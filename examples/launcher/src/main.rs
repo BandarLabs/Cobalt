@@ -56,10 +56,10 @@ const ENTRIES: &[Entry] = &[
         glyph: Glyph::Grid,
     },
     Entry {
-        name: "counter",
-        title: "Counter",
-        summary: "State, actions and partial repaints.",
-        glyph: Glyph::Note,
+        name: "todo",
+        title: "Todo",
+        summary: "A list that remembers itself. Tap an item to finish it.",
+        glyph: Glyph::Check,
     },
     Entry {
         name: "chat",

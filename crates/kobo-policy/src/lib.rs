@@ -9,6 +9,7 @@
 //! than the device it asked for.
 
 pub mod services;
+pub mod store;
 pub mod tasks;
 
 pub use services::{Backends, DeviceServices, DeviceState};

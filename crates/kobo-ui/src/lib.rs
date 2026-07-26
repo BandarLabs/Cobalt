@@ -824,6 +824,7 @@ pub struct Row {
     pub title: String,
     pub summary: String,
     pub glyph: Glyph,
+    pub state: RowState,
 }
 
 impl Row {
@@ -839,8 +840,30 @@ impl Row {
             title: title.into(),
             summary: summary.into(),
             glyph,
+            state: RowState::Open,
         }
     }
+
+    /// The same row, marked as finished.
+    #[must_use]
+    pub fn done(mut self, done: bool) -> Self {
+        self.state = if done { RowState::Done } else { RowState::Open };
+        self
+    }
+}
+
+/// Whether what a row names is still outstanding.
+///
+/// This is a state, not a style. An application says the thing is finished and
+/// the renderer decides what finished looks like, which on this panel is muted
+/// ink and a line through the title. A crossed-out line is the one case where
+/// a line through text carries meaning rather than decoration, which is why it
+/// exists here and nowhere else.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum RowState {
+    #[default]
+    Open,
+    Done,
 }
 
 /// The free-text row that may follow a [`Node::Choice`].
@@ -897,6 +920,10 @@ pub enum Glyph {
     Power,
     /// Three by three with a nought and a cross: a board, a game, a grid.
     Grid,
+    /// An empty ring: something outstanding.
+    Circle,
+    /// A ring with a tick in it: something finished.
+    Check,
 }
 
 impl Node {
@@ -1001,6 +1028,8 @@ pub enum LayoutKind {
     Cell(ActionId),
     CellLabel,
     RowTitle,
+    /// A title whose work is finished: muted and struck through.
+    RowTitleDone,
     RowSummary,
     RowGlyph(Glyph),
     Tile(ActionId),
@@ -1443,7 +1472,10 @@ fn layout_node(
                         width: text_width,
                         height: title_height,
                     },
-                    kind: LayoutKind::RowTitle,
+                    kind: match row.state {
+                        RowState::Open => LayoutKind::RowTitle,
+                        RowState::Done => LayoutKind::RowTitleDone,
+                    },
                     text_lines: title_lines,
                 });
                 if summary_height > 0 {
@@ -2385,6 +2417,14 @@ pub fn render_with(
                 tone::INK,
                 clip,
             ),
+            LayoutKind::RowTitleDone => draw_struck_lines(
+                surface,
+                &node.text_lines,
+                node.rect,
+                metrics,
+                FontSize::Body,
+                clip,
+            ),
             LayoutKind::RowSummary => draw_lines(
                 surface,
                 &node.text_lines,
@@ -2657,6 +2697,46 @@ fn draw_lines(
 ) {
     for line in lines {
         draw_text(surface, line, x, y, size, tone, clip);
+        y = y.saturating_add(size.line_height());
+    }
+}
+
+/// Draws finished text: muted, with a rule through the middle of each line.
+///
+/// The strike is drawn only as wide as the text it crosses rather than the
+/// whole column, because a line that runs past the last word looks like a
+/// separator rather than a cancellation. It is a rule thickness, not one pixel:
+/// a single pixel is under a tenth of a millimetre at this density and simply
+/// is not there.
+fn draw_struck_lines(
+    surface: &mut Surface,
+    lines: &[String],
+    rect: Rect,
+    metrics: &DisplayMetrics,
+    size: FontSize,
+    clip: Rect,
+) {
+    let mut y = rect.y;
+    let thickness = metrics.rule_thickness();
+    for line in lines {
+        draw_text(surface, line, rect.x, y, size, tone::MUTED, clip);
+        let width = min(measure_text(line, size).0, rect.width);
+        // Through the middle of the letters rather than the middle of the line
+        // box, which sits under the baseline and reads as an underline.
+        let middle = y
+            .saturating_add(size.line_height() / 2)
+            .saturating_sub(thickness / 2);
+        fill_clipped(
+            surface,
+            Rect {
+                x: rect.x,
+                y: middle,
+                width,
+                height: thickness,
+            },
+            tone::MUTED,
+            clip,
+        );
         y = y.saturating_add(size.line_height());
     }
 }

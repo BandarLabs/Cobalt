@@ -588,6 +588,17 @@ pub fn shapes(glyph: Glyph) -> Vec<Shape> {
             stroke(Path::line(700, 700, 810, 810)),
             stroke(Path::line(810, 700, 700, 810)),
         ],
+        // An empty ring. Deliberately not a square box: a box at this stroke
+        // weight is hard to tell from the panel's own rules at a glance.
+        Glyph::Circle => vec![stroke(Path::circle(500, 500, 300))],
+        // The same ring with a tick in it, so a finished row differs from an
+        // unfinished one in shape as well as in weight. Shape survives being
+        // read at arm's length under a reading light; tone does not.
+        Glyph::Check => vec![
+            stroke(Path::circle(500, 500, 300)),
+            stroke(Path::line(350, 510, 460, 620)),
+            stroke(Path::line(460, 620, 670, 390)),
+        ],
     }
 }
 

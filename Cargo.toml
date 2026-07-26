@@ -18,7 +18,7 @@ members = [
     "crates/kobo-handoff",
     "crates/kobod",
     "examples/chat",
-    "examples/counter",
+    "examples/todo",
     "examples/tictactoe",
     "examples/hello",
     "examples/gallery",

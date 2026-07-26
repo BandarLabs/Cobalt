@@ -12,7 +12,7 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use kobo_policy::{DeviceServices, TaskRunner};
+use kobo_policy::{store::Store, DeviceServices, TaskRunner};
 use kobo_protocol::{read_from, write_to, Frame, Message};
 use kobo_ui::{render, ActionId, Node, NodeId, Screen, Surface, DISPLAY_HEIGHT, DISPLAY_WIDTH};
 
@@ -512,6 +512,24 @@ fn note(state: &Arc<Mutex<AppState>>, line: &str) -> io::Result<()> {
     Ok(())
 }
 
+fn answer_store(
+    stream: &mut UnixStream,
+    request_id: u32,
+    store: &Store,
+    request: &kobo_protocol::StoreRequest,
+    state: &Arc<Mutex<AppState>>,
+) -> io::Result<()> {
+    let result = store.handle(request);
+    note(state, &format!("store: {request:?} -> {result:?}"))?;
+    write_protocol_frame(
+        stream,
+        &Frame {
+            request_id,
+            message: Message::StoreResult(result),
+        },
+    )
+}
+
 fn read_app_messages(mut stream: UnixStream, state: &Arc<Mutex<AppState>>) -> io::Result<()> {
     // The simulator owns no hardware, so it answers state queries from a
     // believable model and refuses everything that would change a real device.
@@ -519,6 +537,10 @@ fn read_app_messages(mut stream: UnixStream, state: &Arc<Mutex<AppState>>) -> io
     // The simulator has no network. A fetch is refused rather than invented,
     // so an application's failure handling actually runs during development.
     let mut tasks = TaskRunner::simulated(std::env::temp_dir());
+    // Kept outside the process so state survives a reload, which is the whole
+    // point of a store: a developer restarting the application should see what
+    // the owner would see after closing and reopening it.
+    let store = Store::new(std::env::temp_dir().join("cobalt-sim-state"));
     loop {
         let frame = read_protocol_frame(&mut stream)?;
         let request_id = frame.request_id;
@@ -572,6 +594,9 @@ fn read_app_messages(mut stream: UnixStream, state: &Arc<Mutex<AppState>>) -> io
                         .push(format!("task {} refused: {reason:?}", task.0));
                 }
             }
+            Message::StoreRequest(request) => {
+                answer_store(&mut stream, request_id, &store, &request, state)?;
+            }
             Message::Cancel { task } => tasks.cancel(task),
             Message::Exit => {
                 tasks.shutdown();
@@ -581,7 +606,8 @@ fn read_app_messages(mut stream: UnixStream, state: &Arc<Mutex<AppState>>) -> io
             | Message::Welcome { .. }
             | Message::Action { .. }
             | Message::TaskOutcome { .. }
-            | Message::DeviceResult(_) => {
+            | Message::DeviceResult(_)
+            | Message::StoreResult(_) => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "unexpected SDK protocol message",

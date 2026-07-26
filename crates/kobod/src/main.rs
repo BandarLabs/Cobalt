@@ -226,6 +226,7 @@ fn serve_application(stream: &mut UnixStream, frame_path: &Path) -> Result<(), B
     // No network backend is supplied, so a fetch is refused rather than faked.
     let mut tasks = TaskRunner::simulated(std::env::temp_dir())
         .with_fetch(std::sync::Arc::new(kobo_net::fetch_from));
+    let store = kobo_policy::store::Store::new(std::env::temp_dir().join("cobalt-host-state"));
     loop {
         let frame = kobo_protocol::read_from(stream)?;
         match frame.message {
@@ -260,6 +261,16 @@ fn serve_application(stream: &mut UnixStream, frame_path: &Path) -> Result<(), B
                     )?;
                 }
             }
+            Message::StoreRequest(request) => {
+                let result = store.handle(&request);
+                kobo_protocol::write_to(
+                    stream,
+                    &Frame {
+                        request_id: frame.request_id,
+                        message: Message::StoreResult(result),
+                    },
+                )?;
+            }
             Message::Cancel { task } => tasks.cancel(task),
             Message::Exit => {
                 // Nothing an application started may outlive it.
@@ -270,7 +281,8 @@ fn serve_application(stream: &mut UnixStream, frame_path: &Path) -> Result<(), B
             | Message::Welcome { .. }
             | Message::Action { .. }
             | Message::TaskOutcome { .. }
-            | Message::DeviceResult(_) => {
+            | Message::DeviceResult(_)
+            | Message::StoreResult(_) => {
                 return Err("application sent a daemon-only message".into());
             }
         }

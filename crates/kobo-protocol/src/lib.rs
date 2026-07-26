@@ -7,7 +7,7 @@ use std::io::{self, Read, Write};
 
 use kobo_ui::{
     ActionId, BannerLevel, BarAction, Cell, Freeform, Glyph, NavBar, Node, NodeId, PageTurns,
-    Percent, Row, Screen, Space, Tile, TopBar, MIN_NAV_DESTINATIONS,
+    Percent, Row, RowState, Screen, Space, Tile, TopBar, MIN_NAV_DESTINATIONS,
 };
 use std::cmp::min;
 
@@ -38,6 +38,19 @@ pub const MAX_TASK_BYTES_U32: u32 = 512 * 1024;
 /// The same limit as [`MAX_TASK_BYTES_U32`], in the width Rust indexes with.
 /// Declaring the wire width first means the conversion only ever widens.
 pub const MAX_TASK_BYTES: usize = MAX_TASK_BYTES_U32 as usize;
+
+/// The longest a stored key may be.
+pub const MAX_STORE_KEY_LEN: usize = 64;
+
+/// The largest value an application may keep under one key.
+///
+/// Generous for state and far too small for content. That asymmetry is the
+/// point: this is where an application keeps what it needs to open in the same
+/// place it closed, not where it keeps a library.
+pub const MAX_STORE_VALUE: usize = 256 * 1024;
+
+/// The most keys one application may hold.
+pub const MAX_STORE_KEYS: usize = 256;
 
 /// A handle to work the runtime is carrying out on an application's behalf.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -168,6 +181,106 @@ pub enum Message {
         task: TaskId,
         outcome: TaskOutcome,
     },
+    /// An application reading or writing its own small state.
+    StoreRequest(StoreRequest),
+    /// The runtime's answer to exactly one store request.
+    StoreResult(StoreResult),
+}
+
+/// Everything an application can ask of its own store.
+///
+/// # Why keys and not paths
+///
+/// An application that can name a path can name `../../../etc/init.d/rcS`, and
+/// then every caller for the rest of time has to remember to sanitise it. A key
+/// namespace deletes the entire class of mistake instead of defending against
+/// it: there is no syntax here that can express somewhere else.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum StoreRequest {
+    /// Writes a value, replacing whatever was there.
+    Save { key: String, value: Vec<u8> },
+    /// Reads a value back. A key that was never written is not an error.
+    Load { key: String },
+    /// Removes a key.
+    Forget { key: String },
+    /// Lists the keys this application has written.
+    List,
+}
+
+/// The runtime's answer to exactly one [`StoreRequest`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum StoreResult {
+    Saved {
+        key: String,
+    },
+    /// `None` means the key has never been written, which is the ordinary
+    /// first-run answer rather than a failure.
+    Loaded {
+        key: String,
+        value: Option<Vec<u8>>,
+    },
+    Forgotten {
+        key: String,
+    },
+    Keys(Vec<String>),
+    Denied(StoreError),
+}
+
+/// Why a store request was refused.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum StoreError {
+    /// The key was empty, too long, or used a character outside the allowed
+    /// set. Refused rather than rewritten, so two keys can never collide into
+    /// one after sanitising.
+    BadKey = 1,
+    /// The value was larger than [`MAX_STORE_VALUE`], or the application
+    /// already holds [`MAX_STORE_KEYS`] keys.
+    TooFull = 2,
+    /// The store itself could not be written, or this session has none. The
+    /// previous value survives.
+    ///
+    /// There is deliberately no "not permitted" here. An application's own
+    /// state is not a privilege it has to ask for, any more than a phone asks
+    /// permission to remember which tab you were on.
+    Unwritable = 3,
+}
+
+impl TryFrom<u8> for StoreError {
+    type Error = ProtocolError;
+
+    fn try_from(value: u8) -> Result<Self, ProtocolError> {
+        match value {
+            1 => Ok(Self::BadKey),
+            2 => Ok(Self::TooFull),
+            3 => Ok(Self::Unwritable),
+            _ => Err(ProtocolError::InvalidValue("store error")),
+        }
+    }
+}
+
+impl fmt::Display for StoreError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::BadKey => "that is not a usable key",
+            Self::TooFull => "there is no room for that",
+            Self::Unwritable => "the store could not be written",
+        })
+    }
+}
+
+/// Whether a key is one the store will accept.
+///
+/// Lowercase letters, digits, `.`, `-` and `_`. A leading dot is refused so a
+/// key can never become a hidden file, and `..` cannot be spelled at all.
+#[must_use]
+pub fn is_valid_key(key: &str) -> bool {
+    !key.is_empty()
+        && key.len() <= MAX_STORE_KEY_LEN
+        && !key.starts_with('.')
+        && key.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || b".-_".contains(&byte)
+        })
 }
 
 /// Every hardware operation an application can ask for.
@@ -426,6 +539,8 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
                 TaskOutcome::Cancelled => payload.push(2),
             }
         }
+        Message::StoreRequest(request) => encode_store_request(&mut payload, request)?,
+        Message::StoreResult(result) => encode_store_result(&mut payload, result)?,
     }
     debug_assert_eq!(payload.len(), payload_len);
     let mut bytes = Vec::with_capacity(HEADER_LEN + payload.len());
@@ -437,6 +552,76 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
     bytes.extend_from_slice(&frame.request_id.to_be_bytes());
     bytes.extend_from_slice(&payload);
     Ok(bytes)
+}
+
+fn encode_store_request(
+    payload: &mut Vec<u8>,
+    request: &StoreRequest,
+) -> Result<(), ProtocolError> {
+    match request {
+        StoreRequest::Save { key, value } => {
+            payload.push(0);
+            push_string(payload, key)?;
+            push_u32(
+                payload,
+                u32::try_from(value.len()).map_err(|_| ProtocolError::FrameTooLarge)?,
+            );
+            payload.extend_from_slice(value);
+        }
+        StoreRequest::Load { key } => {
+            payload.push(1);
+            push_string(payload, key)?;
+        }
+        StoreRequest::Forget { key } => {
+            payload.push(2);
+            push_string(payload, key)?;
+        }
+        StoreRequest::List => payload.push(3),
+    }
+    Ok(())
+}
+
+fn encode_store_result(payload: &mut Vec<u8>, result: &StoreResult) -> Result<(), ProtocolError> {
+    match result {
+        StoreResult::Saved { key } => {
+            payload.push(0);
+            push_string(payload, key)?;
+        }
+        StoreResult::Loaded { key, value } => {
+            payload.push(1);
+            push_string(payload, key)?;
+            match value {
+                Some(value) => {
+                    payload.push(1);
+                    push_u32(
+                        payload,
+                        u32::try_from(value.len()).map_err(|_| ProtocolError::FrameTooLarge)?,
+                    );
+                    payload.extend_from_slice(value);
+                }
+                None => payload.push(0),
+            }
+        }
+        StoreResult::Forgotten { key } => {
+            payload.push(2);
+            push_string(payload, key)?;
+        }
+        StoreResult::Keys(keys) => {
+            payload.push(3);
+            push_u16(
+                payload,
+                u16::try_from(keys.len()).map_err(|_| ProtocolError::FrameTooLarge)?,
+            );
+            for key in keys {
+                push_string(payload, key)?;
+            }
+        }
+        StoreResult::Denied(error) => {
+            payload.push(4);
+            payload.push(*error as u8);
+        }
+    }
+    Ok(())
 }
 
 fn encoded_message_layout(message: &Message) -> Result<(u8, usize), ProtocolError> {
@@ -507,6 +692,8 @@ fn encoded_message_layout(message: &Message) -> Result<(u8, usize), ProtocolErro
             }
             Ok((11, length))
         }
+        Message::StoreRequest(request) => Ok((13, store_request_len(request)?)),
+        Message::StoreResult(result) => Ok((14, store_result_len(result)?)),
     }
 }
 
@@ -722,8 +909,9 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
             }
             let mut length = 6;
             for row in rows {
-                // Four bytes of action and one of glyph, then both strings.
-                add_encoded_len(&mut length, 5)?;
+                // Four bytes of action, one of glyph and one of state, then
+                // both strings.
+                add_encoded_len(&mut length, 6)?;
                 add_encoded_len(&mut length, encoded_string_len(&row.title)?)?;
                 add_encoded_len(&mut length, encoded_string_len(&row.summary)?)?;
             }
@@ -929,6 +1117,63 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
             };
             Message::TaskOutcome { task, outcome }
         }
+        13 => Message::StoreRequest(match reader.u8()? {
+            0 => {
+                let key = reader.string()?;
+                let length = reader.u32()? as usize;
+                if length > MAX_STORE_VALUE {
+                    return Err(ProtocolError::FrameTooLarge);
+                }
+                StoreRequest::Save {
+                    key,
+                    value: reader.take(length)?.to_vec(),
+                }
+            }
+            1 => StoreRequest::Load {
+                key: reader.string()?,
+            },
+            2 => StoreRequest::Forget {
+                key: reader.string()?,
+            },
+            3 => StoreRequest::List,
+            _ => return Err(ProtocolError::InvalidValue("store request")),
+        }),
+        14 => Message::StoreResult(match reader.u8()? {
+            0 => StoreResult::Saved {
+                key: reader.string()?,
+            },
+            1 => {
+                let key = reader.string()?;
+                let value = match reader.u8()? {
+                    0 => None,
+                    1 => {
+                        let length = reader.u32()? as usize;
+                        if length > MAX_STORE_VALUE {
+                            return Err(ProtocolError::FrameTooLarge);
+                        }
+                        Some(reader.take(length)?.to_vec())
+                    }
+                    _ => return Err(ProtocolError::InvalidValue("stored value")),
+                };
+                StoreResult::Loaded { key, value }
+            }
+            2 => StoreResult::Forgotten {
+                key: reader.string()?,
+            },
+            3 => {
+                let count = reader.u16()? as usize;
+                if count > MAX_STORE_KEYS {
+                    return Err(ProtocolError::FrameTooLarge);
+                }
+                let mut keys = Vec::with_capacity(count);
+                for _ in 0..count {
+                    keys.push(reader.string()?);
+                }
+                StoreResult::Keys(keys)
+            }
+            4 => StoreResult::Denied(StoreError::try_from(reader.u8()?)?),
+            _ => return Err(ProtocolError::InvalidValue("store result")),
+        }),
         value => return Err(ProtocolError::UnknownMessageType(value)),
     };
     if !reader.is_finished() {
@@ -1161,6 +1406,7 @@ fn encode_node(
                 push_string(output, &row.title)?;
                 push_string(output, &row.summary)?;
                 output.push(encode_glyph(row.glyph));
+                output.push(encode_row_state(row.state));
             }
         }
         Node::TileGrid { id, tiles } => {
@@ -1237,6 +1483,74 @@ fn encode_node(
     Ok(())
 }
 
+const fn encode_row_state(state: RowState) -> u8 {
+    match state {
+        RowState::Open => 0,
+        RowState::Done => 1,
+    }
+}
+
+// Rejected rather than defaulted. A state nobody defined is a sender this
+// receiver does not understand, and guessing "not done" for it would quietly
+// show a finished task as outstanding.
+const fn decode_row_state(tag: u8) -> Option<RowState> {
+    Some(match tag {
+        0 => RowState::Open,
+        1 => RowState::Done,
+        _ => return None,
+    })
+}
+
+fn store_request_len(request: &StoreRequest) -> Result<usize, ProtocolError> {
+    let mut length = 1;
+    match request {
+        StoreRequest::Save { key, value } => {
+            if value.len() > MAX_STORE_VALUE {
+                return Err(ProtocolError::FrameTooLarge);
+            }
+            add_encoded_len(&mut length, encoded_string_len(key)?)?;
+            add_encoded_len(&mut length, 4)?;
+            add_encoded_len(&mut length, value.len())?;
+        }
+        StoreRequest::Load { key } | StoreRequest::Forget { key } => {
+            add_encoded_len(&mut length, encoded_string_len(key)?)?;
+        }
+        StoreRequest::List => {}
+    }
+    Ok(length)
+}
+
+fn store_result_len(result: &StoreResult) -> Result<usize, ProtocolError> {
+    let mut length = 1;
+    match result {
+        StoreResult::Saved { key } | StoreResult::Forgotten { key } => {
+            add_encoded_len(&mut length, encoded_string_len(key)?)?;
+        }
+        StoreResult::Loaded { key, value } => {
+            add_encoded_len(&mut length, encoded_string_len(key)?)?;
+            add_encoded_len(&mut length, 1)?;
+            if let Some(value) = value {
+                if value.len() > MAX_STORE_VALUE {
+                    return Err(ProtocolError::FrameTooLarge);
+                }
+                add_encoded_len(&mut length, 4)?;
+                add_encoded_len(&mut length, value.len())?;
+            }
+        }
+        StoreResult::Keys(keys) => {
+            if keys.len() > MAX_STORE_KEYS {
+                return Err(ProtocolError::FrameTooLarge);
+            }
+            add_encoded_len(&mut length, 2)?;
+            for key in keys {
+                add_encoded_len(&mut length, encoded_string_len(key)?)?;
+            }
+        }
+        StoreResult::Denied(_) => add_encoded_len(&mut length, 1)?,
+    }
+    Ok(length)
+}
+
 const fn encode_glyph(glyph: Glyph) -> u8 {
     match glyph {
         Glyph::App => 0,
@@ -1252,6 +1566,8 @@ const fn encode_glyph(glyph: Glyph) -> u8 {
         Glyph::Reader => 10,
         Glyph::Power => 11,
         Glyph::Grid => 12,
+        Glyph::Circle => 13,
+        Glyph::Check => 14,
     }
 }
 
@@ -1270,6 +1586,8 @@ const fn decode_glyph(tag: u8) -> Option<Glyph> {
         10 => Glyph::Reader,
         11 => Glyph::Power,
         12 => Glyph::Grid,
+        13 => Glyph::Circle,
+        14 => Glyph::Check,
         _ => return None,
     })
 }
@@ -1543,11 +1861,14 @@ fn decode_node(
                 let summary = reader.string()?;
                 let glyph =
                     decode_glyph(reader.u8()?).ok_or(ProtocolError::InvalidValue("row glyph"))?;
+                let state = decode_row_state(reader.u8()?)
+                    .ok_or(ProtocolError::InvalidValue("row state"))?;
                 rows.push(Row {
                     action,
                     title,
                     summary,
                     glyph,
+                    state,
                 });
             }
             Ok(Node::Rows { id, rows })
@@ -2143,6 +2464,118 @@ mod node_coverage_tests {
                 "an unknown {label} tag was accepted"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod store_tests {
+    use super::*;
+
+    fn message_round_trip(message: Message) -> Message {
+        let frame = Frame {
+            request_id: 11,
+            message,
+        };
+        let bytes = encode(&frame).expect("encode");
+        decode(&bytes).expect("decode").message
+    }
+
+    #[test]
+    fn every_store_message_survives_the_wire() {
+        for message in [
+            Message::StoreRequest(StoreRequest::Save {
+                key: "tasks".into(),
+                value: vec![0, 1, 2, 255],
+            }),
+            Message::StoreRequest(StoreRequest::Load {
+                key: "tasks".into(),
+            }),
+            Message::StoreRequest(StoreRequest::Forget {
+                key: "tasks".into(),
+            }),
+            Message::StoreRequest(StoreRequest::List),
+            Message::StoreResult(StoreResult::Saved {
+                key: "tasks".into(),
+            }),
+            Message::StoreResult(StoreResult::Loaded {
+                key: "tasks".into(),
+                value: Some(b"[]".to_vec()),
+            }),
+            Message::StoreResult(StoreResult::Loaded {
+                key: "tasks".into(),
+                value: None,
+            }),
+            Message::StoreResult(StoreResult::Forgotten {
+                key: "tasks".into(),
+            }),
+            Message::StoreResult(StoreResult::Keys(vec!["a".into(), "b".into()])),
+            Message::StoreResult(StoreResult::Denied(StoreError::BadKey)),
+        ] {
+            assert_eq!(message_round_trip(message.clone()), message);
+        }
+    }
+
+    #[test]
+    fn a_never_written_key_is_distinct_from_an_empty_one() {
+        // These encode to different bytes on purpose. An application that
+        // cannot tell "nothing saved yet" from "saved nothing" cannot tell a
+        // first run from a cleared list.
+        let missing = Message::StoreResult(StoreResult::Loaded {
+            key: "k".into(),
+            value: None,
+        });
+        let empty = Message::StoreResult(StoreResult::Loaded {
+            key: "k".into(),
+            value: Some(Vec::new()),
+        });
+        assert_ne!(
+            encode(&Frame {
+                request_id: 0,
+                message: missing.clone()
+            })
+            .unwrap(),
+            encode(&Frame {
+                request_id: 0,
+                message: empty.clone()
+            })
+            .unwrap()
+        );
+        assert_eq!(message_round_trip(missing.clone()), missing);
+        assert_eq!(message_round_trip(empty.clone()), empty);
+    }
+
+    #[test]
+    fn an_oversized_value_is_refused_before_it_is_encoded() {
+        let frame = Frame {
+            request_id: 0,
+            message: Message::StoreRequest(StoreRequest::Save {
+                key: "big".into(),
+                value: vec![0; MAX_STORE_VALUE + 1],
+            }),
+        };
+        assert!(matches!(encode(&frame), Err(ProtocolError::FrameTooLarge)));
+    }
+
+    #[test]
+    fn keys_that_could_name_somewhere_else_are_refused() {
+        for bad in [
+            "",
+            "..",
+            "../../etc/passwd",
+            ".hidden",
+            "has/slash",
+            "Upper",
+            "has space",
+            "has\\backslash",
+            "nul\0byte",
+        ] {
+            assert!(!is_valid_key(bad), "{bad:?} was accepted as a key");
+        }
+        for good in ["tasks", "book.position", "a-b_c", "v2.state"] {
+            assert!(is_valid_key(good), "{good:?} was refused as a key");
+        }
+        assert!(!is_valid_key(&"a".repeat(MAX_STORE_KEY_LEN + 1)));
+        assert!(is_valid_key(&"a".repeat(MAX_STORE_KEY_LEN)));
     }
 }
 

@@ -192,6 +192,123 @@ impl Keyboard {
     }
 }
 
+/// What a tap did to a [`TextEntry`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Typing {
+    /// The field opened, changed, or a modifier moved. Repaint.
+    Changed,
+    /// The reader accepted what they typed. The text comes with it, and the
+    /// field is closed and empty again, so the next entry starts clean.
+    Submitted(String),
+    /// The reader backed out. Nothing was entered.
+    Cancelled,
+}
+
+/// A field that raises the keyboard when it is tapped, and puts it away again.
+///
+/// This exists because "tap the row, get a keyboard, get the text back" was
+/// being written out by hand in every application, and every application got a
+/// slightly different one. The row an application draws with
+/// [`ScreenBuilder::or_type`] emits an action like any other; binding that
+/// action here is what makes the row open the keyboard, rather than each
+/// author remembering to switch a view enum.
+///
+/// The application still owns its screens: this decides *whether* the keyboard
+/// is showing, and [`ScreenBuilder::text_entry`] draws it.
+#[derive(Clone, Debug, Default)]
+pub struct TextEntry {
+    keyboard: Keyboard,
+    open: bool,
+    opens_on: Option<ActionId>,
+}
+
+impl TextEntry {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Binds the action that opens this field.
+    ///
+    /// Named rather than numbered, and resolved the same way every other
+    /// action name is, so it is the same string passed to
+    /// [`ScreenBuilder::or_type`].
+    #[must_use]
+    pub fn opened_by(mut self, name: &str) -> Self {
+        self.opens_on = Some(crate::action_id(name));
+        self
+    }
+
+    #[must_use]
+    pub const fn is_open(&self) -> bool {
+        self.open
+    }
+
+    #[must_use]
+    pub fn text(&self) -> &str {
+        self.keyboard.text()
+    }
+
+    #[must_use]
+    pub const fn keyboard(&self) -> &Keyboard {
+        &self.keyboard
+    }
+
+    /// Opens the field with nothing in it.
+    pub fn open(&mut self) {
+        self.keyboard.clear();
+        self.open = true;
+    }
+
+    /// Opens the field with `text` already in it, for editing something.
+    pub fn open_with(&mut self, text: impl Into<String>) {
+        self.keyboard = Keyboard::with_text(text);
+        self.open = true;
+    }
+
+    /// Closes the field and throws away anything typed.
+    pub fn close(&mut self) {
+        self.keyboard.clear();
+        self.open = false;
+    }
+
+    /// Applies `action` if it belongs to this field.
+    ///
+    /// Returns `None` for anything else, so an application passes every action
+    /// here first and handles its own afterwards. While the field is open it
+    /// claims the cancel action too, because a keyboard covering the panel is
+    /// modal whether or not the author thought of it that way.
+    pub fn handle(&mut self, action: ActionId) -> Option<Typing> {
+        if !self.open {
+            if self.opens_on == Some(action) {
+                self.open();
+                return Some(Typing::Changed);
+            }
+            return None;
+        }
+        if action == crate::action_id(CANCEL) {
+            self.close();
+            return Some(Typing::Cancelled);
+        }
+        match self.keyboard.press(action)? {
+            Pressed::Edited | Pressed::Shifted => Some(Typing::Changed),
+            Pressed::Submitted => {
+                let text = self.keyboard.take();
+                self.open = false;
+                // Whitespace only is nothing. Returning it would make every
+                // caller check, and half of them would forget.
+                if text.trim().is_empty() {
+                    Some(Typing::Cancelled)
+                } else {
+                    Some(Typing::Submitted(text.trim().to_string()))
+                }
+            }
+        }
+    }
+}
+
+const CANCEL: &str = "kb.cancel";
+
 const SHIFT: &str = "kb.shift";
 const LAYER: &str = "kb.layer";
 const SPACE: &str = "kb.space";
@@ -256,6 +373,21 @@ impl ScreenBuilder {
                 (ENTER.to_string(), submit.to_string()),
             ],
         )
+    }
+
+    /// Draws an open [`TextEntry`]: the prompt, the text, the keyboard and a
+    /// way out.
+    ///
+    /// A way out is not optional. The keyboard fills the panel, so without it
+    /// a reader who tapped the field by accident has no route back except
+    /// submitting something they did not want.
+    #[must_use]
+    pub fn text_entry(self, entry: &TextEntry, prompt: &str, submit: &str) -> Self {
+        self.heading(prompt)
+            .typed(entry.keyboard(), "Type here")
+            .divider()
+            .keyboard(entry.keyboard(), submit)
+            .button(CANCEL, "Cancel")
     }
 
     /// Shows what has been typed, or `placeholder` when nothing has been.

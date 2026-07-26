@@ -422,13 +422,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "kobo-counter"
-version = "0.1.0"
-dependencies = [
- "kobo-sdk",
-]
-
-[[package]]
 name = "kobo-doctor"
 version = "0.1.0"
 dependencies = [
@@ -562,6 +555,14 @@ dependencies = [
 
 [[package]]
 name = "kobo-tictactoe"
+version = "0.1.0"
+dependencies = [
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
+name = "kobo-todo"
 version = "0.1.0"
 dependencies = [
  "kobo-sdk",

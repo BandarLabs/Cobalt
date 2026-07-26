@@ -11,7 +11,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 mod devsession;
 mod sha256;
 
-const DEVICE_PACKAGES: &[&str] = &["kobo-doctor", "kobod", "kobo-counter"];
+const DEVICE_PACKAGES: &[&str] = &["kobo-doctor", "kobod", "kobo-todo"];
 const REMOTE_CONNECT_TIMEOUT_SECONDS: u64 = 10;
 const REMOTE_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 const REMOTE_CLEANUP_TIMEOUT: Duration = Duration::from_secs(5);
@@ -1518,7 +1518,7 @@ fn verify_command(arguments: &[String]) -> Result<(), String> {
 
 fn run_simulation() -> Result<(), String> {
     let mut build = Command::new("cargo");
-    build.args(["build", "-p", "kobod", "-p", "kobo-counter"]);
+    build.args(["build", "-p", "kobod", "-p", "kobo-todo"]);
     run_status(&mut build, "build host simulation")?;
 
     let mut simulation = SimulationGuard::new()?;
@@ -1541,11 +1541,11 @@ fn run_simulation() -> Result<(), String> {
         ));
     }
 
-    let app_status = Command::new("target/debug/kobo-counter")
+    let app_status = Command::new("target/debug/kobo-todo")
         .env("KOBO_SOCKET", &simulation.socket)
         .env("KOBO_SIM_ONESHOT", "1")
         .status()
-        .map_err(|error| format!("run counter app: {error}"))?;
+        .map_err(|error| format!("run todo app: {error}"))?;
     let daemon_status = simulation.daemon_wait()?;
     if !app_status.success() || !daemon_status.success() {
         return Err(format!(
@@ -1931,7 +1931,7 @@ mod tests {
 
     #[test]
     fn default_device_build_excludes_guard_and_smoke() {
-        assert_eq!(DEVICE_PACKAGES, ["kobo-doctor", "kobod", "kobo-counter"]);
+        assert_eq!(DEVICE_PACKAGES, ["kobo-doctor", "kobod", "kobo-todo"]);
         assert!(!DEVICE_PACKAGES.contains(&"kobo-guard"));
         assert!(!DEVICE_PACKAGES.contains(&"kobo-smoke"));
     }

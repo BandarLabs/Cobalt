@@ -62,6 +62,9 @@ pub const TOUCH_DEVICE: &str = "/dev/input/event1";
 /// over USB without a shell, and because `/tmp` is a RAM disk that every
 /// reboot empties. An application names a secret; only the runtime reads one.
 const SECRETS: &str = "/mnt/onboard/.adds/cobalt/secrets";
+
+/// Where each application's own keyed state lives, one directory per name.
+const STATE_ROOT: &str = "/mnt/onboard/.adds/cobalt/state";
 /// How long the reader is given to stop, and to come back.
 const STOP_GRACE: Duration = Duration::from_secs(15);
 const START_GRACE: Duration = Duration::from_secs(45);
@@ -733,6 +736,11 @@ fn converse(
     let mut battery_read_at = Instant::now()
         .checked_sub(BATTERY_INTERVAL)
         .unwrap_or_else(Instant::now);
+    // Keyed state lives beside the applications, on the book partition, because
+    // that is the one place a Kobo is guaranteed to have room and the one place
+    // a reinstall does not wipe. An application that never saves creates
+    // nothing here.
+    let store = kobo_policy::store::Store::new(Path::new(STATE_ROOT).join(&name));
     let waker = sender.clone();
     let mut tasks = TaskRunner::simulated(std::env::temp_dir())
         .with_fetch(Arc::new(kobo_net::fetch_from))
@@ -861,6 +869,17 @@ fn converse(
                         .map_err(|error| format!("refuse a task: {error}"))?;
                     }
                 }
+                Message::StoreRequest(request) => {
+                    let result = store.handle(&request);
+                    kobo_protocol::write_to(
+                        &mut stream,
+                        &Frame {
+                            request_id: frame.request_id,
+                            message: Message::StoreResult(result),
+                        },
+                    )
+                    .map_err(|error| format!("answer a store request: {error}"))?;
+                }
                 Message::Cancel { task } => tasks.cancel(task),
                 Message::Exit => {
                     tasks.shutdown();
@@ -882,7 +901,8 @@ fn converse(
                 | Message::Welcome { .. }
                 | Message::Action { .. }
                 | Message::TaskOutcome { .. }
-                | Message::DeviceResult(_) => {
+                | Message::DeviceResult(_)
+                | Message::StoreResult(_) => {
                     tasks.shutdown();
                     return Err(format!("{name} sent a runtime-only message"));
                 }

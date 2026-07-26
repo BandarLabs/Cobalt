@@ -6,8 +6,9 @@
 //! [`AppRunner::action`] from their platform event loop.
 
 pub use kobo_protocol::{
-    DenyReason, DeviceRequest, DeviceResult, Frame, LogLevel, Message, StreamError, Task,
-    TaskError, TaskId, TaskOutcome, MAX_TASK_BYTES, MAX_URL_LEN,
+    DenyReason, DeviceRequest, DeviceResult, Frame, LogLevel, Message, StoreError, StoreRequest,
+    StoreResult, StreamError, Task, TaskError, TaskId, TaskOutcome, MAX_STORE_KEYS,
+    MAX_STORE_VALUE, MAX_TASK_BYTES, MAX_URL_LEN,
 };
 pub use kobo_ui::{
     ActionId, BannerLevel, BarAction, Cell, Chrome, DisplayMetrics, Freeform, Glyph, NavBar, Node,
@@ -30,9 +31,9 @@ pub mod keyboard;
 
 pub mod prelude {
     pub use crate::{
-        action_id, ActionId, AppRunner, Capability, Client, ClientEvent, Command, Context,
-        DenyReason, Device, DeviceRequest, DeviceResult, Grant, Grants, KoboApp, Node, NodeId,
-        PowerPolicy, Screen, ScreenBuilder,
+        action_id, ActionId, AppRunner, AppStore, Capability, Client, ClientEvent, Command,
+        Context, DenyReason, Device, DeviceRequest, DeviceResult, Grant, Grants, KoboApp, Node,
+        NodeId, PowerPolicy, Screen, ScreenBuilder, StoreError, StoreRequest, StoreResult,
     };
 }
 
@@ -261,6 +262,37 @@ impl ScreenBuilder {
         self
     }
 
+    /// A list of things to be done, some of which are.
+    ///
+    /// The same rows, with the state carried rather than drawn: an application
+    /// says whether each entry is finished and the renderer decides what
+    /// finished looks like. That is why there is no way to ask for a line
+    /// through a piece of text anywhere else in this SDK.
+    ///
+    /// Tapping a row is what completes it, and only the row that changed is
+    /// repainted, so ticking something off costs one fast partial refresh
+    /// rather than a whole screen.
+    #[must_use]
+    pub fn checklist<I, N, T, S>(mut self, items: I) -> Self
+    where
+        I: IntoIterator<Item = (N, T, S, bool)>,
+        N: AsRef<str>,
+        T: Into<String>,
+        S: Into<String>,
+    {
+        let id = self.next_id();
+        let rows = items
+            .into_iter()
+            .take(MAX_ROWS)
+            .map(|(name, title, summary, done)| {
+                let glyph = if done { Glyph::Check } else { Glyph::Circle };
+                Row::new(self.register(name.as_ref()), title, summary, glyph).done(done)
+            })
+            .collect();
+        self.nodes.push(Node::Rows { id, rows });
+        self
+    }
+
     /// A grid of equally sized, tappable cells.
     ///
     /// The general one: the caller picks the columns, so a board, a keypad and
@@ -446,6 +478,8 @@ pub enum Command {
         work: Task,
     },
     Cancel(TaskId),
+    /// Read or write the application's own small state.
+    Store(StoreRequest),
     Exit,
     /// Hand the panel to another application by name.
     Launch(String),
@@ -572,6 +606,15 @@ impl Context {
         Device { context: self }
     }
 
+    /// The application's own small state, which survives being closed.
+    ///
+    /// Every application has one and none has to ask for it, in the same way a
+    /// phone does not ask permission to remember which tab you were on. It is
+    /// keyed, never pathed, so there is no syntax that can name somewhere else.
+    pub fn store(&mut self) -> AppStore<'_> {
+        AppStore { context: self }
+    }
+
     #[must_use]
     pub fn commands(&self) -> &[Command] {
         &self.commands
@@ -580,6 +623,49 @@ impl Context {
     #[must_use]
     pub fn take_commands(&mut self) -> Vec<Command> {
         std::mem::take(&mut self.commands)
+    }
+}
+
+/// An application's own small state.
+///
+/// Sized for what an application needs in order to open where it closed: a
+/// reading position, a list, a preference. Deliberately far too small for
+/// content, which is what a task and a real file are for.
+#[derive(Debug)]
+pub struct AppStore<'a> {
+    context: &'a mut Context,
+}
+
+impl AppStore<'_> {
+    /// Writes a value, replacing whatever was under that key.
+    ///
+    /// The write is atomic: a reader sees the previous value or the new one and
+    /// never a splice of the two, which matters on a device that loses power
+    /// without warning.
+    pub fn save(&mut self, key: impl Into<String>, value: impl Into<Vec<u8>>) {
+        self.request(StoreRequest::Save {
+            key: key.into(),
+            value: value.into(),
+        });
+    }
+
+    /// Reads a value back. A key that was never written is not an error.
+    pub fn load(&mut self, key: impl Into<String>) {
+        self.request(StoreRequest::Load { key: key.into() });
+    }
+
+    /// Removes a key. Removing one that is not there is a success.
+    pub fn forget(&mut self, key: impl Into<String>) {
+        self.request(StoreRequest::Forget { key: key.into() });
+    }
+
+    /// Lists the keys this application has written.
+    pub fn list(&mut self) {
+        self.request(StoreRequest::List);
+    }
+
+    fn request(&mut self, request: StoreRequest) {
+        self.context.commands.push(Command::Store(request));
     }
 }
 
@@ -699,6 +785,12 @@ pub trait KoboApp {
     /// Like device results, a task always reports back, including when it fails
     /// or is cancelled, so an application never has to time out its own work.
     fn on_task(&mut self, _context: &mut Context, _task: TaskId, _outcome: TaskOutcome) {}
+
+    /// Receives the runtime's answer to exactly one earlier store request.
+    ///
+    /// Like device results, every request reports back, so an application never
+    /// has to guess whether its state was written.
+    fn on_store(&mut self, _context: &mut Context, _result: StoreResult) {}
 }
 
 /// The longest a lifecycle callback may run before the runtime intervenes.
@@ -816,6 +908,11 @@ impl<A: KoboApp> AppRunner<A> {
         self.dispatch(|app, context| app.on_task(context, task, outcome))
     }
 
+    /// Delivers one store answer.
+    pub fn store_result(&mut self, result: StoreResult) -> Vec<Command> {
+        self.dispatch(|app, context| app.on_store(context, result))
+    }
+
     /// The device requests still awaiting an answer, oldest first.
     #[must_use]
     pub fn outstanding_requests(&self) -> usize {
@@ -874,6 +971,7 @@ pub enum ClientEvent {
     Action(ActionId),
     Device(DeviceResult),
     Task { task: TaskId, outcome: TaskOutcome },
+    Store(StoreResult),
     Exit,
 }
 
@@ -987,6 +1085,7 @@ impl Client {
                 Command::Device(request) => Message::DeviceRequest(request),
                 Command::Spawn { task, work } => Message::Spawn { task, work },
                 Command::Cancel(task) => Message::Cancel { task },
+                Command::Store(request) => Message::StoreRequest(request),
                 Command::Exit => Message::Exit,
                 Command::Launch(name) => Message::Launch { name },
             };
@@ -1006,6 +1105,7 @@ impl Client {
             Message::Action { action } => Ok(ClientEvent::Action(action)),
             Message::DeviceResult(result) => Ok(ClientEvent::Device(result)),
             Message::TaskOutcome { task, outcome } => Ok(ClientEvent::Task { task, outcome }),
+            Message::StoreResult(result) => Ok(ClientEvent::Store(result)),
             Message::Exit => Ok(ClientEvent::Exit),
             _ => Err(ClientError::UnexpectedMessage),
         }
@@ -1315,6 +1415,9 @@ pub fn run_on<A: KoboApp>(name: &str, app: A, socket: &Path) -> Result<(), Clien
                 ClientEvent::Task { task, outcome } => {
                     client.send_commands(runner.task_outcome(task, outcome))?;
                 }
+                ClientEvent::Store(result) => {
+                    client.send_commands(runner.store_result(result))?;
+                }
                 ClientEvent::Action(_) | ClientEvent::Exit => break,
             }
         }
@@ -1327,6 +1430,7 @@ pub fn run_on<A: KoboApp>(name: &str, app: A, socket: &Path) -> Result<(), Clien
             ClientEvent::Action(action) => runner.action(action),
             ClientEvent::Device(result) => runner.device_result(result),
             ClientEvent::Task { task, outcome } => runner.task_outcome(task, outcome),
+            ClientEvent::Store(result) => runner.store_result(result),
             ClientEvent::Exit => {
                 // The runtime is taking the screen back. Give the application
                 // its exit callback, then go, rather than arguing about it.
