@@ -713,7 +713,67 @@ project is arranged to prevent.
 
 ---
 
-## 16. Where it stands
+## 16. Six bugs found by looking at a picture
+
+The simulator's entire reason to exist is the claim that a screen which fits in
+the browser fits on the panel. Rendering one frame to a PNG and actually
+looking at it broke that claim six times over.
+
+**The simulator never installed a typeface.** Every preview was drawn in the
+built-in bitmap fallback — uppercase only, fixed width — so line wrapping, page
+counts and the height of every paragraph were nothing like the device's. The
+application process installed the real face for its own text measurement; the
+process doing the drawing was a different process, and nobody had noticed the
+two disagreed. One missing call.
+
+**And the fallback was whatever the developer happened to own.** Verdana on a
+Mac, DejaVu on a Linux box. Two people previewing the same screen saw different
+line breaks and neither saw the panel's. The face is compiled in now — the same
+one the device carries, from upstream, under the SIL Open Font License — so the
+preview is identical everywhere, and the device's own copy still wins when it
+is present.
+
+**Outlined boxes were one pixel wide.** At 300 pixels per inch that is 0.08
+millimetres, in the lightest tone anything uses. It is why the tic-tac-toe grid
+and every card looked washed out on the panel while dividers looked right:
+dividers have always been drawn at the real rule thickness, and strokes were
+drawn with a hard-coded 1. Four pixels instead of one, from the same physical
+measurement both now share.
+
+**Every task message claimed one byte more than it encoded to.** `encode`
+predicts the payload length before writing, and the mismatch was a
+`debug_assert_eq!` — so the moment an application asked for a download, the
+simulator panicked. No test had ever encoded a spawn, which is why a bug that
+made every networked application impossible to preview had gone unnoticed. The
+test that exists now encodes each one and compares the prediction against the
+bytes.
+
+**The simulator refused every network request on principle.** The principle —
+that invented answers teach nothing and error handling that never runs does not
+work — is right, and it is why this project's simulator refuses to fake a
+battery reading. But it was applied to the wrong thing. An application that can
+only reach the network on the device can only be *built* on the device, and the
+terminal had already been made an exception for precisely that reason. Requests
+are real now, and `KOBO_SIM_OFFLINE=1` turns them all into failures, so the
+error path is something a developer runs deliberately instead of the only thing
+they can run. The host runtime turned out to have a real fetch backend wired up
+behind a capability nobody had granted it, so it had been refusing everything
+too.
+
+**And a task that finished while nothing was being typed never arrived.** The
+message loop blocks on the application's socket, so an outcome sat in the
+channel until the developer next tapped something. Refusals were instant, which
+is exactly why this survived: the only tasks the simulator ever completed were
+the ones it refused, so fixing the refusal was what exposed the delivery.
+Tasks drain on their own thread now, as terminal output already did.
+
+The lesson is not any one of these. It is that all six had been in the codebase
+for weeks, under a full test suite and no clippy warnings, and every one of
+them fell out of one PNG.
+
+---
+
+## 17. Where it stands
 
 Working: hardware identification, HWTCON display with a real refresh policy,
 touch, reversible reader handoff, panel sessions, real typography, vector
@@ -721,7 +781,7 @@ icons, twenty-odd UI primitives, keyed storage that survives a restart, several
 applications running at once with a background lifecycle, a terminal, a browser
 simulator sharing the same renderer, a bounded protocol, application launching
 with runtime-owned Back, a reproducible package an owner installs over USB, and
-a CLI. 535 tests, no clippy warnings, statically
+a CLI. 542 tests, no clippy warnings, statically
 linked ARMv7 binaries with no device-side dependencies — `rustup target add` is
 the entire setup.
 
@@ -746,6 +806,9 @@ Not done, and not pretended otherwise:
   now, rasterised at whatever size the layout asks for, so the fuzziness is
   gone; the remaining work is a real constraint-based layout model, so
   components become compositions instead of enum variants.
+- **Nobody has looked at most of these screens on the panel.** The simulator is
+  now a faithful preview, which is not the same as a device run. Everything
+  since the terminal has been verified in a browser and on the host only.
 - **Nothing starts it at boot.** Installing needs only USB now, but launching
   still means running `start.sh` or adding a NickelMenu entry. A first-class
   entry point that does not depend on a firmware-coupled third-party patch is
