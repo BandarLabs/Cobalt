@@ -578,7 +578,9 @@ dependencies = [
 name = "kobo-terminal"
 version = "0.1.0"
 dependencies = [
+ "kobo-policy",
  "kobo-sdk",
+ "kobo-shell",
  "kobo-term",
  "kobo-ui",
 ]

@@ -421,4 +421,96 @@ mod tests {
             Some(Typed::Send(vec![0x7f]))
         );
     }
+    /// The whole loop, against a real shell.
+    ///
+    /// Every other test here mocks the runtime, which proves the application
+    /// is consistent with an idea of a terminal rather than with one. This
+    /// runs the same host the daemon runs, starts a real `/bin/sh`, types into
+    /// it by tapping keys and waits for the answer to appear on the screen.
+    ///
+    /// It is the test that would have caught every mistake that mattered: a
+    /// return that sends a newline, a backspace that moves instead of
+    /// deleting, a grid the shell was never told about, or output that never
+    /// reaches the panel at all.
+    #[test]
+    fn typing_echo_into_a_real_shell_puts_its_answer_on_the_screen() {
+        use kobo_policy::Capability;
+        use kobo_shell::Shells;
+        use std::time::{Duration, Instant};
+
+        let mut shells = Shells::new(&[Capability::Shell]);
+        let (mut runner, commands) = started();
+        let mut latest = screens(&commands).pop();
+
+        // The runtime side of the loop: every request the application made
+        // goes to the same host the daemon uses, and everything that comes
+        // back goes to the application.
+        let serve = |runner: &mut AppRunner<App>,
+                     shells: &mut Shells,
+                     commands: Vec<Command>,
+                     latest: &mut Option<Screen>| {
+            let mut queue = commands;
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                let mut next = Vec::new();
+                for command in queue.drain(..) {
+                    match command {
+                        Command::SetScreen(screen) => *latest = Some(screen),
+                        Command::Shell(request) => {
+                            if let Some(event) = shells.handle(request) {
+                                next.extend(runner.shell_event(event));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                for event in shells.drain() {
+                    next.extend(runner.shell_event(event));
+                }
+                if next.is_empty() {
+                    return;
+                }
+                queue = next;
+                if Instant::now() > deadline {
+                    return;
+                }
+            }
+        };
+
+        serve(&mut runner, &mut shells, commands, &mut latest);
+        assert!(shells.is_open(), "a real shell has to have started");
+
+        for key in [
+            "kb.r0c2", "kb.r2c2", "kb.r1c5", "kb.r0c8", "kb.space", "kb.r1c5", "kb.r0c7",
+            "kb.enter",
+        ] {
+            let commands = runner.action(action_id(key));
+            serve(&mut runner, &mut shells, commands, &mut latest);
+        }
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let commands = runner.action(action_id("nothing at all"));
+            serve(&mut runner, &mut shells, commands, &mut latest);
+            let screen = latest.clone().expect("a screen exists by now");
+            let text = layout(&screen)
+                .nodes
+                .iter()
+                .filter(|node| node.kind == LayoutKind::TerminalGrid)
+                .flat_map(|node| node.text_lines.clone())
+                .collect::<Vec<_>>()
+                .join("\n");
+            // The command echoes as it is typed, so the answer is the *second*
+            // occurrence. Counting is what distinguishes a shell that ran the
+            // line from one still waiting for a line ending it never got.
+            if text.matches("hi").count() >= 2 {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the shell never answered; screen was:\n{text}"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
 }

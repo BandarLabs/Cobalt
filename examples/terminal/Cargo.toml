@@ -11,6 +11,8 @@ kobo-sdk = { path = "../../crates/kobo-sdk" }
 kobo-term = { path = "../../crates/kobo-term" }
 
 [dev-dependencies]
+kobo-policy = { path = "../../crates/kobo-policy" }
+kobo-shell = { path = "../../crates/kobo-shell" }
 kobo-ui = { path = "../../crates/kobo-ui" }
 
 [lints]
