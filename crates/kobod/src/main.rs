@@ -223,9 +223,14 @@ fn serve_application(stream: &mut UnixStream, frame_path: &Path) -> Result<(), B
     // In simulation the daemon owns no hardware, so every hardware-touching
     // request is answered honestly rather than pretended.
     let mut services = DeviceServices::simulated();
-    // No network backend is supplied, so a fetch is refused rather than faked.
+    // A real network backend, and the same placeholder grant the panel
+    // runtime uses. Without the grant the backend could never run, so this
+    // path claimed to be the real runtime while refusing every request an
+    // application made.
     let mut tasks = TaskRunner::simulated(std::env::temp_dir())
-        .with_fetch(std::sync::Arc::new(kobo_net::fetch_from));
+        .with_fetch(std::sync::Arc::new(kobo_net::fetch_from))
+        .with_post(std::sync::Arc::new(kobo_net::post))
+        .with_capabilities([kobo_policy::Capability::Network]);
     let store = kobo_policy::store::Store::new(std::env::temp_dir().join("cobalt-host-state"));
     loop {
         let frame = kobo_protocol::read_from(stream)?;

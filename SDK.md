@@ -405,13 +405,15 @@ cargo run -p kobo-cli -- package
 `rustup target add armv7-unknown-linux-musleabihf` is the entire cross-build
 setup. Binaries are statically linked and have no device-side dependencies.
 
-The simulator refuses network tasks rather than faking them, on purpose: an
-application that has only ever seen invented responses is an application whose
-error handling has never run.
+The simulator performs real work rather than faking it. A fetch is a real
+request, a terminal is a real shell on the developer's own machine, and the
+type is the same face the panel uses, compiled in so that two developers on
+different machines see the same line breaks. An application that could only
+reach the network on the device could only be built on the device, which is
+the one thing this is arranged to avoid.
 
-Terminals are the exception, and for the same reason: the simulator runs a real
-shell on the developer's own machine, because an application that could not
-open a terminal in development could only be tested on the device.
+Failure handling is still code that has to run, so set `KOBO_SIM_OFFLINE=1` to
+make every network task fail. Deliberately, rather than always.
 
 `package` produces the single `KoboRoot.tgz` an owner copies into `.kobo/` over
 USB; the reader installs it at the next boot. Everything lands in

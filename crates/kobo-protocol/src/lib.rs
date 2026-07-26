@@ -852,7 +852,13 @@ fn encoded_message_layout(message: &Message) -> Result<(u8, usize), ProtocolErro
         Message::DeviceRequest(_) => Ok((7, 5)),
         Message::DeviceResult(result) => Ok((8, 1 + device_result_value_len(*result))),
         Message::Spawn { work, .. } => {
-            let mut length = 6;
+            // Four bytes of task identifier and one tag byte. This was six,
+            // which made every spawned task claim one byte more than it
+            // encodes to, and the debug assertion at the end of `encode`
+            // turned that into a panic the moment an application asked for a
+            // download — so no application that fetches anything could be
+            // opened in the simulator at all.
+            let mut length = 5;
             match work {
                 Task::Fetch { url, .. } => {
                     add_encoded_len(&mut length, 8)?;
@@ -2802,6 +2808,82 @@ mod store_tests {
     fn a_terminal_chunk_exactly_at_the_bound_is_carried() {
         let message = Message::ShellRequest(ShellRequest::Input(vec![b'x'; MAX_SHELL_CHUNK]));
         assert_eq!(message_round_trip(message.clone()), message);
+    }
+
+    #[test]
+    fn every_task_message_encodes_to_exactly_the_length_it_claims() {
+        // `encode` predicts the payload length before it writes anything, and
+        // a wrong prediction used to be a debug assertion that only fired when
+        // an application actually spawned something — which meant every task
+        // message crashed the simulator and no test noticed, because none of
+        // them encoded one.
+        for message in [
+            Message::Spawn {
+                task: TaskId(7),
+                work: Task::Fetch {
+                    url: "https://example.invalid/book.txt".into(),
+                    offset: 0,
+                    max_bytes: 1024,
+                },
+            },
+            Message::Spawn {
+                task: TaskId(8),
+                work: Task::ReadFile {
+                    path: "/mnt/onboard/book.txt".into(),
+                },
+            },
+            Message::Spawn {
+                task: TaskId(9),
+                work: Task::Sleep { seconds: 30 },
+            },
+            Message::Spawn {
+                task: TaskId(10),
+                work: Task::Post {
+                    url: "https://example.invalid/v1".into(),
+                    body: "{}".into(),
+                    content_type: "application/json".into(),
+                    secret: Some("openai".into()),
+                    max_bytes: 4096,
+                },
+            },
+            Message::Spawn {
+                task: TaskId(11),
+                work: Task::Post {
+                    url: "https://example.invalid/v1".into(),
+                    body: String::new(),
+                    content_type: "application/json".into(),
+                    secret: None,
+                    max_bytes: 4096,
+                },
+            },
+            Message::Cancel { task: TaskId(12) },
+            Message::TaskOutcome {
+                task: TaskId(13),
+                outcome: TaskOutcome::Completed(b"hello".to_vec()),
+            },
+            Message::TaskOutcome {
+                task: TaskId(14),
+                outcome: TaskOutcome::Failed(TaskError::TooLarge),
+            },
+            Message::TaskOutcome {
+                task: TaskId(15),
+                outcome: TaskOutcome::Cancelled,
+            },
+        ] {
+            let (_, predicted) =
+                encoded_message_layout(&message).expect("the message is within the limits");
+            let frame = Frame {
+                request_id: 3,
+                message: message.clone(),
+            };
+            let encoded = encode(&frame).expect("encode");
+            assert_eq!(
+                encoded.len() - HEADER_LEN,
+                predicted,
+                "{message:?} encodes to a different length than it predicted"
+            );
+            assert_eq!(message_round_trip(message.clone()), message);
+        }
     }
 
     #[test]

@@ -6,8 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+kobo-net = { path = "../kobo-net" }
 kobo-policy = { path = "../kobo-policy" }
 kobo-shell = { path = "../kobo-shell" }
+kobo-text = { path = "../kobo-text" }
 kobo-protocol = { path = "../kobo-protocol" }
 kobo-ui = { path = "../kobo-ui" }
 

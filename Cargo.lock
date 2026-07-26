@@ -551,9 +551,11 @@ dependencies = [
 name = "kobo-sim"
 version = "0.1.0"
 dependencies = [
+ "kobo-net",
  "kobo-policy",
  "kobo-protocol",
  "kobo-shell",
+ "kobo-text",
  "kobo-ui",
 ]
 

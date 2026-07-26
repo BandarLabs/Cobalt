@@ -115,6 +115,7 @@ impl Server {
     ///
     /// Returns an error for a non-loopback address, invalid port, or bind failure.
     pub fn bind_address(address: &str) -> io::Result<Self> {
+        install_typeface();
         let listener = TcpListener::bind(parse_local_address(address)?)?;
         Ok(Self {
             listener,
@@ -201,6 +202,7 @@ impl AppServer {
     /// Returns an error for a non-loopback HTTP address, an existing socket
     /// path, an unsafe socket parent, or a listener binding failure.
     pub fn bind(address: &str, socket_path: impl AsRef<Path>) -> io::Result<Self> {
+        install_typeface();
         let socket_path = socket_path.as_ref().to_path_buf();
         validate_socket_parent(&socket_path)?;
         match fs::symlink_metadata(&socket_path) {
@@ -626,9 +628,20 @@ fn read_app_messages(
     // The simulator owns no hardware, so it answers state queries from a
     // believable model and refuses everything that would change a real device.
     let mut services = DeviceServices::simulated();
-    // The simulator has no network. A fetch is refused rather than invented,
-    // so an application's failure handling actually runs during development.
-    let mut tasks = TaskRunner::simulated(std::env::temp_dir());
+    let tasks = Arc::new(Mutex::new(simulated_tasks()));
+    // Drained on its own thread for the same reason terminal output is. The
+    // message loop below blocks on the application's socket, so an outcome
+    // that arrived while nothing was being typed used to sit in the channel
+    // until the developer happened to tap something. A refusal is instant and
+    // was therefore delivered immediately, which is exactly why the gap
+    // survived: the only tasks the simulator ever completed were the ones it
+    // refused.
+    {
+        let draining = Arc::clone(&tasks);
+        let writer = Arc::clone(writer);
+        let state = Arc::clone(state);
+        std::thread::spawn(move || drain_tasks(&draining, &writer, &state));
+    }
     // Kept outside the process so state survives a reload, which is the whole
     // point of a store: a developer restarting the application should see what
     // the owner would see after closing and reopening it.
@@ -678,7 +691,12 @@ fn read_app_messages(
                 )?;
             }
             Message::Spawn { task, work } => {
-                if let Err(reason) = tasks.submit(task, work) {
+                let rejected = tasks
+                    .lock()
+                    .map_err(|_| io::Error::other("simulator task lock poisoned"))?
+                    .submit(task, work)
+                    .err();
+                if let Some(reason) = rejected {
                     let mut state = state
                         .lock()
                         .map_err(|_| io::Error::other("app state lock poisoned"))?;
@@ -693,9 +711,15 @@ fn read_app_messages(
             Message::ShellRequest(request) => {
                 answer_shell(writer, request_id, &shells, request)?;
             }
-            Message::Cancel { task } => tasks.cancel(task),
+            Message::Cancel { task } => tasks
+                .lock()
+                .map_err(|_| io::Error::other("simulator task lock poisoned"))?
+                .cancel(task),
             Message::Exit => {
-                tasks.shutdown();
+                tasks
+                    .lock()
+                    .map_err(|_| io::Error::other("simulator task lock poisoned"))?
+                    .shutdown();
                 return Ok(());
             }
             Message::Hello { .. }
@@ -712,17 +736,37 @@ fn read_app_messages(
                 ));
             }
         }
-        deliver_task_outcomes(writer, &mut tasks, state)?;
+        deliver_task_outcomes(&tasks, writer, state)?;
+    }
+}
+
+/// Delivers a finished task as soon as it finishes.
+///
+/// A fetch takes seconds, and nothing arrives from the application while it is
+/// waiting for one, so without this thread the answer would only reach the
+/// screen when the developer next tapped something.
+fn drain_tasks(
+    tasks: &Arc<Mutex<TaskRunner>>,
+    writer: &Arc<Mutex<UnixStream>>,
+    state: &Arc<Mutex<AppState>>,
+) -> io::Result<()> {
+    loop {
+        deliver_task_outcomes(tasks, writer, state)?;
+        std::thread::sleep(std::time::Duration::from_millis(20));
     }
 }
 
 /// Reports every task that finished, to the log and to the application.
 fn deliver_task_outcomes(
+    tasks: &Arc<Mutex<TaskRunner>>,
     writer: &Arc<Mutex<UnixStream>>,
-    tasks: &mut TaskRunner,
     state: &Arc<Mutex<AppState>>,
 ) -> io::Result<()> {
-    for finished in tasks.drain() {
+    let finished = tasks
+        .lock()
+        .map_err(|_| io::Error::other("simulator task lock poisoned"))?
+        .drain();
+    for finished in finished {
         {
             let mut state = state
                 .lock()
@@ -776,6 +820,51 @@ pub fn run_server(address: &str) -> io::Result<()> {
 /// Returns an error for an invalid/non-loopback address or listener failure.
 pub fn run_server_at(address: &str) -> io::Result<()> {
     Server::bind_address(address)?.serve()
+}
+
+/// Where the simulator looks for the named credentials an application asks
+/// for, mirroring the device directory without ever handing one to the
+/// application.
+const SIM_SECRETS: &str = "cobalt-sim-secrets";
+
+/// Set this to any value to make every network task fail.
+///
+/// Failure handling is code, and code nobody has run does not work. This is
+/// how a developer runs it deliberately, instead of the simulator refusing
+/// everything all the time and teaching nothing.
+pub const OFFLINE: &str = "KOBO_SIM_OFFLINE";
+
+/// The task runner the browser simulator gives an application.
+///
+/// It performs real requests, for the same reason the simulator runs a real
+/// shell: an application that could only reach the network on the device could
+/// only be developed on the device, which is the one thing this project is
+/// arranged to avoid. Network is granted here as the placeholder for a
+/// manifest, exactly as the device runtime grants it, so the two cannot drift.
+fn simulated_tasks() -> TaskRunner {
+    let runner = TaskRunner::simulated(std::env::temp_dir())
+        .with_secrets(std::env::temp_dir().join(SIM_SECRETS));
+    if std::env::var_os(OFFLINE).is_some() {
+        return runner;
+    }
+    runner
+        .with_fetch(Arc::new(kobo_net::fetch_from))
+        .with_post(Arc::new(kobo_net::post))
+        .with_capabilities([kobo_policy::Capability::Network])
+}
+
+/// Gives the simulator the same type the panel gets.
+///
+/// This was missing, and it was not cosmetic. Without it every preview was
+/// drawn in the built-in bitmap fallback, which is uppercase-only and fixed
+/// width, so line breaks, wrapping, page counts and the height of every block
+/// of text in the browser were nothing like the device's. The whole claim that
+/// a screen which fits in the simulator fits on the panel rested on this call.
+///
+/// A failure is not fatal: `kobo-ui` keeps its bitmap, so the worst case is a
+/// preview that looks like the old one.
+fn install_typeface() {
+    let _ = kobo_text::install(kobo_ui::CLARA_BW_METRICS);
 }
 
 fn parse_local_address(address: &str) -> io::Result<SocketAddr> {
@@ -997,6 +1086,82 @@ mod tests {
     use std::time::Duration;
 
     static NEXT_PRIVATE_DIR: AtomicUsize = AtomicUsize::new(0);
+
+    #[test]
+    fn a_task_that_finishes_while_nothing_is_typed_still_reaches_the_application() {
+        // The message loop blocks on the application's socket, so a fetch
+        // taking seconds used to be delivered only when the developer next
+        // tapped something. Refusals arrived instantly, which is why nothing
+        // noticed: the only tasks the simulator completed were refused ones.
+        let (client, server) = UnixStream::pair().expect("a socket pair");
+        let writer = Arc::new(Mutex::new(server));
+        let state = Arc::new(Mutex::new(AppState::default()));
+        let tasks = Arc::new(Mutex::new(
+            TaskRunner::simulated(private_temp_dir())
+                .with_capabilities([kobo_policy::Capability::Network]),
+        ));
+        {
+            let draining = Arc::clone(&tasks);
+            let writer = Arc::clone(&writer);
+            let state = Arc::clone(&state);
+            std::thread::spawn(move || drain_tasks(&draining, &writer, &state));
+        }
+        tasks
+            .lock()
+            .expect("the task lock")
+            .submit(
+                kobo_protocol::TaskId(1),
+                kobo_protocol::Task::Sleep { seconds: 0 },
+            )
+            .expect("the task was accepted");
+
+        let mut client = client;
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("a read timeout");
+        let frame = read_from(&mut client).expect("an outcome arrived unprompted");
+        assert!(
+            matches!(
+                frame.message,
+                Message::TaskOutcome {
+                    task: kobo_protocol::TaskId(1),
+                    ..
+                }
+            ),
+            "expected the outcome, got {:?}",
+            frame.message
+        );
+    }
+
+    #[test]
+    fn the_simulator_reaches_the_network_unless_it_is_told_not_to() {
+        // Refusing every request taught a developer nothing except that the
+        // simulator refuses requests, and an application that can only reach
+        // the network on the device can only be built on the device. Failure
+        // handling is still reachable, deliberately, through one variable.
+        let mut online = simulated_tasks();
+        assert!(
+            online
+                .submit(
+                    kobo_protocol::TaskId(1),
+                    kobo_protocol::Task::Fetch {
+                        url: "https://example.invalid/x".into(),
+                        offset: 0,
+                        max_bytes: 16,
+                    },
+                )
+                .is_ok(),
+            "the simulator refused a fetch outright"
+        );
+        let denied = online.drain().into_iter().any(|finished| {
+            matches!(
+                finished.outcome,
+                kobo_protocol::TaskOutcome::Failed(kobo_protocol::TaskError::Denied)
+            )
+        });
+        assert!(!denied, "the simulator denied a fetch on capability alone");
+        online.shutdown();
+    }
 
     fn private_temp_dir() -> PathBuf {
         let root = std::env::temp_dir().join(format!(

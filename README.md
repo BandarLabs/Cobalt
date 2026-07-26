@@ -76,8 +76,10 @@ cargo run -p kobo-cli -- run --sim          # the real runtime, host socket
 ```
 
 The simulator binds only to `127.0.0.1` and uses the same renderer, the same
-layout engine and the same policy as the device, so a screen that fits in the
-browser fits on the panel.
+layout engine, the same policy and the same typeface as the device, so a screen
+that fits in the browser fits on the panel. Network requests and terminals are
+real; `KOBO_SIM_OFFLINE=1` makes every network task fail, so error handling is
+something a developer runs on purpose rather than the only thing they can run.
 
 Create and run a new application:
 

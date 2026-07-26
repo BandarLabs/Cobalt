@@ -2459,7 +2459,13 @@ pub fn render_with(
         match node.kind {
             LayoutKind::Card => {
                 fill_clipped(surface, node.rect, tone::SURFACE, clip);
-                stroke_clipped(surface, node.rect, tone::RULE, clip);
+                stroke_clipped(
+                    surface,
+                    node.rect,
+                    tone::RULE,
+                    metrics.rule_thickness(),
+                    clip,
+                );
             }
             LayoutKind::Button(_) => {
                 fill_clipped(surface, node.rect, tone::INK, clip);
@@ -2476,7 +2482,13 @@ pub fn render_with(
             // ruled squares and an empty cell stays paper white. Filling would
             // make every move a full-cell change, which is slow on E Ink and
             // looks like a mistake.
-            LayoutKind::Cell(_) => stroke_clipped(surface, node.rect, tone::RULE, clip),
+            LayoutKind::Cell(_) => stroke_clipped(
+                surface,
+                node.rect,
+                tone::RULE,
+                metrics.rule_thickness(),
+                clip,
+            ),
             LayoutKind::CellLabel => {
                 // Short labels are marks, not words: an X, an O or a letter is
                 // the content of the cell and should fill it.
@@ -2493,7 +2505,13 @@ pub fn render_with(
             }
             LayoutKind::Divider => fill_clipped(surface, node.rect, tone::RULE, clip),
             LayoutKind::Progress => {
-                stroke_clipped(surface, node.rect, tone::INK, clip);
+                stroke_clipped(
+                    surface,
+                    node.rect,
+                    tone::INK,
+                    metrics.rule_thickness(),
+                    clip,
+                );
                 let value = node
                     .text_lines
                     .first()
@@ -2565,7 +2583,13 @@ pub fn render_with(
             LayoutKind::NavDestinationSelected(_) => {
                 draw_nav_label(surface, &node.text_lines, node.rect, metrics, true, clip);
             }
-            LayoutKind::Tile(_) => stroke_clipped(surface, node.rect, tone::RULE, clip),
+            LayoutKind::Tile(_) => stroke_clipped(
+                surface,
+                node.rect,
+                tone::RULE,
+                metrics.rule_thickness(),
+                clip,
+            ),
             // The tap target itself draws nothing. A hairline between rows is
             // enough separation, and a box around each one would add weight
             // that a list of several entries cannot carry.
@@ -2616,7 +2640,13 @@ pub fn render_with(
                 clip,
             ),
             LayoutKind::ChoiceOption(_) => {
-                stroke_clipped(surface, node.rect, tone::INK, clip);
+                stroke_clipped(
+                    surface,
+                    node.rect,
+                    tone::INK,
+                    metrics.rule_thickness(),
+                    clip,
+                );
                 let inset = metrics.space(Space::Small);
                 draw_lines(
                     surface,
@@ -2631,7 +2661,13 @@ pub fn render_with(
             // Outlined in a lighter tone and set in muted ink, so the escape
             // hatch reads as secondary to the options above it.
             LayoutKind::ChoiceFreeform(_) => {
-                stroke_clipped(surface, node.rect, tone::RULE, clip);
+                stroke_clipped(
+                    surface,
+                    node.rect,
+                    tone::RULE,
+                    metrics.rule_thickness(),
+                    clip,
+                );
                 let inset = metrics.space(Space::Small);
                 draw_lines(
                     surface,
@@ -2697,7 +2733,13 @@ pub fn render_with(
                 clip,
             ),
             LayoutKind::ActivityProgress => {
-                stroke_clipped(surface, node.rect, tone::RULE, clip);
+                stroke_clipped(
+                    surface,
+                    node.rect,
+                    tone::RULE,
+                    metrics.rule_thickness(),
+                    clip,
+                );
                 let value = node
                     .text_lines
                     .first()
@@ -2853,30 +2895,44 @@ fn fill_clipped(surface: &mut Surface, rect: Rect, tone: u8, clip: Rect) {
     }
 }
 
-fn stroke_clipped(surface: &mut Surface, rect: Rect, tone: u8, clip: Rect) {
+/// Outlines a rectangle with a border of the given thickness.
+///
+/// The thickness is not decoration. This used to draw a single pixel, which is
+/// 0.08 millimetres at 300 pixels per inch: at the light tone an outline is
+/// drawn in, that is close to invisible on the panel and it is the reason
+/// every ruled box looked washed out while dividers, which have always used
+/// the real rule thickness, looked correct. Both now come from the same
+/// physical measurement.
+fn stroke_clipped(surface: &mut Surface, rect: Rect, tone: u8, thickness: i32, clip: Rect) {
+    // A border cannot be thicker than half the thing it surrounds, or the two
+    // opposite edges overlap and the box fills in.
+    let thickness = thickness
+        .max(1)
+        .min(rect.width.max(1))
+        .min(rect.height.max(1));
     for edge in [
         Rect {
             x: rect.x,
             y: rect.y,
             width: rect.width,
-            height: 1,
+            height: thickness,
         },
         Rect {
             x: rect.x,
-            y: rect.y.saturating_add(rect.height).saturating_sub(1),
+            y: rect.y.saturating_add(rect.height).saturating_sub(thickness),
             width: rect.width,
-            height: 1,
+            height: thickness,
         },
         Rect {
             x: rect.x,
             y: rect.y,
-            width: 1,
+            width: thickness,
             height: rect.height,
         },
         Rect {
-            x: rect.x.saturating_add(rect.width).saturating_sub(1),
+            x: rect.x.saturating_add(rect.width).saturating_sub(thickness),
             y: rect.y,
-            width: 1,
+            width: thickness,
             height: rect.height,
         },
     ] {
@@ -3320,6 +3376,92 @@ mod tests {
         );
         assert_eq!(surface.pixels[48 * 128 + 48], tone::INK);
         assert_eq!(surface.pixels[48 * 128 + 50], 77);
+    }
+
+    #[test]
+    fn an_outlined_box_is_drawn_at_the_panel_rule_thickness() {
+        // A one pixel outline is 0.08 millimetres on this panel, and at the
+        // light tone an outline uses it is close to invisible. This is why
+        // every ruled box looked washed out on the device while dividers,
+        // which have always used the real rule thickness, looked right.
+        let screen = Screen::new(
+            1,
+            vec![Node::Card {
+                id: NodeId(1),
+                children: vec![Node::Heading {
+                    id: NodeId(2),
+                    text: "Card".into(),
+                }],
+            }],
+        );
+        let card = screen
+            .layout()
+            .nodes
+            .into_iter()
+            .find(|node| node.kind == LayoutKind::Card)
+            .expect("the card was laid out");
+        let stride = usize::try_from(CLARA_BW_METRICS.width).expect("a positive width");
+        let mut surface = Surface::new(
+            stride,
+            usize::try_from(CLARA_BW_METRICS.height).expect("a positive height"),
+        );
+        surface.clear(tone::PAPER);
+        render(&screen, &mut surface, None);
+
+        let thickness = CLARA_BW_METRICS.rule_thickness();
+        assert!(thickness > 1, "a rule thinner than this proves nothing");
+        let column = usize::try_from(card.rect.x + card.rect.width / 2).expect("inside the panel");
+        let mut drawn = 0;
+        for offset in 0..thickness {
+            let row = usize::try_from(card.rect.y + offset).expect("inside the panel");
+            if surface.pixels[row * stride + column] == tone::RULE {
+                drawn += 1;
+            }
+        }
+        assert_eq!(
+            drawn, thickness,
+            "the top edge of a card is {drawn} pixels rather than {thickness}"
+        );
+        let below = usize::try_from(card.rect.y + thickness).expect("inside the panel");
+        assert_eq!(
+            surface.pixels[below * stride + column],
+            tone::SURFACE,
+            "the border ran past the rule thickness into the card itself"
+        );
+    }
+
+    #[test]
+    fn a_box_smaller_than_its_own_border_is_still_a_box() {
+        // Nothing lays out a two pixel card, but a clamped thickness is what
+        // stops one being filled solid rather than outlined, and the clamp is
+        // cheaper to test than to reason about.
+        let mut surface = Surface::new(8, 8);
+        surface.clear(tone::PAPER);
+        let rect = Rect {
+            x: 1,
+            y: 1,
+            width: 2,
+            height: 2,
+        };
+        stroke_clipped(
+            &mut surface,
+            rect,
+            tone::INK,
+            99,
+            Rect {
+                x: 0,
+                y: 0,
+                width: 8,
+                height: 8,
+            },
+        );
+        assert_eq!(surface.pixels[8 + 1], tone::INK);
+        assert_eq!(
+            surface.pixels[0],
+            tone::PAPER,
+            "the border escaped its rect"
+        );
+        assert_eq!(surface.pixels[4 * 8 + 4], tone::PAPER);
     }
 
     #[test]

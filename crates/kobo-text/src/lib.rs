@@ -57,19 +57,19 @@ pub const DEVICE_FONT_CANDIDATES: &[&str] = &[
     "/usr/local/Trolltech/QtEmbedded-4.6.2-arm/lib/fonts/Ubuntu-Regular.ttf",
 ];
 
-/// Faces to fall back to on a development machine.
+/// The proportional face, compiled in so that every machine agrees.
 ///
-/// These exist only so the simulator shows real type instead of the bitmap.
-/// They are **not** the same metrics as the device, so line wrapping in the
-/// simulator is approximate whenever one of these is used. The fix is to embed
-/// the device face itself, which its licence permits; until then, set
-/// `KOBO_FONT` to a copy of the device font for an exact preview.
-pub const HOST_FONT_CANDIDATES: &[&str] = &[
-    "/System/Library/Fonts/Supplemental/Verdana.ttf",
-    "/System/Library/Fonts/Supplemental/Arial.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    "/usr/share/fonts/TTF/DejaVuSans.ttf",
-];
+/// This is the same face the device carries, taken from upstream rather than
+/// from the device, under the SIL Open Font License; see
+/// `fonts/LICENSE-AtkinsonHyperlegible.txt`, which travels with it.
+///
+/// It exists because the simulator used to fall back to whatever the developer
+/// happened to have installed — Verdana on a Mac, DejaVu on a Linux box — so
+/// two people previewing the same screen saw different line breaks, and
+/// neither saw the device's. A compiled-in face makes the preview identical
+/// everywhere and close to the panel. The device's own copy still wins when it
+/// is present, because that one is exact by definition.
+pub const TEXT_FONT: &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Regular.ttf");
 
 /// The environment variable that overrides every search.
 pub const FONT_OVERRIDE: &str = "KOBO_FONT";
@@ -77,7 +77,8 @@ pub const FONT_OVERRIDE: &str = "KOBO_FONT";
 /// What went wrong while loading a face.
 #[derive(Debug)]
 pub enum Error {
-    /// No candidate path existed.
+    /// No candidate path existed. Only reachable if the compiled-in face is
+    /// removed, which is why nothing constructs it any more.
     NoFontFound,
     /// The file could not be read.
     Unreadable(PathBuf, std::io::Error),
@@ -124,26 +125,29 @@ pub struct Typeface {
 }
 
 impl Typeface {
-    /// Loads the first candidate that exists and parses.
+    /// Loads the device's own face if it has one, and the compiled-in copy of
+    /// the same face otherwise.
+    ///
+    /// There is no host-specific fallback any more. A preview that used
+    /// whatever font the developer happened to have installed produced
+    /// different line breaks on different machines and matched neither the
+    /// panel nor a colleague.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::NoFontFound`] when no candidate path exists, which is
-    /// the expected result on a host machine.
+    /// Returns an error only if `KOBO_FONT` names something unusable, or a
+    /// device path exists but cannot be read or parsed.
     pub fn discover(metrics: DisplayMetrics) -> Result<Self, Error> {
         if let Some(override_path) = std::env::var_os(FONT_OVERRIDE) {
             return Self::load(PathBuf::from(override_path), metrics);
         }
-        for candidate in DEVICE_FONT_CANDIDATES
-            .iter()
-            .chain(HOST_FONT_CANDIDATES.iter())
-        {
+        for candidate in DEVICE_FONT_CANDIDATES {
             let path = Path::new(candidate);
             if path.exists() {
                 return Self::load(path, metrics);
             }
         }
-        Err(Error::NoFontFound)
+        Self::from_bytes(TEXT_FONT, "AtkinsonHyperlegible-Regular.ttf", metrics)
     }
 
     /// Loads one specific face.
@@ -360,8 +364,9 @@ impl SystemFonts {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::NoFontFound`] when the device has no usable text face,
-    /// which is the expected result on a bare host.
+    /// Returns an error only when a face that was found cannot be read or
+    /// parsed. A machine with no fonts at all still gets the compiled-in
+    /// pair.
     pub fn discover(metrics: DisplayMetrics) -> Result<Self, Error> {
         Ok(Self {
             text: Typeface::discover(metrics)?,

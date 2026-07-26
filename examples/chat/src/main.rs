@@ -55,7 +55,7 @@ const TRANSCRIPT_LINES: usize = 18;
 const MAX_OPTION_LABEL: usize = 44;
 
 const TYPE: &str = "type";
-const SEND_BACK: &str = "compose-back";
+const TALK: &str = "talk";
 const CANCEL: &str = "cancel";
 const RETRY: &str = "retry";
 const OPTIONS: [&str; conversation::MAX_OPTIONS] = [
@@ -101,7 +101,13 @@ impl Chat {
 
     /// The conversation, newest last, with whatever can be answered by tapping.
     fn transcript(&self) -> Screen {
-        let mut screen = ScreenBuilder::new("chat").top_bar(TITLE);
+        // The keyboard is a destination rather than a button in the flow. A
+        // button underneath a transcript moves every time the transcript
+        // grows, which on a panel this slow means the control walks out from
+        // under a finger that is already on its way down.
+        let mut screen = ScreenBuilder::new("chat")
+            .top_bar(TITLE)
+            .nav_bar(0, [(TALK, "Conversation"), (TYPE, "Type")]);
         if let Some(trouble) = &self.trouble {
             screen = screen.banner(BannerLevel::Attention, trouble.clone());
         }
@@ -149,9 +155,7 @@ impl Chat {
                     )
                     .or_type(TYPE, "Type something else...");
             }
-            _ => {
-                screen = screen.spacer(Space::Small).button(TYPE, "Type");
-            }
+            _ => {}
         }
 
         if self.view != View::Waiting && self.can_retry() {
@@ -164,9 +168,8 @@ impl Chat {
     fn compose(&self) -> Screen {
         ScreenBuilder::new("chat-compose")
             .top_bar("Type a message")
+            .nav_bar(1, [(TALK, "Conversation"), (TYPE, "Type")])
             .typed(&self.keyboard, "Your message appears here.")
-            .spacer(Space::Small)
-            .button(SEND_BACK, "Back to the conversation")
             .spacer(Space::Small)
             .keyboard(&self.keyboard, "Send")
             .build()
@@ -227,7 +230,7 @@ impl Chat {
 
     /// Handles a tap while the keyboard is up. Returns whether it was one.
     fn typing(&mut self, context: &mut Context, action: ActionId) -> bool {
-        if action == action_id(SEND_BACK) {
+        if action == action_id(TALK) {
             self.view = View::Talking;
             self.show(context);
             return true;
@@ -343,6 +346,12 @@ impl KoboApp for Chat {
             return;
         }
 
+        if action == action_id(TALK) {
+            // Already here. Repainting would cost a refresh to show exactly
+            // what is already on the panel.
+            return;
+        }
+
         if action == action_id(TYPE) {
             self.view = View::Composing;
             self.trouble = None;
@@ -413,7 +422,7 @@ fn main() -> ExitCode {
 mod tests {
     use super::{
         conversation::{Role, Turn},
-        visible_turns, Chat, View, COLUMNS, OPTIONS, TRANSCRIPT_LINES, TYPE,
+        visible_turns, Chat, View, COLUMNS, OPTIONS, TALK, TRANSCRIPT_LINES, TYPE,
     };
     use kobo_sdk::keyboard::Keyboard;
     use kobo_sdk::{action_id, Command, Context, KoboApp, Screen, Task, TaskId, TaskOutcome};
@@ -741,6 +750,59 @@ mod tests {
             .rect_of_action(action_id(TYPE))
             .is_some());
         assert!(chat.conversation.turns().is_empty());
+    }
+
+    #[test]
+    fn the_way_to_the_keyboard_never_moves_however_long_the_conversation_gets() {
+        // The original defect this system has already been bitten by: a
+        // control below text that reflows walks down the panel as the text
+        // grows, so the finger that was aimed at it lands on whatever took
+        // its place. The keyboard is reached from a bar pinned to the panel
+        // for exactly that reason, and this asserts the rectangle rather than
+        // the intention.
+        let (mut chat, mut context) = started();
+        let empty = chat
+            .screen()
+            .layout_with(&CLARA_BW_METRICS, Chrome::default())
+            .rect_of_action(action_id(TYPE))
+            .expect("the empty conversation offers the keyboard");
+        for turn in 0..12 {
+            chat.conversation.push(Role::You, format!("message {turn}"));
+            chat.conversation.push(
+                Role::Assistant,
+                "A reply long enough to wrap onto more than one line of a panel \
+                 that is only a few inches across, which is the whole point.",
+            );
+        }
+        let full = chat
+            .screen()
+            .layout_with(&CLARA_BW_METRICS, Chrome::default())
+            .rect_of_action(action_id(TYPE))
+            .expect("a full conversation still offers the keyboard");
+        assert_eq!(empty, full, "the keyboard moved as the transcript grew");
+        assert!(
+            full.height >= CLARA_BW_METRICS.touch_target_minimum(),
+            "the way to the keyboard is too small to tap: {full:?}"
+        );
+        let _ = &mut context;
+    }
+
+    #[test]
+    fn the_keyboard_screen_offers_the_way_back_in_the_same_place() {
+        let (mut chat, mut context) = started();
+        let talking = chat
+            .screen()
+            .layout_with(&CLARA_BW_METRICS, Chrome::default())
+            .rect_of_action(action_id(TALK))
+            .expect("the transcript names where it already is");
+        act(&mut chat, TYPE);
+        let composing = chat
+            .screen()
+            .layout_with(&CLARA_BW_METRICS, Chrome::default())
+            .rect_of_action(action_id(TALK))
+            .expect("the keyboard offers the way back");
+        assert_eq!(talking, composing);
+        let _ = &mut context;
     }
 
     /// The identifier the application handed to `Context::spawn`.
