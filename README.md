@@ -1,160 +1,157 @@
 # Kobo
 
-A dependency-free, add-on-first application SDK for Kobo E Ink readers.
+A Rust application platform for Kobo E Ink readers: an SDK, a declarative UI
+layer, a runtime that owns the hardware, a browser simulator, and a CLI.
 
-The initial hardware target is the Kobo Clara BW N365, device code 391. The
-workspace currently provides:
+Applications are ordinary Rust binaries. They describe whole screens and
+receive named actions. They never open the framebuffer, the touch device, a
+network socket or a credential; everything else is a request the runtime may
+refuse, and a refusal is a value rather than a crash.
 
-- A retained grayscale UI and shared browser simulator
-- A Rust application SDK and bounded local protocol
-- Strict Clara BW hardware profiles
-- A read-only ARM device doctor
-- Conformant HWTCON ABI fixtures and a slot-aware touch decoder
-- A capability-gated hardware API that applications reach through the runtime
-- Host CLI commands for scaffolding, simulation, building, and diagnostics
+**[SDK.md](SDK.md) is the developer guide.** [BUILD_IN_PUBLIC.md](BUILD_IN_PUBLIC.md)
+is the running account of what was built, what broke, and what the device
+taught us.
 
-## Safety
+The hardware target is the Kobo Clara BW N365, device code 391. Unknown
+hardware is rejected rather than mapped to a similar model.
 
-The doctor opens hardware read-only and uses query ioctls only. An explicitly
-feature-gated, owner-attended `smoke-display` command is the sole display write
-path: it submits one fixed 32×32 GC16 partial refresh of unchanged framebuffer
-contents, after an exact profile probe and two fixed confirmations. It is not
-safe for unattended use. `kobo-guard` is disabled and excluded from device
-builds. No component modifies partitions, the bootloader, kernel, firmware,
-startup scripts, rootfs, power controls, or network controls.
+## The governing rule
+
+**Nothing that cannot be undone by a reboot.**
+
+The platform never owns boot, so a power cycle always lands in the stock
+reader. Everything else follows from that:
+
+- The screen is snapshotted before a session and restored on every exit path,
+  including every error path.
+- An exclusive touch grab belongs to an open file description, so the kernel
+  drops it even on `SIGKILL`.
+- Stopping the stock reader arms a detached watchdog first, which restarts it
+  unconditionally after a deadline even if this process is killed outright.
+- Nothing is written to the rootfs, the bootloader, the kernel, a partition,
+  or any startup script.
+- Every device write is gated on an exact match of framebuffer identity,
+  geometry, device code, serial model prefix, firmware version and kernel
+  release.
+
+## Layout
+
+```
+crates/    kobo-sdk       what an application imports
+           kobo-ui        layout, rendering, pagination, vector icons
+           kobo-protocol  the bounded wire format between the two
+           kobo-policy    capabilities, task runner, device services
+           kobo-net       HTTPS; the only crate with outside dependencies
+           kobo-json      a small JSON reader and object builder
+           kobo-text      typeface loading and measurement
+           kobo-hal       display, touch, battery, reader handoff
+           kobo-abi       the only unsafe in the workspace
+           kobo-profile   exact hardware identity
+           kobod          the runtime
+           kobo-sim       the browser simulator, same renderer
+           kobo-cli       scaffolding, simulation, building, diagnostics
+           kobo-doctor    read-only device probe
+           kobo-smoke     owner-attended display writes
+           kobo-handoff   stopping and restarting the stock reader
+           kobo-guard     screen capture and restore around a session
+examples/  hello, counter, tictactoe, gallery, launcher, chat, gutenshelf
+```
+
+Only `kobo-net` has dependencies outside this workspace, and it carries TLS
+alone so everything else stays dependency free. Device binaries are statically
+linked ARMv7 and need nothing installed on the device.
 
 ## Development
 
 ```sh
-cargo test --workspace
-cargo run -p kobo-cli -- dev --builtin
+cargo test --workspace --all-features
+cargo run -p kobo-cli -- dev --builtin      # browser simulator
+cargo run -p kobo-cli -- run --sim          # the real runtime, host socket
 ```
 
-The simulator binds only to `127.0.0.1` and uses the same grayscale renderer as
-device builds. The host runtime path exercises the SDK, bounded Unix protocol,
-daemon, application lifecycle, and renderer:
+The simulator binds only to `127.0.0.1` and uses the same renderer, the same
+layout engine and the same policy as the device, so a screen that fits in the
+browser fits on the panel.
 
-```sh
-cargo run -p kobo-cli -- run --sim
-```
-
-Create and run a live SDK application:
+Create and run a new application:
 
 ```sh
 cargo build -p kobo-cli
 target/debug/kobo new weather
-cd weather
-../target/debug/kobo dev
+cd weather && ../target/debug/kobo dev
 ```
 
-The CLI builds the application, starts a private Unix-socket session, and prints
-the loopback browser URL. Browser touches are returned to the Rust event loop.
-
-Build all device-side programs as static ARMv7 hard-float binaries:
+Build every device-side program:
 
 ```sh
 rustup target add armv7-unknown-linux-musleabihf
 cargo run -p kobo-cli -- build --device
 ```
 
-`kobo doctor --device <address>` is the read-only remote diagnostic command. It
-streams the fixed workspace doctor into a unique mode-0700 directory in `/tmp`,
-compares SHA-256 checksums, performs read-only device queries, and removes the
-binary and directory. Every remote operation has a timeout. Interactive device
-execution is intentionally rejected until physical recovery and guarded Nickel
-handoff tests have passed.
+That `rustup target add` is the entire cross-build setup. The linker is pinned
+in `.cargo/config.toml` to `rust-lld`, which ships with the toolchain, so a
+fresh checkout builds device binaries with no system packages.
 
-For an owner physically attending the verified Clara BW only, the separate
-display-only smoke path builds its fixed feature-gated artifact, verifies it,
-and uses the same stdin-only SSH transport:
+## Talking to a device
 
 ```sh
-kobo smoke-display --device <address> --confirm DISPLAY_ONLY_GC16
+kobo doctor  --device <address>              # read-only identity probe
+kobo session --device <address> --status     # power and network state
 ```
 
-It does not write framebuffer pixels and runs through the verified BusyBox
-`/usr/bin/timeout 15` lease. Do not use it unattended.
+`scp` cannot be used with this device: its SSH server ignores remote arguments,
+so the `scp -t` helper never runs and the transfer hangs. Files go through the
+stdin-only shell channel as base64, verified by comparing SHA-256 on both ends.
 
-The project intentionally has no crates.io dependencies in its MVP workspace.
+Every binary sent to a device is rebuilt first from this workspace's pinned
+manifest with `--locked`, and the checksum the device verifies is taken over
+exactly the bytes that were uploaded, so a stale or foreign artifact cannot be
+run by accident.
 
-## Verified Clara BW profile
+## Verified on the hardware
 
-The read-only doctor has matched the physical N365 device:
+The read-only doctor matches the physical N365:
 
-- Device tree: `mediatek,mt8110`, `mediatek,mt8512`
-- Framebuffer: `hwtcon`, 1072×1448, 32-bit RGBA, 4288-byte stride,
+- Device tree `mediatek,mt8110`, `mediatek,mt8512`
+- Framebuffer `hwtcon`, 1072×1448, 32-bit RGBA, 4288-byte stride,
   6,243,328-byte map, rotation 3
-- Touch: `cyttsp5_mt` on `/dev/input/event1`, X 0–1447, Y 0–1071
+- Touch `cyttsp5_mt` on `/dev/input/event1`, X 0–1447, Y 0–1071
+- `identity: model=N365 firmware=4.45.23697 kernel=4.9.77 device-code=391`
 
-The profile deliberately remains `read-only matched`, so the default build still
-has no callable write path.
+The full serial number is deliberately never read past its four-character
+model prefix.
 
-## Attended display smoke test
+Proven on the device, in order: a GC16 refresh that writes no pixel; a
+reversible pixel write restored and verified byte for byte; a whole-screen
+snapshot and restore; the DU waveform; the touch transform, against a physical
+touch; guardian restoration after a failed child; stopping and restarting the
+stock reader; an application rendered on the panel and taps reaching it; and
+HTTPS, including a 24 MB download.
 
-`kobo smoke-display` is the only command that writes to hardware. It is not
-compiled into a default build at all; the CLI must be rebuilt with
-`--features device-write`. Before it changes anything it requires, in order:
+Update markers are random and at least `0x40000000`, because markers are a
+global namespace shared with the stock reader and a low fixed marker could be
+matched against another process's update.
 
-1. the exact confirmation phrase on the command line,
-2. the exact unlock phrase in the device process environment,
-3. an exact match of every probed hardware value against the profile, and
-4. an exact match of the device code, serial model prefix, firmware version,
-   and kernel release.
+## Attended display smoke tests
 
-Three stages exist:
+`kobo smoke-display` is not compiled into a default build; the CLI must be
+rebuilt with `--features device-write`. Before it changes anything it requires,
+in order: the exact confirmation phrase on the command line, the exact unlock
+phrase in the device process environment, an exact match of every probed
+hardware value against the profile, and an exact match of the device code,
+serial model prefix, firmware version and kernel release.
 
 ```
 kobo smoke-display --device <address> --confirm DISPLAY_ONLY_GC16
 kobo smoke-display --device <address> --confirm REVERSIBLE_PIXELS_GC16
 kobo smoke-display --device <address> --confirm SCREEN_SNAPSHOT_RESTORE
+kobo smoke-display --device <address> --confirm REVERSIBLE_PIXELS_DU
 ```
 
-`DISPLAY_ONLY_GC16` asks the controller to re-render a fixed 32×32 region
-without writing a single pixel byte. `REVERSIBLE_PIXELS_GC16` captures that
-region, inverts it, shows it briefly, restores the exact original bytes, and
-then verifies the restoration byte for byte.
-
-`SCREEN_SNAPSHOT_RESTORE` proves the guarantee everything else rests on: it
-snapshots the entire visible framebuffer, changes a 256×256 region, and then
-puts the whole screen back from that snapshot and verifies the change is gone.
-Whatever a future runtime draws, the reader's own screen can always be restored
-exactly. The snapshot is taken first and rewritten on every path, including
-every error path. Even a whole-screen update is submitted in partial mode,
-because full mode is an untested code path on this controller.
-
-The first two stages have been run on the physical Clara BW and both passed:
-
-```
-display-only GC16 refresh completed; no pixel byte was written
-reversible GC16 pixel test completed; 4096 bytes restored and verified
-```
-
-`SCREEN_SNAPSHOT_RESTORE` is implemented and unit tested but has not yet been
-run on hardware.
-
-After each run Nickel was still alive, the device had not rebooted, `dmesg`
-contained no controller errors, and no temporary files were left behind. Both
-`HWTCON_SEND_UPDATE` (`0x4024462e`) and `HWTCON_WAIT_FOR_UPDATE_COMPLETE`
-(`0xc008462f`) are therefore confirmed correct against the real kernel, and a
-framebuffer region can be captured, changed, restored, and proven identical.
-
-Every binary that is sent to a device is rebuilt first from this workspace's own
-pinned manifest with `--locked`, and the checksum the device verifies is taken
-over exactly the bytes that were uploaded. A stale or foreign artifact cannot be
-run on a device by accident.
-
-Reading is bounded the same way. `kobo doctor` reports the identity it gates on:
-
-```
-identity: model=N365 firmware=4.45.23697 kernel=4.9.77 device-code=391
-```
-
-The full serial number is deliberately never read past its four-character model
-prefix.
-
-Update markers are random and at least `0x40000000`, because markers are a
-global namespace shared with the stock reader and a low fixed marker could be
-matched against another process's update.
+`SCREEN_SNAPSHOT_RESTORE` proves the guarantee everything else rests on:
+whatever the runtime draws, the reader's own screen can always be put back
+exactly. Even a whole-screen update is submitted in partial mode, because full
+mode is an untested code path on this controller.
 
 ## Keeping a device reachable while developing
 
@@ -280,9 +277,10 @@ because the host's `diff` does emit the classic format. The tests now assert the
 reported count against an independently computed difference, and reintroducing
 the old counter makes nine of them fail.
 
-## Writing an application## Writing an application
+## Writing an application
 
-An application is a plain Rust struct. It owns its state, describes a screen,
+[SDK.md](SDK.md) is the full guide. In short: an application is a plain Rust
+struct. It owns its state, describes a screen,
 and reacts to events. It never opens a device, chooses a refresh waveform,
 writes a sysfs file, or talks to a radio.
 
@@ -347,10 +345,16 @@ another application holds it, or this runtime cannot do it on this hardware.
 
 That last reason is the safety rule made visible. A build only performs what it
 has a proven backend for; anything else is refused rather than pretended. On a
-real device today that means every hardware-changing request is refused, because
-no backend is enabled yet. The simulator implements all of them, so application
-logic can be written and tested now and will behave identically when a backend
-is turned on.
+real device today that means the battery gauge, which is read-only, and nothing
+else: every hardware-changing request is honestly refused. The simulator
+implements all of them, so application logic can be written and tested now and
+will behave identically when a backend is turned on.
+
+**An invented reading is worse than a refusal**, because an application cannot
+tell one from the other and will act on it. The battery backend finds the supply
+by reading each `type` file for `Battery` rather than hardcoding a device name,
+and an unparseable capacity returns nothing rather than zero: rounding towards
+"flat" is the dangerous direction.
 
 ## What applications may ask for
 

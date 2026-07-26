@@ -97,7 +97,7 @@ pub trait KoboApp {
     fn on_suspend(&mut self, context: &mut Context) {}
     fn on_scheduled_wake(&mut self, context: &mut Context) {}
     fn on_exit(&mut self, context: &mut Context) {}
-    fn on_device_result(&mut self, context: &mut Context, result: DeviceResult) {}
+    fn on_device_result(&mut self, cx: &mut Context, request: DeviceRequest, result: DeviceResult) {}
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {}
 }
 ```
