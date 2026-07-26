@@ -271,6 +271,20 @@ fn serve_application(stream: &mut UnixStream, frame_path: &Path) -> Result<(), B
                     },
                 )?;
             }
+            // This path renders to a file and has no reader at a keyboard, so
+            // there is nothing a terminal could usefully be attached to. It is
+            // refused rather than opened, because a build performs only what
+            // it has a backend for and a silently ignored request would leave
+            // the application waiting for output forever.
+            Message::ShellRequest(_) => kobo_protocol::write_to(
+                stream,
+                &Frame {
+                    request_id: frame.request_id,
+                    message: Message::ShellEvent(kobo_protocol::ShellEvent::Refused(
+                        kobo_protocol::ShellError::Unavailable,
+                    )),
+                },
+            )?,
             Message::Cancel { task } => tasks.cancel(task),
             Message::Exit => {
                 // Nothing an application started may outlive it.
@@ -283,7 +297,8 @@ fn serve_application(stream: &mut UnixStream, frame_path: &Path) -> Result<(), B
             | Message::TaskOutcome { .. }
             | Message::DeviceResult(_)
             | Message::StoreResult(_)
-            | Message::Lifecycle(_) => {
+            | Message::Lifecycle(_)
+            | Message::ShellEvent(_) => {
                 return Err("application sent a daemon-only message".into());
             }
         }

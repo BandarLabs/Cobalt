@@ -411,6 +411,401 @@ pub mod hwtcon {
     }
 }
 
+/// A pseudo-terminal: the only way this platform runs another program and both
+/// sees what it printed and answers it.
+///
+/// It lives here, with the rest of the raw kernel interface, for the reason
+/// every other `unsafe` block in this project does: there is exactly one crate
+/// where a mistake can corrupt memory, and everything above it works in safe,
+/// validated types. A pseudo-terminal is not hardware, but it is a kernel
+/// object obtained through `ioctl` and a controlled `fork`, which is the same
+/// class of thing.
+///
+/// `forkpty` is deliberately not used. It lives in `libutil` on glibc, which
+/// would add a link-time system dependency to a project whose entire setup is
+/// `rustup target add`, and it forks behind the caller's back. The parts it is
+/// made of, `posix_openpt` through `TIOCSCTTY`, are all in plain libc on both
+/// the device and a development host.
+pub mod pty {
+    use std::ffi::{c_char, c_int, c_ulong, c_void, CStr};
+    use std::fs::File;
+    use std::io::{self, Read, Write};
+    use std::os::fd::{AsRawFd, FromRawFd, RawFd};
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::os::unix::process::CommandExt;
+    use std::process::{Child, Command, Stdio};
+    use std::sync::mpsc::{self, Receiver};
+    use std::sync::Arc;
+    use std::thread;
+
+    /// The terminal window size, exactly as the kernel defines it. Telling the
+    /// program its grid is not optional: without it every full-screen program
+    /// assumes 80x24 and draws off the side of a panel that has 53 columns.
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug, Default)]
+    struct WinSize {
+        rows: u16,
+        columns: u16,
+        x_pixels: u16,
+        y_pixels: u16,
+    }
+
+    #[cfg(target_os = "linux")]
+    const TIOCSWINSZ: c_ulong = 0x5414;
+    #[cfg(target_os = "linux")]
+    const TIOCSCTTY: c_ulong = 0x540e;
+    #[cfg(target_os = "linux")]
+    const O_NOCTTY: c_int = 0o400;
+
+    #[cfg(target_os = "macos")]
+    const TIOCSWINSZ: c_ulong = 0x8008_7467;
+    #[cfg(target_os = "macos")]
+    const TIOCSCTTY: c_ulong = 0x2000_7461;
+    #[cfg(target_os = "macos")]
+    const O_NOCTTY: c_int = 0x2_0000;
+
+    const O_RDWR: c_int = 2;
+
+    extern "C" {
+        fn posix_openpt(flags: c_int) -> c_int;
+        fn grantpt(fd: c_int) -> c_int;
+        fn unlockpt(fd: c_int) -> c_int;
+        fn ptsname(fd: c_int) -> *mut c_char;
+        fn ioctl(fd: c_int, request: c_ulong, ...) -> c_int;
+        fn setsid() -> c_int;
+    }
+
+    /// How much is taken from the program in one read.
+    ///
+    /// Bounded because the reader hands whole chunks to a channel, and a
+    /// program printing without pause must not be able to grow that channel
+    /// faster than the panel can consume it.
+    const CHUNK: usize = 4096;
+
+    /// A running program with a terminal attached.
+    ///
+    /// Output arrives on a channel rather than being polled, so a caller
+    /// blocks on its own event loop instead of spinning: on a device that
+    /// idles at zero power a poll loop is a battery defect, not a style
+    /// preference.
+    /// Something to call when the program has printed.
+    pub type Wake = Arc<dyn Fn() + Send + Sync>;
+
+    pub struct Pty {
+        master: File,
+        /// Kept because the grid is set through the slave rather than the
+        /// master: macOS rejects `TIOCSWINSZ` on the master with `ENOTTY`,
+        /// where Linux accepts it, and the slave works on both. Holding the
+        /// slave *open* is not an option, since a live descriptor to it stops
+        /// a read of the master ever reporting that the program finished.
+        slave_path: String,
+        output: Receiver<Vec<u8>>,
+        child: Child,
+    }
+
+    impl Pty {
+        /// Starts `program` under a new pseudo-terminal of the given grid.
+        ///
+        /// The environment is replaced rather than inherited, because the
+        /// caller's environment on this device belongs to the stock reader and
+        /// carries its session bus address among other things.
+        ///
+        /// # Errors
+        ///
+        /// Returns the kernel error from any step of the allocation, or from
+        /// starting the program.
+        pub fn spawn(
+            program: &str,
+            arguments: &[&str],
+            environment: &[(&str, &str)],
+            columns: u16,
+            rows: u16,
+        ) -> io::Result<Self> {
+            Self::spawn_with_wake(program, arguments, environment, columns, rows, None)
+        }
+
+        /// The same, with something to call whenever output has arrived.
+        ///
+        /// A runtime that only looks for output when it wakes for its own
+        /// reasons shows a keystroke's echo whenever it next happens to look,
+        /// which is a terminal that appears to have stopped responding. The
+        /// hook runs on the reader thread, so it must do nothing but nudge.
+        ///
+        /// # Errors
+        ///
+        /// As [`Pty::spawn`].
+        pub fn spawn_with_wake(
+            program: &str,
+            arguments: &[&str],
+            environment: &[(&str, &str)],
+            columns: u16,
+            rows: u16,
+            wake: Option<Wake>,
+        ) -> io::Result<Self> {
+            let master = open_master()?;
+            let slave_path = slave_path(&master)?;
+            // Without O_NOCTTY this open would hand the *parent* a controlling
+            // terminal it never asked for.
+            let slave = File::options()
+                .read(true)
+                .write(true)
+                .custom_flags(O_NOCTTY)
+                .open(&slave_path)?;
+            set_window_size(&slave, columns, rows)?;
+
+            let mut command = Command::new(program);
+            command.args(arguments).env_clear();
+            for (name, value) in environment {
+                command.env(name, value);
+            }
+            command
+                .stdin(Stdio::from(slave.try_clone()?))
+                .stdout(Stdio::from(slave.try_clone()?))
+                .stderr(Stdio::from(slave.try_clone()?));
+            // SAFETY: both calls are async-signal-safe and touch only this
+            // freshly forked child. `setsid` detaches it from the caller's
+            // session so that a signal sent to the terminal cannot reach the
+            // runtime, and TIOCSCTTY on the already-duplicated slave is what
+            // makes job control and Ctrl-C work at all.
+            unsafe {
+                command.pre_exec(|| {
+                    if setsid() < 0 {
+                        return Err(io::Error::last_os_error());
+                    }
+                    if ioctl(0, TIOCSCTTY, std::ptr::null_mut::<c_void>()) < 0 {
+                        return Err(io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+            let child = command.spawn()?;
+            // The parent must not keep the slave open. While any descriptor to
+            // it survives, a read of the master blocks forever instead of
+            // reporting that the program has finished.
+            drop(slave);
+
+            let (sender, output) = mpsc::channel();
+            let mut reader = master.try_clone()?;
+            thread::spawn(move || {
+                let mut buffer = [0u8; CHUNK];
+                loop {
+                    match reader.read(&mut buffer) {
+                        // A closed terminal reports end of file on some
+                        // systems and EIO on Linux. Both mean the same thing.
+                        Ok(0) | Err(_) => break,
+                        Ok(read) => {
+                            if sender.send(buffer[..read].to_vec()).is_err() {
+                                break;
+                            }
+                            if let Some(wake) = wake.as_ref() {
+                                wake();
+                            }
+                        }
+                    }
+                }
+            });
+
+            Ok(Self {
+                master,
+                slave_path,
+                output,
+                child,
+            })
+        }
+
+        /// The channel every byte the program prints arrives on.
+        #[must_use]
+        pub const fn output(&self) -> &Receiver<Vec<u8>> {
+            &self.output
+        }
+
+        /// Sends keystrokes to the program.
+        ///
+        /// # Errors
+        ///
+        /// Returns the write error, including the one that means the program
+        /// has already gone.
+        pub fn write(&mut self, bytes: &[u8]) -> io::Result<()> {
+            self.master.write_all(bytes)
+        }
+
+        /// Tells the program its grid changed.
+        ///
+        /// # Errors
+        ///
+        /// Returns the kernel error from `TIOCSWINSZ`.
+        pub fn resize(&self, columns: u16, rows: u16) -> io::Result<()> {
+            let slave = File::options()
+                .read(true)
+                .write(true)
+                .custom_flags(O_NOCTTY)
+                .open(&self.slave_path)?;
+            set_window_size(&slave, columns, rows)
+        }
+
+        /// Whether the program has finished, and with what status.
+        ///
+        /// # Errors
+        ///
+        /// Returns the error from waiting on the child.
+        pub fn finished(&mut self) -> io::Result<Option<i32>> {
+            Ok(self
+                .child
+                .try_wait()?
+                .map(|status| status.code().unwrap_or(-1)))
+        }
+
+        /// Stops the program and reaps it.
+        ///
+        /// # Errors
+        ///
+        /// Returns the error from signalling or waiting, except for a program
+        /// that had already exited, which is success.
+        pub fn close(&mut self) -> io::Result<()> {
+            if self.child.try_wait()?.is_none() {
+                self.child.kill()?;
+            }
+            self.child.wait()?;
+            Ok(())
+        }
+    }
+
+    fn open_master() -> io::Result<File> {
+        // SAFETY: a plain libc call taking only flags. The descriptor it
+        // returns is handed straight to `File`, which owns it from here on.
+        let fd: RawFd = unsafe { posix_openpt(O_RDWR | O_NOCTTY) };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: `fd` was just returned by the kernel, is checked valid, and
+        // is not owned by anything else.
+        let master = unsafe { File::from_raw_fd(fd) };
+        // SAFETY: both take the descriptor we own and nothing else.
+        if unsafe { grantpt(fd) } < 0 || unsafe { unlockpt(fd) } < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(master)
+    }
+
+    fn slave_path(master: &File) -> io::Result<String> {
+        // SAFETY: `ptsname` returns a pointer into storage owned by libc,
+        // valid until the next call on this thread. It is copied immediately,
+        // before anything else can call it.
+        let name = unsafe { ptsname(master.as_raw_fd()) };
+        if name.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: libc guarantees a NUL-terminated string here.
+        let name = unsafe { CStr::from_ptr(name) };
+        name.to_str()
+            .map(str::to_owned)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "terminal name is not text"))
+    }
+
+    fn set_window_size(terminal: &File, columns: u16, rows: u16) -> io::Result<()> {
+        let mut size = WinSize {
+            rows,
+            columns,
+            x_pixels: 0,
+            y_pixels: 0,
+        };
+        // SAFETY: the request is the one the kernel defines for this exact
+        // structure, and the pointer is to a live local of that type.
+        let result = unsafe {
+            ioctl(
+                terminal.as_raw_fd(),
+                TIOCSWINSZ,
+                std::ptr::addr_of_mut!(size).cast::<c_void>(),
+            )
+        };
+        if result < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod pty_tests {
+    use super::pty::Pty;
+    use std::time::{Duration, Instant};
+
+    /// Collects output until `needle` appears or the patience runs out.
+    fn wait_for(pty: &Pty, needle: &str) -> String {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut seen = String::new();
+        while Instant::now() < deadline {
+            match pty.output().recv_timeout(Duration::from_millis(200)) {
+                Ok(chunk) => seen.push_str(&String::from_utf8_lossy(&chunk)),
+                Err(_) => continue,
+            }
+            if seen.contains(needle) {
+                break;
+            }
+        }
+        seen
+    }
+
+    #[test]
+    fn a_program_started_on_a_terminal_answers_what_is_typed_at_it() {
+        // The whole point, exercised for real rather than described: bytes
+        // written go in as keystrokes and what the program prints comes back.
+        let mut pty = Pty::spawn("/bin/sh", &[], &[("PS1", "$ ")], 53, 20).expect("a terminal");
+        pty.write(b"echo COBALT_ONE\n").expect("typing");
+        let seen = wait_for(&pty, "COBALT_ONE");
+        assert!(seen.contains("COBALT_ONE"), "saw {seen:?}");
+        pty.close().expect("closing");
+    }
+
+    #[test]
+    fn the_program_is_told_the_grid_it_has() {
+        // A program that is not told its size assumes eighty columns and draws
+        // off the side of a panel that has fifty-three.
+        let mut pty = Pty::spawn("/bin/sh", &[], &[("PS1", "$ ")], 53, 37).expect("a terminal");
+        pty.write(b"stty size\n").expect("typing");
+        let seen = wait_for(&pty, "37 53");
+        assert!(seen.contains("37 53"), "saw {seen:?}");
+        pty.close().expect("closing");
+    }
+
+    #[test]
+    fn a_program_that_ends_is_reported_rather_than_read_forever() {
+        let mut pty = Pty::spawn("/bin/sh", &["-c", "exit 3"], &[], 53, 20).expect("a terminal");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut status = None;
+        while Instant::now() < deadline && status.is_none() {
+            status = pty.finished().expect("waiting");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert_eq!(status, Some(3));
+    }
+
+    #[test]
+    fn closing_stops_a_program_that_would_otherwise_run_forever() {
+        let mut pty = Pty::spawn(
+            "/bin/sh",
+            &["-c", "while true; do sleep 1; done"],
+            &[],
+            53,
+            20,
+        )
+        .expect("a terminal");
+        assert_eq!(pty.finished().expect("waiting"), None);
+        pty.close().expect("closing");
+        assert!(pty.finished().expect("waiting").is_some());
+    }
+
+    #[test]
+    fn the_grid_can_change_while_the_program_is_running() {
+        let mut pty = Pty::spawn("/bin/sh", &[], &[("PS1", "$ ")], 53, 20).expect("a terminal");
+        pty.resize(40, 10).expect("resizing");
+        pty.write(b"stty size\n").expect("typing");
+        let seen = wait_for(&pty, "10 40");
+        assert!(seen.contains("10 40"), "saw {seen:?}");
+        pty.close().expect("closing");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{hwtcon, input, ior, iow, iowr};

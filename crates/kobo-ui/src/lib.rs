@@ -27,6 +27,39 @@ pub const MAX_CHOICE_OPTIONS: usize = 6;
 /// longer than this wants paging, which is a different primitive.
 pub const MAX_ROWS: usize = 32;
 
+/// The most rows a [`Node::Terminal`] may carry.
+///
+/// Sized from the panel this was built for rather than chosen round: the
+/// smallest text on a 1448-pixel-tall screen gives about 37 rows, so 64 leaves
+/// room for a taller panel without letting a screen become unboundedly large
+/// from data.
+pub const MAX_TERMINAL_ROWS: usize = 64;
+
+/// The most characters one terminal row may carry.
+///
+/// 53 columns fit across this panel; 160 is the widest terminal anyone
+/// conventionally uses, and anything past the grid is dropped, never wrapped.
+pub const MAX_TERMINAL_COLUMNS: usize = 160;
+
+/// The character grid that fits in a region of the given pixel size.
+///
+/// Both the layout engine and the application that is feeding a terminal have
+/// to agree on this exactly, or the pseudo-terminal is told one width and the
+/// panel shows another, and every line wraps in the wrong place. Deriving both
+/// from one function is what makes that impossible rather than unlikely.
+#[must_use]
+pub fn terminal_grid(width: i32, height: i32) -> (u16, u16) {
+    let (cell_width, cell_height) = mono_cell(TERMINAL_SIZE);
+    let columns = (max(0, width) / max(1, cell_width)).clamp(0, MAX_TERMINAL_COLUMNS as i32);
+    let rows = (max(0, height) / max(1, cell_height)).clamp(0, MAX_TERMINAL_ROWS as i32);
+    (columns as u16, rows as u16)
+}
+
+/// Terminal text is set at the smallest size, because a terminal's value is in
+/// how much of it can be seen at once and a shell's output is read in glances
+/// rather than at length.
+const TERMINAL_SIZE: FontSize = FontSize::Caption;
+
 /// The physical characteristics of a panel the UI is being laid out for.
 ///
 /// Sizes throughout this crate are derived from millimetre measurements rather
@@ -770,6 +803,44 @@ pub enum Node {
         progress: Option<Percent>,
         cancel: Option<BarAction>,
     },
+    /// A grid of characters, drawn in the fixed-pitch face.
+    ///
+    /// This is the one node whose text is already laid out when it arrives.
+    /// Everywhere else an application says what a thing *is* and the renderer
+    /// decides how it looks, because that is what keeps a badly proportioned
+    /// screen unexpressible. A character grid is different in kind: column
+    /// alignment carries the meaning, so wrapping, truncating or re-flowing it
+    /// would destroy the content rather than present it differently.
+    ///
+    /// The application is still not choosing a font or a colour. It supplies
+    /// rows; the renderer owns the face, the size, the ink and the cursor.
+    Terminal {
+        id: NodeId,
+        /// One string per row of the grid, longest first line at the top.
+        /// Rows past [`MAX_TERMINAL_ROWS`] and characters past
+        /// [`MAX_TERMINAL_COLUMNS`] are dropped rather than wrapped.
+        rows: Vec<String>,
+        /// Where the block cursor sits, when it is showing.
+        cursor: Option<Caret>,
+    },
+}
+
+/// The position of a terminal's block cursor, in grid cells.
+///
+/// Cells rather than pixels, for the same reason the grid exists at all: the
+/// runtime can then repaint exactly one cell when the cursor moves, which is a
+/// refresh of about four square millimetres instead of the whole panel.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct Caret {
+    pub row: u16,
+    pub column: u16,
+}
+
+impl Caret {
+    #[must_use]
+    pub const fn new(row: u16, column: u16) -> Self {
+        Self { row, column }
+    }
 }
 
 /// One tile in a [`Node::TileGrid`].
@@ -924,6 +995,8 @@ pub enum Glyph {
     Circle,
     /// A ring with a tick in it: something finished.
     Check,
+    /// A prompt: a chevron and a line waiting to be typed on.
+    Terminal,
 }
 
 impl Node {
@@ -944,7 +1017,8 @@ impl Node {
             | Self::Choice { id, .. }
             | Self::Banner { id, .. }
             | Self::Skeleton { id, .. }
-            | Self::Activity { id, .. } => *id,
+            | Self::Activity { id, .. }
+            | Self::Terminal { id, .. } => *id,
         }
     }
 }
@@ -1042,6 +1116,12 @@ pub enum LayoutKind {
     Skeleton,
     ActivityLabel,
     ActivityProgress,
+    /// A grid of characters. `text_lines` holds one entry per row, already
+    /// clipped to the grid.
+    TerminalGrid,
+    /// One inverted cell. `text_lines` holds the single character underneath
+    /// it, so the cursor can be repainted alone without the row it sits in.
+    TerminalCursor,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1721,7 +1801,89 @@ fn layout_node(
             }
             cursor.saturating_sub(gap)
         }
+        Node::Terminal { id, rows, cursor } => {
+            let (cell_width, cell_height) = mono_cell(TERMINAL_SIZE);
+            let columns = (width / max(1, cell_width)).clamp(0, MAX_TERMINAL_COLUMNS as i32);
+            let lines: Vec<String> = rows
+                .iter()
+                .take(MAX_TERMINAL_ROWS)
+                // Clipped, never wrapped. A row that overflowed onto the next
+                // one would shift every row below it and the grid would stop
+                // being a grid.
+                .map(|row| row.chars().take(columns as usize).collect())
+                .collect();
+            let height = lines.len() as i32 * cell_height;
+            layout.nodes.push(LayoutNode {
+                id: *id,
+                rect: Rect {
+                    x,
+                    y,
+                    width: columns * cell_width,
+                    height,
+                },
+                kind: LayoutKind::TerminalGrid,
+                text_lines: lines.clone(),
+            });
+            if let Some(caret) = cursor {
+                let row = i32::from(caret.row);
+                let column = i32::from(caret.column);
+                if row < lines.len() as i32 && column < columns {
+                    // The character underneath travels with the cursor so the
+                    // cell can be repainted on its own: a cursor that needed
+                    // its row redrawn would cost a refresh the width of the
+                    // panel every time it moved one place.
+                    let under = lines
+                        .get(row as usize)
+                        .and_then(|line| line.chars().nth(column as usize))
+                        .unwrap_or(' ');
+                    layout.nodes.push(LayoutNode {
+                        id: *id,
+                        rect: Rect {
+                            x: x.saturating_add(column * cell_width),
+                            y: y.saturating_add(row * cell_height),
+                            width: cell_width,
+                            height: cell_height,
+                        },
+                        kind: LayoutKind::TerminalCursor,
+                        text_lines: vec![under.to_string()],
+                    });
+                }
+            }
+            y.saturating_add(height)
+        }
     }
+}
+
+/// The character grid a terminal on `screen` will actually be given.
+///
+/// An application feeding a pseudo-terminal has to know the grid *before* it
+/// has any output to put in it, and it must be the same grid the panel will
+/// show, or the shell wraps its lines in one place and the reader sees them
+/// wrap in another. So the screen is laid out with an empty terminal and the
+/// space left over is measured: the answer comes from the layout engine itself
+/// rather than from an application's arithmetic about bars and keyboards.
+///
+/// Returns `(0, 0)` for a screen with no terminal on it.
+#[must_use]
+pub fn terminal_grid_for(screen: &Screen, metrics: &DisplayMetrics) -> (u16, u16) {
+    let layout = screen.layout_for(metrics);
+    let content = layout.content;
+    let Some(terminal) = layout
+        .nodes
+        .iter()
+        .find(|node| node.kind == LayoutKind::TerminalGrid)
+    else {
+        return (0, 0);
+    };
+    let bottom = content.y.saturating_add(content.height);
+    let used = layout
+        .nodes
+        .iter()
+        .filter(|node| node.rect.y >= content.y && node.rect.y < bottom)
+        .map(|node| node.rect.y.saturating_add(node.rect.height))
+        .max()
+        .unwrap_or(content.y);
+    terminal_grid(terminal.rect.width, bottom.saturating_sub(used))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2554,6 +2716,42 @@ pub fn render_with(
                 );
             }
             LayoutKind::Spacer => {}
+            LayoutKind::TerminalGrid => {
+                let (_, cell_height) = mono_cell(TERMINAL_SIZE);
+                let mut line_y = node.rect.y;
+                for line in &node.text_lines {
+                    draw_text_in(
+                        surface,
+                        line,
+                        node.rect.x,
+                        line_y,
+                        TERMINAL_SIZE,
+                        Face::Mono,
+                        tone::INK,
+                        clip,
+                    );
+                    line_y = line_y.saturating_add(cell_height);
+                }
+            }
+            LayoutKind::TerminalCursor => {
+                // A block, not an underline or a bar. There is no blink to
+                // draw attention with, so the cursor has to be found by shape
+                // alone, and inversion is the only thing on this panel that is
+                // unmistakable at a glance.
+                fill_clipped(surface, node.rect, tone::INK, clip);
+                if let Some(under) = node.text_lines.first() {
+                    draw_text_in(
+                        surface,
+                        under,
+                        node.rect.x,
+                        node.rect.y,
+                        TERMINAL_SIZE,
+                        Face::Mono,
+                        tone::PAPER,
+                        clip,
+                    );
+                }
+            }
         }
     }
 }
@@ -4264,5 +4462,61 @@ mod prose_tests {
             },
         );
         assert!(pages.is_empty());
+    }
+
+    /// The hazard that cost this project a working button once already.
+    ///
+    /// A screen whose text above a control grows by one wrapped line pushes
+    /// that control down. On a panel that takes a moment to refresh, the
+    /// control moves out from under the finger that just tapped it and the
+    /// next tap lands on nothing, which looks like intermittent hardware.
+    ///
+    /// This pins both halves: that the layout engine really does move it, so
+    /// nobody has to take the hazard on trust, and that keeping the varying
+    /// text below the control fixes it. Applications are written to the second
+    /// shape; this is why.
+    #[test]
+    fn text_that_wraps_above_a_control_moves_that_control() {
+        let action = ActionId(7);
+        let button = |before: &str, after: &str| -> Rect {
+            let mut nodes = Vec::new();
+            if !before.is_empty() {
+                nodes.push(Node::Text {
+                    id: NodeId(1),
+                    text: before.to_string(),
+                });
+            }
+            nodes.push(Node::Button {
+                id: NodeId(2),
+                action,
+                label: "Do it".to_string(),
+            });
+            if !after.is_empty() {
+                nodes.push(Node::Text {
+                    id: NodeId(3),
+                    text: after.to_string(),
+                });
+            }
+            Screen::new(1, nodes)
+                .layout_for(&CLARA_BW_METRICS)
+                .rect_of_action(action)
+                .expect("the button is always drawn")
+        };
+        let short = "Ready.";
+        let long = concat!(
+            "Ready, and then a great deal more text than that, enough of it ",
+            "to run past the end of one line and onto a second one.",
+        );
+
+        assert_ne!(
+            button(short, ""),
+            button(long, ""),
+            "a longer line above the button has to move it, or this test proves nothing"
+        );
+        assert_eq!(
+            button("", short),
+            button("", long),
+            "text below the button must not move it"
+        );
     }
 }

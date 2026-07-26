@@ -599,6 +599,18 @@ pub fn shapes(glyph: Glyph) -> Vec<Shape> {
             stroke(Path::line(350, 510, 460, 620)),
             stroke(Path::line(460, 620, 670, 390)),
         ],
+        // A prompt, not a screen: the chevron and the underscore are what a
+        // terminal looks like to anyone who has seen one, and a rectangle at
+        // this weight is already the launcher's own tile border.
+        Glyph::Terminal => vec![
+            stroke(
+                Path::new()
+                    .move_to(210, 300)
+                    .line_to(420, 500)
+                    .line_to(210, 700),
+            ),
+            stroke(Path::line(520, 700, 830, 700)),
+        ],
     }
 }
 
@@ -624,7 +636,7 @@ mod tests {
     use super::{back_arrow, render, shapes, Path, Shape, UNITS};
     use crate::Glyph;
 
-    const EVERY: [Glyph; 13] = [
+    const EVERY: [Glyph; 16] = [
         Glyph::App,
         Glyph::Book,
         Glyph::Note,
@@ -638,6 +650,9 @@ mod tests {
         Glyph::Reader,
         Glyph::Power,
         Glyph::Grid,
+        Glyph::Circle,
+        Glyph::Check,
+        Glyph::Terminal,
     ];
 
     fn inked(glyph: Glyph, size: i32) -> usize {

@@ -160,6 +160,16 @@ impl Keyboard {
         Some(Pressed::Edited)
     }
 
+    /// The character this key would type right now, without typing it.
+    ///
+    /// A terminal needs this: a keystroke there is sent to a program the
+    /// instant it happens rather than accumulated into a field, so the layout
+    /// and the modifier state are wanted but the text buffer is not.
+    #[must_use]
+    pub fn resolves(&self, action: ActionId) -> Option<char> {
+        self.character_at(action)
+    }
+
     fn character_at(&self, action: ActionId) -> Option<char> {
         let rows = self.rows();
         for (row, characters) in rows.iter().enumerate() {
@@ -176,7 +186,7 @@ impl Keyboard {
         None
     }
 
-    fn rows(&self) -> [&'static str; 3] {
+    pub(crate) fn rows(&self) -> [&'static str; 3] {
         match self.layer {
             Layer::Letters => LETTERS,
             Layer::Symbols => SYMBOLS,

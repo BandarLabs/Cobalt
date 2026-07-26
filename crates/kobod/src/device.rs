@@ -380,6 +380,8 @@ struct Hosted {
     stream: std::os::unix::net::UnixStream,
     store: kobo_policy::store::Store,
     tasks: TaskRunner,
+    /// The terminal this application may run a program on, or a refusal.
+    shells: kobo_shell::Shells,
     /// The last screen this application drew, foreground or not.
     ///
     /// Held for every application rather than only the front one, because that
@@ -625,6 +627,15 @@ fn host_applications(
                                 Message::StoreResult(result),
                             )?;
                         }
+                        Message::ShellRequest(request) => {
+                            if let Some(event) = apps[index].shells.handle(request) {
+                                reply(
+                                    &mut apps[index],
+                                    frame.request_id,
+                                    Message::ShellEvent(event),
+                                )?;
+                            }
+                        }
                         Message::Spawn { task, work } => {
                             println!("task {} started for {}", task.0, apps[index].name);
                             if apps[index].tasks.submit(task, work).is_err() {
@@ -708,7 +719,8 @@ fn host_applications(
                         | Message::TaskOutcome { .. }
                         | Message::Lifecycle(_)
                         | Message::DeviceResult(_)
-                        | Message::StoreResult(_) => {
+                        | Message::StoreResult(_)
+                        | Message::ShellEvent(_) => {
                             return Err(format!(
                                 "{} sent a runtime-only message",
                                 apps[index].name
@@ -721,6 +733,12 @@ fn host_applications(
             // the point of a background application: the answer arrives whether
             // or not anybody is looking at it.
             for app in &mut apps {
+                // A terminal keeps running in the background for the same
+                // reason a download does: a build that finishes while the
+                // reader is elsewhere should still have finished.
+                for event in app.shells.drain() {
+                    app.send(Message::ShellEvent(event))?;
+                }
                 let finished = app.tasks.drain();
                 for done in finished {
                     println!(
@@ -918,6 +936,21 @@ fn start_application(
         .with_capabilities([kobo_policy::Capability::Network]);
     apps.push(Hosted {
         id,
+        // Named explicitly, and only here. A shell on this device is root on a
+        // writable root filesystem, so it is the one capability that is never
+        // granted by the same blanket line as the rest; when manifests arrive
+        // this becomes a declaration, not a wider default.
+        shells: kobo_shell::Shells::new(if name == "terminal" {
+            &[kobo_policy::Capability::Shell]
+        } else {
+            &[]
+        })
+        .waking({
+            let waker = sender.clone();
+            Arc::new(move || {
+                let _ = waker.send(Event::TaskReady);
+            })
+        }),
         // Keyed state lives beside the applications, on the book partition,
         // because that is the one place a Kobo is guaranteed to have room and
         // the one place a reinstall does not wipe. An application that never

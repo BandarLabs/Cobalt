@@ -306,13 +306,17 @@ impl AppServer {
         let reader = stream.try_clone()?;
         let state = Arc::new(Mutex::new(AppState::default()));
         let reader_state = Arc::clone(&state);
+        // One writer for the whole session, shared by every thread that has
+        // something to say to the application: taps from the browser, replies
+        // to requests, and terminal output arriving on its own. Frames are
+        // length-prefixed, so two of them written at once do not make two
+        // frames, they make one unreadable stream.
+        let writer = Arc::new(Mutex::new(stream.try_clone()?));
+        let reader_writer = Arc::clone(&writer);
         thread::spawn(move || {
-            let _ = read_app_messages(reader, &reader_state);
+            let _ = read_app_messages(reader, &reader_writer, &reader_state);
         });
-        Ok(AppSession {
-            state,
-            writer: Arc::new(Mutex::new(stream.try_clone()?)),
-        })
+        Ok(AppSession { state, writer })
     }
 
     /// Accepts the SDK app and serves browser requests until an I/O error.
@@ -513,7 +517,7 @@ fn note(state: &Arc<Mutex<AppState>>, line: &str) -> io::Result<()> {
 }
 
 fn answer_store(
-    stream: &mut UnixStream,
+    writer: &Arc<Mutex<UnixStream>>,
     request_id: u32,
     store: &Store,
     request: &kobo_protocol::StoreRequest,
@@ -521,8 +525,8 @@ fn answer_store(
 ) -> io::Result<()> {
     let result = store.handle(request);
     note(state, &format!("store: {request:?} -> {result:?}"))?;
-    write_protocol_frame(
-        stream,
+    write_shared(
+        writer,
         &Frame {
             request_id,
             message: Message::StoreResult(result),
@@ -530,7 +534,95 @@ fn answer_store(
     )
 }
 
-fn read_app_messages(mut stream: UnixStream, state: &Arc<Mutex<AppState>>) -> io::Result<()> {
+/// Writes one frame while holding the shared write lock.
+///
+/// Two threads write to this socket: the message loop, and the terminal drain
+/// that has to deliver output nobody asked for. A frame is length-prefixed, so
+/// two interleaved writes do not produce two frames, they produce one
+/// unreadable stream.
+fn write_shared(writer: &Arc<Mutex<UnixStream>>, frame: &Frame) -> io::Result<()> {
+    let mut stream = writer
+        .lock()
+        .map_err(|_| io::Error::other("simulator write lock poisoned"))?;
+    write_protocol_frame(&mut stream, frame)
+}
+
+/// Delivers terminal output as it arrives, rather than when the next message
+/// happens to come in.
+///
+/// Without this the simulator would only show what a program printed after the
+/// developer pressed another key, so anything that prints on its own would look
+/// like it had hung.
+fn drain_shell(
+    shells: &Arc<Mutex<kobo_shell::Shells>>,
+    writer: &Arc<Mutex<UnixStream>>,
+) -> io::Result<()> {
+    loop {
+        let events = {
+            let Ok(mut shells) = shells.lock() else {
+                return Ok(());
+            };
+            shells.drain()
+        };
+        for event in events {
+            write_shared(
+                writer,
+                &Frame {
+                    request_id: 0,
+                    message: Message::ShellEvent(event),
+                },
+            )?;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+/// Applies one terminal request and reports anything it has to say.
+///
+/// A refusal is always written back, because an application that asked for a
+/// shell and heard nothing cannot tell a denial from a slow start.
+fn answer_shell(
+    writer: &Arc<Mutex<UnixStream>>,
+    request_id: u32,
+    shells: &Arc<Mutex<kobo_shell::Shells>>,
+    request: kobo_protocol::ShellRequest,
+) -> io::Result<()> {
+    let answer = shells
+        .lock()
+        .map_err(|_| io::Error::other("simulator shell lock poisoned"))?
+        .handle(request);
+    if let Some(event) = answer {
+        write_shared(
+            writer,
+            &Frame {
+                request_id,
+                message: Message::ShellEvent(event),
+            },
+        )?;
+    }
+    Ok(())
+}
+
+/// A terminal on the developer's own machine, running their own shell.
+///
+/// The point of the simulator is that an application behaves the same here as
+/// on the panel, and an application that could not open a terminal in
+/// development would have to be tested on the device to be tested at all.
+fn simulated_shells(writer: &Arc<Mutex<UnixStream>>) -> Arc<Mutex<kobo_shell::Shells>> {
+    let shells = Arc::new(Mutex::new(kobo_shell::Shells::new(&[
+        kobo_policy::Capability::Shell,
+    ])));
+    let draining = Arc::clone(&shells);
+    let writer = Arc::clone(writer);
+    std::thread::spawn(move || drain_shell(&draining, &writer));
+    shells
+}
+
+fn read_app_messages(
+    mut stream: UnixStream,
+    writer: &Arc<Mutex<UnixStream>>,
+    state: &Arc<Mutex<AppState>>,
+) -> io::Result<()> {
     // The simulator owns no hardware, so it answers state queries from a
     // believable model and refuses everything that would change a real device.
     let mut services = DeviceServices::simulated();
@@ -541,6 +633,7 @@ fn read_app_messages(mut stream: UnixStream, state: &Arc<Mutex<AppState>>) -> io
     // point of a store: a developer restarting the application should see what
     // the owner would see after closing and reopening it.
     let store = Store::new(std::env::temp_dir().join("cobalt-sim-state"));
+    let shells = simulated_shells(writer);
     loop {
         let frame = read_protocol_frame(&mut stream)?;
         let request_id = frame.request_id;
@@ -576,8 +669,8 @@ fn read_app_messages(mut stream: UnixStream, state: &Arc<Mutex<AppState>>) -> io
                         state.logs.remove(0);
                     }
                 }
-                write_protocol_frame(
-                    &mut stream,
+                write_shared(
+                    writer,
                     &Frame {
                         request_id,
                         message: Message::DeviceResult(result),
@@ -595,7 +688,10 @@ fn read_app_messages(mut stream: UnixStream, state: &Arc<Mutex<AppState>>) -> io
                 }
             }
             Message::StoreRequest(request) => {
-                answer_store(&mut stream, request_id, &store, &request, state)?;
+                answer_store(writer, request_id, &store, &request, state)?;
+            }
+            Message::ShellRequest(request) => {
+                answer_shell(writer, request_id, &shells, request)?;
             }
             Message::Cancel { task } => tasks.cancel(task),
             Message::Exit => {
@@ -608,38 +704,49 @@ fn read_app_messages(mut stream: UnixStream, state: &Arc<Mutex<AppState>>) -> io
             | Message::TaskOutcome { .. }
             | Message::DeviceResult(_)
             | Message::StoreResult(_)
-            | Message::Lifecycle(_) => {
+            | Message::Lifecycle(_)
+            | Message::ShellEvent(_) => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "unexpected SDK protocol message",
                 ));
             }
         }
-        for finished in tasks.drain() {
-            {
-                let mut state = state
-                    .lock()
-                    .map_err(|_| io::Error::other("app state lock poisoned"))?;
-                state.logs.push(format!(
-                    "task {} -> {:?}",
-                    finished.task.0, finished.outcome
-                ));
-                if state.logs.len() > 64 {
-                    state.logs.remove(0);
-                }
-            }
-            write_protocol_frame(
-                &mut stream,
-                &Frame {
-                    request_id: 0,
-                    message: Message::TaskOutcome {
-                        task: finished.task,
-                        outcome: finished.outcome,
-                    },
-                },
-            )?;
-        }
+        deliver_task_outcomes(writer, &mut tasks, state)?;
     }
+}
+
+/// Reports every task that finished, to the log and to the application.
+fn deliver_task_outcomes(
+    writer: &Arc<Mutex<UnixStream>>,
+    tasks: &mut TaskRunner,
+    state: &Arc<Mutex<AppState>>,
+) -> io::Result<()> {
+    for finished in tasks.drain() {
+        {
+            let mut state = state
+                .lock()
+                .map_err(|_| io::Error::other("app state lock poisoned"))?;
+            state.logs.push(format!(
+                "task {} -> {:?}",
+                finished.task.0, finished.outcome
+            ));
+            if state.logs.len() > 64 {
+                state.logs.remove(0);
+            }
+        }
+        write_shared(
+            writer,
+            &Frame {
+                request_id: 0,
+                message: Message::TaskOutcome {
+                    task: finished.task,
+                    outcome: finished.outcome,
+                },
+            },
+        )?;
+    }
+    Ok(())
 }
 
 fn read_protocol_frame(stream: &mut UnixStream) -> io::Result<Frame> {

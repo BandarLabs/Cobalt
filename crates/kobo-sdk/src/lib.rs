@@ -6,14 +6,16 @@
 //! [`AppRunner::action`] from their platform event loop.
 
 pub use kobo_protocol::{
-    DenyReason, DeviceRequest, DeviceResult, Frame, Lifecycle, LogLevel, Message, StoreError,
-    StoreRequest, StoreResult, StreamError, Task, TaskError, TaskId, TaskOutcome, MAX_STORE_KEYS,
-    MAX_STORE_VALUE, MAX_TASK_BYTES, MAX_URL_LEN,
+    DenyReason, DeviceRequest, DeviceResult, Frame, Lifecycle, LogLevel, Message, ShellError,
+    ShellEvent, ShellRequest, StoreError, StoreRequest, StoreResult, StreamError, Task, TaskError,
+    TaskId, TaskOutcome, MAX_SHELL_CHUNK, MAX_STORE_KEYS, MAX_STORE_VALUE, MAX_TASK_BYTES,
+    MAX_URL_LEN,
 };
 pub use kobo_ui::{
-    ActionId, BannerLevel, BarAction, Cell, Chrome, DisplayMetrics, Freeform, Glyph, NavBar, Node,
-    NodeId, Percent, ProseArea, Row, Screen, Space, Tile, TopBar, MAX_CELLS, MAX_CHOICE_OPTIONS,
-    MAX_COLUMNS, MAX_ROWS,
+    terminal_grid, terminal_grid_for, ActionId, BannerLevel, BarAction, Caret, Cell, Chrome,
+    DisplayMetrics, Freeform, Glyph, NavBar, Node, NodeId, Percent, ProseArea, Row, Screen, Space,
+    Tile, TopBar, MAX_CELLS, MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_ROWS, MAX_TERMINAL_COLUMNS,
+    MAX_TERMINAL_ROWS,
 };
 use std::collections::VecDeque;
 use std::fmt;
@@ -28,13 +30,14 @@ pub use kobo_policy::{Capability, Declared, Grant, Grants, PowerPolicy};
 
 /// Common application and builder types.
 pub mod keyboard;
+pub mod terminal;
 
 pub mod prelude {
     pub use crate::{
-        action_id, ActionId, AppRunner, AppStore, Capability, Client, ClientEvent, Command,
-        Context, DenyReason, Device, DeviceRequest, DeviceResult, Grant, Grants, KoboApp,
-        Lifecycle, Node, NodeId, PowerPolicy, Screen, ScreenBuilder, StoreError, StoreRequest,
-        StoreResult,
+        action_id, ActionId, AppRunner, AppShell, AppStore, Capability, Client, ClientEvent,
+        Command, Context, DenyReason, Device, DeviceRequest, DeviceResult, Grant, Grants, KoboApp,
+        Lifecycle, Node, NodeId, PowerPolicy, Screen, ScreenBuilder, ShellError, ShellEvent,
+        ShellRequest, StoreError, StoreRequest, StoreResult,
     };
 }
 
@@ -294,7 +297,32 @@ impl ScreenBuilder {
         self
     }
 
-    /// A grid of equally sized, tappable cells.
+    /// A grid of characters, for output that was written to be read in columns.
+    ///
+    /// Everything else in this builder takes meaning and lets the runtime
+    /// decide on appearance. This takes rows that are already positioned,
+    /// because in a character grid the position *is* the meaning: a table, a
+    /// diff or a shell prompt stops saying what it said the moment something
+    /// re-wraps it.
+    ///
+    /// The grid is not negotiable from here. Ask [`kobo_ui::terminal_grid_for`]
+    /// what size the rows should be before filling them, so that whatever is
+    /// producing the text is told the same width the panel will show.
+    #[must_use]
+    pub fn terminal<I, R>(mut self, rows: I, cursor: Option<Caret>) -> Self
+    where
+        I: IntoIterator<Item = R>,
+        R: Into<String>,
+    {
+        let id = self.next_id();
+        let rows = rows
+            .into_iter()
+            .take(MAX_TERMINAL_ROWS)
+            .map(Into::into)
+            .collect();
+        self.nodes.push(Node::Terminal { id, rows, cursor });
+        self
+    }
     ///
     /// The general one: the caller picks the columns, so a board, a keypad and
     /// an on-screen keyboard are all this, rather than three primitives that
@@ -481,6 +509,8 @@ pub enum Command {
     Cancel(TaskId),
     /// Read or write the application's own small state.
     Store(StoreRequest),
+    /// Drive a terminal the runtime owns.
+    Shell(ShellRequest),
     Exit,
     /// Hand the panel to another application by name.
     Launch(String),
@@ -616,6 +646,16 @@ impl Context {
         AppStore { context: self }
     }
 
+    /// The terminal this application may run a program on.
+    ///
+    /// Nothing happens until [`AppShell::open`] is called, and nothing happens
+    /// at all unless the application declared the `shell` capability. Like the
+    /// network and the panel, the dangerous object stays behind the runtime:
+    /// an application says what to type, never what to execute.
+    pub fn shell(&mut self) -> AppShell<'_> {
+        AppShell { context: self }
+    }
+
     #[must_use]
     pub fn commands(&self) -> &[Command] {
         &self.commands
@@ -667,6 +707,48 @@ impl AppStore<'_> {
 
     fn request(&mut self, request: StoreRequest) {
         self.context.commands.push(Command::Store(request));
+    }
+}
+
+/// The application's terminal.
+///
+/// Every method here is a request, answered through
+/// [`KoboApp::on_shell_event`]. There is no return value to check because
+/// there is nothing to check yet: the runtime may refuse, the program may fail
+/// to start, and either way the answer arrives as an event like any other.
+#[derive(Debug)]
+pub struct AppShell<'a> {
+    context: &'a mut Context,
+}
+
+impl AppShell<'_> {
+    /// Starts a program on a terminal of exactly this grid.
+    ///
+    /// Ask [`terminal_grid_for`] what the grid is rather than choosing one.
+    /// A program told a width the panel does not have wraps its lines in a
+    /// different place from where the reader sees them wrap, which makes every
+    /// full-screen program unusable.
+    pub fn open(&mut self, columns: u16, rows: u16) {
+        self.request(ShellRequest::Open { columns, rows });
+    }
+
+    /// Sends keystrokes, already encoded as the bytes a terminal expects.
+    pub fn input(&mut self, bytes: impl Into<Vec<u8>>) {
+        self.request(ShellRequest::Input(bytes.into()));
+    }
+
+    /// Tells the program the grid changed.
+    pub fn resize(&mut self, columns: u16, rows: u16) {
+        self.request(ShellRequest::Resize { columns, rows });
+    }
+
+    /// Ends the program.
+    pub fn close(&mut self) {
+        self.request(ShellRequest::Close);
+    }
+
+    fn request(&mut self, request: ShellRequest) {
+        self.context.commands.push(Command::Shell(request));
     }
 }
 
@@ -807,6 +889,10 @@ pub trait KoboApp {
     /// Like device results, every request reports back, so an application never
     /// has to guess whether its state was written.
     fn on_store(&mut self, _context: &mut Context, _result: StoreResult) {}
+
+    /// Receives everything a terminal has to say: that it opened, what the
+    /// program printed, that it finished, or that the request was refused.
+    fn on_shell_event(&mut self, _context: &mut Context, _event: ShellEvent) {}
 }
 
 /// The longest a lifecycle callback may run before the runtime intervenes.
@@ -937,6 +1023,11 @@ impl<A: KoboApp> AppRunner<A> {
         self.dispatch(|app, context| app.on_store(context, result))
     }
 
+    /// Delivers one terminal event.
+    pub fn shell_event(&mut self, event: ShellEvent) -> Vec<Command> {
+        self.dispatch(|app, context| app.on_shell_event(context, event))
+    }
+
     /// The device requests still awaiting an answer, oldest first.
     #[must_use]
     pub fn outstanding_requests(&self) -> usize {
@@ -997,6 +1088,7 @@ pub enum ClientEvent {
     Task { task: TaskId, outcome: TaskOutcome },
     Store(StoreResult),
     Lifecycle(Lifecycle),
+    Shell(ShellEvent),
     Exit,
 }
 
@@ -1111,6 +1203,7 @@ impl Client {
                 Command::Spawn { task, work } => Message::Spawn { task, work },
                 Command::Cancel(task) => Message::Cancel { task },
                 Command::Store(request) => Message::StoreRequest(request),
+                Command::Shell(request) => Message::ShellRequest(request),
                 Command::Exit => Message::Exit,
                 Command::Launch(name) => Message::Launch { name },
             };
@@ -1132,6 +1225,7 @@ impl Client {
             Message::TaskOutcome { task, outcome } => Ok(ClientEvent::Task { task, outcome }),
             Message::StoreResult(result) => Ok(ClientEvent::Store(result)),
             Message::Lifecycle(state) => Ok(ClientEvent::Lifecycle(state)),
+            Message::ShellEvent(event) => Ok(ClientEvent::Shell(event)),
             Message::Exit => Ok(ClientEvent::Exit),
             _ => Err(ClientError::UnexpectedMessage),
         }
@@ -1447,6 +1541,9 @@ pub fn run_on<A: KoboApp>(name: &str, app: A, socket: &Path) -> Result<(), Clien
                 ClientEvent::Lifecycle(state) => {
                     client.send_commands(runner.lifecycle(state))?;
                 }
+                ClientEvent::Shell(event) => {
+                    client.send_commands(runner.shell_event(event))?;
+                }
                 ClientEvent::Action(_) | ClientEvent::Exit => break,
             }
         }
@@ -1461,6 +1558,7 @@ pub fn run_on<A: KoboApp>(name: &str, app: A, socket: &Path) -> Result<(), Clien
             ClientEvent::Task { task, outcome } => runner.task_outcome(task, outcome),
             ClientEvent::Store(result) => runner.store_result(result),
             ClientEvent::Lifecycle(state) => runner.lifecycle(state),
+            ClientEvent::Shell(event) => runner.shell_event(event),
             ClientEvent::Exit => {
                 // The runtime is taking the screen back. Give the application
                 // its exit callback, then go, rather than arguing about it.

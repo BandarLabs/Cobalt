@@ -38,10 +38,10 @@ const ENTRIES: &[Entry] = &[
         glyph: Glyph::Book,
     },
     Entry {
-        name: "hello",
-        title: "Hello",
-        summary: "The smallest application: one heading and one button.",
-        glyph: Glyph::App,
+        name: "terminal",
+        title: "Terminal",
+        summary: "A shell on the panel, with keys that send rather than collect.",
+        glyph: Glyph::Terminal,
     },
     Entry {
         name: "gallery",

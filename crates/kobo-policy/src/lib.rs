@@ -51,6 +51,18 @@ pub enum Capability {
     Notifications,
     /// Read and write files in a shared, user-visible folder.
     SharedFiles,
+    /// Run a program on a terminal the runtime owns.
+    ///
+    /// This is the most dangerous capability in the system and is deliberately
+    /// last. Everything else this platform does is undone by a reboot: a
+    /// framebuffer write is volatile, an input grab dies with its descriptor,
+    /// a setting has a pristine backup beside it. A shell is the first thing
+    /// that can write the root filesystem, so it is the first thing that can
+    /// produce a device no reboot repairs.
+    ///
+    /// It is therefore never implied by anything, never granted by default,
+    /// and refused outright by any build without a terminal backend.
+    Shell,
 }
 
 impl Capability {
@@ -70,6 +82,7 @@ impl Capability {
             Self::SleepScreen => "sleep-screen",
             Self::Notifications => "notifications",
             Self::SharedFiles => "shared-files",
+            Self::Shell => "shell",
         }
     }
 
@@ -84,7 +97,7 @@ impl Capability {
     }
 
     /// Every capability, in declaration order.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::Network,
         Self::BackgroundNetwork,
         Self::HoldWifi,
@@ -97,6 +110,7 @@ impl Capability {
         Self::SleepScreen,
         Self::Notifications,
         Self::SharedFiles,
+        Self::Shell,
     ];
 
     /// Capabilities that imply another capability must also be held.

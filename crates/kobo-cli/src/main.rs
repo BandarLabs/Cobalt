@@ -11,7 +11,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 mod devsession;
 mod sha256;
 
-const DEVICE_PACKAGES: &[&str] = &["kobo-doctor", "kobod", "kobo-todo"];
+const DEVICE_PACKAGES: &[&str] = &["kobo-doctor", "kobod", "kobo-todo", "kobo-terminal"];
 const REMOTE_CONNECT_TIMEOUT_SECONDS: u64 = 10;
 const REMOTE_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 const REMOTE_CLEANUP_TIMEOUT: Duration = Duration::from_secs(5);
@@ -1931,7 +1931,10 @@ mod tests {
 
     #[test]
     fn default_device_build_excludes_guard_and_smoke() {
-        assert_eq!(DEVICE_PACKAGES, ["kobo-doctor", "kobod", "kobo-todo"]);
+        assert_eq!(
+            DEVICE_PACKAGES,
+            ["kobo-doctor", "kobod", "kobo-todo", "kobo-terminal"]
+        );
         assert!(!DEVICE_PACKAGES.contains(&"kobo-guard"));
         assert!(!DEVICE_PACKAGES.contains(&"kobo-smoke"));
     }

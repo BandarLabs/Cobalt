@@ -13,6 +13,7 @@ path = "src/main.rs"
 kobo-hal = { path = "../kobo-hal", default-features = false }
 kobo-net = { path = "../kobo-net" }
 kobo-policy = { path = "../kobo-policy" }
+kobo-shell = { path = "../kobo-shell" }
 kobo-profile = { path = "../kobo-profile" }
 kobo-protocol = { path = "../kobo-protocol" }
 kobo-text = { path = "../kobo-text" }

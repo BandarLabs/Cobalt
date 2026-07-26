@@ -1,5 +1,5 @@
 [package]
-name = "kobo-hello"
+name = "kobo-terminal"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,6 +8,7 @@ publish = false
 
 [dependencies]
 kobo-sdk = { path = "../../crates/kobo-sdk" }
+kobo-term = { path = "../../crates/kobo-term" }
 
 [dev-dependencies]
 kobo-ui = { path = "../../crates/kobo-ui" }

@@ -6,8 +6,9 @@ use std::fmt;
 use std::io::{self, Read, Write};
 
 use kobo_ui::{
-    ActionId, BannerLevel, BarAction, Cell, Freeform, Glyph, NavBar, Node, NodeId, PageTurns,
-    Percent, Row, RowState, Screen, Space, Tile, TopBar, MIN_NAV_DESTINATIONS,
+    ActionId, BannerLevel, BarAction, Caret, Cell, Freeform, Glyph, NavBar, Node, NodeId,
+    PageTurns, Percent, Row, RowState, Screen, Space, Tile, TopBar, MAX_TERMINAL_COLUMNS,
+    MAX_TERMINAL_ROWS, MIN_NAV_DESTINATIONS,
 };
 use std::cmp::min;
 
@@ -187,6 +188,86 @@ pub enum Message {
     Lifecycle(Lifecycle),
     /// The runtime's answer to exactly one store request.
     StoreResult(StoreResult),
+    /// An application driving a terminal the runtime owns.
+    ShellRequest(ShellRequest),
+    /// The runtime reporting what the program on that terminal did.
+    ShellEvent(ShellEvent),
+}
+
+/// The most bytes carried in one direction of a terminal in a single message.
+///
+/// Output is chunked at this size and input is refused above it. A program
+/// printing a large file must not be able to build a frame larger than the
+/// panel could ever show, and a bound the sender and receiver both know is the
+/// only way a stream stays bounded without either side trusting the other.
+pub const MAX_SHELL_CHUNK: usize = 4096;
+
+/// Everything an application can ask of its terminal.
+///
+/// The application never holds the descriptor. It says what it wants typed and
+/// what size the grid is; the runtime owns the pseudo-terminal, the child
+/// process and the decision about whether this application may have one at
+/// all. That is the same rule as the framebuffer and the network: the
+/// dangerous object stays behind the daemon.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ShellRequest {
+    /// Starts a terminal of the given grid. One per application.
+    Open { columns: u16, rows: u16 },
+    /// Keystrokes, already encoded as the bytes a terminal expects.
+    Input(Vec<u8>),
+    /// The grid changed.
+    Resize { columns: u16, rows: u16 },
+    /// Ends the program and releases the terminal.
+    Close,
+}
+
+/// What the runtime reports back about a terminal.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ShellEvent {
+    /// The terminal exists and the program is running.
+    Opened,
+    /// Bytes the program printed, in the order it printed them.
+    Output(Vec<u8>),
+    /// The program finished. A terminal is never reopened implicitly.
+    Closed { status: i32 },
+    /// The request was refused, and why.
+    Refused(ShellError),
+}
+
+/// Why a terminal request was refused.
+///
+/// Distinct reasons rather than one failure, because they call for different
+/// answers: a missing permission is a manifest problem the developer fixes, a
+/// build without a terminal backend is a platform limit nobody can fix from an
+/// application, and asking twice is a bug in the application itself.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum ShellError {
+    /// The application did not declare the capability.
+    NotPermitted = 0,
+    /// This build has no terminal to give.
+    Unavailable = 1,
+    /// A terminal is already open for this application.
+    AlreadyOpen = 2,
+    /// There is no terminal to act on.
+    NotOpen = 3,
+    /// The program could not be started.
+    Failed = 4,
+}
+
+impl TryFrom<u8> for ShellError {
+    type Error = ProtocolError;
+
+    fn try_from(tag: u8) -> Result<Self, ProtocolError> {
+        Ok(match tag {
+            0 => Self::NotPermitted,
+            1 => Self::Unavailable,
+            2 => Self::AlreadyOpen,
+            3 => Self::NotOpen,
+            4 => Self::Failed,
+            _ => return Err(ProtocolError::InvalidValue("shell error")),
+        })
+    }
 }
 
 /// Everything an application can ask of its own store.
@@ -506,6 +587,8 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
         }
         Message::StoreRequest(request) => encode_store_request(&mut payload, request)?,
         Message::StoreResult(result) => encode_store_result(&mut payload, result)?,
+        Message::ShellRequest(request) => encode_shell_request(&mut payload, request)?,
+        Message::ShellEvent(event) => encode_shell_event(&mut payload, event)?,
         Message::Lifecycle(state) => payload.push(match state {
             Lifecycle::Foreground => 0,
             Lifecycle::Background => 1,
@@ -656,6 +739,96 @@ fn encode_store_result(payload: &mut Vec<u8>, result: &StoreResult) -> Result<()
     Ok(())
 }
 
+fn encode_shell_request(
+    payload: &mut Vec<u8>,
+    request: &ShellRequest,
+) -> Result<(), ProtocolError> {
+    match request {
+        ShellRequest::Open { columns, rows } => {
+            payload.push(0);
+            push_u16(payload, *columns);
+            push_u16(payload, *rows);
+        }
+        ShellRequest::Input(bytes) => {
+            payload.push(1);
+            push_shell_bytes(payload, bytes)?;
+        }
+        ShellRequest::Resize { columns, rows } => {
+            payload.push(2);
+            push_u16(payload, *columns);
+            push_u16(payload, *rows);
+        }
+        ShellRequest::Close => payload.push(3),
+    }
+    Ok(())
+}
+
+fn encode_shell_event(payload: &mut Vec<u8>, event: &ShellEvent) -> Result<(), ProtocolError> {
+    match event {
+        ShellEvent::Opened => payload.push(0),
+        ShellEvent::Output(bytes) => {
+            payload.push(1);
+            push_shell_bytes(payload, bytes)?;
+        }
+        ShellEvent::Closed { status } => {
+            payload.push(2);
+            // Two's complement, both ways, rather than a cast: an exit status
+            // is signed and a cast that clips it would report a killed program
+            // as a successful one.
+            push_u32(payload, u32::from_ne_bytes(status.to_ne_bytes()));
+        }
+        ShellEvent::Refused(error) => {
+            payload.push(3);
+            payload.push(*error as u8);
+        }
+    }
+    Ok(())
+}
+
+fn push_shell_bytes(payload: &mut Vec<u8>, bytes: &[u8]) -> Result<(), ProtocolError> {
+    if bytes.len() > MAX_SHELL_CHUNK {
+        return Err(ProtocolError::FrameTooLarge);
+    }
+    push_u16(
+        payload,
+        u16::try_from(bytes.len()).map_err(|_| ProtocolError::FrameTooLarge)?,
+    );
+    payload.extend_from_slice(bytes);
+    Ok(())
+}
+
+fn read_shell_bytes(reader: &mut Reader) -> Result<Vec<u8>, ProtocolError> {
+    let length = usize::from(reader.u16()?);
+    if length > MAX_SHELL_CHUNK {
+        return Err(ProtocolError::FrameTooLarge);
+    }
+    Ok(reader.take(length)?.to_vec())
+}
+
+fn shell_request_len(request: &ShellRequest) -> Result<usize, ProtocolError> {
+    Ok(match request {
+        ShellRequest::Open { .. } | ShellRequest::Resize { .. } => 5,
+        ShellRequest::Input(bytes) => shell_chunk_len(bytes)?,
+        ShellRequest::Close => 1,
+    })
+}
+
+fn shell_event_len(event: &ShellEvent) -> Result<usize, ProtocolError> {
+    Ok(match event {
+        ShellEvent::Opened => 1,
+        ShellEvent::Output(bytes) => shell_chunk_len(bytes)?,
+        ShellEvent::Closed { .. } => 5,
+        ShellEvent::Refused(_) => 2,
+    })
+}
+
+fn shell_chunk_len(bytes: &[u8]) -> Result<usize, ProtocolError> {
+    if bytes.len() > MAX_SHELL_CHUNK {
+        return Err(ProtocolError::FrameTooLarge);
+    }
+    Ok(3 + bytes.len())
+}
+
 fn encoded_message_layout(message: &Message) -> Result<(u8, usize), ProtocolError> {
     match message {
         Message::Hello { name } => Ok((1, encoded_string_len(name)?)),
@@ -727,6 +900,8 @@ fn encoded_message_layout(message: &Message) -> Result<(u8, usize), ProtocolErro
         Message::StoreRequest(request) => Ok((13, store_request_len(request)?)),
         Message::StoreResult(result) => Ok((14, store_result_len(result)?)),
         Message::Lifecycle(_) => Ok((15, 1)),
+        Message::ShellRequest(request) => Ok((16, shell_request_len(request)?)),
+        Message::ShellEvent(event) => Ok((17, shell_event_len(event)?)),
     }
 }
 
@@ -1005,6 +1180,23 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
             }
             length
         }
+        Node::Terminal { rows, cursor, .. } => {
+            if rows.len() > MAX_TERMINAL_ROWS {
+                return Err(ProtocolError::TooManyNodes);
+            }
+            let mut length = 6;
+            for row in rows {
+                if row.chars().count() > MAX_TERMINAL_COLUMNS {
+                    return Err(ProtocolError::FrameTooLarge);
+                }
+                add_encoded_len(&mut length, encoded_string_len(row)?)?;
+            }
+            add_encoded_len(&mut length, 1)?;
+            if cursor.is_some() {
+                add_encoded_len(&mut length, 4)?;
+            }
+            length
+        }
     };
     if length > MAX_FRAME_LEN {
         return Err(ProtocolError::FrameTooLarge);
@@ -1211,6 +1403,28 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
             0 => Lifecycle::Foreground,
             1 => Lifecycle::Background,
             _ => return Err(ProtocolError::InvalidValue("lifecycle state")),
+        }),
+        16 => Message::ShellRequest(match reader.u8()? {
+            0 => ShellRequest::Open {
+                columns: reader.u16()?,
+                rows: reader.u16()?,
+            },
+            1 => ShellRequest::Input(read_shell_bytes(&mut reader)?),
+            2 => ShellRequest::Resize {
+                columns: reader.u16()?,
+                rows: reader.u16()?,
+            },
+            3 => ShellRequest::Close,
+            _ => return Err(ProtocolError::InvalidValue("shell request")),
+        }),
+        17 => Message::ShellEvent(match reader.u8()? {
+            0 => ShellEvent::Opened,
+            1 => ShellEvent::Output(read_shell_bytes(&mut reader)?),
+            2 => ShellEvent::Closed {
+                status: i32::from_ne_bytes(reader.u32()?.to_ne_bytes()),
+            },
+            3 => ShellEvent::Refused(ShellError::try_from(reader.u8()?)?),
+            _ => return Err(ProtocolError::InvalidValue("shell event")),
         }),
         value => return Err(ProtocolError::UnknownMessageType(value)),
     };
@@ -1517,6 +1731,28 @@ fn encode_node(
                 }
             }
         }
+        Node::Terminal { id, rows, cursor } => {
+            if rows.len() > MAX_TERMINAL_ROWS {
+                return Err(ProtocolError::TooManyNodes);
+            }
+            output.push(16);
+            push_u32(output, id.0);
+            output.push(u8::try_from(rows.len()).map_err(|_| ProtocolError::TooManyNodes)?);
+            for row in rows {
+                if row.chars().count() > MAX_TERMINAL_COLUMNS {
+                    return Err(ProtocolError::FrameTooLarge);
+                }
+                push_string(output, row)?;
+            }
+            match cursor {
+                None => output.push(0),
+                Some(caret) => {
+                    output.push(1);
+                    push_u16(output, caret.row);
+                    push_u16(output, caret.column);
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -1606,6 +1842,7 @@ const fn encode_glyph(glyph: Glyph) -> u8 {
         Glyph::Grid => 12,
         Glyph::Circle => 13,
         Glyph::Check => 14,
+        Glyph::Terminal => 15,
     }
 }
 
@@ -1626,6 +1863,7 @@ const fn decode_glyph(tag: u8) -> Option<Glyph> {
         12 => Glyph::Grid,
         13 => Glyph::Circle,
         14 => Glyph::Check,
+        15 => Glyph::Terminal,
         _ => return None,
     })
 }
@@ -1857,6 +2095,26 @@ fn decode_node(
                 progress,
                 cancel,
             })
+        }
+        16 => {
+            let count = usize::from(reader.u8()?);
+            if count > MAX_TERMINAL_ROWS {
+                return Err(ProtocolError::TooManyNodes);
+            }
+            let mut rows = Vec::with_capacity(count);
+            for _ in 0..count {
+                let row = reader.string()?;
+                if row.chars().count() > MAX_TERMINAL_COLUMNS {
+                    return Err(ProtocolError::InvalidValue("terminal row too wide"));
+                }
+                rows.push(row);
+            }
+            let cursor = match reader.u8()? {
+                0 => None,
+                1 => Some(Caret::new(reader.u16()?, reader.u16()?)),
+                _ => return Err(ProtocolError::InvalidValue("terminal cursor flag")),
+            };
+            Ok(Node::Terminal { id, rows, cursor })
         }
         15 => {
             let columns = reader.u8()?;
@@ -2313,6 +2571,16 @@ mod node_coverage_tests {
                 progress: None,
                 cancel: None,
             },
+            Node::Terminal {
+                id: NodeId(16),
+                rows: vec!["~ # uname -a".into(), "Linux kobo 4.9.77".into()],
+                cursor: Some(Caret::new(1, 17)),
+            },
+            Node::Terminal {
+                id: NodeId(17),
+                rows: Vec::new(),
+                cursor: None,
+            },
         ]
     }
 
@@ -2519,6 +2787,24 @@ mod store_tests {
     }
 
     #[test]
+    fn a_terminal_chunk_larger_than_the_bound_is_refused_rather_than_sent() {
+        // The ceiling has to be enforced by the sender as well as the reader,
+        // or a program printing without pause builds a frame the other end
+        // will only reject after it has already been allocated.
+        let frame = Frame {
+            request_id: 1,
+            message: Message::ShellEvent(ShellEvent::Output(vec![b'x'; MAX_SHELL_CHUNK + 1])),
+        };
+        assert!(matches!(encode(&frame), Err(ProtocolError::FrameTooLarge)));
+    }
+
+    #[test]
+    fn a_terminal_chunk_exactly_at_the_bound_is_carried() {
+        let message = Message::ShellRequest(ShellRequest::Input(vec![b'x'; MAX_SHELL_CHUNK]));
+        assert_eq!(message_round_trip(message.clone()), message);
+    }
+
+    #[test]
     fn every_store_message_survives_the_wire() {
         for message in [
             Message::StoreRequest(StoreRequest::Save {
@@ -2550,6 +2836,25 @@ mod store_tests {
             Message::StoreResult(StoreResult::Denied(StoreError::BadKey)),
             Message::Lifecycle(Lifecycle::Foreground),
             Message::Lifecycle(Lifecycle::Background),
+            Message::ShellRequest(ShellRequest::Open {
+                columns: 53,
+                rows: 20,
+            }),
+            Message::ShellRequest(ShellRequest::Input(vec![0x03])),
+            Message::ShellRequest(ShellRequest::Input(Vec::new())),
+            Message::ShellRequest(ShellRequest::Resize {
+                columns: 40,
+                rows: 10,
+            }),
+            Message::ShellRequest(ShellRequest::Close),
+            Message::ShellEvent(ShellEvent::Opened),
+            Message::ShellEvent(ShellEvent::Output(b"~ # \x1b[K".to_vec())),
+            Message::ShellEvent(ShellEvent::Closed { status: 0 }),
+            // Negative, because a program stopped by a signal is reported as
+            // one and a status that came back wrong would look like success.
+            Message::ShellEvent(ShellEvent::Closed { status: -1 }),
+            Message::ShellEvent(ShellEvent::Refused(ShellError::NotPermitted)),
+            Message::ShellEvent(ShellEvent::Refused(ShellError::Failed)),
         ] {
             assert_eq!(message_round_trip(message.clone()), message);
         }

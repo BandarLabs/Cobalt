@@ -1,15 +1,13 @@
 [package]
-name = "kobo-sim"
+name = "kobo-term"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-kobo-policy = { path = "../kobo-policy" }
-kobo-shell = { path = "../kobo-shell" }
-kobo-protocol = { path = "../kobo-protocol" }
 kobo-ui = { path = "../kobo-ui" }
+vt100 = "0.16"
 
 [lints]
 workspace = true
