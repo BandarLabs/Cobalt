@@ -42,7 +42,7 @@ use kobo_hal::touch::TouchEvent;
 use kobo_hal::{Rect, RefreshIntent, RefreshPlan, RegionSnapshot};
 use kobo_policy::{Backends, Capability, Declared, DeviceServices, PowerPolicy, TaskRunner};
 use kobo_profile::{DeviceProfile, CLARA_BW_391};
-use kobo_protocol::{Frame, Message, TaskError, TaskOutcome};
+use kobo_protocol::{Frame, Lifecycle, Message, TaskError, TaskOutcome};
 use kobo_ui::{render_with, ActionId, Chrome, Screen, Surface, CLARA_BW_METRICS};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -123,9 +123,9 @@ const APP_STOP_GRACE: Duration = Duration::from_secs(3);
 /// battery life.
 enum Event {
     Touch(TouchEvent),
-    App(Box<Frame>),
-    /// The application's end of the socket closed.
-    AppGone,
+    App(u64, Box<Frame>),
+    /// An application's end of the socket closed.
+    AppGone(u64),
     /// A background task finished and its outcome is waiting to be drained.
     ///
     /// The loop otherwise only notices a finished task when something else
@@ -358,11 +358,70 @@ fn restore_screen(
         .map_err(|error| format!("show the restored screen: {error}"))
 }
 
-/// Hosts one application after another on a panel that is already owned.
+/// The most applications kept alive at once.
+///
+/// Not a memory budget: it is what a reader can plausibly be switching between.
+/// Beyond it, the one left alone longest is stopped, because an application
+/// nobody has looked at in a while is cheaper to start again than a device that
+/// runs out of memory while its owner is reading.
+const MAX_HOSTED: usize = 4;
+
+/// One application the runtime is hosting.
+///
+/// Every one of these owns a live process, its own socket, its own store and
+/// its own background work. Only one of them owns the panel.
+struct Hosted {
+    /// Identity that survives the list being reordered. An index would not:
+    /// applications are removed from the middle when they end.
+    id: u64,
+    name: String,
+    path: PathBuf,
+    child: Child,
+    stream: std::os::unix::net::UnixStream,
+    store: kobo_policy::store::Store,
+    tasks: TaskRunner,
+    /// The last screen this application drew, foreground or not.
+    ///
+    /// Held for every application rather than only the front one, because that
+    /// is what makes coming back instant: the panel is repainted from this
+    /// rather than the application being asked to draw itself again.
+    screen: Option<Screen>,
+    painted: u32,
+    /// When this was last on the panel, for deciding what to stop first.
+    used: Instant,
+}
+
+impl Hosted {
+    fn send(&mut self, message: Message) -> Result<(), String> {
+        kobo_protocol::write_to(
+            &mut self.stream,
+            &Frame {
+                request_id: 0,
+                message,
+            },
+        )
+        .map_err(|error| format!("send to {}: {error}", self.name))
+    }
+}
+
+/// Hosts applications on a panel that is already owned.
 ///
 /// The display and the touch panel are taken once and held throughout, because
 /// handing them back between applications would show the reader for a moment
 /// and cost two full refreshes every time somebody opened something.
+///
+/// # Why applications are not stopped when you leave them
+///
+/// Leaving an application used to end its process, and coming back started it
+/// again from nothing: a fresh load, a fresh fetch, and whatever the reader was
+/// in the middle of, gone. On a device where starting costs a full refresh and
+/// a reload, that made switching something to avoid.
+///
+/// So an application that loses the panel keeps everything except the panel. It
+/// is told, so it can save; its work in flight keeps running and its answers
+/// keep arriving; and what it draws is kept rather than shown. Coming back is
+/// one repaint of a screen the runtime already has.
+#[allow(clippy::too_many_lines)]
 fn host_applications(
     application: &Path,
     display: &DisplaySession,
@@ -372,75 +431,514 @@ fn host_applications(
     profile: &'static DeviceProfile,
     watchdog: &Arc<Watchdog>,
 ) -> Result<String, String> {
-    // the touch panel are taken once and held throughout, because handing them
-    // back between applications would show the reader for a moment and cost two
-    // full refreshes every time somebody opened something.
+    let _ = profile;
     let catalogue = application
         .parent()
         .map_or_else(|| PathBuf::from("/tmp"), Path::to_path_buf);
-    let deadline = Instant::now() + limits.ceiling;
     let home = application.to_path_buf();
-    let mut current = home.clone();
-    let mut visited = Vec::new();
-    loop {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            break Ok(format!(
-                "the session limit ended after {}",
-                visited.join(", ")
-            ));
-        }
-        // Only an application the launcher started can be closed back to it;
-        // the first one has nowhere to go but the reader.
-        let chrome = Chrome::with_back(current != home);
-        match run_session(
-            &current,
-            display,
+    let socket_path = PathBuf::from(format!("/tmp/kobo-session-{}.sock", std::process::id()));
+    let _ignored = fs::remove_file(&socket_path);
+    let listener = std::os::unix::net::UnixListener::bind(&socket_path)
+        .map_err(|error| format!("bind application socket: {error}"))?;
+
+    let (sender, events) = mpsc::channel();
+    touch.set(Some(sender.clone()));
+
+    let mut apps: Vec<Hosted> = Vec::new();
+    let mut next_id = 1_u64;
+    let mut surface = Surface::new(whole_screen.width as usize, whole_screen.height as usize);
+    let mut panel = Painter::new(surface.pixels.len());
+    // Not `simulated()`. On the real panel that answered every battery read
+    // with the same invented 72 percent, which is worse than refusing: an
+    // application cannot tell an invented number from a measured one, so it
+    // acts on it. This build performs exactly what it has a proven backend
+    // for, which today is the read-only battery gauge and nothing else.
+    let mut services = DeviceServices::new(
+        Declared::all(),
+        PowerPolicy::DEFAULT,
+        match kobo_hal::battery::read() {
+            Some(_) => Backends::with([Capability::BatteryRead]),
+            None => Backends::none(),
+        },
+    );
+    // Deliberately already stale, so the first read an application makes is a
+    // real measurement rather than the default the services were built with.
+    let mut battery_read_at = Instant::now()
+        .checked_sub(BATTERY_INTERVAL)
+        .unwrap_or_else(Instant::now);
+
+    let result = (|| -> Result<String, String> {
+        let front = start_application(
+            &mut apps,
+            &mut next_id,
+            &home,
+            &listener,
             whole_screen,
-            touch,
-            SessionOptions {
-                limits: Limits {
-                    idle: limits.idle,
-                    ceiling: remaining,
-                },
-                profile,
-                chrome,
-                watchdog: Arc::clone(watchdog),
-            },
-        ) {
-            Err(error) => break Err(error),
-            Ok(session) => {
-                visited.push(session.summary.clone());
-                match session.next {
-                    // An application that finishes hands the panel back to
-                    // whatever started the session, so closing something
-                    // returns to the launcher rather than to the reader. Only
-                    // the first application ending finishes the session.
-                    None if current == home => break Ok(visited.join("; ")),
-                    None => current.clone_from(&home),
-                    Some(name) => match resolve(&catalogue, &name) {
-                        Ok(path) => current = path,
-                        // A launch that cannot be satisfied returns to the
-                        // launcher. Ending the session instead would show the
-                        // reader again, cost the owner half a minute and the
-                        // network, and take every other application down with
-                        // it, all because one entry was missing.
-                        Err(error) => {
-                            visited.push(error);
-                            current.clone_from(&home);
+            &sender,
+        )?;
+        let mut front = front;
+        let mut visited: Vec<String> = Vec::new();
+        let ceiling = Instant::now() + limits.ceiling;
+        let mut last_activity = Instant::now();
+
+        loop {
+            let now = Instant::now();
+            // Reported from the loop rather than from a thread, so this says
+            // the runtime is still serving the panel rather than merely that
+            // the process has not been reaped.
+            watchdog.beat();
+            if now >= ceiling {
+                return Ok(finish(
+                    &apps,
+                    &visited,
+                    &format!("the {} session limit was reached", describe(limits.ceiling)),
+                ));
+            }
+            let idle_at = last_activity + limits.idle;
+            if now >= idle_at {
+                return Ok(finish(
+                    &apps,
+                    &visited,
+                    &format!(
+                        "nothing was touched for {}, so the reader has it back",
+                        describe(limits.idle)
+                    ),
+                ));
+            }
+            // Whichever comes first, and never longer than one heartbeat, so a
+            // session nobody is touching still proves it is alive.
+            let wait = ceiling
+                .saturating_duration_since(now)
+                .min(idle_at.saturating_duration_since(now))
+                .min(BEAT_INTERVAL);
+            match events.recv_timeout(wait) {
+                // Both fall through to the drain below rather than continuing.
+                // A heartbeat is a second chance to deliver a result, and a
+                // wake is the first: the drain is the only delivery path.
+                Err(RecvTimeoutError::Timeout) | Ok(Event::TaskReady) => {}
+                Err(RecvTimeoutError::Disconnected) => {
+                    return Ok(finish(&apps, &visited, "the runtime ran out of work"));
+                }
+                Ok(Event::AppGone(id)) => {
+                    let Some(index) = index_of(&apps, id) else {
+                        continue;
+                    };
+                    let gone = apps.remove(index);
+                    visited.push(format!(
+                        "{} exited after {} screens",
+                        gone.name, gone.painted
+                    ));
+                    stop_hosted(gone);
+                    if id == front {
+                        // The first application ending ends the session: there
+                        // is nothing behind it but the reader.
+                        let Some(home_id) = id_of_path(&apps, &home) else {
+                            return Ok(finish(&apps, &visited, "the launcher exited"));
+                        };
+                        front = switch_to(
+                            &mut apps,
+                            front,
+                            home_id,
+                            display,
+                            whole_screen,
+                            &mut surface,
+                            &mut panel,
+                            &home,
+                        )?;
+                    }
+                }
+                Ok(Event::Touch(event)) => {
+                    last_activity = Instant::now();
+                    let Some(index) = index_of(&apps, front) else {
+                        return Ok(finish(&apps, &visited, "nothing is on the panel"));
+                    };
+                    let chrome = Chrome::with_back(apps[index].path != home);
+                    let screen = apps[index].screen.clone();
+                    if deliver_touch(&mut apps[index].stream, event, screen.as_ref(), chrome)? {
+                        // Going back leaves the application running. It is put
+                        // behind the launcher rather than ended, so coming back
+                        // to it is a repaint rather than a restart.
+                        let Some(home_id) = id_of_path(&apps, &home) else {
+                            return Ok(finish(&apps, &visited, "the launcher is gone"));
+                        };
+                        front = switch_to(
+                            &mut apps,
+                            front,
+                            home_id,
+                            display,
+                            whole_screen,
+                            &mut surface,
+                            &mut panel,
+                            &home,
+                        )?;
+                    }
+                }
+                Ok(Event::App(id, frame)) => {
+                    let Some(index) = index_of(&apps, id) else {
+                        // A frame from an application that has already gone.
+                        // Dropped rather than treated as an error: the read
+                        // thread and the exit race by nature.
+                        continue;
+                    };
+                    match frame.message {
+                        Message::SetScreen(screen) => {
+                            let is_front = id == front;
+                            if is_front {
+                                last_activity = Instant::now();
+                            }
+                            let chrome = Chrome::with_back(apps[index].path != home);
+                            let screen = ensure_way_back(screen, chrome, &apps[index].name);
+                            if is_front {
+                                trace(&format!("screen {} received", screen.id));
+                                println!("screen {}", screen.id);
+                                render_with(&screen, &CLARA_BW_METRICS, chrome, &mut surface, None);
+                                panel.paint(display, whole_screen, &surface)?;
+                                apps[index].painted += 1;
+                            }
+                            // Kept either way. A background application that
+                            // finished its work has a finished screen waiting,
+                            // rather than the reader watching it be rebuilt.
+                            apps[index].screen = Some(screen);
                         }
-                    },
+                        Message::Log { .. } => {}
+                        Message::DeviceRequest(request) => {
+                            if matches!(request, kobo_protocol::DeviceRequest::ReadBattery)
+                                && battery_read_at.elapsed() >= BATTERY_INTERVAL
+                            {
+                                if let Some(battery) = kobo_hal::battery::read() {
+                                    services.observe_battery(battery.percent, battery.charging);
+                                }
+                                battery_read_at = Instant::now();
+                            }
+                            let result = services.handle(request);
+                            reply(
+                                &mut apps[index],
+                                frame.request_id,
+                                Message::DeviceResult(result),
+                            )?;
+                        }
+                        Message::StoreRequest(request) => {
+                            let result = apps[index].store.handle(&request);
+                            reply(
+                                &mut apps[index],
+                                frame.request_id,
+                                Message::StoreResult(result),
+                            )?;
+                        }
+                        Message::Spawn { task, work } => {
+                            println!("task {} started for {}", task.0, apps[index].name);
+                            if apps[index].tasks.submit(task, work).is_err() {
+                                reply(
+                                    &mut apps[index],
+                                    frame.request_id,
+                                    Message::TaskOutcome {
+                                        task,
+                                        outcome: TaskOutcome::Failed(TaskError::Denied),
+                                    },
+                                )?;
+                            }
+                        }
+                        Message::Cancel { task } => apps[index].tasks.cancel(task),
+                        Message::Exit => {
+                            let gone = apps.remove(index);
+                            let ending = gone.path == home;
+                            visited.push(format!(
+                                "{} closed after {} screens",
+                                gone.name, gone.painted
+                            ));
+                            let was_front = gone.id == front;
+                            stop_hosted(gone);
+                            if ending {
+                                return Ok(finish(&apps, &visited, "the launcher was closed"));
+                            }
+                            if was_front {
+                                let Some(home_id) = id_of_path(&apps, &home) else {
+                                    return Ok(finish(&apps, &visited, "the launcher is gone"));
+                                };
+                                front = switch_to(
+                                    &mut apps,
+                                    front,
+                                    home_id,
+                                    display,
+                                    whole_screen,
+                                    &mut surface,
+                                    &mut panel,
+                                    &home,
+                                )?;
+                            }
+                        }
+                        Message::Launch { name: wanted } => {
+                            match open_application(
+                                &mut apps,
+                                &mut next_id,
+                                &catalogue,
+                                &wanted,
+                                &listener,
+                                whole_screen,
+                                &sender,
+                                front,
+                            ) {
+                                Ok(opened) => {
+                                    front = switch_to(
+                                        &mut apps,
+                                        front,
+                                        opened,
+                                        display,
+                                        whole_screen,
+                                        &mut surface,
+                                        &mut panel,
+                                        &home,
+                                    )?;
+                                }
+                                // A launch that cannot be satisfied leaves the
+                                // panel where it is. Ending the session instead
+                                // would show the reader again, cost the owner
+                                // half a minute and the network, and take every
+                                // other application down with it, all because
+                                // one entry was missing.
+                                Err(error) => {
+                                    println!("launch refused: {error}");
+                                    visited.push(error);
+                                }
+                            }
+                        }
+                        Message::Hello { .. }
+                        | Message::Welcome { .. }
+                        | Message::Action { .. }
+                        | Message::TaskOutcome { .. }
+                        | Message::Lifecycle(_)
+                        | Message::DeviceResult(_)
+                        | Message::StoreResult(_) => {
+                            return Err(format!(
+                                "{} sent a runtime-only message",
+                                apps[index].name
+                            ));
+                        }
+                    }
+                }
+            }
+            // Every application's work, not just the one on the panel. That is
+            // the point of a background application: the answer arrives whether
+            // or not anybody is looking at it.
+            for app in &mut apps {
+                let finished = app.tasks.drain();
+                for done in finished {
+                    println!(
+                        "task {} finished for {}: {}",
+                        done.task.0,
+                        app.name,
+                        describe_outcome(&done.outcome)
+                    );
+                    app.send(Message::TaskOutcome {
+                        task: done.task,
+                        outcome: done.outcome,
+                    })?;
                 }
             }
         }
+    })();
+
+    for app in apps {
+        stop_hosted(app);
+    }
+    let _ignored = fs::remove_file(&socket_path);
+    result
+}
+
+fn index_of(apps: &[Hosted], id: u64) -> Option<usize> {
+    apps.iter().position(|app| app.id == id)
+}
+
+fn id_of_path(apps: &[Hosted], path: &Path) -> Option<u64> {
+    apps.iter().find(|app| app.path == path).map(|app| app.id)
+}
+
+fn reply(app: &mut Hosted, request_id: u32, message: Message) -> Result<(), String> {
+    kobo_protocol::write_to(
+        &mut app.stream,
+        &Frame {
+            request_id,
+            message,
+        },
+    )
+    .map_err(|error| format!("answer {}: {error}", app.name))
+}
+
+/// One line describing how the session ended and what ran during it.
+fn finish(apps: &[Hosted], visited: &[String], why: &str) -> String {
+    let mut parts: Vec<String> = visited.to_vec();
+    for app in apps {
+        parts.push(format!("{} drew {} screens", app.name, app.painted));
+    }
+    if parts.is_empty() {
+        why.to_owned()
+    } else {
+        format!("{why}; {}", parts.join(", "))
     }
 }
 
-/// How a hosted application finished.
-struct Outcome {
-    summary: String,
-    /// The application it asked the runtime to run next, if any.
-    next: Option<String>,
+/// Brings `wanted` to the panel, telling both applications what happened.
+#[allow(clippy::too_many_arguments)]
+fn switch_to(
+    apps: &mut [Hosted],
+    front: u64,
+    wanted: u64,
+    display: &DisplaySession,
+    whole_screen: Rect,
+    surface: &mut Surface,
+    panel: &mut Painter,
+    home: &Path,
+) -> Result<u64, String> {
+    if front == wanted {
+        return Ok(front);
+    }
+    if let Some(index) = index_of(apps, front) {
+        // Told before the panel changes, so an application that saves on
+        // leaving has done it before anything else is drawn over it.
+        apps[index].send(Message::Lifecycle(Lifecycle::Background))?;
+    }
+    let Some(index) = index_of(apps, wanted) else {
+        return Ok(front);
+    };
+    apps[index].used = Instant::now();
+    apps[index].send(Message::Lifecycle(Lifecycle::Foreground))?;
+    // Painted from what the runtime already holds rather than waiting for the
+    // application to draw itself again. An application with nothing drawn yet
+    // is the only case where the panel keeps the previous image for a moment,
+    // and that is a genuinely new application rather than a returning one.
+    if let Some(screen) = apps[index].screen.clone() {
+        let chrome = Chrome::with_back(apps[index].path != home);
+        render_with(&screen, &CLARA_BW_METRICS, chrome, surface, None);
+        panel.paint(display, whole_screen, surface)?;
+        apps[index].painted += 1;
+    }
+    Ok(wanted)
+}
+
+/// Finds an application by name, starting it only if it is not already running.
+#[allow(clippy::too_many_arguments)]
+fn open_application(
+    apps: &mut Vec<Hosted>,
+    next_id: &mut u64,
+    catalogue: &Path,
+    name: &str,
+    listener: &std::os::unix::net::UnixListener,
+    whole_screen: Rect,
+    sender: &Sender<Event>,
+    front: u64,
+) -> Result<u64, String> {
+    let path = resolve(catalogue, name)?;
+    if let Some(id) = id_of_path(apps, &path) {
+        return Ok(id);
+    }
+    if apps.len() >= MAX_HOSTED {
+        evict(apps, front);
+    }
+    start_application(apps, next_id, &path, listener, whole_screen, sender)
+}
+
+/// Stops whichever background application has been left alone longest.
+///
+/// Never the one on the panel, and never the last one: the alternative to
+/// stopping something is refusing to open anything, which is worse.
+fn evict(apps: &mut Vec<Hosted>, front: u64) {
+    let seen: Vec<(u64, Instant)> = apps.iter().map(|app| (app.id, app.used)).collect();
+    let Some(index) = coldest(&seen, front) else {
+        return;
+    };
+    let gone = apps.remove(index);
+    println!("stopped {} to make room", gone.name);
+    stop_hosted(gone);
+}
+
+/// Which hosted application has been left alone longest, if any may go.
+///
+/// Separated from the eviction itself so the rule can be tested without
+/// starting four processes: the one on the panel is never a candidate, and
+/// neither is an empty list.
+fn coldest(seen: &[(u64, Instant)], front: u64) -> Option<usize> {
+    seen.iter()
+        .enumerate()
+        .filter(|(_, (id, _))| *id != front)
+        .min_by_key(|(_, (_, used))| *used)
+        .map(|(index, _)| index)
+}
+
+/// Starts one application and completes its opening exchange.
+fn start_application(
+    apps: &mut Vec<Hosted>,
+    next_id: &mut u64,
+    path: &Path,
+    listener: &std::os::unix::net::UnixListener,
+    whole_screen: Rect,
+    sender: &Sender<Event>,
+) -> Result<u64, String> {
+    let socket_path = listener
+        .local_addr()
+        .ok()
+        .and_then(|address| address.as_pathname().map(Path::to_path_buf))
+        .ok_or_else(|| "the application socket has no path".to_owned())?;
+    let mut child = Command::new(path)
+        .env_clear()
+        .env("KOBO_SOCKET", &socket_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| format!("start {}: {error}", path.display()))?;
+    let (stream, name) = match greet(listener, whole_screen) {
+        Ok(greeting) => greeting,
+        Err(error) => {
+            let _ignored = child.kill();
+            let _ignored = child.wait();
+            return Err(error);
+        }
+    };
+    let id = *next_id;
+    *next_id += 1;
+    if let Err(error) = pump_application(&stream, sender, id) {
+        let _ignored = child.kill();
+        let _ignored = child.wait();
+        return Err(error);
+    }
+    let waker = sender.clone();
+    let tasks = TaskRunner::simulated(std::env::temp_dir())
+        .with_fetch(Arc::new(kobo_net::fetch_from))
+        .with_post(Arc::new(kobo_net::post))
+        .with_secrets(SECRETS)
+        .with_wake(Arc::new(move || {
+            let _ = waker.send(Event::TaskReady);
+        }))
+        // Granted to everything for now. This is the placeholder for the
+        // manifest: capabilities belong to an installed application, and until
+        // applications are installed rather than staged in `/tmp` there is
+        // nothing to read a declaration from. It is written here, once, rather
+        // than being absent, so that the day manifests arrive there is exactly
+        // one line to change.
+        .with_capabilities([kobo_policy::Capability::Network]);
+    apps.push(Hosted {
+        id,
+        // Keyed state lives beside the applications, on the book partition,
+        // because that is the one place a Kobo is guaranteed to have room and
+        // the one place a reinstall does not wipe. An application that never
+        // saves creates nothing here.
+        store: kobo_policy::store::Store::new(Path::new(STATE_ROOT).join(&name)),
+        name,
+        path: path.to_path_buf(),
+        child,
+        stream,
+        tasks,
+        screen: None,
+        painted: 0,
+        used: Instant::now(),
+    });
+    Ok(id)
+}
+
+/// Ends one hosted application and everything it started.
+fn stop_hosted(mut app: Hosted) {
+    app.tasks.shutdown();
+    stop_application(&mut app.child);
 }
 
 /// Refuses a session that cannot possibly succeed, while it is still free.
@@ -489,42 +987,6 @@ fn resolve(catalogue: &Path, name: &str) -> Result<PathBuf, String> {
     } else {
         Err(format!("no application named {name} is installed"))
     }
-}
-
-fn run_session(
-    application: &Path,
-    display: &DisplaySession,
-    whole_screen: Rect,
-    touch: &TouchSink,
-    options: SessionOptions,
-) -> Result<Outcome, String> {
-    let socket_path = PathBuf::from(format!("/tmp/kobo-session-{}.sock", std::process::id()));
-    let _ignored = fs::remove_file(&socket_path);
-    let listener = std::os::unix::net::UnixListener::bind(&socket_path)
-        .map_err(|error| format!("bind application socket: {error}"))?;
-
-    let spawned = Command::new(application)
-        .env_clear()
-        .env("KOBO_SOCKET", &socket_path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn();
-    let mut child = match spawned {
-        Ok(child) => child,
-        // The socket is removed here as well, because returning early would
-        // otherwise leave a stale entry in /tmp for every failed start.
-        Err(error) => {
-            let _ignored = fs::remove_file(&socket_path);
-            return Err(format!("start {}: {error}", application.display()));
-        }
-    };
-
-    let result = converse(&listener, display, whole_screen, touch, options, &mut child);
-
-    stop_application(&mut child);
-    let _ignored = fs::remove_file(&socket_path);
-    result
 }
 
 /// Ends the application, politely if it has already finished and firmly if not.
@@ -619,14 +1081,6 @@ fn greet(
     Ok((stream, name))
 }
 
-/// What the runtime, rather than the application, decides about a session.
-struct SessionOptions {
-    limits: Limits,
-    profile: &'static DeviceProfile,
-    chrome: Chrome,
-    watchdog: Arc<Watchdog>,
-}
-
 /// Keeps the recovery watchdog fed from a thread, for the stretches where the
 /// session loop is not running.
 ///
@@ -684,249 +1138,6 @@ fn deliver_touch(
     )
     .map_err(|error| format!("deliver a tap: {error}"))?;
     Ok(false)
-}
-
-/// The session event loop.
-///
-/// It stays one flat match over the message kinds rather than being split up.
-/// Every path that can end a session, and every message that must be refused,
-/// is then visible together, and the alternative is a helper taking eleven
-/// arguments that reads worse than what it replaces.
-#[allow(clippy::too_many_lines)]
-fn converse(
-    listener: &std::os::unix::net::UnixListener,
-    display: &DisplaySession,
-    whole_screen: Rect,
-    touch: &TouchSink,
-    options: SessionOptions,
-    child: &mut Child,
-) -> Result<Outcome, String> {
-    let SessionOptions {
-        limits,
-        profile,
-        chrome,
-        watchdog,
-    } = options;
-    let _ = (profile, child);
-    let (mut stream, name) = greet(listener, whole_screen)?;
-
-    let (sender, events) = mpsc::channel();
-    touch.set(Some(sender.clone()));
-    pump_application(&stream, &sender)?;
-
-    let mut surface = Surface::new(whole_screen.width as usize, whole_screen.height as usize);
-    let mut current: Option<Screen> = None;
-    let mut painted = 0_u32;
-    let mut panel = Painter::new(surface.pixels.len());
-    // Not `simulated()`. On the real panel that answered every battery read
-    // with the same invented 72 percent, which is worse than refusing: an
-    // application cannot tell an invented number from a measured one, so it
-    // acts on it. This build performs exactly what it has a proven backend
-    // for, which today is the read-only battery gauge and nothing else.
-    let mut services = DeviceServices::new(
-        Declared::all(),
-        PowerPolicy::DEFAULT,
-        match kobo_hal::battery::read() {
-            Some(_) => Backends::with([Capability::BatteryRead]),
-            None => Backends::none(),
-        },
-    );
-    // Deliberately already stale, so the first read an application makes is a
-    // real measurement rather than the default the services were built with.
-    let mut battery_read_at = Instant::now()
-        .checked_sub(BATTERY_INTERVAL)
-        .unwrap_or_else(Instant::now);
-    // Keyed state lives beside the applications, on the book partition, because
-    // that is the one place a Kobo is guaranteed to have room and the one place
-    // a reinstall does not wipe. An application that never saves creates
-    // nothing here.
-    let store = kobo_policy::store::Store::new(Path::new(STATE_ROOT).join(&name));
-    let waker = sender.clone();
-    let mut tasks = TaskRunner::simulated(std::env::temp_dir())
-        .with_fetch(Arc::new(kobo_net::fetch_from))
-        .with_post(Arc::new(kobo_net::post))
-        .with_secrets(SECRETS)
-        .with_wake(Arc::new(move || {
-            let _ = waker.send(Event::TaskReady);
-        }))
-        // Granted to everything for now. This is the placeholder for the
-        // manifest: capabilities belong to an installed application, and until
-        // applications are installed rather than staged in `/tmp` there is
-        // nothing to read a declaration from. It is written here, once, rather
-        // than being absent, so that the day manifests arrive there is exactly
-        // one line to change.
-        .with_capabilities([kobo_policy::Capability::Network]);
-    let ceiling = Instant::now() + limits.ceiling;
-    let mut last_activity = Instant::now();
-
-    loop {
-        let now = Instant::now();
-        // Reported from the loop rather than from a thread, so this says the
-        // runtime is still serving the panel rather than merely that the
-        // process has not been reaped.
-        watchdog.beat();
-        if now >= ceiling {
-            tasks.shutdown();
-            return Ok(Outcome {
-                summary: format!(
-                    "{name} reached the {} session limit after {painted} screens",
-                    describe(limits.ceiling)
-                ),
-                next: None,
-            });
-        }
-        let idle_at = last_activity + limits.idle;
-        if now >= idle_at {
-            tasks.shutdown();
-            return Ok(Outcome {
-                summary: format!(
-                    "{name} was left alone for {} after {painted} screens, so the reader has it back",
-                    describe(limits.idle)
-                ),
-                next: None,
-            });
-        }
-        // Whichever comes first, and never longer than one heartbeat, so a
-        // session nobody is touching still proves it is alive.
-        let wait = ceiling
-            .saturating_duration_since(now)
-            .min(idle_at.saturating_duration_since(now))
-            .min(BEAT_INTERVAL);
-        match events.recv_timeout(wait) {
-            // Both fall through to the drain below rather than continuing. A
-            // heartbeat is a second chance to deliver a result, and a wake is
-            // the first: the drain is the only delivery path either way.
-            Err(RecvTimeoutError::Timeout) | Ok(Event::TaskReady) => {}
-            Err(RecvTimeoutError::Disconnected) => {
-                tasks.shutdown();
-                return Ok(Outcome {
-                    summary: format!("{name} ended after {painted} screens"),
-                    next: None,
-                });
-            }
-            Ok(Event::AppGone) => {
-                tasks.shutdown();
-                return Ok(Outcome {
-                    summary: format!("{name} exited after {painted} screens"),
-                    next: None,
-                });
-            }
-            Ok(Event::Touch(event)) => {
-                last_activity = Instant::now();
-                if deliver_touch(&mut stream, event, current.as_ref(), chrome)? {
-                    tasks.shutdown();
-                    return Ok(Outcome {
-                        summary: format!("{name} was closed after {painted} screens"),
-                        next: None,
-                    });
-                }
-            }
-            Ok(Event::App(frame)) => match frame.message {
-                Message::SetScreen(screen) => {
-                    last_activity = Instant::now();
-                    trace(&format!("screen {} received", screen.id));
-                    println!("screen {}", screen.id);
-                    let screen = ensure_way_back(screen, chrome, &name);
-                    render_with(&screen, &CLARA_BW_METRICS, chrome, &mut surface, None);
-                    panel.paint(display, whole_screen, &surface)?;
-                    trace(&format!("screen {} painted", screen.id));
-                    painted += 1;
-                    current = Some(screen);
-                }
-                Message::Log { .. } => {}
-                Message::DeviceRequest(request) => {
-                    if matches!(request, kobo_protocol::DeviceRequest::ReadBattery)
-                        && battery_read_at.elapsed() >= BATTERY_INTERVAL
-                    {
-                        if let Some(battery) = kobo_hal::battery::read() {
-                            services.observe_battery(battery.percent, battery.charging);
-                        }
-                        battery_read_at = Instant::now();
-                    }
-                    let result = services.handle(request);
-                    kobo_protocol::write_to(
-                        &mut stream,
-                        &Frame {
-                            request_id: frame.request_id,
-                            message: Message::DeviceResult(result),
-                        },
-                    )
-                    .map_err(|error| format!("answer a device request: {error}"))?;
-                }
-                Message::Spawn { task, work } => {
-                    println!("task {} started", task.0);
-                    if tasks.submit(task, work).is_err() {
-                        kobo_protocol::write_to(
-                            &mut stream,
-                            &Frame {
-                                request_id: frame.request_id,
-                                message: Message::TaskOutcome {
-                                    task,
-                                    outcome: TaskOutcome::Failed(TaskError::Denied),
-                                },
-                            },
-                        )
-                        .map_err(|error| format!("refuse a task: {error}"))?;
-                    }
-                }
-                Message::StoreRequest(request) => {
-                    let result = store.handle(&request);
-                    kobo_protocol::write_to(
-                        &mut stream,
-                        &Frame {
-                            request_id: frame.request_id,
-                            message: Message::StoreResult(result),
-                        },
-                    )
-                    .map_err(|error| format!("answer a store request: {error}"))?;
-                }
-                Message::Cancel { task } => tasks.cancel(task),
-                Message::Exit => {
-                    tasks.shutdown();
-                    return Ok(Outcome {
-                        summary: format!("{name} exited after {painted} screens"),
-                        next: None,
-                    });
-                }
-                // The application stops so the next one can have the panel.
-                // Running both at once would mean two owners of one screen.
-                Message::Launch { name: wanted } => {
-                    tasks.shutdown();
-                    return Ok(Outcome {
-                        summary: format!("{name} handed over after {painted} screens"),
-                        next: Some(wanted),
-                    });
-                }
-                Message::Hello { .. }
-                | Message::Welcome { .. }
-                | Message::Action { .. }
-                | Message::TaskOutcome { .. }
-                | Message::DeviceResult(_)
-                | Message::StoreResult(_) => {
-                    tasks.shutdown();
-                    return Err(format!("{name} sent a runtime-only message"));
-                }
-            },
-        }
-        for finished in tasks.drain() {
-            println!(
-                "task {} finished: {}",
-                finished.task.0,
-                describe_outcome(&finished.outcome)
-            );
-            kobo_protocol::write_to(
-                &mut stream,
-                &Frame {
-                    request_id: 0,
-                    message: Message::TaskOutcome {
-                        task: finished.task,
-                        outcome: finished.outcome,
-                    },
-                },
-            )
-            .map_err(|error| format!("report a finished task: {error}"))?;
-        }
-    }
 }
 
 /// One short word for a task outcome, for the session log.
@@ -1126,6 +1337,7 @@ fn pump_touch(touch: &mut TouchSession, sink: &TouchSink) {
 fn pump_application(
     stream: &std::os::unix::net::UnixStream,
     sender: &Sender<Event>,
+    id: u64,
 ) -> Result<(), String> {
     let mut reader = stream
         .try_clone()
@@ -1133,10 +1345,10 @@ fn pump_application(
     let sender = sender.clone();
     thread::spawn(move || loop {
         let Ok(frame) = kobo_protocol::read_from(&mut reader) else {
-            let _ignored = sender.send(Event::AppGone);
+            let _ignored = sender.send(Event::AppGone(id));
             return;
         };
-        if sender.send(Event::App(Box::new(frame))).is_err() {
+        if sender.send(Event::App(id, Box::new(frame))).is_err() {
             return;
         }
     });
@@ -1376,5 +1588,39 @@ mod tests {
             height: 2,
         };
         assert!(!Painter::has_grey(&frame, top_left, SCREEN));
+    }
+}
+
+#[cfg(test)]
+mod hosting_tests {
+    use super::coldest;
+    use std::time::{Duration, Instant};
+
+    fn ago(seconds: u64) -> Instant {
+        Instant::now()
+            .checked_sub(Duration::from_secs(seconds))
+            .unwrap_or_else(Instant::now)
+    }
+
+    #[test]
+    fn the_application_left_alone_longest_is_the_one_that_goes() {
+        let seen = [(1, ago(30)), (2, ago(300)), (3, ago(5))];
+        assert_eq!(coldest(&seen, 3), Some(1));
+    }
+
+    #[test]
+    fn the_one_on_the_panel_is_never_stopped_even_when_it_is_the_oldest() {
+        // The front application is the oldest here by a wide margin, because
+        // `used` records when it was last brought forward rather than when it
+        // was last touched. Stopping it would close what the reader is looking
+        // at in order to open something else.
+        let seen = [(1, ago(900)), (2, ago(10))];
+        assert_eq!(coldest(&seen, 1), Some(1));
+    }
+
+    #[test]
+    fn nothing_is_stopped_when_the_only_application_is_the_front_one() {
+        let seen = [(7, ago(60))];
+        assert_eq!(coldest(&seen, 7), None);
     }
 }

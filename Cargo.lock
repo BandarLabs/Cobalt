@@ -406,6 +406,14 @@ name = "kobo-abi"
 version = "0.1.0"
 
 [[package]]
+name = "kobo-brief"
+version = "0.1.0"
+dependencies = [
+ "kobo-json",
+ "kobo-sdk",
+]
+
+[[package]]
 name = "kobo-chat"
 version = "0.1.0"
 dependencies = [

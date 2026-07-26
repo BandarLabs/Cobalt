@@ -282,7 +282,8 @@ fn serve_application(stream: &mut UnixStream, frame_path: &Path) -> Result<(), B
             | Message::Action { .. }
             | Message::TaskOutcome { .. }
             | Message::DeviceResult(_)
-            | Message::StoreResult(_) => {
+            | Message::StoreResult(_)
+            | Message::Lifecycle(_) => {
                 return Err("application sent a daemon-only message".into());
             }
         }

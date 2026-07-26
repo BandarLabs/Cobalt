@@ -6,8 +6,8 @@
 //! [`AppRunner::action`] from their platform event loop.
 
 pub use kobo_protocol::{
-    DenyReason, DeviceRequest, DeviceResult, Frame, LogLevel, Message, StoreError, StoreRequest,
-    StoreResult, StreamError, Task, TaskError, TaskId, TaskOutcome, MAX_STORE_KEYS,
+    DenyReason, DeviceRequest, DeviceResult, Frame, Lifecycle, LogLevel, Message, StoreError,
+    StoreRequest, StoreResult, StreamError, Task, TaskError, TaskId, TaskOutcome, MAX_STORE_KEYS,
     MAX_STORE_VALUE, MAX_TASK_BYTES, MAX_URL_LEN,
 };
 pub use kobo_ui::{
@@ -32,8 +32,9 @@ pub mod keyboard;
 pub mod prelude {
     pub use crate::{
         action_id, ActionId, AppRunner, AppStore, Capability, Client, ClientEvent, Command,
-        Context, DenyReason, Device, DeviceRequest, DeviceResult, Grant, Grants, KoboApp, Node,
-        NodeId, PowerPolicy, Screen, ScreenBuilder, StoreError, StoreRequest, StoreResult,
+        Context, DenyReason, Device, DeviceRequest, DeviceResult, Grant, Grants, KoboApp,
+        Lifecycle, Node, NodeId, PowerPolicy, Screen, ScreenBuilder, StoreError, StoreRequest,
+        StoreResult,
     };
 }
 
@@ -786,6 +787,21 @@ pub trait KoboApp {
     /// or is cancelled, so an application never has to time out its own work.
     fn on_task(&mut self, _context: &mut Context, _task: TaskId, _outcome: TaskOutcome) {}
 
+    /// The reader left this application for another one.
+    ///
+    /// Nothing is stopped: work in flight keeps running and answers keep
+    /// arriving. What changes is that nothing drawn from here will be seen
+    /// until [`KoboApp::on_foreground`], so this is the moment to write
+    /// anything that would be missed if the device never came back.
+    fn on_background(&mut self, _context: &mut Context) {}
+
+    /// The reader came back.
+    ///
+    /// The panel still holds whatever was last drawn from this application, so
+    /// there is no blank to cover, but anything that changed while it was away
+    /// has to be drawn now.
+    fn on_foreground(&mut self, _context: &mut Context) {}
+
     /// Receives the runtime's answer to exactly one earlier store request.
     ///
     /// Like device results, every request reports back, so an application never
@@ -908,6 +924,14 @@ impl<A: KoboApp> AppRunner<A> {
         self.dispatch(|app, context| app.on_task(context, task, outcome))
     }
 
+    /// Tells the application it gained or lost the panel.
+    pub fn lifecycle(&mut self, state: Lifecycle) -> Vec<Command> {
+        match state {
+            Lifecycle::Foreground => self.dispatch(KoboApp::on_foreground),
+            Lifecycle::Background => self.dispatch(KoboApp::on_background),
+        }
+    }
+
     /// Delivers one store answer.
     pub fn store_result(&mut self, result: StoreResult) -> Vec<Command> {
         self.dispatch(|app, context| app.on_store(context, result))
@@ -972,6 +996,7 @@ pub enum ClientEvent {
     Device(DeviceResult),
     Task { task: TaskId, outcome: TaskOutcome },
     Store(StoreResult),
+    Lifecycle(Lifecycle),
     Exit,
 }
 
@@ -1106,6 +1131,7 @@ impl Client {
             Message::DeviceResult(result) => Ok(ClientEvent::Device(result)),
             Message::TaskOutcome { task, outcome } => Ok(ClientEvent::Task { task, outcome }),
             Message::StoreResult(result) => Ok(ClientEvent::Store(result)),
+            Message::Lifecycle(state) => Ok(ClientEvent::Lifecycle(state)),
             Message::Exit => Ok(ClientEvent::Exit),
             _ => Err(ClientError::UnexpectedMessage),
         }
@@ -1418,6 +1444,9 @@ pub fn run_on<A: KoboApp>(name: &str, app: A, socket: &Path) -> Result<(), Clien
                 ClientEvent::Store(result) => {
                     client.send_commands(runner.store_result(result))?;
                 }
+                ClientEvent::Lifecycle(state) => {
+                    client.send_commands(runner.lifecycle(state))?;
+                }
                 ClientEvent::Action(_) | ClientEvent::Exit => break,
             }
         }
@@ -1431,6 +1460,7 @@ pub fn run_on<A: KoboApp>(name: &str, app: A, socket: &Path) -> Result<(), Clien
             ClientEvent::Device(result) => runner.device_result(result),
             ClientEvent::Task { task, outcome } => runner.task_outcome(task, outcome),
             ClientEvent::Store(result) => runner.store_result(result),
+            ClientEvent::Lifecycle(state) => runner.lifecycle(state),
             ClientEvent::Exit => {
                 // The runtime is taking the screen back. Give the application
                 // its exit callback, then go, rather than arguing about it.

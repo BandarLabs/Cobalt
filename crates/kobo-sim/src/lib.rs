@@ -607,7 +607,8 @@ fn read_app_messages(mut stream: UnixStream, state: &Arc<Mutex<AppState>>) -> io
             | Message::Action { .. }
             | Message::TaskOutcome { .. }
             | Message::DeviceResult(_)
-            | Message::StoreResult(_) => {
+            | Message::StoreResult(_)
+            | Message::Lifecycle(_) => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "unexpected SDK protocol message",

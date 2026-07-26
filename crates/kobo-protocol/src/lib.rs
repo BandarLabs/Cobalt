@@ -183,6 +183,8 @@ pub enum Message {
     },
     /// An application reading or writing its own small state.
     StoreRequest(StoreRequest),
+    /// Sent by the runtime when an application gains or loses the panel.
+    Lifecycle(Lifecycle),
     /// The runtime's answer to exactly one store request.
     StoreResult(StoreResult),
 }
@@ -205,6 +207,22 @@ pub enum StoreRequest {
     Forget { key: String },
     /// Lists the keys this application has written.
     List,
+}
+
+/// Where an application stands relative to the panel.
+///
+/// An application is not stopped when the reader leaves it. It keeps its
+/// process, its memory and its work in flight, and is told it is no longer
+/// being looked at. Coming back is then instant and shows exactly what was
+/// left, which on a device where a restart costs a full refresh and a reload
+/// is the difference between switching and starting over.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Lifecycle {
+    /// This application owns the panel. Draw.
+    Foreground,
+    /// Something else owns the panel. Keep working, but nothing drawn now will
+    /// be seen until this comes back, so this is the moment to save.
+    Background,
 }
 
 /// The runtime's answer to exactly one [`StoreRequest`].
@@ -483,64 +501,15 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
         Message::Launch { name } => push_string(&mut payload, name)?,
         Message::DeviceRequest(request) => encode_device_request(&mut payload, *request),
         Message::DeviceResult(result) => encode_device_result(&mut payload, *result),
-        Message::Spawn { task, work } => {
-            push_u32(&mut payload, task.0);
-            match work {
-                Task::Fetch {
-                    url,
-                    offset,
-                    max_bytes,
-                } => {
-                    payload.push(0);
-                    push_string(&mut payload, url)?;
-                    push_u32(&mut payload, *offset);
-                    push_u32(&mut payload, *max_bytes);
-                }
-                Task::ReadFile { path } => {
-                    payload.push(1);
-                    push_string(&mut payload, path)?;
-                }
-                Task::Sleep { seconds } => {
-                    payload.push(2);
-                    push_u32(&mut payload, *seconds);
-                }
-                Task::Post {
-                    url,
-                    body,
-                    content_type,
-                    secret,
-                    max_bytes,
-                } => {
-                    payload.push(3);
-                    push_string(&mut payload, url)?;
-                    push_string(&mut payload, body)?;
-                    push_string(&mut payload, content_type)?;
-                    push_string(&mut payload, secret.as_deref().unwrap_or(""))?;
-                    push_u32(&mut payload, *max_bytes);
-                }
-            }
-        }
-        Message::Cancel { task } => push_u32(&mut payload, task.0),
-        Message::TaskOutcome { task, outcome } => {
-            push_u32(&mut payload, task.0);
-            match outcome {
-                TaskOutcome::Completed(bytes) => {
-                    payload.push(0);
-                    push_u32(
-                        &mut payload,
-                        u32::try_from(bytes.len()).map_err(|_| ProtocolError::FrameTooLarge)?,
-                    );
-                    payload.extend_from_slice(bytes);
-                }
-                TaskOutcome::Failed(error) => {
-                    payload.push(1);
-                    payload.push(encode_task_error(*error));
-                }
-                TaskOutcome::Cancelled => payload.push(2),
-            }
+        Message::Spawn { .. } | Message::Cancel { .. } | Message::TaskOutcome { .. } => {
+            encode_task_message(&mut payload, &frame.message)?;
         }
         Message::StoreRequest(request) => encode_store_request(&mut payload, request)?,
         Message::StoreResult(result) => encode_store_result(&mut payload, result)?,
+        Message::Lifecycle(state) => payload.push(match state {
+            Lifecycle::Foreground => 0,
+            Lifecycle::Background => 1,
+        }),
     }
     debug_assert_eq!(payload.len(), payload_len);
     let mut bytes = Vec::with_capacity(HEADER_LEN + payload.len());
@@ -552,6 +521,69 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
     bytes.extend_from_slice(&frame.request_id.to_be_bytes());
     bytes.extend_from_slice(&payload);
     Ok(bytes)
+}
+
+fn encode_task_message(payload: &mut Vec<u8>, message: &Message) -> Result<(), ProtocolError> {
+    match message {
+        Message::Spawn { task, work } => {
+            push_u32(payload, task.0);
+            match work {
+                Task::Fetch {
+                    url,
+                    offset,
+                    max_bytes,
+                } => {
+                    payload.push(0);
+                    push_string(payload, url)?;
+                    push_u32(payload, *offset);
+                    push_u32(payload, *max_bytes);
+                }
+                Task::ReadFile { path } => {
+                    payload.push(1);
+                    push_string(payload, path)?;
+                }
+                Task::Sleep { seconds } => {
+                    payload.push(2);
+                    push_u32(payload, *seconds);
+                }
+                Task::Post {
+                    url,
+                    body,
+                    content_type,
+                    secret,
+                    max_bytes,
+                } => {
+                    payload.push(3);
+                    push_string(payload, url)?;
+                    push_string(payload, body)?;
+                    push_string(payload, content_type)?;
+                    push_string(payload, secret.as_deref().unwrap_or(""))?;
+                    push_u32(payload, *max_bytes);
+                }
+            }
+        }
+        Message::Cancel { task } => push_u32(payload, task.0),
+        Message::TaskOutcome { task, outcome } => {
+            push_u32(payload, task.0);
+            match outcome {
+                TaskOutcome::Completed(bytes) => {
+                    payload.push(0);
+                    push_u32(
+                        payload,
+                        u32::try_from(bytes.len()).map_err(|_| ProtocolError::FrameTooLarge)?,
+                    );
+                    payload.extend_from_slice(bytes);
+                }
+                TaskOutcome::Failed(error) => {
+                    payload.push(1);
+                    payload.push(encode_task_error(*error));
+                }
+                TaskOutcome::Cancelled => payload.push(2),
+            }
+        }
+        _ => unreachable!("only task messages reach here"),
+    }
+    Ok(())
 }
 
 fn encode_store_request(
@@ -694,6 +726,7 @@ fn encoded_message_layout(message: &Message) -> Result<(u8, usize), ProtocolErro
         }
         Message::StoreRequest(request) => Ok((13, store_request_len(request)?)),
         Message::StoreResult(result) => Ok((14, store_result_len(result)?)),
+        Message::Lifecycle(_) => Ok((15, 1)),
     }
 }
 
@@ -1173,6 +1206,11 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
             }
             4 => StoreResult::Denied(StoreError::try_from(reader.u8()?)?),
             _ => return Err(ProtocolError::InvalidValue("store result")),
+        }),
+        15 => Message::Lifecycle(match reader.u8()? {
+            0 => Lifecycle::Foreground,
+            1 => Lifecycle::Background,
+            _ => return Err(ProtocolError::InvalidValue("lifecycle state")),
         }),
         value => return Err(ProtocolError::UnknownMessageType(value)),
     };
@@ -2510,6 +2548,8 @@ mod store_tests {
             }),
             Message::StoreResult(StoreResult::Keys(vec!["a".into(), "b".into()])),
             Message::StoreResult(StoreResult::Denied(StoreError::BadKey)),
+            Message::Lifecycle(Lifecycle::Foreground),
+            Message::Lifecycle(Lifecycle::Background),
         ] {
             assert_eq!(message_round_trip(message.clone()), message);
         }

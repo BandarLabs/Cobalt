@@ -56,6 +56,12 @@ const ENTRIES: &[Entry] = &[
         glyph: Glyph::Grid,
     },
     Entry {
+        name: "brief",
+        title: "Daily Brief",
+        summary: "Collects the day's stories while you read something else.",
+        glyph: Glyph::Clock,
+    },
+    Entry {
         name: "todo",
         title: "Todo",
         summary: "A list that remembers itself. Tap an item to finish it.",
