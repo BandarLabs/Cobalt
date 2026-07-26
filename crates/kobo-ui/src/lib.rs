@@ -1735,9 +1735,20 @@ impl FontSize {
     /// installed typeface, which is why it cannot be `const`.
     #[must_use]
     pub fn line_height(self) -> i32 {
-        TYPESETTER
-            .get()
-            .map_or_else(|| self.fallback_line_height(), |t| t.line_height(self))
+        self.line_height_in(Face::Text)
+    }
+
+    /// The baseline-to-baseline distance in pixels for one face.
+    ///
+    /// The two faces do not share a line height. A monospace face is typically
+    /// taller for the same em, and a terminal that used the proportional line
+    /// height would overlap its own rows.
+    #[must_use]
+    pub fn line_height_in(self, face: Face) -> i32 {
+        TYPESETTER.get().map_or_else(
+            || self.fallback_line_height(),
+            |t| t.line_height(self, face),
+        )
     }
 
     /// The built-in bitmap's line height.
@@ -1752,6 +1763,27 @@ impl FontSize {
     }
 }
 
+/// Which of the two system faces a run of text is set in.
+///
+/// This is an axis, not a font name. An application says what a piece of text
+/// *is*, never which file to open, for the same reason it names a [`FontSize`]
+/// rather than a pixel count: the runtime owns the answer and can change it for
+/// a different panel without touching a line of application code.
+///
+/// There are exactly two, and there is no third. A weight axis would multiply
+/// the faces the runtime has to find, and on a panel with two usable tones bold
+/// buys far less separation than size and space already do.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum Face {
+    /// Proportional. Everything a reader reads.
+    #[default]
+    Text,
+    /// Fixed pitch, where column alignment carries meaning: a terminal, a hash,
+    /// a file size. Every glyph has the same advance, so `n` characters are
+    /// always exactly `n` cells wide.
+    Mono,
+}
+
 /// Supplies real type to the layout and the renderer.
 ///
 /// This layer knows what a heading is; it does not know what a font file is.
@@ -1760,14 +1792,33 @@ impl FontSize {
 /// why replacing the typeface changes no application code at all.
 pub trait Typesetter: Send + Sync {
     /// The width and height in pixels that `text` will occupy.
-    fn measure(&self, text: &str, size: FontSize) -> (i32, i32);
+    fn measure(&self, text: &str, size: FontSize, face: Face) -> (i32, i32);
     /// The baseline-to-baseline distance for a size.
-    fn line_height(&self, size: FontSize) -> i32;
+    fn line_height(&self, size: FontSize, face: Face) -> i32;
     /// Draws `text` with its top-left corner at `x`, `y`.
     ///
     /// Coverage runs from 0 for untouched to 255 for solid, so a renderer can
     /// antialias against whatever it is drawing onto.
-    fn draw(&self, text: &str, x: i32, y: i32, size: FontSize, plot: &mut dyn FnMut(i32, i32, u8));
+    fn draw(
+        &self,
+        text: &str,
+        x: i32,
+        y: i32,
+        size: FontSize,
+        face: Face,
+        plot: &mut dyn FnMut(i32, i32, u8),
+    );
+
+    /// The advance of a single [`Face::Mono`] cell.
+    ///
+    /// A grid of characters cannot be laid out by measuring strings: a terminal
+    /// has to know the cell before it knows what will be in it, and every cell
+    /// must land on the same column whatever it holds. Asking the face once is
+    /// also what lets a partial repaint address one cell rather than one line.
+    fn cell_width(&self, size: FontSize) -> i32 {
+        let (width, _) = self.measure("0", size, Face::Mono);
+        max(1, width)
+    }
 }
 
 /// The one typeface for the device, installed once by the runtime.
@@ -1801,12 +1852,36 @@ pub fn has_typesetter() -> bool {
 /// deterministic.
 #[must_use]
 pub fn measure_text(text: &str, size: FontSize) -> (i32, i32) {
+    measure_text_in(text, size, Face::Text)
+}
+
+/// Returns integer pixel dimensions for one face of the installed typeface.
+#[must_use]
+pub fn measure_text_in(text: &str, size: FontSize, face: Face) -> (i32, i32) {
     if let Some(typesetter) = TYPESETTER.get() {
-        return typesetter.measure(text, size);
+        return typesetter.measure(text, size, face);
     }
     let scale = size.scale();
     let glyphs = i32::try_from(text.chars().count()).unwrap_or(i32::MAX);
     (glyphs.saturating_mul(6).saturating_mul(scale), 7 * scale)
+}
+
+/// The size of one monospace cell: what a character grid is built from.
+///
+/// Returns width and height together because a caller that needs one always
+/// needs the other, and taking them from a single call means a grid can never
+/// be sized from two different answers.
+#[must_use]
+pub fn mono_cell(size: FontSize) -> (i32, i32) {
+    TYPESETTER.get().map_or_else(
+        || (6 * size.scale(), size.fallback_line_height()),
+        |typesetter| {
+            (
+                max(1, typesetter.cell_width(size)),
+                max(1, typesetter.line_height(size, Face::Mono)),
+            )
+        },
+    )
 }
 
 /// The width of one average character, used to wrap without measuring every
@@ -1816,7 +1891,7 @@ fn average_advance(size: FontSize) -> i32 {
         // Measuring a representative run is closer to the truth than any one
         // character, and proportional type has no single answer.
         const SAMPLE: &str = "abcdefghijklmnopqrstuvwxyz";
-        let (width, _) = typesetter.measure(SAMPLE, size);
+        let (width, _) = typesetter.measure(SAMPLE, size, Face::Text);
         max(1, width / 26)
     })
 }
@@ -2595,8 +2670,23 @@ fn draw_text(
     tone: u8,
     clip: Rect,
 ) {
+    draw_text_in(surface, text, x, y, size, Face::Text, tone, clip);
+}
+
+/// Draws one run of text in a chosen face.
+#[allow(clippy::too_many_arguments)]
+fn draw_text_in(
+    surface: &mut Surface,
+    text: &str,
+    x: i32,
+    y: i32,
+    size: FontSize,
+    face: Face,
+    tone: u8,
+    clip: Rect,
+) {
     if let Some(typesetter) = TYPESETTER.get() {
-        typesetter.draw(text, x, y, size, &mut |pixel_x, pixel_y, coverage| {
+        typesetter.draw(text, x, y, size, face, &mut |pixel_x, pixel_y, coverage| {
             if coverage > 0 && clip.contains(pixel_x, pixel_y) {
                 surface.blend(pixel_x, pixel_y, tone, coverage);
             }
