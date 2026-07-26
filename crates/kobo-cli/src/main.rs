@@ -9,9 +9,80 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod devsession;
+mod package;
 mod sha256;
 
 const DEVICE_PACKAGES: &[&str] = &["kobo-doctor", "kobod", "kobo-todo", "kobo-terminal"];
+/// Everything an owner's device needs, in the order it is packaged.
+///
+/// The launcher is first because it is what `kobod` is pointed at, and the
+/// rest are what it can start. `kobo-doctor`, `kobo-smoke`, `kobo-handoff` and
+/// `kobo-guard` are deliberately absent: they are development tools, and two
+/// of them write to hardware.
+const INSTALLED_PACKAGES: &[&str] = &[
+    "kobod",
+    "kobo-launcher",
+    "kobo-terminal",
+    "kobo-todo",
+    "kobo-brief",
+    "kobo-chat",
+    "kobo-gutenshelf",
+    "kobo-gallery",
+    "kobo-tictactoe",
+];
+/// What the owner runs, and the only thing that starts a panel session.
+///
+/// It sets the unlock the daemon requires, because on an installed device the
+/// owner tapping a menu entry *is* the attendance that gate was asking for.
+/// The session hands the panel back on every exit path, and a reboot always
+/// lands in the stock reader, so the worst case remains a power cycle.
+const START_SCRIPT: &str = "\
+#!/bin/sh
+# Starts Cobalt. The stock reader is stopped, the panel is handed over, and the
+# reader is started again when the session ends. A reboot always returns to the
+# stock reader, so nothing here needs undoing by hand.
+set -e
+root=/mnt/onboard/.adds/cobalt
+KOBO_PRESENT_UNLOCK=OWNER_ATTENDED_PANEL_SESSION \\
+  exec \"$root/bin/kobod\" --present \"$root/bin/kobo-launcher\"
+";
+
+/// Shipped inside the package, because the thing an owner most needs to find
+/// is how to get rid of it.
+const INSTALL_README: &str = "\
+Cobalt
+======
+
+Everything is in this folder, on the same partition your books are on. It is
+visible from any computer over USB.
+
+To remove it completely: delete this folder. Nothing was written to the
+system partition, no start-up script was added, and no part of the reader was
+replaced, so there is nothing else to undo.
+
+To start it: run start.sh. If you have NickelMenu installed, add this one line
+to .adds/nm/menu to get an entry in the reader's own menu:
+
+  menu_item :main    :Cobalt    :cmd_spawn    :quiet:/mnt/onboard/.adds/cobalt/start.sh
+
+Starting Cobalt stops the stock reader for the length of the session and
+starts it again afterwards. That takes twenty to thirty seconds each way. A
+reboot always returns you to the stock reader.
+";
+
+/// Printed after a package is built, and the same words the project's own
+/// instructions use.
+const INSTALL_INSTRUCTIONS: &str = "\
+To install on a device:
+  1. Charge it. The reader refuses to install anything on a low battery, and
+     it does so silently.
+  2. Connect it by USB and copy this file to .kobo/KoboRoot.tgz on the drive
+     that appears.
+  3. Eject the drive. The device installs it at the next boot and restarts.
+
+Everything lands in .adds/cobalt on the same drive. Deleting that folder is a
+complete uninstall; nothing is written to the system partition.";
+
 const REMOTE_CONNECT_TIMEOUT_SECONDS: u64 = 10;
 const REMOTE_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 const REMOTE_CLEANUP_TIMEOUT: Duration = Duration::from_secs(5);
@@ -155,6 +226,8 @@ fn run(arguments: &[String]) -> Result<(), String> {
             "smoke-display is not compiled in; rebuild the CLI with --features device-write"
                 .to_owned(),
         ),
+        "package" => build_package(&arguments[1..]),
+        "inspect" => inspect_package(&arguments[1..]),
         "verify" => verify_command(&arguments[1..]),
         "run" if arguments.get(1).is_some_and(|value| value == "--sim") => run_simulation(),
         "run" => {
@@ -1516,6 +1589,189 @@ fn verify_command(arguments: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// Builds the single file a Kobo owner copies onto their device.
+///
+/// The whole point is that the owner never sees SSH, an IP address, or this
+/// device's habit of ignoring remote arguments. They copy one file into
+/// `.kobo/`, eject, and the reader installs it at the next boot using its own
+/// battery-checked, recovery-bracketed installer.
+fn build_package(arguments: &[String]) -> Result<(), String> {
+    let (tarball, folder) = parse_package(arguments)?;
+    let mut members = Vec::new();
+    for name in INSTALLED_PACKAGES {
+        run_status(
+            &mut device_build_command(name, None)?,
+            format!("cargo build {name}"),
+        )?;
+        let binary = Path::new("target/armv7-unknown-linux-musleabihf/release").join(name);
+        // The same check the device build already applies, repeated here
+        // because this is the artifact somebody else's device will run.
+        verify_arm_elf(&binary)?;
+        members.push(package::Member {
+            path: format!("{}/bin/{name}", package::INSTALL_ROOT),
+            bytes: fs::read(&binary)
+                .map_err(|error| format!("read {}: {error}", binary.display()))?,
+            program: true,
+        });
+    }
+    members.push(text_member("start.sh", START_SCRIPT, true));
+    members.push(text_member("README.txt", INSTALL_README, false));
+    members.push(text_member(
+        "VERSION",
+        &format!("{}\n", env!("CARGO_PKG_VERSION")),
+        false,
+    ));
+
+    let archive = package::tar(&members)?;
+    // Read back rather than trusted. This archive is extracted as root by the
+    // device's boot script, so the list of what it will write is checked from
+    // the bytes that were produced, not from the list they were produced from.
+    let listed = package::list(&archive)?;
+    let compressed = gzip(&archive)?;
+    // Exactly what `rcS` does before it extracts anything. A tarball that
+    // fails this is silently ignored on the device, which looks like an
+    // install that did nothing.
+    gzip_test(&compressed)?;
+
+    if let Some(parent) = tarball.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("{}: {error}", parent.display()))?;
+    }
+    fs::write(&tarball, &compressed)
+        .map_err(|error| format!("write {}: {error}", tarball.display()))?;
+    if let Some(folder) = folder {
+        package::write_folder(&members, &folder)?;
+        println!(
+            "also written as a plain folder: {}\n\
+             copy it into .adds/ on the device and name it cobalt, or copy it over\n\
+             an existing .adds/cobalt to update in place",
+            folder.display()
+        );
+    }
+
+    let files = listed.iter().filter(|entry| entry.kind == b'0').count();
+    println!(
+        "{}: {files} files, {} bytes, sha256 {}",
+        tarball.display(),
+        compressed.len(),
+        sha256::hex_digest(&compressed)
+    );
+    println!("{INSTALL_INSTRUCTIONS}");
+    Ok(())
+}
+
+/// Lists a package and proves it cannot write outside the install root.
+fn inspect_package(arguments: &[String]) -> Result<(), String> {
+    let path = arguments.first().ok_or("usage: kobo inspect <package>")?;
+    let compressed = fs::read(path).map_err(|error| format!("read {path}: {error}"))?;
+    gzip_test(&compressed)?;
+    let archive = gunzip(&compressed)?;
+    let listed = package::list(&archive)?;
+    let root = format!("{}/", package::INSTALL_ROOT);
+    let mut outside = Vec::new();
+    for entry in &listed {
+        let kind = if entry.kind == b'5' { "dir " } else { "file" };
+        println!("{kind} {:o} {:>9} {}", entry.mode, entry.size, entry.path);
+        let inside =
+            entry.path.starts_with(&root) || root.starts_with(entry.path.trim_end_matches('/'));
+        if !inside {
+            outside.push(entry.path.clone());
+        }
+    }
+    if outside.is_empty() {
+        println!(
+            "nothing outside {}; this package writes no root filesystem file",
+            package::INSTALL_ROOT
+        );
+        Ok(())
+    } else {
+        Err(format!(
+            "refusing: {} would be written outside {}",
+            outside.join(", "),
+            package::INSTALL_ROOT
+        ))
+    }
+}
+
+fn text_member(name: &str, contents: &str, program: bool) -> package::Member {
+    package::Member {
+        path: format!("{}/{name}", package::INSTALL_ROOT),
+        bytes: contents.as_bytes().to_vec(),
+        program,
+    }
+}
+
+fn parse_package(arguments: &[String]) -> Result<(PathBuf, Option<PathBuf>), String> {
+    let mut tarball = PathBuf::from("target/KoboRoot.tgz");
+    let mut folder = None;
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--out" => {
+                let value = arguments
+                    .get(index + 1)
+                    .ok_or("usage: kobo package [--out PATH] [--folder PATH]")?;
+                tarball = PathBuf::from(value);
+                index += 2;
+            }
+            "--folder" => {
+                let value = arguments
+                    .get(index + 1)
+                    .ok_or("usage: kobo package [--out PATH] [--folder PATH]")?;
+                folder = Some(PathBuf::from(value));
+                index += 2;
+            }
+            other => return Err(format!("unknown option {other:?}")),
+        }
+    }
+    Ok((tarball, folder))
+}
+
+/// Compresses with the system `gzip`.
+///
+/// `-n` keeps the name and timestamp out of the header, so the same input
+/// produces the same file and the checksum an owner compares is stable.
+fn gzip(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    pipe_through(Command::new("gzip").args(["-n", "-9", "-c"]), bytes)
+}
+
+fn gunzip(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    pipe_through(Command::new("gzip").args(["-d", "-c"]), bytes)
+}
+
+/// The integrity check `rcS` runs before it extracts anything.
+fn gzip_test(bytes: &[u8]) -> Result<(), String> {
+    pipe_through(Command::new("gzip").arg("-t"), bytes)
+        .map(|_| ())
+        .map_err(|error| format!("the package fails the check the device runs first: {error}"))
+}
+
+fn pipe_through(command: &mut Command, input: &[u8]) -> Result<Vec<u8>, String> {
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("run gzip: {error}"))?;
+    let mut stdin = child.stdin.take().ok_or("gzip has no standard input")?;
+    let bytes = input.to_vec();
+    // Written on a thread because a large archive fills the pipe buffer, and
+    // writing it all before reading anything would deadlock against a gzip
+    // that is waiting for somebody to read its output.
+    let writer = thread::spawn(move || stdin.write_all(&bytes));
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("gzip: {error}"))?;
+    writer
+        .join()
+        .map_err(|_| "the gzip writer panicked".to_owned())?
+        .map_err(|error| format!("write to gzip: {error}"))?;
+    if output.status.success() {
+        Ok(output.stdout)
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_owned())
+    }
+}
+
 fn run_simulation() -> Result<(), String> {
     let mut build = Command::new("cargo");
     build.args(["build", "-p", "kobod", "-p", "kobo-todo"]);
@@ -1768,6 +2024,8 @@ fn print_help() {
            wait --device IP       Block until a device answers again\n\
            touch-probe --device IP [--seconds N]  Watch touch read-only to check the transform\n\
            guard-test --device IP --confirm ...   Prove the guardian restores the screen\n\
+           package [--out PATH] [--folder PATH]  Build the KoboRoot.tgz an owner copies\n\
+           inspect <package>       List a package and prove it writes nothing to the rootfs\n\
            verify <arm-binary>     Verify static ARM hard-float format\n\
            run --sim              Run SDK, IPC, daemon and app on host\n\
            run                    Device execution remains safety-gated\n\
@@ -1777,6 +2035,7 @@ fn print_help() {
 
 #[cfg(test)]
 mod tests {
+    use super::package;
     use super::{
         build_executables, manifest_uses_sdk, parse_touch_probe, valid_device_host, valid_slug,
         verify_arm_elf, wait_for_remote_child, workspace_doctor_binary, DevSessionGuard,
@@ -1865,6 +2124,82 @@ mod tests {
                 "kobo-doctor",
             ]
         );
+    }
+
+    #[test]
+    fn every_installed_package_is_a_member_of_this_workspace() {
+        let manifest = fs::read_to_string(super::workspace_manifest()).expect("read the workspace");
+        for name in super::INSTALLED_PACKAGES {
+            let directory = if *name == "kobod" {
+                "crates/kobod".to_owned()
+            } else {
+                format!("examples/{}", name.trim_start_matches("kobo-"))
+            };
+            assert!(
+                manifest.contains(&format!("\"{directory}\"")),
+                "{name} is packaged but {directory} is not a workspace member"
+            );
+        }
+    }
+
+    #[test]
+    fn a_package_writes_nothing_outside_the_install_root() {
+        // The archive is extracted as root by the device's own boot script, so
+        // the check that matters is what it is *able* to write.
+        let members = vec![
+            super::text_member("start.sh", super::START_SCRIPT, true),
+            super::text_member("README.txt", super::INSTALL_README, false),
+        ];
+        let archive = package::tar(&members).expect("build the archive");
+        let root = format!("{}/", package::INSTALL_ROOT);
+        for entry in package::list(&archive).expect("read the archive back") {
+            assert!(
+                entry.path.starts_with(&root) || root.starts_with(entry.path.trim_end_matches('/')),
+                "{} is outside the install root",
+                entry.path
+            );
+        }
+    }
+
+    #[test]
+    fn a_package_survives_the_check_the_device_runs_first() {
+        let members = vec![super::text_member("VERSION", "0.1.0\n", false)];
+        let archive = package::tar(&members).expect("build the archive");
+        let compressed = super::gzip(&archive).expect("compress");
+        super::gzip_test(&compressed).expect("the device would accept this");
+        assert_eq!(
+            super::gunzip(&compressed).expect("decompress"),
+            archive,
+            "compression must round-trip exactly"
+        );
+        assert_eq!(
+            super::gzip(&archive).expect("compress again"),
+            compressed,
+            "the same input must produce the same file, or a checksum means nothing"
+        );
+    }
+
+    #[test]
+    fn the_start_script_points_at_the_folder_the_package_writes() {
+        assert!(super::START_SCRIPT.contains(&format!("/{}", package::INSTALL_ROOT)));
+        assert!(super::INSTALL_README.contains(&format!("/{}", package::INSTALL_ROOT)));
+    }
+
+    #[test]
+    fn package_options_are_parsed_and_unknown_ones_refused() {
+        let (tarball, folder) = super::parse_package(&[]).expect("defaults");
+        assert_eq!(tarball, PathBuf::from("target/KoboRoot.tgz"));
+        assert!(folder.is_none());
+        let (tarball, folder) = super::parse_package(&[
+            "--out".to_owned(),
+            "/tmp/a.tgz".to_owned(),
+            "--folder".to_owned(),
+            "/tmp/b".to_owned(),
+        ])
+        .expect("explicit paths");
+        assert_eq!(tarball, PathBuf::from("/tmp/a.tgz"));
+        assert_eq!(folder, Some(PathBuf::from("/tmp/b")));
+        assert!(super::parse_package(&["--onto".to_owned()]).is_err());
     }
 
     #[test]
