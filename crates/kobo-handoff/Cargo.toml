@@ -1,0 +1,22 @@
+[package]
+name = "kobo-handoff"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+autobins = false
+
+[features]
+default = []
+device-write = ["kobo-hal/device-write"]
+
+[[bin]]
+name = "kobo-handoff"
+path = "src/main.rs"
+required-features = ["device-write"]
+
+[dependencies]
+kobo-hal = { path = "../kobo-hal", default-features = false }
+
+[lints]
+workspace = true

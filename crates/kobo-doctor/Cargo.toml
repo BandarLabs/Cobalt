@@ -1,0 +1,18 @@
+[package]
+name = "kobo-doctor"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "kobo-doctor"
+path = "src/main.rs"
+
+[dependencies]
+kobo-hal = { path = "../kobo-hal" }
+kobo-profile = { path = "../kobo-profile" }
+
+[lints]
+workspace = true
+

@@ -1,0 +1,23 @@
+[package]
+name = "kobo-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "kobo"
+path = "src/main.rs"
+
+[dependencies]
+kobo-sim = { path = "../kobo-sim" }
+
+[features]
+default = []
+# Enables the owner-attended `smoke-display` command. Never enabled by default,
+# so a stock `cargo install`/`cargo run` of this CLI cannot touch the display.
+device-write = []
+
+[lints]
+workspace = true
+

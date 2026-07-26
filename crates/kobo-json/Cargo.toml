@@ -1,0 +1,15 @@
+[package]
+name = "kobo-json"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Deliberately empty. Every crates.io dependency in this workspace lives in
+# kobo-net and nowhere else, and a JSON reader is small enough that pulling a
+# derive macro and its proc-macro toolchain onto the cross-compilation path
+# would cost more than writing it.
+[dependencies]
+
+[lints]
+workspace = true

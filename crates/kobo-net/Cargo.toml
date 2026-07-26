@@ -1,0 +1,16 @@
+[package]
+name = "kobo-net"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+# Every crates.io dependency in this workspace lives here and nowhere else.
+# The device has no dependable TLS of its own: its newest OpenSSL is 1.0.1j
+# from 2014, it carries no CA bundle, and it fails the handshake against a
+# large share of modern hosts. So the runtime brings its own, statically
+# linked, and no library on the device is touched or relied upon.
+[dependencies]
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12"] }
+rustls-rustcrypto = "0.0.2-alpha"
+webpki-roots = "1"
+kobo-protocol = { path = "../kobo-protocol" }

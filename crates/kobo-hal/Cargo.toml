@@ -1,0 +1,17 @@
+[package]
+name = "kobo-hal"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+kobo-abi = { path = "../kobo-abi", default-features = false }
+kobo-profile = { path = "../kobo-profile" }
+
+[features]
+default = []
+device-write = ["kobo-abi/device-write"]
+
+[lints]
+workspace = true

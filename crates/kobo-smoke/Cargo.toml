@@ -1,0 +1,24 @@
+[package]
+name = "kobo-smoke"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+autobins = false
+
+[features]
+default = []
+device-write = ["kobo-abi/device-write", "kobo-hal/device-write"]
+
+[[bin]]
+name = "kobo-smoke"
+path = "src/main.rs"
+required-features = ["device-write"]
+
+[dependencies]
+kobo-abi = { path = "../kobo-abi", default-features = false }
+kobo-hal = { path = "../kobo-hal", default-features = false }
+kobo-profile = { path = "../kobo-profile" }
+
+[lints]
+workspace = true

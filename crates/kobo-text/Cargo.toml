@@ -1,0 +1,13 @@
+[package]
+name = "kobo-text"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Real type for the Kobo application platform"
+
+[dependencies]
+fontdue = "0.9"
+kobo-ui = { path = "../kobo-ui" }
+
+[dev-dependencies]
+kobo-sdk = { path = "../kobo-sdk" }

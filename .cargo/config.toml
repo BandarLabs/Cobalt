@@ -1,0 +1,11 @@
+# The device is armv7 with a hard-float ABI, and every device binary is
+# statically linked against musl so nothing depends on the reader's own
+# libraries. Overwriting or shadowing a Kobo shared library is one of the
+# few genuine ways to leave a device unbootable, so we never link against one.
+#
+# The linker is the LLVM one that ships with the Rust toolchain rather than a
+# cross gcc. That is deliberate: it means a checkout builds device binaries on
+# a stock `rustup target add armv7-unknown-linux-musleabihf` with no system
+# packages, so the build cannot silently differ between machines.
+[target.armv7-unknown-linux-musleabihf]
+linker = "rust-lld"

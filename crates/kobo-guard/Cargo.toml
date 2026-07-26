@@ -1,0 +1,23 @@
+[package]
+name = "kobo-guard"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+autobins = false
+
+[features]
+default = []
+device-write = ["kobo-hal/device-write"]
+
+[[bin]]
+name = "kobo-guard"
+path = "src/main.rs"
+required-features = ["device-write"]
+
+[dependencies]
+kobo-hal = { path = "../kobo-hal", default-features = false }
+kobo-profile = { path = "../kobo-profile" }
+
+[lints]
+workspace = true

@@ -1,0 +1,20 @@
+[package]
+name = "kobo-launcher"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "kobo-launcher"
+path = "src/main.rs"
+
+[dependencies]
+kobo-sdk = { path = "../../crates/kobo-sdk" }
+
+[dev-dependencies]
+kobo-ui = { path = "../../crates/kobo-ui" }
+
+[lints]
+workspace = true

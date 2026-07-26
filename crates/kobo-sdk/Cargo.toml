@@ -1,0 +1,23 @@
+[package]
+name = "kobo-sdk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[features]
+# On by default, because an application that measures text with different type
+# from the runtime measures it wrongly, and the only way to notice is a page
+# that loses its last paragraph on the panel and nowhere else.
+default = ["text"]
+text = ["dep:kobo-text"]
+
+[dependencies]
+kobo-policy = { path = "../kobo-policy" }
+kobo-protocol = { path = "../kobo-protocol" }
+kobo-text = { path = "../kobo-text", optional = true }
+kobo-ui = { path = "../kobo-ui" }
+
+[lints]
+workspace = true
+
