@@ -40,10 +40,12 @@ reader. Everything else follows from that:
 crates/    kobo-sdk       what an application imports
            kobo-ui        layout, rendering, pagination, vector icons
            kobo-protocol  the bounded wire format between the two
-           kobo-policy    capabilities, task runner, device services
-           kobo-net       HTTPS; the only crate with outside dependencies
+           kobo-policy    capabilities, task runner, device services, storage
+           kobo-net       HTTPS; carries TLS and nothing else does
            kobo-json      a small JSON reader and object builder
            kobo-text      typeface loading and measurement
+           kobo-shell     one terminal per application, hosted by the runtime
+           kobo-term      the vt100 screen a terminal's output is parsed into
            kobo-hal       display, touch, battery, reader handoff
            kobo-abi       the only unsafe in the workspace
            kobo-profile   exact hardware identity
@@ -54,12 +56,16 @@ crates/    kobo-sdk       what an application imports
            kobo-smoke     owner-attended display writes
            kobo-handoff   stopping and restarting the stock reader
            kobo-guard     screen capture and restore around a session
-examples/  hello, counter, tictactoe, gallery, launcher, chat, gutenshelf
+examples/  launcher, terminal, todo, brief, chat, gutenshelf, gallery,
+           tictactoe
 ```
 
-Only `kobo-net` has dependencies outside this workspace, and it carries TLS
-alone so everything else stays dependency free. Device binaries are statically
-linked ARMv7 and need nothing installed on the device.
+Outside dependencies are quarantined in exactly three crates, each behind one
+interface: `kobo-net` (TLS), `kobo-text` (glyph rasterisation) and `kobo-term`
+(a vt100 parser). Everything an application touches is dependency free, and
+each of those three can be replaced without a single application changing.
+Device binaries are statically linked ARMv7 and need nothing installed on the
+device.
 
 ## Development
 
@@ -374,6 +380,7 @@ grants a clamped subset:
 | `sleep-screen` | Draw the sleep screen |
 | `notifications` | Post notifications |
 | `shared-files` | Use a user-visible folder |
+| `shell` | Run a terminal, hosted by the runtime |
 
 Unknown names are rejected rather than ignored, dependencies are enforced
 (`hold-wifi` requires `network`, `background-network` requires
@@ -381,3 +388,28 @@ Unknown names are rejected rather than ignored, dependencies are enforced
 `PowerPolicy` the application cannot raise imposes a minimum wake interval, a
 maximum Wi-Fi hold, and withdrawal of the expensive capabilities below fifteen
 percent battery unless the device is charging.
+
+`shell` is the one that is different in kind. Every other capability is undone
+by a reboot; a shell on this device is root on a writable root filesystem, so
+it is the first thing the platform hosts that a power cycle cannot repair. It
+is never implied by another capability, it is granted today only to the
+application named `terminal`, and the application never holds the
+pseudo-terminal: it sends what was typed and receives what was printed, so the
+runtime is the only thing that can start, bound, or stop a program.
+
+## What runs on the panel
+
+| Application | What it is for |
+| --- | --- |
+| `launcher` | The home screen, and an ordinary SDK application like the rest |
+| `terminal` | A shell, with keys that send a byte rather than collect a word |
+| `todo` | State that survives a restart, and a row that can be struck through |
+| `brief` | Background work: stories collected while the reader is elsewhere |
+| `chat` | An answer that can be tapped rather than typed |
+| `gutenshelf` | Sixty thousand free books, downloaded and read on the panel |
+| `gallery` | Every UI primitive at once, for checking by eye on real hardware |
+| `tictactoe` | Two players, one panel, and partial repaints of single cells |
+
+Leaving an application does not end it. It is put behind the launcher rather
+than stopped, so a download or a build that was running keeps running and
+coming back is a repaint rather than a restart.

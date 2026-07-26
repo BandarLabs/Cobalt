@@ -545,14 +545,112 @@ scheduler's wakeup, a server's framing, a redirect's scheme, a gauge's file.
 
 ---
 
-## 14. Where it stands
+## 14. A shell on an e-reader, and why it is a capability
+
+The last example to be written was a terminal, replacing a hello world that
+proved only that a button could be tapped. It is the hardest thing this
+platform hosts and the first feature capable of producing a device a power
+cycle does not repair: a shell here is root on a writable root filesystem.
+
+So it was built as a **runtime capability**, not an application primitive. The
+application has no pseudo-terminal, no fork, no file descriptor and no way to
+name a program. It says what was typed and receives what was printed. That is
+not ceremony — it is the only place a refusal can be enforced, a chunk can be
+bounded, and a program can be killed when its application goes away. Without
+the last one, closing the terminal would leave a root shell running with
+nothing attached to it, which is precisely the class of failure this project
+exists to avoid.
+
+### The pseudo-terminal was three surprises
+
+**`forkpty` was rejected before it was tried.** It lives in `libutil` on glibc,
+and depending on it would end the property that `rustup target add` is the
+entire cross-build setup. `posix_openpt` and a normal `Command` with a
+`pre_exec` hook need nothing.
+
+**`TIOCSWINSZ` on the master fails with `ENOTTY` on macOS** and succeeds on
+Linux. That was diagnosed with a twenty-line C program rather than by reading
+Rust harder, because the question was about the kernel, not the binding. Setting
+the size on the *slave* works on both, so the wrapper keeps the slave's path and
+reopens it briefly to resize.
+
+**The parent must drop the slave** after spawning. While any descriptor to it
+survives, a read of the master blocks forever instead of reporting that the
+program has finished — a terminal that never notices its shell exited.
+
+The slave also has to be opened `O_NOCTTY`, or the *runtime* acquires a
+controlling terminal it never asked for.
+
+### The grid is measured, not calculated
+
+A shell told it has more columns than the panel draws wraps its lines somewhere
+the reader cannot see, and every full-screen program becomes unusable. An
+application could compute the grid from the panel size minus the bars minus the
+keyboard — and would be wrong the first time any of those changed.
+
+So `terminal_grid_for` lays the screen out **with an empty terminal** and
+measures the space left over. The answer comes from the layout engine itself,
+so the application and the renderer cannot disagree by construction.
+
+### Keys that send rather than collect
+
+The existing keyboard accumulates a string and hands it over on submit. That is
+right for a search box and useless for a shell: `Ctrl-C` has to arrive while the
+program is still running, and a program reading a password is waiting on each
+byte.
+
+Three details that are the difference between a terminal and a toy:
+
+- `Ctrl` is **arithmetic, not a table**: it clears the two high bits, which is
+  why `Ctrl-C` is 3 and `Ctrl-[` is escape. Encoding it as a lookup would have
+  been wrong for every key nobody thought to list.
+- Return sends **`\r`**, not `\n`. A shell given 0x0a is still waiting for a
+  line that never ended.
+- Backspace sends **0x7f**, not 0x08. Send 0x08 and the cursor moves left
+  without erasing, which reads as a keyboard that has stopped working.
+
+Arrows use the plain vt100 cursor sequences, because **this device has no
+terminfo database at all**. Programs fall back to whatever they compiled in for
+`vt100`, so that is exactly what the runtime claims in `TERM` and exactly what
+the on-screen keys send.
+
+### The echo was ten seconds late
+
+The daemon's event loop waits on a channel with a heartbeat timeout, and the
+heartbeat is ten seconds. Nothing about a pseudo-terminal woke it, so a
+keystroke's echo appeared whenever the loop next happened to run for its own
+reasons. The reader thread now nudges the loop, and the terminal became a
+terminal.
+
+The opposite problem is next to it: a program printing a line at a time would
+produce an event per line, and an application that repaints per event asks for
+a panel refresh per line. Everything already waiting is coalesced into as few
+messages as the bound allows, so a chatty build is one refresh rather than
+forty.
+
+### Tested against a real shell
+
+Every other test here drives the application against a *model* of the runtime,
+which proves it is consistent with an idea of a terminal. One test runs the
+actual host, starts a real `/bin/sh`, types `echo hi` by tapping keys, and waits
+for the answer to appear on the screen. It is the only test that would have
+caught the return byte, the backspace byte, the missing wake-up, or a grid the
+shell was never told about — and it counts occurrences of `hi`, because the
+command echoes as it is typed and a shell still waiting for a line ending would
+otherwise look like a shell that had answered.
+
+---
+
+## 15. Where it stands
 
 Working: hardware identification, HWTCON display with a real refresh policy,
-touch, reversible reader handoff, panel sessions, real typography, sixteen UI
-primitives, a browser simulator sharing the same renderer, a bounded protocol,
-application launching with runtime-owned Back, and a CLI. 286 tests, no clippy
-warnings, statically linked ARMv7 binaries with no device-side dependencies —
-`rustup target add` is the entire setup.
+touch, reversible reader handoff, panel sessions, real typography, vector
+icons, twenty-odd UI primitives, keyed storage that survives a restart, several
+applications running at once with a background lifecycle, a terminal, a browser
+simulator sharing the same renderer, a bounded protocol, application launching
+with runtime-owned Back, and a CLI. 523 tests, no clippy warnings, statically
+linked ARMv7 binaries with no device-side dependencies — `rustup target add` is
+the entire setup.
 
 Confirmed on the panel: applications launch, their controls work, Back returns
 to the launcher.
@@ -569,10 +667,12 @@ Not done, and not pretended otherwise:
   exist only in the simulator.
 - **Wi-Fi after a handoff** still fights the reader for the radio.
 - **The UI is not general enough.** It is a fixed set of primitives, so every
-  new idea wants a new one. The next major piece of work is a real
-  flexbox-style layout model plus crisp vector drawing, so components become
-  compositions instead of enum variants. The back arrow is still a scaled
-  bitmap, and it looks like one.
+  new idea still wants a new one. Icons and the back arrow are vector paths
+  now, rasterised at whatever size the layout asks for, so the fuzziness is
+  gone; the remaining work is a real constraint-based layout model, so
+  components become compositions instead of enum variants.
+- **Installing still needs a laptop.** A Kobo owner cannot yet get this onto
+  their own device without SSH, which is the next thing to fix.
 
 ---
 
@@ -599,5 +699,10 @@ Things that have repeatedly paid for themselves:
   not exist. `curl --http1.1` is the only version of the question worth asking.
 - **Never invent a hardware reading.** A refusal an application can see beats a
   plausible number it cannot question.
+- **When the question is about the kernel, ask the kernel.** Twenty lines of C
+  settled `TIOCSWINSZ` on a master pseudo-terminal in a minute; no amount of
+  rereading the Rust would have.
+- **Give the dangerous thing to the runtime.** A shell the application cannot
+  hold is a shell the runtime can always stop.
 
 *Updated as work continues.*

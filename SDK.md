@@ -99,6 +99,10 @@ pub trait KoboApp {
     fn on_exit(&mut self, context: &mut Context) {}
     fn on_device_result(&mut self, cx: &mut Context, request: DeviceRequest, result: DeviceResult) {}
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {}
+    fn on_store(&mut self, context: &mut Context, result: StoreResult) {}
+    fn on_shell_event(&mut self, context: &mut Context, event: ShellEvent) {}
+    fn on_background(&mut self, context: &mut Context) {}
+    fn on_foreground(&mut self, context: &mut Context) {}
 }
 ```
 
@@ -132,6 +136,7 @@ one cannot.
 | `text(text)` | A paragraph. Wraps at a measure derived from physical width. |
 | `button(name, label)` | A full-width action. |
 | `rows([(name, title, summary, glyph), …])` | A list. Title, one line of detail, an icon. |
+| `checklist([(name, title, summary, done), …])` | The same list, where a finished row is struck through. |
 | `tiles([(name, label, glyph), …])` | A grid of square destinations. |
 | `grid(columns, square, cells)` | A board. What tic-tac-toe is drawn with. |
 | `choose(prompt, [(name, label), …])` | A question with tappable answers. |
@@ -142,6 +147,10 @@ one cannot.
 | `skeleton(lines)` | Placeholder lines, occupying where content will land. |
 | `divider()` / `spacer(space)` | Rules and space, from the spacing scale. |
 | `paged_list(page, items)` | A pre-paged list of plain strings. |
+| `keyboard(&keyboard, submit)` | The on-screen keys. Positional, so a layer change moves nothing. |
+| `text_entry(&entry, prompt, submit)` | A prompt, what has been typed, and the keys. |
+| `terminal(rows, cursor)` | A character grid with a block caret. |
+| `terminal_keys(&keys)` | Keys that send a byte the moment they are tapped. |
 
 There is no free-form drawing, no colour, no font choice and no pixel
 positioning. Every size comes from the panel's *physical* dimensions, so a
@@ -152,7 +161,8 @@ both.
 ### Icons
 
 `Glyph` is a closed set: `App`, `Book`, `Note`, `Clock`, `Settings`, `Folder`,
-`Chart`, `Search`, `Wifi`, `Battery`, `Reader`, `Power`, `Grid`.
+`Chart`, `Search`, `Wifi`, `Battery`, `Reader`, `Power`, `Grid`, `Circle`,
+`Check`, `Terminal`.
 
 They are geometry, not bitmaps — authored in a 1000 unit box and rasterised
 with coverage antialiasing at whatever size the layout asks for, so they are
@@ -245,7 +255,114 @@ not replayed across a redirect.
 
 ---
 
-## 6. Hardware
+## 6. Typing, where it is unavoidable
+
+Tapping beats typing on this panel, so a screen asks a question with `choose`
+wherever it can. When words are genuinely required, the keyboard is a composite
+rather than a node: rows of ordinary tappable cells and a small state machine.
+
+```rust
+use kobo_sdk::keyboard::{TextEntry, Typing};
+
+match self.entry.handle(action) {
+    Some(Typing::Changed)      => self.show(context), // repaint the field
+    Some(Typing::Submitted(s)) => self.search(&s, context),
+    Some(Typing::Cancelled)    => self.show(context),
+    None => {}                                        // not a keyboard tap
+}
+```
+
+Keys are addressed **positionally** — `kb.r1c2` is the third key of the middle
+row, whatever it currently says. Shift and the symbol layer change every label
+without moving a single cell, so a finger already resting on a key does not
+have to be lifted and re-aimed.
+
+---
+
+## 7. State that survives being closed
+
+There is no save button and there should not be. An E Ink device is closed by
+shutting a cover and forgotten until the battery is flat, so any design that
+depends on a clean exit loses data.
+
+```rust
+context.store().save("items", self.encode());
+context.store().load("items");
+context.store().forget("items");
+context.store().list();
+```
+
+Every call answers exactly once at `on_store`, including its failures. Writes
+are atomic, so the worst a power loss can cost is the change that was in
+flight. The application names a key and never a path: where the bytes live, and
+that they cannot be another application's bytes, is the runtime's problem.
+
+---
+
+## 8. A terminal
+
+The shell is a runtime capability, not something an application opens. There is
+no pseudo-terminal in the SDK, no fork, no file descriptor and no way to name a
+program:
+
+```rust
+let (columns, rows) = kobo_sdk::terminal_grid_for(&empty_screen, &context.metrics());
+context.shell().open(columns, rows);
+context.shell().input(bytes);      // exactly what was typed
+context.shell().resize(c, r);
+context.shell().close();
+```
+
+Everything the program has to say arrives at `on_shell_event`: `Opened`,
+`Output(bytes)`, `Closed { status }`, or `Refused(error)`. Feed the output into
+`kobo_term::Terminal` and draw its `rows()` and `cursor()` with
+`ScreenBuilder::terminal`.
+
+Ask `terminal_grid_for` for the grid rather than computing one. It lays the
+screen out with an empty terminal and measures what is left, so the program
+wraps its lines exactly where the reader sees them wrap; an application that
+did its own arithmetic about bars and keyboards would be wrong the first time
+either changed.
+
+`terminal_keys` sends a byte the instant a key is tapped rather than collecting
+a word, because `Ctrl-C` has to arrive while the program is still running.
+`Ctrl` is arithmetic rather than a lookup table — it clears the two high bits,
+which is why `Ctrl-C` is 3 and `Ctrl-[` is escape — return sends a carriage
+return, and the key above it sends delete.
+
+This is the one capability that is different in kind from the rest. Everything
+else this platform does is undone by a reboot; a shell here is root on a
+writable root filesystem. It is refused unless the application holds
+`Capability::Shell`, and the runtime stops the program when the application
+goes away, so a crash cannot leave a root shell running with nothing attached.
+
+---
+
+## 9. Leaving, and coming back
+
+Leaving an application does not end it. It is put behind the launcher, so a
+download or a build keeps running and returning is a repaint rather than a
+restart.
+
+```rust
+fn on_background(&mut self, context: &mut Context) {
+    // Nothing drawn now will be seen. Write anything that must not be lost.
+}
+
+fn on_foreground(&mut self, context: &mut Context) {
+    // The panel still holds the last thing this application drew, so there is
+    // no blank to cover — but anything that changed while away must be drawn.
+    self.show(context);
+}
+```
+
+Drawing while backgrounded is not an error, it is just traffic for no picture.
+A long-running job should keep its state and rebuild the screen once on the way
+back, rather than sending one per chunk of progress.
+
+---
+
+## 10. Hardware
 
 ```rust
 context.device().read_battery();
@@ -269,7 +386,7 @@ on it.
 
 ---
 
-## 7. Running it
+## 11. Running it
 
 ```sh
 # In a browser, against the same renderer the device uses.
@@ -289,15 +406,21 @@ The simulator refuses network tasks rather than faking them, on purpose: an
 application that has only ever seen invented responses is an application whose
 error handling has never run.
 
+Terminals are the exception, and for the same reason: the simulator runs a real
+shell on the developer's own machine, because an application that could not
+open a terminal in development could only be tested on the device.
+
 ---
 
-## 8. The rules the SDK will not let you break
+## 12. The rules the SDK will not let you break
 
 - **You cannot draw.** No pixels, no colour, no fonts, no coordinates.
 - **You cannot block the panel.** Long work is a task or it does not happen.
 - **You cannot hold a credential.** You may name one.
 - **You cannot remove Back.** The runtime owns the navigation stack.
 - **You cannot open a socket, a file outside your directory, or a device node.**
+- **You cannot start a program.** A terminal is a capability the runtime hosts;
+  an application says what was typed, never what to execute.
 - **You cannot ship an illegible icon.** The set is closed and drawn by the
   runtime.
 
@@ -307,17 +430,19 @@ single rule: **nothing that cannot be undone by a reboot.**
 
 ---
 
-## 9. Where things live
+## 13. Where things live
 
 | Crate | What it is |
 |---|---|
 | `kobo-sdk` | What an application imports. `ScreenBuilder`, `KoboApp`, `Context`. |
 | `kobo-ui` | Layout, rendering, pagination, vector icons. Shared by app and runtime. |
 | `kobo-protocol` | The bounded wire format between the two. |
-| `kobo-policy` | Capabilities, the task runner, device services. |
-| `kobo-net` | HTTPS. The only crate with dependencies outside this workspace. |
+| `kobo-policy` | Capabilities, the task runner, device services, keyed storage. |
+| `kobo-net` | HTTPS. Carries TLS so nothing else has to. |
 | `kobo-json` | A small JSON reader and object builder. |
 | `kobo-text` | Typeface loading and measurement. |
+| `kobo-shell` | One terminal per application, hosted by the runtime. |
+| `kobo-term` | The vt100 screen a program's output is parsed into. |
 | `kobo-hal` | Display, touch, battery, reader handoff. |
 | `kobod` | The runtime. Owns the panel, the session and everything refusable. |
 | `kobo-sim` | The browser simulator, using the same renderer. |
@@ -330,6 +455,11 @@ writes), `kobo-handoff` (stopping and restarting the stock reader) and
 `kobo-profile` sit under `kobo-hal`: the only `unsafe` in the workspace, and the
 exact hardware identity that gates it.
 
-Worked examples, smallest first: `examples/hello`, `examples/counter`,
-`examples/tictactoe`, `examples/gallery` (every primitive on one screen),
+Outside dependencies live in exactly three of those crates, each behind one
+interface: `kobo-net`, `kobo-text` and `kobo-term`. Nothing an application
+imports has any.
+
+Worked examples, smallest first: `examples/tictactoe`, `examples/todo` (state
+that survives a restart), `examples/gallery` (every primitive on one screen),
+`examples/terminal`, `examples/brief` (work that continues in the background),
 `examples/launcher`, `examples/chat`, `examples/gutenshelf`.
