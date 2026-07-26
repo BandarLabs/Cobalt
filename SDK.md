@@ -203,7 +203,8 @@ let task = context.spawn(Task::Fetch {
 });
 ```
 
-`spawn` returns a `TaskId` immediately and the result arrives at `on_task`:
+`spawn` returns immediately with an `Option<TaskId>` — `None` if the runtime
+would not even queue it — and the result arrives at `on_task`:
 
 ```rust
 fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
