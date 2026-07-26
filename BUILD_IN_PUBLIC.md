@@ -641,14 +641,87 @@ otherwise look like a shell that had answered.
 
 ---
 
-## 15. Where it stands
+## 15. Installing without a laptop
+
+The last thing standing between this and a person who owns a Kobo was that
+getting it onto the device meant SSH, an IP address, a shell that ignores its
+own arguments, and a base64 transfer. That is a fine way to develop and an
+absurd way to install software.
+
+The device already has an installer, and it is better than anything worth
+writing. `/etc/init.d/rcS` line 251 looks for `/mnt/onboard/.kobo/KoboRoot.tgz`
+at boot and, if it finds one, writes the u-boot environment to point at
+**recovery**, tests the archive, extracts it as root at `/`, deletes it, writes
+the environment back to normal boot, syncs, and reboots. Power loss anywhere in
+the middle lands in recovery, which is the correct place to land. So the install
+path is: copy one file over USB, eject, and the device does the rest.
+
+The interesting part is what the archive is allowed to contain, because it is
+extracted as root and the whole point of this project is that nothing can cost
+somebody their reader.
+
+It contains nothing on the system partition at all. Everything goes to
+`/mnt/onboard/.adds/cobalt`, which is the same vfat volume the books are on and
+the same one every computer already mounts over USB. That works because of a
+fact measured on the device rather than assumed: `/mnt/onboard` is mounted
+`rw,noatime,nodiratime,fmask=0022,dmask=0022` and **not** `noexec`. Every file
+on it is mode 0755, so a binary copied there simply runs. No rootfs write, no
+init hook, no boot script. Uninstall is deleting a folder from Finder.
+
+Which raises the obvious question: if the folder is enough, why produce a
+tarball at all? Because "copy this tree of files onto a case-insensitive
+filesystem and get the layout exactly right" is a worse instruction than "copy
+this one file", and the vendor's installer brackets the write with a recovery
+boot and a battery check that nothing hand-rolled would. Both forms are
+available; `--folder` writes the tree for anyone who would rather see it.
+
+The builder refuses, before writing anything: absolute paths, `..`, empty
+names, duplicates, anything over 32 MiB, and anything at all outside the
+install root. Then it reads its own output back and re-derives the list from
+the finished bytes, checking every ustar header checksum and rejecting any
+member type other than a plain file or a directory — no symbolic links, no hard
+links, no device nodes, which are precisely the interesting ones when something
+is extracted as root. `kobo inspect` runs that same reader over a built package
+so the claim can be checked rather than believed. Its output was compared
+against the system `tar`, which agrees name for name and mode for mode.
+
+The archive is byte-for-byte reproducible: mtime 0, uid and gid 0, `root`/`root`
+as names, directories emitted before their contents, and `gzip -n -9` so the
+compressor's header carries neither a filename nor a timestamp. Building it
+twice produces the same SHA-256, which is the only condition under which
+printing a checksum means anything. Compression shells out to the system `gzip`
+rather than implementing deflate: the zero-dependency rule is about what runs on
+the device, and the CLI already shells out to `cargo`, `ssh` and `diff`.
+
+Two failure modes are worth naming because both are silent.
+
+The reader's installer is gated behind `pickel can-upgrade`, which reaches
+`/sys/class/power_supply/bd71827_bat/capacity`. **It is a battery check.** A
+device below the threshold quietly deletes nothing, extracts nothing, and says
+nothing, and the owner concludes the package is broken. So "charge it first" is
+step one of the printed instructions, not a footnote.
+
+And `rcS` runs `gunzip -t` before it extracts, then ignores an archive that
+fails. So `kobo package` runs exactly that check on the bytes it just produced,
+before writing the file, rather than discovering it on somebody's device.
+
+What is still missing is the launch hook: nothing starts Cobalt at boot. The
+package ships `start.sh` and one NickelMenu line, both opt-in, both data. Boot
+takeover stays permanently out of scope — a launcher bug that owns boot is a
+dead device for a non-technical owner, which is the exact failure this whole
+project is arranged to prevent.
+
+---
+
+## 16. Where it stands
 
 Working: hardware identification, HWTCON display with a real refresh policy,
 touch, reversible reader handoff, panel sessions, real typography, vector
 icons, twenty-odd UI primitives, keyed storage that survives a restart, several
 applications running at once with a background lifecycle, a terminal, a browser
 simulator sharing the same renderer, a bounded protocol, application launching
-with runtime-owned Back, and a CLI. 523 tests, no clippy warnings, statically
+with runtime-owned Back, a reproducible package an owner installs over USB, and
+a CLI. 535 tests, no clippy warnings, statically
 linked ARMv7 binaries with no device-side dependencies — `rustup target add` is
 the entire setup.
 
@@ -660,8 +733,10 @@ Not done, and not pretended otherwise:
 - **Isolation.** Applications currently run as root. Per-application UID,
   capability dropping, and the tests that prove an application *cannot* reach
   the framebuffer are the single biggest gap to production.
-- **Persistence.** No packaging, manifest, install or rollback. Everything
-  lives in `/tmp` and dies on reboot.
+- **Manifests, rollback and self-update.** There is a package and an install
+  path, but no manifest, no version negotiation, no rollback, and no way for a
+  device to update itself. Since the install folder is executable, self-update
+  is a download and a rename, but it is not written.
 - **Signing.** None.
 - **Power and hardware APIs** are honestly *refused* by the device build and
   exist only in the simulator.
@@ -671,8 +746,13 @@ Not done, and not pretended otherwise:
   now, rasterised at whatever size the layout asks for, so the fuzziness is
   gone; the remaining work is a real constraint-based layout model, so
   components become compositions instead of enum variants.
-- **Installing still needs a laptop.** A Kobo owner cannot yet get this onto
-  their own device without SSH, which is the next thing to fix.
+- **Nothing starts it at boot.** Installing needs only USB now, but launching
+  still means running `start.sh` or adding a NickelMenu entry. A first-class
+  entry point that does not depend on a firmware-coupled third-party patch is
+  the next thing to fix.
+- **The package has never been installed on hardware.** It is verified against
+  the system `tar`, reproducible, and refuses everything it should. It has not
+  yet gone through the reader's own installer on the physical device.
 
 ---
 

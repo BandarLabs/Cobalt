@@ -114,6 +114,38 @@ manifest with `--locked`, and the checksum the device verifies is taken over
 exactly the bytes that were uploaded, so a stale or foreign artifact cannot be
 run by accident.
 
+## Installing on a device
+
+```sh
+cargo run -p kobo-cli -- package                 # target/KoboRoot.tgz
+cargo run -p kobo-cli -- inspect target/KoboRoot.tgz
+```
+
+Charge the device, copy the file to `.kobo/KoboRoot.tgz` over USB, and eject.
+The reader installs it at the next boot with its own installer, which writes
+the boot environment to recovery first and puts it back afterwards, so an
+interrupted install lands somewhere designed for it. No terminal, no SSH, no
+IP address.
+
+Everything lands in `.adds/cobalt` on the same partition as the books. That
+partition is vfat mounted without `noexec`, so the binaries run from where they
+land, which is why no rootfs file and no boot script is needed. Uninstall is
+deleting the folder, over USB, from any computer.
+
+The archive is incapable of writing anywhere else. Members are checked before
+they are written and then read back out of the finished bytes, so `kobo inspect`
+reports what the package can do rather than what it was asked to do; absolute
+paths, `..`, symbolic links, device nodes and anything outside the install root
+are refused. Output is byte-for-byte reproducible — `gzip -n -9`, mtime 0,
+uid/gid 0 — so the printed SHA-256 is worth comparing.
+
+Two things are worth knowing before blaming the package. The reader's installer
+is gated on battery level and fails silently, so an install that appears to do
+nothing usually means charge it first. And nothing yet starts Cobalt at boot:
+run `.adds/cobalt/start.sh`, or add the single NickelMenu line the packaged
+`README.txt` gives you. Boot takeover is permanently out of scope, so a reboot
+always returns to the stock reader.
+
 ## Verified on the hardware
 
 The read-only doctor matches the physical N365:

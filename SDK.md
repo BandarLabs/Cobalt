@@ -397,6 +397,9 @@ cargo run -p kobo-cli -- run --sim
 
 # For the device.
 cargo build --release --target armv7-unknown-linux-musleabihf -p your-app
+
+# For somebody else's device, with no terminal at their end.
+cargo run -p kobo-cli -- package
 ```
 
 `rustup target add armv7-unknown-linux-musleabihf` is the entire cross-build
@@ -409,6 +412,13 @@ error handling has never run.
 Terminals are the exception, and for the same reason: the simulator runs a real
 shell on the developer's own machine, because an application that could not
 open a terminal in development could only be tested on the device.
+
+`package` produces the single `KoboRoot.tgz` an owner copies into `.kobo/` over
+USB; the reader installs it at the next boot. Everything lands in
+`.adds/cobalt` on the book partition, which is mounted without `noexec`, so no
+rootfs file and no boot script is involved and uninstall is deleting a folder.
+`kobo inspect` reads a built package back and refuses one that could write
+anywhere else.
 
 ---
 
