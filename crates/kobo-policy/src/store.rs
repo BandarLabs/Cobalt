@@ -156,7 +156,25 @@ fn write_then_rename(temporary: &Path, final_path: &Path, value: &[u8]) -> std::
         // loss in that window leaves a correctly named file full of nothing.
         file.sync_all()?;
     }
-    fs::rename(temporary, final_path)
+    fs::rename(temporary, final_path)?;
+    // The rename is atomic, but atomic is not the same as durable: until the
+    // *directory* is synced the new entry may not have reached the disk, and a
+    // reset in that window silently keeps the old value. That window is not
+    // theoretical here -- this device can be reset at any instant by a hardware
+    // watchdog, with nothing flushed.
+    //
+    // This is also the whole of what an embedded database would have given us
+    // for a store that is capped at 256 keys and never queried: write a new
+    // copy, make it durable, swap it in atomically, make the swap durable.
+    // Failing to sync the directory is not fatal on its own -- the value is
+    // either the old one or the new one, never a torn one -- so it is reported
+    // rather than allowed to fail a write that has already landed.
+    if let Some(directory) = final_path.parent() {
+        if let Ok(handle) = fs::File::open(directory) {
+            let _ = handle.sync_all();
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
