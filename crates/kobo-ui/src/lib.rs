@@ -392,6 +392,25 @@ impl TopBar {
     }
 }
 
+/// A single control pinned to the bottom band, in place of navigation.
+///
+/// Structurally separate from [`NavBar`] rather than a bar of one destination,
+/// because they are different things: a bar says where you are among places
+/// you could be, and this says there is one way off this screen. A bar of one
+/// is refused everywhere else in this layer for exactly that reason.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BottomAction {
+    pub id: NodeId,
+    pub action: BarAction,
+}
+
+impl BottomAction {
+    #[must_use]
+    pub const fn new(id: NodeId, action: BarAction) -> Self {
+        Self { id, action }
+    }
+}
+
 /// The fixed bar at the bottom of a screen, equivalent to the reader's own.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NavBar {
@@ -442,6 +461,19 @@ pub struct Screen {
     pub nodes: Vec<Node>,
     /// Optional fixed bottom bar, pinned to the panel rather than the flow.
     pub nav_bar: Option<NavBar>,
+    /// A single control pinned to the bottom band, in place of a bar.
+    ///
+    /// A screen with one way off it — a launcher's way back to the reader, a
+    /// dialogue's way out — has no navigation to draw, and a bar of one
+    /// destination is refused precisely because it is not navigation. Placed
+    /// in the flow instead, that control is the first thing a long page pushes
+    /// off the bottom: the launcher shipped with its way back to the Kobo
+    /// reader hanging five pixels past the edge of the panel, because the
+    /// space reserved for a bar and the space a trailing rule and button
+    /// actually need are not the same number and nothing was comparing them.
+    /// Pinned, it occupies exactly the band that was already reserved, so the
+    /// two cannot disagree.
+    pub bottom_action: Option<BottomAction>,
     /// Turning the page by tapping the side of the panel.
     ///
     /// This is how every Kobo has always worked, and it is muscle memory for
@@ -489,6 +521,7 @@ impl Screen {
             top_bar: None,
             nodes,
             nav_bar: None,
+            bottom_action: None,
             page_turns: None,
         }
     }
@@ -509,6 +542,19 @@ impl Screen {
     #[must_use]
     pub fn with_nav_bar(mut self, nav_bar: NavBar) -> Self {
         self.nav_bar = Some(nav_bar);
+        self.bottom_action = None;
+        self
+    }
+
+    /// Pins one control to the bottom band instead of a row of destinations.
+    ///
+    /// The two are mutually exclusive because they are the same band: a screen
+    /// carrying both would draw one over the other. Setting either clears the
+    /// other rather than leaving that to be discovered on a panel.
+    #[must_use]
+    pub fn with_bottom_action(mut self, action: BottomAction) -> Self {
+        self.bottom_action = Some(action);
+        self.nav_bar = None;
         self
     }
 
@@ -543,9 +589,11 @@ impl Screen {
         // lets a tab switch repaint the content area and two bars instead of
         // the whole screen, which is the difference between one refresh and
         // one refresh plus visible chrome flicker.
-        let content_bottom = self.nav_bar.as_ref().map_or(metrics.height, |_| {
+        let content_bottom = if self.nav_bar.is_some() || self.bottom_action.is_some() {
             metrics.height - metrics.nav_bar_height()
-        });
+        } else {
+            metrics.height
+        };
 
         for node in &self.nodes {
             if layout.nodes.len() >= MAX_LAYOUT_NODES || cursor >= content_bottom {
@@ -565,6 +613,9 @@ impl Screen {
 
         if let Some(nav_bar) = &self.nav_bar {
             layout_nav_bar(nav_bar, metrics, &mut layout);
+        }
+        if let Some(action) = &self.bottom_action {
+            layout_bottom_action(action, metrics, &mut layout);
         }
         // The page-turn zones are the content area, which starts below the top
         // bar and stops above the nav bar. Never the bars themselves: Back and
@@ -679,6 +730,67 @@ fn layout_top_bar(
         text_lines: Vec::new(),
     });
     height.saturating_add(metrics.rule_thickness())
+}
+
+/// Draws one control in the band a bottom bar would have occupied.
+///
+/// Deliberately the same reserved height as a nav bar and the same rule above
+/// it, so the two are interchangeable from the content's point of view and a
+/// screen that swaps one for the other does not reflow. The control is a
+/// [`LayoutKind::Button`] like any other, which is what makes it hit-tested,
+/// drawn and repainted by the code that already does all three.
+fn layout_bottom_action(bottom: &BottomAction, metrics: &DisplayMetrics, layout: &mut Layout) {
+    let band = metrics.nav_bar_height();
+    let top = metrics.height - band;
+    let rule = metrics.rule_thickness();
+    layout.nodes.push(LayoutNode {
+        id: bottom.id,
+        rect: Rect {
+            x: 0,
+            y: top,
+            width: metrics.width,
+            height: band,
+        },
+        kind: LayoutKind::Spacer,
+        text_lines: Vec::new(),
+    });
+    layout.nodes.push(LayoutNode {
+        id: bottom.id,
+        rect: Rect {
+            x: 0,
+            y: top,
+            width: metrics.width,
+            height: rule,
+        },
+        kind: LayoutKind::Divider,
+        text_lines: Vec::new(),
+    });
+    let margin = metrics.screen_margin();
+    let width = max(1, metrics.width - margin * 2);
+    // Never taller than the band it was given, and centred in what is left of
+    // it below the rule, so the control has the same air above and below
+    // instead of sitting on the bottom edge of the panel.
+    let height = min(
+        band.saturating_sub(rule),
+        max(
+            metrics.touch_target_minimum(),
+            metrics.touch_target_default(),
+        ),
+    );
+    let y = top
+        .saturating_add(rule)
+        .saturating_add((band - rule - height) / 2);
+    layout.nodes.push(LayoutNode {
+        id: bottom.id,
+        rect: Rect {
+            x: margin,
+            y,
+            width,
+            height,
+        },
+        kind: LayoutKind::Button(bottom.action.action),
+        text_lines: vec![one_line(&bottom.action.label, width - 32, FontSize::Body)],
+    });
 }
 
 fn layout_nav_bar(nav_bar: &NavBar, metrics: &DisplayMetrics, layout: &mut Layout) {
@@ -1064,7 +1176,7 @@ pub struct Row {
     pub action: ActionId,
     pub title: String,
     pub summary: String,
-    pub glyph: Glyph,
+    pub lead: RowLead,
     pub state: RowState,
 }
 
@@ -1074,13 +1186,13 @@ impl Row {
         action: ActionId,
         title: impl Into<String>,
         summary: impl Into<String>,
-        glyph: Glyph,
+        lead: impl Into<RowLead>,
     ) -> Self {
         Self {
             action,
             title: title.into(),
             summary: summary.into(),
-            glyph,
+            lead: lead.into(),
             state: RowState::Open,
         }
     }
@@ -1090,6 +1202,38 @@ impl Row {
     pub fn done(mut self, done: bool) -> Self {
         self.state = if done { RowState::Done } else { RowState::Open };
         self
+    }
+}
+
+/// What stands at the head of a row.
+///
+/// An icon makes a row findable without reading it, which is why rows have one
+/// at all. But a list where every entry carries the *same* icon has spent a
+/// whole touch target's width on decoration: the Hacker News client drew a
+/// newspaper beside all thirty stories, which told the eye nothing it did not
+/// already know from the fact that it was looking at a list of stories.
+///
+/// The alternative is not a smaller icon, it is a different fact. Where the
+/// entries are ordered, the position *is* the distinguishing information, so
+/// the well holds a number instead — the same thing Hacker News itself puts
+/// there. `From<Glyph>` exists so that the icon case, which is still the right
+/// answer for a menu of unlike things, stays the shortest thing to write.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RowLead {
+    Icon(Glyph),
+    /// The row's position in an ordered list, drawn as digits.
+    Number(u16),
+}
+
+impl From<Glyph> for RowLead {
+    fn from(glyph: Glyph) -> Self {
+        Self::Icon(glyph)
+    }
+}
+
+impl From<u16> for RowLead {
+    fn from(number: u16) -> Self {
+        Self::Number(number)
     }
 }
 
@@ -1284,7 +1428,7 @@ pub enum LayoutKind {
     /// A title whose work is finished: muted and struck through.
     RowTitleDone,
     RowSummary,
-    RowGlyph(Glyph),
+    RowLead(RowLead),
     Tile(ActionId),
     TileLabel,
     TileGlyph(Glyph),
@@ -1478,6 +1622,39 @@ pub fn one_line(text: &str, width: i32, size: FontSize) -> String {
         first.pop();
     }
     format!("{}\u{2026}", first.trim_end())
+}
+
+/// `text` cut to at most `lines` wrapped lines, ellipsised if it did not fit.
+///
+/// One line is the tidiest a list can look and, for anything written by
+/// somebody else, the least useful: a Hacker News headline averages well over
+/// a line on this panel, so a one-line list is a column of sentences that all
+/// stop before they have said anything. Two lines carry almost every real
+/// headline whole, at the cost of a list whose rows differ in height — which
+/// is the right trade, because a row's height is not information and its title
+/// is.
+///
+/// Returns a plain string rather than lines, because the layout engine wraps
+/// the title itself and would only have to join them back together.
+#[must_use]
+pub fn clamp_lines(text: &str, width: i32, size: FontSize, lines: usize) -> String {
+    let lines = lines.max(1);
+    if lines == 1 {
+        return one_line(text, width, size);
+    }
+    let wrapped = wrap_text(text, width, size);
+    if wrapped.len() <= lines {
+        return text.trim().to_string();
+    }
+    let mut kept = wrapped[..lines].join(" ");
+    // Take words off the end until the ellipsis fits inside the allowance too,
+    // or the mark lands on a line nobody will see.
+    while !kept.is_empty()
+        && wrap_text(&format!("{}\u{2026}", kept.trim_end()), width, size).len() > lines
+    {
+        kept.pop();
+    }
+    format!("{}\u{2026}", kept.trim_end())
 }
 
 fn layout_node(
@@ -1809,7 +1986,7 @@ fn layout_node(
                         width: icon,
                         height: icon,
                     },
-                    kind: LayoutKind::RowGlyph(row.glyph),
+                    kind: LayoutKind::RowLead(row.lead),
                     text_lines: Vec::new(),
                 });
                 let text_y = cursor.saturating_add((height - content) / 2);
@@ -1917,30 +2094,43 @@ fn layout_node(
                     let size = metrics.tenth_mm(110);
                     (LayoutKind::TileGlyph(tile.glyph), size, size)
                 };
+                let inset = metrics.space(Space::Tight);
+                let caption = FontSize::Caption.line_height();
+                // Mark and name are one object, centred together, rather than
+                // a mark centred in the body with the name pinned to the cell's
+                // bottom edge. Those are the same thing only when the mark
+                // fills the body: a glyph is barely a third of it, so the name
+                // ended up stranded a finger's width below its own icon and
+                // hard against the tile's rule. Every phone home screen sets an
+                // icon and its label as a pair for the same reason.
+                let group = mark_height
+                    .saturating_add(inset)
+                    .saturating_add(caption)
+                    .min(cell_height);
+                let group_y = cell_y.saturating_add((cell_height - group) / 2);
                 layout.nodes.push(LayoutNode {
                     id: *id,
                     rect: Rect {
                         x: cell_x + (cell - mark_width) / 2,
-                        y: cell_y + (body - mark_height) / 2,
+                        y: group_y,
                         width: mark_width,
                         height: mark_height,
                     },
                     kind: mark,
                     text_lines: Vec::new(),
                 });
-                // Inset by the same tight step the label already sits below,
+                // Inset by the same tight step the label sits below the mark,
                 // so a name that fills its tile is ellipsised with a margin
                 // rather than run flush into the cell border.
-                let inset = metrics.space(Space::Tight);
                 let label_width = max_i32(1, cell - inset * 2);
                 let label = one_line(&tile.label, label_width, FontSize::Caption);
                 layout.nodes.push(LayoutNode {
                     id: *id,
                     rect: Rect {
                         x: cell_x + inset,
-                        y: cell_y + body + inset,
+                        y: group_y.saturating_add(mark_height).saturating_add(inset),
                         width: label_width,
-                        height: FontSize::Caption.line_height(),
+                        height: caption,
                     },
                     kind: LayoutKind::TileLabel,
                     text_lines: vec![label],
@@ -2516,6 +2706,13 @@ pub fn paginate(text: &str, area: ProseArea) -> Vec<Vec<String>> {
         .collect()
 }
 
+/// The fewest lines of a paragraph worth leaving alone on a page.
+///
+/// Two, which is the ordinary typesetting rule for widows and orphans. One
+/// line of a paragraph by itself at the foot or the head of a page reads as
+/// something having gone wrong rather than as prose continuing.
+const MIN_KEEP_LINES: usize = 2;
+
 /// Breaks indented prose into pages that fit, keeping each paragraph's depth.
 ///
 /// The companion to [`paginate`] for threaded discussion. Depth cannot be
@@ -2566,11 +2763,25 @@ pub fn paginate_quoted(
                 page.push((depth, lines.join(" ")));
                 break;
             }
-            // A paragraph longer than a whole page cannot be kept whole. It is
-            // split rather than dropped, because a book whose preface is one
-            // enormous block would otherwise open at chapter two.
-            if page.is_empty() {
-                let rest = lines.split_off(fits);
+            // The paragraph does not fit in what is left. Splitting it at a
+            // line boundary is what a book does; moving it whole to the next
+            // page is what this used to do, and on a threaded discussion —
+            // where a single comment is a single paragraph and often a long
+            // one — it left page after page half empty, with the reader
+            // turning twice as often to read the same words.
+            //
+            // The one thing worth protecting is the orphan: a lone line
+            // stranded at the foot of a page, or carried alone to the top of
+            // the next, reads as a mistake. So the split has to leave at least
+            // `MIN_KEEP_LINES` on both sides, and where it cannot the whole
+            // paragraph moves on as before.
+            let keep = fits.min(lines.len().saturating_sub(MIN_KEEP_LINES));
+            // A paragraph longer than an entire page cannot be kept whole at
+            // any cost: a book whose preface is one enormous block would
+            // otherwise open at chapter two.
+            let keep = if page.is_empty() { keep.max(1) } else { keep };
+            if keep >= MIN_KEEP_LINES || (page.is_empty() && keep > 0) {
+                let rest = lines.split_off(keep);
                 page.push((depth, lines.join(" ")));
                 pages.push(std::mem::take(&mut page));
                 used = 0;
@@ -3315,7 +3526,7 @@ pub fn render_all(
                 tone::MUTED,
                 clip,
             ),
-            LayoutKind::RowGlyph(glyph) => draw_glyph_icon(surface, glyph, node.rect, clip),
+            LayoutKind::RowLead(lead) => draw_row_lead(surface, lead, node.rect, clip),
             LayoutKind::TileGlyph(glyph) => draw_glyph_icon(surface, glyph, node.rect, clip),
             // Outlined, because a cover with pale edges on white paper has no
             // boundary at all and reads as text floating in space.
@@ -3580,6 +3791,26 @@ fn draw_nav_label(
 
 fn draw_back_arrow(surface: &mut Surface, rect: Rect, clip: Rect) {
     draw_vector(surface, &vector::back_arrow(), rect, clip);
+}
+
+/// Draws whatever stands at the head of a row.
+///
+/// A number is set in caption size rather than body, because it is a label on
+/// the row and not part of it, and centred in the same square the icon would
+/// have occupied so that a list which numbers some rows and illustrates others
+/// still lines up down its left edge.
+fn draw_row_lead(surface: &mut Surface, lead: RowLead, rect: Rect, clip: Rect) {
+    match lead {
+        RowLead::Icon(glyph) => draw_glyph_icon(surface, glyph, rect, clip),
+        RowLead::Number(number) => {
+            let text = number.to_string();
+            let size = FontSize::Caption;
+            let (width, _) = measure_text(&text, size);
+            let x = rect.x + (rect.width - width) / 2;
+            let y = rect.y + (rect.height - size.line_height()) / 2;
+            draw_text(surface, &text, x, y, size, tone::MUTED, clip);
+        }
+    }
 }
 
 fn draw_glyph_icon(surface: &mut Surface, glyph: Glyph, rect: Rect, clip: Rect) {
@@ -5291,6 +5522,26 @@ mod prose_tests {
         not want to know who has taken it?\u{201d}\n\n\u{201c}You want to tell me, and I have no \
         objection to hearing it.\u{201d}\n\nThis was invitation enough.";
 
+    /// One comment, long enough to run past a page on its own.
+    ///
+    /// Deliberately a single paragraph with no blank line anywhere in it,
+    /// because that is what a Hacker News reply is and what the old
+    /// pagination could not handle.
+    const LONG_REPLY: &str = "The thing nobody mentions about this approach is that it moves \
+        the cost rather than removing it, and the place it moves the cost to is the one place \
+        nobody is measuring. I ran into exactly this two years ago on a system an order of \
+        magnitude smaller, and the failure looked like a performance problem for about a month \
+        before anyone worked out that it was a correctness problem wearing a performance \
+        problem as a coat. The short version is that the invariant everyone assumes holds at \
+        the boundary does not hold once you have more than one writer, and every layer above \
+        that boundary has quietly been relying on it. You can paper over it with a lock, and \
+        that is what we did, and it worked, and then it stopped working the moment somebody \
+        added a second process, because the lock was in the wrong address space. If you are \
+        going to do this, do the boring thing first: write down what is actually guaranteed, \
+        in one file, and make everything that depends on the guarantee say so out loud. It is \
+        much less fun than the clever version and it is the only one I have seen survive a \
+        year of other people editing it.";
+
     fn book(source: &str, times: usize) -> String {
         vec![source; times].join("\n\n")
     }
@@ -5427,6 +5678,56 @@ mod prose_tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_long_comment_fills_the_page_it_starts_on() {
+        // A threaded discussion is paragraphs of wildly different lengths, and
+        // one comment is one paragraph. Moving a paragraph whole to the next
+        // page rather than splitting it meant a five-hundred-word reply left
+        // most of the previous page blank, so a thread took twice the page
+        // turns it needed. Both sides of a split keep at least two lines.
+        let area = CLARA_BW_METRICS.prose_area(true, true);
+        let line_height = FontSize::Body.line_height();
+        let per_page = (area.height / line_height) as usize;
+        // Two of them, still as one paragraph: a reply this long is ordinary
+        // on a thread about anything contentious.
+        let reply = [LONG_REPLY; 2].join(" ");
+        let paragraphs = vec![(0_u8, "A short opening remark."), (1, reply.as_str())];
+        let pages = paginate_quoted(&paragraphs, &CLARA_BW_METRICS, area);
+        assert!(pages.len() > 1, "the reply was not long enough to split");
+        assert_eq!(
+            pages[0].len(),
+            2,
+            "the reply did not start on the first page"
+        );
+        let (_, bottom) = drawn_quoted(&pages[0], &CLARA_BW_METRICS);
+        let slack = (area.height + CLARA_BW_METRICS.screen_margin()) - bottom;
+        assert!(
+            slack < line_height * 3,
+            "the first page left {slack} pixels empty, about {} lines",
+            slack / line_height
+        );
+        for (index, page) in pages.iter().enumerate() {
+            let lines = page
+                .iter()
+                .map(|(depth, text)| {
+                    let (_, width) = quote_offsets(&CLARA_BW_METRICS, area.width, *depth);
+                    wrap_text(text, width, FontSize::Body).len()
+                })
+                .sum::<usize>();
+            assert!(
+                lines <= per_page,
+                "page {index} carries {lines} lines into room for {per_page}"
+            );
+        }
+        let last = pages.last().expect("pages");
+        let (depth, text) = last.last().expect("a paragraph");
+        let (_, width) = quote_offsets(&CLARA_BW_METRICS, area.width, *depth);
+        assert!(
+            wrap_text(text, width, FontSize::Body).len() >= MIN_KEEP_LINES,
+            "the split left an orphan line alone on the last page"
+        );
     }
 
     #[test]

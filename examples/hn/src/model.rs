@@ -48,6 +48,14 @@ pub struct Story {
     pub created: i64,
     /// The self-post body of an Ask HN or a Show HN, already plain text.
     pub text: Option<String>,
+    /// Where a link story points, reduced to a host worth reading.
+    ///
+    /// A whole URL is unreadable in a summary line and a bare title says
+    /// nothing about whether the thing behind it is a paper, a blog or a
+    /// press release. Hacker News itself has shown the host beside every
+    /// title since the beginning, which is the evidence that it is the part
+    /// people actually use.
+    pub site: Option<String>,
 }
 
 /// One comment, already flattened out of the tree and ready to draw.
@@ -94,6 +102,34 @@ impl Comment {
     }
 }
 
+/// The host part of a URL, with `www.` dropped, or nothing worth showing.
+///
+/// Deliberately not a URL parser. The only question being asked is what to
+/// print beside a title, so anything that does not look like an ordinary host
+/// is answered with nothing rather than with a guess: a summary line is not
+/// the place to find out that a stranger's `url` field was a sentence.
+#[must_use]
+fn host_of(url: &str) -> Option<String> {
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))?;
+    let host = rest
+        .split(['/', '?', '#'])
+        .next()?
+        .split('@')
+        .next_back()?
+        .split(':')
+        .next()?;
+    let host = host.strip_prefix("www.").unwrap_or(host);
+    let plausible = !host.is_empty()
+        && host.len() <= 60
+        && host.contains('.')
+        && host
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'));
+    plausible.then(|| host.to_ascii_lowercase())
+}
+
 /// Reads a `search` or `search_by_date` response into a list of stories.
 #[must_use]
 pub fn stories_from(value: &kobo_json::Value) -> Vec<Story> {
@@ -123,6 +159,10 @@ pub fn stories_from(value: &kobo_json::Value) -> Vec<Story> {
                     .and_then(kobo_json::Value::as_str)
                     .map(html::to_text)
                     .filter(|text| !text.is_empty()),
+                site: hit
+                    .get("url")
+                    .and_then(kobo_json::Value::as_str)
+                    .and_then(host_of),
             })
         })
         .collect()
@@ -271,10 +311,14 @@ pub fn age(now: i64, then: i64) -> String {
 /// The second line of a story row: score, author, replies, age.
 #[must_use]
 pub fn summary(story: &Story, now: i64) -> String {
+    // The author is dropped for a link story and kept for a self-post. On a
+    // link the submitter is the least interesting fact on the line — the host
+    // is what tells a reader whether to bother — and on an Ask HN the
+    // submitter is the person being asked, so they are the whole point.
+    let who = story.site.clone().unwrap_or_else(|| story.author.clone());
     format!(
-        "{} points \u{b7} {} \u{b7} {} comments \u{b7} {}",
+        "{who} \u{b7} {} points \u{b7} {} comments \u{b7} {}",
         story.points,
-        story.author,
         story.comments,
         age(now, story.created)
     )
@@ -357,7 +401,7 @@ mod tests {
         let stories = stories_from(&value);
         assert_eq!(
             summary(&stories[0], 0),
-            "0 points \u{b7} [deleted] \u{b7} 0 comments \u{b7} just now"
+            "[deleted] \u{b7} 0 points \u{b7} 0 comments \u{b7} just now"
         );
     }
 

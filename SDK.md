@@ -198,11 +198,40 @@ with a rule down the gutter. Paginate the same shape with
 narrower, wraps to more lines and eats more of the page, so a thread paginated
 flat and drawn indented loses the bottom of nearly every page.
 
-### One-line labels
+### Clamped labels
 
-`context.one_line_row(text, nav_bar)` measures against the real installed face
-and ellipsises, so a list of headlines has rows of uniform height instead of
-some one line tall and some three.
+`context.clamped_row(text, lines, nav_bar)` measures against the real installed
+face and ellipsises, so a row is never taller than you allowed for.
+`one_line_row(text, nav_bar)` is the same thing with `lines` of 1.
+
+One line gives a list of uniform rows and is right for labels you wrote
+yourself. For text written elsewhere — a headline, a subject line, a filename —
+use two: one line ellipsises most real headlines mid-sentence, and
+`paginate_rows` measures every row separately, so rows of different heights
+cost nothing but the ragged edge.
+
+### What stands at the head of a row
+
+The fourth element of a `rows` tuple is anything that converts into a
+`RowLead`: a `Glyph` for an icon, or a `u16` for a position.
+
+An icon makes a row findable without reading it, which is the point of the
+well. But an icon that is the same on every row has spent a whole touch
+target's width saying nothing — a list of stories does not need a newspaper
+beside each entry to explain that it is a list of stories. Where the entries
+are ordered, pass the position instead:
+
+```rust
+screen.rows(stories.iter().enumerate().map(|(index, story)| (
+    format!("story-{index}"),
+    context.clamped_row(&story.title, 2, true),
+    story.summary.clone(),
+    u16::try_from(index + 1).unwrap_or(u16::MAX),
+)))
+```
+
+Numbers are set in the same square an icon would have occupied, so a list that
+numbers some rows and illustrates others still lines up down its left edge.
 
 ### Pictures
 
@@ -472,6 +501,54 @@ USB; the reader installs it at the next boot. Everything lands in
 rootfs file and no boot script is involved and uninstall is deleting a folder.
 `kobo inspect` reads a built package back and refuses one that could write
 anywhere else.
+
+### Connecting a device
+
+Everything above runs on a host. Nothing in this section is needed to write an
+application, and it is here because the first hour with a real reader is
+otherwise spent guessing.
+
+A Kobo powers its radio down whenever it sleeps, and takes a new address from
+DHCP every time the radio comes back. So the address you had is a guess, and
+the only symptom of any of it is a connection timeout. `kobo devices` sweeps the
+local network, reads four files off whatever answers on port 22, and names the
+readers it found:
+
+```sh
+kobo devices
+kobo devices --subnet 192.168.1
+```
+
+```
+192.168.1.15  N365 · firmware 4.45.23697 · Cobalt 0.1.0
+```
+
+A device also stops answering a few minutes after anybody stops touching it.
+Two settings hold it open while you work, and both clear on a reboot:
+
+```sh
+kobo session --device <address> --wifi-always-on on
+kobo session --device <address> --keep-awake on
+```
+
+With SSH already working on the device, an install needs no cable and no
+reboot:
+
+```sh
+cargo run -p kobo-cli -- deploy --device <address>
+```
+
+`deploy` builds the same archive `package` builds and sends it over the
+stdin-only shell channel as base64; the device checks the SHA-256 of what
+arrived against the SHA-256 of what was sent, refuses any path outside
+`.adds/cobalt`, and refuses outright while a Cobalt session is running, because
+the files it would replace are the ones being executed. It needs no reboot
+because the vendor installer is not involved: the binaries simply land on the
+book partition and run from there.
+
+`package` remains the path for somebody else's device, and the one to use if
+this will not connect. **Cobalt does not install an SSH server and does not
+need one to run.** SSH is only how a developer's machine reaches a device.
 
 ---
 

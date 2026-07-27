@@ -13,10 +13,11 @@ pub use kobo_protocol::{
     MAX_TASK_BYTES, MAX_URL_LEN,
 };
 pub use kobo_ui::{
-    terminal_grid, terminal_grid_for, ActionId, BannerLevel, BarAction, Caret, Cell, Chrome,
-    DisplayMetrics, Freeform, Glyph, NavBar, Node, NodeId, Percent, PictureHandle, ProseArea, Row,
-    Screen, Space, Tile, TilePicture, TileShape, TopBar, MAX_CELLS, MAX_CHOICE_OPTIONS,
-    MAX_COLUMNS, MAX_QUOTE_DEPTH, MAX_ROWS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS,
+    terminal_grid, terminal_grid_for, ActionId, BannerLevel, BarAction, BottomAction, Caret, Cell,
+    Chrome, DisplayMetrics, Freeform, Glyph, NavBar, Node, NodeId, Percent, PictureHandle,
+    ProseArea, Row, RowLead, Screen, Space, Tile, TilePicture, TileShape, TopBar, MAX_CELLS,
+    MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_QUOTE_DEPTH, MAX_ROWS, MAX_TERMINAL_COLUMNS,
+    MAX_TERMINAL_ROWS,
 };
 use std::collections::VecDeque;
 use std::fmt;
@@ -54,6 +55,7 @@ pub struct ScreenBuilder {
     top_bar: Option<TopBar>,
     nodes: Vec<Node>,
     nav_bar: Option<NavBar>,
+    bottom_action: Option<BottomAction>,
     page_turns: Option<kobo_ui::PageTurns>,
     actions: Vec<(String, ActionId)>,
 }
@@ -67,6 +69,7 @@ impl ScreenBuilder {
             top_bar: None,
             nodes: Vec::new(),
             nav_bar: None,
+            bottom_action: None,
             page_turns: None,
             actions: Vec::new(),
         }
@@ -244,6 +247,27 @@ impl ScreenBuilder {
             .map(|(name, label)| BarAction::new(self.register(name.as_ref()), label))
             .collect::<Vec<_>>();
         self.nav_bar = Some(NavBar::new(id, destinations, selected.into()));
+        self.bottom_action = None;
+        self
+    }
+
+    /// Pins one control to the bottom of the panel, where a bar would go.
+    ///
+    /// For a screen with a single way off it. Prefer this to a button at the
+    /// end of the flow whenever the control must always be reachable: layout
+    /// reserves this band before it places any content, so nothing above can
+    /// push the control off the panel, and a page that runs long loses its
+    /// last line rather than the only way out. A trailing button reserves
+    /// nothing, and the launcher shipped with its way back to the Kobo reader
+    /// hanging over the bottom edge of the screen because of it.
+    ///
+    /// Mutually exclusive with [`Self::nav_bar`] — they are the same band.
+    #[must_use]
+    pub fn bottom_action(mut self, name: impl AsRef<str>, label: impl Into<String>) -> Self {
+        let id = self.next_id();
+        let action = BarAction::new(self.register(name.as_ref()), label);
+        self.bottom_action = Some(BottomAction::new(id, action));
+        self.nav_bar = None;
         self
     }
 
@@ -323,19 +347,20 @@ impl ScreenBuilder {
     /// screen of tiles holds very few entries; a row holds a title, a summary
     /// and a glyph in a single finger-height band.
     #[must_use]
-    pub fn rows<I, N, T, S>(mut self, rows: I) -> Self
+    pub fn rows<I, N, T, S, L>(mut self, rows: I) -> Self
     where
-        I: IntoIterator<Item = (N, T, S, Glyph)>,
+        I: IntoIterator<Item = (N, T, S, L)>,
         N: AsRef<str>,
         T: Into<String>,
         S: Into<String>,
+        L: Into<RowLead>,
     {
         let id = self.next_id();
         let rows = rows
             .into_iter()
             .take(MAX_ROWS)
-            .map(|(name, title, summary, glyph)| {
-                Row::new(self.register(name.as_ref()), title, summary, glyph)
+            .map(|(name, title, summary, lead)| {
+                Row::new(self.register(name.as_ref()), title, summary, lead)
             })
             .collect();
         self.nodes.push(Node::Rows { id, rows });
@@ -552,6 +577,7 @@ impl ScreenBuilder {
             top_bar: self.top_bar,
             nodes: self.nodes,
             nav_bar: self.nav_bar,
+            bottom_action: self.bottom_action,
             page_turns: self.page_turns,
         }
     }
@@ -686,11 +712,23 @@ impl Context {
     /// a row's words, so what fits here is what fits there.
     #[must_use]
     pub fn one_line_row(&self, text: &str, nav_bar: bool) -> String {
+        self.clamped_row(text, 1, nav_bar)
+    }
+
+    /// `text` cut to at most `lines` lines of a list row.
+    ///
+    /// Two is the useful setting for anything written elsewhere — a headline,
+    /// a subject line, a filename — because one line ellipsises most of them
+    /// mid-sentence. Rows then differ in height, which [`Self::paginate_rows`]
+    /// already accounts for.
+    #[must_use]
+    pub fn clamped_row(&self, text: &str, lines: usize, nav_bar: bool) -> String {
         let area = self.metrics.prose_area(true, nav_bar);
-        kobo_ui::one_line(
+        kobo_ui::clamp_lines(
             text,
             kobo_ui::row_text_width(&self.metrics, area),
             kobo_ui::FontSize::Body,
+            lines,
         )
     }
 
@@ -1209,6 +1247,21 @@ impl<A: KoboApp> AppRunner<A> {
 
     pub fn app_mut(&mut self) -> &mut A {
         &mut self.app
+    }
+
+    /// A context measuring against the same panel the application ran on.
+    ///
+    /// For tests that need to ask what fits: a test computing its own widths
+    /// is testing its own arithmetic, and the whole point of `one_line_row`
+    /// and `clamped_row` is that there is exactly one measure.
+    #[must_use]
+    pub fn context(&self) -> Context {
+        Context {
+            commands: Vec::new(),
+            next_task: self.next_task,
+            in_flight: self.in_flight,
+            metrics: self.metrics,
+        }
     }
 
     pub fn start(&mut self) -> Vec<Command> {

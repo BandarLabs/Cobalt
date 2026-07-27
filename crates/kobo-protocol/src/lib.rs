@@ -6,9 +6,9 @@ use std::fmt;
 use std::io::{self, Read, Write};
 
 use kobo_ui::{
-    ActionId, BannerLevel, BarAction, Caret, Cell, Freeform, Glyph, NavBar, Node, NodeId,
-    PageTurns, Percent, PictureHandle, Row, RowState, Screen, Space, Tile, TilePicture, TileShape,
-    TopBar, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS, MIN_NAV_DESTINATIONS,
+    ActionId, BannerLevel, BarAction, BottomAction, Caret, Cell, Freeform, Glyph, NavBar, Node,
+    NodeId, PageTurns, Percent, PictureHandle, Row, RowLead, RowState, Screen, Space, Tile,
+    TilePicture, TileShape, TopBar, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS, MIN_NAV_DESTINATIONS,
 };
 use std::cmp::min;
 
@@ -1295,6 +1295,15 @@ fn encoded_screen_len(
             add_encoded_len(&mut length, encoded_string_len(&destination.label)?)?;
         }
     }
+    // One flag byte for the pinned control, plus its node, action and label
+    // when there is one and no bar has already claimed the band.
+    add_encoded_len(&mut length, 1)?;
+    if let Some(bottom) = &screen.bottom_action {
+        if screen.nav_bar.is_none() {
+            add_encoded_len(&mut length, 8)?;
+            add_encoded_len(&mut length, encoded_string_len(&bottom.action.label)?)?;
+        }
+    }
     for node in &screen.nodes {
         add_encoded_len(&mut length, encoded_node_len(node, depth, count)?)?;
     }
@@ -1376,9 +1385,9 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
             }
             let mut length = 6;
             for row in rows {
-                // Four bytes of action, one of glyph and one of state, then
+                // Four bytes of action, three of lead and one of state, then
                 // both strings.
-                add_encoded_len(&mut length, 6)?;
+                add_encoded_len(&mut length, 8)?;
                 add_encoded_len(&mut length, encoded_string_len(&row.title)?)?;
                 add_encoded_len(&mut length, encoded_string_len(&row.summary)?)?;
             }
@@ -1839,6 +1848,19 @@ fn encode_screen(
             }
         }
     }
+    // Written after the bar and never instead of it, so a peer decoding an
+    // older screen reads a zero here and carries on. The two are mutually
+    // exclusive by construction rather than by agreement: a screen that
+    // somehow carries both sends only the bar, because that is what the
+    // reserved band was measured for.
+    match &screen.bottom_action {
+        Some(bottom) if screen.nav_bar.is_none() => {
+            output.push(1);
+            push_u32(output, bottom.id.0);
+            encode_bar_action(output, &bottom.action)?;
+        }
+        _ => output.push(0),
+    }
     match &screen.page_turns {
         None => output.push(0),
         Some(turns) => {
@@ -1987,7 +2009,7 @@ fn encode_node(
                 push_u32(output, row.action.0);
                 push_string(output, &row.title)?;
                 push_string(output, &row.summary)?;
-                output.push(encode_glyph(row.glyph));
+                push_row_lead(output, row.lead);
                 output.push(encode_row_state(row.state));
             }
         }
@@ -2289,6 +2311,14 @@ fn decode_screen(
         }
         _ => return Err(ProtocolError::InvalidValue("nav bar flag")),
     };
+    let bottom_action = match reader.u8()? {
+        0 => None,
+        1 => Some(BottomAction::new(
+            NodeId(reader.u32()?),
+            decode_bar_action(reader)?,
+        )),
+        _ => return Err(ProtocolError::InvalidValue("bottom action flag")),
+    };
     let page_turns = match reader.u8()? {
         0 => None,
         1 => Some(PageTurns::new(
@@ -2308,6 +2338,12 @@ fn decode_screen(
     let mut screen = Screen::new(id, nodes);
     screen.top_bar = top_bar;
     screen.nav_bar = nav_bar;
+    // Only when there is no bar. A frame carrying both is a peer that built
+    // something this layer refuses to draw, and the bar is the one the content
+    // above it was laid out against.
+    if screen.nav_bar.is_none() {
+        screen.bottom_action = bottom_action;
+    }
     screen.page_turns = page_turns;
     Ok(screen)
 }
@@ -2568,21 +2604,55 @@ fn decode_node(
                 }
                 let title = reader.string()?;
                 let summary = reader.string()?;
-                let glyph =
-                    decode_glyph(reader.u8()?).ok_or(ProtocolError::InvalidValue("row glyph"))?;
+                let lead = read_row_lead(reader)?;
                 let state = decode_row_state(reader.u8()?)
                     .ok_or(ProtocolError::InvalidValue("row state"))?;
                 rows.push(Row {
                     action,
                     title,
                     summary,
-                    glyph,
+                    lead,
                     state,
                 });
             }
             Ok(Node::Rows { id, rows })
         }
         _ => Err(ProtocolError::InvalidValue("node tag")),
+    }
+}
+
+/// A row's lead is always three bytes: a tag and a sixteen-bit value.
+///
+/// Fixed width rather than variable, because `encoded_screen_len` has to
+/// predict the size of every screen before a byte is written, and a length
+/// that depends on which variant a row happens to carry is exactly the kind of
+/// arithmetic that has already produced one `debug_assert` panic in this file.
+fn push_row_lead(output: &mut Vec<u8>, lead: RowLead) {
+    match lead {
+        RowLead::Icon(glyph) => {
+            output.push(0);
+            push_u16(output, u16::from(encode_glyph(glyph)));
+        }
+        RowLead::Number(number) => {
+            output.push(1);
+            push_u16(output, number);
+        }
+    }
+}
+
+fn read_row_lead(reader: &mut Reader<'_>) -> Result<RowLead, ProtocolError> {
+    let tag = reader.u8()?;
+    let value = reader.u16()?;
+    match tag {
+        0 => {
+            let glyph = u8::try_from(value)
+                .ok()
+                .and_then(decode_glyph)
+                .ok_or(ProtocolError::InvalidValue("row glyph"))?;
+            Ok(RowLead::Icon(glyph))
+        }
+        1 => Ok(RowLead::Number(value)),
+        _ => Err(ProtocolError::InvalidValue("row lead")),
     }
 }
 

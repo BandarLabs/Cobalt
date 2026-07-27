@@ -223,14 +223,15 @@ impl Launcher {
                 )
                 .build()
         } else {
-            // One page, so there is nothing to turn and the bar would be two
-            // thirds empty. The way out becomes an ordinary button at the end
-            // of the list, which is safe here precisely because the list was
-            // measured against the smaller area a bar would have left: the
-            // button cannot be pushed off a screen the entries already fit.
+            // One page, so there is nothing to turn and a bar would be two
+            // thirds empty. The way out becomes the one pinned control
+            // instead, which occupies exactly the band the grid was measured
+            // against. As a trailing button it did not: a rule, two gaps and a
+            // finger-high control need more room than a bar does, and the
+            // difference went over the bottom edge of the panel, where the
+            // renderer clipped it in silence.
             screen
-                .divider()
-                .button("reader", "Return to Kobo reader")
+                .bottom_action("reader", "Return to Kobo reader")
                 .build()
         }
     }
@@ -617,5 +618,41 @@ mod tests {
                 .any(|node| matches!(node, Node::TileGrid { .. })),
             "the list came back without any entries on it"
         );
+    }
+
+    /// The defect this test exists for shipped: the way back to the reader was
+    /// drawn from y=1335 to y=1453 on a panel 1448 pixels tall, so its bottom
+    /// five pixels — and any descender in the label — were clipped by the edge
+    /// of the screen. Nothing failed; the renderer simply stops at the panel.
+    #[test]
+    fn nothing_is_drawn_past_the_edge_of_the_panel() {
+        for (name, metrics) in PANELS {
+            let mut runner = AppRunner::with_metrics(Launcher::default(), metrics);
+            let mut screen = painted(runner.start());
+            for page in 0..=ENTRIES.len() {
+                let layout = screen.layout_with(&metrics, Chrome::with_back(false));
+                for node in &layout.nodes {
+                    let bottom = node.rect.y + node.rect.height;
+                    assert!(
+                        bottom <= metrics.height,
+                        "{name}: {:?} on page {page} ends at {bottom}, past the panel's {}",
+                        node.kind,
+                        metrics.height
+                    );
+                    let right = node.rect.x + node.rect.width;
+                    assert!(
+                        right <= metrics.width,
+                        "{name}: {:?} on page {page} ends at {right}, past the panel's {}",
+                        node.kind,
+                        metrics.width
+                    );
+                }
+                let commands = runner.action(action_id("next"));
+                if commands.is_empty() {
+                    break;
+                }
+                screen = painted(commands);
+            }
+        }
     }
 }

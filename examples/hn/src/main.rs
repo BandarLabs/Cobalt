@@ -33,8 +33,8 @@ mod html;
 mod model;
 
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, Screen, ScreenBuilder, Task,
-    TaskError, TaskId, TaskOutcome,
+    action_id, ActionId, BannerLevel, Context, KoboApp, Screen, ScreenBuilder, Task, TaskError,
+    TaskId, TaskOutcome,
 };
 use model::{Comment, Story};
 use std::process::ExitCode;
@@ -48,6 +48,24 @@ const API: &str = "https://hn.algolia.com/api/v1";
 /// One screenful is six or seven rows, so this is four or five page turns
 /// deep. More would be a longer wait on the radio for pages nobody reaches.
 const HITS: u32 = 30;
+
+/// How far back the ranked tabs look, in seconds.
+///
+/// A week. Ask HN and Show HN are ranked rather than chronological, so without
+/// a window they return the best of all time and the tab becomes a museum. A
+/// day is too short — a good Ask HN thread collects answers for longer than
+/// that, and a quiet Tuesday would leave the tab half empty — and a month is
+/// long enough that the top of the list stops changing.
+const RECENT_SECONDS: i64 = 7 * 24 * 60 * 60;
+
+/// How many lines of a list row a headline may take.
+///
+/// Measured against a real front page: at one line, three of thirty headlines
+/// ended in an ellipsis; at two lines, none did. So the cost is three rows in
+/// thirty standing a line taller than their neighbours, and the gain is three
+/// headlines that say what they are about. Pagination measures every row
+/// individually, so a ragged column costs nothing but the raggedness.
+const TITLE_LINES: usize = 2;
 
 /// How much of a list response to accept.
 ///
@@ -120,7 +138,20 @@ impl Tab {
         }
     }
 
-    fn url(self) -> String {
+    /// Where this tab's stories come from, asked as of `now`.
+    ///
+    /// The time window is the whole reason this takes an argument. Algolia's
+    /// ranked search is ranked over *all of Hacker News, forever*, so asking
+    /// it for `ask_hn` returns the best Ask HN threads of the last fifteen
+    /// years: this application shipped with a ten-year-old post at the top of
+    /// its Ask tab and a nine-year-old one below it, which is a perfectly good
+    /// answer to a question nobody asked. Hacker News' own Ask and Show pages
+    /// rank recent submissions, so these do too.
+    ///
+    /// `Top` needs no window because `front_page` is by definition what is on
+    /// the front page now, and `New` needs none because it is ordered by date
+    /// rather than ranked.
+    fn url(self, now: i64) -> String {
         let tags = match self {
             Self::Top => "front_page",
             Self::New => "story",
@@ -134,7 +165,14 @@ impl Tab {
         } else {
             "search"
         };
-        format!("{API}/{endpoint}?tags={tags}&hitsPerPage={HITS}")
+        let window = match self {
+            Self::Ask | Self::Show => {
+                let since = now.saturating_sub(RECENT_SECONDS);
+                format!("&numericFilters=created_at_i%3E{since}")
+            }
+            Self::Top | Self::New => String::new(),
+        };
+        format!("{API}/{endpoint}?tags={tags}&hitsPerPage={HITS}{window}")
     }
 }
 
@@ -233,19 +271,14 @@ impl Hn {
             let story = self.stories.get(*index)?;
             Some((
                 format!("story-{index}"),
-                // One line each, so the list is a stack of equal rows rather
-                // than a ragged column the eye has to re-measure. The full
-                // title is the first thing on the story's own screen.
                 self.titles.get(*index).cloned().unwrap_or_default(),
                 model::summary(story, self.now),
-                // A link out, or a post whose whole substance is on Hacker
-                // News. The same icon on every row is decoration; this one
-                // answers "is there anything to read before the comments".
-                if story.text.is_some() {
-                    Glyph::Chat
-                } else {
-                    Glyph::News
-                },
+                // The story's position, which is what Hacker News itself puts
+                // here. An icon would be the same icon thirty times over: a
+                // list of stories does not need to be told it is a list of
+                // stories, and the rank says where you are in the tab and how
+                // far down the page turns have carried you.
+                u16::try_from(index + 1).unwrap_or(u16::MAX),
             ))
         });
         // Tapping the side of the panel turns the page, which is how every
@@ -379,7 +412,7 @@ impl Hn {
         self.cancel_outstanding(context);
         self.problem = None;
         match context.spawn(Task::Fetch {
-            url: self.tab.url(),
+            url: self.tab.url(self.now),
             offset: 0,
             max_bytes: LIST_BYTES,
         }) {
@@ -479,7 +512,7 @@ impl Hn {
         self.titles = self
             .stories
             .iter()
-            .map(|story| context.one_line_row(&story.title, true))
+            .map(|story| context.clamped_row(&story.title, TITLE_LINES, true))
             .collect();
         let summaries = self
             .stories
@@ -742,7 +775,7 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{model, Awaiting, Hn, Tab, View, TABS};
+    use super::{model, Awaiting, Hn, Tab, View, TABS, TITLE_LINES};
     use kobo_sdk::{action_id, AppRunner, Command, Task, TaskError, TaskId, TaskOutcome};
     use kobo_ui::{Chrome, LayoutKind, Rect, CLARA_BW_METRICS};
 
@@ -844,9 +877,34 @@ mod tests {
         ] {
             let commands = runner.action(action_id(tab.action()));
             let url = asked(&commands).expect("the tab asked for something");
-            assert_eq!(url, format!("https://hn.algolia.com/api/v1/{expected}"));
+            let (base, _) = url.split_once("&numericFilters").unwrap_or((&url, ""));
+            assert_eq!(base, format!("https://hn.algolia.com/api/v1/{expected}"));
             let task = spawned(&runner);
             runner.task_outcome(task, TaskOutcome::Completed(FRONT_PAGE.as_bytes().to_vec()));
+        }
+    }
+
+    #[test]
+    fn the_ranked_tabs_only_ask_for_stories_from_this_week() {
+        // Algolia ranks `search` over all of Hacker News forever, so without a
+        // window Ask HN answers with the best thread of 2013. This is what
+        // shipped, and what the owner noticed.
+        let now = 1_700_000_000;
+        let week = 7 * 24 * 60 * 60;
+        for tab in [Tab::Ask, Tab::Show] {
+            let url = tab.url(now);
+            assert!(
+                url.contains(&format!("numericFilters=created_at_i%3E{}", now - week)),
+                "{tab:?} asked without a window: {url}"
+            );
+        }
+        for tab in [Tab::Top, Tab::New] {
+            // `front_page` is by definition current and `search_by_date` is
+            // ordered by date, so a window there would only hide stories.
+            assert!(
+                !tab.url(now).contains("numericFilters"),
+                "{tab:?} does not need a window"
+            );
         }
     }
 
@@ -908,12 +966,11 @@ mod tests {
     }
 
     #[test]
-    fn every_row_in_the_list_is_the_same_height() {
-        // A wrapped headline makes its row taller than the ones around it, and
-        // a list of unequal rows is one the eye has to re-measure on every
-        // line. Titles are cut to a line against the same measure the layout
-        // engine gives a row's words, so this holds for real headlines rather
-        // than short ones.
+    fn a_headline_gets_two_lines_and_no_more() {
+        // Rows used to be cut to one line so the list was a stack of equal
+        // bands. Against real headlines that meant most of them stopped
+        // mid-sentence, so the allowance is two now. The ceiling still has to
+        // hold, or one enormous title takes a page to itself.
         let runner = loaded();
         let application = runner.app();
         assert!(
@@ -930,16 +987,40 @@ mod tests {
         let layout = showing
             .list()
             .layout_with(&CLARA_BW_METRICS, Chrome::default());
-        let heights = layout
+        let lines = layout
             .nodes
             .iter()
-            .filter(|node| matches!(node.kind, LayoutKind::Row(_)))
-            .map(|node| node.rect.height)
+            .filter(|node| matches!(node.kind, LayoutKind::RowTitle))
+            .map(|node| node.text_lines.len())
             .collect::<Vec<_>>();
-        assert!(heights.len() > 3, "too few rows to compare");
+        assert!(lines.len() > 3, "too few rows to compare");
         assert!(
-            heights.iter().all(|height| *height == heights[0]),
-            "rows came out at different heights: {heights:?}"
+            lines.iter().all(|count| *count <= TITLE_LINES),
+            "a headline ran past its allowance: {lines:?}"
+        );
+
+        // And the allowance has to earn itself: one line would truncate most
+        // of a real front page, two truncates almost none of it.
+        let cut = |allowance| {
+            application
+                .stories
+                .iter()
+                .filter(|story| {
+                    runner
+                        .context()
+                        .clamped_row(&story.title, allowance, true)
+                        .ends_with('\u{2026}')
+                })
+                .count()
+        };
+        let (one, two) = (cut(1), cut(TITLE_LINES));
+        println!("headlines truncated: one line {one}, two lines {two}");
+        assert!(one > 0, "no headline was truncated at one line either way");
+        assert!(
+            two < one,
+            "two lines saved nothing worth the ragged column: one line cut \
+             {one} of {}, two lines cut {two}",
+            application.stories.len()
         );
     }
 

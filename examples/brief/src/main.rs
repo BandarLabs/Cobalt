@@ -31,8 +31,8 @@
 
 use kobo_json::Value;
 use kobo_sdk::{
-    action_id, ActionId, Context, Glyph, KoboApp, LogLevel, Screen, ScreenBuilder, Space,
-    StoreResult, Task, TaskError, TaskId, TaskOutcome,
+    action_id, ActionId, Context, KoboApp, LogLevel, Screen, ScreenBuilder, Space, StoreResult,
+    Task, TaskError, TaskId, TaskOutcome,
 };
 use std::process::ExitCode;
 
@@ -176,12 +176,15 @@ impl Brief {
                 .heading("Nothing yet")
                 .text("Tap Refresh while the device has Wi-Fi.");
         } else if !self.stories.is_empty() {
-            screen = screen.rows(self.stories.iter().map(|story| {
+            // Numbered rather than illustrated: the same note icon beside
+            // every headline is decoration, and a briefing is ordered, so the
+            // position is the one thing the well can usefully say.
+            screen = screen.rows(self.stories.iter().enumerate().map(|(index, story)| {
                 (
                     "story",
                     story.title.clone(),
                     story.site.clone(),
-                    Glyph::Note,
+                    u16::try_from(index + 1).unwrap_or(u16::MAX),
                 )
             }));
         }

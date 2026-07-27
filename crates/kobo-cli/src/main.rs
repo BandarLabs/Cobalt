@@ -8,6 +8,7 @@ use std::process::{Child, Command, ExitCode, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+mod connect;
 mod devsession;
 mod package;
 mod sha256;
@@ -102,6 +103,20 @@ const REMOTE_CLEANUP_TIMEOUT: Duration = Duration::from_secs(5);
 /// Session commands search the reader libraries, which are large, so they need
 /// more room than a cleanup command.
 const REMOTE_SESSION_TIMEOUT: Duration = Duration::from_secs(45);
+/// How long each answering address in a sweep is given to identify itself.
+///
+/// Reading four small files takes no time at all; the whole budget is the SSH
+/// handshake, and something on the network that is not a device has to be
+/// given up on quickly or one stranger's host holds up the whole listing.
+const DEVICE_IDENTITY_TIMEOUT: Duration = Duration::from_secs(15);
+/// How long an install over Wi-Fi is given.
+///
+/// The package is around six and a half megabytes of base64 through a single
+/// stdin pipe, which measured about ten seconds on this device, and the
+/// extraction and `sync` afterwards are unhurried on vfat. This is generous by
+/// an order of magnitude on purpose: a deploy killed halfway is the one thing
+/// here that could leave a half-written install directory.
+const DEPLOY_TIMEOUT: Duration = Duration::from_secs(300);
 /// How long a single reachability probe is given before it counts as a miss.
 const DEVICE_PROBE_TIMEOUT: Duration = Duration::from_secs(6);
 /// Gap between reachability probes while waiting for a device.
@@ -222,6 +237,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "dev" => dev(&arguments[1..]),
         "build" => build_device(arguments.iter().any(|argument| argument == "--device")),
         "doctor" => doctor(&arguments[1..]),
+        "devices" => list_devices(&arguments[1..]),
         "session" => dev_session(&arguments[1..]),
         "wait" => wait_for_device(&arguments[1..]),
         "touch-probe" => touch_probe(&arguments[1..]),
@@ -240,6 +256,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
                 .to_owned(),
         ),
         "package" => build_package(&arguments[1..]),
+        "deploy" => deploy_package(&arguments[1..]),
         "inspect" => inspect_package(&arguments[1..]),
         "verify" => verify_command(&arguments[1..]),
         "run" if arguments.get(1).is_some_and(|value| value == "--sim") => run_simulation(),
@@ -716,6 +733,94 @@ fn remote_doctor(host: &str) -> Result<(), String> {
     run_remote_fixed_artifact(host, &RemoteArtifact::doctor())
 }
 
+/// Names every Kobo on the local network, because its address changed again.
+///
+/// A reader takes a new address from DHCP every time its radio comes back, so
+/// the address that worked an hour ago is a guess. This is the answer to "what
+/// is it now", and it is deliberately the one command here that needs no
+/// argument at all.
+///
+/// It knocks on port 22, opens a shell on whatever answered, and reads four
+/// files. Everything it does is read-only, and hosts that are not readers are
+/// counted rather than listed: a tool that prints an inventory of somebody's
+/// home network when they asked where their e-reader went has answered a
+/// question nobody asked.
+fn list_devices(arguments: &[String]) -> Result<(), String> {
+    let subnet = parse_devices(arguments)?;
+    println!(
+        "scanning {subnet}.1-254 on port {} for readers",
+        connect::SSH_PORT
+    );
+    let answered = connect::sweep(&subnet, connect::PROBE_TIMEOUT);
+    let mut readers = Vec::new();
+    let mut others = 0_usize;
+    for address in &answered {
+        match identify_device(&address.to_string()) {
+            Some(identity) if identity.is_kobo() => {
+                println!("{address}  {}", identity.summary());
+                readers.push(*address);
+            }
+            _ => others += 1,
+        }
+    }
+    if others > 0 {
+        println!(
+            "{others} other host(s) answered on port {}",
+            connect::SSH_PORT
+        );
+    }
+    let Some(first) = readers.first() else {
+        return Err(unreachable_device(format!(
+            "no reader answered on {subnet}.0/24"
+        )));
+    };
+    println!("use it with --device, for example: kobo doctor --device {first}");
+    Ok(())
+}
+
+/// Reads a host's identity, or `None` when it is not something we can talk to.
+///
+/// An address that completes a TCP handshake proves only that something is
+/// listening. No key, a different SSH server, or a machine that is simply not
+/// ours all fail here, and every one of them is an ordinary result on a home
+/// network rather than a reason to abandon the sweep.
+fn identify_device(host: &str) -> Option<connect::Identity> {
+    if !valid_device_host(host) {
+        return None;
+    }
+    let output = run_remote_shell(
+        &format!("root@{host}"),
+        &connect::identity_script(),
+        DEVICE_IDENTITY_TIMEOUT,
+    )
+    .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(connect::Identity::parse(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
+}
+
+fn parse_devices(arguments: &[String]) -> Result<String, String> {
+    const USAGE: &str = "usage: kobo devices [--subnet A.B.C]";
+    let subnet = match arguments {
+        [] => connect::local_subnet().ok_or(
+            "this machine has no route to a network, so there is nothing to scan; \
+             connect to the same Wi-Fi as the reader, or pass --subnet A.B.C",
+        )?,
+        [flag, value] if flag == "--subnet" => (*value).clone(),
+        _ => return Err(USAGE.to_owned()),
+    };
+    if !connect::valid_subnet(&subnet) {
+        return Err(format!(
+            "--subnet takes the first three octets and nothing else, such as 192.168.1, \
+             not {subnet:?}"
+        ));
+    }
+    Ok(subnet)
+}
+
 /// Controls how long a connected device stays reachable while developing.
 ///
 /// Every action is reversible and none of them touch a partition, the
@@ -743,7 +848,8 @@ fn dev_session(arguments: &[String]) -> Result<(), String> {
         DevSessionAction::RestoreConfig => devsession::restore_config_script(),
         DevSessionAction::Hold(_) => unreachable!("hold is handled above"),
     };
-    let output = run_remote_shell(&format!("root@{host}"), &script, REMOTE_SESSION_TIMEOUT)?;
+    let output = run_remote_shell(&format!("root@{host}"), &script, REMOTE_SESSION_TIMEOUT)
+        .map_err(unreachable_device)?;
     print!("{}", String::from_utf8_lossy(&output.stdout));
     if output.status.success() {
         // Advising a restart is only true when something actually changed; the
@@ -762,10 +868,13 @@ fn dev_session(arguments: &[String]) -> Result<(), String> {
         }
         Ok(())
     } else {
-        Err(remote_session_failure(
-            format!("device session command exited with {}", output.status),
+        Err(unreachable_if_ssh_gave_up(
+            remote_session_failure(
+                format!("device session command exited with {}", output.status),
+                &output,
+                None,
+            ),
             &output,
-            None,
         ))
     }
 }
@@ -865,10 +974,10 @@ fn wait_for_device(arguments: &[String]) -> Result<(), String> {
         }
         let waited = started.elapsed();
         if waited + DEVICE_PROBE_INTERVAL >= budget {
-            return Err(format!(
+            return Err(unreachable_device(format!(
                 "device {host} did not answer within {}s; wake it and try again",
                 budget.as_secs()
-            ));
+            )));
         }
         if attempts == 1 {
             println!(
@@ -1199,18 +1308,21 @@ fn run_remote_fixed_artifact(host: &str, artifact: &RemoteArtifact) -> Result<()
         }
         Ok(output) => {
             let cleanup = cleanup_remote_fixed_artifact(&remote, &session);
-            Err(remote_session_failure(
-                format!("{} exited with {}", artifact.label, output.status),
+            Err(unreachable_if_ssh_gave_up(
+                remote_session_failure(
+                    format!("{} exited with {}", artifact.label, output.status),
+                    &output,
+                    cleanup.err(),
+                ),
                 &output,
-                cleanup.err(),
             ))
         }
         Err(error) => {
             let cleanup = cleanup_remote_fixed_artifact(&remote, &session);
-            Err(match cleanup {
+            Err(unreachable_device(match cleanup {
                 Ok(()) => error,
                 Err(cleanup_error) => format!("{error}; cleanup failed: {cleanup_error}"),
-            })
+            }))
         }
     }
 }
@@ -1410,6 +1522,35 @@ fn cleanup_remote_fixed_artifact(
             &output,
             None,
         ))
+    }
+}
+
+/// Adds the four-cause checklist to an error that means the device was never
+/// reached.
+///
+/// Every one of those causes produces the same connection timeout, so the
+/// error on its own tells the reader nothing they can act on. It is added at
+/// the points where contact was never made rather than to every failure,
+/// because a device that answered and then refused something has already told
+/// them what was wrong.
+#[must_use]
+fn unreachable_device(mut error: String) -> String {
+    error.push_str("\n\n");
+    error.push_str(connect::OFFLINE_HELP);
+    error
+}
+
+/// The same, for a session that ssh itself gave up on.
+///
+/// ssh reserves exit status 255 for its own failures — refused, timed out, key
+/// rejected — so anything else came back from a shell that really did run on
+/// the device, and the checklist would be misleading there.
+#[must_use]
+fn unreachable_if_ssh_gave_up(error: String, output: &RemoteShellOutput) -> String {
+    if output.status.code() == Some(255) {
+        unreachable_device(error)
+    } else {
+        error
     }
 }
 
@@ -1628,8 +1769,34 @@ fn verify_present_is_compiled_in(bytes: &[u8], binary: &Path) -> Result<(), Stri
     ))
 }
 
-fn build_package(arguments: &[String]) -> Result<(), String> {
-    let (tarball, folder) = parse_package(arguments)?;
+/// A package, and what reading its finished bytes back said was in it.
+///
+/// Built once and then used whichever way it is going to reach a device, so
+/// `kobo package` and `kobo deploy` can never disagree about what Cobalt is.
+struct BuiltPackage {
+    members: Vec<package::Member>,
+    listed: Vec<package::Listed>,
+    compressed: Vec<u8>,
+}
+
+impl BuiltPackage {
+    /// How many regular files an owner is about to gain.
+    fn file_count(&self) -> usize {
+        self.listed
+            .iter()
+            .filter(|entry| entry.kind == b'0')
+            .count()
+    }
+}
+
+/// Builds every device binary and packs them into the archive an owner
+/// installs.
+///
+/// This is the whole of the build, deliberately separated from writing it to a
+/// file: the archive that goes over USB and the archive that goes over Wi-Fi
+/// have to be the same bytes, produced by the same checks, or one of the two
+/// paths is unreviewed.
+fn build_package_bytes() -> Result<BuiltPackage, String> {
     let mut members = Vec::new();
     for (name, features) in INSTALLED_PACKAGES {
         run_status(
@@ -1664,19 +1831,37 @@ fn build_package(arguments: &[String]) -> Result<(), String> {
     // device's boot script, so the list of what it will write is checked from
     // the bytes that were produced, not from the list they were produced from.
     let listed = package::list(&archive)?;
+    let outside = members_outside_install_root(&listed);
+    if !outside.is_empty() {
+        return Err(format!(
+            "refusing to build: {} would be written outside {}",
+            outside.join(", "),
+            package::INSTALL_ROOT
+        ));
+    }
     let compressed = gzip(&archive)?;
     // Exactly what `rcS` does before it extracts anything. A tarball that
     // fails this is silently ignored on the device, which looks like an
     // install that did nothing.
     gzip_test(&compressed)?;
+    Ok(BuiltPackage {
+        members,
+        listed,
+        compressed,
+    })
+}
+
+fn build_package(arguments: &[String]) -> Result<(), String> {
+    let (tarball, folder) = parse_package(arguments)?;
+    let built = build_package_bytes()?;
 
     if let Some(parent) = tarball.parent() {
         fs::create_dir_all(parent).map_err(|error| format!("{}: {error}", parent.display()))?;
     }
-    fs::write(&tarball, &compressed)
+    fs::write(&tarball, &built.compressed)
         .map_err(|error| format!("write {}: {error}", tarball.display()))?;
     if let Some(folder) = folder {
-        package::write_folder(&members, &folder)?;
+        package::write_folder(&built.members, &folder)?;
         println!(
             "also written as a plain folder: {}\n\
              copy it into .adds/ on the device and name it cobalt, or copy it over\n\
@@ -1685,15 +1870,144 @@ fn build_package(arguments: &[String]) -> Result<(), String> {
         );
     }
 
-    let files = listed.iter().filter(|entry| entry.kind == b'0').count();
+    let files = built.file_count();
     println!(
         "{}: {files} files, {} bytes, sha256 {}",
         tarball.display(),
-        compressed.len(),
-        sha256::hex_digest(&compressed)
+        built.compressed.len(),
+        sha256::hex_digest(&built.compressed)
     );
     println!("{INSTALL_INSTRUCTIONS}");
     Ok(())
+}
+
+/// Installs Cobalt onto a device over Wi-Fi, with no reboot and no USB cable.
+///
+/// This exists because `/mnt/onboard` is mounted without `noexec`, so an
+/// install is nothing more than putting a folder of files on the book
+/// partition. The vendor installer is not involved, which is why this needs no
+/// reboot and is not the path an ordinary owner uses: it needs SSH already set
+/// up, and `kobo package` remains the answer for somebody who has no terminal.
+///
+/// Nothing here can write outside `.adds/cobalt`. The archive is checked on
+/// this machine before it is sent, and the script checks the same thing again
+/// on the device from the bytes that actually arrived, because that half runs
+/// as root. A running panel session is refused rather than overwritten, since
+/// the files being replaced are the ones it is executing.
+fn deploy_package(arguments: &[String]) -> Result<(), String> {
+    let (host, supplied) = parse_deploy(arguments)?;
+    let (compressed, files) = if let Some(path) = supplied {
+        validated_package(&path)?
+    } else {
+        let built = build_package_bytes()?;
+        let files = built.file_count();
+        (built.compressed, files)
+    };
+    // Hash exactly the bytes that go up the pipe, so what the device verifies
+    // is what this process sent rather than whatever is on disk afterwards.
+    let checksum = sha256::hex_digest(&compressed);
+    println!(
+        "installing {files} files, {} bytes, sha256 {checksum} into {} on {host}",
+        compressed.len(),
+        connect::INSTALL_DIRECTORY
+    );
+    let script = connect::install_script(&base64_encode(&compressed), &checksum);
+    let output = run_remote_shell(&format!("root@{host}"), &script, DEPLOY_TIMEOUT)
+        .map_err(unreachable_device)?;
+    if !output.status.success() {
+        return Err(unreachable_if_ssh_gave_up(
+            remote_session_failure(
+                format!("install on {host} exited with {}", output.status),
+                &output,
+                None,
+            ),
+            &output,
+        ));
+    }
+    let reported = String::from_utf8_lossy(&output.stdout);
+    let version = reported_value(&reported, "installed").unwrap_or("unknown");
+    let binaries = reported_value(&reported, "binaries").unwrap_or("no");
+    println!(
+        "installed Cobalt {version} on {host}: {binaries} binaries in {}",
+        connect::INSTALL_DIRECTORY
+    );
+    println!(
+        "nothing is running yet. Start it on the reader with {}/start.sh, or from a\n\
+         NickelMenu entry if you have one. A reboot always returns to the stock reader.",
+        connect::INSTALL_DIRECTORY
+    );
+    Ok(())
+}
+
+/// The value of one `key=value` line a device script reported.
+///
+/// Absent rather than wrong when the line is missing, so a device that printed
+/// less than expected produces a vaguer message rather than a false one.
+fn reported_value<'a>(output: &'a str, key: &str) -> Option<&'a str> {
+    output.lines().find_map(|line| {
+        let (name, value) = line.trim().split_once('=')?;
+        (name == key).then_some(value.trim())
+    })
+}
+
+/// Reads a package from disk and refuses one that could write anywhere but the
+/// install root.
+///
+/// Exactly the reading `kobo inspect` performs, applied before anything is
+/// uploaded: an archive nobody has read back is an archive nobody knows the
+/// contents of, and this one is extracted as root.
+fn validated_package(path: &Path) -> Result<(Vec<u8>, usize), String> {
+    let compressed = fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))?;
+    gzip_test(&compressed)?;
+    let archive = gunzip(&compressed)?;
+    let listed = package::list(&archive)?;
+    let outside = members_outside_install_root(&listed);
+    if !outside.is_empty() {
+        return Err(format!(
+            "refusing to upload {}: {} would be written outside {}",
+            path.display(),
+            outside.join(", "),
+            package::INSTALL_ROOT
+        ));
+    }
+    Ok((
+        compressed,
+        listed.iter().filter(|entry| entry.kind == b'0').count(),
+    ))
+}
+
+fn parse_deploy(arguments: &[String]) -> Result<(&str, Option<PathBuf>), String> {
+    const USAGE: &str = "usage: kobo deploy --device <host> [--package <path>]";
+    let (host, rest) = match arguments {
+        [device, host, rest @ ..] if device == "--device" => (host.as_str(), rest),
+        _ => return Err(USAGE.to_owned()),
+    };
+    if !valid_device_host(host) {
+        return Err("device host contains unsupported characters".to_owned());
+    }
+    let package = match rest {
+        [] => None,
+        [flag, value] if flag == "--package" => Some(PathBuf::from(value)),
+        _ => return Err(USAGE.to_owned()),
+    };
+    Ok((host, package))
+}
+
+/// Every listed path that would land somewhere other than the install root.
+///
+/// Taken from entries read back out of finished archive bytes rather than from
+/// the member list they were built from, because the archive is what a device
+/// extracts as root. The directories leading down to the root are allowed,
+/// since an archive has to create them to create anything inside them.
+fn members_outside_install_root(listed: &[package::Listed]) -> Vec<String> {
+    let root = format!("{}/", package::INSTALL_ROOT);
+    listed
+        .iter()
+        .filter(|entry| {
+            !(entry.path.starts_with(&root) || root.starts_with(entry.path.trim_end_matches('/')))
+        })
+        .map(|entry| entry.path.clone())
+        .collect()
 }
 
 /// Lists a package and proves it cannot write outside the install root.
@@ -1703,17 +2017,11 @@ fn inspect_package(arguments: &[String]) -> Result<(), String> {
     gzip_test(&compressed)?;
     let archive = gunzip(&compressed)?;
     let listed = package::list(&archive)?;
-    let root = format!("{}/", package::INSTALL_ROOT);
-    let mut outside = Vec::new();
     for entry in &listed {
         let kind = if entry.kind == b'5' { "dir " } else { "file" };
         println!("{kind} {:o} {:>9} {}", entry.mode, entry.size, entry.path);
-        let inside =
-            entry.path.starts_with(&root) || root.starts_with(entry.path.trim_end_matches('/'));
-        if !inside {
-            outside.push(entry.path.clone());
-        }
     }
+    let outside = members_outside_install_root(&listed);
     if outside.is_empty() {
         println!(
             "nothing outside {}; this package writes no root filesystem file",
@@ -2056,12 +2364,14 @@ fn print_help() {
            dev [--builtin] [address]  Run this SDK app in the browser simulator\n\
            build [--device]       Build host workspace or ARM safe doctor, disabled kobod, and sample app\n\
            doctor [--device IP]   Run read-only device diagnostics\n\
+           devices [--subnet A.B.C]  Find every reader on the local network\n\
            session --device IP    Keep a device awake and on Wi-Fi while developing\n\
            session --device IP --hold [minutes]  Keep it reachable for unattended testing\n\
            wait --device IP       Block until a device answers again\n\
            touch-probe --device IP [--seconds N]  Watch touch read-only to check the transform\n\
            guard-test --device IP --confirm ...   Prove the guardian restores the screen\n\
            package [--out PATH] [--folder PATH]  Build the KoboRoot.tgz an owner copies\n\
+           deploy --device IP [--package PATH]   Install over Wi-Fi, no reboot\n\
            inspect <package>       List a package and prove it writes nothing to the rootfs\n\
            verify <arm-binary>     Verify static ARM hard-float format\n\
            run --sim              Run SDK, IPC, daemon and app on host\n\
@@ -2074,10 +2384,11 @@ fn print_help() {
 mod tests {
     use super::package;
     use super::{
-        build_executables, manifest_uses_sdk, parse_touch_probe, valid_device_host, valid_slug,
-        verify_arm_elf, wait_for_remote_child, workspace_doctor_binary, DevSessionGuard,
-        RemoteArtifact, SimulationGuard, DEVICE_PACKAGES, GENERATED_APP_SOURCE,
-        TOUCH_PROBE_DEFAULT_SECONDS, TOUCH_PROBE_MAXIMUM_SECONDS,
+        build_executables, manifest_uses_sdk, parse_deploy, parse_devices, parse_touch_probe,
+        unreachable_device, valid_device_host, valid_slug, verify_arm_elf, wait_for_remote_child,
+        workspace_doctor_binary, DevSessionGuard, RemoteArtifact, SimulationGuard, DEPLOY_TIMEOUT,
+        DEVICE_PACKAGES, GENERATED_APP_SOURCE, TOUCH_PROBE_DEFAULT_SECONDS,
+        TOUCH_PROBE_MAXIMUM_SECONDS,
     };
     #[cfg(feature = "device-write")]
     use super::{
@@ -2118,6 +2429,92 @@ mod tests {
         // The device enforces its own bound, so the host must outlast it.
         let artifact = RemoteArtifact::touch_probe(TOUCH_PROBE_MAXIMUM_SECONDS);
         assert!(artifact.timeout().as_secs() > TOUCH_PROBE_MAXIMUM_SECONDS + 15);
+    }
+
+    /// A sweep builds addresses by appending a host part, so anything that is
+    /// not exactly three octets would produce addresses nobody asked for.
+    #[test]
+    fn a_sweep_is_confined_to_one_named_subnet() {
+        let arguments = |parts: &[&str]| {
+            parts
+                .iter()
+                .map(|part| (*part).to_owned())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            parse_devices(&arguments(&["--subnet", "192.168.1"])),
+            Ok("192.168.1".to_owned())
+        );
+        for rejected in [
+            vec!["--subnet", "192.168.1.10"],
+            vec!["--subnet", "192.168"],
+            vec!["--subnet", "192.168.1; reboot"],
+            vec!["--subnet", "$(hostname)"],
+            vec!["--subnet"],
+            vec!["--subnet", "192.168.1", "--extra"],
+            vec!["192.168.1"],
+        ] {
+            assert!(
+                parse_devices(&arguments(&rejected)).is_err(),
+                "{rejected:?} must be refused"
+            );
+        }
+        // With no argument the subnet comes from this machine's own route, and
+        // a machine with no route has nothing to scan rather than a default.
+        assert_eq!(
+            parse_devices(&[]).is_ok(),
+            super::connect::local_subnet().is_some()
+        );
+    }
+
+    #[test]
+    fn a_deploy_names_one_host_and_at_most_one_package() {
+        let arguments = |parts: &[&str]| {
+            parts
+                .iter()
+                .map(|part| (*part).to_owned())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            parse_deploy(&arguments(&["--device", "192.168.1.15"])),
+            Ok(("192.168.1.15", None))
+        );
+        assert_eq!(
+            parse_deploy(&arguments(&[
+                "--device",
+                "192.168.1.15",
+                "--package",
+                "target/KoboRoot.tgz"
+            ])),
+            Ok(("192.168.1.15", Some(PathBuf::from("target/KoboRoot.tgz"))))
+        );
+        for rejected in [
+            vec!["--device", "192.168.1.15; reboot"],
+            vec!["--device", ""],
+            vec!["--device"],
+            vec!["--device", "192.168.1.15", "--package"],
+            vec!["--device", "192.168.1.15", "--out", "somewhere"],
+            vec!["--package", "target/KoboRoot.tgz"],
+            vec![],
+        ] {
+            assert!(
+                parse_deploy(&arguments(&rejected)).is_err(),
+                "{rejected:?} must be refused"
+            );
+        }
+        // Six and a half megabytes of base64 through one stdin pipe took about
+        // ten seconds on the device, so the budget has to be far larger.
+        assert!(DEPLOY_TIMEOUT.as_secs() >= 180);
+    }
+
+    /// The checklist is the whole value of these messages, so it has to
+    /// survive being attached to an error rather than replacing one.
+    #[test]
+    fn an_unreachable_device_keeps_its_error_and_gains_the_checklist() {
+        let reported = unreachable_device("device 192.168.1.15 did not answer".to_owned());
+        assert!(reported.starts_with("device 192.168.1.15 did not answer"));
+        assert!(reported.contains("kobo devices"));
+        assert!(reported.contains("asleep"));
     }
 
     #[test]

@@ -102,6 +102,107 @@ That `rustup target add` is the entire cross-build setup. The linker is pinned
 in `.cargo/config.toml` to `rust-lld`, which ships with the toolchain, so a
 fresh checkout builds device binaries with no system packages.
 
+## Connecting a device
+
+The reader has to be on the same wireless network as the machine you work from.
+Join it on the device the ordinary way — the top bar, the Wi-Fi icon, then the
+network — and know that the radio goes down every time the reader sleeps.
+Nothing on a stock Kobo keeps Wi-Fi up through a suspend, so this is not a
+setting somebody forgot to turn on.
+
+Two things follow from that, and between them they account for very nearly
+every occasion this project has failed to reach a device.
+
+The first is that the address changes. It comes from DHCP on every
+reconnection, so the one that worked this morning is somebody's laptop by the
+afternoon, and the reader never mentions it. `kobo devices` is the answer:
+
+```sh
+kobo devices                       # this machine's own /24
+kobo devices --subnet 192.168.1    # when this machine has more than one route
+```
+
+It completes a TCP handshake on port 22 across the subnet, opens a shell on
+whatever answered, and reads four files. Everything it does is read-only.
+
+```
+192.168.1.15  N365 · firmware 4.45.23697 · Cobalt 0.1.0
+2 other host(s) answered on port 22
+```
+
+Hosts that turn out not to be readers are counted rather than listed. A tool
+asked where an e-reader went should not reply with an inventory of the network
+it was asked on.
+
+The second is that a device stops answering a few minutes after anyone stops
+touching it. Two reversible settings hold it open while you work:
+
+```sh
+kobo session --device <address> --wifi-always-on on
+kobo session --device <address> --keep-awake on
+```
+
+`--wifi-always-on` writes the reader's own developer setting, which is read at
+startup, so it applies from the next reader restart. `--keep-awake` takes a
+kernel wake lock that lives in RAM. Both clear on a reboot, and neither is
+sufficient on its own on this firmware — *Keeping a device reachable while
+developing*, below, explains what actually stops the suspend and how it was
+measured.
+
+### The two ways to install
+
+Over USB, which needs no SSH and is what an owner does:
+
+```sh
+cargo run -p kobo-cli -- package     # target/KoboRoot.tgz
+```
+
+Charge the device, copy the file to `.kobo/KoboRoot.tgz`, eject, and the reader
+installs it at the next boot with its own installer. Charging first is not
+politeness: that installer is gated on battery level and fails silently, so an
+install that appears to do nothing usually means a flat battery. This path is
+described in full under *Installing on a device*.
+
+Over Wi-Fi, which needs SSH already working on the device and installs with no
+reboot at all:
+
+```sh
+kobo deploy --device <address>
+kobo deploy --device <address> --package target/KoboRoot.tgz
+```
+
+There is no reboot because there is nothing to reboot for. `/mnt/onboard` is
+mounted without `noexec`, so an install is a folder of files arriving on the
+book partition, and the vendor installer — the part that needs a reboot and a
+charged battery — is not involved. `deploy` builds the same archive `package`
+builds, sends it through the stdin-only shell channel as base64, and the device
+compares the SHA-256 of what arrived against the SHA-256 of what was sent
+before it extracts anything.
+
+It refuses more than it does. An archive containing any path outside
+`.adds/cobalt` is refused here before it is sent and again on the device from
+the bytes that actually arrived, because that half runs as root. A package
+given with `--package` is read back and checked exactly as `kobo inspect` reads
+it, so an archive nobody has looked inside is never uploaded. And a running
+Cobalt session is refused rather than worked around, since the files being
+replaced are the ones it is executing.
+
+Neither path starts anything. Run `.adds/cobalt/start.sh` on the reader, or add
+the single NickelMenu line the packaged `README.txt` gives you.
+
+### When it will not answer
+
+Every command that fails to reach a device prints the same four causes, in the
+order they actually happen: the reader is asleep and its radio is off; Wi-Fi is
+off while it is awake; its address has changed; or nothing is listening on port
+22. The first is more common than the other three together, and the fix is the
+power button.
+
+The last one is worth stating plainly. **Cobalt does not install an SSH server
+and does not need one to run.** SSH is only how a developer's machine reaches
+the device; nothing the platform does on the reader involves it. Somebody who
+has never set one up installs over USB and never encounters any of this.
+
 ## Talking to a device
 
 ```sh
