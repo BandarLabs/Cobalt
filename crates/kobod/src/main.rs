@@ -316,6 +316,7 @@ fn serve_application(
         std::thread::spawn(move || deliver_outcomes(&draining, &writer));
     }
     let store = kobo_policy::store::Store::new(std::env::temp_dir().join("cobalt-host-state"));
+    let shelf = kobo_policy::shelf::Shelf::new(std::env::temp_dir().join("cobalt-host-data"));
     let mut pictures = kobo_ui::PictureCache::default();
     loop {
         let frame = kobo_protocol::read_from(stream)?;
@@ -400,7 +401,9 @@ fn serve_application(
                 }
             }
             Message::StoreRequest(request) => {
-                let result = store.handle(&request);
+                let result = shelf
+                    .handle(&request)
+                    .unwrap_or_else(|| store.handle(&request));
                 write_shared(
                     &writer,
                     &Frame {

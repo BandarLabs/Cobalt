@@ -3,11 +3,52 @@
 //! Query operations are always available. Mutating HWTCON requests are compiled
 //! only with the explicitly opt-in `device-write` feature.
 
-use std::ffi::{c_int, c_ulong};
+use std::ffi::{c_int, c_ulong, CString};
 use std::fs::File;
 use std::io;
 use std::mem::MaybeUninit;
 use std::os::fd::AsRawFd;
+use std::os::unix::ffi::OsStrExt;
+use std::path::Path;
+
+/// How many bytes are still free on the filesystem `path` lives on.
+///
+/// # Why anything needs to ask
+///
+/// Cobalt's own data shares a partition with `KoboReader.sqlite`, which is the
+/// stock reader's entire library — every book, every bookmark, every position.
+/// A database that cannot write is a library that comes back empty, and the
+/// reader has no way to know that the thing which filled the card was us. So
+/// anything that writes something large asks first and leaves a margin.
+///
+/// `None` when the filesystem cannot be interrogated, which callers must treat
+/// as "do not know" rather than as "no room": refusing every write on a device
+/// whose `statvfs` is unusual would be worse than the problem being avoided.
+#[must_use]
+pub fn free_space(path: &Path) -> Option<u64> {
+    let path = CString::new(path.as_os_str().as_bytes()).ok()?;
+    let mut stats = MaybeUninit::<libc::statvfs>::zeroed();
+    // SAFETY: `path` is a NUL-terminated C string that outlives the call, and
+    // `statvfs` writes exactly one `statvfs` structure through the pointer.
+    let result = unsafe { libc::statvfs(path.as_ptr(), stats.as_mut_ptr()) };
+    if result != 0 {
+        return None;
+    }
+    // SAFETY: `statvfs` returned success, so the structure is initialised.
+    let stats = unsafe { stats.assume_init() };
+    // `f_bavail`, not `f_bfree`: the difference is the reserve only root may
+    // use, and nothing here runs as a process that should be spending it.
+    //
+    // The conversions look redundant and are not portable to leave out: these
+    // fields are 64-bit on the device's musl and 32-bit on the host this is
+    // also compiled for, so whichever form reads as unnecessary here is
+    // required on the other target.
+    #[allow(clippy::unnecessary_fallible_conversions, clippy::useless_conversion)]
+    let blocks = u64::try_from(stats.f_bavail).ok()?;
+    #[allow(clippy::unnecessary_fallible_conversions, clippy::useless_conversion)]
+    let size = u64::try_from(stats.f_frsize).ok()?;
+    blocks.checked_mul(size)
+}
 
 const IOC_NRBITS: u32 = 8;
 const IOC_TYPEBITS: u32 = 8;
@@ -962,5 +1003,36 @@ mod tests {
         let wait: fn(&File, &mut hwtcon::HwtconUpdateMarkerData) -> std::io::Result<()> =
             hwtcon::wait_for_update_complete;
         let _ = (send, wait);
+    }
+}
+
+#[cfg(test)]
+mod space_tests {
+    #[test]
+    fn a_real_filesystem_reports_something_plausible() {
+        let free = super::free_space(std::path::Path::new(".")).expect("a readable filesystem");
+        assert!(
+            free > 0,
+            "a filesystem with a checkout on it reported empty"
+        );
+    }
+
+    #[test]
+    fn a_path_that_is_not_there_is_not_an_answer() {
+        // "Do not know" and "no room" are different, and a caller that
+        // confused them would refuse every write on an unusual device.
+        assert_eq!(
+            super::free_space(std::path::Path::new("/no/such/place/at/all")),
+            None
+        );
+    }
+
+    #[test]
+    fn a_path_with_a_nul_in_it_is_refused_rather_than_truncated() {
+        assert_eq!(
+            super::free_space(std::path::Path::new("a\u{0}b")),
+            None,
+            "a path was cut at the NUL and some other filesystem was measured"
+        );
     }
 }

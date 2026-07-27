@@ -620,7 +620,16 @@ impl KoboApp for Feeds {
                 self.problem = Some("Your feeds could not be saved.".to_owned());
                 self.show(context);
             }
-            StoreResult::Saved { .. } | StoreResult::Forgotten { .. } | StoreResult::Keys(_) => {}
+            // Listed rather than wildcarded, so adding a store answer to the
+            // protocol makes every application decide what it means here.
+            // This one keeps nothing on the shelf.
+            StoreResult::Saved { .. }
+            | StoreResult::Forgotten { .. }
+            | StoreResult::Keys(_)
+            | StoreResult::ShelfWritten { .. }
+            | StoreResult::ShelfRead { .. }
+            | StoreResult::ShelfRemoved { .. }
+            | StoreResult::Shelf(_) => {}
         }
     }
 

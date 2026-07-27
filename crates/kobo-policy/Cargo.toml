@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+kobo-abi = { path = "../kobo-abi" }
 kobo-protocol = { path = "../kobo-protocol" }
 
 [lints]

@@ -67,6 +67,20 @@ const SECRETS: &str = "/mnt/onboard/.adds/cobalt/secrets";
 
 /// Where each application's own keyed state lives, one directory per name.
 const STATE_ROOT: &str = "/mnt/onboard/.adds/cobalt/state";
+
+/// Where large application data lives.
+///
+/// Beside the state and for the same reasons, but kept apart from it so the
+/// two can be reasoned about separately: state is small, permanent and cheap
+/// to keep, while a shelf holds books that can be fetched again and is the
+/// first thing to clear when the card is tight. A single directory holding
+/// both would make "delete the downloads" indistinguishable from "forget where
+/// I was".
+///
+/// This is the USER partition -- the one that appears when the reader is
+/// plugged in -- not one of the internal partitions the firmware lives on.
+/// Nothing here can stop the device booting.
+const DATA_ROOT: &str = "/mnt/onboard/.adds/cobalt/data";
 /// The panel metrics a screen is drawn and hit-tested with.
 ///
 /// A screen may ask for a text size other than the reader's own — a reader
@@ -553,6 +567,7 @@ struct Hosted {
     child: Child,
     stream: std::os::unix::net::UnixStream,
     store: kobo_policy::store::Store,
+    shelf: kobo_policy::shelf::Shelf,
     tasks: TaskRunner,
     /// The terminal this application may run a program on, or a refusal.
     shells: kobo_shell::Shells,
@@ -1028,7 +1043,13 @@ fn host_applications(
                             )?;
                         }
                         Message::StoreRequest(request) => {
-                            let result = apps[index].store.handle(&request);
+                            // The shelf is asked first and declines anything
+                            // that is not its own, so neither side needs a
+                            // list of which requests belong where.
+                            let result = apps[index]
+                                .shelf
+                                .handle(&request)
+                                .unwrap_or_else(|| apps[index].store.handle(&request));
                             reply(
                                 &mut apps[index],
                                 frame.request_id,
@@ -1374,6 +1395,7 @@ fn start_application(
         // the one place a reinstall does not wipe. An application that never
         // saves creates nothing here.
         store: kobo_policy::store::Store::new(Path::new(STATE_ROOT).join(&name)),
+        shelf: kobo_policy::shelf::Shelf::new(Path::new(DATA_ROOT).join(&name)),
         name,
         path: path.to_path_buf(),
         child,

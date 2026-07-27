@@ -15,3 +15,6 @@ unsafe_code = "allow"
 [lints.clippy]
 all = "warn"
 pedantic = "warn"
+
+[dependencies]
+libc = "0.2.189"

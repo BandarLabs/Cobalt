@@ -70,6 +70,29 @@ pub const MAX_STORE_VALUE: usize = 256 * 1024;
 /// The most keys one application may hold.
 pub const MAX_STORE_KEYS: usize = 256;
 
+/// The most bytes one shelf write or read may carry.
+///
+/// A book is megabytes and a frame is one, so a blob moves in pieces. This is
+/// the piece: large enough that a ten-megabyte book is forty round trips
+/// rather than four hundred, and small enough that neither side is ever
+/// holding a frame near the limit while it also holds the thing being built.
+pub const MAX_SHELF_CHUNK: usize = 256 * 1024;
+
+/// The most bytes one application may keep on the shelf.
+pub const MAX_SHELF_BYTES: u64 = 256 * 1024 * 1024;
+
+/// The most blobs one application may keep.
+pub const MAX_SHELF_BLOBS: usize = 4_096;
+
+/// How much of the card must stay free whatever an application asks for.
+///
+/// `KoboReader.sqlite` shares this partition, and it is the stock reader's
+/// entire library. A database with nowhere to write is a library that comes
+/// back empty, and nothing about that failure points at us. Sixty-four
+/// megabytes is far more than the database needs to grow into and small enough
+/// not to matter on a card measured in gigabytes.
+pub const SHELF_RESERVE: u64 = 64 * 1024 * 1024;
+
 /// A handle to work the runtime is carrying out on an application's behalf.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TaskId(pub u32);
@@ -480,6 +503,30 @@ pub enum StoreRequest {
     Forget { key: String },
     /// Lists the keys this application has written.
     List,
+    /// Writes part of a blob, at a byte offset within it.
+    ///
+    /// Offsets rather than an append cursor: a write that is retried after a
+    /// disconnection must land in the same place, and a cursor the two sides
+    /// disagree about is a file with a hole or a repeat in the middle of it.
+    /// `last` finishes the blob, which is when it becomes readable under its
+    /// name — until then a half-written book is not something that can be
+    /// opened and found wanting.
+    ShelfWrite {
+        name: String,
+        offset: u32,
+        bytes: Vec<u8>,
+        last: bool,
+    },
+    /// Reads part of a blob.
+    ShelfRead {
+        name: String,
+        offset: u32,
+        length: u32,
+    },
+    /// Removes a blob, and any half-written copy of it.
+    ShelfRemove { name: String },
+    /// Lists the blobs this application has finished writing, with their sizes.
+    ShelfList,
 }
 
 /// Where an application stands relative to the panel.
@@ -515,6 +562,23 @@ pub enum StoreResult {
     },
     Keys(Vec<String>),
     Denied(StoreError),
+    /// A piece of a blob landed. `size` is how much of it exists so far.
+    ShelfWritten {
+        name: String,
+        size: u32,
+    },
+    /// A piece of a blob. `size` is the whole blob's length, so a reader knows
+    /// when to stop asking without a separate round trip to find out.
+    ShelfRead {
+        name: String,
+        offset: u32,
+        bytes: Vec<u8>,
+        size: u32,
+    },
+    ShelfRemoved {
+        name: String,
+    },
+    Shelf(Vec<(String, u32)>),
 }
 
 /// Why a store request was refused.
@@ -535,6 +599,17 @@ pub enum StoreError {
     /// state is not a privilege it has to ask for, any more than a phone asks
     /// permission to remember which tab you were on.
     Unwritable = 3,
+    /// The card itself is too near full. Distinct from [`StoreError::TooFull`],
+    /// which is about this application's own allowance: this one means the
+    /// write was refused to leave the stock reader's library room to breathe,
+    /// and deleting something of this application's own may not help.
+    NoRoom = 4,
+    /// No blob of that name, or the offset does not line up with what is
+    /// already there. Writes are appends: a piece that would leave a hole in
+    /// the middle of a book is refused rather than padded, because a book with
+    /// a hole in it opens and is wrong, which is harder to notice than a book
+    /// that does not open at all.
+    Missing = 5,
 }
 
 impl TryFrom<u8> for StoreError {
@@ -545,6 +620,8 @@ impl TryFrom<u8> for StoreError {
             1 => Ok(Self::BadKey),
             2 => Ok(Self::TooFull),
             3 => Ok(Self::Unwritable),
+            4 => Ok(Self::NoRoom),
+            5 => Ok(Self::Missing),
             _ => Err(ProtocolError::InvalidValue("store error")),
         }
     }
@@ -556,6 +633,8 @@ impl fmt::Display for StoreError {
             Self::BadKey => "that is not a usable key",
             Self::TooFull => "there is no room for that",
             Self::Unwritable => "the store could not be written",
+            Self::NoRoom => "the card is too nearly full to write that",
+            Self::Missing => "there is nothing there to read",
         })
     }
 }
@@ -940,6 +1019,37 @@ fn encode_store_request(
             push_string(payload, key)?;
         }
         StoreRequest::List => payload.push(3),
+        StoreRequest::ShelfWrite {
+            name,
+            offset,
+            bytes,
+            last,
+        } => {
+            payload.push(4);
+            push_string(payload, name)?;
+            push_u32(payload, *offset);
+            payload.push(u8::from(*last));
+            push_u32(
+                payload,
+                u32::try_from(bytes.len()).map_err(|_| ProtocolError::FrameTooLarge)?,
+            );
+            payload.extend_from_slice(bytes);
+        }
+        StoreRequest::ShelfRead {
+            name,
+            offset,
+            length,
+        } => {
+            payload.push(5);
+            push_string(payload, name)?;
+            push_u32(payload, *offset);
+            push_u32(payload, *length);
+        }
+        StoreRequest::ShelfRemove { name } => {
+            payload.push(6);
+            push_string(payload, name)?;
+        }
+        StoreRequest::ShelfList => payload.push(7),
     }
     Ok(())
 }
@@ -982,6 +1092,42 @@ fn encode_store_result(payload: &mut Vec<u8>, result: &StoreResult) -> Result<()
         StoreResult::Denied(error) => {
             payload.push(4);
             payload.push(*error as u8);
+        }
+        StoreResult::ShelfWritten { name, size } => {
+            payload.push(5);
+            push_string(payload, name)?;
+            push_u32(payload, *size);
+        }
+        StoreResult::ShelfRead {
+            name,
+            offset,
+            bytes,
+            size,
+        } => {
+            payload.push(6);
+            push_string(payload, name)?;
+            push_u32(payload, *offset);
+            push_u32(payload, *size);
+            push_u32(
+                payload,
+                u32::try_from(bytes.len()).map_err(|_| ProtocolError::FrameTooLarge)?,
+            );
+            payload.extend_from_slice(bytes);
+        }
+        StoreResult::ShelfRemoved { name } => {
+            payload.push(7);
+            push_string(payload, name)?;
+        }
+        StoreResult::Shelf(blobs) => {
+            payload.push(8);
+            push_u16(
+                payload,
+                u16::try_from(blobs.len()).map_err(|_| ProtocolError::FrameTooLarge)?,
+            );
+            for (name, size) in blobs {
+                push_string(payload, name)?;
+                push_u32(payload, *size);
+            }
         }
     }
     Ok(())
@@ -1742,6 +1888,34 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
                 key: reader.string()?,
             },
             3 => StoreRequest::List,
+            4 => {
+                let name = reader.string()?;
+                let offset = reader.u32()?;
+                let last = match reader.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(ProtocolError::InvalidValue("shelf finished flag")),
+                };
+                let length = reader.u32()? as usize;
+                if length > MAX_SHELF_CHUNK {
+                    return Err(ProtocolError::FrameTooLarge);
+                }
+                StoreRequest::ShelfWrite {
+                    name,
+                    offset,
+                    bytes: reader.take(length)?.to_vec(),
+                    last,
+                }
+            }
+            5 => StoreRequest::ShelfRead {
+                name: reader.string()?,
+                offset: reader.u32()?,
+                length: reader.u32()?,
+            },
+            6 => StoreRequest::ShelfRemove {
+                name: reader.string()?,
+            },
+            7 => StoreRequest::ShelfList,
             _ => return Err(ProtocolError::InvalidValue("store request")),
         }),
         14 => Message::StoreResult(match reader.u8()? {
@@ -1778,6 +1952,40 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
                 StoreResult::Keys(keys)
             }
             4 => StoreResult::Denied(StoreError::try_from(reader.u8()?)?),
+            5 => StoreResult::ShelfWritten {
+                name: reader.string()?,
+                size: reader.u32()?,
+            },
+            6 => {
+                let name = reader.string()?;
+                let offset = reader.u32()?;
+                let size = reader.u32()?;
+                let length = reader.u32()? as usize;
+                if length > MAX_SHELF_CHUNK {
+                    return Err(ProtocolError::FrameTooLarge);
+                }
+                StoreResult::ShelfRead {
+                    name,
+                    offset,
+                    bytes: reader.take(length)?.to_vec(),
+                    size,
+                }
+            }
+            7 => StoreResult::ShelfRemoved {
+                name: reader.string()?,
+            },
+            8 => {
+                let count = reader.u16()? as usize;
+                if count > MAX_STORE_KEYS {
+                    return Err(ProtocolError::FrameTooLarge);
+                }
+                let mut blobs = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let name = reader.string()?;
+                    blobs.push((name, reader.u32()?));
+                }
+                StoreResult::Shelf(blobs)
+            }
             _ => return Err(ProtocolError::InvalidValue("store result")),
         }),
         15 => Message::Lifecycle(match reader.u8()? {
@@ -2368,7 +2576,24 @@ fn store_request_len(request: &StoreRequest) -> Result<usize, ProtocolError> {
         StoreRequest::Load { key } | StoreRequest::Forget { key } => {
             add_encoded_len(&mut length, encoded_string_len(key)?)?;
         }
-        StoreRequest::List => {}
+        StoreRequest::List | StoreRequest::ShelfList => {}
+        StoreRequest::ShelfWrite { name, bytes, .. } => {
+            if bytes.len() > MAX_SHELF_CHUNK {
+                return Err(ProtocolError::FrameTooLarge);
+            }
+            add_encoded_len(&mut length, encoded_string_len(name)?)?;
+            // Offset, the finished flag, and the length that precedes the
+            // bytes themselves.
+            add_encoded_len(&mut length, 4 + 1 + 4)?;
+            add_encoded_len(&mut length, bytes.len())?;
+        }
+        StoreRequest::ShelfRead { name, .. } => {
+            add_encoded_len(&mut length, encoded_string_len(name)?)?;
+            add_encoded_len(&mut length, 4 + 4)?;
+        }
+        StoreRequest::ShelfRemove { name } => {
+            add_encoded_len(&mut length, encoded_string_len(name)?)?;
+        }
     }
     Ok(length)
 }
@@ -2400,6 +2625,32 @@ fn store_result_len(result: &StoreResult) -> Result<usize, ProtocolError> {
             }
         }
         StoreResult::Denied(_) => add_encoded_len(&mut length, 1)?,
+        StoreResult::ShelfWritten { name, .. } => {
+            add_encoded_len(&mut length, encoded_string_len(name)?)?;
+            add_encoded_len(&mut length, 4)?;
+        }
+        StoreResult::ShelfRemoved { name } => {
+            add_encoded_len(&mut length, encoded_string_len(name)?)?;
+        }
+        StoreResult::ShelfRead { name, bytes, .. } => {
+            if bytes.len() > MAX_SHELF_CHUNK {
+                return Err(ProtocolError::FrameTooLarge);
+            }
+            add_encoded_len(&mut length, encoded_string_len(name)?)?;
+            // Offset, whole size, and the length that precedes the bytes.
+            add_encoded_len(&mut length, 4 + 4 + 4)?;
+            add_encoded_len(&mut length, bytes.len())?;
+        }
+        StoreResult::Shelf(blobs) => {
+            if blobs.len() > MAX_STORE_KEYS {
+                return Err(ProtocolError::FrameTooLarge);
+            }
+            add_encoded_len(&mut length, 2)?;
+            for (name, _) in blobs {
+                add_encoded_len(&mut length, encoded_string_len(name)?)?;
+                add_encoded_len(&mut length, 4)?;
+            }
+        }
     }
     Ok(length)
 }
@@ -3909,6 +4160,109 @@ mod store_tests {
         ] {
             assert_eq!(message_round_trip(message.clone()), message);
         }
+    }
+
+    #[test]
+    fn every_shelf_message_survives_the_wire_at_the_length_it_predicted() {
+        // The length functions are maintained by hand beside the encoders, so
+        // this asserts the two agree as well as that the bytes decode back.
+        for message in [
+            Message::StoreRequest(StoreRequest::ShelfWrite {
+                name: "pg1342.epub".into(),
+                offset: 0,
+                bytes: vec![0, 1, 2, 255],
+                last: false,
+            }),
+            Message::StoreRequest(StoreRequest::ShelfWrite {
+                name: "pg1342.epub".into(),
+                offset: 262_144,
+                bytes: Vec::new(),
+                last: true,
+            }),
+            Message::StoreRequest(StoreRequest::ShelfRead {
+                name: "pg1342.epub".into(),
+                offset: 4096,
+                length: 65536,
+            }),
+            Message::StoreRequest(StoreRequest::ShelfRemove {
+                name: "pg1342.epub".into(),
+            }),
+            Message::StoreRequest(StoreRequest::ShelfList),
+            Message::StoreResult(StoreResult::ShelfWritten {
+                name: "pg1342.epub".into(),
+                size: 262_144,
+            }),
+            Message::StoreResult(StoreResult::ShelfRead {
+                name: "pg1342.epub".into(),
+                offset: 4096,
+                bytes: b"It is a truth universally acknowledged".to_vec(),
+                size: 700_000,
+            }),
+            Message::StoreResult(StoreResult::ShelfRemoved {
+                name: "pg1342.epub".into(),
+            }),
+            Message::StoreResult(StoreResult::Shelf(vec![
+                ("pg1342.epub".into(), 700_000),
+                ("pg84.txt".into(), 442_000),
+            ])),
+            Message::StoreResult(StoreResult::Shelf(Vec::new())),
+            Message::StoreResult(StoreResult::Denied(StoreError::NoRoom)),
+            Message::StoreResult(StoreResult::Denied(StoreError::Missing)),
+        ] {
+            let frame = Frame {
+                request_id: 1,
+                message: message.clone(),
+            };
+            let (_, predicted) = encoded_message_layout(&frame.message).expect("a valid message");
+            let encoded = encode(&frame).expect("a valid message");
+            assert_eq!(
+                encoded.len() - HEADER_LEN,
+                predicted,
+                "{message:?} encodes to a different length than it predicted"
+            );
+            assert_eq!(message_round_trip(message.clone()), message);
+        }
+    }
+
+    #[test]
+    fn a_chunk_over_the_ceiling_is_refused_by_both_ends() {
+        // Refused at encode, so an application cannot build a frame the
+        // runtime would only drop, and refused at decode, so a peer that
+        // ignored the first rule cannot make us allocate on its say-so.
+        let message = Message::StoreRequest(StoreRequest::ShelfWrite {
+            name: "big".into(),
+            offset: 0,
+            bytes: vec![0; MAX_SHELF_CHUNK + 1],
+            last: false,
+        });
+        assert!(matches!(
+            encode(&Frame {
+                request_id: 1,
+                message,
+            }),
+            Err(ProtocolError::FrameTooLarge)
+        ));
+    }
+
+    #[test]
+    fn a_finished_flag_that_is_neither_yes_nor_no_is_refused() {
+        let mut encoded = encode(&Frame {
+            request_id: 1,
+            message: Message::StoreRequest(StoreRequest::ShelfWrite {
+                name: "a".into(),
+                offset: 0,
+                bytes: Vec::new(),
+                last: true,
+            }),
+        })
+        .expect("a valid message");
+        let flag = encoded.len() - 5;
+        assert_eq!(encoded[flag], 1, "the finished flag moved");
+        encoded[flag] = 2;
+        assert!(matches!(
+            decode(&encoded),
+            Err(ProtocolError::InvalidValue("shelf finished flag"))
+        ));
     }
 
     #[test]

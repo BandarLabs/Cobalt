@@ -10,7 +10,7 @@ pub use kobo_protocol::{
     Message, SecretHeader, ShellError, ShellEvent, ShellRequest, StoreError, StoreRequest,
     StoreResult, StreamError, Task, TaskError, TaskId, TaskOutcome, MAX_HEADERS, MAX_HEADER_NAME,
     MAX_HEADER_VALUE, MAX_INLINE_PICTURE_BYTES, MAX_PICTURE_BYTES, MAX_PICTURE_CHUNK_BYTES,
-    MAX_SHELL_CHUNK, MAX_STORE_KEYS, MAX_STORE_VALUE, MAX_TASK_BYTES, MAX_URL_LEN,
+    MAX_SHELF_CHUNK, MAX_SHELL_CHUNK, MAX_STORE_KEYS, MAX_STORE_VALUE, MAX_TASK_BYTES, MAX_URL_LEN,
 };
 pub use kobo_ui::QuoteRole;
 pub use kobo_ui::{
@@ -38,11 +38,12 @@ pub mod terminal;
 
 pub mod prelude {
     pub use crate::{
-        action_id, ActionId, AppIcon, AppMetadata, AppRunner, AppShell, AppStore, Capability,
-        Client, ClientEvent, Command, Context, ControlState, DenyReason, Device, DeviceRequest,
-        DeviceResult, DialogAction, Grant, Grants, KoboApp, Lifecycle, Navigator, Node, NodeId,
-        PowerPolicy, Screen, ScreenBuilder, ShellError, ShellEvent, ShellRequest, StandardState,
-        StoreError, StoreRequest, StoreResult,
+        action_id, ActionId, AppIcon, AppMetadata, AppRunner, AppShelf, AppShell, AppStore,
+        Capability, Client, ClientEvent, Command, Context, ControlState, DenyReason, Device,
+        DeviceRequest, DeviceResult, DialogAction, Grant, Grants, KoboApp, Lifecycle, Navigator,
+        Node, NodeId, PowerPolicy, Screen, ScreenBuilder, ShelfDownload, ShelfProgress,
+        ShelfUpload, ShellError, ShellEvent, ShellRequest, StandardState, StoreError, StoreRequest,
+        StoreResult,
     };
 }
 
@@ -1529,6 +1530,17 @@ impl Context {
         AppStore { context: self }
     }
 
+    /// The application's large data: books, covers, anything measured in
+    /// megabytes rather than kilobytes.
+    ///
+    /// Separate from [`Context::store`] because the two fail differently. A
+    /// state file is small enough to move in one message and small enough that
+    /// losing it costs a reading position; a book is neither. See
+    /// [`ShelfUpload`] and [`ShelfDownload`], which own the piecework.
+    pub fn shelf(&mut self) -> AppShelf<'_> {
+        AppShelf { context: self }
+    }
+
     /// The terminal this application may run a program on.
     ///
     /// Nothing happens until [`AppShell::open`] is called, and nothing happens
@@ -1590,6 +1602,258 @@ impl AppStore<'_> {
 
     fn request(&mut self, request: StoreRequest) {
         self.context.commands.push(Command::Store(request));
+    }
+}
+
+/// An application's large data.
+///
+/// Everything here is a request answered through [`KoboApp::on_store`], like
+/// the ordinary store. The difference is that a blob does not fit in one
+/// message, so a write is a sequence and a read is a sequence -- which is what
+/// [`ShelfUpload`] and [`ShelfDownload`] exist to stop every application
+/// writing for itself.
+#[derive(Debug)]
+pub struct AppShelf<'a> {
+    context: &'a mut Context,
+}
+
+impl AppShelf<'_> {
+    /// Writes one piece of a blob at `offset`, finishing it when `last`.
+    ///
+    /// A blob cannot be read until a piece arrives with `last` set. That is
+    /// deliberate: a half-downloaded book that opens is worse than no book,
+    /// because it reads correctly until it stops mid-sentence and nothing
+    /// distinguishes that from a book which was always like that.
+    ///
+    /// Prefer [`ShelfUpload`] to calling this directly.
+    pub fn write(
+        &mut self,
+        name: impl Into<String>,
+        offset: u32,
+        bytes: impl Into<Vec<u8>>,
+        last: bool,
+    ) {
+        self.request(StoreRequest::ShelfWrite {
+            name: name.into(),
+            offset,
+            bytes: bytes.into(),
+            last,
+        });
+    }
+
+    /// Reads up to `length` bytes from `offset`. Prefer [`ShelfDownload`].
+    pub fn read(&mut self, name: impl Into<String>, offset: u32, length: u32) {
+        self.request(StoreRequest::ShelfRead {
+            name: name.into(),
+            offset,
+            length,
+        });
+    }
+
+    /// Removes a blob, and any half-written copy of it.
+    pub fn remove(&mut self, name: impl Into<String>) {
+        self.request(StoreRequest::ShelfRemove { name: name.into() });
+    }
+
+    /// Lists what this application has stored, with sizes.
+    pub fn list(&mut self) {
+        self.request(StoreRequest::ShelfList);
+    }
+
+    fn request(&mut self, request: StoreRequest) {
+        self.context.commands.push(Command::Store(request));
+    }
+}
+
+/// The most an application may pull back into memory in one download.
+///
+/// The device has 256 MB of RAM for everything, so a shelf that allows a
+/// quarter of a gigabyte on the card must not allow the same figure in a
+/// `Vec`. A book that is genuinely larger than this has to be read in pieces
+/// by whatever knows how to page it, and this ceiling is where that decision
+/// gets forced rather than discovered by an out-of-memory kill.
+pub const MAX_SHELF_DOWNLOAD: usize = 32 * 1024 * 1024;
+
+/// How a transfer answered the last result it was shown.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ShelfProgress {
+    /// Not this transfer's answer. Show it to whatever else is waiting.
+    Elsewhere,
+    /// Still going. `done` of `total` bytes have moved, and the next request
+    /// has already been queued.
+    Moving { done: u32, total: u32 },
+    /// Finished.
+    Done,
+    /// Refused, and no further request was made.
+    Failed(StoreError),
+}
+
+/// Writes a blob to the shelf in as many pieces as it takes.
+///
+/// # Why the runtime's answer drives the next request
+///
+/// Each answer carries how much of the blob exists, and the next piece is cut
+/// from there rather than from a cursor kept on this side. Two counters that
+/// are supposed to agree eventually do not, and the failure that produces is a
+/// book with a gap in the middle -- which opens, reads, and is quietly wrong.
+/// One counter cannot disagree with itself.
+#[derive(Clone, Debug)]
+pub struct ShelfUpload {
+    name: String,
+    bytes: Vec<u8>,
+    sent: u32,
+}
+
+impl ShelfUpload {
+    #[must_use]
+    pub fn new(name: impl Into<String>, bytes: impl Into<Vec<u8>>) -> Self {
+        Self {
+            name: name.into(),
+            bytes: bytes.into(),
+            sent: 0,
+        }
+    }
+
+    /// Queues the first piece. Beginning at zero also discards anything left
+    /// from an earlier attempt that never finished.
+    pub fn start(&mut self, context: &mut Context) {
+        self.sent = 0;
+        self.send(context);
+    }
+
+    /// Feeds this transfer one store answer.
+    pub fn advance(&mut self, context: &mut Context, result: &StoreResult) -> ShelfProgress {
+        match result {
+            StoreResult::ShelfWritten { name, size } if *name == self.name => {
+                self.sent = *size;
+                if usize::try_from(*size).unwrap_or(usize::MAX) >= self.bytes.len() {
+                    ShelfProgress::Done
+                } else {
+                    self.send(context);
+                    ShelfProgress::Moving {
+                        done: *size,
+                        total: self.total(),
+                    }
+                }
+            }
+            StoreResult::Denied(error) => ShelfProgress::Failed(*error),
+            _ => ShelfProgress::Elsewhere,
+        }
+    }
+
+    fn send(&mut self, context: &mut Context) {
+        let from = usize::try_from(self.sent)
+            .unwrap_or(usize::MAX)
+            .min(self.bytes.len());
+        let to = from.saturating_add(MAX_SHELF_CHUNK).min(self.bytes.len());
+        let piece = self.bytes[from..to].to_vec();
+        let last = to == self.bytes.len();
+        context
+            .shelf()
+            .write(self.name.clone(), self.sent, piece, last);
+    }
+
+    fn total(&self) -> u32 {
+        u32::try_from(self.bytes.len()).unwrap_or(u32::MAX)
+    }
+
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+/// Reads a blob back from the shelf in as many pieces as it takes.
+#[derive(Clone, Debug)]
+pub struct ShelfDownload {
+    name: String,
+    bytes: Vec<u8>,
+    limit: usize,
+}
+
+impl ShelfDownload {
+    #[must_use]
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            bytes: Vec::new(),
+            limit: MAX_SHELF_DOWNLOAD,
+        }
+    }
+
+    /// Stops after `limit` bytes rather than [`MAX_SHELF_DOWNLOAD`].
+    #[must_use]
+    pub fn at_most(mut self, limit: usize) -> Self {
+        self.limit = limit.min(MAX_SHELF_DOWNLOAD);
+        self
+    }
+
+    /// Queues the first read.
+    pub fn start(&mut self, context: &mut Context) {
+        self.bytes.clear();
+        self.request(context);
+    }
+
+    /// Feeds this transfer one store answer.
+    pub fn advance(&mut self, context: &mut Context, result: &StoreResult) -> ShelfProgress {
+        let StoreResult::ShelfRead {
+            name,
+            offset,
+            bytes,
+            size,
+        } = result
+        else {
+            return match result {
+                StoreResult::Denied(error) => ShelfProgress::Failed(*error),
+                _ => ShelfProgress::Elsewhere,
+            };
+        };
+        if *name != self.name {
+            return ShelfProgress::Elsewhere;
+        }
+        // A piece that does not begin where the last one ended would splice
+        // the blob together wrongly. Refusing is the only safe answer: the
+        // result would be a file that parses and is not the file.
+        if usize::try_from(*offset).unwrap_or(usize::MAX) != self.bytes.len() {
+            return ShelfProgress::Failed(StoreError::Missing);
+        }
+        if usize::try_from(*size).unwrap_or(usize::MAX) > self.limit {
+            return ShelfProgress::Failed(StoreError::TooFull);
+        }
+        self.bytes.extend_from_slice(bytes);
+        let done = u32::try_from(self.bytes.len()).unwrap_or(u32::MAX);
+        if done >= *size {
+            return ShelfProgress::Done;
+        }
+        // An empty piece before the end would otherwise ask again forever.
+        if bytes.is_empty() {
+            return ShelfProgress::Failed(StoreError::Missing);
+        }
+        self.request(context);
+        ShelfProgress::Moving { done, total: *size }
+    }
+
+    fn request(&mut self, context: &mut Context) {
+        let offset = u32::try_from(self.bytes.len()).unwrap_or(u32::MAX);
+        let length = u32::try_from(MAX_SHELF_CHUNK).unwrap_or(u32::MAX);
+        context.shelf().read(self.name.clone(), offset, length);
+    }
+
+    /// What has arrived so far, which is the whole blob once
+    /// [`ShelfProgress::Done`] has been returned.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    #[must_use]
+    pub fn take(self) -> Vec<u8> {
+        self.bytes
+    }
+
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
     }
 }
 
@@ -2219,6 +2483,222 @@ impl Client {
 mod tests {
     use super::*;
     use std::thread;
+
+    /// A bare context, for exercising the request builders directly.
+    fn context() -> Context {
+        Context {
+            commands: Vec::new(),
+            next_task: 1,
+            in_flight: 0,
+            metrics: DisplayMetrics::default(),
+        }
+    }
+
+    /// Runs a transfer against the real policy shelf until it stops.
+    ///
+    /// Not a stub. A chunking bug is an agreement between two sides, and a
+    /// fake that agrees with the code under test proves only that the code
+    /// agrees with itself.
+    fn drive(
+        shelf: &kobo_policy::shelf::Shelf,
+        mut step: impl FnMut(&mut Context, Option<&StoreResult>) -> ShelfProgress,
+    ) -> (ShelfProgress, usize) {
+        let mut context = context();
+        let mut progress = step(&mut context, None);
+        let mut trips = 0;
+        while matches!(progress, ShelfProgress::Moving { .. }) || trips == 0 {
+            let Some(Command::Store(request)) = context.take_commands().pop() else {
+                break;
+            };
+            trips += 1;
+            assert!(trips < 10_000, "a transfer did not terminate");
+            let result = shelf.handle(&request).expect("a shelf request");
+            progress = step(&mut context, Some(&result));
+            if !matches!(progress, ShelfProgress::Moving { .. }) {
+                break;
+            }
+        }
+        (progress, trips)
+    }
+
+    fn temporary_shelf() -> kobo_policy::shelf::Shelf {
+        let root = std::env::temp_dir().join(format!(
+            "kobo-sdk-shelf-{}-{:?}",
+            std::process::id(),
+            thread::current().id()
+        ));
+        let _ignored = std::fs::remove_dir_all(&root);
+        kobo_policy::shelf::Shelf::new(root)
+    }
+
+    #[test]
+    fn a_blob_larger_than_a_frame_survives_the_whole_round_trip() {
+        // The case the shelf exists for: bigger than one message, so it can
+        // only work if the cutting and the rejoining agree.
+        let shelf = temporary_shelf();
+        let book: Vec<u8> = (0..600_000u32).map(|index| (index % 251) as u8).collect();
+
+        let mut upload = ShelfUpload::new("book.txt", book.clone());
+        let (progress, trips) = drive(&shelf, |context, result| match result {
+            None => {
+                upload.start(context);
+                ShelfProgress::Moving { done: 0, total: 0 }
+            }
+            Some(result) => upload.advance(context, result),
+        });
+        assert_eq!(progress, ShelfProgress::Done);
+        assert_eq!(trips, 3, "600 kB took an unexpected number of round trips");
+
+        let mut download = ShelfDownload::new("book.txt");
+        let (progress, _) = drive(&shelf, |context, result| match result {
+            None => {
+                download.start(context);
+                ShelfProgress::Moving { done: 0, total: 0 }
+            }
+            Some(result) => download.advance(context, result),
+        });
+        assert_eq!(progress, ShelfProgress::Done);
+        assert_eq!(download.take(), book, "the book came back different");
+    }
+
+    #[test]
+    fn an_empty_blob_still_finishes() {
+        // Zero bytes is a real answer -- an empty file, a book that failed to
+        // download -- and a loop written around "send until empty" hangs here.
+        let shelf = temporary_shelf();
+        let mut upload = ShelfUpload::new("empty.txt", Vec::new());
+        let (progress, trips) = drive(&shelf, |context, result| match result {
+            None => {
+                upload.start(context);
+                ShelfProgress::Moving { done: 0, total: 0 }
+            }
+            Some(result) => upload.advance(context, result),
+        });
+        assert_eq!(progress, ShelfProgress::Done);
+        assert_eq!(trips, 1);
+
+        let mut download = ShelfDownload::new("empty.txt");
+        let (progress, _) = drive(&shelf, |context, result| match result {
+            None => {
+                download.start(context);
+                ShelfProgress::Moving { done: 0, total: 0 }
+            }
+            Some(result) => download.advance(context, result),
+        });
+        assert_eq!(progress, ShelfProgress::Done);
+        assert!(download.take().is_empty());
+    }
+
+    #[test]
+    fn a_restarted_upload_replaces_what_the_first_attempt_left() {
+        let shelf = temporary_shelf();
+        let mut abandoned = ShelfUpload::new("book.txt", vec![b'x'; 300_000]);
+        let mut context = context();
+        abandoned.start(&mut context);
+        if let Some(Command::Store(request)) = context.take_commands().pop() {
+            let _ignored = shelf.handle(&request);
+        }
+
+        let mut upload = ShelfUpload::new("book.txt", b"the real one".to_vec());
+        let (progress, _) = drive(&shelf, |context, result| match result {
+            None => {
+                upload.start(context);
+                ShelfProgress::Moving { done: 0, total: 0 }
+            }
+            Some(result) => upload.advance(context, result),
+        });
+        assert_eq!(progress, ShelfProgress::Done);
+
+        let mut download = ShelfDownload::new("book.txt");
+        let (progress, _) = drive(&shelf, |context, result| match result {
+            None => {
+                download.start(context);
+                ShelfProgress::Moving { done: 0, total: 0 }
+            }
+            Some(result) => download.advance(context, result),
+        });
+        assert_eq!(progress, ShelfProgress::Done);
+        assert_eq!(download.take(), b"the real one");
+    }
+
+    #[test]
+    fn a_download_of_something_that_is_not_there_fails_rather_than_returning_nothing() {
+        // An empty Vec and a missing book must not look the same, or an
+        // application shows a reader full of blank pages instead of an error.
+        let shelf = temporary_shelf();
+        let mut download = ShelfDownload::new("absent.txt");
+        let (progress, _) = drive(&shelf, |context, result| match result {
+            None => {
+                download.start(context);
+                ShelfProgress::Moving { done: 0, total: 0 }
+            }
+            Some(result) => download.advance(context, result),
+        });
+        assert_eq!(progress, ShelfProgress::Failed(StoreError::Missing));
+    }
+
+    #[test]
+    fn a_transfer_ignores_an_answer_that_is_not_its_own() {
+        let mut context = context();
+        let mut upload = ShelfUpload::new("mine.txt", b"x".to_vec());
+        assert_eq!(
+            upload.advance(
+                &mut context,
+                &StoreResult::ShelfWritten {
+                    name: "theirs.txt".into(),
+                    size: 1,
+                }
+            ),
+            ShelfProgress::Elsewhere
+        );
+        assert_eq!(
+            upload.advance(&mut context, &StoreResult::Keys(Vec::new())),
+            ShelfProgress::Elsewhere
+        );
+        assert!(
+            context.take_commands().is_empty(),
+            "a transfer acted on somebody else's answer"
+        );
+    }
+
+    #[test]
+    fn a_download_refuses_a_piece_that_does_not_join_on() {
+        // Splicing at the wrong offset yields a file that parses and is not
+        // the file, which is the failure hardest to notice.
+        let mut context = context();
+        let mut download = ShelfDownload::new("book.txt");
+        assert_eq!(
+            download.advance(
+                &mut context,
+                &StoreResult::ShelfRead {
+                    name: "book.txt".into(),
+                    offset: 4096,
+                    bytes: b"middle".to_vec(),
+                    size: 9000,
+                }
+            ),
+            ShelfProgress::Failed(StoreError::Missing)
+        );
+    }
+
+    #[test]
+    fn a_download_stops_at_its_ceiling_instead_of_filling_memory() {
+        let mut context = context();
+        let mut download = ShelfDownload::new("huge.txt").at_most(1024);
+        assert_eq!(
+            download.advance(
+                &mut context,
+                &StoreResult::ShelfRead {
+                    name: "huge.txt".into(),
+                    offset: 0,
+                    bytes: vec![0; 16],
+                    size: 40_000_000,
+                }
+            ),
+            ShelfProgress::Failed(StoreError::TooFull)
+        );
+        assert!(context.take_commands().is_empty());
+    }
 
     struct Example;
 

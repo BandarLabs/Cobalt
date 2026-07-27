@@ -68,6 +68,13 @@ impl Store {
             StoreRequest::Load { key } => Self::load(root, key),
             StoreRequest::Forget { key } => Self::forget(root, key),
             StoreRequest::List => Self::list(root),
+            // Deliberately not a wildcard. The shelf answers these, and if a
+            // caller routed one here it went to the wrong place -- saying so
+            // is better than silently denying something that is supported.
+            StoreRequest::ShelfWrite { .. }
+            | StoreRequest::ShelfRead { .. }
+            | StoreRequest::ShelfRemove { .. }
+            | StoreRequest::ShelfList => StoreResult::Denied(StoreError::Unwritable),
         }
     }
 
