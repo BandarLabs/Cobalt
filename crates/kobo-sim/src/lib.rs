@@ -164,6 +164,16 @@ impl Server {
                 let frame = self.simulator.frame();
                 write_response(&mut stream, 200, "application/octet-stream", &frame)
             }
+            ("GET", "/diagnostics") => {
+                let body =
+                    diagnostics_json(self.simulator.screen(), &kobo_ui::PictureCache::default());
+                write_response(
+                    &mut stream,
+                    200,
+                    "application/json; charset=utf-8",
+                    body.as_bytes(),
+                )
+            }
             ("POST", "/touch") => {
                 if let Some((x, y)) = parse_touch(&request.body) {
                     self.simulator.touch(x, y);
@@ -593,6 +603,21 @@ impl AppSession {
                     &surface.pixels,
                 )
             }
+            ("GET", "/diagnostics") => {
+                let body = {
+                    let state = self
+                        .state
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    diagnostics_json(&state.screen, &state.pictures)
+                };
+                write_response(
+                    &mut stream,
+                    200,
+                    "application/json; charset=utf-8",
+                    body.as_bytes(),
+                )
+            }
             ("POST", "/touch") => {
                 let response = parse_touch(&request.body)
                     .and_then(|(x, y)| self.screen().hit_test(x, y))
@@ -610,6 +635,68 @@ impl AppSession {
             _ => write_response(&mut stream, 404, "text/plain; charset=utf-8", b"not found"),
         }
     }
+}
+
+fn diagnostics_json(screen: &Screen, pictures: &kobo_ui::PictureCache) -> String {
+    let diagnostics = screen.diagnostics_with_pictures(
+        &kobo_ui::display_metrics_from_env(),
+        kobo_ui::Chrome::default(),
+        pictures,
+    );
+    let mut json = String::from("{\"issues\":[");
+    for (index, issue) in diagnostics.issues.iter().enumerate() {
+        if index > 0 {
+            json.push(',');
+        }
+        let severity = match issue.severity {
+            kobo_ui::DiagnosticSeverity::Warning => "warning",
+            kobo_ui::DiagnosticSeverity::Error => "error",
+        };
+        let node = issue
+            .node
+            .map_or_else(|| "null".to_owned(), |node| node.0.to_string());
+        let rect = issue.rect.map_or_else(
+            || "null".to_owned(),
+            |rect| {
+                format!(
+                    "{{\"x\":{},\"y\":{},\"width\":{},\"height\":{}}}",
+                    rect.x, rect.y, rect.width, rect.height
+                )
+            },
+        );
+        let _ = std::fmt::Write::write_fmt(
+            &mut json,
+            format_args!(
+                "{{\"severity\":\"{severity}\",\"node\":{node},\"message\":{},\"rect\":{rect}}}",
+                json_string(&issue.to_string())
+            ),
+        );
+    }
+    json.push_str("]}");
+    json
+}
+
+fn json_string(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len() + 2);
+    encoded.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => encoded.push_str("\\\""),
+            '\\' => encoded.push_str("\\\\"),
+            '\n' => encoded.push_str("\\n"),
+            '\r' => encoded.push_str("\\r"),
+            '\t' => encoded.push_str("\\t"),
+            character if character.is_control() => {
+                let _ = std::fmt::Write::write_fmt(
+                    &mut encoded,
+                    format_args!("\\u{:04x}", character as u32),
+                );
+            }
+            character => encoded.push(character),
+        }
+    }
+    encoded.push('"');
+    encoded
 }
 
 /// Records one line in the simulator's log, keeping only the recent tail.
@@ -1114,7 +1201,7 @@ fn write_response(
     stream.write_all(body)
 }
 
-const SHELL: &str = r#"<!doctype html>
+const SHELL: &str = r##"<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -1138,6 +1225,11 @@ figcaption { margin-top:12px; color:var(--muted); font-size:.875rem; }
 .status-panel { padding:16px; border:1px solid var(--border); background:var(--panel); }
 .status-panel h2 { margin:0 0 8px; font-size:1rem; }
 .status { min-height:1.5em; margin:0; color:var(--muted); }
+.diagnostic-toggle { display:flex; align-items:center; gap:8px; min-height:44px; margin-top:12px; }
+.diagnostics { max-height:52vh; overflow:auto; margin:8px 0 0; padding-left:20px; color:var(--muted); font-size:.8125rem; }
+.diagnostics li + li { margin-top:8px; }
+.diagnostics .error { color:#ffb4ab; }
+.diagnostics .warning { color:#ffd18b; }
 .key { margin-top:16px; color:var(--muted); font-size:.875rem; }
 @media (max-width:760px) { .toolbar { align-items:flex-start; flex-wrap:wrap; } .toolbar p { order:3; width:100%; } .workspace { grid-template-columns:1fr; } .device { padding:8px; } }
 @media (prefers-contrast:more) { :root { --workspace:#000; --panel:#000; --border:#fff; --text:#fff; --muted:#fff; --paper:#fff; --paper-ink:#000; } }
@@ -1158,24 +1250,31 @@ figcaption { margin-top:12px; color:var(--muted); font-size:.875rem; }
   <aside class="status-panel" aria-label="Simulator status">
     <h2>Connection</h2>
     <p class="status" id="status" aria-live="polite">Loading frame.</p>
+    <label class="diagnostic-toggle"><input type="checkbox" id="overlay" checked> Show diagnostic outlines</label>
+    <h2>Layout diagnostics</h2>
+    <ul class="diagnostics" id="diagnostics"><li>Checking screen…</li></ul>
     <p class="key">Keyboard: focus the display, then press Enter or Space to repeat the last touch.</p>
   </aside>
 </div>
 </main>
 <script>
 const canvas=document.getElementById("display"), ctx=canvas.getContext("2d",{alpha:false});
-const status=document.getElementById("status"); let point={x:536,y:177};
-async function frame(){const r=await fetch("/frame",{cache:"no-store"});const raw=new Uint8Array(await r.arrayBuffer());
+const status=document.getElementById("status"), list=document.getElementById("diagnostics"), overlay=document.getElementById("overlay"); let point={x:536,y:177}, issues=[];
+function showDiagnostics(){list.replaceChildren();if(!issues.length){const item=document.createElement("li");item.textContent="No layout issues.";list.append(item);return;}
+ for(const issue of issues){const item=document.createElement("li");item.className=issue.severity;item.textContent=issue.message;list.append(item);}}
+function drawDiagnostics(){if(!overlay.checked)return;ctx.save();ctx.lineWidth=5;for(const issue of issues){if(!issue.rect)continue;ctx.strokeStyle=issue.severity==="error"?"#d00000":"#b56a00";const r=issue.rect;ctx.strokeRect(r.x+2,r.y+2,Math.max(0,r.width-4),Math.max(0,r.height-4));}ctx.restore();}
+async function frame(){const [r,d]=await Promise.all([fetch("/frame",{cache:"no-store"}),fetch("/diagnostics",{cache:"no-store"})]);const raw=new Uint8Array(await r.arrayBuffer());issues=(await d.json()).issues;
  if(raw.length!==1072*1448)throw Error("Invalid frame");const image=ctx.createImageData(1072,1448);
- for(let i=0;i<raw.length;i++){const p=i*4;image.data[p]=image.data[p+1]=image.data[p+2]=raw[i];image.data[p+3]=255;}ctx.putImageData(image,0,0);status.textContent="Frame loaded.";}
-function location(event){const r=canvas.getBoundingClientRect();return {x:Math.floor((event.clientX-r.left)*1072/r.width),y:Math.floor((event.clientY-r.top)*1448/r.height)};}
+ for(let i=0;i<raw.length;i++){const p=i*4;image.data[p]=image.data[p+1]=image.data[p+2]=raw[i];image.data[p+3]=255;}ctx.putImageData(image,0,0);showDiagnostics();drawDiagnostics();status.textContent=issues.length?`Frame loaded with ${issues.length} diagnostic${issues.length===1?"":"s"}.`:"Frame loaded; layout clean.";}
+function touchLocation(event){const r=canvas.getBoundingClientRect();return {x:Math.floor((event.clientX-r.left)*1072/r.width),y:Math.floor((event.clientY-r.top)*1448/r.height)};}
 async function touch(next){point=next;await fetch("/touch",{method:"POST",headers:{"Content-Type":"text/plain"},body:`x=${point.x}&y=${point.y}`});await frame();status.textContent="Display updated.";}
-canvas.addEventListener("pointerup",event=>{event.preventDefault();touch(location(event)).catch(error=>status.textContent=error.message);});
+canvas.addEventListener("pointerup",event=>{event.preventDefault();touch(touchLocation(event)).catch(error=>status.textContent=error.message);});
 canvas.addEventListener("keydown",event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();touch(point).catch(error=>status.textContent=error.message);}});
 document.getElementById("refresh").addEventListener("click",()=>frame().catch(error=>status.textContent=error.message));
+overlay.addEventListener("change",()=>frame().catch(error=>status.textContent=error.message));
 frame().catch(error=>status.textContent=error.message);
 </script>
-</body></html>"#;
+</body></html>"##;
 
 #[cfg(test)]
 mod tests {
@@ -1296,6 +1395,23 @@ mod tests {
             Some(ActionId(1))
         );
         assert_eq!(simulator.counter(), 1);
+    }
+
+    #[test]
+    fn diagnostics_endpoint_payload_names_layout_failures() {
+        let screen = Screen::new(
+            1,
+            (0..80)
+                .map(|index| Node::Text {
+                    id: NodeId(index + 1),
+                    text: "One visible line".into(),
+                })
+                .collect(),
+        );
+        let payload = diagnostics_json(&screen, &kobo_ui::PictureCache::default());
+        assert!(payload.starts_with("{\"issues\":["));
+        assert!(payload.contains("below the content area"));
+        assert!(payload.contains("\"severity\":\"error\""));
     }
 
     #[test]

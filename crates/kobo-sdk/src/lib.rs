@@ -14,10 +14,10 @@ pub use kobo_protocol::{
 };
 pub use kobo_ui::{
     terminal_grid, terminal_grid_for, ActionId, BannerLevel, BarAction, BottomAction, Caret, Cell,
-    Chrome, DisplayMetrics, Freeform, Glyph, NavBar, Node, NodeId, Percent, PictureHandle,
-    ProseArea, Row, RowLead, Screen, Space, Tile, TilePicture, TileShape, TopBar, MAX_CELLS,
-    MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_QUOTE_DEPTH, MAX_ROWS, MAX_TERMINAL_COLUMNS,
-    MAX_TERMINAL_ROWS,
+    Chrome, DiagnosticSeverity, DisplayMetrics, Freeform, Glyph, LayoutIssue, LayoutIssueKind,
+    NavBar, Node, NodeId, Percent, PictureHandle, ProseArea, Row, RowLead, Screen, Space, Tile,
+    TilePicture, TileShape, TopBar, MAX_CELLS, MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_QUOTE_DEPTH,
+    MAX_ROWS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS,
 };
 use std::collections::VecDeque;
 use std::fmt;
@@ -58,6 +58,7 @@ pub struct ScreenBuilder {
     bottom_action: Option<BottomAction>,
     page_turns: Option<kobo_ui::PageTurns>,
     actions: Vec<(String, ActionId)>,
+    warnings: Vec<LayoutIssue>,
 }
 
 impl ScreenBuilder {
@@ -72,6 +73,7 @@ impl ScreenBuilder {
             bottom_action: None,
             page_turns: None,
             actions: Vec::new(),
+            warnings: Vec::new(),
         }
     }
 
@@ -356,13 +358,14 @@ impl ScreenBuilder {
         L: Into<RowLead>,
     {
         let id = self.next_id();
-        let rows = rows
-            .into_iter()
-            .take(MAX_ROWS)
-            .map(|(name, title, summary, lead)| {
-                Row::new(self.register(name.as_ref()), title, summary, lead)
-            })
-            .collect();
+        let mut source = rows.into_iter();
+        let mut rows = Vec::new();
+        for (name, title, summary, lead) in source.by_ref().take(MAX_ROWS) {
+            rows.push(Row::new(self.register(name.as_ref()), title, summary, lead));
+        }
+        if source.next().is_some() {
+            self.warn_limit(id, "rows", MAX_ROWS);
+        }
         self.nodes.push(Node::Rows { id, rows });
         self
     }
@@ -386,14 +389,15 @@ impl ScreenBuilder {
         S: Into<String>,
     {
         let id = self.next_id();
-        let rows = items
-            .into_iter()
-            .take(MAX_ROWS)
-            .map(|(name, title, summary, done)| {
-                let glyph = if done { Glyph::Check } else { Glyph::Circle };
-                Row::new(self.register(name.as_ref()), title, summary, glyph).done(done)
-            })
-            .collect();
+        let mut source = items.into_iter();
+        let mut rows = Vec::new();
+        for (name, title, summary, done) in source.by_ref().take(MAX_ROWS) {
+            let glyph = if done { Glyph::Check } else { Glyph::Circle };
+            rows.push(Row::new(self.register(name.as_ref()), title, summary, glyph).done(done));
+        }
+        if source.next().is_some() {
+            self.warn_limit(id, "rows", MAX_ROWS);
+        }
         self.nodes.push(Node::Rows { id, rows });
         self
     }
@@ -416,11 +420,15 @@ impl ScreenBuilder {
         R: Into<String>,
     {
         let id = self.next_id();
-        let rows = rows
-            .into_iter()
+        let mut source = rows.into_iter();
+        let rows = source
+            .by_ref()
             .take(MAX_TERMINAL_ROWS)
             .map(Into::into)
             .collect();
+        if source.next().is_some() {
+            self.warn_limit(id, "terminal rows", MAX_TERMINAL_ROWS);
+        }
         self.nodes.push(Node::Terminal { id, rows, cursor });
         self
     }
@@ -441,11 +449,14 @@ impl ScreenBuilder {
         L: Into<String>,
     {
         let id = self.next_id();
-        let cells = cells
-            .into_iter()
-            .take(MAX_CELLS)
-            .map(|(name, label)| Cell::new(self.register(name.as_ref()), label))
-            .collect();
+        let mut source = cells.into_iter();
+        let mut cells = Vec::new();
+        for (name, label) in source.by_ref().take(MAX_CELLS) {
+            cells.push(Cell::new(self.register(name.as_ref()), label));
+        }
+        if source.next().is_some() {
+            self.warn_limit(id, "grid cells", MAX_CELLS);
+        }
         self.nodes.push(Node::Grid {
             id,
             columns: columns.clamp(1, MAX_COLUMNS),
@@ -468,11 +479,14 @@ impl ScreenBuilder {
         L: Into<String>,
     {
         let id = self.next_id();
-        let options = options
-            .into_iter()
-            .take(MAX_CHOICE_OPTIONS)
-            .map(|(name, label)| BarAction::new(self.register(name.as_ref()), label))
-            .collect();
+        let mut source = options.into_iter();
+        let mut options = Vec::new();
+        for (name, label) in source.by_ref().take(MAX_CHOICE_OPTIONS) {
+            options.push(BarAction::new(self.register(name.as_ref()), label));
+        }
+        if source.next().is_some() {
+            self.warn_limit(id, "choice options", MAX_CHOICE_OPTIONS);
+        }
         self.nodes.push(Node::Choice {
             id,
             prompt: prompt.into(),
@@ -582,6 +596,31 @@ impl ScreenBuilder {
         }
     }
 
+    /// Returns warnings raised while bounded collections were added.
+    ///
+    /// Builders consume at most one item past each limit, so an accidental
+    /// infinite iterator remains safe while the caller still learns that data
+    /// was omitted.
+    #[must_use]
+    pub fn warnings(&self) -> &[LayoutIssue] {
+        &self.warnings
+    }
+
+    /// Builds only when no rows, options, cells, or terminal lines were
+    /// silently omitted.
+    ///
+    /// # Errors
+    ///
+    /// Returns every collection-limit warning raised while building. The
+    /// ordinary [`Self::build`] remains available for compatibility.
+    pub fn build_checked(self) -> Result<Screen, Vec<LayoutIssue>> {
+        if self.warnings.is_empty() {
+            Ok(self.build())
+        } else {
+            Err(self.warnings)
+        }
+    }
+
     fn register(&mut self, name: &str) -> ActionId {
         let action = action_id(name);
         if !self.actions.iter().any(|(known, _)| known == name) {
@@ -594,6 +633,19 @@ impl ScreenBuilder {
         let id = NodeId(self.next_node);
         self.next_node = self.next_node.saturating_add(1);
         id
+    }
+
+    fn warn_limit(&mut self, id: NodeId, collection: &'static str, visible: usize) {
+        self.warnings.push(LayoutIssue {
+            severity: DiagnosticSeverity::Warning,
+            node: Some(id),
+            kind: LayoutIssueKind::CollectionTruncated {
+                collection,
+                provided: visible + 1,
+                visible,
+            },
+            rect: None,
+        });
     }
 }
 
@@ -1667,6 +1719,25 @@ mod tests {
             screen.nodes.last(),
             Some(Node::Button { action, .. }) if *action == action_id("close")
         ));
+    }
+
+    #[test]
+    fn checked_build_reports_collection_items_it_had_to_drop() {
+        let builder = ScreenBuilder::new("choice").choose(
+            "Pick one",
+            (0..=MAX_CHOICE_OPTIONS).map(|index| {
+                let name = format!("option-{index}");
+                (name, format!("Option {index}"))
+            }),
+        );
+        assert!(builder.warnings().iter().any(|issue| matches!(
+            issue.kind,
+            LayoutIssueKind::CollectionTruncated {
+                collection: "choice options",
+                ..
+            }
+        )));
+        assert!(builder.build_checked().is_err());
     }
 
     #[test]

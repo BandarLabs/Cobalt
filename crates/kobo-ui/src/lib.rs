@@ -1544,6 +1544,117 @@ pub struct Layout {
     pub page_turns: Option<PageTurns>,
 }
 
+/// How urgently a screen diagnostic should be treated.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum DiagnosticSeverity {
+    Warning,
+    Error,
+}
+
+/// A concrete reason a screen will not render as its author intended.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LayoutIssueKind {
+    ContentOverflow {
+        hidden_nodes: usize,
+    },
+    Clipped,
+    TouchTargetTooSmall {
+        minimum: i32,
+    },
+    TextOverflow,
+    MissingPicture(PictureHandle),
+    UnsupportedCharacter {
+        character: char,
+        face: Face,
+    },
+    DuplicateNodeId,
+    CollectionTruncated {
+        collection: &'static str,
+        provided: usize,
+        visible: usize,
+    },
+    EmptyChoice,
+    InvalidPictureSource,
+}
+
+/// One actionable screen diagnostic, optionally tied to a drawn rectangle.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LayoutIssue {
+    pub severity: DiagnosticSeverity,
+    pub node: Option<NodeId>,
+    pub kind: LayoutIssueKind,
+    pub rect: Option<Rect>,
+}
+
+impl std::fmt::Display for LayoutIssue {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let node = self
+            .node
+            .map_or_else(|| "screen".to_owned(), |node| format!("node {}", node.0));
+        match &self.kind {
+            LayoutIssueKind::ContentOverflow { hidden_nodes } => {
+                write!(
+                    formatter,
+                    "{node}: {hidden_nodes} node(s) are below the content area"
+                )
+            }
+            LayoutIssueKind::Clipped => {
+                write!(formatter, "{node}: content is clipped by a panel edge")
+            }
+            LayoutIssueKind::TouchTargetTooSmall { minimum } => write!(
+                formatter,
+                "{node}: touch target is smaller than the {minimum}px minimum"
+            ),
+            LayoutIssueKind::TextOverflow => {
+                write!(formatter, "{node}: rendered text exceeds its rectangle")
+            }
+            LayoutIssueKind::MissingPicture(handle) => {
+                write!(
+                    formatter,
+                    "{node}: picture {} is not in the runtime cache",
+                    handle.0
+                )
+            }
+            LayoutIssueKind::UnsupportedCharacter { character, face } => {
+                write!(formatter, "{node}: {face:?} face cannot draw {character:?}")
+            }
+            LayoutIssueKind::DuplicateNodeId => {
+                write!(formatter, "{node}: node identifier is used more than once")
+            }
+            LayoutIssueKind::CollectionTruncated {
+                collection,
+                provided,
+                visible,
+            } => write!(
+                formatter,
+                "{node}: {collection} contains {provided} items but only {visible} are visible"
+            ),
+            LayoutIssueKind::EmptyChoice => {
+                write!(formatter, "{node}: choice has no tappable answers")
+            }
+            LayoutIssueKind::InvalidPictureSource => {
+                write!(formatter, "{node}: picture source has no area")
+            }
+        }
+    }
+}
+
+/// Layout plus diagnostics from the same measurement pass.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct LayoutDiagnostics {
+    pub layout: Layout,
+    pub issues: Vec<LayoutIssue>,
+}
+
+impl LayoutDiagnostics {
+    #[must_use]
+    pub fn has_errors(&self) -> bool {
+        self.issues
+            .iter()
+            .any(|issue| issue.severity == DiagnosticSeverity::Error)
+    }
+}
+
 impl Layout {
     #[must_use]
     pub fn hit_test(&self, x: i32, y: i32) -> Option<ActionId> {
@@ -3308,6 +3419,11 @@ pub struct PicturePixels<'a> {
 /// why a tile keeps its glyph as well as its picture.
 pub trait Pictures {
     fn get(&self, handle: PictureHandle) -> Option<PicturePixels<'_>>;
+
+    /// Checks availability without marking the picture recently drawn.
+    fn contains(&self, handle: PictureHandle) -> bool {
+        self.get(handle).is_some()
+    }
 }
 
 /// A source holding nothing, for the many callers that draw no pictures.
@@ -3315,6 +3431,446 @@ impl Pictures for () {
     fn get(&self, _handle: PictureHandle) -> Option<PicturePixels<'_>> {
         None
     }
+}
+
+impl Screen {
+    /// Validates layout, text coverage, limits, and touch targets without
+    /// assuming that asynchronous pictures have arrived yet.
+    #[must_use]
+    pub fn validate(&self, metrics: &DisplayMetrics) -> Vec<LayoutIssue> {
+        self.diagnostics(metrics, Chrome::default()).issues
+    }
+
+    /// Produces layout and diagnostics from one consistent set of metrics.
+    #[must_use]
+    pub fn diagnostics(&self, metrics: &DisplayMetrics, chrome: Chrome) -> LayoutDiagnostics {
+        diagnose_screen(self, metrics, chrome, None)
+    }
+
+    /// Also reports picture handles absent from the runtime cache.
+    #[must_use]
+    pub fn diagnostics_with_pictures(
+        &self,
+        metrics: &DisplayMetrics,
+        chrome: Chrome,
+        pictures: &dyn Pictures,
+    ) -> LayoutDiagnostics {
+        diagnose_screen(self, metrics, chrome, Some(pictures))
+    }
+}
+
+fn diagnose_screen(
+    screen: &Screen,
+    metrics: &DisplayMetrics,
+    chrome: Chrome,
+    pictures: Option<&dyn Pictures>,
+) -> LayoutDiagnostics {
+    let layout = screen.layout_with(metrics, chrome);
+    let mut issues = Vec::new();
+    let mut nodes = Vec::new();
+    collect_nodes(&screen.nodes, 0, &mut nodes, &mut issues);
+
+    let mut identifiers = Vec::new();
+    if let Some(top) = &screen.top_bar {
+        check_identifier(top.id, &mut identifiers, &mut issues);
+        check_text_coverage(top.id, &top.title, Face::Text, &mut issues);
+        if let Some(action) = &top.action {
+            check_text_coverage(top.id, &action.label, Face::Text, &mut issues);
+        }
+    }
+    if let Some(nav) = &screen.nav_bar {
+        check_identifier(nav.id, &mut identifiers, &mut issues);
+        if nav.destinations.len() > nav.visible(metrics).len() {
+            issues.push(limit_issue(
+                nav.id,
+                "navigation destinations",
+                nav.destinations.len(),
+                nav.visible(metrics).len(),
+            ));
+        }
+        for destination in &nav.destinations {
+            check_text_coverage(nav.id, &destination.label, Face::Text, &mut issues);
+        }
+    }
+    if let Some(bottom) = &screen.bottom_action {
+        check_identifier(bottom.id, &mut identifiers, &mut issues);
+        check_text_coverage(bottom.id, &bottom.action.label, Face::Text, &mut issues);
+    }
+    for node in &nodes {
+        check_identifier(node.id(), &mut identifiers, &mut issues);
+        validate_node(node, metrics, pictures, &mut issues);
+    }
+
+    validate_content_bounds(&nodes, &layout, metrics, &mut issues);
+    validate_layout_nodes(&layout, metrics, &mut issues);
+    LayoutDiagnostics { layout, issues }
+}
+
+fn collect_nodes<'a>(
+    nodes: &'a [Node],
+    depth: usize,
+    collected: &mut Vec<&'a Node>,
+    issues: &mut Vec<LayoutIssue>,
+) {
+    if depth > MAX_LAYOUT_DEPTH {
+        if let Some(node) = nodes.first() {
+            issues.push(limit_issue(
+                node.id(),
+                "layout depth",
+                depth,
+                MAX_LAYOUT_DEPTH,
+            ));
+        }
+        return;
+    }
+    for node in nodes {
+        collected.push(node);
+        if let Node::Card { children, .. } = node {
+            collect_nodes(children, depth + 1, collected, issues);
+        }
+    }
+}
+
+fn check_identifier(id: NodeId, identifiers: &mut Vec<NodeId>, issues: &mut Vec<LayoutIssue>) {
+    if identifiers.contains(&id) {
+        issues.push(LayoutIssue {
+            severity: DiagnosticSeverity::Error,
+            node: Some(id),
+            kind: LayoutIssueKind::DuplicateNodeId,
+            rect: None,
+        });
+    } else {
+        identifiers.push(id);
+    }
+}
+
+fn limit_issue(
+    node: NodeId,
+    collection: &'static str,
+    provided: usize,
+    visible: usize,
+) -> LayoutIssue {
+    LayoutIssue {
+        severity: DiagnosticSeverity::Warning,
+        node: Some(node),
+        kind: LayoutIssueKind::CollectionTruncated {
+            collection,
+            provided,
+            visible,
+        },
+        rect: None,
+    }
+}
+
+fn validate_node(
+    node: &Node,
+    metrics: &DisplayMetrics,
+    pictures: Option<&dyn Pictures>,
+    issues: &mut Vec<LayoutIssue>,
+) {
+    let id = node.id();
+    match node {
+        Node::Heading { text, .. }
+        | Node::Text { text, .. }
+        | Node::Quote { text, .. }
+        | Node::Banner { text, .. } => check_text_coverage(id, text, Face::Text, issues),
+        Node::Button { label, .. } => check_text_coverage(id, label, Face::Text, issues),
+        Node::Card { .. }
+        | Node::Divider { .. }
+        | Node::Spacer { .. }
+        | Node::Progress { .. }
+        | Node::Skeleton { .. } => {}
+        Node::PagedList { items, .. } => {
+            for item in items {
+                check_text_coverage(id, item, Face::Text, issues);
+            }
+        }
+        Node::Grid { cells, .. } => {
+            if cells.len() > MAX_CELLS {
+                issues.push(limit_issue(id, "grid cells", cells.len(), MAX_CELLS));
+            }
+            for cell in cells {
+                check_text_coverage(id, &cell.label, Face::Text, issues);
+            }
+        }
+        Node::Rows { rows, .. } => {
+            if rows.len() > MAX_ROWS {
+                issues.push(limit_issue(id, "rows", rows.len(), MAX_ROWS));
+            }
+            for row in rows {
+                check_text_coverage(id, &row.title, Face::Text, issues);
+                check_text_coverage(id, &row.summary, Face::Text, issues);
+            }
+        }
+        Node::TileGrid { tiles, .. } => {
+            for tile in tiles {
+                check_text_coverage(id, &tile.label, Face::Text, issues);
+                if let (Some(pictures), Some(picture)) = (pictures, tile.picture) {
+                    check_picture(id, picture.handle, picture.source, pictures, issues);
+                }
+            }
+        }
+        Node::Choice {
+            prompt,
+            options,
+            freeform,
+            ..
+        } => {
+            check_text_coverage(id, prompt, Face::Text, issues);
+            if options.is_empty() && freeform.is_none() {
+                issues.push(LayoutIssue {
+                    severity: DiagnosticSeverity::Error,
+                    node: Some(id),
+                    kind: LayoutIssueKind::EmptyChoice,
+                    rect: None,
+                });
+            }
+            if options.len() > MAX_CHOICE_OPTIONS {
+                issues.push(limit_issue(
+                    id,
+                    "choice options",
+                    options.len(),
+                    MAX_CHOICE_OPTIONS,
+                ));
+            }
+            for option in options {
+                check_text_coverage(id, &option.label, Face::Text, issues);
+            }
+            if let Some(freeform) = freeform {
+                check_text_coverage(id, &freeform.placeholder, Face::Text, issues);
+            }
+        }
+        Node::Picture { handle, source, .. } => match pictures {
+            Some(pictures) => check_picture(id, *handle, *source, pictures, issues),
+            None if source.0 == 0 || source.1 == 0 => issues.push(LayoutIssue {
+                severity: DiagnosticSeverity::Error,
+                node: Some(id),
+                kind: LayoutIssueKind::InvalidPictureSource,
+                rect: None,
+            }),
+            None => {}
+        },
+        Node::Activity { label, cancel, .. } => {
+            check_text_coverage(id, label, Face::Text, issues);
+            if let Some(cancel) = cancel {
+                check_text_coverage(id, &cancel.label, Face::Text, issues);
+            }
+        }
+        Node::Terminal { rows, .. } => {
+            if rows.len() > MAX_TERMINAL_ROWS {
+                issues.push(limit_issue(
+                    id,
+                    "terminal rows",
+                    rows.len(),
+                    MAX_TERMINAL_ROWS,
+                ));
+            }
+            for row in rows {
+                check_text_coverage(id, row, Face::Mono, issues);
+                let columns = row.chars().count();
+                if columns > MAX_TERMINAL_COLUMNS {
+                    issues.push(limit_issue(
+                        id,
+                        "terminal columns",
+                        columns,
+                        MAX_TERMINAL_COLUMNS,
+                    ));
+                    break;
+                }
+            }
+        }
+    }
+
+    // Keep this parameter part of the validation contract: very narrow panels
+    // can expose limit failures even if the current supported one does not.
+    let _ = metrics;
+}
+
+fn check_picture(
+    id: NodeId,
+    handle: PictureHandle,
+    source: (u32, u32),
+    pictures: &dyn Pictures,
+    issues: &mut Vec<LayoutIssue>,
+) {
+    if source.0 == 0 || source.1 == 0 {
+        issues.push(LayoutIssue {
+            severity: DiagnosticSeverity::Error,
+            node: Some(id),
+            kind: LayoutIssueKind::InvalidPictureSource,
+            rect: None,
+        });
+    } else if !pictures.contains(handle) {
+        issues.push(LayoutIssue {
+            severity: DiagnosticSeverity::Warning,
+            node: Some(id),
+            kind: LayoutIssueKind::MissingPicture(handle),
+            rect: None,
+        });
+    }
+}
+
+fn check_text_coverage(id: NodeId, text: &str, face: Face, issues: &mut Vec<LayoutIssue>) {
+    if let Some(character) = undrawable_in(text, face) {
+        issues.push(LayoutIssue {
+            severity: DiagnosticSeverity::Error,
+            node: Some(id),
+            kind: LayoutIssueKind::UnsupportedCharacter { character, face },
+            rect: None,
+        });
+    }
+}
+
+fn validate_content_bounds(
+    nodes: &[&Node],
+    layout: &Layout,
+    metrics: &DisplayMetrics,
+    issues: &mut Vec<LayoutIssue>,
+) {
+    let mut hidden = Vec::new();
+    let mut clipped = Vec::new();
+    for node in nodes {
+        let id = node.id();
+        let laid_out = layout.nodes.iter().filter(|laid_out| laid_out.id == id);
+        let rects = laid_out.map(|laid_out| laid_out.rect).collect::<Vec<_>>();
+        let expects_rect = !matches!(node, Node::Rows { rows, .. } if rows.is_empty());
+        if expects_rect
+            && (rects.is_empty()
+                || rects
+                    .iter()
+                    .all(|rect| rect.intersection(layout.content).is_none()))
+        {
+            hidden.push(id);
+        } else if rects
+            .iter()
+            .any(|rect| !rect_is_inside(*rect, layout.content))
+            && !clipped.contains(&id)
+        {
+            clipped.push(id);
+            let rect = rects
+                .iter()
+                .copied()
+                .find(|rect| !rect_is_inside(*rect, layout.content));
+            issues.push(LayoutIssue {
+                severity: DiagnosticSeverity::Error,
+                node: Some(id),
+                kind: LayoutIssueKind::Clipped,
+                rect,
+            });
+        }
+    }
+    if let Some(first) = hidden.first().copied() {
+        issues.push(LayoutIssue {
+            severity: DiagnosticSeverity::Error,
+            node: Some(first),
+            kind: LayoutIssueKind::ContentOverflow {
+                hidden_nodes: hidden.len(),
+            },
+            rect: None,
+        });
+    }
+    if layout.nodes.len() >= MAX_LAYOUT_NODES {
+        issues.push(limit_issue(
+            NodeId(0),
+            "layout nodes",
+            layout.nodes.len(),
+            MAX_LAYOUT_NODES,
+        ));
+    }
+    let _ = metrics;
+}
+
+fn validate_layout_nodes(layout: &Layout, metrics: &DisplayMetrics, issues: &mut Vec<LayoutIssue>) {
+    let minimum = metrics.touch_target_minimum();
+    for node in &layout.nodes {
+        if is_tappable(node.kind) && (node.rect.width < minimum || node.rect.height < minimum) {
+            issues.push(LayoutIssue {
+                severity: DiagnosticSeverity::Error,
+                node: Some(node.id),
+                kind: LayoutIssueKind::TouchTargetTooSmall { minimum },
+                rect: Some(node.rect),
+            });
+        }
+        let Some((size, face)) = layout_text_style(node) else {
+            continue;
+        };
+        let too_wide = node
+            .text_lines
+            .iter()
+            .any(|line| measure_text_in(line, size, face).0 > node.rect.width);
+        let too_tall = i32::try_from(node.text_lines.len())
+            .unwrap_or(i32::MAX)
+            .saturating_mul(size.line_height_in(face))
+            > node.rect.height;
+        if too_wide || too_tall {
+            issues.push(LayoutIssue {
+                severity: DiagnosticSeverity::Error,
+                node: Some(node.id),
+                kind: LayoutIssueKind::TextOverflow,
+                rect: Some(node.rect),
+            });
+        }
+    }
+}
+
+const fn is_tappable(kind: LayoutKind) -> bool {
+    matches!(
+        kind,
+        LayoutKind::Button(_)
+            | LayoutKind::Back
+            | LayoutKind::BarAction(_)
+            | LayoutKind::NavDestination(_)
+            | LayoutKind::NavDestinationSelected(_)
+            | LayoutKind::Row(_)
+            | LayoutKind::Cell(_)
+            | LayoutKind::Tile(_)
+            | LayoutKind::ChoiceOption(_, _)
+            | LayoutKind::ChoiceFreeform(_)
+    )
+}
+
+fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
+    let size = match node.kind {
+        LayoutKind::Heading => FontSize::Heading,
+        LayoutKind::CellLabel
+            if node
+                .text_lines
+                .first()
+                .is_some_and(|text| text.chars().count() <= 2) =>
+        {
+            FontSize::Heading
+        }
+        LayoutKind::TopBarTitle => FontSize::Title,
+        LayoutKind::RowSummary
+        | LayoutKind::TileLabel
+        | LayoutKind::NavDestination(_)
+        | LayoutKind::NavDestinationSelected(_) => FontSize::Caption,
+        LayoutKind::Text
+        | LayoutKind::Quote(_)
+        | LayoutKind::Button(_)
+        | LayoutKind::PagedList
+        | LayoutKind::BarAction(_)
+        | LayoutKind::RowTitle
+        | LayoutKind::RowTitleDone
+        | LayoutKind::CellLabel
+        | LayoutKind::ChoicePrompt
+        | LayoutKind::ChoiceOption(_, _)
+        | LayoutKind::ChoiceFreeform(_)
+        | LayoutKind::Banner(_)
+        | LayoutKind::ActivityLabel => FontSize::Body,
+        LayoutKind::TerminalGrid | LayoutKind::TerminalCursor => {
+            return Some((TERMINAL_SIZE, Face::Mono));
+        }
+        _ => return None,
+    };
+    Some((size, Face::Text))
+}
+
+const fn rect_is_inside(rect: Rect, bounds: Rect) -> bool {
+    rect.x >= bounds.x
+        && rect.y >= bounds.y
+        && rect.x.saturating_add(rect.width) <= bounds.x.saturating_add(bounds.width)
+        && rect.y.saturating_add(rect.height) <= bounds.y.saturating_add(bounds.height)
 }
 
 /// Eight megabytes, which is a shelf of about seventy covers.
@@ -3539,6 +4095,10 @@ impl Pictures for PictureCache {
             height: entry.height,
             grey: &entry.grey,
         })
+    }
+
+    fn contains(&self, handle: PictureHandle) -> bool {
+        self.entries.iter().any(|entry| entry.handle == handle)
     }
 }
 
@@ -4463,6 +5023,78 @@ mod tests {
         assert_eq!(TextScale::from_wire(1), Some(TextScale::Large));
         assert_eq!(TextScale::from_wire(9), None);
         assert_eq!(TextScale::ExtraLarge.percent(), 140);
+    }
+
+    #[test]
+    fn validation_reports_content_that_layout_would_hide() {
+        let nodes = (0..80)
+            .map(|index| Node::Text {
+                id: NodeId(index + 1),
+                text: "A paragraph that occupies a real line.".into(),
+            })
+            .collect();
+        let issues = Screen::new(1, nodes).validate(&CLARA_BW_METRICS);
+        assert!(issues.iter().any(|issue| matches!(
+            issue.kind,
+            LayoutIssueKind::ContentOverflow { hidden_nodes } if hidden_nodes > 0
+        )));
+    }
+
+    #[test]
+    fn validation_reports_truncation_and_undersized_targets() {
+        let screen = Screen::new(
+            1,
+            vec![
+                Node::Choice {
+                    id: NodeId(1),
+                    prompt: "Choose".into(),
+                    options: (0..=MAX_CHOICE_OPTIONS)
+                        .map(|index| BarAction::new(ActionId(index as u32 + 1), "Option"))
+                        .collect(),
+                    selected: None,
+                    freeform: None,
+                },
+                Node::Grid {
+                    id: NodeId(2),
+                    columns: MAX_COLUMNS,
+                    square: false,
+                    cells: vec![Cell::new(ActionId(20), "1")],
+                },
+            ],
+        );
+        let issues = screen.validate(&PANELS[1].1);
+        assert!(issues.iter().any(|issue| matches!(
+            issue.kind,
+            LayoutIssueKind::CollectionTruncated {
+                collection: "choice options",
+                ..
+            }
+        )));
+        assert!(issues
+            .iter()
+            .any(|issue| matches!(issue.kind, LayoutIssueKind::TouchTargetTooSmall { .. })));
+    }
+
+    #[test]
+    fn validation_can_distinguish_a_missing_picture_from_layout() {
+        let screen = Screen::new(
+            1,
+            vec![Node::Picture {
+                id: NodeId(1),
+                handle: PictureHandle(7),
+                source: (10, 10),
+                max_height_tenths_mm: 100,
+            }],
+        );
+        let diagnostics = screen.diagnostics_with_pictures(
+            &CLARA_BW_METRICS,
+            Chrome::default(),
+            &PictureCache::default(),
+        );
+        assert!(diagnostics.issues.iter().any(|issue| matches!(
+            issue.kind,
+            LayoutIssueKind::MissingPicture(PictureHandle(7))
+        )));
     }
 
     /// Panels this SDK is expected to reach eventually. None of them is
