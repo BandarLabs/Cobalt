@@ -68,6 +68,23 @@ const SECRETS: &str = "/mnt/onboard/.adds/cobalt/secrets";
 
 /// Where each application's own keyed state lives, one directory per name.
 const STATE_ROOT: &str = "/mnt/onboard/.adds/cobalt/state";
+/// Puts the front light back to where the session found it, on the way out.
+///
+/// Holds a clone rather than a borrow so that the loop can go on using the
+/// light for as long as it runs; both refer to the same sysfs file and the same
+/// remembered original.
+struct FrontlightGuard(Option<kobo_hal::frontlight::Frontlight>);
+
+impl Drop for FrontlightGuard {
+    fn drop(&mut self) {
+        if let Some(light) = &self.0 {
+            if let Err(error) = light.restore() {
+                trace(&format!("frontlight not restored: {error}"));
+            }
+        }
+    }
+}
+
 /// How long the reader is given to stop, and to come back.
 const STOP_GRACE: Duration = Duration::from_secs(15);
 const START_GRACE: Duration = Duration::from_secs(45);
@@ -484,14 +501,33 @@ fn host_applications(
     // application cannot tell an invented number from a measured one, so it
     // acts on it. This build performs exactly what it has a proven backend
     // for, which today is the read-only battery gauge and nothing else.
+    // Opened once and held for the session, because what it holds is the
+    // reading taken before anything was changed. Reopening per request would
+    // capture whatever the last application set as though it were the owner's
+    // own setting, and the light would never go back.
+    let frontlight = kobo_hal::frontlight::Frontlight::open();
+    let mut backends = Vec::new();
+    if kobo_hal::battery::read().is_some() {
+        backends.push(Capability::BatteryRead);
+    }
+    if frontlight.is_some() {
+        backends.push(Capability::FrontlightControl);
+    }
     let mut services = DeviceServices::new(
         Declared::all(),
         PowerPolicy::DEFAULT,
-        match kobo_hal::battery::read() {
-            Some(_) => Backends::with([Capability::BatteryRead]),
-            None => Backends::none(),
-        },
+        Backends::with(backends),
     );
+    if let Some(light) = &frontlight {
+        if let Some(percent) = light.percent() {
+            services.observe_frontlight(percent);
+        }
+    }
+    // A guard rather than a line at the end of the loop, because the loop has
+    // several exits — the session clock, an idle reader, a failed write to an
+    // application — and a front light left bright by whichever path was taken
+    // is exactly the kind of change a reboot should not have to fix.
+    let _restore_light = FrontlightGuard(frontlight.clone());
     // Deliberately already stale, so the first read an application makes is a
     // real measurement rather than the default the services were built with.
     let mut battery_read_at = Instant::now()
@@ -751,6 +787,32 @@ fn host_applications(
                                     services.observe_battery(battery.percent, battery.charging);
                                 }
                                 battery_read_at = Instant::now();
+                            }
+                            // The light is driven before the policy answers,
+                            // so what the application is told is what the
+                            // hardware actually took. Percentages do not divide
+                            // evenly into every control's range, and an
+                            // application that redraws a slider from the reply
+                            // would otherwise drift away from the panel.
+                            if let Some(light) = &frontlight {
+                                match request {
+                                    kobo_protocol::DeviceRequest::SetFrontlight { percent }
+                                        if services.may(Capability::FrontlightControl) =>
+                                    {
+                                        match light.set(percent) {
+                                            Ok(set) => services.observe_frontlight(set),
+                                            Err(error) => {
+                                                trace(&format!("frontlight refused: {error}"));
+                                            }
+                                        }
+                                    }
+                                    kobo_protocol::DeviceRequest::ReadFrontlight => {
+                                        if let Some(percent) = light.percent() {
+                                            services.observe_frontlight(percent);
+                                        }
+                                    }
+                                    _ => {}
+                                }
                             }
                             let result = services.handle(request);
                             reply(

@@ -7,6 +7,11 @@ pub mod battery;
 pub mod display;
 /// Exclusive touch ownership. Available only with `device-write`, because a
 /// grab takes the panel away from the stock reader.
+/// Front light brightness. Behind `device-write`, because it changes something
+/// the owner can see — though only a register on the light driver, which a
+/// reboot restores.
+#[cfg(feature = "device-write")]
+pub mod frontlight;
 #[cfg(feature = "device-write")]
 pub mod input;
 /// Putting the network back after a handoff. Available only with

@@ -122,6 +122,24 @@ impl DeviceServices {
         self.state.charging = charging;
     }
 
+    /// Whether a capability would be allowed right now.
+    ///
+    /// For callers that must drive hardware before the policy answers, so that
+    /// an undeclared application or a low battery still stops the write rather
+    /// than merely changing what it is told about it.
+    #[must_use]
+    pub fn may(&self, capability: Capability) -> bool {
+        self.refusal(capability).is_none()
+    }
+
+    /// Records what the front light is actually set to.
+    ///
+    /// The stock reader is still running and may move the light underneath us,
+    /// so this is a reading rather than a memory of what was last asked for.
+    pub fn observe_frontlight(&mut self, percent: u8) {
+        self.state.frontlight_percent = percent.min(100);
+    }
+
     /// The state applications currently observe.
     #[must_use]
     pub const fn state(&self) -> DeviceState {
