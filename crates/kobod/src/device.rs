@@ -608,6 +608,8 @@ fn host_applications(
         // way out is never left waiting on an application: if this is still
         // set when its grace expires, the launcher is shown regardless.
         let mut back_offered: Option<(u64, Instant)> = None;
+        // The rectangle currently drawn inverted because a finger is on it.
+        let mut pressed: Option<kobo_ui::Rect> = None;
 
         loop {
             let now = Instant::now();
@@ -719,6 +721,58 @@ fn host_applications(
                     };
                     let chrome = Chrome::with_back(apps[index].path != home);
                     let screen = apps[index].screen.clone();
+                    // A control shows that it has been touched, before anything
+                    // it does can be seen. Without this the panel is simply
+                    // still for as long as the application takes to answer —
+                    // which for anything that reaches the network is seconds —
+                    // and the reader, given no evidence their finger landed,
+                    // reasonably concludes it did not and taps again. Drawn by
+                    // inverting the finished surface, so the planner sees a
+                    // change of pure black and white in one small rectangle and
+                    // picks the fast waveform for it.
+                    if let Some(current) = screen.as_ref() {
+                        match event {
+                            TouchEvent::Down { x, y } => {
+                                if let (Ok(x), Ok(y)) = (i32::try_from(x), i32::try_from(y)) {
+                                    if let Some(rect) = current
+                                        .layout_with(&metrics_for(current), chrome)
+                                        .pressed_control(x, y)
+                                    {
+                                        surface.invert_rect(rect);
+                                        panel.paint(display, whole_screen, &surface)?;
+                                        pressed = Some(rect);
+                                    }
+                                }
+                            }
+                            TouchEvent::Up { .. } => {
+                                // Put back before the action is delivered, so
+                                // that an application which repaints does so
+                                // over a control in its resting state rather
+                                // than over an inverted one.
+                                if let Some(rect) = pressed.take() {
+                                    surface.invert_rect(rect);
+                                    panel.paint(display, whole_screen, &surface)?;
+                                }
+                            }
+                            TouchEvent::Move { x, y } => {
+                                // Slid off the control. Cancel the press the
+                                // way every other platform does, so the reader
+                                // can see that letting go here will do nothing.
+                                let off = match (i32::try_from(x), i32::try_from(y)) {
+                                    (Ok(x), Ok(y)) => {
+                                        pressed.is_some_and(|rect| !rect.contains(x, y))
+                                    }
+                                    _ => true,
+                                };
+                                if off {
+                                    if let Some(rect) = pressed.take() {
+                                        surface.invert_rect(rect);
+                                        panel.paint(display, whole_screen, &surface)?;
+                                    }
+                                }
+                            }
+                        }
+                    }
                     match deliver_touch(&mut apps[index].stream, event, screen.as_ref(), chrome)? {
                         Tap::Handled => {}
                         Tap::OfferedBack => back_offered = Some((front, Instant::now())),
@@ -769,6 +823,11 @@ fn host_applications(
                             if is_front {
                                 trace(&format!("screen {} received", screen.id));
                                 println!("screen {}", screen.id);
+                                // The surface is about to be drawn afresh, so
+                                // whatever was inverted on it is gone. Forget
+                                // it, or releasing the finger would invert a
+                                // rectangle of the new screen instead.
+                                pressed = None;
                                 render_all(
                                     &screen,
                                     &metrics_for(&screen),

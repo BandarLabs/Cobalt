@@ -1775,6 +1775,42 @@ impl LayoutDiagnostics {
 }
 
 impl Layout {
+    /// The control a finger is resting on, for drawing it pressed.
+    ///
+    /// Separate from [`Self::hit_test`] because the two answer different
+    /// questions. Hit testing asks what a completed tap should *do*, and
+    /// deliberately includes the page-turn zones, which cover half the panel
+    /// and have nothing to invert. This asks what the reader is touching, which
+    /// must be something with edges they can see change.
+    ///
+    /// The smallest containing control wins, so a button inside a card inverts
+    /// the button.
+    #[must_use]
+    pub fn pressed_control(&self, x: i32, y: i32) -> Option<Rect> {
+        self.nodes
+            .iter()
+            .filter(|node| node.rect.contains(x, y))
+            .filter(|node| {
+                matches!(
+                    node.kind,
+                    LayoutKind::Button(_, ControlState::Enabled)
+                        | LayoutKind::Back
+                        | LayoutKind::BarAction(_)
+                        | LayoutKind::NavDestination(_)
+                        | LayoutKind::NavDestinationSelected(_)
+                        | LayoutKind::Row(_)
+                        | LayoutKind::Cell(_)
+                        | LayoutKind::Tile(_)
+                        | LayoutKind::ChoiceOption(_, _)
+                        | LayoutKind::ChoiceFreeform(_)
+                )
+            })
+            .min_by_key(|node| {
+                i64::from(node.rect.width.max(0)) * i64::from(node.rect.height.max(0))
+            })
+            .map(|node| node.rect)
+    }
+
     #[must_use]
     pub fn hit_test(&self, x: i32, y: i32) -> Option<ActionId> {
         // Controls first, always. A page turn is what a tap means when it
@@ -3518,6 +3554,32 @@ impl Surface {
                     let index = row.saturating_add(usize::try_from(x).unwrap_or(0));
                     if let Some(pixel) = self.pixels.get_mut(index) {
                         *pixel = value;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Turns every pixel in `rect` to its opposite tone.
+    ///
+    /// This is what a control being touched looks like. It is done to the
+    /// finished surface rather than by drawing the control differently, so it
+    /// costs nothing to lay out, applies to every kind of control including the
+    /// ones drawn from vectors, and reverses exactly by being done again.
+    pub fn invert_rect(&mut self, rect: Rect) {
+        let bounds = Rect {
+            x: 0,
+            y: 0,
+            width: i32::try_from(self.width).unwrap_or(i32::MAX),
+            height: i32::try_from(self.height).unwrap_or(i32::MAX),
+        };
+        if let Some(clipped) = rect.intersection(bounds) {
+            for y in clipped.y..clipped.y + clipped.height {
+                let row = usize::try_from(y).unwrap_or(0).saturating_mul(self.width);
+                for x in clipped.x..clipped.x + clipped.width {
+                    let index = row.saturating_add(usize::try_from(x).unwrap_or(0));
+                    if let Some(pixel) = self.pixels.get_mut(index) {
+                        *pixel = u8::MAX - *pixel;
                     }
                 }
             }
@@ -7684,5 +7746,103 @@ mod prose_tests {
             },
         );
         assert_eq!(surface.pixels[0], 127);
+    }
+}
+
+#[cfg(test)]
+mod press_feedback_tests {
+    use super::*;
+
+    #[test]
+    fn a_finger_on_a_button_finds_the_button_and_not_the_page() {
+        let screen = Screen::new(
+            1,
+            vec![Node::Button {
+                id: NodeId(1),
+                action: ActionId(7),
+                label: "Read".into(),
+                state: ControlState::Enabled,
+            }],
+        );
+        let layout = screen.layout_with(&CLARA_BW_METRICS, Chrome::default());
+        let button = layout
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::Button(_, _)))
+            .expect("the button was laid out")
+            .rect;
+
+        let inside = layout
+            .pressed_control(button.x + button.width / 2, button.y + button.height / 2)
+            .expect("a finger in the middle of the button is on the button");
+        assert_eq!(inside, button);
+    }
+
+    #[test]
+    fn a_finger_on_bare_text_has_nothing_to_invert() {
+        let screen = Screen::new(
+            1,
+            vec![Node::Text {
+                id: NodeId(1),
+                text: "Once upon a time".into(),
+            }],
+        );
+        let layout = screen.layout_with(&CLARA_BW_METRICS, Chrome::default());
+        let text = layout
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::Text))
+            .expect("the text was laid out")
+            .rect;
+
+        // Tapping prose may well turn the page, but there is no control there,
+        // and inverting a paragraph would look like a fault rather than
+        // feedback.
+        assert_eq!(
+            layout.pressed_control(text.x + text.width / 2, text.y + text.height / 2),
+            None
+        );
+    }
+
+    #[test]
+    fn inverting_a_rectangle_twice_leaves_the_picture_as_it_was() {
+        let mut surface = Surface::new(20, 10);
+        surface.fill_rect(
+            Rect {
+                x: 2,
+                y: 2,
+                width: 5,
+                height: 5,
+            },
+            30,
+        );
+        let before = surface.pixels.clone();
+        let rect = Rect {
+            x: 1,
+            y: 1,
+            width: 8,
+            height: 8,
+        };
+
+        surface.invert_rect(rect);
+        assert_ne!(surface.pixels, before, "inverting has to change something");
+        surface.invert_rect(rect);
+        assert_eq!(
+            surface.pixels, before,
+            "releasing a control must restore it exactly"
+        );
+    }
+
+    #[test]
+    fn inverting_off_the_edge_touches_nothing_outside_the_surface() {
+        let mut surface = Surface::new(8, 8);
+        let before = surface.pixels.clone();
+        surface.invert_rect(Rect {
+            x: -40,
+            y: -40,
+            width: 10,
+            height: 10,
+        });
+        assert_eq!(surface.pixels, before);
     }
 }
