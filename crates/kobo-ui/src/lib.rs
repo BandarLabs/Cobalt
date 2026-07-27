@@ -3675,7 +3675,17 @@ impl Surface {
     }
 }
 
-/// Non-flashing updates permitted before the panel gets a cleaning refresh.
+/// How much repainting is permitted before the panel gets a cleaning refresh,
+/// counted in whole panels' worth of changed pixels.
+///
+/// This used to count *updates*, which charged a one-character edit and a whole
+/// page turn the same amount. Typing then bought a full-screen flash every
+/// eighth keystroke: the panel went black and back several times while somebody
+/// entered one address, which is the worst artefact E Ink has and it was being
+/// spent on the cheapest possible change. Residue accumulates where pixels
+/// flip, so that is what is counted now. A page turn repaints the panel and
+/// still cleans on the eighth, exactly as before; a keystroke repaints a word
+/// and a key, so hundreds fit in the same budget.
 pub const PANEL_CLEAN_INTERVAL: u32 = 8;
 
 /// The physical update strategy selected from a frame's changed pixels.
@@ -3708,8 +3718,9 @@ pub struct FrameTransition {
     pub full: bool,
     /// One-based number of the refresh in this session.
     pub refresh: u64,
-    /// Partial refreshes that will have accumulated after this transition.
-    pub partials_since_clean: u32,
+    /// Pixels that will have been repainted since the last cleaning refresh,
+    /// once this transition has been applied. Zero directly after a clean.
+    pub dirty: u64,
 }
 
 /// Shared state machine for choosing Kobo panel transitions.
@@ -3722,7 +3733,7 @@ pub struct FramePlanner {
     width: usize,
     height: usize,
     previous: Vec<u8>,
-    partials_since_clean: u32,
+    dirty: u64,
     refreshes: u64,
     started: bool,
 }
@@ -3734,7 +3745,7 @@ impl FramePlanner {
             width,
             height,
             previous: vec![tone::INK; width.saturating_mul(height)],
-            partials_since_clean: 0,
+            dirty: 0,
             refreshes: 0,
             started: false,
         }
@@ -3758,29 +3769,36 @@ impl FramePlanner {
             width: i32::try_from(self.width).ok()?,
             height: i32::try_from(self.height).ok()?,
         };
-        let (region, waveform) = if self.started {
-            let changed = self.changed(surface)?;
-            if self.partials_since_clean >= PANEL_CLEAN_INTERVAL {
-                (whole, PanelWaveform::Gc16)
+        let (region, waveform, dirty) = if self.started {
+            let (changed, flipped) = self.changed(surface)?;
+            // The budget is checked before this update is added to it, so that
+            // a full panel's worth of repainting still buys exactly
+            // PANEL_CLEAN_INTERVAL updates before anything flashes, as it did
+            // when updates rather than pixels were being counted.
+            if self.dirty >= self.clean_after() {
+                (whole, PanelWaveform::Gc16, 0)
             } else if Self::has_grey(surface, changed) {
-                (changed, PanelWaveform::Gl16)
+                (
+                    changed,
+                    PanelWaveform::Gl16,
+                    self.dirty.saturating_add(flipped),
+                )
             } else {
-                (changed, PanelWaveform::Du)
+                (
+                    changed,
+                    PanelWaveform::Du,
+                    self.dirty.saturating_add(flipped),
+                )
             }
         } else {
-            (whole, PanelWaveform::Gc16)
+            (whole, PanelWaveform::Gc16, 0)
         };
-        let full = waveform == PanelWaveform::Gc16;
         Some(FrameTransition {
             region,
             waveform,
-            full,
+            full: waveform == PanelWaveform::Gc16,
             refresh: self.refreshes.saturating_add(1),
-            partials_since_clean: if full {
-                0
-            } else {
-                self.partials_since_clean.saturating_add(1)
-            },
+            dirty,
         })
     }
 
@@ -3794,7 +3812,7 @@ impl FramePlanner {
             return false;
         }
         self.previous.copy_from_slice(&surface.pixels);
-        self.partials_since_clean = transition.partials_since_clean;
+        self.dirty = transition.dirty;
         self.refreshes = transition.refresh;
         self.started = true;
         true
@@ -3806,13 +3824,23 @@ impl FramePlanner {
     }
 
     #[must_use]
-    pub const fn partials_since_clean(&self) -> u32 {
-        self.partials_since_clean
+    /// Pixels repainted since the last cleaning refresh.
+    pub const fn dirty(&self) -> u64 {
+        self.dirty
     }
 
-    fn changed(&self, surface: &Surface) -> Option<Rect> {
+    /// The box enclosing every changed pixel, and how many actually changed.
+    ///
+    /// Both come out of one pass because the count is what the cleaning budget
+    /// is spent from and the box is what the controller is asked to repaint.
+    /// They are deliberately different quantities: one keystroke changes a word
+    /// at the top and a key at the bottom, so the box between them is most of
+    /// the panel while the pixels that moved are a rounding error. Charging the
+    /// box would put typing back where it started.
+    fn changed(&self, surface: &Surface) -> Option<(Rect, u64)> {
         let (mut left, mut right) = (usize::MAX, 0usize);
         let (mut top, mut bottom) = (usize::MAX, 0usize);
+        let mut flipped = 0_u64;
         for (index, _) in surface
             .pixels
             .iter()
@@ -3825,13 +3853,26 @@ impl FramePlanner {
             right = right.max(x);
             top = top.min(y);
             bottom = bottom.max(y);
+            flipped = flipped.saturating_add(1);
         }
-        (left <= right).then(|| Rect {
-            x: i32::try_from(left).unwrap_or(i32::MAX),
-            y: i32::try_from(top).unwrap_or(i32::MAX),
-            width: i32::try_from(right - left + 1).unwrap_or(i32::MAX),
-            height: i32::try_from(bottom - top + 1).unwrap_or(i32::MAX),
+        (left <= right).then(|| {
+            (
+                Rect {
+                    x: i32::try_from(left).unwrap_or(i32::MAX),
+                    y: i32::try_from(top).unwrap_or(i32::MAX),
+                    width: i32::try_from(right - left + 1).unwrap_or(i32::MAX),
+                    height: i32::try_from(bottom - top + 1).unwrap_or(i32::MAX),
+                },
+                flipped,
+            )
         })
+    }
+
+    /// Changed pixels that may accumulate before the panel is cleaned.
+    fn clean_after(&self) -> u64 {
+        (self.width as u64)
+            .saturating_mul(self.height as u64)
+            .saturating_mul(u64::from(PANEL_CLEAN_INTERVAL))
     }
 
     fn has_grey(surface: &Surface, region: Rect) -> bool {
@@ -5929,26 +5970,80 @@ mod tests {
     }
 
     #[test]
-    fn frame_planner_cleans_after_eight_partial_updates() {
+    fn frame_planner_cleans_after_eight_panels_worth_of_repainting() {
+        // Eight full-panel repaints still clean on the eighth, which is what a
+        // run of page turns does. That behaviour is the one being preserved.
         let mut planner = FramePlanner::new(2, 1);
         let mut frame = Surface::new(2, 1);
         let first = planner.plan(&frame).expect("first");
         assert!(planner.commit(&frame, first));
         for index in 0..PANEL_CLEAN_INTERVAL {
-            frame.pixels[0] = if index % 2 == 0 {
+            let tone = if index % 2 == 0 {
                 tone::INK
             } else {
                 tone::PAPER
             };
+            frame.pixels[0] = tone;
+            frame.pixels[1] = tone;
             let partial = planner.plan(&frame).expect("partial");
-            assert!(!partial.full);
+            assert!(!partial.full, "repaint {index} should not flash");
             assert!(planner.commit(&frame, partial));
         }
-        frame.pixels[1] = tone::INK;
+        frame.pixels[0] = tone::MUTED;
         let cleaning = planner.plan(&frame).expect("cleaning refresh");
         assert_eq!(cleaning.waveform, PanelWaveform::Gc16);
         assert!(cleaning.full);
         assert_eq!(cleaning.region.width, 2);
+        assert_eq!(cleaning.dirty, 0, "the budget resets when the panel clears");
+    }
+
+    #[test]
+    fn typing_does_not_flash_the_panel_every_few_keystrokes() {
+        // The reported fault: entering one address made the panel go black and
+        // back several times. A keystroke changes a word and a key, so on a
+        // real panel it is a rounding error against the cleaning budget, and
+        // far more than eight of them must fit before anything flashes.
+        let mut planner = FramePlanner::new(64, 64);
+        let mut frame = Surface::new(64, 64);
+        frame.clear(tone::PAPER);
+        let first = planner.plan(&frame).expect("first");
+        assert!(planner.commit(&frame, first));
+        let mut flashes = 0;
+        for keystroke in 0..64 {
+            // One character somewhere near the top, one key near the bottom.
+            frame.pixels[keystroke % 64] = tone::INK;
+            frame.pixels[63 * 64 + keystroke % 64] = tone::INK;
+            let update = planner.plan(&frame).expect("keystroke");
+            if update.full {
+                flashes += 1;
+            }
+            assert!(planner.commit(&frame, update));
+        }
+        assert_eq!(
+            flashes, 0,
+            "64 keystrokes flashed the panel {flashes} times"
+        );
+    }
+
+    #[test]
+    fn the_budget_is_spent_on_pixels_that_moved_not_on_the_box_around_them() {
+        // A keystroke's changed box spans the panel, from the text at the top
+        // to the key at the bottom. Charging the box rather than the pixels is
+        // exactly what made typing flash, so the two must stay different.
+        let mut planner = FramePlanner::new(32, 32);
+        let mut frame = Surface::new(32, 32);
+        frame.clear(tone::PAPER);
+        let first = planner.plan(&frame).expect("first");
+        assert!(planner.commit(&frame, first));
+        frame.pixels[0] = tone::INK;
+        frame.pixels[32 * 32 - 1] = tone::INK;
+        let update = planner.plan(&frame).expect("two corners");
+        assert_eq!(
+            (update.region.width, update.region.height),
+            (32, 32),
+            "the controller is asked to repaint the whole box between them"
+        );
+        assert_eq!(update.dirty, 2, "but only two pixels are charged for");
     }
 
     #[test]

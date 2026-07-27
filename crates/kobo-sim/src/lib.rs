@@ -1050,13 +1050,13 @@ fn simulation_json(
             format!(
                 concat!(
                     "{{\"waveform\":\"{}\",\"full\":{},\"refresh\":{},",
-                    "\"partialsSinceClean\":{},\"region\":",
+                    "\"dirty\":{},\"region\":",
                     "{{\"x\":{},\"y\":{},\"width\":{},\"height\":{}}}}}"
                 ),
                 transition.waveform.name(),
                 transition.full,
                 transition.refresh,
-                transition.partials_since_clean,
+                transition.dirty,
                 transition.region.x,
                 transition.region.y,
                 transition.region.width,
@@ -1105,7 +1105,7 @@ fn simulation_json(
         json_string(lifecycle),
         transition,
         panel.planner.refreshes(),
-        panel.planner.partials_since_clean(),
+        panel.planner.dirty(),
         touch,
     )
 }
