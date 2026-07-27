@@ -243,6 +243,29 @@ replaced are the ones it is executing.
 Neither path starts anything. Run `.adds/cobalt/start.sh` on the reader, or add
 the single NickelMenu line the packaged `README.txt` gives you.
 
+**Both of those need something a stock device does not have, and this is the
+prerequisite rather than a footnote.** Running `start.sh` needs a shell, and the
+NickelMenu line needs NickelMenu; Kobo firmware ships neither, and Cobalt
+deliberately installs neither, because writing to the root filesystem is the one
+thing the packaging promises never to do. Tested on a factory-reset Clara BW:
+the package installs over USB perfectly and then cannot be launched at all --
+ports 21, 22, 23, 80, 8080 and 2222 are all closed, and nothing on the reader
+will run a file out of `.adds`.
+
+So before Cobalt is useful on a device nobody has opened up, that device needs
+one of:
+
+- **NickelMenu**, which is the ordinary answer and the one most owners already
+  have. Its entry then launches `start.sh` with no shell involved.
+- **A shell.** Stock firmware can give you one without any third-party software:
+  add `[DeveloperSettings]` with `EnableDebugServices=true` to
+  `.kobo/Kobo/Kobo eReader.conf` on the USB drive, and telnet and FTP come up at
+  the next boot. That is enough to run `start.sh`, though not enough for
+  `kobo deploy`, which speaks SSH.
+- **An SSH server**, if you want `kobo deploy` over Wi-Fi. That is what the
+  developer workflow in this README assumes throughout, and it is worth saying
+  plainly that it assumes a device someone has already modified.
+
 ### When it will not answer
 
 Every command that fails to reach a device prints the same four causes, in the
