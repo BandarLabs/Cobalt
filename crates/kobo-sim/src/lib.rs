@@ -302,6 +302,7 @@ impl AppServer {
                     width: PROTOCOL_WIDTH,
                     height: PROTOCOL_HEIGHT,
                     pixels_per_inch: PROTOCOL_PPI,
+                    text_scale: kobo_ui::display_metrics_from_env().text_scale,
                 },
             },
         )?;
@@ -525,7 +526,7 @@ impl AppSession {
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
                     kobo_ui::render_all(
                         &state.screen,
-                        &kobo_ui::CLARA_BW_METRICS,
+                        &kobo_ui::display_metrics_from_env(),
                         kobo_ui::Chrome::default(),
                         &state.pictures,
                         &mut surface,
@@ -917,7 +918,7 @@ fn simulated_tasks() -> TaskRunner {
 /// A failure is not fatal: `kobo-ui` keeps its bitmap, so the worst case is a
 /// preview that looks like the old one.
 fn install_typeface() {
-    let _ = kobo_text::install(kobo_ui::CLARA_BW_METRICS);
+    let _ = kobo_text::install(kobo_ui::display_metrics_from_env());
 }
 
 fn parse_local_address(address: &str) -> io::Result<SocketAddr> {
@@ -1323,6 +1324,7 @@ mod tests {
                     width: PROTOCOL_WIDTH,
                     height: PROTOCOL_HEIGHT,
                     pixels_per_inch: PROTOCOL_PPI,
+                    text_scale: kobo_ui::TextScale::Default,
                 }
             );
             write_protocol_frame(

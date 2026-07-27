@@ -85,6 +85,62 @@ pub struct DisplayMetrics {
     pub width: i32,
     pub height: i32,
     pub pixels_per_inch: i32,
+    /// The reader's preferred text size, supplied by the runtime.
+    pub text_scale: TextScale,
+}
+
+/// A small, deliberate accessibility scale rather than an arbitrary zoom.
+///
+/// Applications continue to ask for semantic sizes such as [`FontSize::Body`].
+/// The runtime applies this preference to every face, so pagination performed
+/// in an application and rendering performed on the device remain identical.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[repr(u8)]
+pub enum TextScale {
+    #[default]
+    Default = 0,
+    Large = 1,
+    ExtraLarge = 2,
+}
+
+impl TextScale {
+    /// Percentage applied to the physical type size.
+    #[must_use]
+    pub const fn percent(self) -> i32 {
+        match self {
+            Self::Default => 100,
+            Self::Large => 120,
+            Self::ExtraLarge => 140,
+        }
+    }
+
+    /// A stable wire representation used by `kobo-protocol`.
+    #[must_use]
+    pub const fn wire_value(self) -> u8 {
+        self as u8
+    }
+
+    /// Decodes the stable wire representation.
+    #[must_use]
+    pub const fn from_wire(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::Default),
+            1 => Some(Self::Large),
+            2 => Some(Self::ExtraLarge),
+            _ => None,
+        }
+    }
+
+    /// Parses values accepted by the runtime's `KOBO_TEXT_SCALE` setting.
+    #[must_use]
+    pub fn from_name(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "default" | "100" | "100%" => Some(Self::Default),
+            "large" | "120" | "120%" => Some(Self::Large),
+            "extra-large" | "extra_large" | "xl" | "140" | "140%" => Some(Self::ExtraLarge),
+            _ => None,
+        }
+    }
 }
 
 /// The only panel with hardware support today.
@@ -92,7 +148,20 @@ pub const CLARA_BW_METRICS: DisplayMetrics = DisplayMetrics {
     width: 1072,
     height: 1448,
     pixels_per_inch: 300,
+    text_scale: TextScale::Default,
 };
+
+/// Returns the supported panel with the process-level accessibility setting.
+#[must_use]
+pub fn display_metrics_from_env() -> DisplayMetrics {
+    let mut metrics = CLARA_BW_METRICS;
+    if let Ok(value) = std::env::var("KOBO_TEXT_SCALE") {
+        if let Some(scale) = TextScale::from_name(&value) {
+            metrics.text_scale = scale;
+        }
+    }
+    metrics
+}
 
 impl Default for DisplayMetrics {
     fn default() -> Self {
@@ -110,6 +179,14 @@ impl DisplayMetrics {
     pub const fn tenth_mm(&self, tenths: i32) -> i32 {
         // pixels = tenths / 10 / 25.4 * dpi, rearranged to stay in integers.
         (tenths * self.pixels_per_inch + 127) / 254
+    }
+
+    /// Converts a semantic type measurement to pixels with the user's text
+    /// preference applied. Spacing and touch targets intentionally do not use
+    /// this path: larger type needs more room, not larger fingers.
+    #[must_use]
+    pub const fn scaled_type_tenth_mm(&self, tenths: i32) -> i32 {
+        self.tenth_mm((tenths * self.text_scale.percent() + 50) / 100)
     }
 
     /// Physical width in tenths of a millimetre.
@@ -2506,6 +2583,21 @@ pub trait Typesetter: Send + Sync {
         true
     }
 
+    /// Unicode byte offsets after which a line may or must end.
+    fn line_breaks(&self, text: &str) -> Vec<(usize, BreakOpportunity)> {
+        fallback_line_breaks(text)
+    }
+
+    /// Byte offsets at the end of each user-perceived character.
+    ///
+    /// Used when one unbroken token is wider than the line, so combining
+    /// sequences and emoji remain intact while wrapping still makes progress.
+    fn grapheme_boundaries(&self, text: &str) -> Vec<usize> {
+        text.char_indices()
+            .map(|(offset, character)| offset + character.len_utf8())
+            .collect()
+    }
+
     /// The advance of a single [`Face::Mono`] cell.
     ///
     /// A grid of characters cannot be laid out by measuring strings: a terminal
@@ -2516,6 +2608,13 @@ pub trait Typesetter: Send + Sync {
         let (width, _) = self.measure("0", size, Face::Mono);
         max(1, width)
     }
+}
+
+/// Whether a Unicode line-break position is optional or compulsory.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum BreakOpportunity {
+    Allowed,
+    Mandatory,
 }
 
 /// The one typeface for the device, installed once by the runtime.
@@ -2598,16 +2697,38 @@ pub fn mono_cell(size: FontSize) -> (i32, i32) {
     )
 }
 
-/// The width of one average character, used to wrap without measuring every
-/// candidate line.
-fn average_advance(size: FontSize) -> i32 {
-    TYPESETTER.get().map_or(6 * size.scale(), |typesetter| {
-        // Measuring a representative run is closer to the truth than any one
-        // character, and proportional type has no single answer.
-        const SAMPLE: &str = "abcdefghijklmnopqrstuvwxyz";
-        let (width, _) = typesetter.measure(SAMPLE, size, Face::Text);
-        max(1, width / 26)
-    })
+fn fallback_line_breaks(text: &str) -> Vec<(usize, BreakOpportunity)> {
+    let mut breaks = Vec::new();
+    for (offset, character) in text.char_indices() {
+        let end = offset + character.len_utf8();
+        let opportunity = if is_line_separator(character) {
+            Some(BreakOpportunity::Mandatory)
+        } else if character.is_whitespace() || is_cjk(character) {
+            Some(BreakOpportunity::Allowed)
+        } else {
+            None
+        };
+        if let Some(opportunity) = opportunity {
+            breaks.push((end, opportunity));
+        }
+    }
+    if breaks.last().map(|entry| entry.0) != Some(text.len()) {
+        breaks.push((text.len(), BreakOpportunity::Mandatory));
+    } else if let Some(last) = breaks.last_mut() {
+        last.1 = BreakOpportunity::Mandatory;
+    }
+    breaks
+}
+
+const fn is_cjk(character: char) -> bool {
+    matches!(
+        character as u32,
+        0x3040..=0x30ff
+            | 0x3400..=0x4dbf
+            | 0x4e00..=0x9fff
+            | 0xac00..=0xd7af
+            | 0xf900..=0xfaff
+    )
 }
 
 /// The least vertical space a block of body text occupies.
@@ -2932,39 +3053,135 @@ pub fn paginate_tiles(
         .collect()
 }
 
-/// Wraps at word boundaries and splits exceptionally long words deterministically.
+/// Wraps at Unicode line-break opportunities using the typeface's exact width.
+///
+/// Exceptionally long tokens are split at grapheme boundaries. A proportional
+/// run of `W`s therefore cannot overflow while a run of `i`s wastes half a
+/// line, and combining marks are never detached from their base character.
 #[must_use]
 pub fn wrap_text(text: &str, max_width: i32, size: FontSize) -> Vec<String> {
     if text.is_empty() || max_width <= 0 {
         return vec![String::new()];
     }
-    let max_chars = max(1, max_width / average_advance(size)) as usize;
+    let opportunities = TYPESETTER
+        .get()
+        .map_or_else(|| fallback_line_breaks(text), |face| face.line_breaks(text));
+    let graphemes = TYPESETTER.get().map_or_else(
+        || {
+            text.char_indices()
+                .map(|(offset, character)| offset + character.len_utf8())
+                .collect()
+        },
+        |face| face.grapheme_boundaries(text),
+    );
     let mut lines = Vec::new();
-    let mut current = String::new();
-    for word in text.split_whitespace() {
-        if current.is_empty() {
-            current.push_str(word);
-        } else if current.chars().count() + 1 + word.chars().count() <= max_chars {
-            current.push(' ');
-            current.push_str(word);
-        } else {
-            lines.push(current);
-            current = word.to_owned();
+    let mut start = 0;
+    while start < text.len() {
+        start = skip_soft_whitespace(text, start);
+        if start == text.len() {
+            break;
         }
-        while current.chars().count() > max_chars {
-            let head = current.chars().take(max_chars).collect::<String>();
-            let tail = current.chars().skip(max_chars).collect::<String>();
-            lines.push(head);
-            current = tail;
+
+        let mut best = None;
+        let mut emitted = false;
+        for &(end, opportunity) in opportunities.iter().filter(|entry| entry.0 > start) {
+            let visible_end = if opportunity == BreakOpportunity::Mandatory {
+                trim_line_separator(text, start, end)
+            } else {
+                end
+            };
+            let candidate = text[start..visible_end].trim_end_matches(char::is_whitespace);
+            if measure_text(candidate, size).0 <= max_width {
+                best = Some((end, candidate.to_owned()));
+                if opportunity == BreakOpportunity::Mandatory {
+                    lines.push(candidate.to_owned());
+                    start = end;
+                    emitted = true;
+                    break;
+                }
+                continue;
+            }
+
+            if let Some((best_end, line)) = best.take() {
+                lines.push(line);
+                start = best_end;
+            } else {
+                let forced_end =
+                    force_grapheme_break(text, start, visible_end, max_width, size, &graphemes);
+                lines.push(text[start..forced_end].trim_end().to_owned());
+                start = forced_end;
+            }
+            emitted = true;
+            break;
         }
-    }
-    if !current.is_empty() {
-        lines.push(current);
+
+        if !emitted {
+            let forced_end =
+                force_grapheme_break(text, start, text.len(), max_width, size, &graphemes);
+            lines.push(text[start..forced_end].trim_end().to_owned());
+            start = forced_end;
+        }
     }
     if lines.is_empty() {
         lines.push(String::new());
     }
     lines
+}
+
+fn skip_soft_whitespace(text: &str, mut offset: usize) -> usize {
+    while let Some(character) = text[offset..].chars().next() {
+        if !character.is_whitespace() || is_line_separator(character) {
+            break;
+        }
+        offset += character.len_utf8();
+        if offset == text.len() {
+            break;
+        }
+    }
+    offset
+}
+
+fn trim_line_separator(text: &str, start: usize, mut end: usize) -> usize {
+    while end > start {
+        let Some((offset, character)) = text[start..end].char_indices().last() else {
+            break;
+        };
+        if !is_line_separator(character) {
+            break;
+        }
+        end = start + offset;
+    }
+    end
+}
+
+const fn is_line_separator(character: char) -> bool {
+    matches!(character, '\n' | '\r' | '\u{2028}' | '\u{2029}')
+}
+
+fn force_grapheme_break(
+    text: &str,
+    start: usize,
+    limit: usize,
+    max_width: i32,
+    size: FontSize,
+    graphemes: &[usize],
+) -> usize {
+    let mut first = None;
+    let mut best = None;
+    for &end in graphemes.iter().filter(|&&end| end > start && end <= limit) {
+        first.get_or_insert(end);
+        if measure_text(&text[start..end], size).0 <= max_width {
+            best = Some(end);
+        } else {
+            break;
+        }
+    }
+    best.or(first).unwrap_or_else(|| {
+        text[start..]
+            .chars()
+            .next()
+            .map_or(text.len(), |character| start + character.len_utf8())
+    })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -4157,6 +4374,15 @@ mod tests {
         );
     }
 
+    #[test]
+    fn text_scale_has_stable_names_and_wire_values() {
+        assert_eq!(TextScale::from_name("large"), Some(TextScale::Large));
+        assert_eq!(TextScale::from_name("140%"), Some(TextScale::ExtraLarge));
+        assert_eq!(TextScale::from_wire(1), Some(TextScale::Large));
+        assert_eq!(TextScale::from_wire(9), None);
+        assert_eq!(TextScale::ExtraLarge.percent(), 140);
+    }
+
     /// Panels this SDK is expected to reach eventually. None of them is
     /// supported by the hardware gate yet; they exist here so the design
     /// system is exercised against real densities rather than one device.
@@ -4168,6 +4394,7 @@ mod tests {
                 width: 758,
                 height: 1024,
                 pixels_per_inch: 212,
+                text_scale: TextScale::Default,
             },
         ),
         (
@@ -4176,6 +4403,7 @@ mod tests {
                 width: 1264,
                 height: 1680,
                 pixels_per_inch: 300,
+                text_scale: TextScale::Default,
             },
         ),
         (
@@ -4184,6 +4412,7 @@ mod tests {
                 width: 1440,
                 height: 1920,
                 pixels_per_inch: 300,
+                text_scale: TextScale::Default,
             },
         ),
         (
@@ -4192,6 +4421,7 @@ mod tests {
                 width: 1404,
                 height: 1872,
                 pixels_per_inch: 227,
+                text_scale: TextScale::Default,
             },
         ),
     ];

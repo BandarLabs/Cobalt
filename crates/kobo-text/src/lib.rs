@@ -39,7 +39,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use fontdue::{Font, FontSettings};
-use kobo_ui::{DisplayMetrics, Face, FontSize, Typesetter};
+use kobo_ui::{BreakOpportunity, DisplayMetrics, Face, FontSize, Typesetter};
+use unicode_linebreak::{linebreaks, BreakOpportunity as UnicodeBreakOpportunity};
+use unicode_segmentation::UnicodeSegmentation;
 
 /// The monospace face, compiled in because the device has none.
 ///
@@ -195,7 +197,7 @@ impl Typeface {
     fn pixels(&self, size: FontSize) -> f32 {
         // `tenth_mm` is the panel-independent definition; this is the only place
         // it becomes a pixel count, so a different panel needs no other change.
-        let pixels = self.metrics.tenth_mm(size.tenth_mm());
+        let pixels = self.metrics.scaled_type_tenth_mm(size.tenth_mm());
         pixels.max(1) as f32
     }
 
@@ -425,6 +427,24 @@ impl Typesetter for SystemFonts {
         self.face(face).font.lookup_glyph_index(character) != 0
     }
 
+    fn line_breaks(&self, text: &str) -> Vec<(usize, BreakOpportunity)> {
+        linebreaks(text)
+            .map(|(offset, opportunity)| {
+                let opportunity = match opportunity {
+                    UnicodeBreakOpportunity::Allowed => BreakOpportunity::Allowed,
+                    UnicodeBreakOpportunity::Mandatory => BreakOpportunity::Mandatory,
+                };
+                (offset, opportunity)
+            })
+            .collect()
+    }
+
+    fn grapheme_boundaries(&self, text: &str) -> Vec<usize> {
+        text.grapheme_indices(true)
+            .map(|(offset, grapheme)| offset + grapheme.len())
+            .collect()
+    }
+
     fn cell_width(&self, size: FontSize) -> i32 {
         // Falls back to measuring rather than refusing, so a future face that
         // is very nearly fixed pitch still produces a usable grid.
@@ -459,11 +479,13 @@ pub fn install(metrics: DisplayMetrics) -> Result<PathBuf, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kobo_ui::TextScale;
 
     const CLARA: DisplayMetrics = DisplayMetrics {
         width: 1072,
         height: 1448,
         pixels_per_inch: 300,
+        text_scale: TextScale::Default,
     };
 
     fn face() -> Option<Typeface> {
@@ -498,6 +520,41 @@ mod tests {
         assert!(FontSize::Caption.tenth_mm() < FontSize::Body.tenth_mm());
         assert!(FontSize::Body.tenth_mm() < FontSize::Title.tenth_mm());
         assert!(FontSize::Title.tenth_mm() < FontSize::Heading.tenth_mm());
+    }
+
+    #[test]
+    fn accessibility_scale_changes_real_glyph_metrics() {
+        let default = Typeface::from_bytes(TEXT_FONT, "text.ttf", CLARA).expect("font");
+        let mut large_metrics = CLARA;
+        large_metrics.text_scale = TextScale::Large;
+        let large = Typeface::from_bytes(TEXT_FONT, "text.ttf", large_metrics).expect("font");
+        assert!(
+            large.measure_run("Readable", FontSize::Body, None).0
+                > default.measure_run("Readable", FontSize::Body, None).0
+        );
+        assert!(large.height(FontSize::Body) > default.height(FontSize::Body));
+    }
+
+    #[test]
+    fn unicode_breaks_and_graphemes_are_not_ascii_approximations() {
+        let fonts = SystemFonts::discover(CLARA).expect("fonts");
+        let cjk_breaks = fonts.line_breaks("漢字");
+        assert_eq!(cjk_breaks[0], ("漢".len(), BreakOpportunity::Allowed));
+
+        let combined = "e\u{301}x";
+        assert_eq!(fonts.grapheme_boundaries(combined)[0], "e\u{301}".len());
+    }
+
+    #[test]
+    fn production_wrapper_never_exceeds_the_measured_width() {
+        let fonts = SystemFonts::discover(CLARA).expect("fonts");
+        let maximum = fonts.measure("WWW iii", FontSize::Body, Face::Text).0;
+        let _ = kobo_ui::install_typesetter(Box::new(fonts));
+        let lines = kobo_ui::wrap_text("WWW iii WWW iii", maximum, FontSize::Body);
+        assert_eq!(lines.join(" "), "WWW iii WWW iii");
+        assert!(lines
+            .iter()
+            .all(|line| kobo_ui::measure_text(line, FontSize::Body).0 <= maximum));
     }
 
     #[test]

@@ -369,7 +369,7 @@ fn main() -> ExitCode {
 mod tests {
     use super::{opening, Launcher, View, ENTRIES};
     use kobo_sdk::{action_id, AppRunner, Command, Lifecycle};
-    use kobo_ui::{Chrome, DisplayMetrics, LayoutKind, Node, CLARA_BW_METRICS};
+    use kobo_ui::{Chrome, DisplayMetrics, LayoutKind, Node, TextScale, CLARA_BW_METRICS};
 
     const PANELS: [(&str, DisplayMetrics); 3] = [
         ("clara-bw", CLARA_BW_METRICS),
@@ -379,6 +379,7 @@ mod tests {
                 width: 758,
                 height: 1024,
                 pixels_per_inch: 212,
+                text_scale: TextScale::Default,
             },
         ),
         (
@@ -387,6 +388,7 @@ mod tests {
                 width: 1440,
                 height: 1920,
                 pixels_per_inch: 300,
+                text_scale: TextScale::Default,
             },
         ),
     ];

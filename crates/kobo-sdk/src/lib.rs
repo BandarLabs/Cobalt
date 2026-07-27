@@ -1465,6 +1465,7 @@ impl Client {
             width,
             height,
             pixels_per_inch,
+            text_scale,
         } = response.message
         else {
             return Err(ClientError::UnexpectedMessage);
@@ -1476,6 +1477,7 @@ impl Client {
                 width: i32::from(width),
                 height: i32::from(height),
                 pixels_per_inch: i32::from(pixels_per_inch),
+                text_scale,
             },
         })
     }
@@ -1657,6 +1659,7 @@ mod tests {
                         width: 1072,
                         height: 1448,
                         pixels_per_inch: 300,
+                        text_scale: kobo_ui::TextScale::Default,
                     },
                 },
             )

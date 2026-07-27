@@ -7,13 +7,14 @@ use std::io::{self, Read, Write};
 
 use kobo_ui::{
     ActionId, BannerLevel, BarAction, BottomAction, Caret, Cell, Freeform, Glyph, NavBar, Node,
-    NodeId, PageTurns, Percent, PictureHandle, Row, RowLead, RowState, Screen, Space, Tile,
-    TilePicture, TileShape, TopBar, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS, MIN_NAV_DESTINATIONS,
+    NodeId, PageTurns, Percent, PictureHandle, Row, RowLead, RowState, Screen, Space, TextScale,
+    Tile, TilePicture, TileShape, TopBar, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS,
+    MIN_NAV_DESTINATIONS,
 };
 use std::cmp::min;
 
 pub const MAGIC: [u8; 4] = *b"KOBO";
-pub const VERSION: u8 = 1;
+pub const VERSION: u8 = 2;
 pub const HEADER_LEN: usize = 14;
 pub const MAX_FRAME_LEN: usize = 1_048_576;
 /// The largest picture that fits in one frame, in eight-bit grey pixels.
@@ -293,6 +294,9 @@ pub enum Message {
         /// would have to assume a panel, which is the one thing this platform
         /// does not do.
         pixels_per_inch: u16,
+        /// The reader's accessibility preference. Applications receive this
+        /// before laying out or paginating any content.
+        text_scale: TextScale,
     },
     SetScreen(Screen),
     Action {
@@ -732,10 +736,12 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
             width,
             height,
             pixels_per_inch,
+            text_scale,
         } => {
             push_u16(&mut payload, *width);
             push_u16(&mut payload, *height);
             push_u16(&mut payload, *pixels_per_inch);
+            payload.push(text_scale.wire_value());
         }
         Message::SetScreen(screen) => {
             let mut count = 0;
@@ -1093,7 +1099,7 @@ fn encoded_task_len(work: &Task) -> Result<usize, ProtocolError> {
 fn encoded_message_layout(message: &Message) -> Result<(u8, usize), ProtocolError> {
     match message {
         Message::Hello { name } => Ok((1, encoded_string_len(name)?)),
-        Message::Welcome { .. } => Ok((2, 6)),
+        Message::Welcome { .. } => Ok((2, 7)),
         Message::SetScreen(screen) => {
             let mut count = 0;
             Ok((3, encoded_screen_len(screen, 0, &mut count)?))
@@ -1526,6 +1532,8 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
             width: reader.u16()?,
             height: reader.u16()?,
             pixels_per_inch: reader.u16()?,
+            text_scale: TextScale::from_wire(reader.u8()?)
+                .ok_or(ProtocolError::InvalidValue("text scale"))?,
         },
         3 => {
             let mut count = 0;

@@ -43,7 +43,9 @@ use kobo_hal::{Rect, RefreshIntent, RefreshPlan, RegionSnapshot};
 use kobo_policy::{Backends, Capability, Declared, DeviceServices, PowerPolicy, TaskRunner};
 use kobo_profile::{DeviceProfile, CLARA_BW_391};
 use kobo_protocol::{Frame, Lifecycle, Message, TaskError, TaskOutcome};
-use kobo_ui::{render_all, ActionId, Chrome, PictureCache, Screen, Surface, CLARA_BW_METRICS};
+use kobo_ui::{
+    display_metrics_from_env, render_all, ActionId, Chrome, PictureCache, Screen, Surface,
+};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -192,7 +194,7 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     // Installed before anything is taken over, because it reads a file and a
     // read can fail. A failure is not fatal: `kobo-ui` keeps its built-in
     // bitmap, so the worst case is ugly text rather than a dead session.
-    let typeface = match kobo_text::install(CLARA_BW_METRICS) {
+    let typeface = match kobo_text::install(display_metrics_from_env()) {
         Ok(path) => path.file_name().map_or_else(
             || path.display().to_string(),
             |name| name.to_string_lossy().into_owned(),
@@ -632,7 +634,7 @@ fn host_applications(
                                 println!("screen {}", screen.id);
                                 render_all(
                                     &screen,
-                                    &CLARA_BW_METRICS,
+                                    &display_metrics_from_env(),
                                     chrome,
                                     &apps[index].pictures,
                                     &mut surface,
@@ -888,7 +890,7 @@ fn switch_to(
         let chrome = Chrome::with_back(apps[index].path != home);
         render_all(
             &screen,
-            &CLARA_BW_METRICS,
+            &display_metrics_from_env(),
             chrome,
             &apps[index].pictures,
             surface,
@@ -1138,7 +1140,9 @@ fn action_for(event: TouchEvent, screen: Option<&Screen>, chrome: Chrome) -> Opt
     };
     // The same chrome the frame was drawn with. Laying out with a different
     // one would move every control away from where the reader can see it.
-    let hit = screen.layout_with(&CLARA_BW_METRICS, chrome).hit_test(x, y);
+    let hit = screen
+        .layout_with(&display_metrics_from_env(), chrome)
+        .hit_test(x, y);
     // Reported so a tap that lands on nothing stays distinguishable from a tap
     // that never arrived at all. Diagnosing the difference without this cost a
     // whole debugging session.
@@ -1173,8 +1177,9 @@ fn greet(
                 // The panel this runtime renders for. An application that
                 // measures text has to measure it for the same one, and pixel
                 // counts alone do not say how large a pixel is.
-                pixels_per_inch: u16::try_from(CLARA_BW_METRICS.pixels_per_inch)
+                pixels_per_inch: u16::try_from(display_metrics_from_env().pixels_per_inch)
                     .unwrap_or(u16::MAX),
+                text_scale: display_metrics_from_env().text_scale,
             },
         },
     )
@@ -1575,7 +1580,7 @@ mod tests {
         let screen = hello();
         let chrome = Chrome::with_back(true);
         let back = screen
-            .layout_with(&CLARA_BW_METRICS, chrome)
+            .layout_with(&display_metrics_from_env(), chrome)
             .nodes
             .iter()
             .find(|node| node.kind == kobo_ui::LayoutKind::Back)
