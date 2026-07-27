@@ -11,6 +11,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 mod connect;
 mod devsession;
 mod package;
+mod setup;
 mod sha256;
 
 const DEVICE_PACKAGES: &[&str] = &["kobo-doctor", "kobod", "kobo-todo", "kobo-terminal"];
@@ -292,6 +293,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
                 .to_owned(),
         ),
         "package" => build_package(&arguments[1..]),
+        "setup" => setup_device(&arguments[1..]),
         "deploy" => deploy_package(&arguments[1..]),
         "inspect" => inspect_package(&arguments[1..]),
         "verify" => verify_command(&arguments[1..]),
@@ -2056,6 +2058,193 @@ fn build_package_bytes() -> Result<BuiltPackage, String> {
     })
 }
 
+/// What to say when the cable is in but nothing usable is behind it.
+const NO_READER_FOUND: &str = "\
+No mounted reader found. A Kobo appears as a removable drive holding a
+.kobo/version file, and only while it is showing 'Connected' on its own
+screen.
+
+  1. Plug the cable into the reader and this machine directly, not through a
+     hub or a charger-only cable.
+  2. The reader asks whether to connect. Tap 'Connect' — it will not mount
+     until you do.
+  3. If it is already mounted somewhere unusual, name it: kobo setup --volume /path";
+
+/// How `kobo setup` was asked to run.
+struct SetupOptions {
+    volume: Option<PathBuf>,
+    undo: bool,
+    eject: bool,
+    dry_run: bool,
+}
+
+fn parse_setup(arguments: &[String]) -> Result<SetupOptions, String> {
+    let mut options = SetupOptions {
+        volume: None,
+        undo: false,
+        eject: true,
+        dry_run: false,
+    };
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--volume" | "-v" => {
+                let value = arguments
+                    .get(index + 1)
+                    .ok_or("--volume needs a path to a mounted reader")?;
+                options.volume = Some(PathBuf::from(value));
+                index += 1;
+            }
+            "--undo" => options.undo = true,
+            "--no-eject" => options.eject = false,
+            "--dry-run" => options.dry_run = true,
+            other => {
+                return Err(format!(
+                    "unknown option '{other}'\n\
+                     usage: kobo setup [--volume PATH] [--undo] [--no-eject] [--dry-run]"
+                ))
+            }
+        }
+        index += 1;
+    }
+    Ok(options)
+}
+
+/// Picks the reader to work on, and refuses to guess between two.
+fn chosen_reader(volume: Option<&Path>) -> Result<setup::Mounted, String> {
+    if let Some(path) = volume {
+        return setup::read_reader(path).ok_or_else(|| {
+            format!(
+                "{} is not a mounted reader: no {}/version naming a Kobo serial",
+                path.display(),
+                setup::SYSTEM_FOLDER
+            )
+        });
+    }
+    let mut found = setup::mounted_readers();
+    match found.len() {
+        0 => Err(NO_READER_FOUND.to_owned()),
+        1 => Ok(found.remove(0)),
+        _ => {
+            let listed = found
+                .iter()
+                .map(|reader| format!("  {}", reader.summary()))
+                .collect::<Vec<_>>()
+                .join("\n");
+            Err(format!(
+                "{} readers are mounted, so this will not guess. Name one:\n{listed}\n\n\
+                 kobo setup --volume <path>",
+                found.len()
+            ))
+        }
+    }
+}
+
+/// Prepares a reader over USB, which is the only way in to a stock one.
+///
+/// Deliberately the whole of the first install: the files, the firmware's own
+/// SSH server, and the setting that keeps the radio up. Everything after this
+/// happens over Wi-Fi, so everything before it has to happen here.
+fn setup_device(arguments: &[String]) -> Result<(), String> {
+    let options = parse_setup(arguments)?;
+    let reader = chosen_reader(options.volume.as_deref())?;
+    println!("found {}", reader.summary());
+
+    if options.undo {
+        return undo_setup(&reader, options.eject);
+    }
+    if options.dry_run {
+        println!(
+            "would install Cobalt into {}/{}\n\
+             would enable the firmware's SSH server by renaming {}\n\
+             would set {}\n\
+             nothing outside the book partition, nothing extracted as root",
+            reader.volume.display(),
+            setup::INSTALL_FOLDER,
+            setup::SSH_DISABLED,
+            setup::SETTINGS_APPLIED
+                .iter()
+                .map(|(section, key, value)| format!("{section}/{key}={value}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        return Ok(());
+    }
+
+    // Built before anything is written, so a build that fails leaves the
+    // reader exactly as it was rather than half set up.
+    let built = build_package_bytes()?;
+    let installed = setup::write_payload(&built.members, &reader.volume)?;
+    setup::verify_payload(&built.members, &reader.volume)?;
+    let ssh = setup::enable_ssh(&reader.volume)?;
+    let settings = setup::apply_settings(&reader.volume)?;
+    let ejected = ejected_or_explained(&reader.volume, options.eject);
+
+    print!(
+        "{}",
+        setup::Report {
+            installed,
+            ssh: Some(ssh),
+            settings,
+            ejected,
+        }
+        .describe(&reader.volume)
+    );
+    Ok(())
+}
+
+/// Puts a reader back to how it shipped.
+fn undo_setup(reader: &setup::Mounted, eject: bool) -> Result<(), String> {
+    let removed = setup::remove_payload(&reader.volume)?;
+    let ssh = setup::disable_ssh(&reader.volume)?;
+    let settings = setup::revert_settings(&reader.volume)?;
+    let ejected = ejected_or_explained(&reader.volume, eject);
+
+    println!(
+        "\nUndone on {}:\n  · {}\n  · {}\n  · {}\n  · {}",
+        reader.volume.display(),
+        if removed {
+            "Cobalt removed"
+        } else {
+            "Cobalt was not installed"
+        },
+        if ssh {
+            "SSH disabled again (takes effect at the next restart)"
+        } else {
+            "SSH was not enabled by this tool"
+        },
+        if settings.is_empty() {
+            "no settings to restore".to_owned()
+        } else {
+            format!("settings removed: {}", settings.join(", "))
+        },
+        if ejected {
+            "volume ejected"
+        } else {
+            "volume left mounted"
+        }
+    );
+    Ok(())
+}
+
+/// Ejects, or says why it could not, without failing the whole command.
+///
+/// Everything is already written by this point. An eject that fails because a
+/// shell is sitting in a directory on the volume is worth reporting and not
+/// worth undoing an install over.
+fn ejected_or_explained(volume: &Path, wanted: bool) -> bool {
+    if !wanted {
+        return false;
+    }
+    match setup::eject(volume) {
+        Ok(()) => true,
+        Err(error) => {
+            eprintln!("everything was written, but the volume did not eject: {error}");
+            false
+        }
+    }
+}
+
 fn build_package(arguments: &[String]) -> Result<(), String> {
     let (tarball, folder) = parse_package(arguments)?;
     let built = build_package_bytes()?;
@@ -2577,6 +2766,7 @@ fn print_help() {
            touch-probe --device IP [--seconds N]  Watch touch read-only to check the transform\n\
            guard-test --device IP --confirm ...   Prove the guardian restores the screen\n\
            package [--out PATH] [--folder PATH]  Build the KoboRoot.tgz an owner copies\n\
+           setup [--volume PATH] [--undo]  Prepare a reader over USB: install, enable SSH\n\
            deploy --device IP [--package PATH]   Install over Wi-Fi, no reboot\n\
            inspect <package>       List a package and prove it writes nothing to the rootfs\n\
            verify <arm-binary>     Verify static ARM hard-float format\n\

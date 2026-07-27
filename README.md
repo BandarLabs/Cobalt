@@ -243,28 +243,51 @@ replaced are the ones it is executing.
 Neither path starts anything. Run `.adds/cobalt/start.sh` on the reader, or add
 the single NickelMenu line the packaged `README.txt` gives you.
 
-**Both of those need something a stock device does not have, and this is the
-prerequisite rather than a footnote.** Running `start.sh` needs a shell, and the
-NickelMenu line needs NickelMenu; Kobo firmware ships neither, and Cobalt
-deliberately installs neither, because writing to the root filesystem is the one
-thing the packaging promises never to do. Tested on a factory-reset Clara BW:
-the package installs over USB perfectly and then cannot be launched at all --
-ports 21, 22, 23, 80, 8080 and 2222 are all closed, and nothing on the reader
-will run a file out of `.adds`.
+**A stock device cannot launch either of those, and this is the prerequisite
+rather than a footnote.** Running `start.sh` needs a shell, and the NickelMenu
+line needs NickelMenu; Cobalt deliberately installs neither, because writing to
+the root filesystem is the one thing the packaging promises never to do.
 
-So before Cobalt is useful on a device nobody has opened up, that device needs
-one of:
+`kobo setup` is the answer, and it needs nothing on the device beforehand:
 
-- **NickelMenu**, which is the ordinary answer and the one most owners already
-  have. Its entry then launches `start.sh` with no shell involved.
-- **A shell.** Stock firmware can give you one without any third-party software:
-  add `[DeveloperSettings]` with `EnableDebugServices=true` to
-  `.kobo/Kobo/Kobo eReader.conf` on the USB drive, and telnet and FTP come up at
-  the next boot. That is enough to run `start.sh`, though not enough for
-  `kobo deploy`, which speaks SSH.
-- **An SSH server**, if you want `kobo deploy` over Wi-Fi. That is what the
-  developer workflow in this README assumes throughout, and it is worth saying
-  plainly that it assumes a device someone has already modified.
+```
+kobo setup            # with the reader connected by USB and showing 'Connected'
+```
+
+It finds the mounted reader, copies Cobalt into `.adds/cobalt`, reads every
+file back to prove it arrived intact, enables the firmware's **own** SSH server,
+sets `DeveloperSettings/ForceWifiOn` so the radio stays up between deploys, and
+ejects. Restart the reader once and `kobo devices`, `kobo deploy` and `kobo
+logs` all work from there on. `kobo setup --undo` puts every part of that back,
+and `kobo setup --dry-run` prints what it would do without touching anything.
+
+The SSH server is the part worth explaining, because it is not ours. Firmware
+4.42 and later ship one, switched off, gated on the name of a file on the book
+partition: `.kobo/ssh-disabled`. Renaming it to `ssh-enabled` is the firmware's
+documented mechanism -- the file says so in its own text -- and renaming it back
+is the whole of the uninstall. This was found on a factory-reset Clara BW
+running 4.45.23697, and it replaces the two worse answers that came before it:
+NickelMenu, which is third-party, and `EnableDebugServices=true`, which brings
+up telnet and FTP as root **with no password at all** and still does not give
+you `kobo deploy`.
+
+### Why setup does not use `KoboRoot.tgz`
+
+The ordinary way to install anything on a Kobo is to drop a `KoboRoot.tgz` into
+`.kobo/`, which the firmware unpacks **as root, at `/`, at the next boot**. It
+is also the one mechanism on the device that can leave it unbootable, because
+nothing checks the paths inside before extracting them over the running system.
+
+So `kobo setup` does not use it. It copies the same files straight into
+`.adds/cobalt` as a plain folder, which the reader never elevates. The cost is
+that a folder copy does not trigger the firmware's update-and-restart, so the
+reader has to be restarted by hand once for the SSH server to start. That is one
+button held down, in exchange for never handing the boot script an archive. The
+worst outcome of a setup that goes wrong is a folder to delete.
+
+`kobo package` still builds a `KoboRoot.tgz` for owners who want the usual
+route, and `kobo inspect` proves before it is copied that every path in it falls
+under `.adds/cobalt`.
 
 ### When it will not answer
 
@@ -274,10 +297,10 @@ off while it is awake; its address has changed; or nothing is listening on port
 22. The first is more common than the other three together, and the fix is the
 power button.
 
-The last one is worth stating plainly. **Cobalt does not install an SSH server
-and does not need one to run.** SSH is only how a developer's machine reaches
-the device; nothing the platform does on the reader involves it. Somebody who
-has never set one up installs over USB and never encounters any of this.
+The last one is worth stating plainly. **Cobalt does not install an SSH server.**
+It enables the one the firmware already ships, and only when you ask it to with
+`kobo setup`. Nothing the platform does on the reader involves SSH; it is only
+how a developer's machine reaches the device.
 
 ## Talking to a device
 

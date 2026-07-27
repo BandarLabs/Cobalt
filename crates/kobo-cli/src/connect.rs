@@ -57,10 +57,10 @@ The device did not answer. In order of how often each one is the cause:
   3. Its address changed. A Kobo takes a new one from DHCP on every
      reconnection, so the address that worked yesterday is often somebody
      else's today. Run 'kobo devices' to find it.
-  4. SSH is not running on it. Cobalt does not install an SSH server and does
-     not need one to run — it is only how a developer machine reaches the
-     device. If you have never set one up, install onto the device by USB
-     instead: 'kobo package', then copy the file to .kobo/KoboRoot.tgz.
+  4. SSH is not running on it. Cobalt does not install an SSH server, but the
+     firmware ships one, switched off. Connect the reader by USB and run
+     'kobo setup': it enables that server, installs Cobalt, and ejects. The
+     server starts at the next restart, so restart the reader afterwards.
 
 Once it answers, 'kobo session --device <ip> --wifi-always-on on' stops the
 reader powering the radio down while you work, and 'kobo session --device <ip>
@@ -335,7 +335,7 @@ mod tests {
         let sleep = OFFLINE_HELP.find("asleep").expect("sleep is first");
         let wifi = OFFLINE_HELP.find("airplane mode").expect("wifi is second");
         let address = OFFLINE_HELP.find("kobo devices").expect("address is third");
-        let ssh = OFFLINE_HELP.find("KoboRoot.tgz").expect("ssh is last");
+        let ssh = OFFLINE_HELP.find("kobo setup").expect("ssh is last");
         assert!(sleep < wifi && wifi < address && address < ssh);
     }
 
