@@ -255,7 +255,7 @@ impl Gutenshelf {
                     "Sixty thousand books, free and out of copyright. \
                      Search for an author or a title.",
                 )
-                .button("search", "Search the library")
+                .primary_button("search", "Search the library")
                 .build();
         }
         let pages = self.shelf_pages();
@@ -317,7 +317,7 @@ impl Gutenshelf {
         let mut screen = ScreenBuilder::new("gutenshelf-book")
             .top_bar(book.title.clone())
             .heading(book.title.clone())
-            .text(book.author.clone());
+            .secondary(book.author.clone());
         // The same cover the shelf already fetched, at a fixed height so every
         // book's page has the same shape whatever its artwork happens to be.
         // Given in millimetres rather than pixels, so it is a third of the
@@ -332,11 +332,12 @@ impl Gutenshelf {
             return screen.activity("Downloading", None).build();
         }
         screen = if book.text.is_some() {
-            screen.button("read", "Read")
+            // The one thing this page is for, so it is the one control filled.
+            screen.primary_button("read", "Read")
         } else {
             // Said plainly rather than by disabling a button. A button that
             // does nothing when tapped reads as a broken panel.
-            screen.text("Gutenberg has no plain text edition of this book.")
+            screen.secondary("Gutenberg has no plain text edition of this book.")
         };
         screen.button("results", "Back to the results").build()
     }

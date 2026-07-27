@@ -61,6 +61,26 @@ impl QuoteRole {
     }
 }
 
+/// How much of the panel one control is allowed to claim.
+///
+/// Every enabled button used to be a filled black slab. Three of them on a
+/// screen is three black slabs, which is both the reason the interface read as
+/// a toy next to the stock reader and a real cost on this hardware: a solid
+/// fill is the most expensive thing an E Ink panel can be asked to draw and
+/// the slowest to clear. The stock reader fills exactly one control per screen
+/// and outlines the rest, so the eye finds the primary action in one movement
+/// instead of choosing between three equally loud rectangles.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum Emphasis {
+    /// Outlined: a rule around dark text on paper. The default, because most
+    /// buttons are not the one thing the screen is for.
+    #[default]
+    Normal,
+    /// Filled. At most one per screen, and the layout does not enforce that —
+    /// an author who fills everything is back where this started.
+    Primary,
+}
+
 /// The deepest a [`Node::Quote`] is drawn.
 ///
 /// Measured rather than picked: one indent step is one small space, and this
@@ -1026,7 +1046,11 @@ fn layout_bottom_action(bottom: &BottomAction, metrics: &DisplayMetrics, layout:
             width,
             height,
         },
-        kind: LayoutKind::Button(bottom.action.action, ControlState::Enabled),
+        kind: LayoutKind::Button(
+            bottom.action.action,
+            ControlState::Enabled,
+            Emphasis::Normal,
+        ),
         text_lines: vec![one_line(&bottom.action.label, width - 32, FontSize::Body)],
     });
 }
@@ -1100,6 +1124,21 @@ pub enum Node {
         id: NodeId,
         text: String,
     },
+    /// A line about the content rather than the content: a date, an author, a
+    /// size, a count, a status.
+    ///
+    /// Every screen in the platform set all of its prose at one size in one
+    /// tone, so a heading was followed by an undifferentiated column in which
+    /// "Downloading" and the third paragraph of a novel carried identical
+    /// weight. The stock reader never does this: metadata is smaller and
+    /// lighter than what it describes, which is what lets a list be read by
+    /// scanning the titles alone. This is a separate node rather than a role on
+    /// [`Self::Text`] because it is never prose — it is not paginated, not set
+    /// in the reading face, and never wraps to more than a line or two.
+    Secondary {
+        id: NodeId,
+        text: String,
+    },
     /// A paragraph set in from the left, with a rule marking what it answers.
     ///
     /// Threaded discussion is not a niche: replies, quoted mail, nested
@@ -1122,6 +1161,8 @@ pub enum Node {
         action: ActionId,
         label: String,
         state: ControlState,
+        /// Whether this is the one thing the screen is for. See [`Emphasis`].
+        emphasis: Emphasis,
     },
     Card {
         id: NodeId,
@@ -1576,6 +1617,7 @@ impl Node {
         match self {
             Self::Heading { id, .. }
             | Self::Text { id, .. }
+            | Self::Secondary { id, .. }
             | Self::Quote { id, .. }
             | Self::Button { id, .. }
             | Self::Card { id, .. }
@@ -1657,11 +1699,13 @@ const fn min_i32(a: i32, b: i32) -> i32 {
 pub enum LayoutKind {
     Heading,
     Text,
+    /// A line of metadata: smaller than the body, and in the muted tone.
+    Secondary,
     /// An indented paragraph. The values are the clamped depth and what the
     /// paragraph is for, so the renderer can draw the gutter rules and pick a
     /// size without consulting the tree.
     Quote(u8, QuoteRole),
-    Button(ActionId, ControlState),
+    Button(ActionId, ControlState, Emphasis),
     Card,
     Divider,
     Spacer,
@@ -1858,7 +1902,7 @@ impl Layout {
             .filter(|node| {
                 matches!(
                     node.kind,
-                    LayoutKind::Button(_, ControlState::Enabled)
+                    LayoutKind::Button(_, ControlState::Enabled, _)
                         | LayoutKind::Back
                         | LayoutKind::BarAction(_)
                         | LayoutKind::NavDestination(_)
@@ -1910,7 +1954,7 @@ impl Layout {
 
     fn hit_control(&self, x: i32, y: i32) -> Option<ActionId> {
         self.nodes.iter().rev().find_map(|node| match node.kind {
-            LayoutKind::Button(action, ControlState::Enabled)
+            LayoutKind::Button(action, ControlState::Enabled, _)
             | LayoutKind::BarAction(action)
             | LayoutKind::NavDestination(action)
             | LayoutKind::NavDestinationSelected(action)
@@ -1931,7 +1975,7 @@ impl Layout {
     /// Whether the tap landed on a control that exists but cannot act.
     fn hit_inert_control(&self, x: i32, y: i32) -> bool {
         self.nodes.iter().rev().any(|node| {
-            matches!(node.kind, LayoutKind::Button(_, ControlState::Disabled))
+            matches!(node.kind, LayoutKind::Button(_, ControlState::Disabled, _))
                 && node.rect.contains(x, y)
         })
     }
@@ -1968,7 +2012,7 @@ impl Layout {
         self.nodes
             .iter()
             .find(|node| match node.kind {
-                LayoutKind::Button(candidate, ControlState::Enabled)
+                LayoutKind::Button(candidate, ControlState::Enabled, _)
                 | LayoutKind::BarAction(candidate)
                 | LayoutKind::NavDestination(candidate)
                 | LayoutKind::NavDestinationSelected(candidate)
@@ -2131,6 +2175,26 @@ fn layout_node(
             });
             y.saturating_add(height)
         }
+        Node::Secondary { id, text } => {
+            // Measured at its own size, and with no minimum height. The floor
+            // in MIN_TEXT_HEIGHT is there so a control is never smaller than a
+            // finger; metadata is not touched, and applying it puts a blank
+            // line between a caption and the thing it captions.
+            let lines = wrap_text(text, width, FontSize::Caption);
+            let height = lines.len() as i32 * FontSize::Caption.line_height();
+            layout.nodes.push(LayoutNode {
+                id: *id,
+                rect: Rect {
+                    x,
+                    y,
+                    width,
+                    height,
+                },
+                kind: LayoutKind::Secondary,
+                text_lines: lines,
+            });
+            y.saturating_add(height)
+        }
         Node::Quote {
             id,
             depth,
@@ -2169,6 +2233,7 @@ fn layout_node(
             action,
             label,
             state,
+            emphasis,
         } => {
             // A control is never smaller than a finger, by construction. The
             // author never gets to choose a height at all.
@@ -2184,7 +2249,7 @@ fn layout_node(
                     width,
                     height,
                 },
-                kind: LayoutKind::Button(*action, *state),
+                kind: LayoutKind::Button(*action, *state, *emphasis),
                 text_lines: wrap_text(label, width - 32, FontSize::Body),
             });
             y.saturating_add(height)
@@ -4180,6 +4245,7 @@ fn validate_node(
     match node {
         Node::Heading { text, .. }
         | Node::Text { text, .. }
+        | Node::Secondary { text, .. }
         | Node::Quote { text, .. }
         | Node::Banner { text, .. } => check_text_coverage(id, text, Face::Text, issues),
         Node::Button { label, .. } => check_text_coverage(id, label, Face::Text, issues),
@@ -4424,7 +4490,7 @@ fn validate_layout_nodes(layout: &Layout, metrics: &DisplayMetrics, issues: &mut
 const fn is_tappable(kind: LayoutKind) -> bool {
     matches!(
         kind,
-        LayoutKind::Button(_, ControlState::Enabled)
+        LayoutKind::Button(_, ControlState::Enabled, _)
             | LayoutKind::Back
             | LayoutKind::BarAction(_)
             | LayoutKind::NavDestination(_)
@@ -4449,13 +4515,14 @@ fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
             FontSize::Heading
         }
         LayoutKind::TopBarTitle => FontSize::Title,
-        LayoutKind::RowSummary
+        LayoutKind::Secondary
+        | LayoutKind::RowSummary
         | LayoutKind::TileLabel
         | LayoutKind::NavDestination(_)
         | LayoutKind::NavDestinationSelected(_) => FontSize::Caption,
         LayoutKind::Text
         | LayoutKind::Quote(..)
-        | LayoutKind::Button(_, _)
+        | LayoutKind::Button(..)
         | LayoutKind::PagedList
         | LayoutKind::BarAction(_)
         | LayoutKind::RowTitle
@@ -4814,7 +4881,10 @@ pub fn render_all(
                     clip,
                 );
             }
-            LayoutKind::Button(_, ControlState::Enabled) => {
+            // The one filled control on the screen, if there is one. A fill is
+            // the loudest thing this panel can draw and the slowest to clear,
+            // so it is spent on the action the screen exists for.
+            LayoutKind::Button(_, ControlState::Enabled, Emphasis::Primary) => {
                 fill_clipped(surface, node.rect, tone::INK, clip);
                 draw_centered(
                     surface,
@@ -4825,7 +4895,30 @@ pub fn render_all(
                     clip,
                 );
             }
-            LayoutKind::Button(_, ControlState::Disabled) => {
+            // Outlined, in full-strength ink. This is the default, and it is
+            // what makes a screen of controls read as a list of choices rather
+            // than a stack of black bars. It is distinguished from a disabled
+            // control by the weight of the rule and the tone of the label,
+            // both of which are visible without a second control to compare
+            // against.
+            LayoutKind::Button(_, ControlState::Enabled, Emphasis::Normal) => {
+                stroke_clipped(
+                    surface,
+                    node.rect,
+                    tone::INK,
+                    metrics.rule_thickness(),
+                    clip,
+                );
+                draw_centered(
+                    surface,
+                    &node.text_lines,
+                    node.rect,
+                    FontSize::Body,
+                    tone::INK,
+                    clip,
+                );
+            }
+            LayoutKind::Button(_, ControlState::Disabled, _) => {
                 stroke_clipped(
                     surface,
                     node.rect,
@@ -4942,6 +5035,17 @@ pub fn render_all(
             // The face the layout wrapped these lines in, never a default.
             // Measuring in one face and drawing in another is what puts a line
             // past the margin it was fitted to.
+            // Never in the prose face, even inside a reading screen: this is a
+            // caption on the page, not part of the page.
+            LayoutKind::Secondary => draw_lines(
+                surface,
+                &node.text_lines,
+                node.rect.x,
+                node.rect.y,
+                FontSize::Caption,
+                tone::MUTED,
+                clip,
+            ),
             LayoutKind::Text | LayoutKind::PagedList => draw_lines_in(
                 surface,
                 &node.text_lines,
@@ -5111,18 +5215,36 @@ pub fn render_all(
             }
             LayoutKind::Banner(level) => {
                 let padding = metrics.space(Space::Small);
-                let (background, ink) = match level {
-                    BannerLevel::Info => (tone::SURFACE, tone::INK),
-                    BannerLevel::Attention => (tone::INK, tone::PAPER),
-                };
-                fill_clipped(surface, node.rect, background, clip);
+                // Both levels sit on the same quiet surface. An attention
+                // banner used to be reversed out of solid black across the
+                // full width of the panel, which on E Ink is a slab that has
+                // to be cleared before anything near it can be redrawn, and
+                // which shouted louder than the content it was warning about.
+                // What separates the two levels now is a heavy bar down the
+                // leading edge — the same mark a printed page uses to flag a
+                // paragraph, readable at a glance and cheap to draw.
+                fill_clipped(surface, node.rect, tone::SURFACE, clip);
+                let mut text_x = node.rect.x + padding;
+                if level == BannerLevel::Attention {
+                    let bar = metrics.rule_thickness() * 3;
+                    fill_clipped(
+                        surface,
+                        Rect {
+                            width: bar,
+                            ..node.rect
+                        },
+                        tone::INK,
+                        clip,
+                    );
+                    text_x = text_x.saturating_add(bar);
+                }
                 draw_lines(
                     surface,
                     &node.text_lines,
-                    node.rect.x + padding,
+                    text_x,
                     node.rect.y + padding,
                     FontSize::Body,
-                    ink,
+                    tone::INK,
                     clip,
                 );
             }
@@ -5892,6 +6014,7 @@ mod tests {
                 action: ActionId(2),
                 label: "Increment".into(),
                 state: ControlState::Enabled,
+                emphasis: Emphasis::Normal,
             }],
         );
         let button = screen.layout().nodes[0].rect;
@@ -5912,13 +6035,14 @@ mod tests {
                 action: ActionId(2),
                 label: "Unavailable".into(),
                 state: ControlState::Disabled,
+                emphasis: Emphasis::Normal,
             }],
         );
         let layout = screen.layout();
         let button = &layout.nodes[0];
         assert_eq!(
             button.kind,
-            LayoutKind::Button(ActionId(2), ControlState::Disabled)
+            LayoutKind::Button(ActionId(2), ControlState::Disabled, Emphasis::Normal)
         );
         assert_eq!(screen.hit_test(button.rect.x + 1, button.rect.y + 1), None);
     }
@@ -5934,6 +6058,7 @@ mod tests {
                 action: ActionId(2),
                 label: "Unavailable".into(),
                 state: ControlState::Disabled,
+                emphasis: Emphasis::Normal,
             }],
         )
         .with_page_turns(ActionId(10), ActionId(11));
@@ -5973,6 +6098,7 @@ mod tests {
                 action: ActionId(1),
                 label: "Go".into(),
                 state: ControlState::Enabled,
+                emphasis: Emphasis::Normal,
             }],
         );
         let mut surface = Surface::new(128, 128);
@@ -6256,6 +6382,7 @@ mod page_turn_tests {
                 action: ActionId(99),
                 label: "Press me".to_owned(),
                 state: ControlState::Enabled,
+                emphasis: Emphasis::Normal,
             }],
         )
         .with_page_turns(ActionId(10), ActionId(20));
@@ -7137,6 +7264,7 @@ mod loading_tests {
                 action: ActionId(3),
                 label: "Button".into(),
                 state: ControlState::Enabled,
+                emphasis: Emphasis::Normal,
             },
             Node::Card {
                 id: NodeId(4),
@@ -7221,6 +7349,7 @@ mod loading_tests {
                         action: ActionId(900),
                         label: "After".into(),
                         state: ControlState::Enabled,
+                        emphasis: Emphasis::Normal,
                     },
                 ],
             );
@@ -7229,12 +7358,19 @@ mod loading_tests {
                 .nodes
                 .iter()
                 .find(|candidate| {
-                    candidate.kind == LayoutKind::Button(ActionId(900), ControlState::Enabled)
+                    candidate.kind
+                        == LayoutKind::Button(
+                            ActionId(900),
+                            ControlState::Enabled,
+                            Emphasis::Normal,
+                        )
                 })
                 .expect("the following button was laid out")
                 .rect;
             for other in &layout.nodes {
-                if other.kind == LayoutKind::Button(ActionId(900), ControlState::Enabled) {
+                if other.kind
+                    == LayoutKind::Button(ActionId(900), ControlState::Enabled, Emphasis::Normal)
+                {
                     continue;
                 }
                 assert!(
@@ -7257,7 +7393,7 @@ mod loading_tests {
             .nodes
             .iter()
             .filter_map(|node| match node.kind {
-                LayoutKind::Button(action, ControlState::Enabled)
+                LayoutKind::Button(action, ControlState::Enabled, _)
                 | LayoutKind::BarAction(action)
                 | LayoutKind::Tile(action)
                 | LayoutKind::Row(action)
@@ -7614,6 +7750,209 @@ mod prose_tests {
         );
     }
 
+    /// Every pixel of a given tone inside a rect.
+    fn tone_count(surface: &Surface, rect: Rect, want: u8, stride: usize) -> usize {
+        let mut found = 0;
+        for row in rect.y..rect.y + rect.height {
+            for column in rect.x..rect.x + rect.width {
+                let (Ok(row), Ok(column)) = (usize::try_from(row), usize::try_from(column)) else {
+                    continue;
+                };
+                if surface.pixels[row * stride + column] == want {
+                    found += 1;
+                }
+            }
+        }
+        found
+    }
+
+    fn paint(screen: &Screen) -> (Surface, usize) {
+        let stride = usize::try_from(CLARA_BW_METRICS.width).expect("a positive width");
+        let height = usize::try_from(CLARA_BW_METRICS.height).expect("a positive height");
+        let mut surface = Surface::new(stride, height);
+        surface.clear(tone::PAPER);
+        render(screen, &mut surface, None);
+        (surface, stride)
+    }
+
+    #[test]
+    fn an_ordinary_control_is_outlined_and_only_the_primary_one_is_filled() {
+        // Every enabled button used to be a filled black slab, so a screen of
+        // three choices was three identical black bars with nothing to aim at,
+        // and the panel had the most expensive mark it can draw repeated three
+        // times. Only the action the screen exists for is filled now.
+        let screen = Screen::new(
+            1,
+            vec![
+                Node::Button {
+                    id: NodeId(1),
+                    action: ActionId(1),
+                    label: "Read".to_owned(),
+                    state: ControlState::Enabled,
+                    emphasis: Emphasis::Primary,
+                },
+                Node::Button {
+                    id: NodeId(2),
+                    action: ActionId(2),
+                    label: "Details".to_owned(),
+                    state: ControlState::Enabled,
+                    emphasis: Emphasis::Normal,
+                },
+            ],
+        );
+        let layout = screen.layout();
+        let rect = |id: u32| {
+            layout
+                .nodes
+                .iter()
+                .find(|node| node.id == NodeId(id))
+                .expect("the control was laid out")
+                .rect
+        };
+        let (surface, stride) = paint(&screen);
+        let filled = tone_count(&surface, rect(1), tone::INK, stride);
+        let outlined = tone_count(&surface, rect(2), tone::INK, stride);
+        let area = usize::try_from(rect(1).width * rect(1).height).expect("a real control");
+        assert!(
+            filled * 10 > area * 8,
+            "the primary control was not filled: {filled} of {area}"
+        );
+        assert!(
+            outlined * 4 < area,
+            "the ordinary control was filled too: {outlined} of {area}"
+        );
+        assert!(
+            outlined > 0,
+            "the ordinary control left no mark at all, so it cannot be found"
+        );
+    }
+
+    #[test]
+    fn an_ordinary_control_still_reads_as_available_next_to_a_disabled_one() {
+        // Both are outlined, so what separates them has to be the weight of
+        // the rule and the tone of the label rather than the shape.
+        let screen = Screen::new(
+            1,
+            vec![
+                Node::Button {
+                    id: NodeId(1),
+                    action: ActionId(1),
+                    label: "Subscribe".to_owned(),
+                    state: ControlState::Enabled,
+                    emphasis: Emphasis::Normal,
+                },
+                Node::Button {
+                    id: NodeId(2),
+                    action: ActionId(2),
+                    label: "Subscribe".to_owned(),
+                    state: ControlState::Disabled,
+                    emphasis: Emphasis::Normal,
+                },
+            ],
+        );
+        let layout = screen.layout();
+        let rect = |id: u32| {
+            layout
+                .nodes
+                .iter()
+                .find(|node| node.id == NodeId(id))
+                .expect("laid out")
+                .rect
+        };
+        let (surface, stride) = paint(&screen);
+        assert!(
+            tone_count(&surface, rect(1), tone::INK, stride)
+                > tone_count(&surface, rect(2), tone::INK, stride),
+            "an available control was no darker than one that cannot be used"
+        );
+        assert_eq!(
+            tone_count(&surface, rect(1), tone::MUTED, stride),
+            0,
+            "an available control was drawn in the tone reserved for refusal"
+        );
+    }
+
+    #[test]
+    fn an_attention_banner_marks_its_edge_rather_than_blacking_out_the_panel() {
+        // It used to be reversed out of solid black across the full width,
+        // which shouted louder than whatever it was warning about and left the
+        // panel a slab to clear before anything near it could be redrawn.
+        let screen = Screen::new(
+            1,
+            vec![Node::Banner {
+                id: NodeId(1),
+                level: BannerLevel::Attention,
+                text: "The network went away.".to_owned(),
+            }],
+        );
+        let rect = screen
+            .layout()
+            .nodes
+            .into_iter()
+            .find(|node| matches!(node.kind, LayoutKind::Banner(_)))
+            .expect("the banner was laid out")
+            .rect;
+        let (surface, stride) = paint(&screen);
+        let ink = tone_count(&surface, rect, tone::INK, stride);
+        let area = usize::try_from(rect.width * rect.height).expect("a real banner");
+        assert!(
+            ink * 4 < area,
+            "the banner is still mostly black: {ink} of {area}"
+        );
+        // The leading edge is the mark that distinguishes it, so it must be
+        // solid ink for the full height of the banner.
+        let bar = CLARA_BW_METRICS.rule_thickness() * 3;
+        let edge = Rect { width: bar, ..rect };
+        assert_eq!(
+            tone_count(&surface, edge, tone::INK, stride),
+            usize::try_from(bar * rect.height).expect("a real edge"),
+            "the leading edge was not drawn solid"
+        );
+    }
+
+    #[test]
+    fn metadata_is_lighter_and_smaller_than_what_it_describes() {
+        // A heading followed by an undifferentiated column is what made every
+        // screen read as one block of prose. A caption is set like a caption.
+        let screen = Screen::new(
+            1,
+            vec![
+                Node::Text {
+                    id: NodeId(1),
+                    text: "Twenty Thousand Leagues Under the Sea".to_owned(),
+                },
+                Node::Secondary {
+                    id: NodeId(2),
+                    text: "Jules Verne, 1870".to_owned(),
+                },
+            ],
+        );
+        let layout = screen.layout();
+        let node = |id: u32| {
+            layout
+                .nodes
+                .iter()
+                .find(|node| node.id == NodeId(id))
+                .expect("laid out")
+                .clone()
+        };
+        assert_eq!(node(2).kind, LayoutKind::Secondary);
+        assert!(
+            node(2).rect.height < node(1).rect.height,
+            "the caption took as much room as the line it describes"
+        );
+        let (surface, stride) = paint(&screen);
+        assert_eq!(
+            tone_count(&surface, node(2).rect, tone::INK, stride),
+            0,
+            "metadata was drawn in full-strength ink"
+        );
+        assert!(
+            tone_count(&surface, node(2).rect, tone::MUTED, stride) > 0,
+            "metadata was not drawn at all"
+        );
+    }
+
     #[test]
     fn depth_is_counted_in_rules_rather_than_left_to_the_indent() {
         // Two millimetres of indent per level is invisible on the panel: on a
@@ -7869,6 +8208,7 @@ mod prose_tests {
                 action,
                 label: "Do it".to_string(),
                 state: ControlState::Enabled,
+                emphasis: Emphasis::Normal,
             });
             if !after.is_empty() {
                 nodes.push(Node::Text {
@@ -8147,13 +8487,14 @@ mod press_feedback_tests {
                 action: ActionId(7),
                 label: "Read".into(),
                 state: ControlState::Enabled,
+                emphasis: Emphasis::Normal,
             }],
         );
         let layout = screen.layout_with(&CLARA_BW_METRICS, Chrome::default());
         let button = layout
             .nodes
             .iter()
-            .find(|node| matches!(node.kind, LayoutKind::Button(_, _)))
+            .find(|node| matches!(node.kind, LayoutKind::Button(_, _, _)))
             .expect("the button was laid out")
             .rect;
 

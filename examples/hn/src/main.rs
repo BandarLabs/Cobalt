@@ -301,7 +301,7 @@ impl Hn {
                             "Nothing came back for this tab. That is usually the network \
                              rather than Hacker News.",
                         )
-                        .button("retry", "Try again"),
+                        .primary_button("retry", "Try again"),
                 )
                 .build();
         };

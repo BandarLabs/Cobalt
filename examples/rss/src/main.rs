@@ -264,7 +264,7 @@ impl Feeds {
                     "Follow a site and its new articles arrive here, \
                      ready to read without a browser.",
                 )
-                .button("add", "Add a feed")
+                .primary_button("add", "Add a feed")
                 .build();
         }
         let rows: Vec<(String, String)> = self
@@ -306,7 +306,7 @@ impl Feeds {
         }
         screen
             .typed(&self.keyboard, "A site, such as arstechnica.com")
-            .text(ATTRIBUTION)
+            .secondary(ATTRIBUTION)
             .keyboard(&self.keyboard, "Search")
             .build()
     }
@@ -335,7 +335,7 @@ impl Feeds {
                     "No feeds there. Some sites publish one at a different \
                      address, so it is worth trying the exact page you read.",
                 )
-                .button("add", "Try another address")
+                .primary_button("add", "Try another address")
                 .build();
         }
         let rows: Vec<(String, String)> = self
@@ -396,7 +396,7 @@ impl Feeds {
         if self.items.is_empty() {
             return screen
                 .empty_state("Nothing published yet.")
-                .button("refresh", "Check again")
+                .primary_button("refresh", "Check again")
                 .build();
         }
         let rows: Vec<(String, String)> = self

@@ -1398,7 +1398,7 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
     }
 
     let length = match node {
-        Node::Heading { text, .. } | Node::Text { text, .. } => {
+        Node::Heading { text, .. } | Node::Text { text, .. } | Node::Secondary { text, .. } => {
             let mut length = 5;
             add_encoded_len(&mut length, encoded_string_len(text)?)?;
             length
@@ -1410,7 +1410,8 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
             length
         }
         Node::Button { label, .. } => {
-            let mut length = 10;
+            // tag, id, action, state, emphasis, then the label.
+            let mut length = 11;
             add_encoded_len(&mut length, encoded_string_len(label)?)?;
             length
         }
@@ -2040,6 +2041,11 @@ fn encode_node(
             push_u32(output, id.0);
             push_string(output, text)?;
         }
+        Node::Secondary { id, text } => {
+            output.push(19);
+            push_u32(output, id.0);
+            push_string(output, text)?;
+        }
         Node::Quote {
             id,
             depth,
@@ -2060,6 +2066,7 @@ fn encode_node(
             action,
             label,
             state,
+            emphasis,
         } => {
             output.push(3);
             push_u32(output, id.0);
@@ -2067,6 +2074,10 @@ fn encode_node(
             output.push(match state {
                 ControlState::Enabled => 0,
                 ControlState::Disabled => 1,
+            });
+            output.push(match emphasis {
+                kobo_ui::Emphasis::Normal => 0,
+                kobo_ui::Emphasis::Primary => 1,
             });
             push_string(output, label)?;
         }
@@ -2555,7 +2566,18 @@ fn decode_node(
                 1 => ControlState::Disabled,
                 _ => return Err(ProtocolError::InvalidValue("control state")),
             },
+            // An unrecognised emphasis is the quiet one. Guessing "primary"
+            // for a value we do not understand would let a future application
+            // fill every control on a screen by accident.
+            emphasis: match reader.u8()? {
+                1 => kobo_ui::Emphasis::Primary,
+                _ => kobo_ui::Emphasis::Normal,
+            },
             label: reader.string()?,
+        }),
+        19 => Ok(Node::Secondary {
+            id,
+            text: reader.string()?,
         }),
         4 => {
             let child_count = usize::from(reader.u16()?);
@@ -3015,6 +3037,7 @@ mod tests {
                         action: ActionId(3),
                         label: "Go".into(),
                         state: ControlState::Enabled,
+                        emphasis: kobo_ui::Emphasis::Normal,
                     }],
                 }],
             )),
@@ -3205,6 +3228,7 @@ mod node_coverage_tests {
                 action: ActionId(1),
                 label: "Press".into(),
                 state: ControlState::Disabled,
+                emphasis: kobo_ui::Emphasis::Normal,
             },
             Node::Card {
                 id: NodeId(4),

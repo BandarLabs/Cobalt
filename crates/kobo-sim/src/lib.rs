@@ -278,6 +278,7 @@ impl Simulator {
                     action: ActionId(1),
                     label: "Increment".into(),
                     state: kobo_ui::ControlState::Enabled,
+                    emphasis: kobo_ui::Emphasis::Primary,
                 },
             ],
         );
@@ -2221,6 +2222,7 @@ mod tests {
                             action: ActionId(9),
                             label: "Tap".into(),
                             state: kobo_ui::ControlState::Enabled,
+                            emphasis: kobo_ui::Emphasis::Normal,
                         }],
                     )),
                 },

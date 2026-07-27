@@ -428,7 +428,7 @@ mod tests {
                 let found = layout.nodes.iter().any(|node| {
                     matches!(
                         node.kind,
-                        LayoutKind::Button(action, _) | LayoutKind::NavDestination(action)
+                        LayoutKind::Button(action, ..) | LayoutKind::NavDestination(action)
                         if action == reader
                     )
                 });

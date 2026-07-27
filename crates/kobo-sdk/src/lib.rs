@@ -15,10 +15,10 @@ pub use kobo_protocol::{
 pub use kobo_ui::QuoteRole;
 pub use kobo_ui::{
     terminal_grid, terminal_grid_for, ActionId, BannerLevel, BarAction, BottomAction, Caret, Cell,
-    Chrome, ControlState, DiagnosticSeverity, DisplayMetrics, Freeform, Glyph, LayoutIssue,
-    LayoutIssueKind, NavBar, Node, NodeId, Percent, PictureHandle, ProseArea, Row, RowLead, Screen,
-    Space, Tile, TilePicture, TileShape, TopBar, MAX_CELLS, MAX_CHOICE_OPTIONS, MAX_COLUMNS,
-    MAX_QUOTE_DEPTH, MAX_ROWS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS,
+    Chrome, ControlState, DiagnosticSeverity, DisplayMetrics, Emphasis, Freeform, Glyph,
+    LayoutIssue, LayoutIssueKind, NavBar, Node, NodeId, Percent, PictureHandle, ProseArea, Row,
+    RowLead, Screen, Space, Tile, TilePicture, TileShape, TopBar, MAX_CELLS, MAX_CHOICE_OPTIONS,
+    MAX_COLUMNS, MAX_QUOTE_DEPTH, MAX_ROWS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS,
 };
 use std::collections::VecDeque;
 use std::fmt;
@@ -293,6 +293,21 @@ impl ScreenBuilder {
         self
     }
 
+    /// Adds a line about the content rather than the content itself.
+    ///
+    /// A date, an author, a size, a count, a status. Set smaller and lighter
+    /// than body text, which is what lets a list be read by scanning titles.
+    /// Use it for anything that would otherwise be a parenthetical.
+    #[must_use]
+    pub fn secondary(mut self, text: impl Into<String>) -> Self {
+        let id = self.next_id();
+        self.nodes.push(Node::Secondary {
+            id,
+            text: text.into(),
+        });
+        self
+    }
+
     /// Adds a consistent empty, offline, denied, or error presentation.
     ///
     /// Chain [`Self::button`] when the condition has a recovery action. The
@@ -397,6 +412,26 @@ impl ScreenBuilder {
         self.button_with_state(name, label, ControlState::Enabled)
     }
 
+    /// Adds the one control the screen exists for, drawn filled.
+    ///
+    /// At most one per screen. A fill is the loudest mark this panel can make
+    /// and the slowest to clear, so spending it on every control — which is
+    /// what the platform used to do — leaves the reader with nothing to aim
+    /// at and the panel with a slab to erase.
+    #[must_use]
+    pub fn primary_button(mut self, name: impl AsRef<str>, label: impl Into<String>) -> Self {
+        let action = self.register(name.as_ref());
+        let id = self.next_id();
+        self.nodes.push(Node::Button {
+            id,
+            action,
+            label: label.into(),
+            state: ControlState::Enabled,
+            emphasis: Emphasis::Primary,
+        });
+        self
+    }
+
     /// Adds a button that is visible but cannot currently be activated.
     #[must_use]
     pub fn disabled_button(self, name: impl AsRef<str>, label: impl Into<String>) -> Self {
@@ -418,6 +453,7 @@ impl ScreenBuilder {
             action,
             label: label.into(),
             state,
+            emphasis: Emphasis::Normal,
         });
         self
     }
@@ -2095,6 +2131,7 @@ mod tests {
                     action: ActionId(1),
                     label: "Tap".into(),
                     state: ControlState::Enabled,
+                    emphasis: Emphasis::Normal,
                 }],
             ));
         }
