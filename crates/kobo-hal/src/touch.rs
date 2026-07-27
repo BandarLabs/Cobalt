@@ -162,7 +162,12 @@ impl TouchDecoder {
         if let Some(slot_index) = self.primary_slot {
             let slot = &mut self.slots[slot_index];
             let active = slot.tracking_id.is_some();
-            let point = if active && slot.has(SLOT_X_FRESH) && slot.has(SLOT_Y_FRESH) {
+            // Deliberately not conditioned on the contact still being down. A
+            // release that arrives in the same report as its coordinates still
+            // happened somewhere, and requiring `active` here threw those
+            // coordinates away — which is how a quick tap came to register as
+            // nothing at all.
+            let point = if slot.has(SLOT_X_FRESH) && slot.has(SLOT_Y_FRESH) {
                 profile.touch_to_display(slot.raw_x, slot.raw_y)
             } else {
                 None
@@ -182,7 +187,14 @@ impl TouchDecoder {
                     Some(TouchEvent::Down { x, y })
                 }
                 (true, true, true, Some((x, y))) => Some(TouchEvent::Move { x, y }),
-                (true, false, true, _) => slot.last_point.map(|(x, y)| TouchEvent::Up { x, y }),
+                // A contact that ended, whether or not its press was ever
+                // announced. The second case is a tap short enough that the
+                // driver reported the press and the release before this decoder
+                // saw a report in between: there was no `Down` to pair with, but
+                // a finger did touch the panel at a known place and dropping it
+                // is the difference between a control that works and one the
+                // reader has to tap twice.
+                (_, false, true, _) => slot.last_point.map(|(x, y)| TouchEvent::Up { x, y }),
                 _ => None,
             };
             slot.set(SLOT_CHANGED, false);
@@ -264,6 +276,61 @@ mod tests {
     /// has to come from the press. Without `BTN_TOUCH` the contact would never
     /// end and every later tap would be ignored, which is exactly what was
     /// observed on the device.
+    #[test]
+    fn a_tap_too_quick_to_be_seen_pressed_still_registers() {
+        // The reader's complaint was that some taps on buttons did nothing. A
+        // light, fast tap can have its press and its release land inside one
+        // report: the panel reports coordinates and a tracking id, then
+        // BTN_TOUCH going low, and only then the SYN. There is no report in
+        // between for a Down to be emitted from, and the decoder used to
+        // require one before it would emit an Up — so the whole tap vanished
+        // and the control looked broken.
+        let mut decoder = TouchDecoder::default();
+        let events = feed(
+            &mut decoder,
+            &[
+                (input::EV_ABS, input::ABS_MT_TRACKING_ID, 7),
+                (input::EV_ABS, input::ABS_MT_POSITION_X, 374),
+                (input::EV_ABS, input::ABS_MT_POSITION_Y, 267),
+                (input::EV_KEY, input::BTN_TOUCH, 0),
+                (input::EV_SYN, input::SYN_REPORT, 0),
+            ],
+        );
+        let expected = CLARA_BW_391
+            .touch_to_display(374, 267)
+            .expect("the panel maps this point");
+        assert_eq!(
+            events,
+            vec![TouchEvent::Up {
+                x: expected.0,
+                y: expected.1
+            }],
+            "a tap reported in a single frame is still a tap"
+        );
+        // And it leaves nothing behind, or the next contact starts confused.
+        assert!(decoder.is_quiescent());
+    }
+
+    #[test]
+    fn a_contact_that_never_gave_coordinates_reports_nothing() {
+        // The other half of the same change: an Up is only invented when the
+        // panel actually said where. A release with no position anywhere in the
+        // stream must not become a tap at the origin.
+        let mut decoder = TouchDecoder::default();
+        let events = feed(
+            &mut decoder,
+            &[
+                (input::EV_ABS, input::ABS_MT_TRACKING_ID, 7),
+                (input::EV_KEY, input::BTN_TOUCH, 0),
+                (input::EV_SYN, input::SYN_REPORT, 0),
+            ],
+        );
+        assert!(
+            events.is_empty(),
+            "a contact with no position is not a tap anywhere: {events:?}"
+        );
+    }
+
     #[test]
     fn a_release_without_a_tracking_id_still_ends_the_contact() {
         let mut decoder = TouchDecoder::default();

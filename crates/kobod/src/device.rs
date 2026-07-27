@@ -68,6 +68,21 @@ const SECRETS: &str = "/mnt/onboard/.adds/cobalt/secrets";
 
 /// Where each application's own keyed state lives, one directory per name.
 const STATE_ROOT: &str = "/mnt/onboard/.adds/cobalt/state";
+/// The panel metrics a screen is drawn and hit-tested with.
+///
+/// A screen may ask for a text size other than the reader's own — a reader
+/// adjusting the size of a book is the case this exists for. Every place that
+/// lays this screen out has to agree, because layout is what decides where the
+/// controls are: rendering at one size and hit-testing at another moves every
+/// control away from where it can be seen.
+fn metrics_for(screen: &Screen) -> kobo_ui::DisplayMetrics {
+    let mut metrics = display_metrics_from_env();
+    if let Some(scale) = screen.text_scale {
+        metrics.text_scale = scale;
+    }
+    metrics
+}
+
 /// Puts the front light back to where the session found it, on the way out.
 ///
 /// Holds a clone rather than a borrow so that the loop can go on using the
@@ -726,7 +741,7 @@ fn host_applications(
                                 println!("screen {}", screen.id);
                                 render_all(
                                     &screen,
-                                    &display_metrics_from_env(),
+                                    &metrics_for(&screen),
                                     chrome,
                                     &apps[index].pictures,
                                     &mut surface,
@@ -1030,7 +1045,7 @@ fn switch_to(
         let chrome = Chrome::with_back(apps[index].path != home);
         render_all(
             &screen,
-            &display_metrics_from_env(),
+            &metrics_for(&screen),
             chrome,
             &apps[index].pictures,
             surface,
@@ -1281,7 +1296,7 @@ fn action_for(event: TouchEvent, screen: Option<&Screen>, chrome: Chrome) -> Opt
     // The same chrome the frame was drawn with. Laying out with a different
     // one would move every control away from where the reader can see it.
     let hit = screen
-        .layout_with(&display_metrics_from_env(), chrome)
+        .layout_with(&metrics_for(screen), chrome)
         .hit_test(x, y);
     // Reported so a tap that lands on nothing stays distinguishable from a tap
     // that never arrived at all. Diagnosing the difference without this cost a

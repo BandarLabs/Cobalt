@@ -247,6 +247,7 @@ pub struct ScreenBuilder {
     bottom_action: Option<BottomAction>,
     page_turns: Option<kobo_ui::PageTurns>,
     owns_back: bool,
+    text_scale: Option<kobo_ui::TextScale>,
     actions: Vec<(String, ActionId)>,
     warnings: Vec<LayoutIssue>,
 }
@@ -263,6 +264,7 @@ impl ScreenBuilder {
             bottom_action: None,
             page_turns: None,
             owns_back: false,
+            text_scale: None,
             actions: Vec::new(),
             warnings: Vec::new(),
         }
@@ -467,6 +469,22 @@ impl ScreenBuilder {
     #[must_use]
     pub const fn owns_back(mut self, owns_back: bool) -> Self {
         self.owns_back = owns_back;
+        self
+    }
+
+    /// Asks for a text size other than the reader's own.
+    ///
+    /// Almost no screen should. The scale is an accessibility preference and
+    /// overriding it overrules someone who has already said how large they
+    /// need type to be. The case it exists for is a reader, where the size of
+    /// the body text is the thing being adjusted and the adjustment belongs to
+    /// the book.
+    ///
+    /// Paginate with [`Context::metrics_at`] using the same scale. Measuring at
+    /// one size and drawing at another loses the end of every page.
+    #[must_use]
+    pub const fn text_scale(mut self, scale: kobo_ui::TextScale) -> Self {
+        self.text_scale = Some(scale);
         self
     }
 
@@ -905,6 +923,7 @@ impl ScreenBuilder {
             bottom_action: self.bottom_action,
             page_turns: self.page_turns,
             owns_back: self.owns_back,
+            text_scale: self.text_scale,
         }
     }
 
@@ -1031,6 +1050,19 @@ impl Context {
         self.metrics
     }
 
+    /// The same panel, measured at a different text size.
+    ///
+    /// For an application that sets [`ScreenBuilder::text_scale`]: paginate
+    /// with this, at the same scale the screen asks for, or the page that was
+    /// measured is not the page that gets drawn and its last paragraph is lost
+    /// with nothing on the panel to say so.
+    #[must_use]
+    pub const fn metrics_at(&self, scale: kobo_ui::TextScale) -> DisplayMetrics {
+        let mut metrics = self.metrics;
+        metrics.text_scale = scale;
+        metrics
+    }
+
     /// Breaks prose into pages that fit this panel.
     ///
     /// Each page is a list of paragraphs to emit as separate text nodes, in
@@ -1046,6 +1078,19 @@ impl Context {
     #[must_use]
     pub fn paginate(&self, text: &str, nav_bar: bool) -> Vec<Vec<String>> {
         kobo_ui::paginate(text, self.metrics.prose_area(true, nav_bar))
+    }
+
+    /// The same, at a text size other than the reader's own.
+    ///
+    /// Pair with [`ScreenBuilder::text_scale`] set to the same value.
+    #[must_use]
+    pub fn paginate_at(
+        &self,
+        text: &str,
+        nav_bar: bool,
+        scale: kobo_ui::TextScale,
+    ) -> Vec<Vec<String>> {
+        kobo_ui::paginate(text, self.metrics_at(scale).prose_area(true, nav_bar))
     }
 
     /// Breaks threaded prose into pages that fit this panel, keeping the

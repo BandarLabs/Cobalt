@@ -1353,8 +1353,9 @@ fn encoded_screen_len(
     if screen.page_turns.is_some() {
         add_encoded_len(&mut length, 8)?;
     }
-    // One flag byte for first refusal on the runtime's Back control.
-    add_encoded_len(&mut length, 1)?;
+    // One flag byte for first refusal on the runtime's Back control, and one
+    // for a text size this screen asks for in place of the reader's own.
+    add_encoded_len(&mut length, 2)?;
     if let Some(nav_bar) = &screen.nav_bar {
         if nav_bar.destinations.len() > u8::MAX as usize {
             return Err(ProtocolError::TooManyNodes);
@@ -1976,6 +1977,9 @@ fn encode_screen(
         }
     }
     output.push(u8::from(screen.owns_back));
+    // Zero means inherit, so a screen that says nothing keeps the reader's own
+    // setting and the byte costs nothing to leave alone.
+    output.push(screen.text_scale.map_or(0, |scale| scale.wire_value() + 1));
     push_u16(
         output,
         u16::try_from(screen.nodes.len()).map_err(|_| ProtocolError::TooManyNodes)?,
@@ -2448,6 +2452,12 @@ fn decode_screen(
         1 => true,
         _ => return Err(ProtocolError::InvalidValue("own back flag")),
     };
+    let text_scale = match reader.u8()? {
+        0 => None,
+        value => {
+            Some(TextScale::from_wire(value - 1).ok_or(ProtocolError::InvalidValue("text scale"))?)
+        }
+    };
     let count_nodes = usize::from(reader.u16()?);
     if count_nodes > MAX_NODES {
         return Err(ProtocolError::TooManyNodes);
@@ -2467,6 +2477,7 @@ fn decode_screen(
     }
     screen.page_turns = page_turns;
     screen.owns_back = owns_back;
+    screen.text_scale = text_scale;
     Ok(screen)
 }
 
@@ -2983,6 +2994,27 @@ mod tests {
         let encoded = encode(&frame).expect("valid screen");
         assert_eq!(encoded, encode(&frame).expect("stable encoding"));
         assert_eq!(decode(&encoded), Ok(frame));
+    }
+
+    #[test]
+    fn a_screen_can_ask_for_a_text_size_and_most_do_not() {
+        let screen = Screen::new(1, Vec::new());
+        assert!(
+            screen.text_scale.is_none(),
+            "inheriting the reader's own setting is the default"
+        );
+        for scale in [None, Some(TextScale::Large), Some(TextScale::ExtraLarge)] {
+            let frame = Frame {
+                request_id: 9,
+                message: Message::SetScreen(screen.clone().with_text_scale(scale)),
+            };
+            let bytes = encode(&frame).expect("encodes");
+            let back = decode(&bytes).expect("decodes");
+            let Message::SetScreen(out) = back.message else {
+                panic!("wrong message");
+            };
+            assert_eq!(out.text_scale, scale);
+        }
     }
 
     #[test]

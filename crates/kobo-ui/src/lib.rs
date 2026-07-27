@@ -604,6 +604,18 @@ pub struct Screen {
     /// does not then draw something new is left behind and the launcher shown
     /// anyway, so the worst this can do is delay the way out once.
     pub owns_back: bool,
+    /// A text size this screen asks for, overriding the reader's own setting.
+    ///
+    /// `None` means inherit, which is what almost every screen should do: the
+    /// scale is an accessibility preference and an application that overrides
+    /// it is overruling someone who has already said how big they need type to
+    /// be. The exception this exists for is a reader, where the size of the
+    /// body text *is* the thing being adjusted and the adjustment belongs to
+    /// the book rather than to the device.
+    ///
+    /// An application that sets this must paginate at the same scale, or the
+    /// page it measured is not the page that gets drawn.
+    pub text_scale: Option<TextScale>,
 }
 
 /// The actions a tap on the left or right of the content area sends.
@@ -642,6 +654,7 @@ impl Screen {
             bottom_action: None,
             page_turns: None,
             owns_back: false,
+            text_scale: None,
         }
     }
 
@@ -650,6 +663,12 @@ impl Screen {
     /// Pass the application's own answer to "is there anywhere to go back to",
     /// so the last screen of an application's own stack still leaves for the
     /// launcher rather than swallowing the tap and appearing to do nothing.
+    #[must_use]
+    pub const fn with_text_scale(mut self, text_scale: Option<TextScale>) -> Self {
+        self.text_scale = text_scale;
+        self
+    }
+
     #[must_use]
     pub const fn with_own_back(mut self, owns_back: bool) -> Self {
         self.owns_back = owns_back;
