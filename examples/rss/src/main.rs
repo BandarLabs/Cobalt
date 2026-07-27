@@ -71,7 +71,11 @@ const SEARCH_BYTES: u32 = 128 * 1024;
 /// feeds are written newest first.
 const FEED_BYTES: u32 = 512 * 1024;
 
-/// The attribution Feedsearch's terms ask for, shown wherever its results are.
+/// The attribution Feedsearch's terms ask for, on the screen where there is
+/// room for the whole sentence.
+///
+/// The results screen carries it in its top bar instead. Both screens show
+/// their results because of Feedsearch, and both have to say so.
 const ATTRIBUTION: &str = "Feed search powered by feedsearch.dev";
 
 /// A feed the reader has chosen to follow.
@@ -291,11 +295,13 @@ impl Feeds {
     }
 
     fn results(&self, context: &Context) -> Screen {
-        let mut screen = ScreenBuilder::new("rss-found").top_bar(if self.query.is_empty() {
-            "Feeds found".to_owned()
-        } else {
-            format!("\u{201c}{}\u{201d}", self.query)
-        });
+        // The attribution lives in the top bar rather than under the list.
+        // Feedsearch's terms ask for it to be visible wherever their results
+        // are shown, and anything in the flow below a full page of rows is the
+        // first thing the panel drops — silently, so the one element that is
+        // not optional would be the one element missing. The bar is drawn
+        // before the content and cannot be pushed off it.
+        let mut screen = ScreenBuilder::new("rss-found").top_bar("Feeds via feedsearch.dev");
         if let Some(problem) = &self.problem {
             screen = screen.banner(BannerLevel::Attention, problem.clone());
         }
@@ -315,15 +321,41 @@ impl Feeds {
                 .button("add", "Try another address")
                 .build();
         }
-        screen = screen.rows(self.found.iter().enumerate().map(|(index, found)| {
+        let rows: Vec<(String, String)> = self
+            .found
+            .iter()
+            .map(|found| {
+                (
+                    context.one_line_row(&found.title, true),
+                    context.one_line_row(&found.summary, true),
+                )
+            })
+            .collect();
+        let pages = page_groups(context, &rows);
+        let page = self.list_page.min(pages.len().saturating_sub(1));
+        let shown = pages.get(page).cloned().unwrap_or_default();
+        screen = screen.rows(shown.iter().map(|index| {
             (
                 format!("found-{index}"),
-                context.one_line_row(&found.title, false),
-                context.one_line_row(&found.summary, false),
+                rows[*index].0.clone(),
+                rows[*index].1.clone(),
                 Glyph::Rss,
             )
         }));
-        screen.text(ATTRIBUTION).build()
+        if pages.len() <= 1 {
+            return screen.build();
+        }
+        screen
+            .page_turns("list-back", "list-next")
+            .nav_bar(
+                None,
+                [
+                    ("list-back", "Back"),
+                    ("add", "Search"),
+                    ("list-next", "More"),
+                ],
+            )
+            .build()
     }
 
     fn articles(&self, context: &Context) -> Screen {
@@ -587,6 +619,7 @@ impl KoboApp for Feeds {
                     }
                     self.query.clone_from(&typed);
                     self.view = View::Found;
+                    self.list_page = 0;
                     self.ask_search(context, &typed);
                     self.show(context);
                     return;
@@ -782,6 +815,7 @@ mod tests {
         View, MAX_FEEDS,
     };
     use kobo_sdk::{action_id, AppRunner, Command, TaskId, TaskOutcome};
+    use kobo_ui::CLARA_BW_METRICS;
 
     const ATOM: &str = "<feed><title>A Journal</title>\
         <entry><title>First post</title><link href=\"https://example.com/1\"/>\
@@ -1029,5 +1063,229 @@ mod tests {
             ..super::feed::Item::default()
         };
         assert!(byline(&item).starts_with("A few words"));
+    }
+
+    /// The last screen an action produced.
+    fn screen_of(commands: &[Command]) -> kobo_sdk::Screen {
+        commands
+            .iter()
+            .rev()
+            .find_map(|command| match command {
+                Command::SetScreen(screen) => Some(screen.clone()),
+                _ => None,
+            })
+            .expect("the action drew a screen")
+    }
+
+    /// Every screen has to fit the panel it is drawn on.
+    ///
+    /// Asserted against the layout rather than against the numbers that
+    /// produced it. Rows are cut into pages by the runtime's own measurement,
+    /// but the things placed around them — the attribution the search service
+    /// requires, a keyboard, a nav bar — are placed by this application, and
+    /// nothing but the layout makes the two agree. A screen that overflows
+    /// loses its last element silently, and on hardware that reads as a
+    /// missing button rather than as a bug.
+    fn fits_the_panel(screen: &kobo_sdk::Screen, what: &str) {
+        let issues = screen.validate(&CLARA_BW_METRICS);
+        assert!(
+            issues.is_empty(),
+            "{what} does not fit the panel: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn every_screen_in_the_whole_journey_fits_the_panel() {
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            ..Feeds::default()
+        });
+
+        // An empty shelf, which is the first thing a new reader sees.
+        fits_the_panel(
+            &screen_of(&runner.action(kobo_sdk::ActionId::BACK)),
+            "the empty shelf",
+        );
+
+        // Typing an address. The keyboard takes most of the panel, and the
+        // attribution has to fit above it.
+        fits_the_panel(
+            &screen_of(&runner.action(action_id("add"))),
+            "the search screen",
+        );
+        for key in ["kb.r0c9", "kb.r1c0", "kb.r0c1"] {
+            fits_the_panel(
+                &screen_of(&runner.action(action_id(key))),
+                "the search screen mid-typing",
+            );
+        }
+        fits_the_panel(
+            &screen_of(&runner.action(action_id("kb.enter"))),
+            "the search in flight",
+        );
+
+        // A full page of results, each with the longest title and summary the
+        // service is allowed to return, plus the attribution underneath.
+        let entries: Vec<String> = (0..12)
+            .map(|index| {
+                format!(
+                    r#"{{"url":"https://example.com/feed/{index}","title":"{}","description":"{}","item_count":20,"score":{index}}}"#,
+                    "A Publication With A Very Long Name Indeed ".repeat(4),
+                    "A description that runs on at some length. ".repeat(4)
+                )
+            })
+            .collect();
+        let answer = format!("[{}]", entries.join(","));
+        let commands = runner.task_outcome(TaskId(1), TaskOutcome::Completed(answer.into_bytes()));
+        fits_the_panel(&screen_of(&commands), "a full page of results");
+
+        // Choosing one, then a feed of long articles.
+        fits_the_panel(
+            &screen_of(&runner.action(action_id("found-0"))),
+            "the feed loading",
+        );
+        let items: Vec<String> = (0..20)
+            .map(|index| {
+                format!(
+                    "<item><title>An article with a headline of the length \
+                     publishers actually use, number {index}</title>\
+                     <author>A Writer With A Long Name</author>\
+                     <pubDate>Fri, 05 Jul 2019 16:00:30 +0000</pubDate>\
+                     <description>{}</description></item>",
+                    "Some prose about the state of the world, at length. ".repeat(40)
+                )
+            })
+            .collect();
+        let source = format!(
+            "<rss><channel><title>A Journal</title>{}</channel></rss>",
+            items.join("")
+        );
+        let commands = runner.task_outcome(TaskId(2), TaskOutcome::Completed(source.into_bytes()));
+        fits_the_panel(&screen_of(&commands), "a page of articles");
+
+        // Every page of the article list, then every page of one article.
+        fits_the_panel(
+            &screen_of(&runner.action(action_id("list-next"))),
+            "a later page of articles",
+        );
+        fits_the_panel(
+            &screen_of(&runner.action(action_id("list-back"))),
+            "back to the first page",
+        );
+
+        let commands = runner.action(action_id("item-0"));
+        fits_the_panel(&screen_of(&commands), "the first page of an article");
+        let pages = runner.app_mut().pages.len();
+        assert!(pages > 1, "the long article fitted a single page");
+        for page in 1..pages {
+            let commands = runner.action(action_id("page-next"));
+            fits_the_panel(&screen_of(&commands), &format!("article page {page}"));
+        }
+    }
+
+    #[test]
+    fn the_screens_that_say_nothing_happened_fit_too() {
+        // Empty and error states are the ones nobody looks at until they
+        // appear on a device in front of somebody.
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            view: View::Items,
+            open: Some(0),
+            subscriptions: following(),
+            task: Some((TaskId(1), Awaiting::Feed)),
+            ..Feeds::default()
+        });
+        let commands =
+            runner.task_outcome(TaskId(1), TaskOutcome::Completed(b"<html></html>".to_vec()));
+        fits_the_panel(&screen_of(&commands), "a feed that was not a feed");
+
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            view: View::Found,
+            query: "example.com".to_owned(),
+            task: Some((TaskId(1), Awaiting::Search)),
+            ..Feeds::default()
+        });
+        let commands = runner.task_outcome(TaskId(1), TaskOutcome::Completed(b"[]".to_vec()));
+        fits_the_panel(&screen_of(&commands), "a search that found nothing");
+
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            view: View::Items,
+            open: Some(0),
+            subscriptions: following(),
+            task: Some((TaskId(1), Awaiting::Feed)),
+            ..Feeds::default()
+        });
+        let commands = runner.task_outcome(
+            TaskId(1),
+            TaskOutcome::Failed(kobo_sdk::TaskError::Unreachable),
+        );
+        fits_the_panel(&screen_of(&commands), "a feed that could not be reached");
+    }
+
+    #[test]
+    fn feedsearch_is_credited_on_both_screens_that_show_its_results() {
+        // A licensing obligation, not a preference: their terms ask for an
+        // attribution visible to the reader on the search and results screens.
+        // It has already been lost once, to a full page of results pushing it
+        // off the panel, which is why it is asserted rather than trusted.
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            ..Feeds::default()
+        });
+        let search = screen_of(&runner.action(action_id("add")));
+        assert!(
+            format!("{search:?}").contains("feedsearch.dev"),
+            "the search screen does not credit Feedsearch"
+        );
+
+        for key in ["kb.r0c9", "kb.r1c0", "kb.r0c1"] {
+            runner.action(action_id(key));
+        }
+        // The results screen, while the search is still in flight.
+        let waiting = screen_of(&runner.action(action_id("kb.enter")));
+        assert!(
+            format!("{waiting:?}").contains("feedsearch.dev"),
+            "the results screen does not credit Feedsearch while loading"
+        );
+
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            view: View::Found,
+            query: "example.com".to_owned(),
+            task: Some((TaskId(1), Awaiting::Search)),
+            ..Feeds::default()
+        });
+        let answer = br#"[{"url":"https://example.com/rss","title":"Example","score":1}]"#;
+        let results =
+            screen_of(&runner.task_outcome(TaskId(1), TaskOutcome::Completed(answer.to_vec())));
+        assert!(
+            format!("{results:?}").contains("feedsearch.dev"),
+            "the results screen does not credit Feedsearch"
+        );
+    }
+
+    #[test]
+    fn a_shelf_of_the_most_feeds_this_holds_is_still_turnable() {
+        let subscriptions: Vec<Subscription> = (0..MAX_FEEDS)
+            .map(|index| Subscription {
+                url: format!("https://example.com/{index}"),
+                title: format!("A Publication With A Long Name, number {index}"),
+                site: format!("https://a-fairly-long-hostname-{index}.example.com/"),
+            })
+            .collect();
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            subscriptions,
+            ..Feeds::default()
+        });
+        let commands = runner.action(kobo_sdk::ActionId::BACK);
+        fits_the_panel(&screen_of(&commands), "a full shelf");
+        // And every later page of it.
+        for page in 1..8 {
+            let commands = runner.action(action_id("list-next"));
+            fits_the_panel(&screen_of(&commands), &format!("shelf page {page}"));
+        }
     }
 }
