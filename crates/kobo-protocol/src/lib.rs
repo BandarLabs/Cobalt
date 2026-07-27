@@ -1353,6 +1353,8 @@ fn encoded_screen_len(
     if screen.page_turns.is_some() {
         add_encoded_len(&mut length, 8)?;
     }
+    // One flag byte for first refusal on the runtime's Back control.
+    add_encoded_len(&mut length, 1)?;
     if let Some(nav_bar) = &screen.nav_bar {
         if nav_bar.destinations.len() > u8::MAX as usize {
             return Err(ProtocolError::TooManyNodes);
@@ -1973,6 +1975,7 @@ fn encode_screen(
             push_u32(output, turns.next.0);
         }
     }
+    output.push(u8::from(screen.owns_back));
     push_u16(
         output,
         u16::try_from(screen.nodes.len()).map_err(|_| ProtocolError::TooManyNodes)?,
@@ -2440,6 +2443,11 @@ fn decode_screen(
         )),
         _ => return Err(ProtocolError::InvalidValue("page turn flag")),
     };
+    let owns_back = match reader.u8()? {
+        0 => false,
+        1 => true,
+        _ => return Err(ProtocolError::InvalidValue("own back flag")),
+    };
     let count_nodes = usize::from(reader.u16()?);
     if count_nodes > MAX_NODES {
         return Err(ProtocolError::TooManyNodes);
@@ -2458,6 +2466,7 @@ fn decode_screen(
         screen.bottom_action = bottom_action;
     }
     screen.page_turns = page_turns;
+    screen.owns_back = owns_back;
     Ok(screen)
 }
 
@@ -2974,6 +2983,29 @@ mod tests {
         let encoded = encode(&frame).expect("valid screen");
         assert_eq!(encoded, encode(&frame).expect("stable encoding"));
         assert_eq!(decode(&encoded), Ok(frame));
+    }
+
+    #[test]
+    fn a_request_for_first_refusal_on_back_survives_the_wire() {
+        // A screen that asked to answer Back itself has to arrive that way,
+        // because the runtime decides where the reader's tap goes from this
+        // flag alone. Lost in transit it would silently mean the opposite.
+        let screen = Screen::new(
+            7,
+            vec![Node::Text {
+                id: NodeId(1),
+                text: "Chapter one".into(),
+            }],
+        );
+        assert!(!screen.owns_back, "not asking for it is the default");
+        for owns_back in [false, true] {
+            let frame = Frame {
+                request_id: 12,
+                message: Message::SetScreen(screen.clone().with_own_back(owns_back)),
+            };
+            let encoded = encode(&frame).expect("valid screen");
+            assert_eq!(decode(&encoded), Ok(frame));
+        }
     }
 
     #[test]

@@ -61,9 +61,12 @@ const COVER_BYTES: u32 = 512 * 1024;
 
 /// How many books one shelf page holds.
 ///
-/// Two columns of portrait tiles, three rows deep, which is what fits between
-/// the bars on this panel. It is a count rather than a measurement because the
-/// grid itself is measured: this only decides where the shelf is cut.
+/// Three columns of portrait tiles, two rows deep, which is what fits whole
+/// between the bars on this panel. It used to be six in two columns of three,
+/// and the third row was cut in half by the nav bar: the shelf showed four
+/// books and a mistake. The grid itself is measured; this only decides where
+/// the shelf is cut, so it has to agree with the grid or the same thing
+/// happens again.
 const SHELF_PAGE: usize = 6;
 
 /// How close to the end of what has been downloaded the reader may get before
@@ -158,6 +161,22 @@ impl Default for Gutenshelf {
 }
 
 impl Gutenshelf {
+    /// Whether the shelf itself is still on its way.
+    ///
+    /// Covers deliberately do not count. They arrive one at a time and the
+    /// slowest of them decided how long the loading screen stayed up, so a
+    /// shelf whose books had already arrived sat behind "Fetching the most
+    /// popular books" until the last piece of artwork on the page resolved —
+    /// and a cover that fails is silent, so it looked like nothing was
+    /// happening at all.
+    fn awaiting_catalogue(&self) -> bool {
+        matches!(self.task, Some((_, Awaiting::Catalogue)))
+    }
+
+    fn awaiting_text(&self) -> bool {
+        matches!(self.task, Some((_, Awaiting::Text)))
+    }
+
     fn show(&self, context: &mut Context) {
         let screen = match self.view {
             View::Results => self.results(),
@@ -165,7 +184,12 @@ impl Gutenshelf {
             View::Details => self.details(),
             View::Reading => self.reading(),
         };
-        context.set_screen(screen);
+        // Every view except the shelf was reached from another one, so Back
+        // unwinds the application first and leaves it only from the shelf.
+        // Without this the reader taps Back out of a book and lands at the
+        // launcher, and coming back in shows the book again rather than the
+        // shelf they were trying to reach.
+        context.set_screen(screen.with_own_back(self.view != View::Results));
     }
 
     fn results(&self) -> kobo_sdk::Screen {
@@ -176,8 +200,7 @@ impl Gutenshelf {
         if let Some(problem) = &self.problem {
             screen = screen.banner(BannerLevel::Attention, problem.clone());
         }
-        screen = screen.button("search", "Search the library");
-        if self.task.is_some() {
+        if self.awaiting_catalogue() {
             // A skeleton rather than only a label. The panel takes about a
             // second to repaint, so on a fast answer a one-line "loading"
             // message is on screen for less time than the refresh that draws
@@ -197,11 +220,14 @@ impl Gutenshelf {
                 .build();
         }
         if self.books.is_empty() {
+            // The one screen where a full-width button belongs, because it is
+            // the only thing on it and the only thing to do.
             return screen
                 .text(
                     "Sixty thousand books, free and out of copyright. \
                      Search for an author or a title.",
                 )
+                .button("search", "Search the library")
                 .build();
         }
         let pages = self.shelf_pages();
@@ -220,9 +246,12 @@ impl Gutenshelf {
                     book.picture,
                 )
             });
-        screen = screen.divider().picture_tiles(TileShape::Portrait, shown);
+        screen = screen.picture_tiles(TileShape::Portrait, shown);
         if pages <= 1 {
-            return screen.build();
+            // Still reachable, just not at the cost of a whole row of covers.
+            // Search used to be a full-width button above the shelf, which on
+            // this panel was a third of the artwork the shelf exists to show.
+            return screen.bottom_action("search", "Search").build();
         }
         // The same page controls the reader already uses inside a book, so a
         // shelf is turned the way a page is. Tapping the side of the panel
@@ -264,7 +293,7 @@ impl Gutenshelf {
         if let Some(problem) = &self.problem {
             screen = screen.banner(BannerLevel::Attention, problem.clone());
         }
-        if self.task.is_some() {
+        if self.awaiting_text() {
             return screen.activity("Downloading", None).build();
         }
         screen = if book.text.is_some() {
@@ -511,7 +540,11 @@ impl Gutenshelf {
         // and line height, so a page that fits here is drawn whole. A page
         // that does not is not truncated on screen with a warning: the layout
         // simply stops, and the last paragraph is never drawn at all.
-        self.pages = context.paginate(&self.text, true);
+        //
+        // Cleaned from the whole accumulated text rather than piece by piece,
+        // because every marker this looks for can be split down the middle by
+        // a chunk boundary.
+        self.pages = context.paginate(&readable(&self.text), true);
         self.view = View::Reading;
     }
 }
@@ -523,6 +556,19 @@ impl KoboApp for Gutenshelf {
     }
 
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
+        if action == ActionId::BACK {
+            // Delivered only on a screen that claimed it, so the shelf is
+            // never reached here and Back still leaves the application from
+            // there. Reading returns to the book it was opened from; a book
+            // and the keyboard both return to the shelf.
+            self.view = match self.view {
+                View::Reading if self.open.is_some() => View::Details,
+                _ => View::Results,
+            };
+            self.problem = None;
+            self.show(context);
+            return;
+        }
         if self.view == View::Search {
             match self.keyboard.press(action) {
                 Some(Pressed::Submitted) => {
@@ -647,6 +693,159 @@ impl KoboApp for Gutenshelf {
     }
 }
 
+/// Turns Project Gutenberg's plain text into something worth reading on a
+/// panel.
+///
+/// The files are typeset for a 70 column terminal in 1971 and it shows. What
+/// arrives is a licence, a title page laid out with runs of spaces, captions
+/// for illustrations that are not in the file, and italics marked with
+/// underscores. Handed straight to the typesetter that becomes twelve pages of
+/// legal text before chapter one, lines like `PRIDE.        and PREJUDICE`
+/// broken wherever the wrapping happened to land, and `_unhesitatingly_` with
+/// its markup showing.
+///
+/// Nothing here is guesswork about prose. Every rule keys on a marker Gutenberg
+/// actually writes, and each one leaves the text alone when its marker is
+/// missing, so a file that does not follow the convention is passed through
+/// rather than mangled.
+fn readable(raw: &str) -> String {
+    let body = between_markers(raw);
+    let mut out = String::with_capacity(body.len());
+    for line in body.lines() {
+        // Underscores are Gutenberg's italics and are not punctuation anybody
+        // writes in a sentence, so they come out wherever they are. They are
+        // frequently misplaced against the spaces around them — `for_ Pride
+        // and Prejudice _unhesitatingly` — which is why matching them in pairs
+        // would leave as many behind as it removed.
+        let line = line.replace('_', "");
+        // A run of spaces is a title page pretending to be a table. On a panel
+        // that rewraps everything it is either a ragged gap in the middle of a
+        // line or a line break in the wrong place, and one space says the same
+        // thing without either.
+        let collapsed = collapse_runs(&line);
+        let trimmed = collapsed.trim();
+        if trimmed.is_empty() {
+            // Kept, because a blank line is the only paragraph mark the format
+            // has. Collapsed to one so the page count is not padded out by the
+            // four blank lines Gutenberg leaves around a chapter heading.
+            if !out.ends_with("\n\n") && !out.is_empty() {
+                out.push('\n');
+            }
+            continue;
+        }
+        out.push_str(trimmed);
+        out.push('\n');
+    }
+    strip_illustrations(&out)
+}
+
+/// Narrows the file to the book, when it says where the book is.
+///
+/// Gutenberg brackets the text with `*** START OF ...` and `*** END OF ...`
+/// lines. Everything outside them is the licence and the credits: worth
+/// keeping in the file, not worth eleven pages of a reader's evening before
+/// chapter one.
+fn between_markers(raw: &str) -> &str {
+    let mut body = raw;
+    if let Some(start) = marker_line(body, "*** START") {
+        body = &body[start..];
+    }
+    if let Some(end) = marker_line(body, "*** END") {
+        body = &body[..end];
+    }
+    body
+}
+
+/// Finds where the line carrying a marker ends, or where it begins for an end
+/// marker. Returns a byte offset that is always a line boundary.
+fn marker_line(text: &str, marker: &str) -> Option<usize> {
+    let mut offset = 0;
+    for line in text.lines() {
+        let upper = line.trim_start().to_uppercase();
+        if upper.starts_with(marker) {
+            return Some(if marker.starts_with("*** S") {
+                // Past this line, so the marker itself is not read as prose.
+                (offset + line.len() + 1).min(text.len())
+            } else {
+                offset
+            });
+        }
+        offset += line.len() + 1;
+    }
+    None
+}
+
+/// Removes `[Illustration: ...]` captions, which describe pictures the plain
+/// text edition does not contain.
+///
+/// Bracket counted rather than matched line by line, because the caption
+/// regularly runs over several lines and can carry brackets of its own. An
+/// unclosed bracket — a truncated download, most likely — puts the text back
+/// exactly as it was rather than swallowing the rest of the book.
+fn strip_illustrations(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = find_illustration(rest) {
+        let (before, from) = rest.split_at(at);
+        out.push_str(before);
+        let mut depth = 0_u32;
+        let mut end = None;
+        for (index, character) in from.char_indices() {
+            match character {
+                '[' => depth += 1,
+                ']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(index + 1);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let Some(end) = end else {
+            out.push_str(from);
+            return out;
+        };
+        rest = &from[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Where the next illustration caption opens, if there is one.
+fn find_illustration(text: &str) -> Option<usize> {
+    let mut from = 0;
+    while let Some(at) = text[from..].find('[') {
+        let at = from + at;
+        let after = &text[at + 1..];
+        let head: String = after.chars().take("illustration".len()).collect();
+        if head.eq_ignore_ascii_case("illustration") {
+            return Some(at);
+        }
+        from = at + 1;
+    }
+    None
+}
+
+/// Squeezes runs of spaces and tabs down to one.
+fn collapse_runs(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut in_run = false;
+    for character in line.chars() {
+        if character == ' ' || character == '\t' {
+            if !in_run {
+                out.push(' ');
+                in_run = true;
+            }
+        } else {
+            out.push(character);
+            in_run = false;
+        }
+    }
+    out
+}
+
 /// Percent-encodes a search term.
 ///
 /// Everything outside the unreserved set is escaped, which is stricter than a
@@ -764,9 +963,97 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{books_from, encode_query, plain_text_url, Awaiting, Gutenshelf, View};
+    use super::{books_from, encode_query, plain_text_url, readable, Awaiting, Gutenshelf, View};
     use kobo_sdk::{action_id, AppRunner, Command};
     use kobo_ui::{Chrome, LayoutKind, CLARA_BW_METRICS};
+
+    /// Verbatim from the Pride and Prejudice file, which is what put twelve
+    /// pages of licence and a table-of-contents-shaped title page in front of
+    /// chapter one on the panel.
+    const RAW: &str = "\
+The Project Gutenberg eBook of Pride and Prejudice\n\
+\n\
+This eBook is for the use of anyone anywhere in the United States and\n\
+most other parts of the world at no cost and with almost no restrictions\n\
+whatsoever.\n\
+\n\
+Title: Pride and Prejudice\n\
+\n\
+*** START OF THE PROJECT GUTENBERG EBOOK PRIDE AND PREJUDICE ***\n\
+[Illustration:\n\
+\n\
+ GEORGE ALLEN                    PUBLISHER\n\
+\n\
+        156 CHARING CROSS ROAD LONDON\n\
+                                            ]\n\
+\n\
+PRIDE.                    and PREJUDICE\n\
+\n\
+It is a truth universally acknowledged, that a single man in\n\
+possession of a good fortune, must be in want of a wife. I, for my\n\
+part, declare for_ Pride and Prejudice _unhesitatingly.\n\
+\n\
+*** END OF THE PROJECT GUTENBERG EBOOK PRIDE AND PREJUDICE ***\n\
+\n\
+Please read this before you distribute or use this work.\n";
+
+    #[test]
+    fn gutenbergs_typesetting_for_a_1971_terminal_is_undone() {
+        let clean = readable(RAW);
+
+        // The licence at both ends is the reader's evening, not their book.
+        assert!(
+            !clean.contains("almost no restrictions"),
+            "the header survived: {clean}"
+        );
+        assert!(
+            !clean.contains("before you distribute"),
+            "the footer survived: {clean}"
+        );
+        assert!(!clean.contains("*** START"), "the marker is not prose");
+        assert!(!clean.contains("*** END"));
+
+        // A caption for a picture that is not in a plain text file, spanning
+        // lines and carrying its own layout.
+        assert!(
+            !clean.contains("GEORGE ALLEN") && !clean.contains("Illustration"),
+            "the illustration survived: {clean}"
+        );
+
+        // Runs of spaces are a title page pretending to be a table.
+        assert!(
+            clean.contains("PRIDE. and PREJUDICE"),
+            "the run was not collapsed: {clean}"
+        );
+
+        // Italics markup, including the misplaced pair that made the panel
+        // read `for_ Pride and Prejudice _unhesitatingly`.
+        assert!(!clean.contains('_'), "markup is showing: {clean}");
+        assert!(clean.contains("declare for Pride and Prejudice unhesitatingly."));
+
+        // The book itself is still all there.
+        assert!(clean.contains("a truth universally acknowledged"));
+        // And the paragraph mark it needs to be typeset is kept.
+        assert!(clean.contains("\n\n"), "paragraphs were lost: {clean}");
+    }
+
+    #[test]
+    fn a_file_that_follows_none_of_the_conventions_is_left_alone() {
+        // The rules key on markers Gutenberg writes. A file without them is
+        // somebody's book, and dropping it because it is unusual would be
+        // very much worse than showing it as it came.
+        let plain = "Chapter One\n\nIt was a bright cold day in April.\n";
+        assert_eq!(readable(plain), plain);
+    }
+
+    #[test]
+    fn an_unclosed_caption_never_swallows_the_rest_of_the_book() {
+        // A truncated download ends mid-caption. Counting brackets to the end
+        // of the file and deleting what it found would leave a blank screen.
+        let truncated = "Chapter One\n\n[Illustration: the frontispiece\n";
+        let clean = readable(truncated);
+        assert!(clean.contains("Chapter One"), "{clean}");
+    }
 
     const ANSWER: &str = r#"{
         "count": 2,
@@ -884,6 +1171,56 @@ mod tests {
                 application.pages[page].len()
             );
         }
+    }
+
+    #[test]
+    fn every_cover_on_a_shelf_page_is_drawn_whole_between_the_bars() {
+        // The defect this covers: the shelf held six books in two columns,
+        // which is three rows of a shape half again as tall as it is wide, and
+        // the third row was drawn underneath the nav bar. The reader saw four
+        // covers and half of two more, so a shelf of six looked like a shelf
+        // of four and a rendering fault.
+        //
+        // Asserted against the layout rather than against the numbers that
+        // produced it, because the two are set in different crates: SHELF_PAGE
+        // decides where the shelf is cut and the grid decides how wide a cell
+        // is, and nothing else makes them agree.
+        let application = Gutenshelf {
+            books: (0..super::SHELF_PAGE)
+                .map(|index| super::Book {
+                    title: format!("Book {index}"),
+                    author: "Somebody".to_owned(),
+                    text: None,
+                    cover: None,
+                    picture: None,
+                })
+                .collect(),
+            ..Gutenshelf::default()
+        };
+        let chrome = Chrome::with_back(true);
+        let screen = application.results();
+        let layout = screen.layout_with(&CLARA_BW_METRICS, chrome);
+        let tiles = layout
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, LayoutKind::Tile(_)))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            tiles.len(),
+            super::SHELF_PAGE,
+            "every book on the page has a tile"
+        );
+        let floor = CLARA_BW_METRICS.height - CLARA_BW_METRICS.nav_bar_height();
+        for tile in &tiles {
+            assert!(
+                tile.rect.y + tile.rect.height <= floor,
+                "a cover runs under the nav bar: {:?} against {floor}",
+                tile.rect
+            );
+        }
+        // And the screen itself agrees, which is the check an author gets.
+        let issues = screen.validate(&CLARA_BW_METRICS);
+        assert!(issues.is_empty(), "{issues:?}");
     }
 
     #[test]

@@ -125,6 +125,7 @@ one cannot.
 |---|---|
 | `top_bar(title)` | The fixed bar at the top. Back is added by the runtime. |
 | `top_bar_action(name, label)` | One trailing control in the top bar. |
+| `owns_back(bool)` | Ask for Back as an action before it leaves the app. |
 | `nav_bar(selected, [(name, label), …])` | The pinned bottom bar. At least two destinations. |
 | `page_turns(previous, next)` | Tap the left of the page to go back, the rest to go on. |
 
@@ -221,9 +222,42 @@ nav.replace(Route::ConfirmDelete(42));
 assert!(nav.back());
 ```
 
-The root can never be popped and `current()` always returns a route. This is
-application navigation; the runtime-owned Back control remains separate and
-cannot be hidden by an application.
+The root can never be popped and `current()` always returns a route.
+
+To make the runtime's Back control drive that stack, ask for first refusal on
+it. Pass `can_go_back()` and the behaviour follows the stack for free — deep
+screens pop, the root leaves the application:
+
+```rust
+ScreenBuilder::new("book")
+    .top_bar(title)
+    .owns_back(nav.can_go_back())
+    .build()
+```
+
+```rust
+fn on_action(&mut self, context: &mut Context, action: ActionId) {
+    if action == ActionId::BACK {
+        // Only ever delivered on a screen that asked for it.
+        self.nav.back();
+        self.show(context);
+        return;
+    }
+    // ...
+}
+```
+
+**This is first refusal, not ownership.** The Back control is still the
+runtime's, still drawn by the runtime, and still leads out of the application
+in the end. An application that claims it and then draws nothing in answer is
+left behind and the launcher appears anyway, after about two seconds. There is
+no way to hold the reader, which is the whole reason the affordance is
+trustworthy enough to be the way out of anything.
+
+Without this, Back always went straight to the launcher, so a reader who
+tapped out of a book landed at home instead of the shelf — and reopening the
+application showed the book again, because its retained screen had never
+changed.
 
 Confirmations are deliberately whole screens, not floating desktop windows:
 
@@ -668,7 +702,8 @@ need one to run.** SSH is only how a developer's machine reaches a device.
 - **You cannot draw.** No pixels, no colour, no fonts, no coordinates.
 - **You cannot block the panel.** Long work is a task or it does not happen.
 - **You cannot hold a credential.** You may name one.
-- **You cannot remove Back.** The runtime owns the navigation stack.
+- **You cannot remove Back.** The runtime owns it, draws it, and leaves to the
+  launcher if you do not answer it. You may ask to answer it first.
 - **You cannot open a socket, a file outside your directory, or a device node.**
 - **You cannot start a program.** A terminal is a capability the runtime hosts;
   an application says what was typed, never what to execute.

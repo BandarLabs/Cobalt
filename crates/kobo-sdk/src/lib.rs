@@ -246,6 +246,7 @@ pub struct ScreenBuilder {
     nav_bar: Option<NavBar>,
     bottom_action: Option<BottomAction>,
     page_turns: Option<kobo_ui::PageTurns>,
+    owns_back: bool,
     actions: Vec<(String, ActionId)>,
     warnings: Vec<LayoutIssue>,
 }
@@ -261,6 +262,7 @@ impl ScreenBuilder {
             nav_bar: None,
             bottom_action: None,
             page_turns: None,
+            owns_back: false,
             actions: Vec::new(),
             warnings: Vec::new(),
         }
@@ -448,6 +450,24 @@ impl ScreenBuilder {
         self.actions
             .iter()
             .find_map(|(known, id)| (known == name).then_some(*id))
+    }
+
+    /// Asks for the reader's Back to arrive as an action first.
+    ///
+    /// The Back control belongs to the runtime and always leads out of the
+    /// application in the end; this only asks for first refusal, so a screen
+    /// reached from inside the application can return to where it was reached
+    /// from instead of dropping the reader at the launcher. Pass
+    /// [`Navigator::can_go_back`] and the behaviour follows the back stack for
+    /// free: deep screens pop, the root leaves.
+    ///
+    /// The offer expires. An application that sets this and then draws nothing
+    /// in answer to [`ActionId::BACK`] is left behind and the launcher appears
+    /// anyway, which is why setting it can never strand a reader.
+    #[must_use]
+    pub const fn owns_back(mut self, owns_back: bool) -> Self {
+        self.owns_back = owns_back;
+        self
     }
 
     /// Adds the fixed top bar.
@@ -884,6 +904,7 @@ impl ScreenBuilder {
             nav_bar: self.nav_bar,
             bottom_action: self.bottom_action,
             page_turns: self.page_turns,
+            owns_back: self.owns_back,
         }
     }
 

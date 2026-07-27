@@ -265,7 +265,12 @@ impl Hn {
             View::List => self.list(),
             View::Thread => self.thread(),
         };
-        context.set_screen(screen);
+        // A thread was reached from the list, so Back belongs to the list
+        // first and to the launcher second. Claimed only when a thread is
+        // genuinely open, so the fallback back to the list does not cost the
+        // reader a tap that redraws what they are already looking at.
+        let owns_back = self.view == View::Thread && self.open.is_some();
+        context.set_screen(screen.with_own_back(owns_back));
     }
 
     /// The story list for the tab that is showing.
@@ -745,6 +750,14 @@ impl KoboApp for Hn {
     }
 
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
+        if action == ActionId::BACK {
+            // Only ever delivered on a screen that asked for it, so this is
+            // always a thread returning to the list it was opened from.
+            self.view = View::List;
+            self.problem = None;
+            self.show(context);
+            return;
+        }
         for tab in Tab::ALL {
             if action == action_id(tab.action()) {
                 self.switch_tab(context, tab);

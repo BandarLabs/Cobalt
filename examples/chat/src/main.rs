@@ -114,7 +114,10 @@ struct Chat {
 
 impl Chat {
     fn show(&self, context: &mut Context) {
-        context.set_screen(self.screen());
+        // The keyboard and the service list are both destinations reached from
+        // the transcript, so Back returns to the transcript before it leaves.
+        let owns_back = matches!(self.view, View::Composing | View::Choosing);
+        context.set_screen(self.screen().with_own_back(owns_back));
     }
 
     fn screen(&self) -> Screen {
@@ -419,6 +422,13 @@ impl KoboApp for Chat {
     }
 
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
+        if action == ActionId::BACK {
+            // Only offered on the keyboard and the service list, both of which
+            // return to the transcript they were opened from.
+            self.view = View::Talking;
+            self.show(context);
+            return;
+        }
         if self.view == View::Composing && self.typing(context, action) {
             return;
         }
