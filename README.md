@@ -272,13 +272,19 @@ Then it waits. The restart is the one step that has to happen on the reader —
 its SSH server only starts at boot, and nothing on this side can press the
 power button — so the command asks for it and then watches the network for the
 reader to come back, printing its address and the exact `kobo deploy` line when
-it does. It identifies the reader by *change* rather than by asking anything:
-it records which addresses answer on port 22 before the wait, and reports the
-one that was not answering and now is. On a first setup there is no key
-installed and the firmware's first login forces a password change, so a probe
-that authenticated would hang; a probe that never sends a byte cannot. That
-also means the machine it is running on, the router and a NAS are never
-mistaken for a reader, because none of them just joined.
+it does. It identifies the reader by two things it can learn without writing a
+byte, because on a first setup there is no key installed and the firmware's
+first login forces a password change, so a probe that authenticated would hang.
+The first is *change*: it records which addresses answer on port 22 before the
+wait, and only ones that were not answering and now are can be the reader —
+which rules out the machine it is running on, the router and a NAS, since none
+of them just joined. The second is the SSH banner, which a server sends
+unprompted. Change alone was not enough: a laptop waking from sleep mid-wait
+was reported as the reader, and a confident wrong address is worse than none.
+A Kobo answers as Dropbear, so anything else is passed over and named as such
+at the end. An address that accepts a connection but says nothing is asked
+again next round rather than written off, because a booting reader does exactly
+that.
 
 `--no-wait` skips that. `kobo setup --undo` puts every part of the setup back,
 and `kobo setup --dry-run` prints what it would do without touching anything —

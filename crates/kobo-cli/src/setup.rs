@@ -619,57 +619,98 @@ pub const WAIT_LIMIT: Duration = Duration::from_secs(300);
 /// How long between sweeps while waiting.
 pub const WAIT_INTERVAL: Duration = Duration::from_secs(10);
 
+/// The SSH server a Kobo runs, as it names itself in its banner.
+///
+/// Kobo firmware's `ssh-enabled` flag starts Dropbear, not OpenSSH, so a
+/// newcomer that announces anything else is some other machine. This is the
+/// only fact about a reader that can be had before authenticating.
+pub const READER_SSH: &str = "dropbear";
+
+/// True when an SSH banner belongs to a reader rather than to a laptop, a
+/// router or a NAS that happened to join while waiting.
+#[must_use]
+pub fn is_reader_banner(banner: &str) -> bool {
+    banner.to_lowercase().contains(READER_SSH)
+}
+
 /// What came back from waiting for a restarted reader.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Arrival {
-    /// One address that was not answering before is answering now.
+    /// One address that was not answering before is answering now, and its
+    /// SSH server named itself as a reader's.
     Found(Ipv4Addr),
     /// Several are, so this will not guess which is the reader.
     Several(Vec<Ipv4Addr>),
-    /// Nothing new answered before the limit ran out.
-    TimedOut,
+    /// No reader answered before the limit ran out. Carries any addresses that
+    /// did appear and were passed over, so that the difference between nothing
+    /// happening and the wrong machine arriving can be told.
+    TimedOut(Vec<Ipv4Addr>),
 }
 
-/// Waits for an address to start answering on the SSH port that was not
+/// Waits for a reader to start answering on the SSH port that was not
 /// answering when the wait began.
 ///
 /// The reader cannot be identified by asking it anything: on a first setup
 /// there is no key installed and the firmware's first login forces a password
-/// change, so a probe that authenticates would hang or lock the account. What
-/// can be told without a byte being sent is *change* — the reader was off the
-/// network a moment ago and is on it now. So a baseline is taken first and
-/// only newcomers count, which also means this cannot mistake the machine it
-/// is running on, a router, or a NAS for a Kobo.
+/// change, so a probe that authenticates would hang or lock the account. Two
+/// things can be told without a byte being written. The first is *change* — it
+/// was off the network a moment ago and is on it now — which alone rules out
+/// the machine this is running on, a router and a NAS, since those were all
+/// there at the start. The second is the SSH banner, which a server sends
+/// unprompted, and which is how a laptop waking from sleep mid-wait is told
+/// from a Kobo. Change alone is not enough: it named such a laptop as the
+/// reader, and printing a confident wrong address is worse than printing none.
 ///
-/// `sweep` returns everything answering right now; `pause` waits out one
-/// interval and returns false when there is no time left. Both are passed in
-/// so the whole of the decision can be tested without a network.
+/// `sweep` returns everything answering right now, `banner` reads one address's
+/// SSH version string, and `pause` waits out one interval and returns false
+/// when there is no time left. All three are passed in so the whole of the
+/// decision can be tested without a network.
 pub fn wait_for_reader(
     mut sweep: impl FnMut() -> Vec<Ipv4Addr>,
+    mut banner: impl FnMut(Ipv4Addr) -> String,
     mut pause: impl FnMut() -> bool,
 ) -> Arrival {
-    let before: BTreeSet<Ipv4Addr> = sweep().into_iter().collect();
+    let baseline: BTreeSet<Ipv4Addr> = sweep().into_iter().collect();
+    let mut settled: BTreeSet<Ipv4Addr> = BTreeSet::new();
+    let mut passed_over: Vec<Ipv4Addr> = Vec::new();
     while pause() {
         let mut arrived: Vec<Ipv4Addr> = sweep()
             .into_iter()
-            .filter(|address| !before.contains(address))
+            .filter(|address| !baseline.contains(address) && !settled.contains(address))
             .collect();
         arrived.sort_unstable();
         arrived.dedup();
-        match arrived.len() {
+        let mut readers = Vec::new();
+        for address in arrived {
+            let said = banner(address);
+            if said.is_empty() {
+                // Silent is *could not tell*, not *not a reader*. A booting
+                // Kobo accepts a connection before its SSH server will talk,
+                // and writing it off here would mean never finding it.
+                continue;
+            }
+            settled.insert(address);
+            if is_reader_banner(&said) {
+                readers.push(address);
+            } else {
+                passed_over.push(address);
+            }
+        }
+        match readers.len() {
             0 => {}
-            1 => return Arrival::Found(arrived[0]),
-            _ => return Arrival::Several(arrived),
+            1 => return Arrival::Found(readers[0]),
+            _ => return Arrival::Several(readers),
         }
     }
-    Arrival::TimedOut
+    Arrival::TimedOut(passed_over)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        clear_setting, is_kobo_serial, next_steps, parse_version, set_setting, wait_for_reader,
-        Arrival, Mounted, Report, Ssh, INSTALL_FOLDER, SETTINGS_APPLIED, SSH_DISABLED, SSH_ENABLED,
+        clear_setting, is_kobo_serial, is_reader_banner, next_steps, parse_version, set_setting,
+        wait_for_reader, Arrival, Mounted, Report, Ssh, INSTALL_FOLDER, SETTINGS_APPLIED,
+        SSH_DISABLED, SSH_ENABLED,
     };
     use std::net::Ipv4Addr;
     use std::path::PathBuf;
@@ -698,18 +739,37 @@ mod tests {
         }
     }
 
+    /// A banner reader for which every address is a Kobo.
+    fn all_readers() -> impl FnMut(Ipv4Addr) -> String {
+        |_| "SSH-2.0-dropbear_2019.78".to_string()
+    }
+
+    /// A banner reader for which only `readers` are Kobos and the rest are
+    /// ordinary machines.
+    fn only(readers: Vec<u8>) -> impl FnMut(Ipv4Addr) -> String {
+        move |seen| {
+            if readers.iter().any(|last| address(*last) == seen) {
+                "SSH-2.0-dropbear_2019.78".to_string()
+            } else {
+                "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3".to_string()
+            }
+        }
+    }
+
     #[test]
     fn a_machine_already_on_the_network_is_not_mistaken_for_the_reader() {
         // The router, this laptop and a NAS all answer on 22 the whole time.
-        // None of them restarted, so none of them is what was waited for.
-        let arrival = wait_for_reader(sweeps(vec![vec![1, 5, 40]]), rounds(4));
-        assert_eq!(arrival, Arrival::TimedOut);
+        // None of them restarted, so none of them is what was waited for —
+        // even though a banner check would have accepted all three.
+        let arrival = wait_for_reader(sweeps(vec![vec![1, 5, 40]]), all_readers(), rounds(4));
+        assert_eq!(arrival, Arrival::TimedOut(Vec::new()));
     }
 
     #[test]
     fn the_one_address_that_joined_is_the_answer() {
         let arrival = wait_for_reader(
             sweeps(vec![vec![1, 5], vec![1, 5], vec![1, 5, 22]]),
+            all_readers(),
             rounds(4),
         );
         assert_eq!(arrival, Arrival::Found(address(22)));
@@ -717,15 +777,23 @@ mod tests {
 
     #[test]
     fn two_arrivals_at_once_are_reported_rather_than_guessed_between() {
-        let arrival = wait_for_reader(sweeps(vec![vec![1], vec![1, 22, 23]]), rounds(4));
+        let arrival = wait_for_reader(
+            sweeps(vec![vec![1], vec![1, 22, 23]]),
+            all_readers(),
+            rounds(4),
+        );
         assert_eq!(arrival, Arrival::Several(vec![address(22), address(23)]));
     }
 
     #[test]
     fn a_machine_that_drops_off_while_waiting_is_not_an_arrival() {
         // Fewer answering than before is still nothing new answering.
-        let arrival = wait_for_reader(sweeps(vec![vec![1, 5, 40], vec![1]]), rounds(3));
-        assert_eq!(arrival, Arrival::TimedOut);
+        let arrival = wait_for_reader(
+            sweeps(vec![vec![1, 5, 40], vec![1]]),
+            all_readers(),
+            rounds(3),
+        );
+        assert_eq!(arrival, Arrival::TimedOut(Vec::new()));
     }
 
     #[test]
@@ -736,10 +804,93 @@ mod tests {
                 taken += 1;
                 Vec::new()
             },
+            all_readers(),
             rounds(3),
         );
-        assert_eq!(arrival, Arrival::TimedOut);
+        assert_eq!(arrival, Arrival::TimedOut(Vec::new()));
         assert_eq!(taken, 4, "one baseline sweep and one per allowed round");
+    }
+
+    #[test]
+    fn a_laptop_waking_from_sleep_mid_wait_is_not_named_as_the_reader() {
+        // This is what actually happened: change alone found .10, and .10 was
+        // a machine running OpenSSH that had woken up, not the Kobo.
+        let arrival = wait_for_reader(sweeps(vec![vec![1], vec![1, 10]]), only(vec![]), rounds(4));
+        assert_eq!(arrival, Arrival::TimedOut(vec![address(10)]));
+    }
+
+    #[test]
+    fn a_reader_arriving_after_some_other_machine_is_still_found() {
+        // Passing one over must not end the wait, or the reader that comes up
+        // half a minute later is never seen.
+        let arrival = wait_for_reader(
+            sweeps(vec![vec![1], vec![1, 10], vec![1, 10, 22]]),
+            only(vec![22]),
+            rounds(5),
+        );
+        assert_eq!(arrival, Arrival::Found(address(22)));
+    }
+
+    #[test]
+    fn an_address_that_named_itself_is_only_probed_once() {
+        let mut asked = Vec::new();
+        let arrival = wait_for_reader(
+            sweeps(vec![vec![1], vec![1, 10]]),
+            |seen| {
+                asked.push(seen);
+                "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3".to_string()
+            },
+            rounds(4),
+        );
+        assert_eq!(arrival, Arrival::TimedOut(vec![address(10)]));
+        assert_eq!(
+            asked,
+            vec![address(10)],
+            "it stays in view but is not re-probed"
+        );
+    }
+
+    #[test]
+    fn an_address_that_said_nothing_is_asked_again() {
+        // A Kobo accepts a connection while booting before its SSH server will
+        // talk. Reading one silence as a verdict would lose the reader for the
+        // rest of the wait.
+        let mut asked = 0;
+        let arrival = wait_for_reader(
+            sweeps(vec![vec![1], vec![1, 22]]),
+            |_| {
+                asked += 1;
+                if asked < 3 {
+                    String::new()
+                } else {
+                    "SSH-2.0-dropbear_2019.78".to_string()
+                }
+            },
+            rounds(5),
+        );
+        assert_eq!(arrival, Arrival::Found(address(22)));
+        assert_eq!(asked, 3, "asked again each round until it answered");
+    }
+
+    #[test]
+    fn only_the_reader_among_several_arrivals_is_named() {
+        let arrival = wait_for_reader(
+            sweeps(vec![vec![1], vec![1, 10, 22]]),
+            only(vec![22]),
+            rounds(4),
+        );
+        assert_eq!(arrival, Arrival::Found(address(22)));
+    }
+
+    #[test]
+    fn a_banner_is_read_whatever_case_and_padding_it_arrives_in() {
+        assert!(is_reader_banner("SSH-2.0-dropbear_2019.78"));
+        assert!(is_reader_banner("ssh-2.0-DropBear"));
+        assert!(!is_reader_banner("SSH-2.0-OpenSSH_8.9p1 Ubuntu-3"));
+        assert!(
+            !is_reader_banner(""),
+            "an address that said nothing is not a reader"
+        );
     }
 
     #[test]

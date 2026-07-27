@@ -2223,6 +2223,7 @@ fn await_reader(subnet: &str) {
     let deadline = Instant::now() + setup::WAIT_LIMIT;
     let arrival = setup::wait_for_reader(
         || connect::sweep(subnet, connect::PROBE_TIMEOUT),
+        |address| connect::ssh_banner(address, connect::BANNER_TIMEOUT),
         || {
             if Instant::now() >= deadline {
                 return false;
@@ -2246,15 +2247,29 @@ fn await_reader(subnet: &str) {
                 .collect::<Vec<_>>()
                 .join(", ");
             println!(
-                "More than one machine joined while waiting ({listed}), so this will not\n\
-                 guess which is the reader. 'kobo devices' asks each one what it is."
+                "More than one reader joined while waiting ({listed}), so this will not\n\
+                 guess which is yours. 'kobo devices' asks each one what it is."
             );
         }
-        setup::Arrival::TimedOut => println!(
-            "The reader did not appear. It is set up either way — the files are on it\n\
-             and its SSH server starts at the next boot. 'kobo devices' finds it once\n\
-             it is awake and on Wi-Fi."
-        ),
+        setup::Arrival::TimedOut(passed_over) => {
+            println!(
+                "The reader did not appear. It is set up either way — the files are on it\n\
+                 and its SSH server starts at the next boot. 'kobo devices' finds it once\n\
+                 it is awake and on Wi-Fi."
+            );
+            if !passed_over.is_empty() {
+                let listed = passed_over
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                println!(
+                    "\nSomething else joined the network while waiting ({listed}) and was\n\
+                     passed over: a Kobo answers as {}, and those did not.",
+                    setup::READER_SSH
+                );
+            }
+        }
     }
 }
 
