@@ -198,33 +198,63 @@ impl Suspended {
     /// So rather than sleep for a guessed interval, this watches the bus for
     /// the reader's own ping and resumes as soon as one arrives.
     ///
+    /// The watchdog is armed **only** on evidence that something is feeding it.
+    ///
+    /// This function used to arm it regardless, on the reasoning that if the
+    /// reader was not running then "a reboot to stock is the correct outcome".
+    /// That reasoning cost a reader their device. A freeze watchdog firing is
+    /// not a reboot: it is an `SoC` reset with nothing flushed and no filesystem
+    /// sync. Arm it against a reader that is not pinging and it fires roughly
+    /// ten seconds later, every time, forever -- and some of those resets land
+    /// while the reader is part-way through writing its library database.
+    /// A corrupt `KoboReader.sqlite` is what makes the device erase itself and
+    /// come up asking for a language, which is precisely what happened.
+    ///
+    /// So the choice is between leaving the device without freeze protection
+    /// until its next reboot, and hard-resetting it on a ten second loop. This
+    /// file already had the right principle written down one paragraph up --
+    /// "a degradation, rather than rebooting it, which is a failure" -- and
+    /// simply failed to apply it here.
+    ///
     /// # Errors
     ///
-    /// Returns an error when the resume call itself is refused. Never
-    /// observing a ping is not an error: the watchdog is resumed anyway once
-    /// `wait` elapses, because by then either the reader is pinging and the
-    /// monitor failed us, or the reader is genuinely not running and a reboot
-    /// to stock is the correct outcome.
+    /// Returns an error when the resume call itself is refused.
     pub fn resume_once_fed(&self, wait: Duration) -> Result<ResumedAfter, SupervisorError> {
         let observed = wait_for_ping(&self.session_bus, wait);
         // Stopped only now. Waiting for the reader's first ping is exactly the
         // window in which the suspension still has to hold.
         self.stop_keeping_alive();
-        self.resume()?;
+        if observed.armed() {
+            self.resume()?;
+        }
+        // Otherwise it stays suspended. `Suspend` is `QTimer::stop()`, so a
+        // suspended watchdog has no running timer and cannot fire; the device
+        // is merely unprotected against a freeze, and the next reboot -- or
+        // the reader resuming it once it is genuinely up -- restores that.
         Ok(observed)
     }
 }
 
-/// Why the watchdog was handed back when it was.
+/// What was decided about the freeze watchdog on the way out.
+///
+/// Only the first of these arms it. The other two leave it suspended, because
+/// they are the cases where nothing is known to be feeding it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ResumedAfter {
-    /// The reader was seen feeding the watchdog, so it is safe to arm.
+    /// The reader was seen feeding the watchdog, so it was safe to arm.
     ReaderPinged,
-    /// No ping was seen in the time allowed. Reported rather than hidden,
-    /// because it means the device may reboot back to stock shortly.
+    /// No ping was seen in the time allowed, so it was left suspended.
     NoPingSeen,
-    /// The bus could not be watched, so the wait was blind.
+    /// The bus could not be watched, so it was left suspended.
     NotObservable,
+}
+
+impl ResumedAfter {
+    /// Whether the watchdog was actually armed.
+    #[must_use]
+    pub const fn armed(self) -> bool {
+        matches!(self, Self::ReaderPinged)
+    }
 }
 
 impl fmt::Display for ResumedAfter {
@@ -233,9 +263,12 @@ impl fmt::Display for ResumedAfter {
             Self::ReaderPinged => write!(formatter, "the reader was feeding it again"),
             Self::NoPingSeen => write!(
                 formatter,
-                "WITHOUT seeing the reader feed it; the device may reboot back to stock shortly"
+                "no ping was seen, so it was LEFT SUSPENDED rather than armed against a reader that is not feeding it; a reboot restores freeze protection"
             ),
-            Self::NotObservable => write!(formatter, "without being able to watch the bus"),
+            Self::NotObservable => write!(
+                formatter,
+                "the bus could not be watched, so it was left suspended; a reboot restores freeze protection"
+            ),
         }
     }
 }
@@ -337,6 +370,39 @@ fn call(session_bus: &str, method: &str) -> Result<(), String> {
 mod tests {
     use super::{resume_with, SupervisorError, Suspended, OBJECT, SERVICE};
     use std::ffi::OsStr;
+
+    /// The rule that a device was factory reset for want of.
+    ///
+    /// Arming the freeze watchdog is only ever safe when something has been
+    /// seen feeding it. Every other outcome must leave it suspended: an armed
+    /// watchdog nobody feeds hard-resets the `SoC` about every ten seconds with
+    /// nothing synced, and eventually one of those resets lands in the middle
+    /// of the reader writing its library database.
+    #[test]
+    fn the_watchdog_is_armed_only_when_the_reader_was_seen_feeding_it() {
+        use super::ResumedAfter;
+        assert!(ResumedAfter::ReaderPinged.armed());
+        assert!(
+            !ResumedAfter::NoPingSeen.armed(),
+            "arming against a reader that is not pinging resets the device on a loop"
+        );
+        assert!(
+            !ResumedAfter::NotObservable.armed(),
+            "not being able to watch the bus is not evidence that anything is feeding it"
+        );
+    }
+
+    /// Whatever the outcome is called, the log has to say what was actually
+    /// done, because the previous wording said the device "may reboot back to
+    /// stock shortly" -- which read as a caveat and was in fact a promise.
+    #[test]
+    fn an_unarmed_outcome_says_it_was_left_suspended() {
+        use super::ResumedAfter;
+        assert!(ResumedAfter::NoPingSeen.to_string().contains("SUSPENDED"));
+        assert!(ResumedAfter::NotObservable
+            .to_string()
+            .contains("left suspended"));
+    }
 
     #[test]
     fn a_missing_session_bus_is_refused_rather_than_guessed() {

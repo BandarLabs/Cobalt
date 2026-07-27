@@ -281,26 +281,27 @@ one begins from its own "not connected" state; there is no D-Bus service, no
 script and no supported way to ask it to reconnect. So every session costs the
 connection, and the reader picks it up again by itself.
 
-The runtime can put the link back by restarting the supplicant and DHCP client
-it recorded, but it does **not** do so by default, and that is deliberate. Those
-daemons attach to `wlan0`, the restarted reader drives the same radio and cannot
-be told what we started behind it, and two owners of one radio leaves the
-reader's own network panel unable to scan at all — not merely disconnected, but
-unable to see a network it has known for months. A reboot clears it, as a reboot
-clears everything here, but that is a poor thing to owe someone who only opened
-an application.
+The runtime does **not** put the link back, and there is no option to make it.
+It used to be able to, by restarting the supplicant and DHCP client it had
+recorded. Those daemons attach to `wlan0`; the restarted reader drives the same
+radio from inside libnickel and cannot be told what we started behind it; and
+two owners of one radio leaves the reader's own network panel unable to scan at
+all — not merely disconnected, but unable to see a network it has known for
+months.
 
-Restoring it is therefore a convenience for one case only: working on a device
-over Wi-Fi, where losing the link loses the session driving it. Ask for it
-explicitly:
+That was known and the restore was kept anyway, behind an environment variable,
+as a convenience for working on a device over Wi-Fi where losing the link costs
+a reboot. It was removed after it erased a device. The reader came up owning a
+radio it had not configured, never reached its first watchdog ping, and the
+freeze watchdog was armed against it regardless — which is an SoC reset every
+ten seconds with nothing synced, until one landed inside a write to the library
+database and the device came up asking for a language.
 
-```sh
-KOBO_KEEP_NETWORK=1 KOBO_PRESENT_UNLOCK=OWNER_ATTENDED_PANEL_SESSION kobod --present ...
-```
-
-`start.sh` in the installed package does not set it, so an owner launching from
-NickelMenu never gets it. If a session does leave the radio confused, a reboot
-always returns the stock reader with its network intact.
+Both links in that chain are now cut. The watchdog is armed only on evidence
+that something is feeding it (see `resume_once_fed`), and the network is simply
+never restored. A developer working over Wi-Fi loses the link when the session
+ends and reconnects the reader's own way, or reboots. That is a worse afternoon
+and a better trade.
 
 ### If you have shipped for Android or iOS
 

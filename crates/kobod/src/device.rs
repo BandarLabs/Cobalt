@@ -35,7 +35,6 @@
 use crate::blackbox::{self, trace};
 use kobo_hal::display::{DisplaySession, OWNER_UNLOCK_PHRASE};
 use kobo_hal::input::TouchSession;
-use kobo_hal::network::{Connection, Restored};
 use kobo_hal::reader::{Reader, Watchdog, WATCHDOG_CHECK};
 use kobo_hal::supervisor::Suspended;
 use kobo_hal::touch::TouchEvent;
@@ -81,16 +80,6 @@ fn metrics_for(screen: &Screen) -> kobo_ui::DisplayMetrics {
         metrics.text_scale = scale;
     }
     metrics
-}
-
-/// Whether this session was asked to put the Wi-Fi connection back itself.
-///
-/// Off unless stated, because the restarted reader owns the radio and does not
-/// know what we would be starting behind it. Set `KOBO_KEEP_NETWORK=1` when the
-/// session is being driven over Wi-Fi and losing the link would lose the
-/// session — which is a developer working remotely, and nobody else.
-fn keep_network_requested() -> bool {
-    std::env::var_os("KOBO_KEEP_NETWORK").is_some_and(|value| value == "1" || value == "true")
 }
 
 /// Puts the front light back to where the session found it, on the way out.
@@ -171,10 +160,6 @@ const BATTERY_INTERVAL: Duration = Duration::from_secs(30);
 /// too little reboots the device.
 const WATCHDOG_HANDBACK: Duration = Duration::from_secs(90);
 
-/// How long to wait for the connection to come back. Association plus a DHCP
-/// lease takes several seconds on this radio, and the reader is already running
-/// again by this point, so waiting costs nothing but the report.
-const NETWORK_GRACE: Duration = Duration::from_secs(30);
 /// How long the application is given to exit before it is killed.
 const APP_STOP_GRACE: Duration = Duration::from_secs(3);
 
@@ -292,11 +277,6 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     let mut touch = TouchSession::acquire(Path::new(TOUCH_DEVICE), profile)
         .map_err(|error| format!("take the touch panel: {error}"))?;
 
-    // Recorded while the daemons are still alive. Restarting the reader drops
-    // the connection every time, and on a device managed over Wi-Fi that would
-    // otherwise cost the very link this session was started through.
-    let connection = Connection::capture();
-
     // Without this the device reboots itself partway through the session, so a
     // refusal here is fatal and the reader is left running.
     let suspended = Suspended::suspend(reader.environment("DBUS_SESSION_BUS_ADDRESS"))
@@ -345,27 +325,21 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     trace("panel and touch released, restarting the reader");
     println!("panel released, restarting the reader");
     let restarted = reader.start(START_GRACE);
-    // Only when someone asked for it. Putting the connection back means
-    // starting a supplicant and a DHCP client on `wlan0`, and the reader that
-    // has just been restarted drives that same radio itself, from inside
-    // libnickel, with no way to be told what we did. Two owners of one radio is
-    // the mistake the display is careful to avoid twelve lines above, and it
-    // has the same shape here: the reader's own network panel then finds an
-    // interface it did not configure, and stops being able to scan at all — not
-    // merely disconnected, but unable to list a network it has known for
-    // months. A reboot clears it, as it clears everything here, but a reboot is
-    // a poor thing to owe someone who only opened an application.
+    // The connection is never put back, and there is no longer a way to ask
+    // for it. Restoring it meant starting a supplicant and a DHCP client on
+    // `wlan0` while the reader we had just restarted drives that same radio
+    // itself, from inside libnickel, with no way to be told what we did. Two
+    // owners of one radio is the mistake the display is careful to avoid
+    // twelve lines above, and it had the same shape here.
     //
-    // So this is now what it always really was: a convenience for working on a
-    // device over Wi-Fi, where losing the link means losing the session that is
-    // driving it. That case is exactly the one that already had to say out loud
-    // that a human is present, so it is gated on the same statement rather than
-    // on a new one.
-    let network = if keep_network_requested() {
-        connection.restore(NETWORK_GRACE)
-    } else {
-        Ok(kobo_hal::network::Restored::Unaffected)
-    };
+    // It existed as a convenience for working on a device over Wi-Fi, where
+    // losing the link costs a reboot. It is gone because that convenience was
+    // the first link in the chain that erased a device: the reader came up
+    // owning a radio it had not configured, never reached its first watchdog
+    // ping, and the watchdog was armed against it anyway. The second link is
+    // fixed in `resume_once_fed`, which now arms nothing without evidence, but
+    // a developer's reboot was never worth being one fault away from a
+    // stranger's library.
     trace("reader restart returned, waiting for it to feed the freeze watchdog");
     println!("waiting for the reader to feed the freeze watchdog");
     // Resumed only once the reader is feeding it again. Resuming the moment
@@ -387,16 +361,8 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
             "THE READER DID NOT COME BACK ({error}). Power cycle the device; it always boots the stock reader"
         ),
     };
-    let reader_state = match network {
-        Ok(Restored::Unaffected) => reader_state,
-        Ok(Restored::Restarted) => format!("{reader_state}, and the network was reconnected"),
-        Ok(Restored::StillDown) => format!(
-            "{reader_state}, but the network did not come back; reconnect from the reader's own network screen"
-        ),
-        Err(error) => format!(
-            "{reader_state}, but the network could not be restarted ({error}); reconnect from the reader's own network screen"
-        ),
-    };
+    let reader_state =
+        format!("{reader_state}; the Wi-Fi connection is the reader's own again, so reconnect from its network screen if it does not return by itself");
     match (outcome, restored) {
         (Ok(summary), Ok(())) => Ok(format!("{summary}; typeface {typeface}; {reader_state}")),
         (Ok(summary), Err(error)) => Ok(format!(
