@@ -40,7 +40,22 @@ use model::{Comment, Story};
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// The read-only front end to Hacker News' own index.
+/// Hacker News' own API, which is the authority on what is on the site.
+///
+/// It answers one item per request, which is why it is not the only source
+/// here: a thirty-story list would be thirty-one round trips and the thread
+/// this application was written for has five hundred and sixty-seven comments.
+/// What it is used for is *which* stories, in *what* order — the four list
+/// endpoints are literally the pages the site serves.
+const HN_API: &str = "https://hacker-news.firebaseio.com/v0";
+
+/// Algolia's index of the same site, which answers in bulk.
+///
+/// One request returns thirty stories by number, or a whole nested thread.
+/// What it is not good at is ranking: its ranked search is ranked over all of
+/// Hacker News forever, which is how this application came to open Ask HN on a
+/// question from 2013. So the ordering comes from `HN_API` and the substance
+/// comes from here.
 const API: &str = "https://hn.algolia.com/api/v1";
 
 /// How many stories a tab asks for.
@@ -49,14 +64,18 @@ const API: &str = "https://hn.algolia.com/api/v1";
 /// deep. More would be a longer wait on the radio for pages nobody reaches.
 const HITS: u32 = 30;
 
-/// How far back the ranked tabs look, in seconds.
+/// The fields a story row and a story screen actually use.
 ///
-/// A week. Ask HN and Show HN are ranked rather than chronological, so without
-/// a window they return the best of all time and the tab becomes a museum. A
-/// day is too short — a good Ask HN thread collects answers for longer than
-/// that, and a quiet Tuesday would leave the tab half empty — and a month is
-/// long enough that the top of the list stops changing.
-const RECENT_SECONDS: i64 = 7 * 24 * 60 * 60;
+/// Asked for by name so the answer does not carry Algolia's search-highlight
+/// apparatus, which is a tenth of the payload and of no use to anything here.
+const FIELDS: &str = "objectID,title,url,author,points,num_comments,created_at_i,story_text";
+
+/// How much of a ranking to accept.
+///
+/// Thirty item numbers, sliced server-side. The unsliced list is five hundred
+/// of them; this ceiling is generous against the slice and would refuse the
+/// whole list, which is the point.
+const RANKING_BYTES: u32 = 8 * 1024;
 
 /// How many lines of a list row a headline may take.
 ///
@@ -138,41 +157,48 @@ impl Tab {
         }
     }
 
-    /// Where this tab's stories come from, asked as of `now`.
+    /// Hacker News' own list for this tab: item numbers, in the site's order.
     ///
-    /// The time window is the whole reason this takes an argument. Algolia's
-    /// ranked search is ranked over *all of Hacker News, forever*, so asking
-    /// it for `ask_hn` returns the best Ask HN threads of the last fifteen
-    /// years: this application shipped with a ten-year-old post at the top of
-    /// its Ask tab and a nine-year-old one below it, which is a perfectly good
-    /// answer to a question nobody asked. Hacker News' own Ask and Show pages
-    /// rank recent submissions, so these do too.
+    /// This is the whole reason the application talks to two services. These
+    /// four endpoints are the pages themselves — `topstories` *is* the front
+    /// page, `askstories` *is* Ask HN — so there is no ranking to approximate
+    /// and no recency window to guess at. The previous version asked Algolia's
+    /// ranked search instead, and Algolia ranks over all of Hacker News
+    /// forever, so Ask HN opened on a question from 2013.
     ///
-    /// `Top` needs no window because `front_page` is by definition what is on
-    /// the front page now, and `New` needs none because it is ordered by date
-    /// rather than ranked.
-    fn url(self, now: i64) -> String {
-        let tags = match self {
-            Self::Top => "front_page",
-            Self::New => "story",
-            Self::Ask => "ask_hn",
-            Self::Show => "show_hn",
+    /// Sliced server-side with Firebase's own query parameters: the unsliced
+    /// answer is five hundred numbers and 4.5 KB, the slice is thirty and
+    /// under three hundred bytes, and the radio is the expensive part of this
+    /// device.
+    fn ranking_url(self) -> String {
+        let list = match self {
+            Self::Top => "topstories",
+            Self::New => "newstories",
+            Self::Ask => "askstories",
+            Self::Show => "showstories",
         };
-        // `New` is the only one that wants chronological order; the rest are
-        // ranked, which is what "front page" means.
-        let endpoint = if matches!(self, Self::New) {
-            "search_by_date"
-        } else {
-            "search"
-        };
-        let window = match self {
-            Self::Ask | Self::Show => {
-                let since = now.saturating_sub(RECENT_SECONDS);
-                format!("&numericFilters=created_at_i%3E{since}")
+        format!("{HN_API}/{list}.json?orderBy=%22%24key%22&limitToFirst={HITS}")
+    }
+
+    /// Everything about those stories, in one request.
+    ///
+    /// Algolia tags every item with `story_<number>`, so an OR group of tags
+    /// fetches an arbitrary set by number. `story` is `AND`ed in front of the
+    /// group because a comment carries its parent story's tag too, and without
+    /// it a list of thirty stories comes back as a list of their comments.
+    ///
+    /// The answer arrives in Algolia's order, not the site's, which is why
+    /// [`Hn::took_list`] sorts it back.
+    fn stories_url(ids: &[i64]) -> String {
+        use std::fmt::Write as _;
+        let mut tags = String::new();
+        for id in ids.iter().take(HITS as usize) {
+            if !tags.is_empty() {
+                tags.push(',');
             }
-            Self::Top | Self::New => String::new(),
-        };
-        format!("{API}/{endpoint}?tags={tags}&hitsPerPage={HITS}{window}")
+            let _ = write!(tags, "story_{id}");
+        }
+        format!("{API}/search?tags=story,({tags})&hitsPerPage={HITS}&attributesToRetrieve={FIELDS}")
     }
 }
 
@@ -190,6 +216,9 @@ enum View {
 /// network.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Awaiting {
+    /// Which stories this tab holds, and in what order.
+    Ranking(Tab),
+    /// What those stories say.
     List(Tab),
     /// The whole thread, nested, in one request.
     Thread,
@@ -202,6 +231,8 @@ struct Hn {
     tab: Tab,
     view: View,
     stories: Vec<Story>,
+    /// The item numbers Hacker News gave for the showing tab, in its order.
+    ranking: Vec<i64>,
     /// Which story rows belong on each page, measured against this panel.
     pages: Vec<Vec<usize>>,
     page: usize,
@@ -243,7 +274,10 @@ impl Hn {
         if let Some(problem) = &self.problem {
             screen = screen.banner(BannerLevel::Attention, problem.clone());
         }
-        if matches!(self.task, Some((_, Awaiting::List(_)))) {
+        if matches!(
+            self.task,
+            Some((_, Awaiting::Ranking(_) | Awaiting::List(_)))
+        ) {
             // A skeleton rather than a spinner, because there are no spinners
             // here: every frame is a full panel refresh. A list-shaped
             // placeholder puts the rows where the eye is already looking.
@@ -408,15 +442,29 @@ impl Hn {
         }
     }
 
+    /// Asks Hacker News which stories this tab holds. The substance follows.
     fn ask_list(&mut self, context: &mut Context) {
         self.cancel_outstanding(context);
         self.problem = None;
+        self.ranking.clear();
         match context.spawn(Task::Fetch {
-            url: self.tab.url(self.now),
+            url: self.tab.ranking_url(),
+            offset: 0,
+            max_bytes: RANKING_BYTES,
+        }) {
+            Some(task) => self.task = Some((task, Awaiting::Ranking(self.tab))),
+            None => self.problem = Some("Too much is already in flight.".to_owned()),
+        }
+    }
+
+    /// Asks Algolia for those stories, all of them in one request.
+    fn ask_stories(&mut self, context: &mut Context, tab: Tab) {
+        match context.spawn(Task::Fetch {
+            url: Tab::stories_url(&self.ranking),
             offset: 0,
             max_bytes: LIST_BYTES,
         }) {
-            Some(task) => self.task = Some((task, Awaiting::List(self.tab))),
+            Some(task) => self.task = Some((task, Awaiting::List(tab))),
             None => self.problem = Some("Too much is already in flight.".to_owned()),
         }
     }
@@ -489,6 +537,33 @@ impl Hn {
         self.show(context);
     }
 
+    /// Takes the tab's item numbers and goes after what they say.
+    fn took_ranking(&mut self, context: &mut Context, bytes: &[u8], tab: Tab) {
+        let numbers: Option<Vec<i64>> = std::str::from_utf8(bytes)
+            .ok()
+            .and_then(|body| kobo_json::parse(body).ok())
+            .and_then(|value| {
+                value
+                    .as_array()
+                    .map(|items| items.iter().filter_map(kobo_json::Value::as_i64).collect())
+            });
+        self.tab = tab;
+        let Some(numbers) = numbers else {
+            self.stories.clear();
+            self.pages.clear();
+            self.problem = Some("Hacker News' list of stories could not be read.".to_owned());
+            return;
+        };
+        self.ranking = numbers;
+        if self.ranking.is_empty() {
+            self.stories.clear();
+            self.pages.clear();
+            self.problem = Some("That tab came back empty.".to_owned());
+            return;
+        }
+        self.ask_stories(context, tab);
+    }
+
     fn took_list(&mut self, context: &Context, bytes: &[u8], tab: Tab) {
         let Some(value) = std::str::from_utf8(bytes)
             .ok()
@@ -500,6 +575,21 @@ impl Hn {
         self.tab = tab;
         self.now = unix_now();
         self.stories = model::stories_from(&value);
+        // Algolia answers a set of item numbers in its own order, which for a
+        // tags query is relevance and means nothing here. Hacker News' order is
+        // what the reader came for, so it is imposed rather than received.
+        // Anything the index has not caught up with sorts to the end instead of
+        // disappearing.
+        let ranking = std::mem::take(&mut self.ranking);
+        self.stories.sort_by_key(|story| {
+            story
+                .id
+                .parse::<i64>()
+                .ok()
+                .and_then(|id| ranking.iter().position(|listed| *listed == id))
+                .unwrap_or(usize::MAX)
+        });
+        self.ranking = ranking;
         self.page = 0;
         self.repaginate_list(context);
         if self.stories.is_empty() {
@@ -705,6 +795,15 @@ impl KoboApp for Hn {
         self.task = None;
         match outcome {
             TaskOutcome::Completed(bytes) => match awaiting {
+                Awaiting::Ranking(tab) => {
+                    self.took_ranking(context, &bytes, tab);
+                    // The second request is already in the air, so the skeleton
+                    // stays up rather than flashing a half-drawn list.
+                    if matches!(self.task, Some((_, Awaiting::List(_)))) {
+                        self.show(context);
+                        return;
+                    }
+                }
                 Awaiting::List(tab) => self.took_list(context, &bytes, tab),
                 Awaiting::Thread => self.took_thread(context, &bytes),
                 Awaiting::FlatPage => self.took_flat_page(context, &bytes),
@@ -779,17 +878,34 @@ mod tests {
     use kobo_sdk::{action_id, AppRunner, Command, Task, TaskError, TaskId, TaskOutcome};
     use kobo_ui::{Chrome, LayoutKind, Rect, CLARA_BW_METRICS};
 
+    /// Hacker News' own answer for the front page: item numbers, in order.
+    ///
+    /// Deliberately in a different order from the hits in `FRONT_PAGE`, which
+    /// is Algolia's relevance order. If the application ever stops imposing
+    /// this order the tests below say so, and the reader would otherwise be
+    /// shown a front page that is not the front page.
+    const RANKING: &str = include_str!("../tests/ranking.json");
     const FRONT_PAGE: &str = include_str!("../tests/front_page.json");
     const THREAD: &str = include_str!("../tests/thread.json");
     const COMMENT_PAGE: &str = include_str!("../tests/comment_page.json");
 
     /// An application with a real front page already loaded.
+    ///
+    /// Two answers, because a list is two requests: which stories, then what
+    /// they say.
     fn loaded() -> AppRunner<Hn> {
         let mut runner = AppRunner::new(Hn::default());
         runner.start();
-        let task = spawned(&runner);
-        runner.task_outcome(task, TaskOutcome::Completed(FRONT_PAGE.as_bytes().to_vec()));
+        answer_list(&mut runner);
         runner
+    }
+
+    /// Answers whichever half of a list request is outstanding, then the other.
+    fn answer_list(runner: &mut AppRunner<Hn>) {
+        let task = spawned(runner);
+        runner.task_outcome(task, TaskOutcome::Completed(RANKING.as_bytes().to_vec()));
+        let task = spawned(runner);
+        runner.task_outcome(task, TaskOutcome::Completed(FRONT_PAGE.as_bytes().to_vec()));
     }
 
     fn spawned(runner: &AppRunner<Hn>) -> TaskId {
@@ -865,47 +981,97 @@ mod tests {
     }
 
     #[test]
-    fn every_tab_asks_the_endpoint_that_actually_serves_it() {
-        // Four tabs, three endpoints and four tag sets. Getting one wrong
-        // gives a tab that quietly shows the front page under another name.
+    fn every_tab_asks_hacker_news_for_the_page_it_is_named_after() {
+        // These four endpoints are the pages themselves: `topstories` is what
+        // /news serves, `askstories` is what /ask serves, and so on, verified
+        // against the live site position for position. Getting one wrong gives
+        // a tab that quietly shows some other page under this one's name, and
+        // asking anything else gives a Hacker News of our own invention.
         let mut runner = loaded();
         for (tab, expected) in [
-            (Tab::New, "search_by_date?tags=story&hitsPerPage=30"),
-            (Tab::Ask, "search?tags=ask_hn&hitsPerPage=30"),
-            (Tab::Show, "search?tags=show_hn&hitsPerPage=30"),
-            (Tab::Top, "search?tags=front_page&hitsPerPage=30"),
+            (Tab::New, "newstories"),
+            (Tab::Ask, "askstories"),
+            (Tab::Show, "showstories"),
+            (Tab::Top, "topstories"),
         ] {
             let commands = runner.action(action_id(tab.action()));
             let url = asked(&commands).expect("the tab asked for something");
-            let (base, _) = url.split_once("&numericFilters").unwrap_or((&url, ""));
-            assert_eq!(base, format!("https://hn.algolia.com/api/v1/{expected}"));
-            let task = spawned(&runner);
-            runner.task_outcome(task, TaskOutcome::Completed(FRONT_PAGE.as_bytes().to_vec()));
+            assert_eq!(
+                url,
+                format!(
+                    "https://hacker-news.firebaseio.com/v0/{expected}.json\
+                     ?orderBy=%22%24key%22&limitToFirst=30"
+                ),
+                "{tab:?} asked the wrong page"
+            );
+            answer_list(&mut runner);
         }
     }
 
     #[test]
-    fn the_ranked_tabs_only_ask_for_stories_from_this_week() {
-        // Algolia ranks `search` over all of Hacker News forever, so without a
-        // window Ask HN answers with the best thread of 2013. This is what
-        // shipped, and what the owner noticed.
-        let now = 1_700_000_000;
-        let week = 7 * 24 * 60 * 60;
-        for tab in [Tab::Ask, Tab::Show] {
-            let url = tab.url(now);
+    fn nothing_ranks_the_stories_except_hacker_news() {
+        // The whole reason there are two requests. Algolia answers a set of
+        // item numbers in its own relevance order, and taking that order gave
+        // an Ask HN tab whose top entry was from 2013. The site's order is
+        // imposed on the answer, whatever order the answer arrives in.
+        let runner = loaded();
+        let listed = kobo_json::parse(RANKING)
+            .expect("the fixture parses")
+            .as_array()
+            .expect("an array of item numbers")
+            .iter()
+            .filter_map(kobo_json::Value::as_i64)
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>();
+        let shown = runner
+            .app()
+            .stories
+            .iter()
+            .map(|story| story.id.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(shown, listed, "the stories were not in Hacker News' order");
+    }
+
+    #[test]
+    fn the_second_request_names_every_story_the_first_one_listed() {
+        // One request for thirty stories rather than thirty requests, which is
+        // why Algolia is here at all. `story` is ANDed in front of the group
+        // because a comment carries its parent story's tag too, and without it
+        // a list of stories comes back as a list of their comments.
+        let mut runner = AppRunner::new(Hn::default());
+        runner.start();
+        let task = spawned(&runner);
+        let commands =
+            runner.task_outcome(task, TaskOutcome::Completed(RANKING.as_bytes().to_vec()));
+        let url = asked(&commands).expect("the stories were asked for");
+        assert!(
+            url.starts_with("https://hn.algolia.com/api/v1/search?tags=story,("),
+            "{url}"
+        );
+        for id in [
+            49_063_754_i64,
+            49_057_175,
+            49_060_495,
+            49_063_022,
+            49_057_241,
+        ] {
             assert!(
-                url.contains(&format!("numericFilters=created_at_i%3E{}", now - week)),
-                "{tab:?} asked without a window: {url}"
+                url.contains(&format!("story_{id}")),
+                "{id} was not asked for: {url}"
             );
         }
-        for tab in [Tab::Top, Tab::New] {
-            // `front_page` is by definition current and `search_by_date` is
-            // ordered by date, so a window there would only hide stories.
-            assert!(
-                !tab.url(now).contains("numericFilters"),
-                "{tab:?} does not need a window"
-            );
-        }
+    }
+
+    #[test]
+    fn an_empty_ranking_is_said_out_loud_rather_than_shown_as_an_empty_list() {
+        // A tab with nothing in it and a tab whose request failed look the
+        // same on a panel unless one of them says so.
+        let mut runner = AppRunner::new(Hn::default());
+        runner.start();
+        let task = spawned(&runner);
+        runner.task_outcome(task, TaskOutcome::Completed(b"[]".to_vec()));
+        assert!(runner.app().task.is_none(), "it went on asking anyway");
+        assert!(runner.app().problem.is_some(), "nothing was said about it");
     }
 
     #[test]
@@ -1155,7 +1321,7 @@ mod tests {
         let url = asked(&commands).expect("nothing was asked for after the ceiling");
         assert_eq!(
             url,
-            "https://hn.algolia.com/api/v1/search_by_date?tags=comment,story_49057175\
+            "https://hn.algolia.com/api/v1/search_by_date?tags=comment,story_49063754\
              &hitsPerPage=30&page=0"
         );
         assert!(runner.app().flat);
@@ -1246,7 +1412,7 @@ mod tests {
             1,
             "more than one answer is on its way to the same panel"
         );
-        assert!(matches!(runner.app().task, Some((_, Awaiting::List(_)))));
+        assert!(matches!(runner.app().task, Some((_, Awaiting::Ranking(_)))));
         assert_ne!(runner.app().task.map(|(task, _)| task), Some(first));
     }
 

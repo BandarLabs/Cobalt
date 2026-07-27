@@ -317,11 +317,25 @@ pub fn summary(story: &Story, now: i64) -> String {
     // submitter is the person being asked, so they are the whole point.
     let who = story.site.clone().unwrap_or_else(|| story.author.clone());
     format!(
-        "{who} \u{b7} {} points \u{b7} {} comments \u{b7} {}",
-        story.points,
-        story.comments,
+        "{who} \u{b7} {} \u{b7} {} \u{b7} {}",
+        plural(story.points, "point"),
+        plural(story.comments, "comment"),
         age(now, story.created)
     )
+}
+
+/// `n thing`, or `n things`.
+///
+/// A brand new story is the common case on the Ask and Show pages now that
+/// they carry the site's own ordering rather than the best of all time, and
+/// "1 comments" beside it is the kind of small wrongness that makes a screen
+/// look machine-made.
+fn plural(count: u32, noun: &str) -> String {
+    if count == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{count} {noun}s")
+    }
 }
 
 #[cfg(test)]
@@ -391,6 +405,22 @@ mod tests {
         let stories = stories_from(&value);
         assert_eq!(stories.len(), 1);
         assert_eq!(stories[0].id, "2");
+    }
+
+    #[test]
+    fn one_of_something_is_not_written_as_one_somethings() {
+        // The Ask and Show pages carry the site's own ordering now, so a story
+        // minutes old with a single comment is the ordinary case rather than
+        // the rare one.
+        let value = parse(
+            r#"{"hits": [{"objectID": "1", "title": "T", "author": "a",
+                          "points": 1, "num_comments": 1, "created_at_i": 0}]}"#,
+        );
+        let stories = stories_from(&value);
+        assert_eq!(
+            summary(&stories[0], 0),
+            "a \u{b7} 1 point \u{b7} 1 comment \u{b7} just now"
+        );
     }
 
     #[test]
