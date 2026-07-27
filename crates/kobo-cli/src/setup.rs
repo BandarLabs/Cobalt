@@ -58,13 +58,29 @@ pub const SETTINGS: &str = ".kobo/Kobo/Kobo eReader.conf";
 
 /// The settings this command writes, as section, key and value.
 ///
-/// Deliberately one entry. `ForceWifiOn` is the reader's own setting, applied
-/// by the reader's own networking, so nothing here ends up as a second owner
-/// of the radio — which is the mistake that cost this project a device once
-/// already. Sleep timeouts are left alone: the reader still powers the radio
-/// down when it sleeps, and the honest fix for that is the on-device energy
-/// saving screen, not a key guessed at from the outside.
-pub const SETTINGS_APPLIED: &[(&str, &str, &str)] = &[("DeveloperSettings", "ForceWifiOn", "true")];
+/// Both are the reader's own settings, applied by the reader's own code. That
+/// is the whole rule for this list: nothing here may make Cobalt a second
+/// owner of the radio or of power, which is the mistake that cost this project
+/// a device once already.
+///
+/// `ForceWifiOn` keeps the radio up once the reader is awake. On its own that
+/// is not enough, because the reader does not merely let the radio idle — it
+/// suspends the whole device, and a suspended device answers nothing. The
+/// suspend is requested by nickel itself, so no wake lock can prevent it; the
+/// only lever is nickel's own timer. `AutoSleepMinutes` is that timer, and
+/// ninety minutes is long enough to install, deploy and test without the
+/// device going out from under you mid-session.
+///
+/// Neither key is guessed. `AutoSleepMinutes` was found by enumerating the key
+/// strings beside the `PowerSettings` type information in `libnickel`, then
+/// confirmed on hardware: the reader reported it as supported, and a device
+/// that had been suspending for ninety-three per cent of its life stayed awake
+/// for thirty-eight unattended minutes afterwards. `kobo setup --undo` removes
+/// both, and the reader's own Energy saving screen overrides them at any time.
+pub const SETTINGS_APPLIED: &[(&str, &str, &str)] = &[
+    ("DeveloperSettings", "ForceWifiOn", "true"),
+    ("PowerOptions", "AutoSleepMinutes", "90"),
+];
 
 /// A mounted reader, and what it says it is.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -561,6 +577,11 @@ Next, on the reader:
 
 Cobalt itself is started from .adds/cobalt/start.sh. A restart always returns
 to the stock reader.
+
+The reader is also set to stay awake for ninety minutes rather than a few, so
+that it is still reachable when you come back to it. That costs battery. The
+reader's own Energy saving screen changes it back at any time, as does
+'kobo setup --undo'.
 ";
 
 #[cfg(test)]
@@ -680,6 +701,55 @@ mod tests {
         for (section, key, _) in SETTINGS_APPLIED {
             assert!(!section.is_empty() && !key.is_empty());
         }
+    }
+
+    #[test]
+    fn every_setting_this_command_writes_can_be_taken_back_off_again() {
+        // A stock file, in the shape the reader writes: sections it already
+        // has, sections it does not, and keys around the ones being changed.
+        let before = "[ApplicationPreferences]\nCurrentLocale=en_US\n\n\
+                      [PowerOptions]\nAutoColorEnabled=true\nFrontLightLevel=7\n";
+        let mut after = before.to_owned();
+        for (section, key, value) in SETTINGS_APPLIED {
+            after = set_setting(&after, section, key, value);
+        }
+        for (section, key, value) in SETTINGS_APPLIED {
+            assert!(after.contains(&format!("{key}={value}")), "{after}");
+            // In its own section, not appended to whichever came last.
+            let header = after.find(&format!("[{section}]")).expect("section");
+            let assignment = after.find(&format!("{key}={value}")).expect("key");
+            assert!(header < assignment, "{key} landed outside {section}");
+        }
+        // Keys the reader owns are untouched throughout.
+        assert!(after.contains("FrontLightLevel=7"));
+        assert!(after.contains("CurrentLocale=en_US"));
+
+        let mut undone = after;
+        for (section, key, _) in SETTINGS_APPLIED {
+            undone = clear_setting(&undone, section, key);
+        }
+        for (_, key, _) in SETTINGS_APPLIED {
+            assert!(!undone.contains(key), "{key} survived the undo: {undone}");
+        }
+        assert!(undone.contains("FrontLightLevel=7"));
+    }
+
+    #[test]
+    fn the_reader_is_kept_awake_long_enough_to_work_on_it() {
+        // The whole point of the setup is that the device is reachable after
+        // it is put down. A value small enough to suspend mid-deploy would
+        // leave that broken in a way only hardware would show.
+        let minutes: u32 = SETTINGS_APPLIED
+            .iter()
+            .find(|(section, key, _)| *section == "PowerOptions" && *key == "AutoSleepMinutes")
+            .expect("the sleep timer is set")
+            .2
+            .parse()
+            .expect("a number of minutes");
+        assert!(
+            minutes >= 60,
+            "the reader would sleep after {minutes} minutes"
+        );
     }
 
     #[test]

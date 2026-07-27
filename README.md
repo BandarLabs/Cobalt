@@ -256,10 +256,19 @@ kobo setup            # with the reader connected by USB and showing 'Connected'
 
 It finds the mounted reader, copies Cobalt into `.adds/cobalt`, reads every
 file back to prove it arrived intact, enables the firmware's **own** SSH server,
-sets `DeveloperSettings/ForceWifiOn` so the radio stays up between deploys, and
-ejects. Restart the reader once and `kobo devices`, `kobo deploy` and `kobo
-logs` all work from there on. `kobo setup --undo` puts every part of that back,
-and `kobo setup --dry-run` prints what it would do without touching anything.
+sets `DeveloperSettings/ForceWifiOn` so the radio stays up between deploys and
+`PowerOptions/AutoSleepMinutes=90` so the reader is still reachable when you
+come back to it, and ejects. Restart the reader once and `kobo devices`, `kobo
+deploy` and `kobo logs` all work from there on. `kobo setup --undo` puts every
+part of that back, and `kobo setup --dry-run` prints what it would do without
+touching anything.
+
+Both settings are the reader's own, applied by the reader's own code, so
+nothing here becomes a second owner of the radio or of power. The sleep timer
+is the same key [`kobo session --sleep-after`](#what-actually-stops-the-suspend)
+uses, and for the same reason: the suspend is requested by nickel itself, so
+nickel's timer is the only thing that can prevent it. It costs battery, and the
+reader's Energy saving screen overrides it at any time.
 
 The SSH server is the part worth explaining, because it is not ours. Firmware
 4.42 and later ship one, switched off, gated on the name of a file on the book
