@@ -574,15 +574,31 @@ different machines see the same line breaks. An application that could only
 reach the network on the device could only be built on the device, which is
 the one thing this is arranged to avoid.
 
-Failure handling is still code that has to run, so set `KOBO_SIM_OFFLINE=1` to
-make every network task fail. Deliberately, rather than always.
+The current target is the measured `clara-bw-391` profile: 1072 × 1448 at 300
+PPI, rotation 3, with display taps converted through the Clara's raw controller
+ranges before SDK hit testing. The runtime and simulator share the exact Rust
+refresh planner, including dirty rectangles, DU/GL16/GC16 selection and an
+eight-partial-update cleaning cadence. The browser's visible residue is an
+explicit approximation—an LCD cannot reproduce electrophoretic physics—and
+the **Show ideal pixels** control makes that boundary inspectable. Keeping this
+authoritative logic in the native simulator avoids adding a second WASM build
+and download to the development loop; a Rust-to-WASM renderer can be added
+later for a fully static/offline embed without changing the simulation model.
+
+Failure handling is still code that has to run. Select a deterministic scenario
+in the inspector to exercise offline, low-battery, permission-denied,
+missing-secret, network-timeout, storage-full and image-cache-pressure paths.
+The foreground and background buttons deliver real SDK lifecycle messages.
+`KOBO_SIM_OFFLINE=1` remains available for headless or scripted development.
 
 The simulator's diagnostics panel is part of the normal development loop. It
 reports content beyond the fold, clipping, undersized targets, text overflow,
 unsupported characters, duplicate node IDs, truncated collections, invalid
 picture sizes and missing cache entries. Toggle **Show diagnostic outlines**
 to draw each issue over the exact rectangle returned by the shared layout
-engine.
+engine. The adjacent panel inspector names every refresh waveform, whether it
+is partial or cleaning, its pixel rectangle, refresh count and accumulated
+partials. Raw and display touch coordinates are shown after every tap.
 
 `package` produces the single `KoboRoot.tgz` an owner copies into `.kobo/` over
 USB; the reader installs it at the next boot. Everything lands in

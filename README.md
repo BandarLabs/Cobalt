@@ -77,15 +77,23 @@ cargo run -p kobo-cli -- dev --builtin      # browser simulator
 cargo run -p kobo-cli -- run --sim          # the real runtime, host socket
 ```
 
-The simulator binds only to `127.0.0.1` and uses the same renderer, the same
-layout engine, the same policy and the same typeface as the device, so a screen
-that fits in the browser fits on the panel. Network requests and terminals are
-real; `KOBO_SIM_OFFLINE=1` makes every network task fail, so error handling is
-something a developer runs on purpose rather than the only thing they can run.
-Its side panel also reports layout, text, touch-target and picture diagnostics,
-with optional outlines over the exact failing rectangles. Run with
-`KOBO_TEXT_SCALE=large` or `KOBO_TEXT_SCALE=extra-large` to verify the 120% and
-140% accessibility settings with the same metrics used for pagination.
+The simulator binds only to `127.0.0.1` and currently targets the measured Kobo
+Clara BW 391 profile: 1072 × 1448 at 300 PPI, including its rotated raw touch
+coordinates. It uses the same renderer, layout engine, policy, typeface and
+panel refresh planner as the device, so a screen that fits in the browser fits
+on the panel and the reported changed rectangle, waveform and clean-refresh
+cadence cannot drift from the runtime. The inspector can compare ideal pixels
+with a clearly labelled approximation of E Ink residue and outline the next
+refresh region.
+
+Network requests and terminals are real. The inspector's deterministic
+scenarios exercise offline, low-battery, denied-permission, missing-secret,
+timeout, full-storage and image-cache-pressure paths; it can also deliver
+foreground and background lifecycle events. Its layout panel reports text,
+touch-target and picture diagnostics with optional outlines over the exact
+failing rectangles. Run with `KOBO_TEXT_SCALE=large` or
+`KOBO_TEXT_SCALE=extra-large` to verify the 120% and 140% accessibility settings
+with the same metrics used for pagination.
 
 Create and run a new application:
 
