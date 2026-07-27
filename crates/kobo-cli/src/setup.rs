@@ -33,10 +33,13 @@
 //! is one button held down, in exchange for never handing the boot script an
 //! archive. It is the right trade.
 
+use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::fs;
+use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 /// The folder a reader's own files live in, relative to the mounted volume.
 pub const SYSTEM_FOLDER: &str = ".kobo";
@@ -527,6 +530,8 @@ pub struct Report {
     pub settings: Vec<String>,
     /// Whether the volume was ejected.
     pub ejected: bool,
+    /// Whether the command will wait for the restarted reader itself.
+    pub waiting: bool,
 }
 
 impl Report {
@@ -557,13 +562,29 @@ impl Report {
                 "volume left mounted"
             }
         );
-        text.push_str(NEXT_STEPS);
+        text.push_str(&next_steps(self.waiting));
         text
     }
 }
 
 /// What the owner has to do, and what to do if they want none of this.
-pub const NEXT_STEPS: &str = "
+///
+/// The third step differs by whether this command is about to do it for them.
+/// Telling somebody to run `kobo devices` and then running it for them reads
+/// as though one of the two did not happen.
+#[must_use]
+pub fn next_steps(waiting: bool) -> String {
+    let finding = if waiting {
+        "  3. This command is waiting for it, and will print its address when it\n\
+         \x20    appears. Ctrl-C stops the wait; nothing on the reader depends on it."
+    } else {
+        "  3. Find it with 'kobo devices', then 'kobo deploy' works from here on."
+    };
+    format!("{NEXT_STEPS_HEAD}{finding}{NEXT_STEPS_TAIL}")
+}
+
+/// Everything above the step that differs.
+const NEXT_STEPS_HEAD: &str = "
 Nothing was written outside the book partition, and nothing was extracted as
 root. To undo all of it: 'kobo setup --undo', or delete .adds/cobalt and rename
 .kobo/ssh-enabled back to ssh-disabled.
@@ -573,7 +594,10 @@ Next, on the reader:
   1. Restart it — hold the power button until it powers off, then press it
      again. The SSH server only starts at boot.
   2. Join it to Wi-Fi if it is not already.
-  3. Find it with 'kobo devices', then 'kobo deploy' works from here on.
+";
+
+/// Everything below it.
+const NEXT_STEPS_TAIL: &str = "
 
 Cobalt itself is started from .adds/cobalt/start.sh. A restart always returns
 to the stock reader.
@@ -584,13 +608,158 @@ reader's own Energy saving screen changes it back at any time, as does
 'kobo setup --undo'.
 ";
 
+/// How long a restarted reader is given to come back on the network.
+///
+/// A Kobo takes about a minute to boot and another to join Wi-Fi, and somebody
+/// who walked away to fetch the cable takes longer than both. Five minutes is
+/// long enough not to give up on a working reader and short enough that a
+/// forgotten terminal is not still sweeping an hour later.
+pub const WAIT_LIMIT: Duration = Duration::from_secs(300);
+
+/// How long between sweeps while waiting.
+pub const WAIT_INTERVAL: Duration = Duration::from_secs(10);
+
+/// What came back from waiting for a restarted reader.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Arrival {
+    /// One address that was not answering before is answering now.
+    Found(Ipv4Addr),
+    /// Several are, so this will not guess which is the reader.
+    Several(Vec<Ipv4Addr>),
+    /// Nothing new answered before the limit ran out.
+    TimedOut,
+}
+
+/// Waits for an address to start answering on the SSH port that was not
+/// answering when the wait began.
+///
+/// The reader cannot be identified by asking it anything: on a first setup
+/// there is no key installed and the firmware's first login forces a password
+/// change, so a probe that authenticates would hang or lock the account. What
+/// can be told without a byte being sent is *change* — the reader was off the
+/// network a moment ago and is on it now. So a baseline is taken first and
+/// only newcomers count, which also means this cannot mistake the machine it
+/// is running on, a router, or a NAS for a Kobo.
+///
+/// `sweep` returns everything answering right now; `pause` waits out one
+/// interval and returns false when there is no time left. Both are passed in
+/// so the whole of the decision can be tested without a network.
+pub fn wait_for_reader(
+    mut sweep: impl FnMut() -> Vec<Ipv4Addr>,
+    mut pause: impl FnMut() -> bool,
+) -> Arrival {
+    let before: BTreeSet<Ipv4Addr> = sweep().into_iter().collect();
+    while pause() {
+        let mut arrived: Vec<Ipv4Addr> = sweep()
+            .into_iter()
+            .filter(|address| !before.contains(address))
+            .collect();
+        arrived.sort_unstable();
+        arrived.dedup();
+        match arrived.len() {
+            0 => {}
+            1 => return Arrival::Found(arrived[0]),
+            _ => return Arrival::Several(arrived),
+        }
+    }
+    Arrival::TimedOut
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        clear_setting, is_kobo_serial, parse_version, set_setting, Mounted, Report, Ssh,
-        INSTALL_FOLDER, SETTINGS_APPLIED, SSH_DISABLED, SSH_ENABLED,
+        clear_setting, is_kobo_serial, next_steps, parse_version, set_setting, wait_for_reader,
+        Arrival, Mounted, Report, Ssh, INSTALL_FOLDER, SETTINGS_APPLIED, SSH_DISABLED, SSH_ENABLED,
     };
+    use std::net::Ipv4Addr;
     use std::path::PathBuf;
+
+    fn address(last: u8) -> Ipv4Addr {
+        Ipv4Addr::new(192, 168, 1, last)
+    }
+
+    /// Sweeps that return each of `rounds` in turn, then the last one forever.
+    fn sweeps(rounds: Vec<Vec<u8>>) -> impl FnMut() -> Vec<Ipv4Addr> {
+        let mut index = 0;
+        move || {
+            let round = rounds[index.min(rounds.len() - 1)].clone();
+            index += 1;
+            round.into_iter().map(address).collect()
+        }
+    }
+
+    /// A clock that allows exactly `limit` more rounds.
+    fn rounds(limit: usize) -> impl FnMut() -> bool {
+        let mut left = limit;
+        move || {
+            let more = left > 0;
+            left = left.saturating_sub(1);
+            more
+        }
+    }
+
+    #[test]
+    fn a_machine_already_on_the_network_is_not_mistaken_for_the_reader() {
+        // The router, this laptop and a NAS all answer on 22 the whole time.
+        // None of them restarted, so none of them is what was waited for.
+        let arrival = wait_for_reader(sweeps(vec![vec![1, 5, 40]]), rounds(4));
+        assert_eq!(arrival, Arrival::TimedOut);
+    }
+
+    #[test]
+    fn the_one_address_that_joined_is_the_answer() {
+        let arrival = wait_for_reader(
+            sweeps(vec![vec![1, 5], vec![1, 5], vec![1, 5, 22]]),
+            rounds(4),
+        );
+        assert_eq!(arrival, Arrival::Found(address(22)));
+    }
+
+    #[test]
+    fn two_arrivals_at_once_are_reported_rather_than_guessed_between() {
+        let arrival = wait_for_reader(sweeps(vec![vec![1], vec![1, 22, 23]]), rounds(4));
+        assert_eq!(arrival, Arrival::Several(vec![address(22), address(23)]));
+    }
+
+    #[test]
+    fn a_machine_that_drops_off_while_waiting_is_not_an_arrival() {
+        // Fewer answering than before is still nothing new answering.
+        let arrival = wait_for_reader(sweeps(vec![vec![1, 5, 40], vec![1]]), rounds(3));
+        assert_eq!(arrival, Arrival::TimedOut);
+    }
+
+    #[test]
+    fn the_wait_gives_up_rather_than_sweeping_for_ever() {
+        let mut taken = 0;
+        let arrival = wait_for_reader(
+            || {
+                taken += 1;
+                Vec::new()
+            },
+            rounds(3),
+        );
+        assert_eq!(arrival, Arrival::TimedOut);
+        assert_eq!(taken, 4, "one baseline sweep and one per allowed round");
+    }
+
+    #[test]
+    fn the_reader_is_not_told_to_go_looking_for_it_while_this_is_looking_for_it() {
+        assert!(next_steps(true).contains("waiting for it"));
+        assert!(!next_steps(true).contains("Find it with"));
+        assert!(next_steps(false).contains("Find it with 'kobo devices'"));
+        for waiting in [true, false] {
+            let text = next_steps(waiting);
+            assert!(text.contains("kobo setup --undo"), "undo is always offered");
+            assert!(
+                text.contains("Restart it"),
+                "the restart is always asked for"
+            );
+            assert!(
+                text.contains("ninety minutes"),
+                "the sleep change is declared"
+            );
+        }
+    }
 
     #[test]
     fn a_version_line_yields_the_serial_and_the_firmware() {
@@ -765,6 +934,7 @@ mod tests {
             ssh: Some(Ssh::Enabled),
             settings: vec!["DeveloperSettings/ForceWifiOn".to_owned()],
             ejected: true,
+            waiting: false,
         };
         let text = report.describe(&PathBuf::from("/Volumes/KOBOeReader"));
         assert!(text.contains("13 files"));

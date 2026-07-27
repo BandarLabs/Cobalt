@@ -258,10 +258,23 @@ It finds the mounted reader, copies Cobalt into `.adds/cobalt`, reads every
 file back to prove it arrived intact, enables the firmware's **own** SSH server,
 sets `DeveloperSettings/ForceWifiOn` so the radio stays up between deploys and
 `PowerOptions/AutoSleepMinutes=90` so the reader is still reachable when you
-come back to it, and ejects. Restart the reader once and `kobo devices`, `kobo
-deploy` and `kobo logs` all work from there on. `kobo setup --undo` puts every
-part of that back, and `kobo setup --dry-run` prints what it would do without
-touching anything.
+come back to it, and ejects.
+
+Then it waits. The restart is the one step that has to happen on the reader —
+its SSH server only starts at boot, and nothing on this side can press the
+power button — so the command asks for it and then watches the network for the
+reader to come back, printing its address and the exact `kobo deploy` line when
+it does. It identifies the reader by *change* rather than by asking anything:
+it records which addresses answer on port 22 before the wait, and reports the
+one that was not answering and now is. On a first setup there is no key
+installed and the firmware's first login forces a password change, so a probe
+that authenticated would hang; a probe that never sends a byte cannot. That
+also means the machine it is running on, the router and a NAS are never
+mistaken for a reader, because none of them just joined.
+
+`--no-wait` skips that. `kobo setup --undo` puts every part of the setup back,
+and `kobo setup --dry-run` prints what it would do without touching anything —
+including for `--undo`, which is what `--undo --dry-run` means.
 
 Both settings are the reader's own, applied by the reader's own code, so
 nothing here becomes a second owner of the radio or of power. The sleep timer

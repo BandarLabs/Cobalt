@@ -2071,20 +2071,36 @@ screen.
      until you do.
   3. If it is already mounted somewhere unusual, name it: kobo setup --volume /path";
 
+/// Which direction `kobo setup` was pointed in.
+///
+/// A mode rather than a flag because the two are exclusive and reading them as
+/// two booleans made `--undo --dry-run` perform the undo: the undo branch was
+/// taken before the dry run was ever consulted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SetupMode {
+    /// Install Cobalt and prepare the reader.
+    Install,
+    /// Put the reader back to how it shipped.
+    Undo,
+}
+
 /// How `kobo setup` was asked to run.
+#[derive(Debug)]
 struct SetupOptions {
     volume: Option<PathBuf>,
-    undo: bool,
+    mode: SetupMode,
     eject: bool,
     dry_run: bool,
+    wait: bool,
 }
 
 fn parse_setup(arguments: &[String]) -> Result<SetupOptions, String> {
     let mut options = SetupOptions {
         volume: None,
-        undo: false,
+        mode: SetupMode::Install,
         eject: true,
         dry_run: false,
+        wait: true,
     };
     let mut index = 0;
     while index < arguments.len() {
@@ -2096,13 +2112,14 @@ fn parse_setup(arguments: &[String]) -> Result<SetupOptions, String> {
                 options.volume = Some(PathBuf::from(value));
                 index += 1;
             }
-            "--undo" => options.undo = true,
+            "--undo" => options.mode = SetupMode::Undo,
             "--no-eject" => options.eject = false,
+            "--no-wait" => options.wait = false,
             "--dry-run" => options.dry_run = true,
             other => {
                 return Err(format!(
                     "unknown option '{other}'\n\
-                     usage: kobo setup [--volume PATH] [--undo] [--no-eject] [--dry-run]"
+                     usage: kobo setup [--volume PATH] [--undo] [--no-eject] [--no-wait] [--dry-run]"
                 ))
             }
         }
@@ -2151,25 +2168,12 @@ fn setup_device(arguments: &[String]) -> Result<(), String> {
     let reader = chosen_reader(options.volume.as_deref())?;
     println!("found {}", reader.summary());
 
-    if options.undo {
-        return undo_setup(&reader, options.eject);
-    }
     if options.dry_run {
-        println!(
-            "would install Cobalt into {}/{}\n\
-             would enable the firmware's SSH server by renaming {}\n\
-             would set {}\n\
-             nothing outside the book partition, nothing extracted as root",
-            reader.volume.display(),
-            setup::INSTALL_FOLDER,
-            setup::SSH_DISABLED,
-            setup::SETTINGS_APPLIED
-                .iter()
-                .map(|(section, key, value)| format!("{section}/{key}={value}"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
+        println!("{}", dry_run_plan(&options, &reader));
         return Ok(());
+    }
+    if options.mode == SetupMode::Undo {
+        return undo_setup(&reader, options.eject);
     }
 
     // Built before anything is written, so a build that fails leaves the
@@ -2181,6 +2185,11 @@ fn setup_device(arguments: &[String]) -> Result<(), String> {
     let settings = setup::apply_settings(&reader.volume)?;
     let ejected = ejected_or_explained(&reader.volume, options.eject);
 
+    // A reader that was never ejected has not seen the install and will not be
+    // restarted into it, so there is nothing to wait for.
+    let subnet = connect::local_subnet();
+    let waiting = options.wait && ejected && subnet.is_some();
+
     print!(
         "{}",
         setup::Report {
@@ -2188,10 +2197,102 @@ fn setup_device(arguments: &[String]) -> Result<(), String> {
             ssh: Some(ssh),
             settings,
             ejected,
+            waiting,
         }
         .describe(&reader.volume)
     );
+    if waiting {
+        let subnet = subnet.unwrap_or_default();
+        await_reader(&subnet);
+    }
     Ok(())
+}
+
+/// Watches `subnet` until an address that was not answering starts to.
+///
+/// Prints rather than returns, and never fails: everything this command was
+/// asked to do is already on the reader by the time it is called, so a wait
+/// that finds nothing is a wait that found nothing, not a setup that failed.
+fn await_reader(subnet: &str) {
+    println!(
+        "\nWaiting up to {} minutes for the reader to come back on {subnet}.0/24. Ctrl-C to stop.",
+        setup::WAIT_LIMIT.as_secs() / 60
+    );
+    let deadline = Instant::now() + setup::WAIT_LIMIT;
+    let arrival = setup::wait_for_reader(
+        || connect::sweep(subnet, connect::PROBE_TIMEOUT),
+        || {
+            if Instant::now() >= deadline {
+                return false;
+            }
+            thread::sleep(setup::WAIT_INTERVAL);
+            print!(".");
+            let _ = std::io::stdout().flush();
+            true
+        },
+    );
+    println!();
+    match arrival {
+        setup::Arrival::Found(address) => println!(
+            "The reader is at {address}.\n\n  kobo deploy --device {address}\n\n\
+             That installs over Wi-Fi from here on, with no cable and no restart."
+        ),
+        setup::Arrival::Several(addresses) => {
+            let listed = addresses
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            println!(
+                "More than one machine joined while waiting ({listed}), so this will not\n\
+                 guess which is the reader. 'kobo devices' asks each one what it is."
+            );
+        }
+        setup::Arrival::TimedOut => println!(
+            "The reader did not appear. It is set up either way — the files are on it\n\
+             and its SSH server starts at the next boot. 'kobo devices' finds it once\n\
+             it is awake and on Wi-Fi."
+        ),
+    }
+}
+
+/// What a run would do, without doing any of it.
+///
+/// A pure function of the options and the reader, so that what `--dry-run`
+/// promises can be tested rather than read.
+fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
+    let keys = setup::SETTINGS_APPLIED
+        .iter()
+        .map(|(section, key, value)| format!("{section}/{key}={value}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    if options.mode == SetupMode::Undo {
+        return format!(
+            "would remove {}/{}\n\
+             would disable the firmware's SSH server by renaming {} back\n\
+             would clear {}\n\
+             nothing else on the reader is touched",
+            reader.volume.display(),
+            setup::INSTALL_FOLDER,
+            setup::SSH_ENABLED,
+            keys
+        );
+    }
+    format!(
+        "would install Cobalt into {}/{}\n\
+         would enable the firmware's SSH server by renaming {}\n\
+         would set {keys}\n\
+         would eject, then {}\n\
+         nothing outside the book partition, nothing extracted as root",
+        reader.volume.display(),
+        setup::INSTALL_FOLDER,
+        setup::SSH_DISABLED,
+        if options.wait {
+            "wait for the restarted reader to appear on the network"
+        } else {
+            "stop, because --no-wait was given"
+        }
+    )
 }
 
 /// Puts a reader back to how it shipped.
@@ -2767,7 +2868,8 @@ fn print_help() {
            touch-probe --device IP [--seconds N]  Watch touch read-only to check the transform\n\
            guard-test --device IP --confirm ...   Prove the guardian restores the screen\n\
            package [--out PATH] [--folder PATH]  Build the KoboRoot.tgz an owner copies\n\
-           setup [--volume PATH] [--undo]  Prepare a reader over USB: install, enable SSH\n\
+           setup [--volume PATH] [--undo]  Prepare a reader over USB: install, enable SSH,\n\
+                                   set the sleep timer, eject, then wait for it to return\n\
            deploy --device IP [--package PATH]   Install over Wi-Fi, no reboot\n\
            inspect <package>       List a package and prove it writes nothing to the rootfs\n\
            verify <arm-binary>     Verify static ARM hard-float format\n\
@@ -3653,6 +3755,82 @@ mod tests {
             assert_eq!(changed_lines(b"applied; changed_lines=lots\n"), 0);
             assert_eq!(changed_lines(b"something else entirely\n"), 0);
             assert_eq!(changed_lines(&[0xff, 0xfe, 0x00]), 0);
+        }
+    }
+
+    mod preparing {
+        use super::super::{dry_run_plan, parse_setup, setup, SetupMode};
+        use std::path::PathBuf;
+
+        fn arguments(values: &[&str]) -> Vec<String> {
+            values.iter().map(|value| (*value).to_owned()).collect()
+        }
+
+        fn reader() -> setup::Mounted {
+            setup::Mounted {
+                volume: PathBuf::from("/Volumes/KOBOeReader"),
+                serial: "N365410043013".to_owned(),
+                firmware: "4.45.23697".to_owned(),
+            }
+        }
+
+        #[test]
+        fn a_bare_run_installs_ejects_and_waits() {
+            let parsed = parse_setup(&arguments(&[])).expect("parse");
+            assert_eq!(parsed.mode, SetupMode::Install);
+            assert!(parsed.eject);
+            assert!(parsed.wait);
+            assert!(!parsed.dry_run);
+        }
+
+        #[test]
+        fn the_wait_can_be_declined() {
+            let parsed = parse_setup(&arguments(&["--no-wait"])).expect("parse");
+            assert!(!parsed.wait);
+            assert!(
+                parsed.eject,
+                "declining the wait does not decline the eject"
+            );
+        }
+
+        #[test]
+        fn a_dry_run_of_an_undo_describes_the_undo_and_performs_nothing() {
+            // This is the whole reason the two are one mode and not two flags.
+            // Read as two booleans, '--undo --dry-run' took the undo branch
+            // first and removed Cobalt from a reader nobody had agreed to.
+            let parsed = parse_setup(&arguments(&["--undo", "--dry-run"])).expect("parse");
+            assert_eq!(parsed.mode, SetupMode::Undo);
+            assert!(parsed.dry_run);
+            let plan = dry_run_plan(&parsed, &reader());
+            assert!(plan.starts_with("would "), "{plan}");
+            assert!(plan.contains("would remove"), "{plan}");
+            assert!(plan.contains(setup::SSH_ENABLED), "{plan}");
+            assert!(!plan.contains("would install"), "{plan}");
+        }
+
+        #[test]
+        fn a_dry_run_names_every_change_it_would_make() {
+            let parsed = parse_setup(&arguments(&["--dry-run"])).expect("parse");
+            let plan = dry_run_plan(&parsed, &reader());
+            assert!(plan.contains("would install"));
+            assert!(plan.contains(setup::SSH_DISABLED));
+            assert!(plan.contains("wait for the restarted reader"));
+            for (section, key, value) in setup::SETTINGS_APPLIED {
+                assert!(plan.contains(&format!("{section}/{key}={value}")), "{plan}");
+            }
+        }
+
+        #[test]
+        fn a_dry_run_that_will_not_wait_says_so() {
+            let parsed = parse_setup(&arguments(&["--dry-run", "--no-wait"])).expect("parse");
+            assert!(dry_run_plan(&parsed, &reader()).contains("--no-wait was given"));
+        }
+
+        #[test]
+        fn an_unknown_option_is_refused_with_the_whole_usage() {
+            let error = parse_setup(&arguments(&["--force"])).expect_err("refused");
+            assert!(error.contains("--no-wait"), "{error}");
+            assert!(error.contains("--undo"), "{error}");
         }
     }
 
