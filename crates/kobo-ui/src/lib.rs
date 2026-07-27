@@ -3333,6 +3333,14 @@ struct HeldPicture {
     used: std::cell::Cell<u64>,
 }
 
+struct PendingPicture {
+    handle: PictureHandle,
+    width: u32,
+    height: u32,
+    expected: usize,
+    grey: Vec<u8>,
+}
+
 /// The pictures one application has handed over, bounded by total size.
 ///
 /// Eviction is least-recently-drawn. A picture that falls out is not an error:
@@ -3344,6 +3352,7 @@ pub struct PictureCache {
     held: usize,
     entries: Vec<HeldPicture>,
     clock: std::cell::Cell<u64>,
+    pending: Option<PendingPicture>,
 }
 
 impl Default for PictureCache {
@@ -3371,6 +3380,7 @@ impl PictureCache {
             held: 0,
             entries: Vec::new(),
             clock: std::cell::Cell::new(0),
+            pending: None,
         }
     }
 
@@ -3380,18 +3390,32 @@ impl PictureCache {
     /// one picture alone exceeds the whole budget. Both are refusals rather
     /// than truncations: a half-stored picture would draw as garbage.
     pub fn put(&mut self, handle: PictureHandle, width: u32, height: u32, grey: Vec<u8>) -> bool {
+        self.put_report(handle, width, height, grey).is_some()
+    }
+
+    /// Stores a complete picture and reports any handles evicted to make room.
+    ///
+    /// `None` means the picture was refused. An empty vector means it fitted
+    /// without eviction. This gives runtimes and simulator diagnostics a way
+    /// to explain a missing image instead of silently falling back forever.
+    pub fn put_report(
+        &mut self,
+        handle: PictureHandle,
+        width: u32,
+        height: u32,
+        grey: Vec<u8>,
+    ) -> Option<Vec<PictureHandle>> {
         let expected = usize::try_from(width).ok().and_then(|width| {
             usize::try_from(height)
                 .ok()
                 .and_then(|h| width.checked_mul(h))
         });
-        let Some(expected) = expected else {
-            return false;
-        };
+        let expected = expected?;
         if expected == 0 || expected != grey.len() || grey.len() > self.budget {
-            return false;
+            return None;
         }
         self.remove(handle);
+        let mut evicted = Vec::new();
         while self.held + grey.len() > self.budget {
             let Some(oldest) = self
                 .entries
@@ -3402,6 +3426,7 @@ impl PictureCache {
             else {
                 break;
             };
+            evicted.push(self.entries[oldest].handle);
             self.held -= self.entries[oldest].grey.len();
             self.entries.remove(oldest);
         }
@@ -3414,7 +3439,63 @@ impl PictureCache {
             grey,
             used: std::cell::Cell::new(self.clock.get()),
         });
+        Some(evicted)
+    }
+
+    /// Starts a bounded, in-order upload without replacing the live picture.
+    ///
+    /// Starting another upload cancels the incomplete one. The previous live
+    /// value under `handle` remains drawable until [`Self::commit_upload`].
+    pub fn begin_upload(&mut self, handle: PictureHandle, width: u32, height: u32) -> bool {
+        let expected = usize::try_from(width).ok().and_then(|width| {
+            usize::try_from(height)
+                .ok()
+                .and_then(|height| width.checked_mul(height))
+        });
+        let Some(expected) = expected else {
+            self.pending = None;
+            return false;
+        };
+        if expected == 0 || expected > self.budget {
+            self.pending = None;
+            return false;
+        }
+        self.pending = Some(PendingPicture {
+            handle,
+            width,
+            height,
+            expected,
+            grey: Vec::with_capacity(expected),
+        });
         true
+    }
+
+    /// Appends one chunk at its exact expected offset.
+    pub fn upload_chunk(&mut self, handle: PictureHandle, offset: usize, bytes: &[u8]) -> bool {
+        let Some(pending) = self.pending.as_mut() else {
+            return false;
+        };
+        if pending.handle != handle
+            || offset != pending.grey.len()
+            || pending.grey.len().saturating_add(bytes.len()) > pending.expected
+        {
+            self.pending = None;
+            return false;
+        }
+        pending.grey.extend_from_slice(bytes);
+        true
+    }
+
+    /// Atomically replaces the live picture after every byte has arrived.
+    ///
+    /// Returns evicted handles on success and `None` for an incomplete or
+    /// mismatched upload.
+    pub fn commit_upload(&mut self, handle: PictureHandle) -> Option<Vec<PictureHandle>> {
+        let pending = self.pending.take()?;
+        if pending.handle != handle || pending.grey.len() != pending.expected {
+            return None;
+        }
+        self.put_report(pending.handle, pending.width, pending.height, pending.grey)
     }
 
     pub fn remove(&mut self, handle: PictureHandle) {
@@ -3427,6 +3508,7 @@ impl PictureCache {
     pub fn clear(&mut self) {
         self.entries.clear();
         self.held = 0;
+        self.pending = None;
     }
 
     #[must_use]
@@ -6277,6 +6359,41 @@ mod prose_tests {
         );
         assert!(cache.get(PictureHandle(3)).is_some());
         assert_eq!(cache.bytes_held(), 200);
+    }
+
+    #[test]
+    fn cache_evictions_are_reported_to_the_runtime() {
+        let mut cache = PictureCache::new(150);
+        assert_eq!(
+            cache.put_report(PictureHandle(1), 10, 10, vec![1; 100]),
+            Some(Vec::new())
+        );
+        assert_eq!(
+            cache.put_report(PictureHandle(2), 10, 10, vec![2; 100]),
+            Some(vec![PictureHandle(1)])
+        );
+    }
+
+    #[test]
+    fn chunked_picture_becomes_live_only_after_a_complete_commit() {
+        let mut cache = PictureCache::new(300);
+        assert!(cache.begin_upload(PictureHandle(7), 10, 10));
+        assert!(cache.upload_chunk(PictureHandle(7), 0, &[3; 40]));
+        assert!(
+            cache.get(PictureHandle(7)).is_none(),
+            "not partially visible"
+        );
+        assert!(cache.upload_chunk(PictureHandle(7), 40, &[3; 60]));
+        assert_eq!(cache.commit_upload(PictureHandle(7)), Some(Vec::new()));
+        assert_eq!(cache.get(PictureHandle(7)).map(|p| p.grey[0]), Some(3));
+    }
+
+    #[test]
+    fn an_out_of_order_chunk_cancels_the_upload() {
+        let mut cache = PictureCache::new(300);
+        assert!(cache.begin_upload(PictureHandle(7), 10, 10));
+        assert!(!cache.upload_chunk(PictureHandle(7), 1, &[3; 40]));
+        assert_eq!(cache.commit_upload(PictureHandle(7)), None);
     }
 
     #[test]

@@ -427,7 +427,7 @@ fn current_user_id() -> io::Result<u32> {
 /// Split out only so the message loop stays readable; the cache is the same
 /// one the device runtime uses.
 fn hold(state: &Arc<Mutex<AppState>>, message: Message) -> io::Result<()> {
-    let refused = {
+    let diagnostic = {
         let mut held = state
             .lock()
             .map_err(|_| io::Error::other("app state lock poisoned"))?;
@@ -437,7 +437,30 @@ fn hold(state: &Arc<Mutex<AppState>>, message: Message) -> io::Result<()> {
                 width,
                 height,
                 grey,
-            } => (!held.pictures.put(handle, width, height, grey)).then_some(handle),
+            } => picture_result(
+                handle,
+                held.pictures.put_report(handle, width, height, grey),
+            ),
+            Message::BeginPicture {
+                handle,
+                width,
+                height,
+            } => (!held.pictures.begin_upload(handle, width, height))
+                .then(|| format!("picture {} upload refused", handle.0)),
+            Message::PictureChunk {
+                handle,
+                offset,
+                grey,
+            } => (!held.pictures.upload_chunk(
+                handle,
+                usize::try_from(offset).unwrap_or(usize::MAX),
+                &grey,
+            ))
+            .then(|| format!("picture {} chunk refused", handle.0)),
+            Message::CommitPicture { handle } => {
+                let result = held.pictures.commit_upload(handle);
+                picture_result(handle, result)
+            }
             Message::DropPicture { handle } => {
                 held.pictures.remove(handle);
                 None
@@ -445,10 +468,40 @@ fn hold(state: &Arc<Mutex<AppState>>, message: Message) -> io::Result<()> {
             _ => None,
         }
     };
-    match refused {
-        Some(handle) => note(state, &format!("picture {} refused", handle.0)),
+    match diagnostic {
+        Some(message) => note(state, &message),
         None => Ok(()),
     }
+}
+
+fn picture_result(
+    handle: kobo_ui::PictureHandle,
+    result: Option<Vec<kobo_ui::PictureHandle>>,
+) -> Option<String> {
+    match result {
+        None => Some(format!("picture {} refused", handle.0)),
+        Some(evicted) if !evicted.is_empty() => Some(format!(
+            "picture {} stored; evicted {}",
+            handle.0,
+            evicted
+                .iter()
+                .map(|picture| picture.0.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+        Some(_) => None,
+    }
+}
+
+fn is_picture_message(message: &Message) -> bool {
+    matches!(
+        message,
+        Message::PutPicture { .. }
+            | Message::BeginPicture { .. }
+            | Message::PictureChunk { .. }
+            | Message::CommitPicture { .. }
+            | Message::DropPicture { .. }
+    )
 }
 
 #[derive(Debug)]
@@ -721,7 +774,7 @@ fn read_app_messages(
                     "Info: asked to launch {name}; the simulator hosts one application"
                 ));
             }
-            Message::PutPicture { .. } | Message::DropPicture { .. } => hold(state, frame.message)?,
+            message if is_picture_message(&message) => hold(state, message)?,
             Message::Log { level, message } => note(state, &format!("{level:?}: {message}"))?,
             Message::DeviceRequest(request) => {
                 let result = services.handle(request);
@@ -776,14 +829,7 @@ fn read_app_messages(
                     .shutdown();
                 return Ok(());
             }
-            Message::Hello { .. }
-            | Message::Welcome { .. }
-            | Message::Action { .. }
-            | Message::TaskOutcome { .. }
-            | Message::DeviceResult(_)
-            | Message::StoreResult(_)
-            | Message::Lifecycle(_)
-            | Message::ShellEvent(_) => {
+            _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "unexpected SDK protocol message",

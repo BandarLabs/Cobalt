@@ -653,14 +653,36 @@ fn host_applications(
                             width,
                             height,
                             grey,
+                        } => match apps[index].pictures.put_report(handle, width, height, grey) {
+                            None => trace(&format!("picture {} refused", handle.0)),
+                            Some(evicted) => trace_picture_evictions(handle, &evicted),
+                        },
+                        Message::BeginPicture {
+                            handle,
+                            width,
+                            height,
                         } => {
-                            // A refusal is silent by design. The screen naming
-                            // this handle simply finds nothing and falls back,
-                            // which is the same path as an eviction, so there
-                            // is one behaviour to reason about rather than two.
-                            let accepted = apps[index].pictures.put(handle, width, height, grey);
-                            if !accepted {
-                                trace(&format!("picture {} refused", handle.0));
+                            if !apps[index].pictures.begin_upload(handle, width, height) {
+                                trace(&format!("picture {} upload refused", handle.0));
+                            }
+                        }
+                        Message::PictureChunk {
+                            handle,
+                            offset,
+                            grey,
+                        } => {
+                            if !apps[index].pictures.upload_chunk(
+                                handle,
+                                usize::try_from(offset).unwrap_or(usize::MAX),
+                                &grey,
+                            ) {
+                                trace(&format!("picture {} chunk refused", handle.0));
+                            }
+                        }
+                        Message::CommitPicture { handle } => {
+                            match apps[index].pictures.commit_upload(handle) {
+                                None => trace(&format!("picture {} commit refused", handle.0)),
+                                Some(evicted) => trace_picture_evictions(handle, &evicted),
                             }
                         }
                         Message::DropPicture { handle } => apps[index].pictures.remove(handle),
@@ -1149,6 +1171,18 @@ fn action_for(event: TouchEvent, screen: Option<&Screen>, chrome: Chrome) -> Opt
     trace(&format!("touch up ({x},{y}) -> {hit:?}"));
     println!("touch up ({x},{y}) -> {hit:?}");
     hit
+}
+
+fn trace_picture_evictions(handle: kobo_ui::PictureHandle, evicted: &[kobo_ui::PictureHandle]) {
+    if evicted.is_empty() {
+        return;
+    }
+    let evicted = evicted
+        .iter()
+        .map(|picture| picture.0.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    trace(&format!("picture {} stored; evicted {evicted}", handle.0));
 }
 
 /// Accepts the application and completes the opening exchange.

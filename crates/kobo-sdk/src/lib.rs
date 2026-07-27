@@ -9,8 +9,8 @@ pub use kobo_protocol::{
     Credential, DenyReason, DeviceRequest, DeviceResult, Frame, Header, Lifecycle, LogLevel,
     Message, SecretHeader, ShellError, ShellEvent, ShellRequest, StoreError, StoreRequest,
     StoreResult, StreamError, Task, TaskError, TaskId, TaskOutcome, MAX_HEADERS, MAX_HEADER_NAME,
-    MAX_HEADER_VALUE, MAX_PICTURE_BYTES, MAX_SHELL_CHUNK, MAX_STORE_KEYS, MAX_STORE_VALUE,
-    MAX_TASK_BYTES, MAX_URL_LEN,
+    MAX_HEADER_VALUE, MAX_INLINE_PICTURE_BYTES, MAX_PICTURE_BYTES, MAX_PICTURE_CHUNK_BYTES,
+    MAX_SHELL_CHUNK, MAX_STORE_KEYS, MAX_STORE_VALUE, MAX_TASK_BYTES, MAX_URL_LEN,
 };
 pub use kobo_ui::{
     terminal_grid, terminal_grid_for, ActionId, BannerLevel, BarAction, BottomAction, Caret, Cell,
@@ -842,8 +842,9 @@ impl Context {
     /// immediately averaged away costs the wire, the runtime's cache and the
     /// battery for nothing.
     ///
-    /// Returns `None` when the picture is empty, mis-sized, or larger than one
-    /// frame allows.
+    /// Returns `None` when the picture is empty, mis-sized, or larger than the
+    /// bounded per-picture budget. Large pictures are chunked transparently by
+    /// the socket client and become visible only after the final chunk arrives.
     pub fn put_picture(
         &mut self,
         handle: PictureHandle,
@@ -1501,6 +1502,45 @@ impl Client {
         commands: impl IntoIterator<Item = Command>,
     ) -> Result<(), ClientError> {
         for command in commands {
+            let command = match command {
+                Command::PutPicture {
+                    handle,
+                    width,
+                    height,
+                    grey,
+                } => {
+                    if grey.len() <= MAX_INLINE_PICTURE_BYTES {
+                        self.send(Message::PutPicture {
+                            handle,
+                            width,
+                            height,
+                            grey,
+                        })?;
+                    } else {
+                        self.send(Message::BeginPicture {
+                            handle,
+                            width,
+                            height,
+                        })?;
+                        for (index, chunk) in grey.chunks(MAX_PICTURE_CHUNK_BYTES).enumerate() {
+                            let offset = index
+                                .checked_mul(MAX_PICTURE_CHUNK_BYTES)
+                                .and_then(|offset| u32::try_from(offset).ok())
+                                .ok_or(ClientError::Stream(StreamError::Protocol(
+                                    kobo_protocol::ProtocolError::FrameTooLarge,
+                                )))?;
+                            self.send(Message::PictureChunk {
+                                handle,
+                                offset,
+                                grey: chunk.to_vec(),
+                            })?;
+                        }
+                        self.send(Message::CommitPicture { handle })?;
+                    }
+                    continue;
+                }
+                other => other,
+            };
             let message = match command {
                 Command::SetScreen(screen) => Message::SetScreen(screen),
                 Command::Log { level, message } => Message::Log { level, message },
@@ -1511,17 +1551,7 @@ impl Client {
                 Command::Shell(request) => Message::ShellRequest(request),
                 Command::Exit => Message::Exit,
                 Command::Launch(name) => Message::Launch { name },
-                Command::PutPicture {
-                    handle,
-                    width,
-                    height,
-                    grey,
-                } => Message::PutPicture {
-                    handle,
-                    width,
-                    height,
-                    grey,
-                },
+                Command::PutPicture { .. } => unreachable!("handled above"),
                 Command::DropPicture(handle) => Message::DropPicture { handle },
             };
             self.send(message)?;
@@ -1674,6 +1704,74 @@ mod tests {
                 ScreenBuilder::new("counter").heading("Counter").build(),
             )])
             .expect("send screen");
+        daemon.join().expect("daemon");
+    }
+
+    #[test]
+    fn client_transparently_chunks_a_full_width_picture() {
+        let (client_stream, mut daemon_stream) = UnixStream::pair().expect("socket pair");
+        let daemon = thread::spawn(move || {
+            let hello = kobo_protocol::read_from(&mut daemon_stream).expect("hello");
+            kobo_protocol::write_to(
+                &mut daemon_stream,
+                &Frame {
+                    request_id: hello.request_id,
+                    message: Message::Welcome {
+                        width: 1072,
+                        height: 1448,
+                        pixels_per_inch: 300,
+                        text_scale: kobo_ui::TextScale::Default,
+                    },
+                },
+            )
+            .expect("welcome");
+
+            assert!(matches!(
+                kobo_protocol::read_from(&mut daemon_stream)
+                    .expect("begin")
+                    .message,
+                Message::BeginPicture {
+                    handle: PictureHandle(9),
+                    width: 1072,
+                    height: 1448
+                }
+            ));
+            let expected = 1072_usize * 1448;
+            let mut received = 0;
+            while received < expected {
+                let Message::PictureChunk {
+                    handle,
+                    offset,
+                    grey,
+                } = kobo_protocol::read_from(&mut daemon_stream)
+                    .expect("chunk")
+                    .message
+                else {
+                    panic!("expected a picture chunk");
+                };
+                assert_eq!(handle, PictureHandle(9));
+                assert_eq!(usize::try_from(offset).expect("offset"), received);
+                assert!(grey.len() <= MAX_PICTURE_CHUNK_BYTES);
+                received += grey.len();
+            }
+            assert!(matches!(
+                kobo_protocol::read_from(&mut daemon_stream)
+                    .expect("commit")
+                    .message,
+                Message::CommitPicture {
+                    handle: PictureHandle(9)
+                }
+            ));
+        });
+        let mut client = Client::from_stream(client_stream, "gallery").expect("connect");
+        client
+            .send_commands([Command::PutPicture {
+                handle: PictureHandle(9),
+                width: 1072,
+                height: 1448,
+                grey: vec![127; 1072 * 1448],
+            }])
+            .expect("upload");
         daemon.join().expect("daemon");
     }
 }

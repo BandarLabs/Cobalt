@@ -17,14 +17,16 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 pub const VERSION: u8 = 2;
 pub const HEADER_LEN: usize = 14;
 pub const MAX_FRAME_LEN: usize = 1_048_576;
-/// The largest picture that fits in one frame, in eight-bit grey pixels.
+/// The largest decoded picture accepted from one application.
 ///
-/// This is deliberately below [`MAX_FRAME_LEN`] rather than equal to it: a
-/// picture is a payload inside a frame, not the frame. It allows a full panel
-/// width by a little over half its height, which is more than a screen can
-/// usefully show at once, and applications are expected to fit a picture to the
-/// space it will occupy before handing it over anyway.
-pub const MAX_PICTURE_BYTES: usize = 768 * 1024;
+/// Four Clara panels is the same bound used by `kobo-image`: enough headroom
+/// for a high-resolution source while remaining below the per-app cache.
+pub const MAX_PICTURE_BYTES: usize = 4 * 1072 * 1448;
+/// Largest picture sent as one legacy `PutPicture` frame.
+pub const MAX_INLINE_PICTURE_BYTES: usize = 768 * 1024;
+/// Largest piece of a chunked upload. Small enough to bound transient copies
+/// while still moving a full panel in a handful of local-socket writes.
+pub const MAX_PICTURE_CHUNK_BYTES: usize = 256 * 1024;
 pub const MAX_STRING_LEN: usize = 16_384;
 pub const MAX_NODES: usize = 512;
 /// The byte a nav bar sends when no destination is the current one.
@@ -359,6 +361,22 @@ pub enum Message {
         height: u32,
         /// Eight-bit grey, row major, exactly `width * height` bytes.
         grey: Vec<u8>,
+    },
+    /// Starts an atomic picture upload larger than one protocol frame.
+    BeginPicture {
+        handle: PictureHandle,
+        width: u32,
+        height: u32,
+    },
+    /// One in-order span of a picture started by [`Message::BeginPicture`].
+    PictureChunk {
+        handle: PictureHandle,
+        offset: u32,
+        grey: Vec<u8>,
+    },
+    /// Makes a completely received upload visible to screens.
+    CommitPicture {
+        handle: PictureHandle,
     },
     /// Releases a picture. The runtime also drops every picture an application
     /// holds when it exits, so this is for applications that outlive their own
@@ -776,7 +794,27 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
             push_u32(&mut payload, *height);
             payload.extend_from_slice(grey);
         }
-        Message::DropPicture { handle } => push_u32(&mut payload, handle.0),
+        Message::BeginPicture {
+            handle,
+            width,
+            height,
+        } => {
+            push_u32(&mut payload, handle.0);
+            push_u32(&mut payload, *width);
+            push_u32(&mut payload, *height);
+        }
+        Message::PictureChunk {
+            handle,
+            offset,
+            grey,
+        } => {
+            push_u32(&mut payload, handle.0);
+            push_u32(&mut payload, *offset);
+            payload.extend_from_slice(grey);
+        }
+        Message::CommitPicture { handle } | Message::DropPicture { handle } => {
+            push_u32(&mut payload, handle.0);
+        }
         Message::Lifecycle(state) => payload.push(match state {
             Lifecycle::Foreground => 0,
             Lifecycle::Background => 1,
@@ -1149,20 +1187,44 @@ fn encoded_message_layout(message: &Message) -> Result<(u8, usize), ProtocolErro
             // The declared size and the bytes must agree before anything is
             // allocated on the strength of either, or a decoder reading by
             // dimension would run off the end of a short payload.
-            let expected = usize::try_from(*width)
-                .ok()
-                .and_then(|width| width.checked_mul(usize::try_from(*height).ok()?))
-                .ok_or(ProtocolError::FrameTooLarge)?;
+            let expected = picture_len(*width, *height)?;
             if expected != grey.len() {
                 return Err(ProtocolError::InvalidValue("picture size"));
             }
-            if grey.len() > MAX_PICTURE_BYTES {
+            if grey.len() > MAX_INLINE_PICTURE_BYTES {
                 return Err(ProtocolError::FrameTooLarge);
             }
             Ok((18, 12 + grey.len()))
         }
         Message::DropPicture { .. } => Ok((19, 4)),
+        Message::BeginPicture { width, height, .. } => {
+            let expected = picture_len(*width, *height)?;
+            if expected == 0 || expected > MAX_PICTURE_BYTES {
+                return Err(ProtocolError::FrameTooLarge);
+            }
+            Ok((20, 12))
+        }
+        Message::PictureChunk { offset, grey, .. } => {
+            if grey.is_empty()
+                || grey.len() > MAX_PICTURE_CHUNK_BYTES
+                || usize::try_from(*offset)
+                    .ok()
+                    .and_then(|offset| offset.checked_add(grey.len()))
+                    .is_none_or(|end| end > MAX_PICTURE_BYTES)
+            {
+                return Err(ProtocolError::FrameTooLarge);
+            }
+            Ok((21, 8 + grey.len()))
+        }
+        Message::CommitPicture { .. } => Ok((22, 4)),
     }
+}
+
+fn picture_len(width: u32, height: u32) -> Result<usize, ProtocolError> {
+    usize::try_from(width)
+        .ok()
+        .and_then(|width| width.checked_mul(usize::try_from(height).ok()?))
+        .ok_or(ProtocolError::FrameTooLarge)
 }
 
 /// Every device request encodes as one tag byte and one 32-bit argument, so a
@@ -1729,11 +1791,8 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
             let handle = PictureHandle(reader.u32()?);
             let width = reader.u32()?;
             let height = reader.u32()?;
-            let expected = usize::try_from(width)
-                .ok()
-                .and_then(|width| width.checked_mul(usize::try_from(height).ok()?))
-                .ok_or(ProtocolError::FrameTooLarge)?;
-            if expected > MAX_PICTURE_BYTES {
+            let expected = picture_len(width, height)?;
+            if expected > MAX_INLINE_PICTURE_BYTES {
                 return Err(ProtocolError::FrameTooLarge);
             }
             let grey = reader.take(expected)?.to_vec();
@@ -1745,6 +1804,43 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
             }
         }
         19 => Message::DropPicture {
+            handle: PictureHandle(reader.u32()?),
+        },
+        20 => {
+            let handle = PictureHandle(reader.u32()?);
+            let width = reader.u32()?;
+            let height = reader.u32()?;
+            let expected = picture_len(width, height)?;
+            if expected == 0 || expected > MAX_PICTURE_BYTES {
+                return Err(ProtocolError::FrameTooLarge);
+            }
+            Message::BeginPicture {
+                handle,
+                width,
+                height,
+            }
+        }
+        21 => {
+            let handle = PictureHandle(reader.u32()?);
+            let offset = reader.u32()?;
+            let length = reader.remaining();
+            if length == 0 || length > MAX_PICTURE_CHUNK_BYTES {
+                return Err(ProtocolError::FrameTooLarge);
+            }
+            let end = usize::try_from(offset)
+                .ok()
+                .and_then(|offset| offset.checked_add(length))
+                .ok_or(ProtocolError::FrameTooLarge)?;
+            if end > MAX_PICTURE_BYTES {
+                return Err(ProtocolError::FrameTooLarge);
+            }
+            Message::PictureChunk {
+                handle,
+                offset,
+                grey: reader.take(length)?.to_vec(),
+            }
+        }
+        22 => Message::CommitPicture {
             handle: PictureHandle(reader.u32()?),
         },
         value => return Err(ProtocolError::UnknownMessageType(value)),
@@ -2734,6 +2830,10 @@ impl<'a> Reader<'a> {
     const fn is_finished(&self) -> bool {
         self.offset == self.bytes.len()
     }
+
+    const fn remaining(&self) -> usize {
+        self.bytes.len() - self.offset
+    }
 }
 
 #[cfg(test)]
@@ -3677,9 +3777,49 @@ mod picture_tests {
             request_id: 1,
             message: Message::PutPicture {
                 handle: PictureHandle(4),
-                width: u32::try_from(MAX_PICTURE_BYTES + 1).expect("fits"),
+                width: u32::try_from(MAX_INLINE_PICTURE_BYTES + 1).expect("fits"),
                 height: 1,
-                grey: vec![0; MAX_PICTURE_BYTES + 1],
+                grey: vec![0; MAX_INLINE_PICTURE_BYTES + 1],
+            },
+        });
+        assert!(matches!(refused, Err(ProtocolError::FrameTooLarge)));
+    }
+
+    #[test]
+    fn every_phase_of_a_large_picture_upload_survives_the_wire() {
+        let messages = [
+            Message::BeginPicture {
+                handle: PictureHandle(4),
+                width: 1072,
+                height: 1448,
+            },
+            Message::PictureChunk {
+                handle: PictureHandle(4),
+                offset: 0,
+                grey: vec![17; 4096],
+            },
+            Message::CommitPicture {
+                handle: PictureHandle(4),
+            },
+        ];
+        for message in messages {
+            let frame = Frame {
+                request_id: 1,
+                message,
+            };
+            let bytes = encode(&frame).expect("encode");
+            assert_eq!(decode(&bytes).expect("decode"), frame);
+        }
+    }
+
+    #[test]
+    fn a_picture_chunk_is_independently_bounded() {
+        let refused = encode(&Frame {
+            request_id: 1,
+            message: Message::PictureChunk {
+                handle: PictureHandle(4),
+                offset: 0,
+                grey: vec![0; MAX_PICTURE_CHUNK_BYTES + 1],
             },
         });
         assert!(matches!(refused, Err(ProtocolError::FrameTooLarge)));

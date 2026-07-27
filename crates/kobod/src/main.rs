@@ -320,11 +320,42 @@ fn serve_application(stream: &mut UnixStream, frame_path: &Path) -> Result<(), B
                 width,
                 height,
                 grey,
+            } => match pictures.put_report(handle, width, height, grey) {
+                None => println!("picture {} refused", handle.0),
+                Some(evicted) if !evicted.is_empty() => {
+                    println!("picture {} evicted {evicted:?}", handle.0);
+                }
+                Some(_) => {}
+            },
+            Message::BeginPicture {
+                handle,
+                width,
+                height,
             } => {
-                if !pictures.put(handle, width, height, grey) {
-                    println!("picture {} refused", handle.0);
+                if !pictures.begin_upload(handle, width, height) {
+                    println!("picture {} upload refused", handle.0);
                 }
             }
+            Message::PictureChunk {
+                handle,
+                offset,
+                grey,
+            } => {
+                if !pictures.upload_chunk(
+                    handle,
+                    usize::try_from(offset).unwrap_or(usize::MAX),
+                    &grey,
+                ) {
+                    println!("picture {} chunk refused", handle.0);
+                }
+            }
+            Message::CommitPicture { handle } => match pictures.commit_upload(handle) {
+                None => println!("picture {} commit refused", handle.0),
+                Some(evicted) if !evicted.is_empty() => {
+                    println!("picture {} evicted {evicted:?}", handle.0);
+                }
+                Some(_) => {}
+            },
             Message::DropPicture { handle } => pictures.remove(handle),
             // This path renders one application to a file and owns no panel to
             // hand over, so the request is reported rather than performed.
