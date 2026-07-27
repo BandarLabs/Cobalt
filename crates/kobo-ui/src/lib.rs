@@ -673,6 +673,116 @@ impl BottomAction {
     }
 }
 
+/// A byline that can be tapped to hide or show what is underneath it.
+///
+/// # Why the count is carried and not written into the byline
+///
+/// "12 replies" only makes sense while the replies are hidden, so an
+/// application that wrote it into the byline text would have to compose two
+/// different strings and would end up with two different-length bylines
+/// jumping as the reader folds and unfolds. The renderer knows which state it
+/// is drawing, so it is the thing that should say so.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Fold {
+    /// Sent when the byline is tapped.
+    pub action: ActionId,
+    /// Whether what is underneath is currently hidden.
+    pub collapsed: bool,
+    /// How many replies are hidden. Only shown while collapsed.
+    pub hidden: u16,
+}
+
+/// Which way a caret points.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum Side {
+    /// The caret is on top of the popover, so the anchor is above it.
+    Up,
+    /// The caret is underneath, so the anchor is below it.
+    Down,
+}
+
+/// Something drawn over a screen, which the screen keeps underneath.
+///
+/// # Why this is not just more nodes
+///
+/// A dialogue built out of ordinary nodes replaces the screen: the reader
+/// loses sight of what they were deciding about, and the application has to
+/// rebuild the whole thing to dismiss it. Every real reader -- the stock one
+/// included -- keeps the page underneath and puts the question on top of it.
+///
+/// # Why nothing is dimmed
+///
+/// The usual way to focus attention on an overlay is to darken everything
+/// else. On this panel that is the single most expensive thing that could be
+/// asked for: shading the whole screen changes every pixel, which forces a
+/// full refresh with its black flash, and undoing it forces a second one. So
+/// an overlay is separated by its own heavy border and by the paper it sits
+/// on, not by spoiling what is behind it -- and the panel repaints only the
+/// rectangle the overlay occupies.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Overlay {
+    pub id: NodeId,
+    pub kind: OverlayKind,
+    /// Shown at the top of the overlay. Empty for a popover that is a bare
+    /// list of choices, where a title is a line of chrome nobody reads.
+    pub title: String,
+    pub nodes: Vec<Node>,
+}
+
+/// Which of the two kinds of overlay this is.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OverlayKind {
+    /// Attached to the control that opened it, with a caret pointing at it.
+    ///
+    /// For choices that belong to a control: what a "..." offers, what tapping
+    /// a size stepper reveals. Tapping anywhere else dismisses it, because a
+    /// popover asks nothing and losing it costs the reader nothing.
+    Popover { anchor: ActionId },
+    /// Centred, and dismissed only by answering.
+    ///
+    /// For a question with consequences -- deleting something, replacing
+    /// something. A tap outside is ignored rather than taken as an answer,
+    /// because "somewhere else" is not one of the choices and a reader who
+    /// brushes the panel has not decided anything.
+    Modal,
+}
+
+impl Overlay {
+    /// A popover hanging off `anchor`.
+    #[must_use]
+    pub fn popover(id: NodeId, anchor: ActionId, nodes: Vec<Node>) -> Self {
+        Self {
+            id,
+            kind: OverlayKind::Popover { anchor },
+            title: String::new(),
+            nodes,
+        }
+    }
+
+    /// A question that has to be answered.
+    #[must_use]
+    pub fn modal(id: NodeId, title: impl Into<String>, nodes: Vec<Node>) -> Self {
+        Self {
+            id,
+            kind: OverlayKind::Modal,
+            title: title.into(),
+            nodes,
+        }
+    }
+
+    #[must_use]
+    pub fn with_title(mut self, title: impl Into<String>) -> Self {
+        self.title = title.into();
+        self
+    }
+
+    /// Whether a tap that misses the overlay dismisses it.
+    #[must_use]
+    pub const fn dismissed_by_a_miss(&self) -> bool {
+        matches!(self.kind, OverlayKind::Popover { .. })
+    }
+}
+
 /// The fixed bar at the bottom of a screen, equivalent to the reader's own.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NavBar {
@@ -780,6 +890,13 @@ pub struct Screen {
     /// An application that sets this must paginate at the same scale, or the
     /// page it measured is not the page that gets drawn.
     pub text_scale: Option<TextScale>,
+
+    /// Something drawn over this screen, with the screen kept underneath.
+    ///
+    /// Outside the node list for the same reason the bars are: a screen cannot
+    /// carry two overlays, cannot bury one inside a card, and cannot place one
+    /// halfway down the page.
+    pub overlay: Option<Box<Overlay>>,
 }
 
 /// The actions a tap on the left or right of the content area sends.
@@ -820,6 +937,7 @@ impl Screen {
             owns_back: false,
             reading: false,
             text_scale: None,
+            overlay: None,
         }
     }
 
@@ -831,6 +949,13 @@ impl Screen {
     #[must_use]
     pub const fn with_reading(mut self, reading: bool) -> Self {
         self.reading = reading;
+        self
+    }
+
+    /// Draws `overlay` over this screen, keeping the screen underneath.
+    #[must_use]
+    pub fn with_overlay(mut self, overlay: Overlay) -> Self {
+        self.overlay = Some(Box::new(overlay));
         self
     }
 
@@ -966,12 +1091,196 @@ impl Screen {
             width: metrics.width,
             height: max(0, content_bottom - content_top),
         };
+        // Last, so it is on top of everything -- including the bars, which a
+        // popover hanging off a top-bar control has to cover to be readable --
+        // and so hit testing, which walks the list backwards, reaches it first.
+        if let Some(overlay) = &self.overlay {
+            layout_overlay(overlay, metrics, prose, &mut layout);
+            // A popover cannot also be a page turn: the zones are whatever is
+            // left of the content area, and "left over" must not include the
+            // thing drawn over it.
+            layout.page_turns = None;
+        }
         layout
     }
 
     #[must_use]
     pub fn hit_test(&self, x: i32, y: i32) -> Option<ActionId> {
         self.layout().hit_test(x, y)
+    }
+}
+
+/// Places an overlay over an already-laid-out screen.
+///
+/// Everything here is measured against what is already in `layout`, because a
+/// popover's position is a fact about where its anchor ended up and cannot be
+/// known before the screen has been laid out.
+fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layout: &mut Layout) {
+    let margin = metrics.screen_margin();
+    let padding = metrics.space(Space::Small);
+    let gap = metrics.space(Space::Tight);
+    // Never the full width. An overlay that reaches both margins is
+    // indistinguishable from a new screen, which is the thing it exists not to
+    // be: the reader has to be able to see that what they were looking at is
+    // still there.
+    let width = min(metrics.width - 4 * margin, metrics.width * 5 / 6);
+    let inner = width - 2 * padding;
+
+    // Measured first, placed second. Where a popover goes depends on how tall
+    // it turned out, so it is laid out into a scratch list at the origin and
+    // then moved.
+    let mut scratch = Layout::default();
+    let mut cursor = padding;
+    let mut title_height = 0;
+    if !overlay.title.is_empty() {
+        title_height = FontSize::Title.line_height();
+        cursor = cursor.saturating_add(title_height).saturating_add(gap);
+    }
+    for node in &overlay.nodes {
+        if scratch.nodes.len() >= MAX_LAYOUT_NODES {
+            break;
+        }
+        cursor = layout_node(
+            node,
+            padding,
+            cursor,
+            inner,
+            0,
+            metrics,
+            prose,
+            &mut scratch,
+        );
+        cursor = cursor.saturating_add(gap);
+    }
+    let height = min(cursor - gap + padding, metrics.height - 2 * margin);
+
+    let caret = metrics.space(Space::Small);
+    let (x, y, side) = match overlay.kind {
+        OverlayKind::Modal => (
+            (metrics.width - width) / 2,
+            (metrics.height - height) / 2,
+            None,
+        ),
+        OverlayKind::Popover { anchor } => {
+            let target = layout
+                .nodes
+                .iter()
+                .find(|node| node.kind.acts_on() == Some(anchor))
+                .map(|node| node.rect);
+            let Some(target) = target else {
+                // An anchor that is not on the screen is an application bug,
+                // and the least surprising thing to do with a popover that has
+                // nothing to point at is to centre it rather than to drop it:
+                // dropping it loses whatever it was going to say.
+                return layout_overlay(
+                    &Overlay {
+                        kind: OverlayKind::Modal,
+                        ..overlay.clone()
+                    },
+                    metrics,
+                    prose,
+                    layout,
+                );
+            };
+            // Below the anchor if it fits, above it otherwise. A popover that
+            // hangs off the bottom of the panel shows the reader its top edge
+            // and nothing else.
+            let below = target.y + target.height + caret;
+            let (y, side) = if below + height <= metrics.height - margin {
+                (below, Side::Up)
+            } else {
+                (max(margin, target.y - caret - height), Side::Down)
+            };
+            // Centred on the anchor, then pulled back inside the margins. The
+            // caret stays with the anchor rather than with the box, which is
+            // what makes an edge-anchored popover still point at the right
+            // control.
+            let wanted = target.x + (target.width - width) / 2;
+            let x = wanted.clamp(margin, max(margin, metrics.width - margin - width));
+            (x, y, Some((side, target)))
+        }
+    };
+
+    // The scrim covers the panel and draws nothing. It exists so a tap that
+    // misses the overlay is reported as a miss rather than reaching the screen
+    // underneath, which would let a reader press a control they cannot see.
+    layout.nodes.push(LayoutNode {
+        id: overlay.id,
+        rect: Rect {
+            x: 0,
+            y: 0,
+            width: metrics.width,
+            height: metrics.height,
+        },
+        kind: LayoutKind::Scrim {
+            dismisses: overlay.dismissed_by_a_miss(),
+        },
+        text_lines: Vec::new(),
+    });
+    layout.nodes.push(LayoutNode {
+        id: overlay.id,
+        rect: Rect {
+            x,
+            y,
+            width,
+            height,
+        },
+        kind: LayoutKind::Overlay,
+        text_lines: Vec::new(),
+    });
+    if let Some((side, target)) = side {
+        // Clamped so the caret cannot leave the box it belongs to, which is
+        // what happens when a popover is pushed back inside the margin and its
+        // anchor is right at the edge.
+        let centre = target.x + target.width / 2;
+        let caret_x = centre.clamp(x + padding, x + width - padding - caret);
+        let caret_y = if side == Side::Up {
+            y - caret
+        } else {
+            y + height
+        };
+        layout.nodes.push(LayoutNode {
+            id: overlay.id,
+            rect: Rect {
+                x: caret_x - caret / 2,
+                y: caret_y,
+                width: caret,
+                height: caret,
+            },
+            kind: LayoutKind::OverlayCaret(side),
+            text_lines: Vec::new(),
+        });
+    }
+    if !overlay.title.is_empty() {
+        layout.nodes.push(LayoutNode {
+            id: overlay.id,
+            rect: Rect {
+                x: x + padding,
+                y: y + padding,
+                width: inner,
+                height: title_height,
+            },
+            kind: LayoutKind::OverlayTitle,
+            text_lines: wrap_text_in(&overlay.title, inner, FontSize::Title, prose)
+                .into_iter()
+                .take(1)
+                .collect(),
+        });
+    }
+    // Moved into place wholesale. Anything that fell past the bottom is left
+    // out rather than drawn over the edge, which is the same rule the main
+    // flow follows.
+    let bottom = y + height - padding;
+    for mut node in scratch.nodes {
+        node.rect.x += x;
+        node.rect.y += y;
+        if node.rect.y + node.rect.height > bottom {
+            continue;
+        }
+        if layout.nodes.len() >= MAX_LAYOUT_NODES {
+            break;
+        }
+        layout.nodes.push(node);
     }
 }
 
@@ -1310,6 +1619,10 @@ pub enum Node {
         /// Whether this paragraph is what was said, or who said it.
         role: QuoteRole,
         text: String,
+        /// Set on a byline to make it a handle for showing and hiding the
+        /// replies underneath it. Ignored on a body: a paragraph is not a
+        /// thing that can be folded away, only the comment it belongs to is.
+        fold: Option<Fold>,
     },
     Button {
         id: NodeId,
@@ -1852,6 +2165,25 @@ const fn min_i32(a: i32, b: i32) -> i32 {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LayoutKind {
+    /// A byline that hides or shows what is underneath it. Carries the action
+    /// to send and whether it is currently folded shut.
+    QuoteFold(ActionId, bool),
+    /// The card an overlay is drawn on.
+    Overlay,
+    /// The title inside an overlay.
+    OverlayTitle,
+    /// The triangle joining a popover to the control that opened it. The value
+    /// is which way it points, which is decided by whether the popover ended
+    /// up below its anchor or above it.
+    OverlayCaret(Side),
+    /// Everything an overlay is not covering.
+    ///
+    /// Emitted so a tap that misses a popover can be told apart from a tap on
+    /// what is behind it. It draws nothing: the panel is not dimmed. `dismisses`
+    /// says whether missing means "put it away" or means nothing at all.
+    Scrim {
+        dismisses: bool,
+    },
     /// The strip above the top bar. Emitted only by the runtime.
     StatusBand,
     /// The time, at the leading edge of the band.
@@ -1910,6 +2242,28 @@ pub enum LayoutKind {
     /// One inverted cell. `text_lines` holds the single character underneath
     /// it, so the cursor can be repainted alone without the row it sits in.
     TerminalCursor,
+}
+
+impl LayoutKind {
+    /// The action this kind carries, for finding a control by name once it has
+    /// been laid out.
+    #[must_use]
+    pub const fn acts_on(&self) -> Option<ActionId> {
+        match *self {
+            Self::Button(action, _, _)
+            | Self::BarAction(action)
+            | Self::NavDestination(action)
+            | Self::NavDestinationSelected(action)
+            | Self::Tile(action)
+            | Self::Row(action)
+            | Self::Cell(action)
+            | Self::ChoiceOption(action, _)
+            | Self::ChoiceFreeform(action)
+            | Self::QuoteFold(action, _) => Some(action),
+            Self::Back => Some(ActionId::BACK),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2117,31 +2471,56 @@ impl Layout {
     }
 
     fn hit_control(&self, x: i32, y: i32) -> Option<ActionId> {
-        self.nodes.iter().rev().find_map(|node| match node.kind {
-            LayoutKind::Button(action, ControlState::Enabled, _)
-            | LayoutKind::BarAction(action)
-            | LayoutKind::NavDestination(action)
-            | LayoutKind::NavDestinationSelected(action)
-            | LayoutKind::Tile(action)
-            | LayoutKind::Row(action)
-            | LayoutKind::Cell(action)
-            | LayoutKind::ChoiceOption(action, _)
-            | LayoutKind::ChoiceFreeform(action)
-                if node.rect.contains(x, y) =>
-            {
-                Some(action)
+        // Backwards, because later nodes are drawn on top of earlier ones and
+        // what is on top is what the finger touched.
+        for node in self.nodes.iter().rev() {
+            if !node.rect.contains(x, y) {
+                continue;
             }
-            LayoutKind::Back if node.rect.contains(x, y) => Some(ActionId::BACK),
-            _ => None,
-        })
+            let action = match node.kind {
+                LayoutKind::Button(action, ControlState::Enabled, _)
+                | LayoutKind::BarAction(action)
+                | LayoutKind::NavDestination(action)
+                | LayoutKind::NavDestinationSelected(action)
+                | LayoutKind::Tile(action)
+                | LayoutKind::Row(action)
+                | LayoutKind::Cell(action)
+                | LayoutKind::ChoiceOption(action, _)
+                | LayoutKind::ChoiceFreeform(action)
+                | LayoutKind::QuoteFold(action, _) => action,
+                LayoutKind::Back => ActionId::BACK,
+                // The scrim ends the search. Everything past it is underneath
+                // an overlay, and a control the reader cannot see is a control
+                // they cannot have meant to press. A popover treats the miss
+                // as "put it away", which is what Back already means to an
+                // application that owns its own history.
+                LayoutKind::Scrim { dismisses } => {
+                    return dismisses.then_some(ActionId::BACK);
+                }
+                _ => continue,
+            };
+            return Some(action);
+        }
+        None
     }
 
     /// Whether the tap landed on a control that exists but cannot act.
     fn hit_inert_control(&self, x: i32, y: i32) -> bool {
-        self.nodes.iter().rev().any(|node| {
-            matches!(node.kind, LayoutKind::Button(_, ControlState::Disabled, _))
-                && node.rect.contains(x, y)
-        })
+        for node in self.nodes.iter().rev() {
+            if !node.rect.contains(x, y) {
+                continue;
+            }
+            // A modal's scrim swallows the tap rather than letting it become a
+            // page turn underneath, on the same reasoning as a disabled
+            // control: what the reader touched was not the page.
+            if matches!(
+                node.kind,
+                LayoutKind::Button(_, ControlState::Disabled, _) | LayoutKind::Scrim { .. }
+            ) {
+                return true;
+            }
+        }
+        false
     }
 
     /// The smallest rectangle covering every node, for a targeted refresh.
@@ -2364,11 +2743,21 @@ fn layout_node(
             depth,
             role,
             text,
+            fold,
         } => {
             let depth = (*depth).min(MAX_QUOTE_DEPTH);
-            let (offset, text_width) = quote_offsets(metrics, width, depth);
+            let (offset, full_width) = quote_offsets(metrics, width, depth);
             let text_x = x.saturating_add(offset);
             let size = role.size();
+            // Only a byline folds, and only a byline gives up room for the
+            // mark. A body that shortened its measure to leave space for a
+            // control it does not have would ragged the whole comment.
+            let fold = match role {
+                QuoteRole::Byline => *fold,
+                QuoteRole::Body => None,
+            };
+            let mark = fold.map_or(0, |_| fold_mark_width(metrics));
+            let text_width = max(1, full_width - mark);
             let lines = wrap_text_in(text, text_width, size, prose);
             // A byline is one short line and is allowed to be shorter than a
             // finger: it is not a control, and forcing it to the minimum text
@@ -2377,19 +2766,51 @@ fn layout_node(
             let measured = lines.len() as i32 * size.line_height_in(prose);
             let height = match role {
                 QuoteRole::Body => max(MIN_TEXT_HEIGHT, measured),
-                QuoteRole::Byline => measured,
+                QuoteRole::Byline => byline_height(measured, metrics),
             };
             layout.nodes.push(LayoutNode {
                 id: *id,
                 rect: Rect {
                     x: text_x,
                     y,
-                    width: text_width,
+                    // The whole column, even when the words were fitted to
+                    // less of it. The band a byline is drawn on has to reach
+                    // the fold mark at the far edge, or the mark floats on
+                    // bare paper next to a grey strip and reads as belonging
+                    // to neither. The lines were already wrapped, so a wider
+                    // rectangle moves nothing.
+                    width: full_width,
                     height,
                 },
                 kind: LayoutKind::Quote(depth, *role),
                 text_lines: lines,
             });
+            if let Some(fold) = fold {
+                // The whole strip, not just the mark. A ten-point plus sign is
+                // not something a finger can be asked to find on a panel this
+                // size, and the byline is already a band the reader can see.
+                // Pushed after the quote so it is drawn over the tint and hit
+                // before it.
+                layout.nodes.push(LayoutNode {
+                    id: *id,
+                    rect: Rect {
+                        x: text_x,
+                        y,
+                        width: full_width,
+                        height,
+                    },
+                    kind: LayoutKind::QuoteFold(fold.action, fold.collapsed),
+                    // A bare figure beside the plus, not "12 replies": the
+                    // words would be four times as wide as the number and
+                    // would have to be taken out of the byline, and "+12"
+                    // beside a fold is not something a reader has to be told.
+                    text_lines: if fold.collapsed && fold.hidden > 0 {
+                        vec![fold.hidden.to_string()]
+                    } else {
+                        Vec::new()
+                    },
+                });
+            }
             y.saturating_add(height)
         }
         Node::Button {
@@ -3476,6 +3897,38 @@ pub fn paginate_quoted(
     metrics: &DisplayMetrics,
     area: ProseArea,
 ) -> Vec<Vec<(u8, QuoteRole, String)>> {
+    let tagged: Vec<_> = paragraphs
+        .iter()
+        .map(|(depth, role, text)| (0u32, *depth, *role, *text))
+        .collect();
+    paginate_tagged(&tagged, metrics, area)
+        .into_iter()
+        .map(|page| {
+            page.into_iter()
+                .map(|(_, depth, role, text)| (depth, role, text))
+                .collect()
+        })
+        .collect()
+}
+
+/// The same, with a number of the application's choosing carried alongside
+/// every paragraph and handed back on every piece it ends up in.
+///
+/// # Why this exists
+///
+/// A paragraph does not survive pagination intact: a long one is split across
+/// two pages, and a byline is repeated at the top of a continuation. So an
+/// application cannot find its way back from a paragraph on a page to the
+/// thing the paragraph came from by counting, and matching on the text is
+/// wrong the moment two people write the same sentence. Anything that has to
+/// act on what was tapped -- folding a comment away, for instance -- needs the
+/// paginator to carry the identity rather than to reconstruct it afterwards.
+#[must_use]
+pub fn paginate_tagged(
+    paragraphs: &[(u32, u8, QuoteRole, &str)],
+    metrics: &DisplayMetrics,
+    area: ProseArea,
+) -> Vec<Vec<(u32, u8, QuoteRole, String)>> {
     let mut pages: Vec<Page> = Vec::new();
     let mut page: Page = Vec::new();
     let mut used = 0;
@@ -3487,9 +3940,10 @@ pub fn paginate_quoted(
     // Who is speaking, carried across page breaks. A comment is a byline
     // followed by its paragraphs, so the last byline seen is the author of
     // everything until the next one.
-    let mut speaker: Option<(u8, String)> = None;
+    let mut speaker: Option<(u32, u8, String)> = None;
 
-    for (depth, role, paragraph) in paragraphs {
+    for (tag, depth, role, paragraph) in paragraphs {
+        let tag = *tag;
         let depth = (*depth).min(MAX_QUOTE_DEPTH);
         let role = *role;
         let size = role.size();
@@ -3504,7 +3958,7 @@ pub fn paginate_quoted(
             continue;
         }
         if role == QuoteRole::Byline {
-            speaker = Some((depth, paragraph.to_owned()));
+            speaker = Some((tag, depth, paragraph.to_owned()));
         }
         let mut lines = wrap_text_in(paragraph, width, size, area.face);
         while !lines.is_empty() {
@@ -3514,7 +3968,7 @@ pub fn paginate_quoted(
             if fits == 0 {
                 // Nothing more will fit, so start a page rather than draw off
                 // the bottom of the panel.
-                used = turn_page(&mut pages, &mut page, speaker.as_ref(), role, area);
+                used = turn_page(&mut pages, &mut page, speaker.as_ref(), role, metrics, area);
                 continue;
             }
             if fits >= lines.len() {
@@ -3525,9 +3979,9 @@ pub fn paginate_quoted(
                 used += spacing
                     + match role {
                         QuoteRole::Body => max_i32(MIN_TEXT_HEIGHT, measured),
-                        QuoteRole::Byline => measured,
+                        QuoteRole::Byline => byline_height(measured, metrics),
                     };
-                page.push((depth, role, lines.join(" ")));
+                page.push((tag, depth, role, lines.join(" ")));
                 break;
             }
             // The paragraph does not fit in what is left. Splitting it at a
@@ -3549,11 +4003,11 @@ pub fn paginate_quoted(
             let keep = if page.is_empty() { keep.max(1) } else { keep };
             if keep >= MIN_KEEP_LINES || (page.is_empty() && keep > 0) {
                 let rest = lines.split_off(keep);
-                page.push((depth, role, lines.join(" ")));
-                used = turn_page(&mut pages, &mut page, speaker.as_ref(), role, area);
+                page.push((tag, depth, role, lines.join(" ")));
+                used = turn_page(&mut pages, &mut page, speaker.as_ref(), role, metrics, area);
                 lines = rest;
             } else {
-                used = turn_page(&mut pages, &mut page, speaker.as_ref(), role, area);
+                used = turn_page(&mut pages, &mut page, speaker.as_ref(), role, metrics, area);
             }
         }
     }
@@ -3563,8 +4017,9 @@ pub fn paginate_quoted(
     pages
 }
 
-/// One page of threaded prose: depth, what the paragraph is for, and the words.
-type Page = Vec<(u8, QuoteRole, String)>;
+/// One page of threaded prose: the application's tag, depth, what the
+/// paragraph is for, and the words.
+type Page = Vec<(u32, u8, QuoteRole, String)>;
 
 /// Closes the current page and opens the next, naming the speaker again.
 ///
@@ -3580,23 +4035,29 @@ type Page = Vec<(u8, QuoteRole, String)>;
 fn turn_page(
     pages: &mut Vec<Page>,
     page: &mut Page,
-    speaker: Option<&(u8, String)>,
+    speaker: Option<&(u32, u8, String)>,
     role: QuoteRole,
+    metrics: &DisplayMetrics,
     area: ProseArea,
 ) -> i32 {
     pages.push(std::mem::take(page));
-    let Some((depth, byline)) = speaker else {
+    let Some((tag, depth, byline)) = speaker else {
         return 0;
     };
     if role != QuoteRole::Body {
         return 0;
     }
     let size = QuoteRole::Byline.size();
-    let height = size.line_height_in(area.face);
+    let height = byline_height(size.line_height_in(area.face), metrics);
     if height > area.height {
         return 0;
     }
-    page.push((*depth, QuoteRole::Byline, format!("{byline} \u{2026}")));
+    page.push((
+        *tag,
+        *depth,
+        QuoteRole::Byline,
+        format!("{byline} \u{2026}"),
+    ));
     height
 }
 
@@ -4678,7 +5139,7 @@ fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
         {
             FontSize::Heading
         }
-        LayoutKind::TopBarTitle => FontSize::Title,
+        LayoutKind::TopBarTitle | LayoutKind::OverlayTitle => FontSize::Title,
         LayoutKind::Secondary
         | LayoutKind::RowSummary
         | LayoutKind::TileLabel
@@ -5041,6 +5502,90 @@ pub fn render_all(
             continue;
         }
         match node.kind {
+            // Nothing. Written out rather than left to the catch-all so that
+            // adding a dim later is a deliberate act and not an oversight: on
+            // this panel, shading the whole screen costs a full refresh in and
+            // a full refresh out.
+            LayoutKind::Scrim { .. } => {}
+            // Paper, not surface, and a heavy border. An overlay has to look
+            // like a separate sheet laid on the page, and the only two things
+            // available to say so without shading everything else are the
+            // brightest tone on the panel and a line thick enough to read as
+            // an edge.
+            LayoutKind::Overlay => {
+                fill_clipped(surface, node.rect, tone::PAPER, clip);
+                stroke_clipped(
+                    surface,
+                    node.rect,
+                    tone::INK,
+                    metrics.rule_thickness() * 2,
+                    clip,
+                );
+            }
+            // A plus or a minus at the trailing edge of the byline, and, when
+            // shut, how much is behind it. Two strokes and one stroke: nothing
+            // here needs a font, and a glyph at this size would be softer than
+            // the rules the comment is already drawn with.
+            LayoutKind::QuoteFold(_, collapsed) => {
+                // Twice the weight of a rule and most of a line tall. At half
+                // that it was a mark of about a millimetre and a half, which
+                // on the panel is a speck: too small to read as a plus and far
+                // too small to look like something worth pressing.
+                let thickness = metrics.rule_thickness() * 2;
+                let arm = FontSize::Caption.line_height();
+                let pad = metrics.space(Space::Tight);
+                let centre_x = node.rect.x + node.rect.width - pad - arm / 2;
+                let centre_y = node.rect.y + node.rect.height / 2;
+                fill_clipped(
+                    surface,
+                    Rect {
+                        x: centre_x - arm / 2,
+                        y: centre_y - thickness / 2,
+                        width: arm,
+                        height: max(1, thickness),
+                    },
+                    tone::INK,
+                    clip,
+                );
+                if collapsed {
+                    fill_clipped(
+                        surface,
+                        Rect {
+                            x: centre_x - thickness / 2,
+                            y: centre_y - arm / 2,
+                            width: max(1, thickness),
+                            height: arm,
+                        },
+                        tone::INK,
+                        clip,
+                    );
+                }
+                // Right up against the mark, so the two read as one label.
+                if let Some(count) = node.text_lines.first() {
+                    let (text_width, _) = measure_text(count, FontSize::Caption);
+                    draw_lines(
+                        surface,
+                        &node.text_lines,
+                        centre_x - arm / 2 - pad - text_width,
+                        node.rect.y + (node.rect.height - FontSize::Caption.line_height()) / 2,
+                        FontSize::Caption,
+                        tone::MUTED,
+                        clip,
+                    );
+                }
+            }
+            LayoutKind::OverlayCaret(side) => {
+                draw_caret(surface, node.rect, side, clip);
+            }
+            LayoutKind::OverlayTitle => draw_lines(
+                surface,
+                &node.text_lines,
+                node.rect.x,
+                node.rect.y,
+                FontSize::Title,
+                tone::INK,
+                clip,
+            ),
             LayoutKind::Card => {
                 fill_clipped(surface, node.rect, tone::SURFACE, clip);
                 stroke_clipped(
@@ -5192,11 +5737,31 @@ pub fn render_all(
                         clip,
                     );
                 }
+                // A byline sits on a tinted strip. Without it, "user 3 hours
+                // ago" is one more line of text in a column of lines of text,
+                // and on a page of nested replies the reader has to re-read
+                // the first line of every comment to work out whether it is
+                // the comment or the name of whoever wrote it. Tone alone did
+                // not do it: muted grey text at caption size reads as a quiet
+                // sentence, not as a label.
+                //
+                // The strip runs the width of the column and is inset only by
+                // the padding, so it also draws the left edge of the comment
+                // for the eye to run down.
+                let top = if role == QuoteRole::Byline {
+                    // Exactly the rectangle, because the height already
+                    // includes the air. Painting outside it would run into the
+                    // paragraph underneath.
+                    fill_clipped(surface, node.rect, tone::SURFACE, clip);
+                    metrics.space(Space::Tight)
+                } else {
+                    0
+                };
                 draw_lines(
                     surface,
                     &node.text_lines,
                     node.rect.x,
-                    node.rect.y,
+                    node.rect.y + top,
                     role.size(),
                     role.tone(),
                     clip,
@@ -5686,6 +6251,79 @@ fn blit_vector(surface: &mut Surface, shapes: &[vector::Shape], size: i32, rect:
             }
             surface.blend(x, y, tone::INK, alpha);
         }
+    }
+}
+
+/// How much of a byline is given over to the fold mark.
+///
+/// The mark itself, room for a four-figure count beside it, and the space
+/// around both. Fixed rather than measured so that folding and unfolding
+/// cannot change where the byline text wraps, which would make the line jump
+/// under the finger that just tapped it -- and so a long byline can never run
+/// underneath the count, because the count is never drawn outside the room
+/// that was taken from the byline to begin with.
+/// How tall a byline is: its line, plus a sixth of a line of air above and
+/// below.
+///
+/// # Why the air is part of the height
+///
+/// The paginator has to agree with the layout to the pixel. A tint drawn
+/// outside the measured rectangle would creep into the gap the paginator
+/// allowed for the paragraph underneath, and a byline measured short is a
+/// byline that lets one more line onto a page than will actually fit.
+///
+/// # Why it is a fraction and not a millimetre
+///
+/// A whole millimetre either side more than doubles a byline, and a byline as
+/// tall as the sentence it introduces has stopped being a label. A fraction of
+/// its own line keeps the proportion when the reader scales the text up, and
+/// keeps a byline shorter than a paragraph, which is the thing being claimed.
+fn byline_height(measured: i32, _metrics: &DisplayMetrics) -> i32 {
+    measured + 2 * (measured / 6)
+}
+
+fn fold_mark_width(metrics: &DisplayMetrics) -> i32 {
+    let (digits, _) = measure_text("8888", FontSize::Caption);
+    FontSize::Caption.line_height() + digits + 3 * metrics.space(Space::Tight)
+}
+
+/// Draws the triangle joining a popover to the control that opened it.
+///
+/// Rows rather than a polygon fill: the shape is a handful of pixels, and
+/// stepping the width per row is both exact and cheap.
+///
+/// Solid ink, and it does not try to punch a hole in the popover's border to
+/// merge with it. Drawn hollow, with paper where it meets the box, it read as
+/// a white notch bitten out of the edge -- and on a panel with no greys to
+/// hide a seam in, an outline that does not line up exactly is worse than no
+/// outline. A small filled triangle pointing at the control says the same
+/// thing and cannot be got wrong.
+fn draw_caret(surface: &mut Surface, rect: Rect, side: Side, clip: Rect) {
+    let height = rect.height.max(1);
+    let width = rect.width.max(1);
+    let centre = rect.x + width / 2;
+    for row in 0..height {
+        // A point at the end away from the box, the full width where it meets
+        // it, so the triangle grows out of the popover towards the control.
+        let along = match side {
+            Side::Up => height - 1 - row,
+            Side::Down => row,
+        };
+        let half = (width * (height - along) / (2 * height)).max(0);
+        if half == 0 {
+            continue;
+        }
+        fill_clipped(
+            surface,
+            Rect {
+                x: centre - half,
+                y: rect.y + row,
+                width: half * 2,
+                height: 1,
+            },
+            tone::INK,
+            clip,
+        );
     }
 }
 
@@ -7782,6 +8420,7 @@ mod prose_tests {
                 depth: *depth,
                 role: *role,
                 text: paragraph.clone(),
+                fold: None,
             })
             .collect();
         let screen = Screen::new(1, nodes)
@@ -7926,6 +8565,7 @@ mod prose_tests {
                 id: NodeId(depth + 1),
                 depth: depth as u8,
                 role: QuoteRole::Body,
+                fold: None,
                 text: "A reply, which answers the one above it.".to_owned(),
             })
             .collect();
@@ -8354,6 +8994,7 @@ mod prose_tests {
                     id: NodeId(1),
                     depth,
                     role: QuoteRole::Body,
+                    fold: None,
                     text: "A reply, which answers the one above it.".to_owned(),
                 }],
             );
@@ -8399,6 +9040,7 @@ mod prose_tests {
                 id: NodeId(1),
                 depth: 1,
                 role: QuoteRole::Body,
+                fold: None,
                 text: "patio11 2 hours ago".to_owned(),
             }],
         );
@@ -8408,6 +9050,7 @@ mod prose_tests {
                 id: NodeId(1),
                 depth: 1,
                 role: QuoteRole::Byline,
+                fold: None,
                 text: "patio11 2 hours ago".to_owned(),
             }],
         );
@@ -8857,6 +9500,379 @@ mod prose_tests {
             },
         );
         assert_eq!(surface.pixels[0], 127);
+    }
+
+    fn a_byline(fold: Option<Fold>) -> Screen {
+        Screen::new(
+            1,
+            vec![
+                Node::Quote {
+                    id: NodeId(1),
+                    depth: 0,
+                    role: QuoteRole::Byline,
+                    text: "someone 3 hours ago".to_owned(),
+                    fold,
+                },
+                Node::Quote {
+                    id: NodeId(2),
+                    depth: 0,
+                    role: QuoteRole::Body,
+                    text: "What they said.".to_owned(),
+                    fold: None,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn a_byline_is_set_on_a_tint_and_the_words_underneath_it_are_not() {
+        // Muted caption text alone was not enough to tell a name apart from a
+        // sentence, so the byline gets a band. The band has to stop at the
+        // byline: a comment drawn entirely on a tint is a card, and a page of
+        // cards is a page with no white space in it.
+        let screen = a_byline(None);
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        let (surface, stride) = paint(&screen);
+        let byline = layout
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::Quote(_, QuoteRole::Byline)))
+            .expect("a byline");
+        let body = layout
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::Quote(_, QuoteRole::Body)))
+            .expect("a body");
+        assert!(
+            tone_count(&surface, byline.rect, tone::SURFACE, stride) > 0,
+            "the byline was drawn on bare paper, so it still reads as a sentence"
+        );
+        assert_eq!(
+            tone_count(&surface, body.rect, tone::SURFACE, stride),
+            0,
+            "the tint ran on past the byline and under the comment"
+        );
+    }
+
+    #[test]
+    fn a_fold_does_not_move_the_words_when_it_opens_and_shuts() {
+        // The mark and its count are drawn in room taken out of the byline up
+        // front. Sizing that room to the state would re-wrap the line under
+        // the finger that just tapped it, which on a panel that takes half a
+        // second to repaint reads as the text running away.
+        let shut = a_byline(Some(Fold {
+            action: ActionId(7),
+            collapsed: true,
+            hidden: 12,
+        }));
+        let open = a_byline(Some(Fold {
+            action: ActionId(7),
+            collapsed: false,
+            hidden: 12,
+        }));
+        let lines = |screen: &Screen| {
+            screen
+                .layout_with(&CLARA_BW_METRICS, &Chrome::default())
+                .nodes
+                .iter()
+                .find(|node| matches!(node.kind, LayoutKind::Quote(_, QuoteRole::Byline)))
+                .expect("a byline")
+                .text_lines
+                .clone()
+        };
+        assert_eq!(
+            lines(&shut),
+            lines(&open),
+            "the byline was wrapped differently open and shut"
+        );
+
+        // The rectangle is the whole column either way, because that is the
+        // band the byline is drawn on. What the mark takes is taken out of the
+        // words, so the claim has to be made about the words: a byline long
+        // enough to fill the column has to break earlier once it is foldable,
+        // or the mark is drawn over the end of it.
+        let long = "somebodywithaverylongname and then a great deal more of a byline than \
+                    anybody would ever write, long enough to fill the column twice over";
+        let wrapped = |fold| {
+            let mut screen = a_byline(fold);
+            let Node::Quote { text, .. } = &mut screen.nodes[0] else {
+                unreachable!("the first node is the byline")
+            };
+            *text = long.to_owned();
+            screen
+                .layout_with(&CLARA_BW_METRICS, &Chrome::default())
+                .nodes
+                .iter()
+                .find(|node| matches!(node.kind, LayoutKind::Quote(_, QuoteRole::Byline)))
+                .expect("a byline")
+                .text_lines[0]
+                .clone()
+        };
+        let foldable = wrapped(Some(Fold {
+            action: ActionId(7),
+            collapsed: false,
+            hidden: 3,
+        }));
+        assert!(
+            foldable.len() < wrapped(None).len(),
+            "a foldable byline used the full column, so the mark is drawn over its words"
+        );
+    }
+
+    #[test]
+    fn the_whole_byline_is_the_handle_not_just_the_mark() {
+        // A plus sign is about three millimetres across. Asking a finger to
+        // find it is asking for a miss, and a miss on a thread turns the page.
+        let screen = a_byline(Some(Fold {
+            action: ActionId(7),
+            collapsed: false,
+            hidden: 3,
+        }));
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        let strip = layout
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::QuoteFold(..)))
+            .expect("a fold handle")
+            .rect;
+        assert_eq!(
+            layout.hit_test(strip.x + 2, strip.y + strip.height / 2),
+            Some(ActionId(7)),
+            "the leading edge of the byline did not fold it"
+        );
+        assert_eq!(
+            layout.hit_test(strip.x + strip.width - 2, strip.y + strip.height / 2),
+            Some(ActionId(7)),
+            "the trailing edge of the byline did not fold it"
+        );
+    }
+
+    #[test]
+    fn a_shut_fold_says_how_much_is_behind_it_and_an_open_one_does_not() {
+        let count = |collapsed| {
+            a_byline(Some(Fold {
+                action: ActionId(7),
+                collapsed,
+                hidden: 12,
+            }))
+            .layout_with(&CLARA_BW_METRICS, &Chrome::default())
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::QuoteFold(..)))
+            .expect("a fold handle")
+            .text_lines
+            .clone()
+        };
+        assert_eq!(count(true), vec!["12".to_owned()]);
+        assert!(
+            count(false).is_empty(),
+            "an open comment counted replies that are already on the page"
+        );
+    }
+
+    fn with_an_overlay(kind: OverlayKind) -> Screen {
+        Screen::new(
+            1,
+            vec![Node::Button {
+                id: NodeId(1),
+                action: ActionId(5),
+                label: "Underneath".to_owned(),
+                state: ControlState::Enabled,
+                emphasis: Emphasis::Normal,
+            }],
+        )
+        .with_overlay(Overlay {
+            id: NodeId(40),
+            kind,
+            title: "Delete this?".to_owned(),
+            nodes: vec![Node::Button {
+                id: NodeId(41),
+                action: ActionId(6),
+                label: "Delete".to_owned(),
+                state: ControlState::Enabled,
+                emphasis: Emphasis::Primary,
+            }],
+        })
+    }
+
+    #[test]
+    fn an_overlay_leaves_the_screen_it_covers_alone() {
+        // Dimming the backdrop is the usual way to focus attention on a
+        // dialogue and the one thing this panel cannot afford: shading every
+        // pixel forces a full refresh to put it up and a second one to take it
+        // down. The overlay has to earn its separation with a border instead.
+        let screen = with_an_overlay(OverlayKind::Modal);
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        let card = layout
+            .nodes
+            .iter()
+            .find(|node| node.kind == LayoutKind::Overlay)
+            .expect("an overlay")
+            .rect;
+        let (covered, stride) = paint(&screen);
+        let mut bare = screen.clone();
+        bare.overlay = None;
+        let (bare, _) = paint(&bare);
+        // Everything above the card, pixel for pixel. Not "all paper": the
+        // button underneath is drawn up there and has to still be drawn,
+        // which is the whole claim.
+        let above = card.y.max(1) as usize * stride;
+        assert_eq!(
+            covered.pixels[..above],
+            bare.pixels[..above],
+            "the screen under the overlay was altered, so putting the overlay up and \
+             taking it down each cost a full refresh"
+        );
+    }
+
+    #[test]
+    fn a_tap_beside_a_modal_answers_nothing() {
+        // "Somewhere else" is not one of the choices, and a reader who brushes
+        // the panel has not agreed to delete anything.
+        let screen = with_an_overlay(OverlayKind::Modal);
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        assert_eq!(
+            layout.hit_test(2, CLARA_BW_METRICS.height - 2),
+            None,
+            "a tap outside a modal reached a control the reader could not see"
+        );
+    }
+
+    #[test]
+    fn a_tap_beside_a_popover_puts_it_away() {
+        let screen = Screen::new(
+            1,
+            vec![Node::Button {
+                id: NodeId(1),
+                action: ActionId(5),
+                label: "More".to_owned(),
+                state: ControlState::Enabled,
+                emphasis: Emphasis::Normal,
+            }],
+        )
+        .with_overlay(Overlay::popover(
+            NodeId(40),
+            ActionId(5),
+            vec![Node::Button {
+                id: NodeId(41),
+                action: ActionId(6),
+                label: "Share".to_owned(),
+                state: ControlState::Enabled,
+                emphasis: Emphasis::Normal,
+            }],
+        ));
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        assert_eq!(
+            layout.hit_test(2, CLARA_BW_METRICS.height - 2),
+            Some(ActionId::BACK),
+            "a tap outside a popover did not dismiss it"
+        );
+    }
+
+    #[test]
+    fn a_popover_points_at_the_control_that_opened_it() {
+        let screen = Screen::new(
+            1,
+            vec![Node::Button {
+                id: NodeId(1),
+                action: ActionId(5),
+                label: "More".to_owned(),
+                state: ControlState::Enabled,
+                emphasis: Emphasis::Normal,
+            }],
+        )
+        .with_overlay(Overlay::popover(
+            NodeId(40),
+            ActionId(5),
+            vec![Node::Button {
+                id: NodeId(41),
+                action: ActionId(6),
+                label: "Share".to_owned(),
+                state: ControlState::Enabled,
+                emphasis: Emphasis::Normal,
+            }],
+        ));
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        let anchor = layout
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::Button(ActionId(5), _, _)))
+            .expect("the anchor")
+            .rect;
+        let caret = layout
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::OverlayCaret(_)))
+            .expect("a caret")
+            .rect;
+        let centre = caret.x + caret.width / 2;
+        assert!(
+            centre >= anchor.x && centre <= anchor.x + anchor.width,
+            "the caret pointed at {centre}, which is not anywhere on the control at \
+             {}..{}",
+            anchor.x,
+            anchor.x + anchor.width
+        );
+    }
+
+    #[test]
+    fn an_overlay_with_nothing_to_point_at_is_still_shown() {
+        // Naming an anchor that is not on the screen is an application bug.
+        // Dropping the overlay loses whatever it was going to ask, which is a
+        // worse answer than centring it.
+        let screen = Screen::new(1, vec![])
+            .with_overlay(Overlay::popover(NodeId(40), ActionId(999), vec![]))
+            .with_overlay(Overlay::popover(
+                NodeId(40),
+                ActionId(999),
+                vec![Node::Text {
+                    id: NodeId(41),
+                    text: "Something".to_owned(),
+                }],
+            ));
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        assert!(
+            layout
+                .nodes
+                .iter()
+                .any(|node| node.kind == LayoutKind::Overlay),
+            "an overlay with a missing anchor was dropped"
+        );
+        assert!(
+            !layout
+                .nodes
+                .iter()
+                .any(|node| matches!(node.kind, LayoutKind::OverlayCaret(_))),
+            "a caret was drawn pointing at nothing"
+        );
+    }
+
+    #[test]
+    fn an_overlay_takes_the_page_turns_away() {
+        // The zones are whatever is left of the content area, and what is left
+        // must not include the thing drawn on top of it: a reader answering a
+        // question would otherwise turn the page underneath instead.
+        let screen = Screen::new(
+            1,
+            vec![Node::Text {
+                id: NodeId(1),
+                text: "A page of a book.".to_owned(),
+            }],
+        )
+        .with_page_turns(ActionId(2), ActionId(3))
+        .with_overlay(Overlay::modal(
+            NodeId(40),
+            "Leave?",
+            vec![Node::Button {
+                id: NodeId(41),
+                action: ActionId(6),
+                label: "Leave".to_owned(),
+                state: ControlState::Enabled,
+                emphasis: Emphasis::Primary,
+            }],
+        ));
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        assert_eq!(layout.hit_page_turn(4, CLARA_BW_METRICS.height / 2), None);
     }
 }
 

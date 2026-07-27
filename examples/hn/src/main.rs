@@ -36,6 +36,7 @@ use kobo_sdk::{
     TaskError, TaskId, TaskOutcome,
 };
 use model::{Comment, Story};
+use std::collections::HashSet;
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -238,8 +239,12 @@ struct Hn {
     /// The open story, as an index into `stories`.
     open: Option<usize>,
     comments: Vec<Comment>,
-    /// The thread broken into pages of paragraphs that fit this panel.
-    thread_pages: Vec<Vec<(u8, QuoteRole, String)>>,
+    /// The thread broken into pages of paragraphs that fit this panel. Each
+    /// paragraph carries the comment it came from, one-based, so a byline on a
+    /// page can be folded without having to be found again.
+    thread_pages: Vec<Vec<(u32, u8, QuoteRole, String)>>,
+    /// Which comments are folded shut, by index into `comments`.
+    collapsed: HashSet<usize>,
     /// Each story's title cut to the one line a row can show, measured against
     /// this panel rather than guessed at by character count.
     titles: Vec<String>,
@@ -371,13 +376,40 @@ impl Hn {
                 .nav_bar(None, THREAD_BAR)
                 .build();
         }
-        for (depth, role, paragraph) in self
+        // A byline is only made foldable once, on the page where its comment
+        // begins. The copy repeated at the top of a continuation is a
+        // reminder of who is speaking, and hanging a control off it would put
+        // two plus signs for the same comment in front of the reader.
+        let mut folded_here: Option<u32> = None;
+        for (tag, depth, role, paragraph) in self
             .thread_pages
             .get(self.thread_page)
             .into_iter()
             .flatten()
         {
-            screen = screen.quote_as(*depth, *role, paragraph.clone());
+            let index = (*tag as usize).checked_sub(1);
+            match (*role, index) {
+                (QuoteRole::Byline, Some(index)) if folded_here != Some(*tag) => {
+                    folded_here = Some(*tag);
+                    let collapsed = self.collapsed.contains(&index);
+                    let replies = self.replies_to(index);
+                    if replies == 0 && !collapsed {
+                        // Nothing to fold away. A control that does nothing is
+                        // worse than no control: the reader taps it and the
+                        // page redraws identically.
+                        screen = screen.quote_as(*depth, *role, paragraph.clone());
+                    } else {
+                        screen = screen.folding_byline(
+                            *depth,
+                            paragraph.clone(),
+                            format!("fold-{index}"),
+                            collapsed,
+                            u16::try_from(replies).unwrap_or(u16::MAX),
+                        );
+                    }
+                }
+                _ => screen = screen.quote_as(*depth, *role, paragraph.clone()),
+            }
         }
         if let Some(problem) = &self.problem {
             screen = screen.banner(BannerLevel::Attention, problem.clone());
@@ -401,41 +433,74 @@ impl Hn {
     /// Depth travels with each paragraph because an indented paragraph has a
     /// narrower measure: a thread paginated flat and then drawn indented would
     /// lose the bottom of nearly every page.
-    fn thread_paragraphs(&self) -> Vec<(u8, QuoteRole, String)> {
+    fn thread_paragraphs(&self) -> Vec<(u32, u8, QuoteRole, String)> {
         let Some(story) = self.open.and_then(|index| self.stories.get(index)) else {
             return Vec::new();
         };
         let mut paragraphs = vec![
-            (0, QuoteRole::Body, story.title.clone()),
+            (0, 0, QuoteRole::Body, story.title.clone()),
             // Domain, points, comment count and age are metadata about the
             // story in exactly the way a comment's byline is metadata about
             // the comment, and they were being set as though they were the
             // story's opening sentence.
-            (0, QuoteRole::Byline, model::summary(story, self.now)),
+            (0, 0, QuoteRole::Byline, model::summary(story, self.now)),
         ];
         if let Some(note) = &self.note {
             // Inside the flow, not in a banner. A banner is chrome the
             // paginator never measured, so it would push the last paragraph of
             // every page off the panel.
-            paragraphs.push((0, QuoteRole::Body, note.clone()));
+            paragraphs.push((0, 0, QuoteRole::Body, note.clone()));
         }
         if let Some(body) = &story.text {
-            paragraphs.push((0, QuoteRole::Body, body.clone()));
+            paragraphs.push((0, 0, QuoteRole::Body, body.clone()));
         }
         if self.comments.is_empty() {
-            paragraphs.push((0, QuoteRole::Body, "No comments yet.".to_owned()));
+            paragraphs.push((0, 0, QuoteRole::Body, "No comments yet.".to_owned()));
             return paragraphs;
         }
-        for comment in &self.comments {
+        let mut index = 0;
+        while index < self.comments.len() {
+            let comment = &self.comments[index];
             let indent = comment.indent();
-            paragraphs.push((indent, QuoteRole::Byline, comment.byline(self.now)));
+            // One-based, because zero is the tag everything that is not a
+            // comment carries. A thread this long cannot be fetched -- the
+            // ceiling is `model::MAX_COMMENTS` -- so the conversion cannot
+            // narrow, and saturating is still better than wrapping onto
+            // somebody else's comment.
+            let tag = u32::try_from(index + 1).unwrap_or(u32::MAX);
+            paragraphs.push((tag, indent, QuoteRole::Byline, comment.byline(self.now)));
+            if self.collapsed.contains(&index) {
+                // The comment's own words go too. Folding a comment that left
+                // its text on the page would only hide the replies, and the
+                // reader who tapped it was hiding the whole thing.
+                index += self.replies_to(index) + 1;
+                continue;
+            }
             for body in comment.body.split("\n\n") {
                 if !body.trim().is_empty() {
-                    paragraphs.push((indent, QuoteRole::Body, body.to_owned()));
+                    paragraphs.push((tag, indent, QuoteRole::Body, body.to_owned()));
                 }
             }
+            index += 1;
         }
         paragraphs
+    }
+
+    /// How many comments are underneath the one at `index`.
+    ///
+    /// The list is in pre-order, so a comment's replies are exactly the run
+    /// that follows it while the depth stays greater than its own. Counted on
+    /// the real `depth` rather than on `indent`, which is clamped: past the
+    /// indent cap every reply is drawn at the same offset, and counting on
+    /// that would fold a comment's siblings away with it.
+    fn replies_to(&self, index: usize) -> usize {
+        let Some(parent) = self.comments.get(index) else {
+            return 0;
+        };
+        self.comments[index + 1..]
+            .iter()
+            .take_while(|comment| comment.depth > parent.depth)
+            .count()
     }
 
     /// Drops whatever is already on its way.
@@ -534,6 +599,10 @@ impl Hn {
         // left in place would be drawn under the new title for the second it
         // takes the request to come back.
         self.comments.clear();
+        // Folds are positions in the list that is being thrown away. Left
+        // behind, they would shut whichever comments of the new story happened
+        // to land on the same indices.
+        self.collapsed.clear();
         self.thread_pages.clear();
         self.thread_page = 0;
         self.flat = false;
@@ -689,13 +758,38 @@ impl Hn {
         self.repaginate_thread(context);
     }
 
+    /// Hides or shows the replies under the comment at `index`.
+    ///
+    /// The reader is kept where they tapped. Folding a long subtree away
+    /// shortens the thread by pages, so holding the page *number* would leave
+    /// them somewhere they never asked to be -- often past the end. Holding
+    /// the *comment* instead means the byline they just touched is still under
+    /// their finger, with whatever follows it now pulled up into view, which
+    /// is the whole point of folding it.
+    fn fold(&mut self, context: &mut Context, index: usize) {
+        if !self.collapsed.remove(&index) {
+            self.collapsed.insert(index);
+        }
+        self.repaginate_thread(context);
+        let tag = u32::try_from(index + 1).unwrap_or(u32::MAX);
+        if let Some(page) = self
+            .thread_pages
+            .iter()
+            .position(|page| page.iter().any(|(carried, ..)| *carried == tag))
+        {
+            self.thread_page = page;
+        }
+        self.problem = None;
+        self.show(context);
+    }
+
     fn repaginate_thread(&mut self, context: &Context) {
         let paragraphs = self.thread_paragraphs();
         let borrowed = paragraphs
             .iter()
-            .map(|(depth, role, text)| (*depth, *role, text.as_str()))
+            .map(|(tag, depth, role, text)| (*tag, *depth, *role, text.as_str()))
             .collect::<Vec<_>>();
-        self.thread_pages = context.paginate_quoted(&borrowed, true);
+        self.thread_pages = context.paginate_tagged(&borrowed, true);
         self.thread_page = self
             .thread_page
             .min(self.thread_pages.len().saturating_sub(1));
@@ -782,6 +876,12 @@ impl KoboApp for Hn {
             self.turn_list(action == action_id("list-next"));
             self.show(context);
             return;
+        }
+        for index in 0..self.comments.len() {
+            if action == action_id(&format!("fold-{index}")) {
+                self.fold(context, index);
+                return;
+            }
         }
         if action == action_id("thread-next") {
             self.turn_thread(context);
@@ -1359,7 +1459,7 @@ mod tests {
         assert!(
             application.thread_pages[0]
                 .iter()
-                .any(|(_, _, paragraph)| paragraph.contains("flat")),
+                .any(|(_, _, _, paragraph)| paragraph.contains("flat")),
             "the note was not on the first page"
         );
     }
@@ -1482,5 +1582,121 @@ mod tests {
         assert_eq!(application.thread_page, 0);
         assert!(!application.flat);
         assert_eq!(application.note, None);
+    }
+    fn a_thread_of(depths: &[u16]) -> Hn {
+        Hn {
+            stories: vec![model::Story {
+                id: "1".to_owned(),
+                title: "A story".to_owned(),
+                author: "someone".to_owned(),
+                points: 10,
+                comments: u32::try_from(depths.len()).unwrap_or(u32::MAX),
+                created: 0,
+                text: None,
+                site: None,
+            }],
+            open: Some(0),
+            comments: depths
+                .iter()
+                .enumerate()
+                .map(|(index, depth)| model::Comment {
+                    author: format!("author{index}"),
+                    created: 0,
+                    depth: *depth,
+                    body: format!("Comment number {index}."),
+                })
+                .collect(),
+            ..Hn::default()
+        }
+    }
+
+    #[test]
+    fn folding_a_comment_takes_its_replies_and_not_its_siblings() {
+        // The list is pre-order, so a comment's replies are the run after it
+        // while the depth stays greater. Counting on the drawn indent instead
+        // would be wrong past the indent cap, where every level looks alike.
+        let application = a_thread_of(&[0, 1, 2, 1, 0]);
+        assert_eq!(application.replies_to(0), 3, "the first comment's subtree");
+        assert_eq!(application.replies_to(1), 1);
+        assert_eq!(application.replies_to(3), 0);
+        assert_eq!(application.replies_to(4), 0, "the last comment has none");
+
+        // Past the indent cap every level is drawn at the same offset. A
+        // subtree measured on what is drawn rather than on what is true would
+        // swallow the sibling at 4 along with the reply at 5.
+        let capped = u16::from(model::MAX_INDENT);
+        let deep = a_thread_of(&[capped, capped + 1, capped, capped + 1]);
+        assert_eq!(
+            deep.replies_to(0),
+            1,
+            "a comment past the indent cap took its own sibling with it"
+        );
+        assert_eq!(deep.replies_to(2), 1);
+    }
+
+    #[test]
+    fn a_folded_comment_takes_its_own_words_with_it() {
+        // Hiding only the replies would leave the comment's text on the page,
+        // and a reader who folded it away was folding the whole thing away.
+        let mut application = a_thread_of(&[0, 1, 2, 0]);
+        let open = application.thread_paragraphs();
+        application.collapsed.insert(0);
+        let shut = application.thread_paragraphs();
+        let bodies = |paragraphs: &[(u32, u8, kobo_sdk::QuoteRole, String)]| {
+            paragraphs
+                .iter()
+                .filter(|(_, _, role, _)| *role == kobo_sdk::QuoteRole::Body)
+                .map(|(_, _, _, text)| text.clone())
+                .collect::<Vec<_>>()
+        };
+        assert!(bodies(&open).iter().any(|text| text.contains("number 0")));
+        assert!(
+            !bodies(&shut).iter().any(|text| text.contains("number 0")),
+            "the folded comment's own words stayed on the page"
+        );
+        for hidden in ["number 1", "number 2"] {
+            assert!(
+                !bodies(&shut).iter().any(|text| text.contains(hidden)),
+                "{hidden} was a reply to the folded comment and should have gone with it"
+            );
+        }
+        assert!(
+            bodies(&shut).iter().any(|text| text.contains("number 3")),
+            "a sibling of the folded comment was folded away too"
+        );
+    }
+
+    #[test]
+    fn a_folded_byline_stays_on_the_page_so_it_can_be_opened_again() {
+        // A fold that removed its own handle would be a comment the reader
+        // could hide and then never get back.
+        let mut application = a_thread_of(&[0, 1, 0]);
+        application.collapsed.insert(0);
+        let paragraphs = application.thread_paragraphs();
+        assert!(
+            paragraphs
+                .iter()
+                .any(|(_, _, role, text)| *role == kobo_sdk::QuoteRole::Byline
+                    && text.contains("author0")),
+            "the folded comment's byline went with it"
+        );
+    }
+
+    #[test]
+    fn the_tag_leads_back_to_the_comment_a_paragraph_came_from() {
+        // What makes the fold work at all: pagination splits paragraphs and
+        // repeats bylines, so counting is not a way back and the identity has
+        // to be carried.
+        let application = a_thread_of(&[0, 1, 0]);
+        let paragraphs = application.thread_paragraphs();
+        for (tag, _, _, text) in &paragraphs {
+            if let Some(index) = (*tag as usize).checked_sub(1) {
+                let author = &application.comments[index].author;
+                assert!(
+                    text.contains(author) || text.contains(&format!("number {index}")),
+                    "{text:?} carried tag {tag}, which is {author}'s"
+                );
+            }
+        }
     }
 }

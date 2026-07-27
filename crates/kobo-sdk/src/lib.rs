@@ -15,10 +15,11 @@ pub use kobo_protocol::{
 pub use kobo_ui::QuoteRole;
 pub use kobo_ui::{
     terminal_grid, terminal_grid_for, ActionId, BannerLevel, BarAction, BottomAction, Caret, Cell,
-    Chrome, ControlState, DiagnosticSeverity, DisplayMetrics, Emphasis, Freeform, Glyph,
-    LayoutIssue, LayoutIssueKind, NavBar, Node, NodeId, Percent, PictureHandle, ProseArea, Row,
-    RowLead, Screen, Space, Tile, TilePicture, TileShape, TopBar, MAX_CELLS, MAX_CHOICE_OPTIONS,
-    MAX_COLUMNS, MAX_QUOTE_DEPTH, MAX_ROWS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS,
+    Chrome, ControlState, DiagnosticSeverity, DisplayMetrics, Emphasis, Fold, Freeform, Glyph,
+    LayoutIssue, LayoutIssueKind, NavBar, Node, NodeId, Overlay, OverlayKind, Percent,
+    PictureHandle, ProseArea, Row, RowLead, Screen, Space, Tile, TilePicture, TileShape, TopBar,
+    MAX_CELLS, MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_QUOTE_DEPTH, MAX_ROWS, MAX_TERMINAL_COLUMNS,
+    MAX_TERMINAL_ROWS,
 };
 use std::collections::VecDeque;
 use std::fmt;
@@ -249,6 +250,7 @@ pub struct ScreenBuilder {
     page_turns: Option<kobo_ui::PageTurns>,
     owns_back: bool,
     text_scale: Option<kobo_ui::TextScale>,
+    overlay: Option<Box<Overlay>>,
     reading: bool,
     actions: Vec<(String, ActionId)>,
     warnings: Vec<LayoutIssue>,
@@ -267,6 +269,7 @@ impl ScreenBuilder {
             page_turns: None,
             owns_back: false,
             text_scale: None,
+            overlay: None,
             reading: false,
             actions: Vec::new(),
             warnings: Vec::new(),
@@ -394,15 +397,54 @@ impl ScreenBuilder {
         self.quote_as(depth, QuoteRole::Byline, text)
     }
 
+    /// A byline that folds away everything underneath it.
+    ///
+    /// `name` is the action sent when it is tapped; `hidden` is how many
+    /// replies are behind it, which is drawn only while it is shut. What
+    /// folding *does* is the application's business -- the renderer only sends
+    /// the tap -- because only the application knows where the subtree ends.
+    #[must_use]
+    pub fn folding_byline(
+        self,
+        depth: u8,
+        text: impl Into<String>,
+        name: impl AsRef<str>,
+        collapsed: bool,
+        hidden: u16,
+    ) -> Self {
+        let action = action_id(name.as_ref());
+        self.quote_full(
+            depth,
+            QuoteRole::Byline,
+            text,
+            Some(Fold {
+                action,
+                collapsed,
+                hidden,
+            }),
+        )
+    }
+
     /// A paragraph of a thread, saying what it is for.
     #[must_use]
-    pub fn quote_as(mut self, depth: u8, role: QuoteRole, text: impl Into<String>) -> Self {
+    pub fn quote_as(self, depth: u8, role: QuoteRole, text: impl Into<String>) -> Self {
+        self.quote_full(depth, role, text, None)
+    }
+
+    fn quote_full(
+        mut self,
+        depth: u8,
+        role: QuoteRole,
+        text: impl Into<String>,
+        fold: Option<Fold>,
+    ) -> Self {
         let id = self.next_id();
         self.nodes.push(Node::Quote {
             id,
             depth: depth.min(MAX_QUOTE_DEPTH),
             role,
             text: text.into(),
+            fold,
         });
         self
     }
@@ -559,6 +601,47 @@ impl ScreenBuilder {
     pub const fn reading(mut self, reading: bool) -> Self {
         self.reading = reading;
         self
+    }
+
+    /// Hangs a popover off the control named `anchor`.
+    ///
+    /// The closure builds the overlay's contents with the same builder the
+    /// screen uses, so ids and action names carry on from where the screen
+    /// left off: a control inside a popover is named and read exactly like a
+    /// control on the screen, and nothing has to be told which is which.
+    #[must_use]
+    pub fn popover(self, anchor: impl AsRef<str>, build: impl FnOnce(Self) -> Self) -> Self {
+        let anchor = action_id(anchor.as_ref());
+        self.overlay_with(OverlayKind::Popover { anchor }, String::new(), build)
+    }
+
+    /// Puts a question over the screen that has to be answered.
+    #[must_use]
+    pub fn modal(self, title: impl Into<String>, build: impl FnOnce(Self) -> Self) -> Self {
+        self.overlay_with(OverlayKind::Modal, title.into(), build)
+    }
+
+    fn overlay_with(
+        mut self,
+        kind: OverlayKind,
+        title: String,
+        build: impl FnOnce(Self) -> Self,
+    ) -> Self {
+        // The screen's nodes are set aside so the closure builds into an empty
+        // list, then put back. Threading the builder through rather than
+        // handing the closure a fresh one is what keeps one id counter and one
+        // action table for the whole screen.
+        let outer = std::mem::take(&mut self.nodes);
+        let id = self.next_id();
+        let mut done = build(self);
+        let nodes = std::mem::replace(&mut done.nodes, outer);
+        done.overlay = Some(Box::new(Overlay {
+            id,
+            kind,
+            title,
+            nodes,
+        }));
+        done
     }
 
     /// Adds the fixed top bar.
@@ -997,6 +1080,7 @@ impl ScreenBuilder {
             page_turns: self.page_turns,
             owns_back: self.owns_back,
             text_scale: self.text_scale,
+            overlay: self.overlay,
             reading: self.reading,
         }
     }
@@ -1200,6 +1284,22 @@ impl Context {
         nav_bar: bool,
     ) -> Vec<Vec<(u8, QuoteRole, String)>> {
         kobo_ui::paginate_quoted(
+            paragraphs,
+            &self.metrics,
+            self.metrics.prose_area(true, nav_bar),
+        )
+    }
+
+    /// The same, carrying a number of the application's choosing through the
+    /// break so that a paragraph on a page can be traced back to what it came
+    /// from. See [`kobo_ui::paginate_tagged`].
+    #[must_use]
+    pub fn paginate_tagged(
+        &self,
+        paragraphs: &[(u32, u8, QuoteRole, &str)],
+        nav_bar: bool,
+    ) -> Vec<Vec<(u32, u8, QuoteRole, String)>> {
+        kobo_ui::paginate_tagged(
             paragraphs,
             &self.metrics,
             self.metrics.prose_area(true, nav_bar),

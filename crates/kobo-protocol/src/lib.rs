@@ -1379,6 +1379,19 @@ fn encoded_screen_len(
     for node in &screen.nodes {
         add_encoded_len(&mut length, encoded_node_len(node, depth, count)?)?;
     }
+    // The presence flag, and when there is one: the id, the kind, the anchor a
+    // popover names, the title and the count of its nodes.
+    add_encoded_len(&mut length, 1)?;
+    if let Some(overlay) = &screen.overlay {
+        add_encoded_len(&mut length, 7)?;
+        if matches!(overlay.kind, kobo_ui::OverlayKind::Popover { .. }) {
+            add_encoded_len(&mut length, 4)?;
+        }
+        add_encoded_len(&mut length, encoded_string_len(&overlay.title)?)?;
+        for node in &overlay.nodes {
+            add_encoded_len(&mut length, encoded_node_len(node, depth, count)?)?;
+        }
+    }
     Ok(length)
 }
 
@@ -1403,9 +1416,10 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
             add_encoded_len(&mut length, encoded_string_len(text)?)?;
             length
         }
-        Node::Quote { text, .. } => {
-            // id, depth, role, then the text.
-            let mut length = 7;
+        Node::Quote { text, fold, .. } => {
+            // id, depth, role, whether it folds, then the text. A fold costs
+            // seven more: the action, whether it is shut, and the count.
+            let mut length = 8 + if fold.is_some() { 7 } else { 0 };
             add_encoded_len(&mut length, encoded_string_len(text)?)?;
             length
         }
@@ -1991,6 +2005,32 @@ fn encode_screen(
     for node in &screen.nodes {
         encode_node(output, node, depth, count)?;
     }
+    // Last, and after the node count, so the nodes are read the same way with
+    // or without one. An overlay's nodes are counted against the same budget
+    // as the screen's: a dialogue is not a way to smuggle another screen's
+    // worth of nodes past the limit.
+    match &screen.overlay {
+        None => output.push(0),
+        Some(overlay) => {
+            output.push(1);
+            push_u32(output, overlay.id.0);
+            match overlay.kind {
+                kobo_ui::OverlayKind::Modal => output.push(0),
+                kobo_ui::OverlayKind::Popover { anchor } => {
+                    output.push(1);
+                    push_u32(output, anchor.0);
+                }
+            }
+            push_string(output, &overlay.title)?;
+            push_u16(
+                output,
+                u16::try_from(overlay.nodes.len()).map_err(|_| ProtocolError::TooManyNodes)?,
+            );
+            for node in &overlay.nodes {
+                encode_node(output, node, depth, count)?;
+            }
+        }
+    }
     Ok(())
 }
 
@@ -2051,6 +2091,7 @@ fn encode_node(
             depth,
             role,
             text,
+            fold,
         } => {
             output.push(18);
             push_u32(output, id.0);
@@ -2059,6 +2100,16 @@ fn encode_node(
                 kobo_ui::QuoteRole::Body => 0,
                 kobo_ui::QuoteRole::Byline => 1,
             });
+            // A flag rather than a reserved action id, because zero is a
+            // perfectly ordinary action and there is no value to spare.
+            if let Some(fold) = fold {
+                output.push(1);
+                push_u32(output, fold.action.0);
+                output.push(u8::from(fold.collapsed));
+                push_u16(output, fold.hidden);
+            } else {
+                output.push(0);
+            }
             push_string(output, text)?;
         }
         Node::Button {
@@ -2402,6 +2453,7 @@ const fn decode_glyph(tag: u8) -> Option<Glyph> {
     })
 }
 
+#[allow(clippy::too_many_lines)]
 fn decode_screen(
     reader: &mut Reader<'_>,
     depth: usize,
@@ -2496,7 +2548,37 @@ fn decode_screen(
     for _ in 0..count_nodes {
         nodes.push(decode_node(reader, depth, count)?);
     }
+    let overlay = match reader.u8()? {
+        0 => None,
+        1 => {
+            let id = NodeId(reader.u32()?);
+            let kind = match reader.u8()? {
+                0 => kobo_ui::OverlayKind::Modal,
+                1 => kobo_ui::OverlayKind::Popover {
+                    anchor: ActionId(reader.u32()?),
+                },
+                _ => return Err(ProtocolError::InvalidValue("overlay kind")),
+            };
+            let title = reader.string()?;
+            let count_overlay = usize::from(reader.u16()?);
+            if count_overlay > MAX_NODES {
+                return Err(ProtocolError::TooManyNodes);
+            }
+            let mut overlay_nodes = Vec::with_capacity(count_overlay);
+            for _ in 0..count_overlay {
+                overlay_nodes.push(decode_node(reader, depth, count)?);
+            }
+            Some(Box::new(kobo_ui::Overlay {
+                id,
+                kind,
+                title,
+                nodes: overlay_nodes,
+            }))
+        }
+        _ => return Err(ProtocolError::InvalidValue("overlay flag")),
+    };
     let mut screen = Screen::new(id, nodes);
+    screen.overlay = overlay;
     screen.top_bar = top_bar;
     screen.nav_bar = nav_bar;
     // Only when there is no bar. A frame carrying both is a peer that built
@@ -2542,6 +2624,18 @@ fn decode_node(
         18 => {
             let depth = reader.u8()?;
             let role = reader.u8()?;
+            // Anything other than the flag we write means no fold, on the same
+            // principle as the role: a frame from a newer application should
+            // still be readable as the comment it is.
+            let fold = if reader.u8()? == 1 {
+                Some(kobo_ui::Fold {
+                    action: ActionId(reader.u32()?),
+                    collapsed: reader.u8()? == 1,
+                    hidden: reader.u16()?,
+                })
+            } else {
+                None
+            };
             Ok(Node::Quote {
                 id,
                 // Clamped rather than rejected: a depth past the cap is a
@@ -2555,6 +2649,7 @@ fn decode_node(
                     1 => kobo_ui::QuoteRole::Byline,
                     _ => kobo_ui::QuoteRole::Body,
                 },
+                fold,
                 text: reader.string()?,
             })
         }
@@ -3221,6 +3316,7 @@ mod node_coverage_tests {
                 id: NodeId(30),
                 depth: 2,
                 role: kobo_ui::QuoteRole::Body,
+                fold: None,
                 text: "A reply".into(),
             },
             Node::Button {
@@ -3329,6 +3425,63 @@ mod node_coverage_tests {
     }
 
     #[test]
+    fn a_folding_byline_survives_the_wire_with_its_count() {
+        // The count is what the renderer draws beside the mark, so losing it
+        // would show a bare plus with no idea how much is behind it -- and the
+        // size table has to agree with the payload or every frame carrying one
+        // fails the length check rather than the assertion here.
+        for fold in [
+            None,
+            Some(kobo_ui::Fold {
+                action: ActionId(4321),
+                collapsed: true,
+                hidden: 4095,
+            }),
+            Some(kobo_ui::Fold {
+                action: ActionId(0),
+                collapsed: false,
+                hidden: 0,
+            }),
+        ] {
+            let node = Node::Quote {
+                id: NodeId(3),
+                depth: 2,
+                role: kobo_ui::QuoteRole::Byline,
+                fold,
+                text: "someone 3 hours ago".to_owned(),
+            };
+            assert_eq!(
+                round_trip(Screen::new(1, vec![node.clone()])).nodes,
+                vec![node.clone()],
+                "a fold did not survive the wire: {fold:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_overlay_survives_the_wire() {
+        let screen = Screen::new(
+            1,
+            vec![Node::Text {
+                id: NodeId(1),
+                text: "Underneath".to_owned(),
+            }],
+        )
+        .with_overlay(kobo_ui::Overlay::modal(
+            NodeId(9),
+            "Delete this?",
+            vec![Node::Button {
+                id: NodeId(10),
+                action: ActionId(6),
+                label: "Delete".to_owned(),
+                state: ControlState::Enabled,
+                emphasis: kobo_ui::Emphasis::Primary,
+            }],
+        ));
+        assert_eq!(round_trip(screen.clone()).overlay, screen.overlay);
+    }
+
+    #[test]
     fn every_node_kind_round_trips_byte_for_byte() {
         for node in one_of_every_node() {
             let screen = Screen::new(1, vec![node.clone()]);
@@ -3352,6 +3505,7 @@ mod node_coverage_tests {
                 id: NodeId(1),
                 depth: 40,
                 role: kobo_ui::QuoteRole::Body,
+                fold: None,
                 text: "Deep in an argument".into(),
             }],
         );
@@ -3361,6 +3515,7 @@ mod node_coverage_tests {
                 id: NodeId(1),
                 depth: kobo_ui::MAX_QUOTE_DEPTH,
                 role: kobo_ui::QuoteRole::Body,
+                fold: None,
                 text: "Deep in an argument".into(),
             }]
         );
@@ -3986,9 +4141,10 @@ mod picture_tests {
             )),
         };
         let mut bytes = encode(&frame).expect("encode");
-        // An empty grid ends with its shape and then its tile count, so the
-        // shape is the second byte from the end.
-        let shape = bytes.len() - 2;
+        // An empty grid ends with its shape and then its tile count, and a
+        // screen ends with whether it carries an overlay, so the shape is the
+        // third byte from the end.
+        let shape = bytes.len() - 3;
         assert_eq!(bytes[shape], 0, "square");
         bytes[shape] = 9;
         assert!(matches!(
