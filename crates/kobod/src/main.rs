@@ -264,6 +264,7 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
         return Err("first application message must be Hello".into());
     };
     println!("application connected: {name}");
+    let chrome = simulated_chrome(&name);
     kobo_protocol::write_to(
         &mut stream,
         &Frame {
@@ -276,14 +277,19 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
             },
         },
     )?;
-    serve_application(&mut stream, frame_path)
+    serve_application(&mut stream, frame_path, chrome, &name)
 }
 
 #[allow(
     clippy::too_many_lines,
     reason = "one arm per message type; splitting the dispatch hides it"
 )]
-fn serve_application(stream: &mut UnixStream, frame_path: &Path) -> Result<(), Box<dyn Error>> {
+fn serve_application(
+    stream: &mut UnixStream,
+    frame_path: &Path,
+    chrome: kobo_ui::Chrome,
+    name: &str,
+) -> Result<(), Box<dyn Error>> {
     // In simulation the daemon owns no hardware, so every hardware-touching
     // request is answered honestly rather than pretended.
     let mut services = DeviceServices::simulated();
@@ -314,7 +320,9 @@ fn serve_application(stream: &mut UnixStream, frame_path: &Path) -> Result<(), B
     loop {
         let frame = kobo_protocol::read_from(stream)?;
         match frame.message {
-            Message::SetScreen(screen) => write_screen(frame_path, &screen, &pictures)?,
+            Message::SetScreen(screen) => {
+                write_screen(frame_path, screen, chrome, name, &pictures)?;
+            }
             Message::PutPicture {
                 handle,
                 width,
@@ -487,19 +495,41 @@ fn deliver_outcomes(
     }
 }
 
+/// The chrome an application would be given on a device, in simulation.
+///
+/// The launcher is home, so it has nowhere to go back to; everything else was
+/// opened from it and does. The panel runtime decides this by comparing paths,
+/// which a simulation running one application from a target directory has no
+/// equivalent of, so it goes by the name the application introduced itself
+/// with — the same name the launcher uses.
+fn simulated_chrome(name: &str) -> kobo_ui::Chrome {
+    kobo_ui::Chrome::with_back(name != HOME_APPLICATION)
+}
+
+/// The application that is home, and so has no way back to draw.
+const HOME_APPLICATION: &str = "launcher";
+
 fn write_screen(
     path: &Path,
-    screen: &Screen,
+    screen: Screen,
+    chrome: kobo_ui::Chrome,
+    name: &str,
     pictures: &dyn kobo_ui::Pictures,
 ) -> Result<(), Box<dyn Error>> {
     let mut surface = Surface::new(
         usize::try_from(DISPLAY_WIDTH)?,
         usize::try_from(DISPLAY_HEIGHT)?,
     );
+    // The same two steps the device takes, in the same order, because a
+    // preview drawn with different chrome is a preview of a screen that will
+    // never exist. Rendering with Chrome::default() here meant the way back
+    // was the one part of every screen that could not be looked at without a
+    // reader — and it is the part that traps somebody when it is missing.
+    let screen = kobo_ui::ensure_way_back(screen, chrome, name);
     kobo_ui::render_all(
-        screen,
+        &screen,
         &kobo_ui::display_metrics_from_env(),
-        kobo_ui::Chrome::default(),
+        chrome,
         pictures,
         &mut surface,
         None,
@@ -563,6 +593,35 @@ impl Drop for SocketGuard {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn everything_but_the_home_screen_is_given_a_way_back() {
+        // Without this the simulation drew every screen with no way back,
+        // which is the one defect that leaves somebody stuck on a reader and
+        // was the only part of a screen that could not be checked without one.
+        assert!(!super::simulated_chrome("launcher").back);
+        for name in ["rss", "hn", "gutenshelf", "todo", "terminal"] {
+            assert!(super::simulated_chrome(name).back, "{name} had no way back");
+        }
+    }
+
+    #[test]
+    fn an_application_with_no_bar_of_its_own_is_given_one_to_go_back_from() {
+        let bare = kobo_ui::Screen::new(1, Vec::new());
+        assert!(bare.top_bar.is_none());
+        let fixed = kobo_ui::ensure_way_back(bare, super::simulated_chrome("rss"), "Feeds");
+        assert_eq!(
+            fixed.top_bar.expect("a bar to hold the way back").title,
+            "Feeds"
+        );
+    }
+
+    #[test]
+    fn the_home_screen_is_not_given_a_bar_it_did_not_ask_for() {
+        let bare = kobo_ui::Screen::new(1, Vec::new());
+        let left = kobo_ui::ensure_way_back(bare, super::simulated_chrome("launcher"), "Cobalt");
+        assert!(left.top_bar.is_none());
+    }
     use super::validate_simulation_paths;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;

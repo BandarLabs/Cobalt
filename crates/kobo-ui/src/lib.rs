@@ -431,6 +431,25 @@ impl Chrome {
     }
 }
 
+/// Gives a screen a top bar to put the way back in, when it has none.
+///
+/// The way back is drawn in the top bar, so an application that did not ask
+/// for one would otherwise trap the reader. The runtime supplies the bar
+/// rather than trusting every application to remember, titled with the
+/// application's own name so nothing is invented.
+///
+/// Here rather than in the daemon because the daemon has two renderers — the
+/// panel and the host simulation — and only one of them was doing this. A
+/// preview drawn without the way back is a preview of a screen that will never
+/// exist, and it hides the one defect that leaves somebody stuck.
+#[must_use]
+pub fn ensure_way_back(mut screen: Screen, chrome: Chrome, name: &str) -> Screen {
+    if chrome.back && screen.top_bar.is_none() {
+        screen = screen.with_top_bar(TopBar::new(NodeId(0), name));
+    }
+    screen
+}
+
 /// A single tappable label in a bar.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BarAction {

@@ -785,7 +785,8 @@ fn host_applications(
                                 back_offered = None;
                             }
                             let chrome = Chrome::with_back(apps[index].path != home);
-                            let screen = ensure_way_back(screen, chrome, &apps[index].name);
+                            let screen =
+                                kobo_ui::ensure_way_back(screen, chrome, &apps[index].name);
                             if is_front {
                                 trace(&format!("screen {} received", screen.id));
                                 println!("screen {}", screen.id);
@@ -1321,23 +1322,11 @@ fn stop_application(child: &mut Child) {
     let _ignored = child.wait();
 }
 
-#[allow(clippy::too_many_arguments)]
 /// Resolves a touch to the action it activates, if any.
 ///
 /// Activation happens on release rather than on contact, so a finger that lands
 /// on the wrong control can be slid away from it without acting. That is what
 /// every touch interface the owner already uses has taught them to expect.
-/// The way back is drawn in the top bar, so an application that did not ask
-/// for one would otherwise trap the reader. The runtime supplies it rather
-/// than trusting every application to remember, titled with the application's
-/// own name so nothing is invented.
-fn ensure_way_back(mut screen: Screen, chrome: Chrome, name: &str) -> Screen {
-    if chrome.back && screen.top_bar.is_none() {
-        screen = screen.with_top_bar(kobo_ui::TopBar::new(kobo_ui::NodeId(0), name));
-    }
-    screen
-}
-
 fn action_for(event: TouchEvent, screen: Option<&Screen>, chrome: Chrome) -> Option<ActionId> {
     let TouchEvent::Up { x, y } = event else {
         return None;
@@ -1745,17 +1734,19 @@ mod tests {
     #[test]
     fn an_application_that_forgot_a_top_bar_still_gets_a_way_back() {
         let bare = Screen::new(1, Vec::new());
-        let fixed = ensure_way_back(bare, Chrome::with_back(true), "Hello");
+        let fixed = kobo_ui::ensure_way_back(bare, Chrome::with_back(true), "Hello");
         assert_eq!(
             fixed.top_bar.as_ref().map(|bar| bar.title.as_str()),
             Some("Hello")
         );
         // The launcher itself is not given one it did not ask for.
-        assert!(
-            ensure_way_back(Screen::new(1, Vec::new()), Chrome::default(), "Launcher")
-                .top_bar
-                .is_none()
-        );
+        assert!(kobo_ui::ensure_way_back(
+            Screen::new(1, Vec::new()),
+            Chrome::default(),
+            "Launcher"
+        )
+        .top_bar
+        .is_none());
     }
 
     #[test]
