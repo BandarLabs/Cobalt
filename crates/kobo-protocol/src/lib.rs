@@ -7,8 +7,8 @@ use std::io::{self, Read, Write};
 
 use kobo_ui::{
     ActionId, BannerLevel, BarAction, Caret, Cell, Freeform, Glyph, NavBar, Node, NodeId,
-    PageTurns, Percent, Row, RowState, Screen, Space, Tile, TopBar, MAX_TERMINAL_COLUMNS,
-    MAX_TERMINAL_ROWS, MIN_NAV_DESTINATIONS,
+    PageTurns, Percent, PictureHandle, Row, RowState, Screen, Space, Tile, TilePicture, TileShape,
+    TopBar, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS, MIN_NAV_DESTINATIONS,
 };
 use std::cmp::min;
 
@@ -16,6 +16,14 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 pub const VERSION: u8 = 1;
 pub const HEADER_LEN: usize = 14;
 pub const MAX_FRAME_LEN: usize = 1_048_576;
+/// The largest picture that fits in one frame, in eight-bit grey pixels.
+///
+/// This is deliberately below [`MAX_FRAME_LEN`] rather than equal to it: a
+/// picture is a payload inside a frame, not the frame. It allows a full panel
+/// width by a little over half its height, which is more than a screen can
+/// usefully show at once, and applications are expected to fit a picture to the
+/// space it will occupy before handing it over anyway.
+pub const MAX_PICTURE_BYTES: usize = 768 * 1024;
 pub const MAX_STRING_LEN: usize = 16_384;
 pub const MAX_NODES: usize = 512;
 /// The byte a nav bar sends when no destination is the current one.
@@ -63,6 +71,134 @@ pub const MAX_STORE_KEYS: usize = 256;
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TaskId(pub u32);
 
+/// The most headers one request may carry, beyond the ones the runtime sets.
+pub const MAX_HEADERS: usize = 8;
+/// The longest a header name may be.
+pub const MAX_HEADER_NAME: usize = 64;
+/// The longest a header value may be.
+pub const MAX_HEADER_VALUE: usize = 256;
+
+/// The characters RFC 9110 allows in a header name.
+const fn is_token_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+        || matches!(
+            byte,
+            b'!' | b'#'
+                | b'$'
+                | b'%'
+                | b'&'
+                | b'\''
+                | b'*'
+                | b'+'
+                | b'-'
+                | b'.'
+                | b'^'
+                | b'_'
+                | b'`'
+                | b'|'
+                | b'~'
+        )
+}
+
+/// One header an application supplies.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Header {
+    pub name: String,
+    pub value: String,
+}
+
+impl Header {
+    #[must_use]
+    pub fn new(name: impl Into<String>, value: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            value: value.into(),
+        }
+    }
+
+    /// Whether this is something an application may legitimately send.
+    ///
+    /// Names are checked against the token characters HTTP allows and values
+    /// against visible ASCII, because a newline in either would let an
+    /// application append headers of its own — including the credential header
+    /// it is not allowed to see.
+    #[must_use]
+    pub fn is_well_formed(&self) -> bool {
+        !self.name.is_empty()
+            && self.name.len() <= MAX_HEADER_NAME
+            && self.value.len() <= MAX_HEADER_VALUE
+            && self.name.bytes().all(is_token_byte)
+            && self
+                .value
+                .bytes()
+                .all(|byte| (0x20..0x7f).contains(&byte) || byte == b'\t')
+    }
+}
+
+/// Where a credential goes in the request.
+///
+/// Bearer is not the only convention, and treating it as if it were means every
+/// service that uses another one has to be reached through a proxy that does.
+/// Anthropic wants `x-api-key` and Google wants `x-goog-api-key`; naming the
+/// header is what lets an application talk to either directly.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SecretHeader {
+    /// `Authorization: Bearer <value>`.
+    Bearer,
+    /// A header carrying the value alone, such as `x-api-key`.
+    Named(String),
+}
+
+/// A credential an application may use and never see.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Credential {
+    /// The name of a secret the runtime holds.
+    pub secret: String,
+    pub header: SecretHeader,
+}
+
+impl Credential {
+    /// The usual convention: `Authorization: Bearer <value>`.
+    #[must_use]
+    pub fn bearer(secret: impl Into<String>) -> Self {
+        Self {
+            secret: secret.into(),
+            header: SecretHeader::Bearer,
+        }
+    }
+
+    /// A named header, such as `x-api-key` or `x-goog-api-key`.
+    #[must_use]
+    pub fn in_header(secret: impl Into<String>, header: impl Into<String>) -> Self {
+        Self {
+            secret: secret.into(),
+            header: SecretHeader::Named(header.into()),
+        }
+    }
+
+    /// The header name this credential will be sent under.
+    #[must_use]
+    pub fn header_name(&self) -> &str {
+        match &self.header {
+            SecretHeader::Bearer => "Authorization",
+            SecretHeader::Named(name) => name,
+        }
+    }
+
+    #[must_use]
+    pub fn is_well_formed(&self) -> bool {
+        if self.secret.is_empty() || self.secret.len() > MAX_HEADER_NAME {
+            return false;
+        }
+        match &self.header {
+            SecretHeader::Bearer => true,
+            SecretHeader::Named(name) => {
+                !name.is_empty() && name.len() <= MAX_HEADER_NAME && name.bytes().all(is_token_byte)
+            }
+        }
+    }
+}
+
 /// Work an application can ask the runtime to perform off the event loop.
 ///
 /// Deliberately a closed set rather than a closure. An application does not get
@@ -92,8 +228,14 @@ pub enum Task {
         url: String,
         body: String,
         content_type: String,
-        /// The name of a secret the runtime holds, or `None`.
-        secret: Option<String>,
+        /// The credential to attach, or `None`.
+        credential: Option<Credential>,
+        /// Headers the request needs that are not secret.
+        ///
+        /// Some APIs are unusable without one: Anthropic refuses any request
+        /// that does not carry `anthropic-version`. Bounded and validated, and
+        /// the headers the runtime owns cannot be set here.
+        headers: Vec<Header>,
         max_bytes: u32,
     },
     /// Reads a file from the application's own directory.
@@ -198,6 +340,28 @@ pub enum Message {
     ShellRequest(ShellRequest),
     /// The runtime reporting what the program on that terminal did.
     ShellEvent(ShellEvent),
+    /// Hands a decoded picture to the runtime, to be referred to afterwards by
+    /// `handle`.
+    ///
+    /// Pictures travel once and out of band because a screen is re-sent whole
+    /// on every change. Sending one again on each repaint would put a cover on
+    /// the wire for every tap, and a shelf of them would exceed a frame.
+    ///
+    /// Replacing a live handle is allowed and is how an application updates a
+    /// picture in place.
+    PutPicture {
+        handle: PictureHandle,
+        width: u32,
+        height: u32,
+        /// Eight-bit grey, row major, exactly `width * height` bytes.
+        grey: Vec<u8>,
+    },
+    /// Releases a picture. The runtime also drops every picture an application
+    /// holds when it exits, so this is for applications that outlive their own
+    /// pictures rather than a requirement.
+    DropPicture {
+        handle: PictureHandle,
+    },
 }
 
 /// The most bytes carried in one direction of a terminal in a single message.
@@ -595,6 +759,18 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
         Message::StoreResult(result) => encode_store_result(&mut payload, result)?,
         Message::ShellRequest(request) => encode_shell_request(&mut payload, request)?,
         Message::ShellEvent(event) => encode_shell_event(&mut payload, event)?,
+        Message::PutPicture {
+            handle,
+            width,
+            height,
+            grey,
+        } => {
+            push_u32(&mut payload, handle.0);
+            push_u32(&mut payload, *width);
+            push_u32(&mut payload, *height);
+            payload.extend_from_slice(grey);
+        }
+        Message::DropPicture { handle } => push_u32(&mut payload, handle.0),
         Message::Lifecycle(state) => payload.push(match state {
             Lifecycle::Foreground => 0,
             Lifecycle::Background => 1,
@@ -639,14 +815,36 @@ fn encode_task_message(payload: &mut Vec<u8>, message: &Message) -> Result<(), P
                     url,
                     body,
                     content_type,
-                    secret,
+                    credential,
+                    headers,
                     max_bytes,
                 } => {
                     payload.push(3);
                     push_string(payload, url)?;
                     push_string(payload, body)?;
                     push_string(payload, content_type)?;
-                    push_string(payload, secret.as_deref().unwrap_or(""))?;
+                    match credential {
+                        None => payload.push(0),
+                        Some(credential) => match &credential.header {
+                            SecretHeader::Bearer => {
+                                payload.push(1);
+                                push_string(payload, &credential.secret)?;
+                            }
+                            SecretHeader::Named(name) => {
+                                payload.push(2);
+                                push_string(payload, name)?;
+                                push_string(payload, &credential.secret)?;
+                            }
+                        },
+                    }
+                    payload.push(
+                        u8::try_from(headers.len())
+                            .map_err(|_| ProtocolError::InvalidValue("too many headers"))?,
+                    );
+                    for header in headers {
+                        push_string(payload, &header.name)?;
+                        push_string(payload, &header.value)?;
+                    }
                     push_u32(payload, *max_bytes);
                 }
             }
@@ -835,6 +1033,63 @@ fn shell_chunk_len(bytes: &[u8]) -> Result<usize, ProtocolError> {
     Ok(3 + bytes.len())
 }
 
+/// How many bytes one [`Task`] encodes to, identifier and tag included.
+fn encoded_task_len(work: &Task) -> Result<usize, ProtocolError> {
+    // Four bytes of task identifier and one tag byte. This was six, which made
+    // every spawned task claim one byte more than it encodes to, and the debug
+    // assertion at the end of `encode` turned that into a panic the moment an
+    // application asked for a download — so no application that fetches
+    // anything could be opened in the simulator at all.
+    let mut length = 5;
+    match work {
+        Task::Fetch { url, .. } => {
+            add_encoded_len(&mut length, 8)?;
+            add_encoded_len(&mut length, encoded_string_len(url)?)?;
+        }
+        Task::ReadFile { path } => {
+            add_encoded_len(&mut length, encoded_string_len(path)?)?;
+        }
+        Task::Sleep { .. } => add_encoded_len(&mut length, 4)?,
+        Task::Post {
+            url,
+            body,
+            content_type,
+            credential,
+            headers,
+            ..
+        } => {
+            // Refused here rather than stripped silently. A request that
+            // quietly loses the header an API requires fails at the far end
+            // with an error the author cannot connect to anything they wrote.
+            if headers.len() > MAX_HEADERS || headers.iter().any(|header| !header.is_well_formed())
+            {
+                return Err(ProtocolError::InvalidValue("request header"));
+            }
+            if credential
+                .as_ref()
+                .is_some_and(|credential| !credential.is_well_formed())
+            {
+                return Err(ProtocolError::InvalidValue("credential"));
+            }
+            add_encoded_len(&mut length, 6)?;
+            add_encoded_len(&mut length, encoded_string_len(url)?)?;
+            add_encoded_len(&mut length, encoded_string_len(body)?)?;
+            add_encoded_len(&mut length, encoded_string_len(content_type)?)?;
+            if let Some(credential) = credential {
+                add_encoded_len(&mut length, encoded_string_len(&credential.secret)?)?;
+                if let SecretHeader::Named(name) = &credential.header {
+                    add_encoded_len(&mut length, encoded_string_len(name)?)?;
+                }
+            }
+            for header in headers {
+                add_encoded_len(&mut length, encoded_string_len(&header.name)?)?;
+                add_encoded_len(&mut length, encoded_string_len(&header.value)?)?;
+            }
+        }
+    }
+    Ok(length)
+}
+
 fn encoded_message_layout(message: &Message) -> Result<(u8, usize), ProtocolError> {
     match message {
         Message::Hello { name } => Ok((1, encoded_string_len(name)?)),
@@ -857,42 +1112,7 @@ fn encoded_message_layout(message: &Message) -> Result<(u8, usize), ProtocolErro
         }
         Message::DeviceRequest(_) => Ok((7, 5)),
         Message::DeviceResult(result) => Ok((8, 1 + device_result_value_len(*result))),
-        Message::Spawn { work, .. } => {
-            // Four bytes of task identifier and one tag byte. This was six,
-            // which made every spawned task claim one byte more than it
-            // encodes to, and the debug assertion at the end of `encode`
-            // turned that into a panic the moment an application asked for a
-            // download — so no application that fetches anything could be
-            // opened in the simulator at all.
-            let mut length = 5;
-            match work {
-                Task::Fetch { url, .. } => {
-                    add_encoded_len(&mut length, 8)?;
-                    add_encoded_len(&mut length, encoded_string_len(url)?)?;
-                }
-                Task::ReadFile { path } => {
-                    add_encoded_len(&mut length, encoded_string_len(path)?)?;
-                }
-                Task::Sleep { .. } => add_encoded_len(&mut length, 4)?,
-                Task::Post {
-                    url,
-                    body,
-                    content_type,
-                    secret,
-                    ..
-                } => {
-                    add_encoded_len(&mut length, 4)?;
-                    add_encoded_len(&mut length, encoded_string_len(url)?)?;
-                    add_encoded_len(&mut length, encoded_string_len(body)?)?;
-                    add_encoded_len(&mut length, encoded_string_len(content_type)?)?;
-                    add_encoded_len(
-                        &mut length,
-                        encoded_string_len(secret.as_deref().unwrap_or(""))?,
-                    )?;
-                }
-            }
-            Ok((9, length))
-        }
+        Message::Spawn { work, .. } => Ok((9, encoded_task_len(work)?)),
         Message::Cancel { .. } => Ok((10, 4)),
         Message::TaskOutcome { outcome, .. } => {
             let mut length = 5;
@@ -914,6 +1134,28 @@ fn encoded_message_layout(message: &Message) -> Result<(u8, usize), ProtocolErro
         Message::Lifecycle(_) => Ok((15, 1)),
         Message::ShellRequest(request) => Ok((16, shell_request_len(request)?)),
         Message::ShellEvent(event) => Ok((17, shell_event_len(event)?)),
+        Message::PutPicture {
+            width,
+            height,
+            grey,
+            ..
+        } => {
+            // The declared size and the bytes must agree before anything is
+            // allocated on the strength of either, or a decoder reading by
+            // dimension would run off the end of a short payload.
+            let expected = usize::try_from(*width)
+                .ok()
+                .and_then(|width| width.checked_mul(usize::try_from(*height).ok()?))
+                .ok_or(ProtocolError::FrameTooLarge)?;
+            if expected != grey.len() {
+                return Err(ProtocolError::InvalidValue("picture size"));
+            }
+            if grey.len() > MAX_PICTURE_BYTES {
+                return Err(ProtocolError::FrameTooLarge);
+            }
+            Ok((18, 12 + grey.len()))
+        }
+        Message::DropPicture { .. } => Ok((19, 4)),
     }
 }
 
@@ -1080,6 +1322,11 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
             add_encoded_len(&mut length, encoded_string_len(text)?)?;
             length
         }
+        Node::Quote { text, .. } => {
+            let mut length = 6;
+            add_encoded_len(&mut length, encoded_string_len(text)?)?;
+            length
+        }
         Node::Button { label, .. } => {
             let mut length = 9;
             add_encoded_len(&mut length, encoded_string_len(label)?)?;
@@ -1141,13 +1388,17 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
             if tiles.len() > u8::MAX as usize {
                 return Err(ProtocolError::TooManyNodes);
             }
-            let mut length = 6;
+            let mut length = 7;
             for tile in tiles {
-                add_encoded_len(&mut length, 5)?;
+                add_encoded_len(&mut length, 6)?;
                 add_encoded_len(&mut length, encoded_string_len(&tile.label)?)?;
+                if tile.picture.is_some() {
+                    add_encoded_len(&mut length, 12)?;
+                }
             }
             length
         }
+        Node::Picture { .. } => 19,
         Node::Choice {
             prompt,
             options,
@@ -1157,7 +1408,7 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
             if options.len() > u8::MAX as usize {
                 return Err(ProtocolError::TooManyNodes);
             }
-            let mut length = 7;
+            let mut length = 8;
             add_encoded_len(&mut length, encoded_string_len(prompt)?)?;
             for option in options {
                 add_encoded_len(&mut length, 4)?;
@@ -1314,20 +1565,39 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
                     }
                     let body = reader.string()?;
                     let content_type = reader.string()?;
-                    let secret = reader.string()?;
+                    let credential = match reader.u8()? {
+                        0 => None,
+                        1 => Some(Credential::bearer(reader.string()?)),
+                        2 => {
+                            let header = reader.string()?;
+                            Some(Credential::in_header(reader.string()?, header))
+                        }
+                        _ => return Err(ProtocolError::InvalidValue("credential")),
+                    };
+                    if credential
+                        .as_ref()
+                        .is_some_and(|credential| !credential.is_well_formed())
+                    {
+                        return Err(ProtocolError::InvalidValue("credential"));
+                    }
+                    let count = usize::from(reader.u8()?);
+                    if count > MAX_HEADERS {
+                        return Err(ProtocolError::InvalidValue("too many headers"));
+                    }
+                    let mut headers = Vec::with_capacity(count);
+                    for _ in 0..count {
+                        let header = Header::new(reader.string()?, reader.string()?);
+                        if !header.is_well_formed() {
+                            return Err(ProtocolError::InvalidValue("request header"));
+                        }
+                        headers.push(header);
+                    }
                     Task::Post {
                         url,
                         body,
                         content_type,
-                        // An empty name means no credential. Encoding it as an
-                        // empty string rather than an option keeps the wire
-                        // format free of a flag byte whose two values would
-                        // otherwise both have to be exercised.
-                        secret: if secret.is_empty() {
-                            None
-                        } else {
-                            Some(secret)
-                        },
+                        credential,
+                        headers,
                         max_bytes: min(reader.u32()?, MAX_TASK_BYTES_U32),
                     }
                 }
@@ -1438,6 +1708,28 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
             3 => ShellEvent::Refused(ShellError::try_from(reader.u8()?)?),
             _ => return Err(ProtocolError::InvalidValue("shell event")),
         }),
+        18 => {
+            let handle = PictureHandle(reader.u32()?);
+            let width = reader.u32()?;
+            let height = reader.u32()?;
+            let expected = usize::try_from(width)
+                .ok()
+                .and_then(|width| width.checked_mul(usize::try_from(height).ok()?))
+                .ok_or(ProtocolError::FrameTooLarge)?;
+            if expected > MAX_PICTURE_BYTES {
+                return Err(ProtocolError::FrameTooLarge);
+            }
+            let grey = reader.take(expected)?.to_vec();
+            Message::PutPicture {
+                handle,
+                width,
+                height,
+                grey,
+            }
+        }
+        19 => Message::DropPicture {
+            handle: PictureHandle(reader.u32()?),
+        },
         value => return Err(ProtocolError::UnknownMessageType(value)),
     };
     if !reader.is_finished() {
@@ -1516,6 +1808,16 @@ fn encode_screen(
     match &screen.nav_bar {
         None => output.push(0),
         Some(nav_bar) => {
+            // Refused here as well as on the way in. A bar of one destination
+            // is a bar that says nothing about where else the reader could go,
+            // and the decoder has always rejected it — so an application that
+            // built one encoded happily, killed the runtime's reader thread on
+            // arrival, and then sat waiting forever for an event from a
+            // connection nobody was reading any more. Failing at the encoder
+            // turns that into an error the application sees immediately.
+            if nav_bar.destinations.len() < MIN_NAV_DESTINATIONS {
+                return Err(ProtocolError::InvalidValue("nav bar destinations"));
+            }
             output.push(1);
             push_u32(output, nav_bar.id.0);
             let len = u8::try_from(nav_bar.destinations.len())
@@ -1602,6 +1904,12 @@ fn encode_node(
             push_u32(output, id.0);
             push_string(output, text)?;
         }
+        Node::Quote { id, depth, text } => {
+            output.push(18);
+            push_u32(output, id.0);
+            output.push((*depth).min(kobo_ui::MAX_QUOTE_DEPTH));
+            push_string(output, text)?;
+        }
         Node::Button { id, action, label } => {
             output.push(3);
             push_u32(output, id.0);
@@ -1683,20 +1991,47 @@ fn encode_node(
                 output.push(encode_row_state(row.state));
             }
         }
-        Node::TileGrid { id, tiles } => {
+        Node::TileGrid { id, tiles, shape } => {
             output.push(9);
             push_u32(output, id.0);
+            output.push(match shape {
+                TileShape::Square => 0,
+                TileShape::Portrait => 1,
+            });
             output.push(u8::try_from(tiles.len()).map_err(|_| ProtocolError::TooManyNodes)?);
             for tile in tiles {
                 push_u32(output, tile.action.0);
                 push_string(output, &tile.label)?;
                 output.push(encode_glyph(tile.glyph));
+                match tile.picture {
+                    Some(picture) => {
+                        output.push(1);
+                        push_u32(output, picture.handle.0);
+                        push_u32(output, picture.source.0);
+                        push_u32(output, picture.source.1);
+                    }
+                    None => output.push(0),
+                }
             }
+        }
+        Node::Picture {
+            id,
+            handle,
+            source,
+            max_height_tenths_mm,
+        } => {
+            output.push(17);
+            push_u32(output, id.0);
+            push_u32(output, handle.0);
+            push_u32(output, source.0);
+            push_u32(output, source.1);
+            push_u16(output, *max_height_tenths_mm);
         }
         Node::Choice {
             id,
             prompt,
             options,
+            selected,
             freeform,
         } => {
             output.push(10);
@@ -1706,6 +2041,12 @@ fn encode_node(
             for option in options {
                 encode_bar_action(output, option)?;
             }
+            // Sent as one past the index so that "no answer yet" is zero, which
+            // is what a peer that never sets it produces.
+            output.push(match selected {
+                Some(index) if usize::from(*index) < options.len() => index.saturating_add(1),
+                _ => 0,
+            });
             match freeform {
                 None => output.push(0),
                 Some(freeform) => {
@@ -1865,6 +2206,8 @@ const fn encode_glyph(glyph: Glyph) -> u8 {
         Glyph::Circle => 13,
         Glyph::Check => 14,
         Glyph::Terminal => 15,
+        Glyph::Chat => 16,
+        Glyph::News => 17,
     }
 }
 
@@ -1886,6 +2229,8 @@ const fn decode_glyph(tag: u8) -> Option<Glyph> {
         13 => Glyph::Circle,
         14 => Glyph::Check,
         15 => Glyph::Terminal,
+        16 => Glyph::Chat,
+        17 => Glyph::News,
         _ => return None,
     })
 }
@@ -1994,6 +2339,17 @@ fn decode_node(
             id,
             text: reader.string()?,
         }),
+        18 => {
+            let depth = reader.u8()?;
+            Ok(Node::Quote {
+                id,
+                // Clamped rather than rejected: a depth past the cap is a
+                // deeper reply, not a malformed frame, and the renderer was
+                // always going to draw it at the cap anyway.
+                depth: depth.min(kobo_ui::MAX_QUOTE_DEPTH),
+                text: reader.string()?,
+            })
+        }
         3 => Ok(Node::Button {
             id,
             action: ActionId(reader.u32()?),
@@ -2040,6 +2396,11 @@ fn decode_node(
             Ok(Node::PagedList { id, page, items })
         }
         9 => {
+            let shape = match reader.u8()? {
+                0 => TileShape::Square,
+                1 => TileShape::Portrait,
+                _ => return Err(ProtocolError::InvalidValue("tile shape")),
+            };
             let len = usize::from(reader.u8()?);
             let mut tiles = Vec::with_capacity(len);
             for _ in 0..len {
@@ -2050,14 +2411,29 @@ fn decode_node(
                 let label = reader.string()?;
                 let glyph =
                     decode_glyph(reader.u8()?).ok_or(ProtocolError::InvalidValue("tile glyph"))?;
+                let picture = match reader.u8()? {
+                    0 => None,
+                    1 => Some(TilePicture {
+                        handle: PictureHandle(reader.u32()?),
+                        source: (reader.u32()?, reader.u32()?),
+                    }),
+                    _ => return Err(ProtocolError::InvalidValue("tile picture flag")),
+                };
                 tiles.push(Tile {
                     action,
                     label,
                     glyph,
+                    picture,
                 });
             }
-            Ok(Node::TileGrid { id, tiles })
+            Ok(Node::TileGrid { id, tiles, shape })
         }
+        17 => Ok(Node::Picture {
+            id,
+            handle: PictureHandle(reader.u32()?),
+            source: (reader.u32()?, reader.u32()?),
+            max_height_tenths_mm: reader.u16()?,
+        }),
         10 => {
             let prompt = reader.string()?;
             let len = usize::from(reader.u8()?);
@@ -2065,6 +2441,14 @@ fn decode_node(
             for _ in 0..len {
                 options.push(decode_bar_action(reader)?);
             }
+            // Clamped rather than refused: an answer that does not name one of
+            // the options is a caller mistake, and refusing the frame would
+            // cost the whole screen over a marker.
+            let selected = match reader.u8()? {
+                0 => None,
+                marked if usize::from(marked) <= options.len() => Some(marked - 1),
+                _ => None,
+            };
             let freeform = match reader.u8()? {
                 0 => None,
                 1 => {
@@ -2086,6 +2470,7 @@ fn decode_node(
                 id,
                 prompt,
                 options,
+                selected,
                 freeform,
             })
         }
@@ -2513,6 +2898,7 @@ mod node_coverage_tests {
     /// single tag byte: no test had ever put a spacer through `encode`. The
     /// encoder asserts its own predicted length in debug builds, so the bug was
     /// one call away from being loud, and was silently over-reserving instead.
+    #[allow(clippy::too_many_lines, reason = "one literal per node variant")]
     fn one_of_every_node() -> Vec<Node> {
         vec![
             Node::Heading {
@@ -2522,6 +2908,11 @@ mod node_coverage_tests {
             Node::Text {
                 id: NodeId(2),
                 text: "Body".into(),
+            },
+            Node::Quote {
+                id: NodeId(30),
+                depth: 2,
+                text: "A reply".into(),
             },
             Node::Button {
                 id: NodeId(3),
@@ -2550,6 +2941,7 @@ mod node_coverage_tests {
                 items: vec!["one".into(), "two".into()],
             },
             Node::TileGrid {
+                shape: TileShape::Square,
                 id: NodeId(10),
                 tiles: vec![
                     Tile::new(ActionId(2), "Reader", Glyph::Reader),
@@ -2576,6 +2968,7 @@ mod node_coverage_tests {
                     BarAction::new(ActionId(4), "First"),
                     BarAction::new(ActionId(5), "Second"),
                 ],
+                selected: Some(1),
                 freeform: Some(Freeform::new(ActionId(6), "Something else")),
             },
             Node::Banner {
@@ -2637,6 +3030,30 @@ mod node_coverage_tests {
     }
 
     #[test]
+    fn a_reply_deeper_than_the_cap_arrives_at_the_cap_rather_than_being_refused() {
+        // Real discussion threads nest far past anything this panel can draw,
+        // and forty levels is a deeper reply rather than a malformed frame. It
+        // is clamped on the way out and again on the way in, so a peer that
+        // never clamped cannot make the renderer indent off the panel.
+        let screen = Screen::new(
+            1,
+            vec![Node::Quote {
+                id: NodeId(1),
+                depth: 40,
+                text: "Deep in an argument".into(),
+            }],
+        );
+        assert_eq!(
+            round_trip(screen).nodes,
+            vec![Node::Quote {
+                id: NodeId(1),
+                depth: kobo_ui::MAX_QUOTE_DEPTH,
+                text: "Deep in an argument".into(),
+            }]
+        );
+    }
+
+    #[test]
     fn a_screen_holding_every_node_round_trips() {
         let nodes = one_of_every_node();
         let screen = Screen::new(9, nodes.clone())
@@ -2691,6 +3108,15 @@ mod node_coverage_tests {
         ));
     }
 
+    /// A one-destination bar is refused by both halves, and the encoder
+    /// matters more than the decoder.
+    ///
+    /// It used to encode cleanly and fail only on arrival. The runtime's
+    /// reader thread died on the malformed frame, the application never heard
+    /// about it, and it then waited forever on a socket nobody was reading:
+    /// the panel kept showing the previous screen and every later tap did
+    /// nothing at all. A Hacker News thread opening with a single "Stories"
+    /// destination is exactly how it was found.
     #[test]
     fn a_nav_bar_with_one_destination_is_rejected() {
         let screen = Screen::new(1, Vec::new()).with_nav_bar(NavBar::new(
@@ -2702,9 +3128,8 @@ mod node_coverage_tests {
             request_id: 1,
             message: Message::SetScreen(screen),
         };
-        let bytes = encode(&frame).expect("encode");
         assert!(matches!(
-            decode(&bytes),
+            encode(&frame),
             Err(ProtocolError::InvalidValue("nav bar destinations"))
         ));
     }
@@ -2748,6 +3173,32 @@ mod node_coverage_tests {
     }
 
     #[test]
+    fn an_answer_naming_no_option_arrives_unmarked_rather_than_refused() {
+        let screen = Screen::new(
+            1,
+            vec![Node::Choice {
+                id: NodeId(1),
+                prompt: "Pick one".into(),
+                options: vec![BarAction::new(ActionId(4), "First")],
+                selected: Some(9),
+                freeform: None,
+            }],
+        );
+        let bytes = encode(&Frame {
+            request_id: 1,
+            message: Message::SetScreen(screen),
+        })
+        .expect("encode");
+        let Message::SetScreen(screen) = decode(&bytes).expect("decode").message else {
+            unreachable!("a set screen frame decodes as one")
+        };
+        let [Node::Choice { selected, .. }] = &screen.nodes[..] else {
+            unreachable!("the screen is one choice")
+        };
+        assert_eq!(*selected, None);
+    }
+
+    #[test]
     fn a_choice_offering_no_answers_is_rejected() {
         let screen = Screen::new(
             1,
@@ -2755,6 +3206,7 @@ mod node_coverage_tests {
                 id: NodeId(1),
                 prompt: "Dead end".into(),
                 options: Vec::new(),
+                selected: None,
                 freeform: None,
             }],
         );
@@ -2780,6 +3232,7 @@ mod node_coverage_tests {
                     &Screen::new(
                         1,
                         vec![Node::TileGrid {
+                            shape: TileShape::Square,
                             id: NodeId(1),
                             tiles: vec![Tile::new(ActionId(1), "x", Glyph::App)],
                         }],
@@ -2888,7 +3341,8 @@ mod store_tests {
                     url: "https://example.invalid/v1".into(),
                     body: "{}".into(),
                     content_type: "application/json".into(),
-                    secret: Some("openai".into()),
+                    credential: Some(Credential::bearer("openai")),
+                    headers: Vec::new(),
                     max_bytes: 4096,
                 },
             },
@@ -2898,7 +3352,8 @@ mod store_tests {
                     url: "https://example.invalid/v1".into(),
                     body: String::new(),
                     content_type: "application/json".into(),
-                    secret: None,
+                    credential: None,
+                    headers: Vec::new(),
                     max_bytes: 4096,
                 },
             },
@@ -3071,4 +3526,121 @@ const fn decode_task_error(tag: u8) -> Result<TaskError, ProtocolError> {
         4 => TaskError::NotFound,
         _ => return Err(ProtocolError::InvalidValue("task error")),
     })
+}
+
+#[cfg(test)]
+mod picture_tests {
+    use super::*;
+
+    #[test]
+    fn a_picture_on_a_shelf_survives_the_wire() {
+        let screen = Screen::new(
+            9,
+            vec![
+                Node::TileGrid {
+                    id: NodeId(1),
+                    tiles: vec![
+                        Tile::new(ActionId(11), "Waiting", Glyph::Book),
+                        Tile::new(ActionId(12), "Moby Dick", Glyph::Book)
+                            .with_picture(TilePicture::new(PictureHandle(7), 190, 300)),
+                    ],
+                    shape: TileShape::Portrait,
+                },
+                Node::Picture {
+                    id: NodeId(2),
+                    handle: PictureHandle(7),
+                    source: (190, 300),
+                    max_height_tenths_mm: 600,
+                },
+            ],
+        );
+        let frame = Frame {
+            request_id: 3,
+            message: Message::SetScreen(screen),
+        };
+        let bytes = encode(&frame).expect("encode");
+        assert_eq!(decode(&bytes).expect("decode"), frame);
+    }
+
+    #[test]
+    fn handing_over_a_picture_survives_the_wire() {
+        let frame = Frame {
+            request_id: 1,
+            message: Message::PutPicture {
+                handle: PictureHandle(4),
+                width: 3,
+                height: 2,
+                grey: vec![0, 32, 64, 96, 128, 160],
+            },
+        };
+        let bytes = encode(&frame).expect("encode");
+        assert_eq!(decode(&bytes).expect("decode"), frame);
+    }
+
+    #[test]
+    fn a_picture_whose_size_disagrees_with_its_bytes_is_refused() {
+        // The decoder allocates on the strength of the declared size, so the
+        // two have to be checked against each other before anything is read.
+        let refused = encode(&Frame {
+            request_id: 1,
+            message: Message::PutPicture {
+                handle: PictureHandle(4),
+                width: 100,
+                height: 100,
+                grey: vec![0; 99],
+            },
+        });
+        assert!(matches!(refused, Err(ProtocolError::InvalidValue(_))));
+    }
+
+    #[test]
+    fn a_picture_larger_than_a_frame_is_refused() {
+        let refused = encode(&Frame {
+            request_id: 1,
+            message: Message::PutPicture {
+                handle: PictureHandle(4),
+                width: u32::try_from(MAX_PICTURE_BYTES + 1).expect("fits"),
+                height: 1,
+                grey: vec![0; MAX_PICTURE_BYTES + 1],
+            },
+        });
+        assert!(matches!(refused, Err(ProtocolError::FrameTooLarge)));
+    }
+
+    #[test]
+    fn releasing_a_picture_survives_the_wire() {
+        let frame = Frame {
+            request_id: 8,
+            message: Message::DropPicture {
+                handle: PictureHandle(4),
+            },
+        };
+        let bytes = encode(&frame).expect("encode");
+        assert_eq!(decode(&bytes).expect("decode"), frame);
+    }
+
+    #[test]
+    fn an_unknown_tile_shape_is_refused_rather_than_guessed() {
+        let frame = Frame {
+            request_id: 1,
+            message: Message::SetScreen(Screen::new(
+                1,
+                vec![Node::TileGrid {
+                    id: NodeId(1),
+                    tiles: Vec::new(),
+                    shape: TileShape::Square,
+                }],
+            )),
+        };
+        let mut bytes = encode(&frame).expect("encode");
+        // An empty grid ends with its shape and then its tile count, so the
+        // shape is the second byte from the end.
+        let shape = bytes.len() - 2;
+        assert_eq!(bytes[shape], 0, "square");
+        bytes[shape] = 9;
+        assert!(matches!(
+            decode(&bytes),
+            Err(ProtocolError::InvalidValue("tile shape"))
+        ));
+    }
 }

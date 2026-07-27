@@ -1,0 +1,509 @@
+//! Turning pictures from the network into something an E Ink panel can show.
+//!
+//! Three steps, deliberately separate, because each one can fail or be refused
+//! on its own: decode what arrived, fit it to the space the layout gave it, and
+//! reduce it to the greys the panel can actually hold.
+//!
+//! Decoding is the one place in this project where bytes from a stranger are
+//! parsed by code nobody here wrote, so the caps below are not decoration. A
+//! JPEG header is a few bytes and can claim any size it likes; without a
+//! ceiling on the decoded pixel count a hostile — or merely enormous — image
+//! takes the reader's memory and, on a device with no swap and no fan, the
+//! reader with it.
+
+use image::imageops::FilterType;
+use image::ImageReader;
+use std::fmt;
+use std::io::Cursor;
+
+/// The most compressed bytes a picture may arrive as.
+///
+/// Comfortably above a book cover or a photograph at panel size, and far below
+/// anything worth streaming to a device like this.
+pub const MAX_SOURCE_BYTES: usize = 4 * 1024 * 1024;
+
+/// The most pixels a picture may decode to, whatever its header claims.
+///
+/// Four times the panel, so a source larger than the screen is still allowed —
+/// downscaling a big photograph is exactly what this is for — while a header
+/// claiming forty thousand square is refused before a buffer is allocated.
+pub const MAX_PIXELS: u64 = 4 * 1072 * 1448;
+
+/// How far [`Picture::fit_enlarging`] will blow a small picture up.
+///
+/// Three is where a 190 pixel book cover stops being lettering on a 300 pixel
+/// per inch panel. Past it the halftone that follows has nothing left to
+/// resolve and the result reads as a decoding fault.
+pub const MAX_ENLARGEMENT: u32 = 3;
+
+/// How many greys a panel can hold, unless a caller knows better.
+///
+/// Sixteen is what this family of controllers drives, and it is the number
+/// that makes dithering worth doing: at 256 the reduction is invisible, and at
+/// two everything becomes a woodcut.
+pub const PANEL_GREYS: u8 = 16;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ImageError {
+    /// More compressed bytes than [`MAX_SOURCE_BYTES`].
+    TooManyBytes { bytes: usize },
+    /// More pixels than [`MAX_PIXELS`].
+    TooManyPixels { pixels: u64 },
+    /// Nothing here recognises this as a picture.
+    UnknownFormat,
+    /// The decoder rejected the bytes, in its own words: "this is not a
+    /// picture" and "this picture is truncated" are different things to the
+    /// person looking at the screen.
+    Undecodable(String),
+    /// A fit was asked for into a box with no area.
+    EmptyBox,
+}
+
+impl fmt::Display for ImageError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TooManyBytes { bytes } => write!(
+                formatter,
+                "the picture is {bytes} bytes, and {MAX_SOURCE_BYTES} is the most that is read"
+            ),
+            Self::TooManyPixels { pixels } => write!(
+                formatter,
+                "the picture claims {pixels} pixels, and {MAX_PIXELS} is the most that is decoded"
+            ),
+            Self::UnknownFormat => {
+                write!(formatter, "this is not a picture in any format read here")
+            }
+            Self::Undecodable(why) => write!(formatter, "the picture could not be read: {why}"),
+            Self::EmptyBox => write!(formatter, "a picture cannot be fitted into no space at all"),
+        }
+    }
+}
+
+impl std::error::Error for ImageError {}
+
+/// One picture, in the only form the panel has any use for: eight bit grey,
+/// one byte per pixel, top row first, no padding.
+///
+/// The same layout the drawing surface uses, so painting one is a copy rather
+/// than a conversion.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Picture {
+    width: u32,
+    height: u32,
+    grey: Vec<u8>,
+}
+
+impl Picture {
+    /// Builds a picture from grey bytes that are already the right shape.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ImageError::TooManyPixels`] when the dimensions exceed
+    /// [`MAX_PIXELS`], and [`ImageError::Undecodable`] when `grey` is not
+    /// exactly `width * height` bytes.
+    pub fn from_grey(width: u32, height: u32, grey: Vec<u8>) -> Result<Self, ImageError> {
+        let pixels = u64::from(width) * u64::from(height);
+        if pixels > MAX_PIXELS {
+            return Err(ImageError::TooManyPixels { pixels });
+        }
+        if grey.len() as u64 != pixels {
+            return Err(ImageError::Undecodable(format!(
+                "{} bytes for a {width} by {height} picture, which needs {pixels}",
+                grey.len()
+            )));
+        }
+        Ok(Self {
+            width,
+            height,
+            grey,
+        })
+    }
+
+    #[must_use]
+    pub const fn width(&self) -> u32 {
+        self.width
+    }
+
+    #[must_use]
+    pub const fn height(&self) -> u32 {
+        self.height
+    }
+
+    /// The pixels, one grey byte each, row by row from the top.
+    #[must_use]
+    pub fn grey(&self) -> &[u8] {
+        &self.grey
+    }
+
+    #[must_use]
+    pub fn into_grey(self) -> Vec<u8> {
+        self.grey
+    }
+
+    /// The largest size that fits inside `width` by `height` without changing
+    /// the shape of the picture.
+    ///
+    /// Separate from [`Picture::fit`] so a layout can ask how much room a
+    /// picture will really take before deciding to give it any. A cover is
+    /// taller than it is wide and a screenshot is wider than it is tall, and a
+    /// row that reserves a square for both wastes most of it on one of them.
+    #[must_use]
+    pub fn size_within(&self, width: u32, height: u32) -> (u32, u32) {
+        if self.width == 0 || self.height == 0 || width == 0 || height == 0 {
+            return (0, 0);
+        }
+        let by_width = u64::from(width) * u64::from(self.height);
+        let by_height = u64::from(height) * u64::from(self.width);
+        // Whichever edge runs out first decides, and the other is derived from
+        // it, so the ratio survives exactly rather than to within rounding on
+        // both axes independently.
+        if by_width <= by_height {
+            let scaled = by_width / u64::from(self.width);
+            (width, u32::try_from(scaled).unwrap_or(height).max(1))
+        } else {
+            let scaled = by_height / u64::from(self.height);
+            (u32::try_from(scaled).unwrap_or(width).max(1), height)
+        }
+    }
+
+    /// Scales the picture to sit inside `width` by `height`, keeping its shape.
+    ///
+    /// A picture smaller than the box is returned untouched rather than blown
+    /// up. On a panel with no colour and a slow refresh an enlarged thumbnail
+    /// reads as a fault, while a small picture reads as a small picture.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ImageError::EmptyBox`] when the box has no area.
+    pub fn fit(&self, width: u32, height: u32) -> Result<Self, ImageError> {
+        if width == 0 || height == 0 {
+            return Err(ImageError::EmptyBox);
+        }
+        if self.width <= width && self.height <= height {
+            return Ok(self.clone());
+        }
+        // Lanczos rather than nearest or triangle, inside `scaled_to`.
+        // Lettering on a book cover is the usual subject, and it is the only
+        // filter here that keeps it legible at a third of its original size.
+        self.scaled_to(width, height)
+    }
+
+    /// Scales the picture to fill `width` by `height` as closely as its shape
+    /// allows, enlarging it by up to [`MAX_ENLARGEMENT`] if it is smaller.
+    ///
+    /// [`Picture::fit`] is the right answer for a picture shown at whatever
+    /// size it happens to be. This is the right answer for a picture given a
+    /// cell of its own: a book cover published at 190 by 300 sits in a third of
+    /// a portrait tile on a 300 pixel-per-inch panel and reads as a stamp
+    /// somebody dropped in an empty box. Enlargement is bounded because past
+    /// three times a cover stops being lettering and becomes a blur, and the
+    /// remainder is left as margin rather than smeared.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ImageError::EmptyBox`] when the box has no area.
+    pub fn fit_enlarging(&self, width: u32, height: u32) -> Result<Self, ImageError> {
+        if width == 0 || height == 0 {
+            return Err(ImageError::EmptyBox);
+        }
+        let ceiling_width = self.width.saturating_mul(MAX_ENLARGEMENT);
+        let ceiling_height = self.height.saturating_mul(MAX_ENLARGEMENT);
+        self.scaled_to(width.min(ceiling_width), height.min(ceiling_height))
+    }
+
+    /// Resamples to the largest size inside the box, in either direction.
+    fn scaled_to(&self, width: u32, height: u32) -> Result<Self, ImageError> {
+        let (target_width, target_height) = self.size_within(width, height);
+        if target_width == 0 || target_height == 0 {
+            return Err(ImageError::EmptyBox);
+        }
+        if target_width == self.width && target_height == self.height {
+            return Ok(self.clone());
+        }
+        let source = image::GrayImage::from_raw(self.width, self.height, self.grey.clone())
+            .ok_or_else(|| ImageError::Undecodable("the picture is not its own size".to_owned()))?;
+        let scaled =
+            image::imageops::resize(&source, target_width, target_height, FilterType::Lanczos3);
+        Ok(Self {
+            width: target_width,
+            height: target_height,
+            grey: scaled.into_raw(),
+        })
+    }
+
+    /// Reduces the picture to `levels` evenly spaced greys, spreading what is
+    /// lost into the pixels not yet visited.
+    ///
+    /// Floyd–Steinberg, because the alternative on a panel with sixteen greys
+    /// is banding, and a band across a photograph is far more obvious than the
+    /// grain this leaves. Fewer than two levels is treated as two: one grey is
+    /// not a picture.
+    pub fn dither(&mut self, levels: u8) {
+        let levels = u32::from(levels.max(2));
+        let width = self.width as usize;
+        let height = self.height as usize;
+        if width == 0 || height == 0 {
+            return;
+        }
+        // Carried beside the pixels rather than inside them. Rounding the
+        // error back into a byte at every step is what makes naive error
+        // diffusion drift dark.
+        let mut error = vec![0_i32; width * height];
+        for y in 0..height {
+            for x in 0..width {
+                let index = y * width + x;
+                let wanted = i32::from(self.grey[index]) + error[index];
+                let quantized = nearest_level(wanted, levels);
+                self.grey[index] = u8::try_from(quantized.clamp(0, 255)).unwrap_or(255);
+                let residue = wanted - quantized;
+                if residue == 0 {
+                    continue;
+                }
+                let mut spread = |dx: isize, dy: usize, numerator: i32| {
+                    let Some(nx) = x.checked_add_signed(dx) else {
+                        return;
+                    };
+                    let ny = y + dy;
+                    if nx >= width || ny >= height {
+                        return;
+                    }
+                    error[ny * width + nx] += residue * numerator / 16;
+                };
+                spread(1, 0, 7);
+                spread(-1, 1, 3);
+                spread(0, 1, 5);
+                spread(1, 1, 1);
+            }
+        }
+    }
+}
+
+fn nearest_level(value: i32, levels: u32) -> i32 {
+    let steps = i32::try_from(levels - 1).unwrap_or(1).max(1);
+    let clamped = value.clamp(0, 255);
+    let step = (clamped * steps + 127) / 255;
+    (step * 255 + steps / 2) / steps
+}
+
+/// Reads a picture that arrived over the network.
+///
+/// # Errors
+///
+/// Refuses anything over [`MAX_SOURCE_BYTES`] before looking at it, anything
+/// claiming more than [`MAX_PIXELS`] before allocating for it, and reports
+/// whatever the decoder said otherwise.
+pub fn decode(bytes: &[u8]) -> Result<Picture, ImageError> {
+    if bytes.len() > MAX_SOURCE_BYTES {
+        return Err(ImageError::TooManyBytes { bytes: bytes.len() });
+    }
+    let reader = ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|error| ImageError::Undecodable(error.to_string()))?;
+    if reader.format().is_none() {
+        return Err(ImageError::UnknownFormat);
+    }
+    // Asked before decoding, not after. This is the check that stops a header
+    // claiming a billion pixels from becoming a billion pixel allocation.
+    let (width, height) = reader
+        .into_dimensions()
+        .map_err(|error| ImageError::Undecodable(error.to_string()))?;
+    let pixels = u64::from(width) * u64::from(height);
+    if pixels > MAX_PIXELS {
+        return Err(ImageError::TooManyPixels { pixels });
+    }
+    let decoded = ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|error| ImageError::Undecodable(error.to_string()))?
+        .decode()
+        .map_err(|error| ImageError::Undecodable(error.to_string()))?;
+    // Luminance weights rather than an average of the channels, which matters
+    // more here than on a colour panel: an averaged red and an averaged blue
+    // come out the same grey, and on a book cover that is the title
+    // disappearing into its own background.
+    let grey = decoded.to_luma8();
+    Picture::from_grey(grey.width(), grey.height(), grey.into_raw())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{decode, ImageError, Picture, MAX_ENLARGEMENT, MAX_PIXELS, PANEL_GREYS};
+
+    /// A real four by four JPEG, so the decoder is exercised against a file
+    /// rather than against a mock of one.
+    fn tiny_jpeg() -> Vec<u8> {
+        const BASE64: &str = concat!(
+            "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0a",
+            "HBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAAEAAQBAREA/8QAHwAAAQUBAQEB",
+            "AQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1Fh",
+            "ByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZ",
+            "WmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXG",
+            "x8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/9oACAEBAAA/APn+v//Z"
+        );
+        decode_base64(BASE64)
+    }
+
+    fn decode_base64(text: &str) -> Vec<u8> {
+        const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut out = Vec::new();
+        let mut accumulator = 0_u32;
+        let mut bits = 0_u32;
+        for byte in text.bytes() {
+            if byte == b'=' {
+                break;
+            }
+            let Some(value) = ALPHABET.iter().position(|candidate| *candidate == byte) else {
+                continue;
+            };
+            accumulator = (accumulator << 6) | u32::try_from(value).unwrap_or(0);
+            bits += 6;
+            if bits >= 8 {
+                bits -= 8;
+                out.push(u8::try_from((accumulator >> bits) & 0xff).unwrap_or(0));
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn a_real_jpeg_decodes_to_grey_bytes() {
+        let picture = decode(&tiny_jpeg()).expect("decode the jpeg");
+        assert_eq!(picture.width(), 4);
+        assert_eq!(picture.height(), 4);
+        assert_eq!(picture.grey().len(), 16);
+    }
+
+    #[test]
+    fn something_that_is_not_a_picture_is_refused_rather_than_guessed_at() {
+        let error = decode(b"<!doctype html><title>not a picture</title>").expect_err("refused");
+        assert!(matches!(
+            error,
+            ImageError::UnknownFormat | ImageError::Undecodable(_)
+        ));
+    }
+
+    /// The decoder reads bytes from a stranger, so the ceiling has to hold
+    /// before anything is allocated rather than after.
+    #[test]
+    fn an_enormous_claim_is_refused_before_it_is_believed() {
+        let error = Picture::from_grey(100_000, 100_000, Vec::new()).expect_err("refused");
+        assert!(matches!(error, ImageError::TooManyPixels { .. }));
+        assert!(u64::from(100_000_u32) * u64::from(100_000_u32) > MAX_PIXELS);
+    }
+
+    #[test]
+    fn grey_bytes_that_are_not_the_size_they_claim_are_refused() {
+        let error = Picture::from_grey(4, 4, vec![0; 15]).expect_err("refused");
+        assert!(matches!(error, ImageError::Undecodable(_)));
+    }
+
+    #[test]
+    fn fitting_keeps_the_shape_of_the_picture() {
+        // A book cover: taller than it is wide, which is the case a square box
+        // gets wrong if it scales both axes independently.
+        let picture = Picture::from_grey(190, 300, vec![128; 190 * 300]).expect("build");
+        let fitted = picture.fit(120, 120).expect("fit");
+        assert_eq!(fitted.height(), 120, "the tall edge is the one that binds");
+        assert_eq!(fitted.width(), 76, "190/300 of 120, kept exactly");
+        assert_eq!(fitted.grey().len(), 76 * 120);
+    }
+
+    #[test]
+    fn a_picture_smaller_than_its_box_is_left_alone() {
+        let picture = Picture::from_grey(20, 30, vec![7; 600]).expect("build");
+        let fitted = picture.fit(400, 400).expect("fit");
+        assert_eq!((fitted.width(), fitted.height()), (20, 30));
+        assert_eq!(fitted.grey(), picture.grey(), "and not resampled either");
+    }
+
+    /// The defect this exists for: a Gutenberg cover is 190 by 300, a portrait
+    /// tile on the Clara is more than twice that, and `fit` left the cover at
+    /// its published size floating in an empty cell.
+    #[test]
+    fn a_cover_given_a_tile_of_its_own_is_enlarged_to_most_of_it() {
+        let picture = Picture::from_grey(190, 300, vec![128; 190 * 300]).expect("build");
+        let filled = picture.fit_enlarging(480, 660).expect("fit");
+        assert_eq!(filled.height(), 660, "the tall edge is the one that binds");
+        assert_eq!(filled.width(), 418, "190/300 of 660, kept exactly");
+        assert_eq!(filled.grey().len(), 418 * 660);
+    }
+
+    #[test]
+    fn enlargement_stops_before_a_picture_becomes_a_blur() {
+        let picture = Picture::from_grey(40, 40, vec![9; 1600]).expect("build");
+        let filled = picture.fit_enlarging(4000, 4000).expect("fit");
+        assert_eq!(
+            (filled.width(), filled.height()),
+            (40 * MAX_ENLARGEMENT, 40 * MAX_ENLARGEMENT),
+            "the cap decides, not the box"
+        );
+    }
+
+    #[test]
+    fn enlarging_still_never_overflows_a_box_a_picture_already_exceeds() {
+        let picture = Picture::from_grey(1000, 1000, vec![9; 1_000_000]).expect("build");
+        let filled = picture.fit_enlarging(100, 100).expect("fit");
+        assert_eq!((filled.width(), filled.height()), (100, 100));
+    }
+
+    #[test]
+    fn a_box_with_no_area_is_refused_rather_than_producing_nothing() {
+        let picture = Picture::from_grey(4, 4, vec![0; 16]).expect("build");
+        assert_eq!(
+            picture.fit(0, 10).expect_err("refused"),
+            ImageError::EmptyBox
+        );
+    }
+
+    #[test]
+    fn dithering_leaves_only_the_greys_the_panel_can_hold() {
+        // A gradient, which is exactly what bands when it is simply rounded.
+        let grey = (0..=255_u8).collect::<Vec<_>>();
+        let mut picture = Picture::from_grey(16, 16, grey).expect("build");
+        picture.dither(PANEL_GREYS);
+        let allowed = (0..u32::from(PANEL_GREYS))
+            .map(|step| u8::try_from((step * 255 + 7) / 15).unwrap_or(255))
+            .collect::<Vec<_>>();
+        for value in picture.grey() {
+            assert!(
+                allowed.contains(value),
+                "{value} is not one of the {PANEL_GREYS} greys: {allowed:?}"
+            );
+        }
+    }
+
+    /// Error diffusion that rounds inside the pixel buffer drifts, and a
+    /// photograph that comes out visibly darker than it went in is the usual
+    /// symptom. The mean has to survive the reduction.
+    #[test]
+    fn dithering_keeps_the_overall_brightness() {
+        let grey = (0..1024)
+            .map(|index| u8::try_from(index % 256).unwrap_or(0))
+            .collect::<Vec<_>>();
+        let picture = Picture::from_grey(32, 32, grey).expect("build");
+        let before = average(picture.grey());
+        let mut dithered = picture.clone();
+        dithered.dither(PANEL_GREYS);
+        let after = average(dithered.grey());
+        assert!(
+            (before - after).abs() < 3.0,
+            "brightness moved from {before} to {after}"
+        );
+    }
+
+    #[test]
+    fn one_grey_is_not_a_picture_so_the_floor_is_two() {
+        let mut picture = Picture::from_grey(4, 4, vec![90; 16]).expect("build");
+        picture.dither(0);
+        for value in picture.grey() {
+            assert!(
+                *value == 0 || *value == 255,
+                "{value} is not black or white"
+            );
+        }
+    }
+
+    fn average(values: &[u8]) -> f64 {
+        let count = u32::try_from(values.len()).expect("a short fixture");
+        values.iter().map(|value| f64::from(*value)).sum::<f64>() / f64::from(count)
+    }
+}

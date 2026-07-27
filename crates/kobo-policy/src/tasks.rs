@@ -6,7 +6,9 @@
 //! every unit of work is registered, counted, cancellable, and reports back
 //! exactly once.
 
-use kobo_protocol::{Task, TaskError, TaskId, TaskOutcome, MAX_TASK_BYTES, MAX_TASK_BYTES_U32};
+use kobo_protocol::{
+    SecretHeader, Task, TaskError, TaskId, TaskOutcome, MAX_TASK_BYTES, MAX_TASK_BYTES_U32,
+};
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
@@ -63,10 +65,37 @@ pub type Fetcher = dyn Fn(&str, u32, u32) -> Result<Vec<u8>, TaskError> + Send +
 
 /// The host-provided implementation a `Post` task runs through.
 ///
-/// The credential is the fourth argument and arrives already resolved. The
-/// application never supplied it and cannot observe it.
-pub type Poster =
-    dyn Fn(&str, &[u8], &str, Option<&str>, u32) -> Result<Vec<u8>, TaskError> + Send + Sync;
+/// The credential is the fourth argument, as a header name and its complete
+/// value, and arrives already resolved: the application named a secret and
+/// never supplied or observed it. The fifth argument is the non-secret headers
+/// the application asked for, already checked against the ones the runtime
+/// owns.
+pub type Poster = dyn Fn(&str, &[u8], &str, Option<(&str, &str)>, &[(&str, &str)], u32) -> Result<Vec<u8>, TaskError>
+    + Send
+    + Sync;
+
+/// Headers an application may not set, because the runtime decides them.
+///
+/// `Authorization` is here even though a credential may legitimately go there:
+/// the runtime puts it on from a named secret, so an application setting it
+/// directly is either supplying its own key — which defeats the whole point of
+/// never letting an application hold one — or overwriting the runtime's.
+const RESERVED_HEADERS: &[&str] = &[
+    "authorization",
+    "host",
+    "content-length",
+    "content-type",
+    "connection",
+    "transfer-encoding",
+    "range",
+    "accept-encoding",
+];
+
+/// Whether an application may set this header itself.
+#[must_use]
+pub fn header_is_the_applications_to_set(name: &str) -> bool {
+    !RESERVED_HEADERS.contains(&name.to_ascii_lowercase().as_str())
+}
 
 /// Told, from the finishing task's own thread, that a result is now waiting.
 ///
@@ -433,29 +462,55 @@ fn run(work: &Task, root: &Path, backends: Backends<'_>, cancel: &AtomicBool) ->
             url,
             body,
             content_type,
-            secret: name,
+            credential: wanted,
+            headers,
             max_bytes,
         } => {
             let Some(post) = post else {
                 return TaskOutcome::Failed(TaskError::Denied);
             };
+            // Refused rather than quietly dropped. A request that loses a
+            // header the runtime happens to own would fail at the far end with
+            // an error the author cannot connect to anything they wrote.
+            if headers
+                .iter()
+                .any(|header| !header_is_the_applications_to_set(&header.name))
+            {
+                return TaskOutcome::Failed(TaskError::Denied);
+            }
             // A task that names a credential the runtime does not hold is
             // refused rather than sent without one. Sending it anyway would
             // reach the server as an unauthenticated request, and the
             // application would report whatever the server said about that
             // instead of the real problem.
-            let credential = match name {
+            let credential = match wanted {
                 None => None,
-                Some(name) => match secret(secrets, name) {
+                Some(wanted) => match secret(secrets, &wanted.secret) {
                     None => return TaskOutcome::Failed(TaskError::Denied),
-                    Some(value) => Some(value),
+                    // Assembled here, in the one place that has both the
+                    // convention and the value, so nothing downstream has to
+                    // know that Bearer is spelled differently from an API key.
+                    Some(value) => Some((
+                        wanted.header_name().to_owned(),
+                        match wanted.header {
+                            SecretHeader::Bearer => format!("Bearer {value}"),
+                            SecretHeader::Named(_) => value,
+                        },
+                    )),
                 },
             };
+            let extra = headers
+                .iter()
+                .map(|header| (header.name.as_str(), header.value.as_str()))
+                .collect::<Vec<_>>();
             match post(
                 url,
                 body.as_bytes(),
                 content_type,
-                credential.as_deref(),
+                credential
+                    .as_ref()
+                    .map(|(name, value)| (name.as_str(), value.as_str())),
+                &extra,
                 (*max_bytes).min(MAX_TASK_BYTES_U32),
             ) {
                 Ok(bytes) => TaskOutcome::Completed(bytes),
@@ -494,6 +549,7 @@ fn resolve(root: &Path, path: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kobo_protocol::Credential;
     use std::sync::atomic::AtomicUsize;
 
     fn temp_root(name: &str) -> PathBuf {
@@ -781,7 +837,7 @@ mod tests {
         let mut runner = TaskRunner::simulated(temp_root("nosecret"))
             .with_capabilities([Capability::Network])
             .with_secrets(temp_root("nosecret-empty"))
-            .with_post(Arc::new(move |_, _, _, _, _| {
+            .with_post(Arc::new(move |_, _, _, _, _, _| {
                 observed.store(true, Ordering::SeqCst);
                 Ok(Vec::new())
             }));
@@ -792,7 +848,8 @@ mod tests {
                     url: String::from("https://example.invalid/"),
                     body: String::from("{}"),
                     content_type: String::from("application/json"),
-                    secret: Some(String::from("absent")),
+                    credential: Some(Credential::bearer("absent")),
+                    headers: Vec::new(),
                     max_bytes: 1024,
                 },
             )
@@ -810,8 +867,8 @@ mod tests {
         let mut runner = TaskRunner::simulated(temp_root("resolved-root"))
             .with_capabilities([Capability::Network])
             .with_secrets(directory)
-            .with_post(Arc::new(|_, _, _, bearer, _| {
-                assert_eq!(bearer, Some("sk-test-value"));
+            .with_post(Arc::new(|_, _, _, credential, _, _| {
+                assert_eq!(credential, Some(("Authorization", "Bearer sk-test-value")));
                 Ok(b"{\"ok\":true}".to_vec())
             }));
         runner
@@ -821,7 +878,8 @@ mod tests {
                     url: String::from("https://example.invalid/"),
                     body: String::from("{}"),
                     content_type: String::from("application/json"),
-                    secret: Some(String::from("openai")),
+                    credential: Some(Credential::bearer("openai")),
+                    headers: Vec::new(),
                     max_bytes: 1024,
                 },
             )
@@ -837,10 +895,9 @@ mod tests {
 
     #[test]
     fn posting_without_the_network_capability_is_refused() {
-        let mut runner =
-            TaskRunner::simulated(temp_root("ungranted")).with_post(Arc::new(|_, _, _, _, _| {
-                panic!("an ungranted post must never reach the network")
-            }));
+        let mut runner = TaskRunner::simulated(temp_root("ungranted")).with_post(Arc::new(
+            |_, _, _, _, _, _| panic!("an ungranted post must never reach the network"),
+        ));
         runner
             .submit(
                 TaskId(1),
@@ -848,7 +905,8 @@ mod tests {
                     url: String::from("https://example.invalid/"),
                     body: String::from("{}"),
                     content_type: String::from("application/json"),
-                    secret: None,
+                    credential: None,
+                    headers: Vec::new(),
                     max_bytes: 1024,
                 },
             )

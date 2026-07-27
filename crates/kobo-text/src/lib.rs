@@ -419,6 +419,12 @@ impl Typesetter for SystemFonts {
             .draw_run(text, x, y, size, self.cell(size, face), plot);
     }
 
+    fn has_glyph(&self, character: char, face: Face) -> bool {
+        // Index zero is `.notdef`, the empty box, which is exactly the thing
+        // worth catching before it reaches a panel.
+        self.face(face).font.lookup_glyph_index(character) != 0
+    }
+
     fn cell_width(&self, size: FontSize) -> i32 {
         // Falls back to measuring rather than refusing, so a future face that
         // is very nearly fixed pitch still produces a usable grid.
@@ -507,6 +513,22 @@ mod tests {
         let outcome = Typeface::load(&path, CLARA);
         let _ = std::fs::remove_file(&path);
         assert!(matches!(outcome, Err(Error::Malformed(..))));
+    }
+
+    /// The check an application's own tests lean on: a tick character looked
+    /// fine in source and rendered as an empty box on the panel, because the
+    /// bundled face has no glyph for it.
+    #[test]
+    fn the_face_reports_what_it_cannot_draw() {
+        let bundled =
+            Typeface::from_bytes(TEXT_FONT, "bundled", CLARA).expect("the compiled-in face");
+        for present in "Aa1,.\u{2026}\u{e9}".chars() {
+            assert!(
+                bundled.font.lookup_glyph_index(present) != 0,
+                "the face should draw {present:?}"
+            );
+        }
+        assert_eq!(bundled.font.lookup_glyph_index('\u{2713}'), 0);
     }
 
     #[test]

@@ -24,8 +24,8 @@
 
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, ScreenBuilder, Task, TaskId,
-    TaskOutcome,
+    action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, PictureHandle, ScreenBuilder, Task,
+    TaskId, TaskOutcome, TilePicture, TileShape,
 };
 use std::process::ExitCode;
 
@@ -53,6 +53,19 @@ const SKELETON_ROWS: u8 = 6;
 /// The most books to keep from one response.
 const MAX_RESULTS: usize = 16;
 
+/// How much of a cover to accept.
+///
+/// Gutenberg's medium covers are around thirty kilobytes. The ceiling is what
+/// stops a mis-typed URL pulling a megabyte down a slow radio for a thumbnail.
+const COVER_BYTES: u32 = 512 * 1024;
+
+/// How many books one shelf page holds.
+///
+/// Two columns of portrait tiles, three rows deep, which is what fits between
+/// the bars on this panel. It is a count rather than a measurement because the
+/// grid itself is measured: this only decides where the shelf is cut.
+const SHELF_PAGE: usize = 6;
+
 /// How close to the end of what has been downloaded the reader may get before
 /// the next piece is requested.
 const TOP_UP_PAGES: usize = 2;
@@ -63,6 +76,10 @@ struct Book {
     author: String,
     /// Where the plain text lives, when Gutenberg published one.
     text: Option<String>,
+    /// Where the cover artwork lives, when Gutenberg published one.
+    cover: Option<String>,
+    /// The cover once it has been decoded and handed to the runtime.
+    picture: Option<TilePicture>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -81,6 +98,8 @@ enum View {
 enum Awaiting {
     Catalogue,
     Text,
+    /// The cover of one book, named by its index.
+    Cover(usize),
 }
 
 struct Gutenshelf {
@@ -104,6 +123,15 @@ struct Gutenshelf {
     /// Whether the download reached the end of the book.
     complete: bool,
     page: usize,
+    /// Which page of the shelf is showing.
+    shelf: usize,
+    /// Books whose covers are still to be fetched, most recent first.
+    ///
+    /// Only the covers for the shelf page being looked at are ever queued. A
+    /// shelf of sixteen would otherwise hold the radio open for a dozen
+    /// pictures the reader may never scroll to, and on a device that reads for
+    /// weeks on a charge that is the difference between free and not.
+    wanted: Vec<usize>,
     task: Option<(TaskId, Awaiting)>,
     problem: Option<String>,
 }
@@ -121,6 +149,8 @@ impl Default for Gutenshelf {
             fetched: 0,
             complete: false,
             page: 0,
+            shelf: 0,
+            wanted: Vec::new(),
             task: None,
             problem: None,
         }
@@ -174,17 +204,45 @@ impl Gutenshelf {
                 )
                 .build();
         }
-        screen
-            .divider()
-            .rows(self.books.iter().enumerate().map(|(index, book)| {
+        let pages = self.shelf_pages();
+        let first = self.shelf * SHELF_PAGE;
+        let shown = self
+            .books
+            .iter()
+            .enumerate()
+            .skip(first)
+            .take(SHELF_PAGE)
+            .map(|(index, book)| {
                 (
                     format!("book-{index}"),
                     book.title.clone(),
-                    book.author.clone(),
                     Glyph::Book,
+                    book.picture,
                 )
-            }))
+            });
+        screen = screen.divider().picture_tiles(TileShape::Portrait, shown);
+        if pages <= 1 {
+            return screen.build();
+        }
+        // The same page controls the reader already uses inside a book, so a
+        // shelf is turned the way a page is. Tapping the side of the panel
+        // works here too, which is how every Kobo has always turned a page.
+        screen
+            .page_turns("shelf-back", "shelf-next")
+            .nav_bar(
+                None,
+                [
+                    ("shelf-back", "Back"),
+                    ("search", "Search"),
+                    ("shelf-next", "More"),
+                ],
+            )
             .build()
+    }
+
+    /// How many pages the shelf is cut into.
+    fn shelf_pages(&self) -> usize {
+        self.books.len().div_ceil(SHELF_PAGE).max(1)
     }
 
     fn search(&self) -> kobo_sdk::Screen {
@@ -274,6 +332,102 @@ impl Gutenshelf {
         }) {
             Some(task) => self.task = Some((task, Awaiting::Catalogue)),
             None => self.problem = Some("Too much is already in flight.".to_owned()),
+        }
+    }
+
+    /// Queues the covers for the shelf page being looked at, then starts the
+    /// first one.
+    ///
+    /// Deliberately not one request per book at once. Four could be in flight,
+    /// but each arrival would repaint the shelf, and every repaint on this
+    /// panel is a full refresh the reader watches happen. One at a time, with
+    /// a single repaint when the page is complete, costs one refresh instead
+    /// of six.
+    fn want_covers(&mut self, context: &mut Context) {
+        let first = self.shelf * SHELF_PAGE;
+        self.wanted = self
+            .books
+            .iter()
+            .enumerate()
+            .skip(first)
+            .take(SHELF_PAGE)
+            .filter(|(_, book)| book.picture.is_none() && book.cover.is_some())
+            .map(|(index, _)| index)
+            .rev()
+            .collect();
+        self.ask_cover(context);
+    }
+
+    fn ask_cover(&mut self, context: &mut Context) {
+        if self.task.is_some() {
+            return;
+        }
+        while let Some(index) = self.wanted.pop() {
+            let Some(url) = self.books.get(index).and_then(|book| book.cover.clone()) else {
+                continue;
+            };
+            if let Some(task) = context.spawn(Task::Fetch {
+                url,
+                offset: 0,
+                max_bytes: COVER_BYTES,
+            }) {
+                self.task = Some((task, Awaiting::Cover(index)));
+                return;
+            }
+            // Out of slots rather than out of covers. Put it back and let the
+            // next arrival try again, so a busy moment loses nothing.
+            self.wanted.push(index);
+            return;
+        }
+    }
+
+    /// Decodes one cover and hands it to the runtime at the size it will be
+    /// drawn.
+    ///
+    /// Fitting here rather than letting the renderer shrink it is what keeps
+    /// the picture cache honest: a shelf of full-size covers is two megabytes
+    /// of pixels that are averaged away on every paint.
+    fn took_cover(&mut self, context: &mut Context, index: usize, bytes: &[u8]) {
+        let (cell_width, cell_height) = context.metrics().tile_body(TileShape::Portrait);
+        let Ok(cell_width) = u32::try_from(cell_width) else {
+            return;
+        };
+        let Ok(cell_height) = u32::try_from(cell_height) else {
+            return;
+        };
+        let Ok(picture) = kobo_image::decode(bytes) else {
+            // A cover that will not decode is not worth telling the reader
+            // about: the tile keeps its glyph and the book is still readable.
+            return;
+        };
+        // Enlarging rather than merely shrinking: Gutenberg publishes covers at
+        // around 190 by 300, and a tile on this panel is more than twice that,
+        // so fitting alone left every cover as a stamp in an empty cell.
+        let Ok(mut picture) = picture.fit_enlarging(cell_width, cell_height) else {
+            return;
+        };
+        // Halftoned to the levels this panel actually resolves. Without it the
+        // smooth gradients in cover art band into visible steps, which looks
+        // like a decoding fault rather than a limitation of the display.
+        picture.dither(kobo_image::PANEL_GREYS);
+        let handle = PictureHandle(u32::try_from(index).unwrap_or(0));
+        let (width, height) = (picture.width(), picture.height());
+        if let Some(reference) = context.put_picture(handle, width, height, picture.into_grey()) {
+            if let Some(book) = self.books.get_mut(index) {
+                book.picture = Some(reference);
+            }
+        }
+    }
+
+    /// Starts the next cover, or repaints once the page is complete.
+    ///
+    /// The repaint is deferred to exactly here. Painting on each arrival would
+    /// cost one full refresh per cover, and the reader would watch the shelf
+    /// fill in one tile at a time over several seconds.
+    fn next_cover(&mut self, context: &mut Context) {
+        self.ask_cover(context);
+        if self.task.is_none() {
+            self.show(context);
         }
     }
 
@@ -418,6 +572,19 @@ impl KoboApp for Gutenshelf {
             self.show(context);
             return;
         }
+        if action == action_id("shelf-next") || action == action_id("shelf-back") {
+            let pages = self.shelf_pages();
+            self.shelf = if action == action_id("shelf-next") {
+                (self.shelf + 1).min(pages - 1)
+            } else {
+                self.shelf.saturating_sub(1)
+            };
+            // Painted before the covers are asked for, so turning the shelf is
+            // immediate and the artwork arrives into a page that is already up.
+            self.show(context);
+            self.want_covers(context);
+            return;
+        }
         if action == action_id("page-back") {
             self.page = self.page.saturating_sub(1);
             self.problem = None;
@@ -442,10 +609,23 @@ impl KoboApp for Gutenshelf {
         self.task = None;
         match outcome {
             TaskOutcome::Completed(bytes) => match awaiting {
-                Awaiting::Catalogue => self.took_catalogue(&bytes),
+                Awaiting::Catalogue => {
+                    self.took_catalogue(&bytes);
+                    self.want_covers(context);
+                }
                 Awaiting::Text => self.took_text(context, &bytes),
+                Awaiting::Cover(index) => {
+                    self.took_cover(context, index, &bytes);
+                    return self.next_cover(context);
+                }
             },
             TaskOutcome::Failed(error) => {
+                if let Awaiting::Cover(_) = awaiting {
+                    // Silent on purpose. A missing cover leaves a tile with its
+                    // glyph, which is a shelf that still works; a banner about
+                    // artwork over a usable library is noise.
+                    return self.next_cover(context);
+                }
                 // Named rather than summarised. "Not found" and "the network
                 // could not be reached" call for completely different things
                 // from the reader.
@@ -456,7 +636,12 @@ impl KoboApp for Gutenshelf {
                     self.view = View::Details;
                 }
             }
-            TaskOutcome::Cancelled => self.problem = Some("Cancelled.".to_owned()),
+            TaskOutcome::Cancelled => {
+                if let Awaiting::Cover(_) = awaiting {
+                    return self.next_cover(context);
+                }
+                self.problem = Some("Cancelled.".to_owned());
+            }
         }
         self.show(context);
     }
@@ -497,6 +682,8 @@ fn books_from(value: &kobo_json::Value) -> Vec<Book> {
                 title: title.to_owned(),
                 author: authors_of(entry),
                 text: plain_text_url(entry),
+                cover: cover_url(entry),
+                picture: None,
             })
         })
         .collect()
@@ -540,6 +727,29 @@ fn plain_text_url(entry: &kobo_json::Value) -> Option<String> {
         // that fails at download time has already cost the reader a tap.
         .find(|url| !url.to_ascii_lowercase().ends_with(".zip") && url.starts_with("https://"))
         .map(str::to_owned)
+}
+
+/// Picks the cover artwork, if Gutenberg published one.
+///
+/// Gutendex lists two sizes under the same `image/jpeg` type — a small
+/// thumbnail and a medium cover — so the URL is what distinguishes them. The
+/// medium one is around 190 by 300, which is a little over half a tile on this
+/// panel and the one worth enlarging; the small one is too coarse for it.
+fn cover_url(entry: &kobo_json::Value) -> Option<String> {
+    let kobo_json::Value::Object(formats) = entry.get("formats")? else {
+        return None;
+    };
+    let covers = formats
+        .iter()
+        .filter(|(kind, _)| kind.starts_with("image/"))
+        .filter_map(|(_, url)| url.as_str())
+        .filter(|url| url.starts_with("https://"))
+        .collect::<Vec<_>>();
+    covers
+        .iter()
+        .find(|url| url.contains(".cover.medium."))
+        .or_else(|| covers.first())
+        .map(|url| (*url).to_owned())
 }
 
 fn main() -> ExitCode {

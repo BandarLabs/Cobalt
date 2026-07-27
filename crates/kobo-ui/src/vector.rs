@@ -611,6 +611,30 @@ pub fn shapes(glyph: Glyph) -> Vec<Shape> {
             ),
             stroke(Path::line(520, 700, 830, 700)),
         ],
+        // A folded newspaper: a masthead rule, a column and a headline block.
+        // Distinct in silhouette from the bubble beside it in the launcher,
+        // which is the only property that matters at 24 pixels.
+        Glyph::News => vec![
+            stroke(Path::rounded(120, 220, 760, 560, 50)),
+            stroke(Path::line(220, 380, 620, 380)),
+            stroke(Path::line(220, 520, 460, 520)),
+            stroke(Path::line(220, 640, 460, 640)),
+            Shape::Fill(Path::rounded(560, 500, 220, 160, 30)),
+        ],
+        // A speech bubble with a tail: a conversation, a comment thread, a
+        // reply. Two lines inside rather than three, because at 24 pixels the
+        // third closes up into a smudge.
+        Glyph::Chat => vec![
+            stroke(Path::rounded(130, 180, 740, 500, 90)),
+            stroke(
+                Path::new()
+                    .move_to(300, 680)
+                    .line_to(300, 870)
+                    .line_to(470, 680),
+            ),
+            stroke(Path::line(280, 340, 720, 340)),
+            stroke(Path::line(280, 500, 580, 500)),
+        ],
     }
 }
 
@@ -636,7 +660,7 @@ mod tests {
     use super::{back_arrow, render, shapes, Path, Shape, UNITS};
     use crate::Glyph;
 
-    const EVERY: [Glyph; 16] = [
+    const EVERY: [Glyph; 18] = [
         Glyph::App,
         Glyph::Book,
         Glyph::Note,
@@ -653,6 +677,8 @@ mod tests {
         Glyph::Circle,
         Glyph::Check,
         Glyph::Terminal,
+        Glyph::Chat,
+        Glyph::News,
     ];
 
     fn inked(glyph: Glyph, size: i32) -> usize {

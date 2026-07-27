@@ -316,7 +316,13 @@ impl AppServer {
         let writer = Arc::new(Mutex::new(stream.try_clone()?));
         let reader_writer = Arc::clone(&writer);
         thread::spawn(move || {
-            let _ = read_app_messages(reader, &reader_writer, &reader_state);
+            // A malformed frame ends the session rather than being skipped,
+            // and the developer is told which one: a reader that dies quietly
+            // leaves an application talking to nobody, with a panel that keeps
+            // showing the last good screen and ignores every tap.
+            if let Err(error) = read_app_messages(reader, &reader_writer, &reader_state) {
+                eprintln!("the application's connection ended: {error}");
+            }
         });
         Ok(AppSession { state, writer })
     }
@@ -415,10 +421,43 @@ fn current_user_id() -> io::Result<u32> {
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "current user ID is invalid"))
 }
 
+/// Keeps or releases one picture on the application's behalf.
+///
+/// Split out only so the message loop stays readable; the cache is the same
+/// one the device runtime uses.
+fn hold(state: &Arc<Mutex<AppState>>, message: Message) -> io::Result<()> {
+    let refused = {
+        let mut held = state
+            .lock()
+            .map_err(|_| io::Error::other("app state lock poisoned"))?;
+        match message {
+            Message::PutPicture {
+                handle,
+                width,
+                height,
+                grey,
+            } => (!held.pictures.put(handle, width, height, grey)).then_some(handle),
+            Message::DropPicture { handle } => {
+                held.pictures.remove(handle);
+                None
+            }
+            _ => None,
+        }
+    };
+    match refused {
+        Some(handle) => note(state, &format!("picture {} refused", handle.0)),
+        None => Ok(()),
+    }
+}
+
 #[derive(Debug)]
 struct AppState {
     screen: Screen,
     logs: Vec<String>,
+    /// The same bounded cache the device runtime uses, so a preview that shows
+    /// a cover and a panel that does not would be a real difference rather than
+    /// a simulator shortcut.
+    pictures: kobo_ui::PictureCache,
 }
 
 impl Default for AppState {
@@ -426,6 +465,7 @@ impl Default for AppState {
         Self {
             screen: Screen::new(0, Vec::new()),
             logs: Vec::new(),
+            pictures: kobo_ui::PictureCache::default(),
         }
     }
 }
@@ -477,9 +517,21 @@ impl AppSession {
                 SHELL.as_bytes(),
             ),
             ("GET", "/frame") => {
-                let screen = self.screen();
                 let mut surface = Surface::new(DISPLAY_WIDTH as usize, DISPLAY_HEIGHT as usize);
-                render(&screen, &mut surface, None);
+                {
+                    let state = self
+                        .state
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    kobo_ui::render_all(
+                        &state.screen,
+                        &kobo_ui::CLARA_BW_METRICS,
+                        kobo_ui::Chrome::default(),
+                        &state.pictures,
+                        &mut surface,
+                        None,
+                    );
+                }
                 write_response(
                     &mut stream,
                     200,
@@ -668,6 +720,7 @@ fn read_app_messages(
                     "Info: asked to launch {name}; the simulator hosts one application"
                 ));
             }
+            Message::PutPicture { .. } | Message::DropPicture { .. } => hold(state, frame.message)?,
             Message::Log { level, message } => note(state, &format!("{level:?}: {message}"))?,
             Message::DeviceRequest(request) => {
                 let result = services.handle(request);

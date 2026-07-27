@@ -312,7 +312,10 @@ enum Method<'a> {
     Post {
         body: &'a [u8],
         content_type: &'a str,
-        bearer: Option<&'a str>,
+        /// The credential header, already assembled as a name and its value.
+        credential: Option<(&'a str, &'a str)>,
+        /// Further headers the request needs, none of them secret.
+        headers: &'a [(&'a str, &'a str)],
     },
 }
 
@@ -327,11 +330,15 @@ impl Method<'_> {
 
 /// Sends `body` to `url` and returns at most `max_bytes` of the answer.
 ///
-/// `bearer`, when present, is sent as an `Authorization: Bearer` header. It is
-/// taken as a parameter rather than read from anywhere here because the only
-/// caller that has one is the runtime: an application names a secret and never
-/// sees its value, so a credential cannot leak through an application's own
-/// memory, logs or crash dump.
+/// `credential`, when present, is a header name and its complete value — the
+/// caller decides whether that is `Authorization: Bearer …`, `x-api-key: …` or
+/// something else, because the convention differs by service and choosing one
+/// here would mean every other service needs a proxy in front of it.
+///
+/// It is taken as a parameter rather than read from anywhere here because the
+/// only caller that has one is the runtime: an application names a secret and
+/// never sees its value, so a credential cannot leak through an application's
+/// own memory, logs or crash dump.
 ///
 /// Redirects are deliberately **not** followed. Replaying a body at whatever
 /// address a server names is how a request meant for one host ends up, headers
@@ -346,18 +353,27 @@ pub fn post(
     url: &str,
     body: &[u8],
     content_type: &str,
-    bearer: Option<&str>,
+    credential: Option<(&str, &str)>,
+    headers: &[(&str, &str)],
     max_bytes: u32,
 ) -> Result<Vec<u8>, TaskError> {
-    // A header value containing a newline would let a caller append headers of
-    // its own to the request. The runtime reads the credential off a file it
-    // does not control the contents of, so this is checked rather than assumed.
-    if let Some(bearer) = bearer {
-        if bearer.bytes().any(|byte| byte < 0x20 || byte == 0x7f) {
+    // A header containing a newline would let a caller append headers of its
+    // own to the request. The runtime reads the credential off a file whose
+    // contents it does not control, so this is checked rather than assumed,
+    // and it is checked here because this is the last gate before the socket.
+    let clean = |text: &str| !text.bytes().any(|byte| byte < 0x20 || byte == 0x7f);
+    if let Some((name, value)) = credential {
+        if name.is_empty() || !clean(name) || !clean(value) {
             return Err(TaskError::Denied);
         }
     }
-    if content_type.bytes().any(|byte| byte < 0x20 || byte == 0x7f) {
+    if headers
+        .iter()
+        .any(|(name, value)| name.is_empty() || !clean(name) || !clean(value))
+    {
+        return Err(TaskError::Denied);
+    }
+    if !clean(content_type) {
         return Err(TaskError::Denied);
     }
     let address = parse(url)?;
@@ -366,7 +382,8 @@ pub fn post(
         &Method::Post {
             body,
             content_type,
-            bearer,
+            credential,
+            headers,
         },
         max_bytes,
     )?;
@@ -409,10 +426,14 @@ fn head(address: &Address, method: &Method<'_>, max_bytes: u32) -> String {
         Method::Post {
             body,
             content_type,
-            bearer,
+            credential,
+            headers,
         } => {
-            if let Some(bearer) = bearer {
-                head.push_str(&format!("Authorization: Bearer {bearer}\r\n"));
+            if let Some((name, value)) = credential {
+                head.push_str(&format!("{name}: {value}\r\n"));
+            }
+            for (name, value) in *headers {
+                head.push_str(&format!("{name}: {value}\r\n"));
             }
             head.push_str(&format!(
                 "Content-Type: {content_type}\r\nContent-Length: {}\r\n",
@@ -482,7 +503,7 @@ fn request(address: &Address, method: &Method<'_>, max_bytes: u32) -> Result<Vec
 #[cfg(test)]
 mod tests {
     use super::{
-        fetch, head, parse, resolve_redirect, split_response, Address, Cow, Method, Response,
+        fetch, head, parse, post, resolve_redirect, split_response, Address, Cow, Method, Response,
     };
     use kobo_protocol::TaskError;
 
@@ -760,5 +781,61 @@ mod tests {
             split_response(response),
             Ok(Response::Body(Cow::Borrowed(b"hello")))
         ));
+    }
+
+    #[test]
+    fn a_credential_actually_reaches_the_request() {
+        // This existed as `Authorization: ******` — the redaction meant for a
+        // log, written into the real request. Every authenticated POST was
+        // therefore sent with a placeholder where the key should have been,
+        // and nothing on this side could see it: the failure appears as a 401
+        // from the far end.
+        let address = parse("https://api.anthropic.com/v1/messages").expect("a URL");
+        let head = head(
+            &address,
+            &Method::Post {
+                body: b"{}",
+                content_type: "application/json",
+                credential: Some(("x-api-key", "sk-ant-secret")),
+                headers: &[("anthropic-version", "2023-06-01")],
+            },
+            1024,
+        );
+        assert!(head.contains("x-api-key: sk-ant-secret\r\n"), "{head}");
+        assert!(head.contains("anthropic-version: 2023-06-01\r\n"), "{head}");
+        assert!(!head.contains('*'), "{head}");
+        assert!(head.contains("Content-Length: 2\r\n"), "{head}");
+    }
+
+    #[test]
+    fn a_bearer_credential_is_spelled_the_usual_way() {
+        let address = parse("https://openrouter.ai/api/v1/chat").expect("a URL");
+        let head = head(
+            &address,
+            &Method::Post {
+                body: b"{}",
+                content_type: "application/json",
+                credential: Some(("Authorization", "Bearer sk-or-secret")),
+                headers: &[],
+            },
+            1024,
+        );
+        assert!(
+            head.contains("Authorization: Bearer sk-or-secret\r\n"),
+            "{head}"
+        );
+    }
+
+    #[test]
+    fn a_header_that_could_forge_another_one_is_refused() {
+        let refused = post(
+            "https://example.invalid/",
+            b"{}",
+            "application/json",
+            None,
+            &[("x-note", "one\r\nAuthorization: Bearer stolen")],
+            1024,
+        );
+        assert_eq!(refused, Err(TaskError::Denied));
     }
 }

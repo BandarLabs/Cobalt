@@ -140,7 +140,11 @@ one cannot.
 | `tiles([(name, label, glyph), …])` | A grid of square destinations. |
 | `grid(columns, square, cells)` | A board. What tic-tac-toe is drawn with. |
 | `choose(prompt, [(name, label), …])` | A question with tappable answers. |
+| `chosen(index)` | Marks which answer of the preceding `choose` is already given. |
 | `or_type(name, placeholder)` | A freeform row on the end of a `choose`. |
+| `quote(depth, text)` | A paragraph set in by reply depth, with a gutter rule. |
+| `picture(picture, max_height_mm)` | One picture, as large as the width and that height allow. |
+| `picture_tiles(shape, […])` | A grid of tiles that each carry a picture, falling back to a glyph. |
 | `banner(level, text)` | `Info` or `Attention`. Attention is drawn inverted. || `progress(percent)` | A determinate bar. |
 | `activity(label, progress)` | An indeterminate wait. |
 | `cancellable(name, label)` | Adds a cancel control to the preceding activity. |
@@ -162,13 +166,54 @@ both.
 
 `Glyph` is a closed set: `App`, `Book`, `Note`, `Clock`, `Settings`, `Folder`,
 `Chart`, `Search`, `Wifi`, `Battery`, `Reader`, `Power`, `Grid`, `Circle`,
-`Check`, `Terminal`.
+`Check`, `Terminal`, `Chat`, `News`.
 
 They are geometry, not bitmaps — authored in a 1000 unit box and rasterised
 with coverage antialiasing at whatever size the layout asks for, so they are
 crisp at every density. Applications cannot supply their own paths: arbitrary
 path data is untrusted input to a rasteriser, and an application must not be
 able to draw something indistinguishable from a system control.
+
+### State is carried, never drawn into a label
+
+A finished row, a chosen answer and a reply's depth are all *state*: the
+application says what is true and the renderer decides what it looks like.
+There is no way to ask for a line through text, a tick beside a label or an
+indent, and that is deliberate — an application that marks its own choice with
+a character picks one the installed face may not have, and gets an empty box on
+the panel. In debug builds `set_screen` refuses a screen carrying a character
+the face cannot draw, so an application's own tests fail rather than the panel.
+
+### Threaded replies
+
+```rust
+for (depth, paragraph) in &page {
+    screen = screen.quote(*depth, paragraph);
+}
+```
+
+`quote` sets a paragraph in by one step per level, up to `MAX_QUOTE_DEPTH`,
+with a rule down the gutter. Paginate the same shape with
+`context.paginate_quoted(&paragraphs, nav_bar)` — an indented paragraph is
+narrower, wraps to more lines and eats more of the page, so a thread paginated
+flat and drawn indented loses the bottom of nearly every page.
+
+### One-line labels
+
+`context.one_line_row(text, nav_bar)` measures against the real installed face
+and ellipsises, so a list of headlines has rows of uniform height instead of
+some one line tall and some three.
+
+### Pictures
+
+`kobo-image` decodes JPEG and PNG on the host and on the device, halftones to
+the sixteen greys the panel resolves with `dither(PANEL_GREYS)`, and fits a
+picture to the cell it will occupy. `fit` shrinks only; `fit_enlarging` will
+blow a small picture up to `MAX_ENLARGEMENT` times, which is what a book cover
+published at 190 by 300 needs to fill a tile on a 300 pixel-per-inch panel.
+The application decodes and hands the runtime the pixels at the size they will
+be drawn, so the picture cache holds what is on the screen rather than what was
+downloaded.
 
 ---
 
@@ -247,8 +292,14 @@ slow panel than an empty screen that suddenly fills.
 Task::Post { secret: Some("openai".into()), .. }
 ```
 
+```rust
+Task::Post { credential: Some(Credential::in_header("anthropic", "x-api-key")), .. }
+```
+
 The application names a secret; the runtime reads
-`/mnt/onboard/.adds/cobalt/secrets/openai` and attaches it as a bearer token.
+`/mnt/onboard/.adds/cobalt/secrets/<name>` and attaches it, either as a bearer
+token or under the header the application named — which is what lets a request
+go straight to Anthropic or Gemini rather than through a proxy.
 The value is never in the application's memory, its logs, or its crash dump,
 and it cannot be sent anywhere the application did not name — the request is
 not replayed across a redirect.

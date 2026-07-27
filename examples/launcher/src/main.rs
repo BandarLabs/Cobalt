@@ -15,7 +15,9 @@
 //! on the screen also makes it the most exercised path in the system, which is
 //! exactly where the reliability is wanted.
 
-use kobo_sdk::{action_id, ActionId, Context, Glyph, KoboApp, ScreenBuilder};
+use kobo_sdk::{
+    action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, ScreenBuilder, Space, TileShape,
+};
 use std::process::ExitCode;
 
 /// One entry in the launcher.
@@ -25,8 +27,20 @@ use std::process::ExitCode;
 /// silently change what a tap does.
 struct Entry {
     name: &'static str,
+    /// What the details screen calls it. May be as long as it needs to be.
     title: &'static str,
+    /// What the tile calls it. A cell is about 25 millimetres wide, so a name
+    /// longer than a couple of words is ellipsised into something nobody can
+    /// read; a separate short form is more honest than trimming the real one.
+    label: &'static str,
     summary: &'static str,
+    /// What the details screen adds to the summary: enough to decide with,
+    /// which a tile has no room for and a row would push off the panel.
+    detail: &'static str,
+    /// What starting it costs the device, in one sentence. A launcher that
+    /// starts something without saying what it will reach for is asking the
+    /// owner to find out afterwards.
+    needs: &'static str,
     glyph: Glyph,
 }
 
@@ -34,44 +48,74 @@ const ENTRIES: &[Entry] = &[
     Entry {
         name: "gutenshelf",
         title: "Gutenshelf",
+        label: "Gutenshelf",
         summary: "Sixty thousand free books from Project Gutenberg.",
+        detail: "Search the catalogue, open a book, and read it a measured page at a time. Downloads arrive in ranged chunks, so a long book starts before it has finished arriving, and covers fill the shelf as they land.",
+        needs: "Needs the network while searching and downloading.",
         glyph: Glyph::Book,
     },
     Entry {
         name: "terminal",
         title: "Terminal",
+        label: "Terminal",
         summary: "A shell on the panel, with keys that send rather than collect.",
+        detail: "A real shell, owned by the runtime rather than the application, with a keyboard whose keys send a line instead of collecting one. Output is paged, so a command that prints a thousand lines does not cost a thousand refreshes.",
+        needs: "Runs commands on this device. Nothing it does survives a reboot.",
         glyph: Glyph::Terminal,
     },
     Entry {
         name: "gallery",
         title: "Components",
+        label: "Components",
         summary: "Every UI primitive on real hardware, for checking by eye.",
+        detail: "Every node this SDK can draw, on the panel it was designed for: type, banners, threaded quotes, icons, pictures, choices and work in flight. The place to check a change by eye before it reaches an application.",
+        needs: "Runs entirely on the device.",
         glyph: Glyph::Chart,
     },
     Entry {
         name: "tictactoe",
         title: "Tic-tac-toe",
+        label: "Tic-tac-toe",
         summary: "Two players, one panel. Nought goes first.",
+        detail: "Two players share the panel. Each move repaints one cell rather than the board, which is what a partial refresh is for.",
+        needs: "Runs entirely on the device.",
         glyph: Glyph::Grid,
     },
     Entry {
         name: "brief",
         title: "Daily Brief",
+        label: "Daily Brief",
         summary: "Collects the day's stories while you read something else.",
+        detail: "Collects its stories on a schedule while you are reading something else, and is already written when you open it. The example of an application whose useful work happens when it is not on the screen.",
+        needs: "Needs the network in the background, on a schedule the runtime sets.",
         glyph: Glyph::Clock,
     },
     Entry {
         name: "todo",
         title: "Todo",
+        label: "Todo",
         summary: "A list that remembers itself. Tap an item to finish it.",
+        detail: "A list that survives being closed, the device being suspended, and the battery running out. Tapping an item finishes it and repaints that one row.",
+        needs: "Keeps its list in this application's own storage.",
         glyph: Glyph::Check,
     },
     Entry {
         name: "chat",
         title: "AI Command Center",
+        label: "AI Chat",
         summary: "Ask a question and tap the answer, rather than typing one.",
-        glyph: Glyph::Chart,
+        detail: "Ask a question and choose from what comes back, rather than typing another one. Works against OpenRouter, Anthropic or Gemini, whichever has a key.",
+        needs: "Needs the network, and a key you provide.",
+        glyph: Glyph::Chat,
+    },
+    Entry {
+        name: "hn",
+        title: "Hacker News",
+        label: "Hacker News",
+        summary: "Top, New, Ask and Show, with whole comment threads.",
+        detail: "Top, New, Ask and Show, with whole comment threads laid out by reply depth rather than by chevrons. Long threads are paged, so a discussion with a thousand replies opens as fast as one with ten.",
+        needs: "Needs the network while loading stories and threads.",
+        glyph: Glyph::News,
     },
 ];
 
@@ -79,11 +123,23 @@ const ENTRIES: &[Entry] = &[
 enum View {
     #[default]
     Home,
+    /// A tile was tapped. The description lives here rather than on the grid,
+    /// which is what buys the grid its density.
+    Details(usize),
     /// An entry was chosen and the runtime has been asked to start it. The
     /// screen says so, because the panel is slow enough that a tap with no
     /// visible answer reads as a tap that was missed.
     Starting(usize),
     Leaving,
+}
+
+/// The action a tile carries.
+///
+/// Distinct from the entry name on purpose, so that the identity which starts
+/// an application and the identity which merely describes it can never be
+/// confused by a rename.
+fn opening(name: &str) -> String {
+    format!("open-{name}")
 }
 
 #[derive(Default)]
@@ -100,6 +156,7 @@ impl Launcher {
     fn show(&mut self, context: &mut Context) {
         let screen = match self.view {
             View::Home => self.home(context),
+            View::Details(index) => Self::details(index),
             View::Starting(index) => Self::starting(index),
             View::Leaving => Self::leaving(),
         };
@@ -112,11 +169,7 @@ impl Launcher {
     /// a Sage, and an application that picked a number would be wrong on every
     /// panel but one.
     fn pages(context: &Context) -> Vec<Vec<usize>> {
-        let rows = ENTRIES
-            .iter()
-            .map(|entry| (entry.title, entry.summary))
-            .collect::<Vec<_>>();
-        let pages = context.paginate_rows(&rows, true);
+        let pages = context.paginate_tiles(ENTRIES.len(), TileShape::Square, true);
         if pages.is_empty() {
             vec![Vec::new()]
         } else {
@@ -124,12 +177,20 @@ impl Launcher {
         }
     }
 
-    /// The home screen.
+    /// The home screen: a grid of icons and names, and nothing else.
     ///
-    /// Rows rather than tiles. A tile is square, so three of them filled a
-    /// 1072 by 1448 panel while saying only three words between them, and the
-    /// summary each entry already carried had nowhere to go. A row spends the
-    /// same finger-height band on a title, that summary and a glyph.
+    /// Tiles rather than rows, which is a reversal. Rows were chosen because a
+    /// tile said only three words while a row also carried the summary; the
+    /// answer to that is not a denser row but a second screen. A phone home
+    /// screen shows an icon and a name and costs a tap to learn more, and it
+    /// is the arrangement every reader already knows. The summary moves to
+    /// [`Self::details`], and what the grid buys is that the catalogue is
+    /// recognisable at a glance instead of read.
+    ///
+    /// The tile action is deliberately not the entry name: tapping a tile
+    /// opens the description, and only the button there starts anything. An
+    /// accidental brush against a grid must not cost half a minute of an
+    /// application starting and being backed out of.
     fn home(&mut self, context: &Context) -> kobo_sdk::Screen {
         let pages = Self::pages(context);
         self.page = self.page.min(pages.len() - 1);
@@ -139,11 +200,11 @@ impl Launcher {
         } else {
             "Cobalt".to_owned()
         };
-        let screen = ScreenBuilder::new("launcher").top_bar(title).rows(
+        let screen = ScreenBuilder::new("launcher").top_bar(title).tiles(
             showing
                 .iter()
                 .map(|&index| &ENTRIES[index])
-                .map(|entry| (entry.name, entry.title, entry.summary, entry.glyph)),
+                .map(|entry| (opening(entry.name), entry.label, entry.glyph)),
         );
         // The way out is pinned to the panel rather than placed after the
         // list. Layout reserves the bar before any content, so however many
@@ -172,6 +233,22 @@ impl Launcher {
                 .button("reader", "Return to Kobo reader")
                 .build()
         }
+    }
+
+    /// What a tile is for: the description, and the one control that starts it.
+    ///
+    /// Everything a row used to carry, with room for more than a row ever had,
+    /// and reached by a tap that cannot start anything by accident.
+    fn details(index: usize) -> kobo_sdk::Screen {
+        let entry = &ENTRIES[index];
+        ScreenBuilder::new("launcher-details")
+            .top_bar("Cobalt")
+            .heading(entry.title)
+            .text(entry.detail)
+            .spacer(Space::Medium)
+            .banner(BannerLevel::Info, entry.needs)
+            .nav_bar(None, [("back", "Back"), (entry.name, "Open")])
+            .build()
     }
 
     /// Painted between tapping an entry and that entry appearing.
@@ -257,6 +334,14 @@ impl KoboApp for Launcher {
         }
         if let Some(index) = ENTRIES
             .iter()
+            .position(|entry| action == action_id(&opening(entry.name)))
+        {
+            self.view = View::Details(index);
+            self.show(context);
+            return;
+        }
+        if let Some(index) = ENTRIES
+            .iter()
             .position(|entry| action == action_id(entry.name))
         {
             // Paint first, then ask. The runtime stops this application to
@@ -281,7 +366,7 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{Launcher, View, ENTRIES};
+    use super::{opening, Launcher, View, ENTRIES};
     use kobo_sdk::{action_id, AppRunner, Command, Lifecycle};
     use kobo_ui::{Chrome, DisplayMetrics, LayoutKind, Node, CLARA_BW_METRICS};
 
@@ -361,7 +446,7 @@ mod tests {
             loop {
                 let layout = screen.layout_with(&metrics, Chrome::with_back(false));
                 for node in &layout.nodes {
-                    if let LayoutKind::Row(action) = node.kind {
+                    if let LayoutKind::Tile(action) = node.kind {
                         found.push(action);
                     }
                 }
@@ -372,7 +457,7 @@ mod tests {
                 screen = painted(runner.action(action_id("next")));
                 let first = ENTRIES
                     .first()
-                    .map(|entry| action_id(entry.name))
+                    .map(|entry| action_id(&opening(entry.name)))
                     .expect("the catalogue is not empty");
                 if found.contains(&first) && found.len() >= ENTRIES.len() {
                     break;
@@ -391,7 +476,7 @@ mod tests {
     }
 
     #[test]
-    fn every_row_on_a_page_is_drawn_rather_than_dropped() {
+    fn every_tile_on_a_page_is_drawn_rather_than_dropped() {
         for (name, metrics) in PANELS {
             let mut runner = AppRunner::with_metrics(Launcher::default(), metrics);
             let screen = painted(runner.start());
@@ -399,7 +484,7 @@ mod tests {
             let rows = layout
                 .nodes
                 .iter()
-                .filter(|node| matches!(node.kind, LayoutKind::Row(_)))
+                .filter(|node| matches!(node.kind, LayoutKind::Tile(_)))
                 .collect::<Vec<_>>();
             assert!(!rows.is_empty(), "{name}: the first page drew no entries");
             let floor = metrics.height - metrics.nav_bar_height();
@@ -412,10 +497,53 @@ mod tests {
         }
     }
 
+    /// A tile describes; only the button starts. A grid of icons is easy to
+    /// brush against, and starting an application costs the reader the panel,
+    /// this application's state, and a wait — so a stray touch must not be
+    /// able to buy any of that.
     #[test]
-    fn tapping_an_entry_asks_the_runtime_to_start_it() {
+    fn tapping_a_tile_describes_the_entry_and_starts_nothing() {
         let mut runner = AppRunner::new(Launcher::default());
         runner.start();
+        let commands = runner.action(action_id(&opening(ENTRIES[0].name)));
+        assert!(
+            !commands
+                .iter()
+                .any(|command| matches!(command, Command::Launch(_))),
+            "a tile tap started an application"
+        );
+        assert!(matches!(runner.app().view, View::Details(0)));
+        let shown = painted(commands);
+        let layout = shown.layout_with(&CLARA_BW_METRICS, Chrome::with_back(false));
+        let words = layout
+            .nodes
+            .iter()
+            .flat_map(|node| node.text_lines.clone())
+            .collect::<Vec<_>>()
+            .join(" ");
+        // The description is the entire reason this screen exists, and what it
+        // will reach for is the reason it is worth reading before tapping Open.
+        let head = |text: &str| {
+            text.split_whitespace()
+                .take(3)
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        assert!(
+            words.contains(&head(ENTRIES[0].detail)),
+            "the description was not shown: {words}"
+        );
+        assert!(
+            words.contains(&head(ENTRIES[0].needs)),
+            "what it needs was not shown: {words}"
+        );
+    }
+
+    #[test]
+    fn opening_from_the_details_screen_asks_the_runtime_to_start_it() {
+        let mut runner = AppRunner::new(Launcher::default());
+        runner.start();
+        runner.action(action_id(&opening(ENTRIES[0].name)));
         let commands = runner.action(action_id(ENTRIES[0].name));
         assert!(commands
             .iter()
@@ -486,7 +614,7 @@ mod tests {
             painted
                 .nodes
                 .iter()
-                .any(|node| matches!(node, Node::Rows { .. })),
+                .any(|node| matches!(node, Node::TileGrid { .. })),
             "the list came back without any entries on it"
         );
     }

@@ -1,0 +1,249 @@
+{
+ "author": "zeldone",
+ "children": [
+  {
+   "author": "ibejoeb",
+   "children": [
+    {
+     "author": "ranger_danger",
+     "children": [
+      {
+       "author": "fy20",
+       "children": [
+        {
+         "author": "ranger_danger",
+         "children": [
+          {
+           "author": "Namidairo",
+           "children": [],
+           "created_at": "2026-07-27T03:59:47.000Z",
+           "created_at_i": 1785124787,
+           "id": 49065067,
+           "options": [],
+           "parent_id": 49062734,
+           "points": null,
+           "story_id": 49059398,
+           "text": "&gt; I have also tried many other IP camera brands over the years, but it seems none of them have figured out how to output fully compliant RTP&#x2F;RTMP&#x2F;etc. streams so I end up always having strange and random problems receiving fluid streams from them into a central server.<p>Another issue is semi-compliant ONVIF implementations for PTZ cameras and&#x2F;or not having relative movement implemented. Or you know, just lacking RTSP and ONVIF entirely.<p>&gt; Coupled with the fact that many brands are just using the same recycled white-label Chinese firmware, I&#x27;m not surprised.<p>SDKs for many of the SoCs not being available is really annoying as well. Some of the Ingenic, Sigmastar, Goke etc. are available, but I think many were just leaks from customers rather than intentional releases.",
+           "title": null,
+           "type": "comment",
+           "url": null
+          },
+          {
+           "author": "Fabricio20",
+           "children": [],
+           "created_at": "2026-07-27T04:17:47.000Z",
+           "created_at_i": 1785125867,
+           "id": 49065147,
+           "options": [],
+           "parent_id": 49062734,
+           "points": null,
+           "story_id": 49059398,
+           "text": "I&#x27;ve had some great success with Reolink. Decent video quality and the software is made with RTSP&#x2F;RTMP support in mind, including a proper web portal on the camera so you don&#x27;t even need the phone app for setup.<p>Not too sure if you are looking for non Chinese manufactured though, down here anything else is just way too expensive and lower quality anyway!",
+           "title": null,
+           "type": "comment",
+           "url": null
+          }
+         ],
+         "created_at": "2026-07-26T21:44:06.000Z",
+         "created_at_i": 1785102246,
+         "id": 49062734,
+         "options": [],
+         "parent_id": 49062483,
+         "points": null,
+         "story_id": 49059398,
+         "text": "For those that don&#x27;t know, Hikvision is banned in several countries now due to both cybersecurity reasons and human rights violations: <a href=\"https:&#x2F;&#x2F;ipvm.com&#x2F;reports&#x2F;hikua-bans\" rel=\"nofollow\">https:&#x2F;&#x2F;ipvm.com&#x2F;reports&#x2F;hikua-bans</a><p>I have also tried many other IP camera brands over the years, but it seems none of them have figured out how to output fully compliant RTP&#x2F;RTMP&#x2F;etc. streams so I end up always having strange and random problems receiving fluid streams from them into a central server.<p>Coupled with the fact that many brands are just using the same recycled white-label Chinese firmware, I&#x27;m not surprised.<p>Would love better recommendations though if any exist.",
+         "title": null,
+         "type": "comment",
+         "url": null
+        }
+       ],
+       "created_at": "2026-07-26T21:15:31.000Z",
+       "created_at_i": 1785100531,
+       "id": 49062483,
+       "options": [],
+       "parent_id": 49059912,
+       "points": null,
+       "story_id": 49059398,
+       "text": "I&#x27;d just bite the bullet and get proper security cameras. I got a few 4K something or other from Ankke (rebranded HikVision) 5 years ago and they still work fine. They were about €100 each.",
+       "title": null,
+       "type": "comment",
+       "url": null
+      }
+     ],
+     "created_at": "2026-07-26T16:50:09.000Z",
+     "created_at_i": 1785084609,
+     "id": 49059912,
+     "options": [],
+     "parent_id": 49059799,
+     "points": null,
+     "story_id": 49059398,
+     "text": "In my experience, budget USB cameras are not reliable as a long-term solution because they randomly stop working in different ways after days of use and must be power-cycled.<p>Instead I would suggest either a direct CSI connection or an external GigE camera.",
+     "title": null,
+     "type": "comment",
+     "url": null
+    },
+    {
+     "author": "dvno42",
+     "children": [
+      {
+       "author": "kotaKat",
+       "children": [],
+       "created_at": "2026-07-26T17:23:50.000Z",
+       "created_at_i": 1785086630,
+       "id": 49060238,
+       "options": [],
+       "parent_id": 49060049,
+       "points": null,
+       "story_id": 49059398,
+       "text": "Arecont Vision cameras are fun too. Casino mode, anyone?<p>&quot;This feature ensures continuous full-motion recording at 30 frames per second (fps) to comply with gaming industry regulations. Casino Mode guarantees that the frame rate will not dip below 30 fps by forcing automatic bit rate and exposure control to maintain specific predetermined settings.&quot;<p>[1] <a href=\"https:&#x2F;&#x2F;www.retailitinsights.com&#x2F;doc&#x2F;arecont-vision-adds-casino-mode-to-full-hd-0001\" rel=\"nofollow\">https:&#x2F;&#x2F;www.retailitinsights.com&#x2F;doc&#x2F;arecont-vision-adds-cas...</a>",
+       "title": null,
+       "type": "comment",
+       "url": null
+      }
+     ],
+     "created_at": "2026-07-26T17:02:14.000Z",
+     "created_at_i": 1785085334,
+     "id": 49060049,
+     "options": [],
+     "parent_id": 49059799,
+     "points": null,
+     "story_id": 49059398,
+     "text": "Old Axis cams show up on eBay. Those are pretty standards oriented and easy to work with. Most hanwah and some Samsung are fine too.",
+     "title": null,
+     "type": "comment",
+     "url": null
+    }
+   ],
+   "created_at": "2026-07-26T16:38:15.000Z",
+   "created_at_i": 1785083895,
+   "id": 49059799,
+   "options": [],
+   "parent_id": 49059398,
+   "points": null,
+   "story_id": 49059398,
+   "text": "Anyone have camera suggestions? I&#x27;ve got 2 spare raspi 5s that would probably be a good base.",
+   "title": null,
+   "type": "comment",
+   "url": null
+  },
+  {
+   "author": "npodbielski",
+   "children": [],
+   "created_at": "2026-07-26T17:18:10.000Z",
+   "created_at_i": 1785086290,
+   "id": 49060182,
+   "options": [],
+   "parent_id": 49059398,
+   "points": null,
+   "story_id": 49059398,
+   "text": "I always wonder why author of such software will not add some screenshot or gif showing UI and how it does work? In features there is mention of web interface.",
+   "title": null,
+   "type": "comment",
+   "url": null
+  },
+  {
+   "author": "mattlondon",
+   "children": [
+    {
+     "author": "genericacct",
+     "children": [],
+     "created_at": "2026-07-26T18:43:22.000Z",
+     "created_at_i": 1785091402,
+     "id": 49061048,
+     "options": [],
+     "parent_id": 49060335,
+     "points": null,
+     "story_id": 49059398,
+     "text": "Try the motion Linux package, it can connect to tapos over SDP and then you can run Yolo or any other solution on the output",
+     "title": null,
+     "type": "comment",
+     "url": null
+    },
+    {
+     "author": "atmosx",
+     "children": [
+      {
+       "author": "Fabricio20",
+       "children": [
+        {
+         "author": "wolvoleo",
+         "children": [],
+         "created_at": "2026-07-26T20:56:27.000Z",
+         "created_at_i": 1785099387,
+         "id": 49062321,
+         "options": [],
+         "parent_id": 49061515,
+         "points": null,
+         "story_id": 49059398,
+         "text": "Frigate is pretty cool if you need motion detection. If you don&#x27;t it&#x27;s a bit wasteful because it still keeps the whole decoding pipeline active. I&#x27;ve switched to LightNVR that doesn&#x27;t do that. I have enough alarm sensors (motion and door entry) so I don&#x27;t need motion on the cams as well. I just record 24&#x2F;7 for evidence keeping.",
+         "title": null,
+         "type": "comment",
+         "url": null
+        }
+       ],
+       "created_at": "2026-07-26T19:28:13.000Z",
+       "created_at_i": 1785094093,
+       "id": 49061515,
+       "options": [],
+       "parent_id": 49061391,
+       "points": null,
+       "story_id": 49059398,
+       "text": "It&#x27;s actually pretty darn easy nowadays and i&#x27;m so glad its the case! Frigate is amazing and the detection package is of your choosing (hardware dependant) and everything is customizable too.",
+       "title": null,
+       "type": "comment",
+       "url": null
+      }
+     ],
+     "created_at": "2026-07-26T19:15:25.000Z",
+     "created_at_i": 1785093325,
+     "id": 49061391,
+     "options": [],
+     "parent_id": 49060335,
+     "points": null,
+     "story_id": 49059398,
+     "text": "Seriously… how hard is it to setup an RPi with a camera and offload the detection to some open source software? Last time I checked there projects performing animal, face and even license plates reckon, extraction and db recording of “who”, “when”, “what” using cheap cameras and an RPi.",
+     "title": null,
+     "type": "comment",
+     "url": null
+    },
+    {
+     "author": "wolvoleo",
+     "children": [],
+     "created_at": "2026-07-26T20:54:41.000Z",
+     "created_at_i": 1785099281,
+     "id": 49062302,
+     "options": [],
+     "parent_id": 49060335,
+     "points": null,
+     "story_id": 49059398,
+     "text": "The tapo cameras do this on cam.  They can even report it to the NVR system, completely local with ONVIF.<p>Nest does it in the cloud. Obviously it&#x27;s more capable but it also means Google grabs all your video: <a href=\"https:&#x2F;&#x2F;support.google.com&#x2F;googlehome&#x2F;answer&#x2F;16594324?hl=en#zippy=%2Chow-nest-aware-improves-sound-and-motion-detection\" rel=\"nofollow\">https:&#x2F;&#x2F;support.google.com&#x2F;googlehome&#x2F;answer&#x2F;16594324?hl=en#...</a>",
+     "title": null,
+     "type": "comment",
+     "url": null
+    }
+   ],
+   "created_at": "2026-07-26T17:35:17.000Z",
+   "created_at_i": 1785087317,
+   "id": 49060335,
+   "options": [],
+   "parent_id": 49059398,
+   "points": null,
+   "story_id": 49059398,
+   "text": "How does this handle motion detection?  Anyone tried it?<p>I have a bunch of Nest cameras and some cheaper Tapo cameras.<p>The &quot;motion detection&quot; is night and day different.  The Tapo does some basic frame-diffing and it&#x27;s <i>awful</i>.  Shadows? DING DING DiNG MOTION DETECTED! gust of wind made some blades of grass move? Motion! Spider? Motion motion motion! Turn down the sensitivity a notch or two and it won&#x27;t notice a human walk across the frame 2 meters away. The Tapo ones claim to be smart but twigs and leaves still trigger pet&#x2F;person&#x2F;motion alerts. It makes them essentially useless.<p>The Nest cameras are so much better  and their &quot;human&quot; detected is usually zero-false-negatives at the cost of one or two false-positives perhaps once every 3 or 4 months, and their app is superior (tapo one frequently needs to be false-killed to load clips). Yes I am aware that the nest ones are streaming back to google 24&#x2F;7.<p>Tldr: naive frame-diffing sucks for this sort of thing if used outside. An open source implementation that has accurate and reliable &quot;human detection&quot; would be amazing. Doesn&#x27;t need to be &quot;AI&quot; - I would hope that there is some sort of computationally reasonable OpenCV way of doing person detection. Perhaps wait for frame-diffing to flag motion then feed it to a more expensive algorithm?",
+   "title": null,
+   "type": "comment",
+   "url": null
+  }
+ ],
+ "created_at": "2026-07-26T15:53:55.000Z",
+ "created_at_i": 1785081235,
+ "id": 49059398,
+ "options": [],
+ "parent_id": null,
+ "points": 127,
+ "story_id": 49059398,
+ "text": null,
+ "title": "Show HN: CheapSecurity – Lightweight, Self-Hosted CCTV for Linux SBCs",
+ "type": "story",
+ "url": "https://github.com/gmrandazzo/CheapSecurity"
+}

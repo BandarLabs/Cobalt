@@ -6,16 +6,17 @@
 //! [`AppRunner::action`] from their platform event loop.
 
 pub use kobo_protocol::{
-    DenyReason, DeviceRequest, DeviceResult, Frame, Lifecycle, LogLevel, Message, ShellError,
-    ShellEvent, ShellRequest, StoreError, StoreRequest, StoreResult, StreamError, Task, TaskError,
-    TaskId, TaskOutcome, MAX_SHELL_CHUNK, MAX_STORE_KEYS, MAX_STORE_VALUE, MAX_TASK_BYTES,
-    MAX_URL_LEN,
+    Credential, DenyReason, DeviceRequest, DeviceResult, Frame, Header, Lifecycle, LogLevel,
+    Message, SecretHeader, ShellError, ShellEvent, ShellRequest, StoreError, StoreRequest,
+    StoreResult, StreamError, Task, TaskError, TaskId, TaskOutcome, MAX_HEADERS, MAX_HEADER_NAME,
+    MAX_HEADER_VALUE, MAX_PICTURE_BYTES, MAX_SHELL_CHUNK, MAX_STORE_KEYS, MAX_STORE_VALUE,
+    MAX_TASK_BYTES, MAX_URL_LEN,
 };
 pub use kobo_ui::{
     terminal_grid, terminal_grid_for, ActionId, BannerLevel, BarAction, Caret, Cell, Chrome,
-    DisplayMetrics, Freeform, Glyph, NavBar, Node, NodeId, Percent, ProseArea, Row, Screen, Space,
-    Tile, TopBar, MAX_CELLS, MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_ROWS, MAX_TERMINAL_COLUMNS,
-    MAX_TERMINAL_ROWS,
+    DisplayMetrics, Freeform, Glyph, NavBar, Node, NodeId, Percent, PictureHandle, ProseArea, Row,
+    Screen, Space, Tile, TilePicture, TileShape, TopBar, MAX_CELLS, MAX_CHOICE_OPTIONS,
+    MAX_COLUMNS, MAX_QUOTE_DEPTH, MAX_ROWS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS,
 };
 use std::collections::VecDeque;
 use std::fmt;
@@ -86,6 +87,23 @@ impl ScreenBuilder {
         let id = self.next_id();
         self.nodes.push(Node::Text {
             id,
+            text: text.into(),
+        });
+        self
+    }
+
+    /// A paragraph set in from the left by `depth` levels, with a rule beside
+    /// it, for a reply that answers what came before it.
+    ///
+    /// Depth is clamped to [`MAX_QUOTE_DEPTH`], so a thread that nests forty
+    /// deep still reads: the deepest replies share an indent and say how deep
+    /// they really are in their own words.
+    #[must_use]
+    pub fn quote(mut self, depth: u8, text: impl Into<String>) -> Self {
+        let id = self.next_id();
+        self.nodes.push(Node::Quote {
+            id,
+            depth: depth.min(MAX_QUOTE_DEPTH),
             text: text.into(),
         });
         self
@@ -243,7 +261,58 @@ impl ScreenBuilder {
             .into_iter()
             .map(|(name, label, glyph)| Tile::new(self.register(name.as_ref()), label, glyph))
             .collect();
-        self.nodes.push(Node::TileGrid { id, tiles });
+        self.nodes.push(Node::TileGrid {
+            id,
+            tiles,
+            shape: TileShape::Square,
+        });
+        self
+    }
+
+    /// Adds a grid of tiles that may each carry a picture.
+    ///
+    /// Use [`TileShape::Portrait`] for covers and posters: a square cell
+    /// letterboxes a book cover into roughly half its own area, which is what
+    /// makes a shelf of covers look like a grid of stamps.
+    ///
+    /// A tile whose picture the runtime does not have falls back to its glyph,
+    /// so a shelf is usable while the covers are still arriving.
+    #[must_use]
+    pub fn picture_tiles<I, N, L>(mut self, shape: TileShape, tiles: I) -> Self
+    where
+        I: IntoIterator<Item = (N, L, Glyph, Option<TilePicture>)>,
+        N: AsRef<str>,
+        L: Into<String>,
+    {
+        let id = self.next_id();
+        let tiles = tiles
+            .into_iter()
+            .map(|(name, label, glyph, picture)| {
+                let tile = Tile::new(self.register(name.as_ref()), label, glyph);
+                match picture {
+                    Some(picture) => tile.with_picture(picture),
+                    None => tile,
+                }
+            })
+            .collect();
+        self.nodes.push(Node::TileGrid { id, tiles, shape });
+        self
+    }
+
+    /// Shows one picture, as large as the width and `max_height_mm` allow.
+    ///
+    /// The height is a physical measurement rather than a pixel count so that
+    /// the same screen gives a picture the same share of the panel on a Clara
+    /// and on an Elipsa.
+    #[must_use]
+    pub fn picture(mut self, picture: TilePicture, max_height_mm: u16) -> Self {
+        let id = self.next_id();
+        self.nodes.push(Node::Picture {
+            id,
+            handle: picture.handle,
+            source: picture.source,
+            max_height_tenths_mm: max_height_mm.saturating_mul(10),
+        });
         self
     }
 
@@ -383,6 +452,7 @@ impl ScreenBuilder {
             id,
             prompt: prompt.into(),
             options,
+            selected: None,
             freeform: None,
         });
         self
@@ -398,6 +468,25 @@ impl ScreenBuilder {
         let action = self.register(name.as_ref());
         if let Some(Node::Choice { freeform, .. }) = self.nodes.last_mut() {
             *freeform = Some(Freeform::new(action, placeholder));
+        }
+        self
+    }
+
+    /// Marks which option of the choice just declared is already the answer.
+    ///
+    /// State rather than decoration: the renderer draws the mark from the icon
+    /// atlas, so an application never has to put a tick character in a label
+    /// and never gets a missing-glyph box on a device whose face lacks it. An
+    /// index naming no option leaves every row unmarked.
+    #[must_use]
+    pub fn chosen(mut self, index: usize) -> Self {
+        if let Some(Node::Choice {
+            options, selected, ..
+        }) = self.nodes.last_mut()
+        {
+            *selected = u8::try_from(index)
+                .ok()
+                .filter(|index| usize::from(*index) < options.len());
         }
         self
     }
@@ -521,6 +610,15 @@ pub enum Command {
     Exit,
     /// Hand the panel to another application by name.
     Launch(String),
+    /// Give the runtime a picture to hold.
+    PutPicture {
+        handle: PictureHandle,
+        width: u32,
+        height: u32,
+        grey: Vec<u8>,
+    },
+    /// Release a picture the runtime is holding.
+    DropPicture(PictureHandle),
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -560,6 +658,42 @@ impl Context {
         kobo_ui::paginate(text, self.metrics.prose_area(true, nav_bar))
     }
 
+    /// Breaks threaded prose into pages that fit this panel, keeping the
+    /// depth of every paragraph.
+    ///
+    /// Indentation has to be measured, not applied afterwards: an indented
+    /// paragraph is narrower, so it wraps to more lines and eats more of the
+    /// page. Feed the result straight to [`ScreenBuilder::quote`].
+    #[must_use]
+    pub fn paginate_quoted(
+        &self,
+        paragraphs: &[(u8, &str)],
+        nav_bar: bool,
+    ) -> Vec<Vec<(u8, String)>> {
+        kobo_ui::paginate_quoted(
+            paragraphs,
+            &self.metrics,
+            self.metrics.prose_area(true, nav_bar),
+        )
+    }
+
+    /// `text` cut to the single line a list row can show, ellipsised if it
+    /// did not fit.
+    ///
+    /// A title that wraps makes its row taller than the one above it, and a
+    /// list whose rows all differ in height is one the eye has to re-measure
+    /// on every line. Measured against the same width the layout engine gives
+    /// a row's words, so what fits here is what fits there.
+    #[must_use]
+    pub fn one_line_row(&self, text: &str, nav_bar: bool) -> String {
+        let area = self.metrics.prose_area(true, nav_bar);
+        kobo_ui::one_line(
+            text,
+            kobo_ui::row_text_width(&self.metrics, area),
+            kobo_ui::FontSize::Body,
+        )
+    }
+
     /// Breaks a list of rows into pages that fit this panel.
     ///
     /// Returns the row indices belonging to each page. Nothing in this UI
@@ -570,6 +704,22 @@ impl Context {
     #[must_use]
     pub fn paginate_rows(&self, rows: &[(&str, &str)], nav_bar: bool) -> Vec<Vec<usize>> {
         kobo_ui::paginate_rows(rows, &self.metrics, self.metrics.prose_area(true, nav_bar))
+    }
+
+    /// Breaks a grid of tiles into pages that fit this panel.
+    ///
+    /// Returns the tile indices belonging to each page. The count of tiles a
+    /// panel holds is a measurement, not a constant: a Clara fits two columns
+    /// and a Sage three, so an application that picked a number would silently
+    /// lose its last entries on every panel but the one it was written on.
+    #[must_use]
+    pub fn paginate_tiles(&self, count: usize, shape: TileShape, nav_bar: bool) -> Vec<Vec<usize>> {
+        kobo_ui::paginate_tiles(
+            count,
+            &self.metrics,
+            shape,
+            self.metrics.prose_area(true, nav_bar),
+        )
     }
 
     /// Asks the runtime to hand the panel to another application.
@@ -585,7 +735,49 @@ impl Context {
         self.commands.push(Command::Launch(name.into()));
     }
 
+    /// # Panics
+    ///
+    /// In debug builds only, on a screen the wire would refuse or one carrying
+    /// a character the installed face cannot draw. Both are defects that are
+    /// silent on the panel and obvious here.
     pub fn set_screen(&mut self, screen: Screen) {
+        // A screen the wire refuses is not a rendering problem, it is a dead
+        // connection: the runtime's reader stops at the malformed frame and
+        // the application then waits forever for events from a socket nobody
+        // is reading. On the panel that looks like every tap being ignored.
+        // Checked in debug builds only, so an application's own tests fail on
+        // the screen that built it rather than a device session doing nothing.
+        debug_assert!(
+            kobo_protocol::encode(&kobo_protocol::Frame {
+                request_id: 1,
+                message: kobo_protocol::Message::SetScreen(screen.clone()),
+            })
+            .is_ok(),
+            "this screen cannot be sent to the runtime: {:?}",
+            kobo_protocol::encode(&kobo_protocol::Frame {
+                request_id: 1,
+                message: kobo_protocol::Message::SetScreen(screen.clone()),
+            })
+            .err()
+        );
+        // The same idea one layer up: a character the installed face has no
+        // glyph for is drawn as an empty box, which reads on the panel as a
+        // broken renderer rather than as a missing character. Checked against
+        // what will actually be drawn, so an application that marks its own
+        // state with a symbol fails its own tests instead of shipping.
+        #[cfg(debug_assertions)]
+        {
+            let layout = screen.layout_for(&self.metrics);
+            for node in &layout.nodes {
+                for line in &node.text_lines {
+                    assert!(
+                        kobo_ui::undrawable_in(line, kobo_ui::Face::Text).is_none(),
+                        "this screen carries {:?}, which the installed face cannot draw: {line:?}",
+                        kobo_ui::undrawable_in(line, kobo_ui::Face::Text).expect("just found one")
+                    );
+                }
+            }
+        }
         self.commands.push(Command::SetScreen(screen));
     }
 
@@ -598,6 +790,48 @@ impl Context {
 
     pub fn exit(&mut self) {
         self.commands.push(Command::Exit);
+    }
+
+    /// Hands a decoded picture to the runtime and returns the reference to put
+    /// on a screen.
+    ///
+    /// Send a picture once and refer to it afterwards. Screens are re-sent
+    /// whole on every change, so a picture that travelled with the screen would
+    /// travel again on every tap.
+    ///
+    /// Fit the picture to the space it will occupy before calling this. The
+    /// renderer will shrink an oversized one, but sending pixels that are
+    /// immediately averaged away costs the wire, the runtime's cache and the
+    /// battery for nothing.
+    ///
+    /// Returns `None` when the picture is empty, mis-sized, or larger than one
+    /// frame allows.
+    pub fn put_picture(
+        &mut self,
+        handle: PictureHandle,
+        width: u32,
+        height: u32,
+        grey: Vec<u8>,
+    ) -> Option<TilePicture> {
+        let expected = usize::try_from(width)
+            .ok()
+            .and_then(|width| width.checked_mul(usize::try_from(height).ok()?))?;
+        if expected == 0 || expected != grey.len() || expected > MAX_PICTURE_BYTES {
+            return None;
+        }
+        self.commands.push(Command::PutPicture {
+            handle,
+            width,
+            height,
+            grey,
+        });
+        Some(TilePicture::new(handle, width, height))
+    }
+
+    /// Releases a picture. Every picture is released anyway when the
+    /// application exits, so this is for one that outlives its usefulness.
+    pub fn drop_picture(&mut self, handle: PictureHandle) {
+        self.commands.push(Command::DropPicture(handle));
     }
 
     /// Hands work to the runtime so the event loop keeps running.
@@ -935,6 +1169,13 @@ pub struct AppRunner<A> {
 impl<A: KoboApp> AppRunner<A> {
     #[must_use]
     pub fn new(app: A) -> Self {
+        // The same typeface the runtime lays out with, installed here as well
+        // as on the socket path, because an application's own tests are where
+        // wrapping, pagination and one-line labels are actually asserted. Left
+        // to the built-in bitmap they would be asserted against a fixed-width
+        // uppercase fallback nothing ever draws with.
+        #[cfg(feature = "text")]
+        let _ = kobo_text::install(DisplayMetrics::default());
         Self {
             app,
             metrics: DisplayMetrics::default(),
@@ -953,6 +1194,8 @@ impl<A: KoboApp> AppRunner<A> {
     /// panel it owns during the handshake.
     #[must_use]
     pub fn with_metrics(app: A, metrics: DisplayMetrics) -> Self {
+        #[cfg(feature = "text")]
+        let _ = kobo_text::install(metrics);
         Self {
             metrics,
             ..Self::new(app)
@@ -1213,6 +1456,18 @@ impl Client {
                 Command::Shell(request) => Message::ShellRequest(request),
                 Command::Exit => Message::Exit,
                 Command::Launch(name) => Message::Launch { name },
+                Command::PutPicture {
+                    handle,
+                    width,
+                    height,
+                    grey,
+                } => Message::PutPicture {
+                    handle,
+                    width,
+                    height,
+                    grey,
+                },
+                Command::DropPicture(handle) => Message::DropPicture { handle },
             };
             self.send(message)?;
         }
@@ -1274,6 +1529,29 @@ mod tests {
         fn on_action(&mut self, context: &mut Context, action: ActionId) {
             context.log(LogLevel::Info, format!("action {}", action.0));
         }
+    }
+
+    struct Tofu;
+
+    impl KoboApp for Tofu {
+        fn on_start(&mut self, context: &mut Context) {
+            context.set_screen(
+                ScreenBuilder::new("tofu")
+                    .button("ok", "Chosen \u{2713}")
+                    .build(),
+            );
+        }
+
+        fn on_action(&mut self, _context: &mut Context, _action: ActionId) {}
+    }
+
+    /// A character the face has no glyph for is an empty box on the panel, and
+    /// the only place that is cheap to find out is here.
+    #[cfg(all(debug_assertions, feature = "text"))]
+    #[test]
+    #[should_panic(expected = "which the installed face cannot draw")]
+    fn a_screen_carrying_a_character_the_face_cannot_draw_fails_here() {
+        AppRunner::new(Tofu).start();
     }
 
     #[test]

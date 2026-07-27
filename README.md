@@ -43,6 +43,7 @@ crates/    kobo-sdk       what an application imports
            kobo-policy    capabilities, task runner, device services, storage
            kobo-net       HTTPS; carries TLS and nothing else does
            kobo-json      a small JSON reader and object builder
+           kobo-image     JPEG and PNG decoding, scaling and halftoning
            kobo-text      typeface loading and measurement
            kobo-shell     one terminal per application, hosted by the runtime
            kobo-term      the vt100 screen a terminal's output is parsed into
@@ -57,13 +58,14 @@ crates/    kobo-sdk       what an application imports
            kobo-handoff   stopping and restarting the stock reader
            kobo-guard     screen capture and restore around a session
 examples/  launcher, terminal, todo, brief, chat, gutenshelf, gallery,
-           tictactoe
+           tictactoe, hn
 ```
 
-Outside dependencies are quarantined in exactly three crates, each behind one
-interface: `kobo-net` (TLS), `kobo-text` (glyph rasterisation) and `kobo-term`
-(a vt100 parser). Everything an application touches is dependency free, and
-each of those three can be replaced without a single application changing.
+Outside dependencies are quarantined in exactly four crates, each behind one
+interface: `kobo-net` (TLS), `kobo-text` (glyph rasterisation), `kobo-term`
+(a vt100 parser) and `kobo-image` (JPEG and PNG decoding). Everything an
+application touches is dependency free, and each of those four can be replaced
+without a single application changing.
 Device binaries are statically linked ARMv7 and need nothing installed on the
 device.
 
@@ -317,6 +319,28 @@ because the host's `diff` does emit the classic format. The tests now assert the
 reported count against an independently computed difference, and reintroducing
 the old counter makes nine of them fail.
 
+## What the UI layer draws
+
+A closed set of nodes, no free-form drawing, no colour, no font choice and no
+pixel positioning: headings and paragraphs, buttons, rows and checklists, tile
+grids with icons or pictures, a picture on its own, a tap-first `choose` with
+an optional freeform row, threaded `quote` paragraphs for replies, banners,
+progress and activity, skeletons, dividers and spacers, a paged list, an
+on-screen keyboard, and a terminal grid.
+
+Everything that varies is *state* rather than styling. A finished row is
+finished, a chosen answer is chosen, a reply has a depth; the renderer decides
+what each looks like. That is what makes a badly proportioned screen
+unexpressible rather than merely discouraged, and it is also what stops an
+application marking its own state with a character the installed face has no
+glyph for — in debug builds `set_screen` refuses a screen carrying one, so an
+application's own tests fail instead of the panel showing an empty box.
+
+Pictures are decoded by `kobo-image`, halftoned to the sixteen greys this panel
+resolves, and scaled to the cell they will occupy — including *up*, bounded, so
+a book cover published at 190 by 300 fills a tile on a 300 pixel-per-inch panel
+instead of sitting in the middle of it like a stamp.
+
 ## Writing an application
 
 [SDK.md](SDK.md) is the full guide. In short: an application is a plain Rust
@@ -390,11 +414,36 @@ else: every hardware-changing request is honestly refused. The simulator
 implements all of them, so application logic can be written and tested now and
 will behave identically when a backend is turned on.
 
+### What is not there yet, stated plainly
+
+`schedule_wake` has no device backend. On hardware the runtime does not own
+suspend or the RTC alarm, so a scheduled wake is refused rather than silently
+dropped — but that means the entire ambient genre, which is arguably E Ink's
+native one, works in the simulator and not on the panel. `brief` is the example
+of the shape; on a device it collects its stories while it is in the
+foreground. Making it real means `kobod` owning suspend on the only device
+there is, which is deliberately not something done unattended.
+
 **An invented reading is worse than a refusal**, because an application cannot
 tell one from the other and will act on it. The battery backend finds the supply
 by reading each `type` file for `Battery` rather than hardcoding a device name,
 and an unparseable capacity returns nothing rather than zero: rounding towards
 "flat" is the dangerous direction.
+
+## Credentials
+
+An application never holds a key. It names one:
+
+```rust
+Task::Post { credential: Some(Credential::bearer("openrouter")), .. }
+Task::Post { credential: Some(Credential::in_header("anthropic", "x-api-key")), .. }
+```
+
+The runtime reads `/mnt/onboard/.adds/cobalt/secrets/<name>` and attaches it,
+either as a bearer token or under the header the service expects, so a request
+goes straight to Anthropic or Gemini rather than through a proxy that would
+have to be trusted with the key. The value never enters the application's
+memory, its logs or its crash dump, and it is not replayed across a redirect.
 
 ## What applications may ask for
 
@@ -443,6 +492,7 @@ runtime is the only thing that can start, bound, or stop a program.
 | `gutenshelf` | Sixty thousand free books, downloaded and read on the panel |
 | `gallery` | Every UI primitive at once, for checking by eye on real hardware |
 | `tictactoe` | Two players, one panel, and partial repaints of single cells |
+| `hn` | Hacker News, with whole threads laid out by reply depth |
 
 Leaving an application does not end it. It is put behind the launcher rather
 than stopped, so a download or a build that was running keeps running and

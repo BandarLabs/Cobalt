@@ -43,7 +43,7 @@ use kobo_hal::{Rect, RefreshIntent, RefreshPlan, RegionSnapshot};
 use kobo_policy::{Backends, Capability, Declared, DeviceServices, PowerPolicy, TaskRunner};
 use kobo_profile::{DeviceProfile, CLARA_BW_391};
 use kobo_protocol::{Frame, Lifecycle, Message, TaskError, TaskOutcome};
-use kobo_ui::{render_with, ActionId, Chrome, Screen, Surface, CLARA_BW_METRICS};
+use kobo_ui::{render_all, ActionId, Chrome, PictureCache, Screen, Surface, CLARA_BW_METRICS};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -398,6 +398,12 @@ struct Hosted {
     /// is what makes coming back instant: the panel is repainted from this
     /// rather than the application being asked to draw itself again.
     screen: Option<Screen>,
+    /// The pictures this application handed over, bounded and private to it.
+    ///
+    /// Per application rather than shared so that one application filling the
+    /// cache cannot evict another's covers, and so that everything is released
+    /// together when it exits.
+    pictures: PictureCache,
     painted: u32,
     /// When this was last on the panel, for deciding what to stop first.
     used: Instant,
@@ -624,7 +630,14 @@ fn host_applications(
                             if is_front {
                                 trace(&format!("screen {} received", screen.id));
                                 println!("screen {}", screen.id);
-                                render_with(&screen, &CLARA_BW_METRICS, chrome, &mut surface, None);
+                                render_all(
+                                    &screen,
+                                    &CLARA_BW_METRICS,
+                                    chrome,
+                                    &apps[index].pictures,
+                                    &mut surface,
+                                    None,
+                                );
                                 panel.paint(display, whole_screen, &surface)?;
                                 apps[index].painted += 1;
                             }
@@ -633,6 +646,22 @@ fn host_applications(
                             // rather than the reader watching it be rebuilt.
                             apps[index].screen = Some(screen);
                         }
+                        Message::PutPicture {
+                            handle,
+                            width,
+                            height,
+                            grey,
+                        } => {
+                            // A refusal is silent by design. The screen naming
+                            // this handle simply finds nothing and falls back,
+                            // which is the same path as an eviction, so there
+                            // is one behaviour to reason about rather than two.
+                            let accepted = apps[index].pictures.put(handle, width, height, grey);
+                            if !accepted {
+                                trace(&format!("picture {} refused", handle.0));
+                            }
+                        }
+                        Message::DropPicture { handle } => apps[index].pictures.remove(handle),
                         Message::Log { .. } => {}
                         Message::DeviceRequest(request) => {
                             if matches!(request, kobo_protocol::DeviceRequest::ReadBattery)
@@ -857,7 +886,14 @@ fn switch_to(
     // and that is a genuinely new application rather than a returning one.
     if let Some(screen) = apps[index].screen.clone() {
         let chrome = Chrome::with_back(apps[index].path != home);
-        render_with(&screen, &CLARA_BW_METRICS, chrome, surface, None);
+        render_all(
+            &screen,
+            &CLARA_BW_METRICS,
+            chrome,
+            &apps[index].pictures,
+            surface,
+            None,
+        );
         panel.paint(display, whole_screen, surface)?;
         apps[index].painted += 1;
     }
@@ -993,6 +1029,7 @@ fn start_application(
         stream,
         tasks,
         screen: None,
+        pictures: PictureCache::default(),
         painted: 0,
         used: Instant::now(),
     });

@@ -1,0 +1,89 @@
+{
+ "hits": [
+  {
+   "_tags": [
+    "comment",
+    "author_fragmede",
+    "story_37392676"
+   ],
+   "author": "fragmede",
+   "comment_text": "Having a category for inaccessible things in LEO doesn&#x27;t indict my point that things not in LEO are typically accessible.",
+   "created_at": "2023-09-16T19:11:23Z",
+   "created_at_i": 1694891483,
+   "objectID": "37537722",
+   "parent_id": 37402691,
+   "story_id": 37392676,
+   "story_title": "Ask HN: I’m an FCC Commissioner proposing regulation of IoT security updates",
+   "updated_at": "2024-09-20T15:10:31Z"
+  },
+  {
+   "_tags": [
+    "comment",
+    "author_Sporktacular",
+    "story_37392676"
+   ],
+   "author": "Sporktacular",
+   "comment_text": "Kinda. I think we agree on the need to protect researchers. And if researchers are aligned with consumers rather than manufacturers then that&#x27;s preferable because it&#x27;s not the manufacturer&#x27;s property once it leaves the building.<p>If protection is in place, that alignment will work because manufacturers&#x27; declining to be scrutinised won&#x27;t prevent researches from doing their job. But making protection conditional on manufacturer approval will suppress their work in those cases. And I don&#x27;t know the practicality of establishing and enforcing this. So I oppose any conditionality generally.",
+   "created_at": "2023-09-13T15:39:31Z",
+   "created_at_i": 1694619571,
+   "objectID": "37498214",
+   "parent_id": 37424075,
+   "story_id": 37392676,
+   "story_title": "Ask HN: I’m an FCC Commissioner proposing regulation of IoT security updates",
+   "updated_at": "2024-09-20T15:08:38Z"
+  },
+  {
+   "_tags": [
+    "comment",
+    "author_RobKohr",
+    "story_37392676"
+   ],
+   "author": "RobKohr",
+   "comment_text": "It sounds like extra regulation, and thus a large spread out cost for society, for something that hasn&#x27;t seemed like a real problem. I worry that this would stifle innovation in development of products by small companies and individual developers to meet regulatory burdens to get govt stamps of approval, while giving an advantage to large companies that can handle regulatory burdens.<p>IoT is an experimental field that is dominated by people fiddling in their garage.<p>If harm comes from their use, that is where tort law comes into play, and that doesn&#x27;t seem to something that is a common occurrence except in the fantasy of doomsayers talking about ovens that are weaponized - all without thinking about companies that make ovens and how this would already be their primary concern.",
+   "created_at": "2023-09-11T14:58:34Z",
+   "created_at_i": 1694444314,
+   "objectID": "37468243",
+   "parent_id": 37392676,
+   "story_id": 37392676,
+   "story_title": "Ask HN: I’m an FCC Commissioner proposing regulation of IoT security updates",
+   "updated_at": "2024-09-20T15:05:13Z"
+  },
+  {
+   "_tags": [
+    "comment",
+    "author_Ja-k",
+    "story_37392676"
+   ],
+   "author": "Ja-k",
+   "comment_text": "If manufacturer does not support software updates including security updates, it should be plainly stated, to compare similar items to purchase.",
+   "created_at": "2023-09-10T14:12:59Z",
+   "created_at_i": 1694355179,
+   "objectID": "37455928",
+   "parent_id": 37392676,
+   "story_id": 37392676,
+   "story_title": "Ask HN: I’m an FCC Commissioner proposing regulation of IoT security updates",
+   "updated_at": "2024-09-20T15:03:48Z"
+  },
+  {
+   "_tags": [
+    "comment",
+    "author_Ja-k",
+    "story_37392676"
+   ],
+   "author": "Ja-k",
+   "comment_text": "If there are no software updates by manufacture, it should be apparent at time of sale, to accurately compare competing products.",
+   "created_at": "2023-09-10T14:11:04Z",
+   "created_at_i": 1694355064,
+   "objectID": "37455913",
+   "parent_id": 37392676,
+   "story_id": 37392676,
+   "story_title": "Ask HN: I’m an FCC Commissioner proposing regulation of IoT security updates",
+   "updated_at": "2024-09-20T15:03:48Z"
+  }
+ ],
+ "hitsPerPage": 5,
+ "nbHits": 925,
+ "nbPages": 185,
+ "page": 0,
+ "query": ""
+}

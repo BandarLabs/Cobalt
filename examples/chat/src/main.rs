@@ -24,11 +24,11 @@
 
 mod conversation;
 
-use conversation::{Conversation, Reply, Role, Turn};
+use conversation::{Conversation, Provider, Reply, Role, Turn, PROVIDERS};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, KoboApp, LogLevel, Screen, ScreenBuilder, Space,
-    Task, TaskError, TaskId, TaskOutcome,
+    StoreResult, Task, TaskError, TaskId, TaskOutcome,
 };
 use std::process::ExitCode;
 
@@ -56,6 +56,10 @@ const MAX_OPTION_LABEL: usize = 44;
 
 const TYPE: &str = "type";
 const TALK: &str = "talk";
+const SERVICE: &str = "service";
+/// Where the chosen provider is remembered between sessions.
+const CHOSEN: &str = "provider";
+const CHOICES: [&str; 3] = ["service-0", "service-1", "service-2"];
 const CANCEL: &str = "cancel";
 const RETRY: &str = "retry";
 const OPTIONS: [&str; conversation::MAX_OPTIONS] = [
@@ -67,6 +71,10 @@ enum View {
     #[default]
     Talking,
     Composing,
+    /// Which service to talk to. Its own screen rather than a sheet, because
+    /// the answer changes what every subsequent request looks like and the
+    /// reader should see it stated rather than glimpse it.
+    Choosing,
     /// A request is in flight. The transcript stays on the panel underneath,
     /// because replacing it with a waiting screen would cost a full repaint
     /// to show less than was there before.
@@ -76,11 +84,28 @@ enum View {
 /// What the application calls itself, in the one place it says so.
 const TITLE: &str = "AI Command Center";
 
+/// The three destinations, in one place so that no screen can disagree with
+/// another about where the bar goes or what is on it.
+const DESTINATIONS: [(&str, &str); 3] =
+    [(TALK, "Conversation"), (TYPE, "Type"), (SERVICE, "Service")];
+
+/// A provider's name, marked when it is the one in use.
+///
+/// The mark is a character rather than a tone: a chosen row drawn a shade
+/// darker is invisible on a panel that resolves sixteen greys under a reading
+/// light, and this is the only way to tell which key a request will use.
 #[derive(Default)]
 struct Chat {
     conversation: Conversation,
     keyboard: Keyboard,
     view: View,
+    /// Which service the next request goes to.
+    ///
+    /// The application still never sees a key. This picks the endpoint, the
+    /// body shape, and the *name* of the secret the runtime resolves; if the
+    /// runtime holds no secret under that name the request is refused, which
+    /// is the honest answer.
+    provider: Provider,
     task: Option<TaskId>,
     /// What went wrong, if anything. Always recoverable: it is drawn as a
     /// banner above a screen that still has every control it had before.
@@ -95,6 +120,7 @@ impl Chat {
     fn screen(&self) -> Screen {
         match self.view {
             View::Composing => self.compose(),
+            View::Choosing => self.choosing(),
             View::Talking | View::Waiting => self.transcript(),
         }
     }
@@ -107,7 +133,7 @@ impl Chat {
         // under a finger that is already on its way down.
         let mut screen = ScreenBuilder::new("chat")
             .top_bar(TITLE)
-            .nav_bar(0, [(TALK, "Conversation"), (TYPE, "Type")]);
+            .nav_bar(0, DESTINATIONS);
         if let Some(trouble) = &self.trouble {
             screen = screen.banner(BannerLevel::Attention, trouble.clone());
         }
@@ -168,10 +194,37 @@ impl Chat {
     fn compose(&self) -> Screen {
         ScreenBuilder::new("chat-compose")
             .top_bar("Type a message")
-            .nav_bar(1, [(TALK, "Conversation"), (TYPE, "Type")])
+            .nav_bar(1, DESTINATIONS)
             .typed(&self.keyboard, "Your message appears here.")
             .spacer(Space::Small)
             .keyboard(&self.keyboard, "Send")
+            .build()
+    }
+
+    /// The service chooser.
+    fn choosing(&self) -> Screen {
+        ScreenBuilder::new("chat-service")
+            .top_bar("Service")
+            .nav_bar(2, DESTINATIONS)
+            .text(
+                "The key itself is held by the runtime and never by this \
+                 application. Choosing a service chooses which stored key it \
+                 uses and which address the request goes to.",
+            )
+            .spacer(Space::Small)
+            .choose(
+                "Talk to",
+                PROVIDERS
+                    .iter()
+                    .enumerate()
+                    .map(|(index, provider)| (CHOICES[index], provider.label())),
+            )
+            .chosen(
+                PROVIDERS
+                    .iter()
+                    .position(|provider| *provider == self.provider)
+                    .unwrap_or(0),
+            )
             .build()
     }
 
@@ -211,10 +264,11 @@ impl Chat {
     /// can still cancel.
     fn submit(&mut self, context: &mut Context) {
         let work = Task::Post {
-            url: conversation::ENDPOINT.to_owned(),
-            body: self.conversation.request_body(),
+            url: self.provider.endpoint().to_owned(),
+            body: self.conversation.request_body(self.provider),
             content_type: "application/json".to_owned(),
-            secret: Some(conversation::SECRET.to_owned()),
+            credential: Some(self.provider.credential()),
+            headers: self.provider.headers(),
             max_bytes: conversation::MAX_REPLY_BYTES,
         };
         if let Some(task) = context.spawn(work) {
@@ -338,7 +392,30 @@ const fn explain(error: TaskError) -> &'static str {
 
 impl KoboApp for Chat {
     fn on_start(&mut self, context: &mut Context) {
+        context.store().load(CHOSEN);
         self.show(context);
+    }
+
+    /// Restores the remembered service.
+    ///
+    /// A first run, a cleared store and a refusal all land on the default,
+    /// because none of them is a reason to put an error in front of someone
+    /// who only wanted to ask a question.
+    fn on_store(&mut self, context: &mut Context, result: StoreResult) {
+        if let StoreResult::Loaded { key, value } = result {
+            if key != CHOSEN {
+                return;
+            }
+            let restored = value
+                .as_deref()
+                .and_then(|bytes| std::str::from_utf8(bytes).ok())
+                .map(Provider::from_key)
+                .unwrap_or_default();
+            if restored != self.provider {
+                self.provider = restored;
+                self.show(context);
+            }
+        }
     }
 
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
@@ -356,6 +433,26 @@ impl KoboApp for Chat {
             self.view = View::Composing;
             self.trouble = None;
             self.show(context);
+            return;
+        }
+
+        if action == action_id(SERVICE) {
+            self.view = View::Choosing;
+            self.trouble = None;
+            self.show(context);
+            return;
+        }
+
+        if let Some(index) = CHOICES.iter().position(|name| action == action_id(name)) {
+            if let Some(&provider) = PROVIDERS.get(index) {
+                self.provider = provider;
+                context
+                    .store()
+                    .save(CHOSEN, provider.key().as_bytes().to_vec());
+                self.view = View::Talking;
+                self.trouble = None;
+                self.show(context);
+            }
             return;
         }
 
@@ -387,13 +484,15 @@ impl KoboApp for Chat {
         self.task = None;
         self.view = View::Talking;
         match outcome {
-            TaskOutcome::Completed(bytes) => match conversation::read_completion(&bytes) {
-                Ok(reply) => {
-                    self.conversation.push(Role::Assistant, reply);
-                    self.trouble = None;
+            TaskOutcome::Completed(bytes) => {
+                match conversation::read_completion(&bytes, self.provider) {
+                    Ok(reply) => {
+                        self.conversation.push(Role::Assistant, reply);
+                        self.trouble = None;
+                    }
+                    Err(trouble) => self.trouble = Some(trouble),
                 }
-                Err(trouble) => self.trouble = Some(trouble),
-            },
+            }
             TaskOutcome::Failed(error) => {
                 // The kind of failure, never the conversation: what the reader
                 // said is theirs and has no business in the system log.
@@ -421,11 +520,16 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
+        conversation::Provider,
         conversation::{Role, Turn},
-        visible_turns, Chat, View, COLUMNS, OPTIONS, TALK, TRANSCRIPT_LINES, TYPE,
+        visible_turns, Chat, View, CHOICES, CHOSEN, COLUMNS, OPTIONS, SERVICE, TALK,
+        TRANSCRIPT_LINES, TYPE,
     };
     use kobo_sdk::keyboard::Keyboard;
-    use kobo_sdk::{action_id, Command, Context, KoboApp, Screen, Task, TaskId, TaskOutcome};
+    use kobo_sdk::{
+        action_id, Command, Context, KoboApp, Screen, StoreRequest, StoreResult, Task, TaskId,
+        TaskOutcome,
+    };
     use kobo_ui::{Chrome, LayoutKind, CLARA_BW_METRICS};
 
     /// Runs one callback and hands back what the application asked for.
@@ -446,9 +550,14 @@ mod tests {
     fn posted(commands: &[Command]) -> Option<(String, Option<String>)> {
         commands.iter().find_map(|command| match command {
             Command::Spawn {
-                work: Task::Post { body, secret, .. },
+                work: Task::Post {
+                    body, credential, ..
+                },
                 ..
-            } => Some((body.clone(), secret.clone())),
+            } => Some((
+                body.clone(),
+                credential.as_ref().map(|held| held.secret.clone()),
+            )),
             _ => None,
         })
     }
@@ -842,5 +951,136 @@ mod tests {
             1,
             "a cancel threw the question away"
         );
+    }
+
+    /// The whole point of naming the credential header: the request goes
+    /// straight to the service the reader picked, with that service's key in
+    /// that service's header and that service's body shape.
+    #[test]
+    fn choosing_a_service_changes_where_the_next_question_goes() {
+        let (mut chat, _) = started();
+        act(&mut chat, SERVICE);
+        assert_eq!(chat.view, View::Choosing);
+
+        let saved = act(&mut chat, CHOICES[1]);
+        assert_eq!(chat.provider, Provider::Anthropic);
+        assert!(
+            saved.iter().any(|command| matches!(
+                command,
+                Command::Store(StoreRequest::Save { key, value })
+                    if key == CHOSEN && value == Provider::Anthropic.key().as_bytes()
+            )),
+            "the choice was not remembered"
+        );
+
+        let commands = type_and_send(&mut chat, "hello");
+        let request = commands
+            .iter()
+            .find_map(|command| match command {
+                Command::Spawn {
+                    work:
+                        Task::Post {
+                            url,
+                            credential,
+                            headers,
+                            ..
+                        },
+                    ..
+                } => Some((url.clone(), credential.clone(), headers.clone())),
+                _ => None,
+            })
+            .expect("a question was asked");
+        assert_eq!(request.0, Provider::Anthropic.endpoint());
+        let credential = request.1.expect("a credential");
+        assert_eq!(credential.header_name(), "x-api-key");
+        assert_eq!(credential.secret, "anthropic");
+        assert!(request
+            .2
+            .iter()
+            .any(|header| header.name == "anthropic-version"));
+    }
+
+    /// The chooser has to say which service is already in use, and it has to
+    /// say it with something the panel can actually draw: a tick character in
+    /// the label rendered as a missing-glyph box on the device.
+    #[test]
+    fn the_service_in_use_is_marked_and_no_label_carries_a_symbol() {
+        let (mut chat, _) = started();
+        act(&mut chat, SERVICE);
+        act(&mut chat, CHOICES[1]);
+        act(&mut chat, SERVICE);
+        let screen = chat.screen();
+        let [.., kobo_sdk::Node::Choice {
+            options, selected, ..
+        }] = &screen.nodes[..]
+        else {
+            unreachable!("the chooser ends in a choice")
+        };
+        assert_eq!(*selected, Some(1));
+        for option in options {
+            assert!(
+                option.label.is_ascii(),
+                "a label carries a symbol the installed face may not have: {}",
+                option.label
+            );
+        }
+    }
+
+    #[test]
+    fn the_remembered_service_comes_back_and_a_stale_one_does_not() {
+        let (mut chat, _) = started();
+        let mut context = Context::default();
+        chat.on_store(
+            &mut context,
+            StoreResult::Loaded {
+                key: CHOSEN.to_owned(),
+                value: Some(Provider::Gemini.key().as_bytes().to_vec()),
+            },
+        );
+        assert_eq!(chat.provider, Provider::Gemini);
+
+        // A value naming a service that no longer exists is not a reason to
+        // put an error in front of someone who wanted to ask a question.
+        let mut chat = Chat::default();
+        let mut context = Context::default();
+        chat.on_store(
+            &mut context,
+            StoreResult::Loaded {
+                key: CHOSEN.to_owned(),
+                value: Some(b"a-service-that-was-removed".to_vec()),
+            },
+        );
+        assert_eq!(chat.provider, Provider::OpenAi);
+    }
+
+    /// The bar carries three destinations now, and it still must not move: a
+    /// control that walks down the panel as the transcript grows is one that
+    /// leaves from under a finger already on its way down.
+    #[test]
+    fn the_bar_is_in_the_same_place_however_long_the_conversation_is() {
+        let bar = |chat: &Chat| {
+            chat.screen()
+                .layout_with(&CLARA_BW_METRICS, Chrome::default())
+                .nodes
+                .iter()
+                .filter(|node| {
+                    matches!(
+                        node.kind,
+                        LayoutKind::NavDestination(_) | LayoutKind::NavDestinationSelected(_)
+                    )
+                })
+                .map(|node| node.rect)
+                .collect::<Vec<_>>()
+        };
+        let (mut chat, _) = started();
+        let empty = bar(&chat);
+        assert_eq!(empty.len(), 3, "three destinations");
+        for index in 0..12 {
+            chat.conversation
+                .push(Role::You, format!("question {index}"));
+            chat.conversation
+                .push(Role::Assistant, "A reasonably long answer. ".repeat(6));
+        }
+        assert_eq!(bar(&chat), empty, "the bar moved as the transcript grew");
     }
 }

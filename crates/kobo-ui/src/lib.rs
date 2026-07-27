@@ -21,6 +21,15 @@ const MAX_LAYOUT_DEPTH: usize = 16;
 /// which is what [`Node::PagedList`] is for.
 pub const MAX_CHOICE_OPTIONS: usize = 6;
 
+/// The deepest a [`Node::Quote`] is drawn.
+///
+/// Measured rather than picked: one indent step is one small space, and this
+/// panel's text column is 91 mm wide. Past three steps a reply has lost a
+/// quarter of its measure, and a discussion that nests forty deep — which real
+/// ones do — would otherwise end up one word per line. Deeper replies keep
+/// their true depth in their byline and share the deepest indent.
+pub const MAX_QUOTE_DEPTH: u8 = 3;
+
 /// The most rows one list may declare.
 ///
 /// A bound exists so a screen cannot become unboundedly tall from data; a list
@@ -162,6 +171,32 @@ impl DisplayMetrics {
             1
         } else if columns > 4 {
             4
+        } else {
+            columns
+        }
+    }
+
+    /// How many columns a grid of this tile shape gets.
+    ///
+    /// Deliberately not [`Self::max_grid_columns`], which answers a different
+    /// question. That one asks how narrow a column of *text* may be, and 45
+    /// millimetres is the honest answer. A tile carries a mark and a one-line
+    /// label, so the binding constraint is a finger and a recognisable icon,
+    /// not a line of prose — holding tiles to the text figure gave a Clara two
+    /// 41 millimetre squares per row, which is a grid of four enormous buttons
+    /// where a phone would show nine.
+    ///
+    /// Portrait cells are held wider because they carry artwork someone has to
+    /// recognise, and a 25 millimetre book cover is a postage stamp.
+    #[must_use]
+    pub const fn grid_columns(&self, shape: TileShape) -> usize {
+        let minimum = shape.minimum_cell_tenth_mm();
+        let usable = self.width_tenth_mm() - 80;
+        let columns = (usable / minimum) as usize;
+        if columns < 1 {
+            1
+        } else if columns > 5 {
+            5
         } else {
             columns
         }
@@ -612,7 +647,6 @@ fn layout_top_bar(
             title_width.saturating_sub(action_width.saturating_add(metrics.space(Space::Small)));
     }
 
-    let title = wrap_text(&top_bar.title, title_width, FontSize::Title);
     layout.nodes.push(LayoutNode {
         id: top_bar.id,
         rect: Rect {
@@ -624,7 +658,13 @@ fn layout_top_bar(
         kind: LayoutKind::TopBarTitle,
         // One line only. A title that wraps is a title that is too long, and
         // growing the bar to fit it would move every screen's content.
-        text_lines: vec![title.into_iter().next().unwrap_or_default()],
+        //
+        // Ellipsised rather than simply cut. Keeping the first wrapped line
+        // and dropping the rest silently reads as the whole title: a Hacker
+        // News thread titled "US citizen charged after GrapheneOS phone wipes
+        // during airport search" appeared on the panel as "US citizen charged
+        // after", which is a different and much worse sentence.
+        text_lines: vec![one_line(&top_bar.title, title_width, FontSize::Title)],
     });
 
     layout.nodes.push(LayoutNode {
@@ -710,6 +750,21 @@ pub enum Node {
         id: NodeId,
         text: String,
     },
+    /// A paragraph set in from the left, with a rule marking what it answers.
+    ///
+    /// Threaded discussion is not a niche: replies, quoted mail, nested
+    /// comments and annotated diffs are all the same shape, and every one of
+    /// them was previously reduced to drawing arrows in the text because no
+    /// node could express depth. Depth is a small number rather than a
+    /// measurement, so an application still cannot choose pixels, and it is
+    /// capped at [`MAX_QUOTE_DEPTH`] because an indent that keeps growing
+    /// leaves a nine-deep reply one word wide on a panel this narrow.
+    Quote {
+        id: NodeId,
+        /// How many levels in. Clamped on construction.
+        depth: u8,
+        text: String,
+    },
     Button {
         id: NodeId,
         action: ActionId,
@@ -764,6 +819,7 @@ pub enum Node {
     TileGrid {
         id: NodeId,
         tiles: Vec<Tile>,
+        shape: TileShape,
     },
     /// The tap-first question primitive.
     ///
@@ -774,6 +830,14 @@ pub enum Node {
         id: NodeId,
         prompt: String,
         options: Vec<BarAction>,
+        /// Which option is already the answer, if one is.
+        ///
+        /// Carried as state rather than drawn into a label, for the same
+        /// reason a finished row in a [`Node::Rows`] list is: an application
+        /// that marks its own choice with a character picks one the installed
+        /// face may not have, and gets a missing-glyph box on the panel. The
+        /// renderer marks it with an icon from the atlas instead.
+        selected: Option<u8>,
         /// Optional escape hatch, shown last, for when none of the options fit.
         /// The keyboard is only summoned if this row is actually tapped.
         freeform: Option<Freeform>,
@@ -792,6 +856,30 @@ pub enum Node {
     Skeleton {
         id: NodeId,
         lines: u8,
+    },
+    /// A picture the runtime is already holding, drawn as large as the space
+    /// allows without changing its shape.
+    ///
+    /// The pixels are deliberately not here. A screen is re-sent on every
+    /// change — that is what makes the model simple — and a book cover is
+    /// eighty thousand bytes, so carrying them inline would put a cover on the
+    /// wire for every tap. Instead the application hands the picture over once
+    /// and refers to it afterwards by `handle`.
+    ///
+    /// The natural size travels with the reference so that layout stays a pure
+    /// function of the screen. A renderer that had to look the picture up
+    /// before it could measure anything would give a different answer
+    /// depending on what the runtime happened to be holding, which is exactly
+    /// the class of bug that makes a preview stop matching the panel.
+    Picture {
+        id: NodeId,
+        handle: PictureHandle,
+        /// The picture's own size, in pixels, as handed over.
+        source: (u32, u32),
+        /// The tallest this may be drawn, in tenths of a millimetre, so a
+        /// portrait picture cannot take a whole panel on one device and a
+        /// third of it on another.
+        max_height_tenths_mm: u16,
     },
     /// Work in flight, typically a network request.
     ///
@@ -853,12 +941,77 @@ impl Caret {
     }
 }
 
+/// A picture the runtime is holding on the application's behalf.
+///
+/// Handles are chosen by the application and are private to it, so two
+/// applications may use the same number without colliding.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct PictureHandle(pub u32);
+
+/// A picture on a tile, together with the size it was handed over at.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TilePicture {
+    pub handle: PictureHandle,
+    pub source: (u32, u32),
+}
+
+impl TilePicture {
+    #[must_use]
+    pub const fn new(handle: PictureHandle, width: u32, height: u32) -> Self {
+        Self {
+            handle,
+            source: (width, height),
+        }
+    }
+}
+
+/// The proportion of a tile's body.
+///
+/// This is a token rather than a number because a grid whose cells may be any
+/// shape is a grid that can be made to look wrong. Square is the destination
+/// shape; portrait is the shape of a book, a poster or a cover, and exists so
+/// that a shelf of covers reads as a shelf.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TileShape {
+    #[default]
+    Square,
+    Portrait,
+}
+
+impl TileShape {
+    /// The body's height as a fraction of its width, in eighths.
+    #[must_use]
+    pub const fn eighths(self) -> i32 {
+        match self {
+            Self::Square => 8,
+            Self::Portrait => 12,
+        }
+    }
+
+    /// The narrowest a cell of this shape may be, in tenths of a millimetre.
+    ///
+    /// A physical measurement rather than a pixel count, for the same reason
+    /// every other size here is: 25 millimetres is a comfortable icon on any
+    /// panel, and 25 pixels is a different thing on each one.
+    #[must_use]
+    pub const fn minimum_cell_tenth_mm(self) -> i32 {
+        match self {
+            Self::Square => 250,
+            Self::Portrait => 400,
+        }
+    }
+}
+
 /// One tile in a [`Node::TileGrid`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Tile {
     pub action: ActionId,
     pub label: String,
     pub glyph: Glyph,
+    /// Drawn instead of the glyph when the runtime is holding it. The glyph
+    /// stays because a cover that has not arrived yet, or that failed to
+    /// decode, must still leave a usable tile rather than a hole.
+    pub picture: Option<TilePicture>,
 }
 
 impl Tile {
@@ -868,7 +1021,14 @@ impl Tile {
             action,
             label: label.into(),
             glyph,
+            picture: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_picture(mut self, picture: TilePicture) -> Self {
+        self.picture = Some(picture);
+        self
     }
 }
 
@@ -1007,6 +1167,10 @@ pub enum Glyph {
     Check,
     /// A prompt: a chevron and a line waiting to be typed on.
     Terminal,
+    /// A speech bubble: a conversation, or a thread of them.
+    Chat,
+    /// A folded newspaper: stories, a feed, a front page.
+    News,
 }
 
 impl Node {
@@ -1015,6 +1179,7 @@ impl Node {
         match self {
             Self::Heading { id, .. }
             | Self::Text { id, .. }
+            | Self::Quote { id, .. }
             | Self::Button { id, .. }
             | Self::Card { id, .. }
             | Self::Divider { id }
@@ -1027,6 +1192,7 @@ impl Node {
             | Self::Choice { id, .. }
             | Self::Banner { id, .. }
             | Self::Skeleton { id, .. }
+            | Self::Picture { id, .. }
             | Self::Activity { id, .. }
             | Self::Terminal { id, .. } => *id,
         }
@@ -1094,6 +1260,9 @@ const fn min_i32(a: i32, b: i32) -> i32 {
 pub enum LayoutKind {
     Heading,
     Text,
+    /// An indented paragraph. The value is the clamped depth, so the renderer
+    /// can draw the gutter rule without consulting the tree.
+    Quote(u8),
     Button(ActionId),
     Card,
     Divider,
@@ -1119,8 +1288,11 @@ pub enum LayoutKind {
     Tile(ActionId),
     TileLabel,
     TileGlyph(Glyph),
+    /// A picture, already placed. `rect` is where it goes; the renderer scales
+    /// it to fit only if the application handed over something larger.
+    Picture(PictureHandle),
     ChoicePrompt,
-    ChoiceOption(ActionId),
+    ChoiceOption(ActionId, bool),
     ChoiceFreeform(ActionId),
     Banner(BannerLevel),
     Skeleton,
@@ -1186,7 +1358,7 @@ impl Layout {
             | LayoutKind::Tile(action)
             | LayoutKind::Row(action)
             | LayoutKind::Cell(action)
-            | LayoutKind::ChoiceOption(action)
+            | LayoutKind::ChoiceOption(action, _)
             | LayoutKind::ChoiceFreeform(action)
                 if node.rect.contains(x, y) =>
             {
@@ -1234,13 +1406,78 @@ impl Layout {
                 | LayoutKind::NavDestination(candidate)
                 | LayoutKind::NavDestinationSelected(candidate)
                 | LayoutKind::Tile(candidate)
-                | LayoutKind::ChoiceOption(candidate)
+                | LayoutKind::ChoiceOption(candidate, _)
                 | LayoutKind::Cell(candidate)
                 | LayoutKind::ChoiceFreeform(candidate) => candidate == action,
                 _ => false,
             })
             .map(|node| node.rect)
     }
+}
+
+/// The largest `source` can be drawn inside `max_width` by `max_height` without
+/// changing its proportions.
+///
+/// A picture is never enlarged. Upscaling a small cover to fill a tile turns a
+/// sharp thumbnail into a soft one, and on a panel with sixteen greys softness
+/// is the one thing that reads as broken.
+fn fit_within(source: (u32, u32), max_width: i32, max_height: i32) -> (i32, i32) {
+    let max_width = max(0, max_width);
+    let max_height = max(0, max_height);
+    let width = i32::try_from(source.0).unwrap_or(i32::MAX);
+    let height = i32::try_from(source.1).unwrap_or(i32::MAX);
+    if width <= 0 || height <= 0 || max_width == 0 || max_height == 0 {
+        return (0, 0);
+    }
+    if width <= max_width && height <= max_height {
+        return (width, height);
+    }
+    let by_width = (
+        max_width,
+        max(
+            1,
+            (i64::from(max_width) * i64::from(height) / i64::from(width)) as i32,
+        ),
+    );
+    if by_width.1 <= max_height {
+        return by_width;
+    }
+    (
+        max(
+            1,
+            (i64::from(max_height) * i64::from(width) / i64::from(height)) as i32,
+        ),
+        max_height,
+    )
+}
+
+/// The first line of `text`, marked with an ellipsis when there was more.
+///
+/// A label cut at a word boundary with nothing to show for it reads as a
+/// rendering fault rather than as an abbreviation, and under a book cover
+/// almost every title is longer than the tile is wide.
+///
+/// Public because a list of headlines wants it as much as a tile does: a story
+/// title that wraps makes its row a different height from the one above, and a
+/// list whose rows all differ is one the eye has to re-measure on every line.
+#[must_use]
+pub fn one_line(text: &str, width: i32, size: FontSize) -> String {
+    let lines = wrap_text(text, width, size);
+    let mut first = lines.first().cloned().unwrap_or_default();
+    // `wrap_text` breaks on an average advance, which is the right trade for
+    // paragraphs and the wrong one for a single label: a line of wide letters
+    // measures over the estimate and runs out of its tile, which is how "AI
+    // Command Center" reached both borders of a cell it was supposed to sit
+    // inside. One line can afford to be measured properly.
+    if lines.len() <= 1 && measure_text(&first, size).0 <= width {
+        return first;
+    }
+    // Room has to be made for the ellipsis, or the mark itself wraps and is
+    // never seen.
+    while !first.is_empty() && measure_text(&format!("{first}\u{2026}"), size).0 > width {
+        first.pop();
+    }
+    format!("{}\u{2026}", first.trim_end())
 }
 
 fn layout_node(
@@ -1288,6 +1525,28 @@ fn layout_node(
                     height,
                 },
                 kind: LayoutKind::Text,
+                text_lines: lines,
+            });
+            y.saturating_add(height)
+        }
+        Node::Quote { id, depth, text } => {
+            let depth = (*depth).min(MAX_QUOTE_DEPTH);
+            let (offset, text_width) = quote_offsets(metrics, width, depth);
+            let text_x = x.saturating_add(offset);
+            let lines = wrap_text(text, text_width, FontSize::Body);
+            let height = max(
+                MIN_TEXT_HEIGHT,
+                lines.len() as i32 * FontSize::Body.line_height(),
+            );
+            layout.nodes.push(LayoutNode {
+                id: *id,
+                rect: Rect {
+                    x: text_x,
+                    y,
+                    width: text_width,
+                    height,
+                },
+                kind: LayoutKind::Quote(depth),
                 text_lines: lines,
             });
             y.saturating_add(height)
@@ -1585,14 +1844,36 @@ fn layout_node(
             }
             cursor.saturating_sub(gap)
         }
-        Node::TileGrid { id, tiles } => {
-            let columns = metrics.max_grid_columns() as i32;
+        Node::Picture {
+            id,
+            handle,
+            source,
+            max_height_tenths_mm,
+        } => {
+            let ceiling = metrics.tenth_mm(i32::from(*max_height_tenths_mm));
+            let (drawn_width, drawn_height) = fit_within(*source, width, ceiling);
+            layout.nodes.push(LayoutNode {
+                id: *id,
+                rect: Rect {
+                    x: x + (width - drawn_width) / 2,
+                    y,
+                    width: drawn_width,
+                    height: drawn_height,
+                },
+                kind: LayoutKind::Picture(*handle),
+                text_lines: Vec::new(),
+            });
+            y.saturating_add(drawn_height)
+        }
+        Node::TileGrid { id, tiles, shape } => {
+            let columns = metrics.grid_columns(*shape) as i32;
             let gutter = metrics.space(Space::Small);
             let cell = (width - gutter * (columns - 1)) / columns;
-            // Square cells, plus a band beneath for the label. A tile shorter
-            // than it is wide reads as a button, not a destination.
+            // The body, plus a band beneath for the label. A tile shorter than
+            // it is wide reads as a button, not a destination.
+            let body = cell * shape.eighths() / 8;
             let label_band = FontSize::Caption.line_height() + metrics.space(Space::Tight);
-            let cell_height = cell.saturating_add(label_band);
+            let cell_height = body.saturating_add(label_band);
             let index = layout.nodes.len();
             layout.nodes.push(LayoutNode {
                 id: *id,
@@ -1626,28 +1907,39 @@ fn layout_node(
                     kind: LayoutKind::Tile(tile.action),
                     text_lines: Vec::new(),
                 });
-                let glyph_size = metrics.tenth_mm(110);
+                // Fitted inside the body and centred, so a cover that is not
+                // exactly the tile's proportion is letterboxed rather than
+                // stretched. A stretched face is worse than a smaller one.
+                let (mark, mark_width, mark_height) = if let Some(picture) = tile.picture {
+                    let (width, height) = fit_within(picture.source, cell, body);
+                    (LayoutKind::Picture(picture.handle), width, height)
+                } else {
+                    let size = metrics.tenth_mm(110);
+                    (LayoutKind::TileGlyph(tile.glyph), size, size)
+                };
                 layout.nodes.push(LayoutNode {
                     id: *id,
                     rect: Rect {
-                        x: cell_x + (cell - glyph_size) / 2,
-                        y: cell_y + (cell - glyph_size) / 2,
-                        width: glyph_size,
-                        height: glyph_size,
+                        x: cell_x + (cell - mark_width) / 2,
+                        y: cell_y + (body - mark_height) / 2,
+                        width: mark_width,
+                        height: mark_height,
                     },
-                    kind: LayoutKind::TileGlyph(tile.glyph),
+                    kind: mark,
                     text_lines: Vec::new(),
                 });
-                let label = wrap_text(&tile.label, cell, FontSize::Caption)
-                    .into_iter()
-                    .next()
-                    .unwrap_or_default();
+                // Inset by the same tight step the label already sits below,
+                // so a name that fills its tile is ellipsised with a margin
+                // rather than run flush into the cell border.
+                let inset = metrics.space(Space::Tight);
+                let label_width = max_i32(1, cell - inset * 2);
+                let label = one_line(&tile.label, label_width, FontSize::Caption);
                 layout.nodes.push(LayoutNode {
                     id: *id,
                     rect: Rect {
-                        x: cell_x,
-                        y: cell_y + cell + metrics.space(Space::Tight),
-                        width: cell,
+                        x: cell_x + inset,
+                        y: cell_y + body + inset,
+                        width: label_width,
                         height: FontSize::Caption.line_height(),
                     },
                     kind: LayoutKind::TileLabel,
@@ -1666,6 +1958,7 @@ fn layout_node(
             id,
             prompt,
             options,
+            selected,
             freeform,
         } => {
             let gap = metrics.space(Space::Tight);
@@ -1689,10 +1982,11 @@ fn layout_node(
                     .saturating_add(height)
                     .saturating_add(metrics.space(Space::Small));
             }
-            for option in options.iter().take(MAX_CHOICE_OPTIONS) {
+            for (index, option) in options.iter().take(MAX_CHOICE_OPTIONS).enumerate() {
                 if layout.nodes.len() >= MAX_LAYOUT_NODES {
                     break;
                 }
+                let chosen = selected.is_some_and(|selected| usize::from(selected) == index);
                 layout.nodes.push(LayoutNode {
                     id: *id,
                     rect: Rect {
@@ -1701,7 +1995,7 @@ fn layout_node(
                         width,
                         height: row_height,
                     },
-                    kind: LayoutKind::ChoiceOption(option.action),
+                    kind: LayoutKind::ChoiceOption(option.action, chosen),
                     text_lines: vec![option.label.clone()],
                 });
                 cursor = cursor.saturating_add(row_height).saturating_add(gap);
@@ -2013,6 +2307,15 @@ pub trait Typesetter: Send + Sync {
         plot: &mut dyn FnMut(i32, i32, u8),
     );
 
+    /// Whether this face can actually draw `character`.
+    ///
+    /// The default is `true`, meaning "cannot tell": a typesetter that does not
+    /// know its own coverage must not cause working text to be reported as
+    /// undrawable.
+    fn has_glyph(&self, _character: char, _face: Face) -> bool {
+        true
+    }
+
     /// The advance of a single [`Face::Mono`] cell.
     ///
     /// A grid of characters cannot be laid out by measuring strings: a terminal
@@ -2070,6 +2373,23 @@ pub fn measure_text_in(text: &str, size: FontSize, face: Face) -> (i32, i32) {
     (glyphs.saturating_mul(6).saturating_mul(scale), 7 * scale)
 }
 
+/// The first character of `text` the installed face cannot draw, if any.
+///
+/// A character with no glyph is drawn as an empty box, which on a panel reads
+/// as a rendering fault rather than as a missing character. This is what lets
+/// an application's own tests refuse a label carrying a symbol the face never
+/// had, instead of finding out by looking at hardware.
+///
+/// Returns `None` when no typeface is installed, because the built-in bitmap
+/// fallback is not what anything is ultimately drawn with and answering from it
+/// would condemn perfectly good text.
+#[must_use]
+pub fn undrawable_in(text: &str, face: Face) -> Option<char> {
+    let typesetter = TYPESETTER.get()?;
+    text.chars()
+        .find(|character| !character.is_whitespace() && !typesetter.has_glyph(*character, face))
+}
+
 /// The size of one monospace cell: what a character grid is built from.
 ///
 /// Returns width and height together because a caller that needs one always
@@ -2122,6 +2442,23 @@ pub struct ProseArea {
 }
 
 impl DisplayMetrics {
+    /// The pixel size of one tile's body on this panel.
+    ///
+    /// An application needs this to prepare a picture at the size it will
+    /// actually be drawn. Guessing is the alternative, and a guess is wrong on
+    /// every other model: the column count comes from the panel's physical
+    /// width, so the same shelf has different cells on a Clara and an Elipsa.
+    #[must_use]
+    pub fn tile_body(&self, shape: TileShape) -> (i32, i32) {
+        let columns = self.grid_columns(shape) as i32;
+        let gutter = self.space(Space::Small);
+        let width = max_i32(
+            0,
+            (self.width - 2 * self.screen_margin() - gutter * (columns - 1)) / columns,
+        );
+        (width, width * shape.eighths() / 8)
+    }
+
     /// The area between the bars that body text may occupy.
     ///
     /// `top_bar` and `nav_bar` describe the screen the text will be shown on,
@@ -2161,20 +2498,47 @@ impl DisplayMetrics {
 /// their gaps, and holds barely half the text of a page of description.
 #[must_use]
 pub fn paginate(text: &str, area: ProseArea) -> Vec<Vec<String>> {
-    let line_height = FontSize::Body.line_height();
-    let mut pages: Vec<Vec<String>> = Vec::new();
-    let mut page: Vec<String> = Vec::new();
-    let mut used = 0;
-    if area.width <= 0 || area.height < line_height {
-        return pages;
-    }
-
     // Line endings are normalised first. Project Gutenberg serves CRLF, so a
     // split on "\n\n" alone never matched and an entire novel arrived as one
     // paragraph: a solid wall of text with no space anywhere in it. A lone CR
     // is folded too, because some of the older files use it.
     let text = normalise_breaks(text);
-    for paragraph in text.split("\n\n") {
+    let paragraphs = text
+        .split("\n\n")
+        .map(|paragraph| (0, paragraph))
+        .collect::<Vec<_>>();
+    // The metrics only ever reach `quote_offsets`, and at depth zero that
+    // returns the full width whatever panel this is, so an unindented page is
+    // measured identically on every device.
+    paginate_quoted(&paragraphs, &DisplayMetrics::default(), area)
+        .into_iter()
+        .map(|page| page.into_iter().map(|(_, text)| text).collect())
+        .collect()
+}
+
+/// Breaks indented prose into pages that fit, keeping each paragraph's depth.
+///
+/// The companion to [`paginate`] for threaded discussion. Depth cannot be
+/// applied afterwards: an indented paragraph has a narrower measure, so it
+/// wraps to more lines and takes more of the page. A thread paginated flat and
+/// then drawn indented loses the bottom of every page.
+#[must_use]
+pub fn paginate_quoted(
+    paragraphs: &[(u8, &str)],
+    metrics: &DisplayMetrics,
+    area: ProseArea,
+) -> Vec<Vec<(u8, String)>> {
+    let line_height = FontSize::Body.line_height();
+    let mut pages: Vec<Vec<(u8, String)>> = Vec::new();
+    let mut page: Vec<(u8, String)> = Vec::new();
+    let mut used = 0;
+    if area.width <= 0 || area.height < line_height {
+        return pages;
+    }
+
+    for (depth, paragraph) in paragraphs {
+        let depth = (*depth).min(MAX_QUOTE_DEPTH);
+        let (_, width) = quote_offsets(metrics, area.width, depth);
         // Line breaks inside a paragraph are the source file's, not the
         // author's; Gutenberg's plain text is hard wrapped at seventy columns
         // and honouring that would give a column of ragged short lines.
@@ -2183,7 +2547,7 @@ pub fn paginate(text: &str, area: ProseArea) -> Vec<Vec<String>> {
         if paragraph.is_empty() {
             continue;
         }
-        let mut lines = wrap_text(paragraph, area.width, FontSize::Body);
+        let mut lines = wrap_text(paragraph, width, FontSize::Body);
         while !lines.is_empty() {
             let spacing = if page.is_empty() { 0 } else { area.gap };
             let room = area.height - used - spacing;
@@ -2199,7 +2563,7 @@ pub fn paginate(text: &str, area: ProseArea) -> Vec<Vec<String>> {
                 // The layout engine gives every text node a floor, so a
                 // one-line paragraph can occupy more than one line's height.
                 used += spacing + max_i32(MIN_TEXT_HEIGHT, lines.len() as i32 * line_height);
-                page.push(lines.join(" "));
+                page.push((depth, lines.join(" ")));
                 break;
             }
             // A paragraph longer than a whole page cannot be kept whole. It is
@@ -2207,7 +2571,7 @@ pub fn paginate(text: &str, area: ProseArea) -> Vec<Vec<String>> {
             // enormous block would otherwise open at chapter two.
             if page.is_empty() {
                 let rest = lines.split_off(fits);
-                page.push(lines.join(" "));
+                page.push((depth, lines.join(" ")));
                 pages.push(std::mem::take(&mut page));
                 used = 0;
                 lines = rest;
@@ -2223,18 +2587,6 @@ pub fn paginate(text: &str, area: ProseArea) -> Vec<Vec<String>> {
     pages
 }
 
-/// Breaks a list of rows into pages that fit, returning the row indices on each.
-///
-/// There is no scrolling anywhere in this UI and there should not be: a panel
-/// that takes the better part of a second to repaint cannot follow a finger,
-/// and a partial refresh chasing a moving list is exactly the operation that
-/// leaves ghosting behind. A page turn is one refresh with a stable result,
-/// which is also what a book does.
-///
-/// So a list longer than the panel is paged rather than cut off, and this is
-/// how an application finds out where the folds are. Heights come from the
-/// same wrapping and spacing the layout engine uses, so a page that fits here
-/// is a page that will be drawn whole.
 /// Folds every line-ending convention onto `\n`.
 ///
 /// Text arrives from servers, not from this repository, and a paragraph break
@@ -2247,6 +2599,47 @@ pub fn normalise_breaks(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\r', "\n")
 }
 
+/// Where a quote at `depth` starts and how wide its words are, given the
+/// column it sits in.
+///
+/// One function, used by the layout engine and by the paginator, because a
+/// paginator that measured a different width from the one that gets drawn is
+/// a paginator that silently drops the last line of a page.
+#[must_use]
+pub fn quote_offsets(metrics: &DisplayMetrics, width: i32, depth: u8) -> (i32, i32) {
+    let depth = depth.min(MAX_QUOTE_DEPTH);
+    let step = metrics.space(Space::Small);
+    let indent = i32::from(depth) * step;
+    // The gutter holds the rule that says "this answers something".
+    let gutter = if depth == 0 { 0 } else { step };
+    (indent + gutter, max(1, width - indent - gutter))
+}
+
+/// How wide the words in a list row actually are, once the icon is paid for.
+///
+/// Exposed because an application that wants a uniform row height has to
+/// ellipsise its titles itself, and it can only do that against the same
+/// measure the layout engine uses. Deriving it a second time by hand is how a
+/// list ends up with one row in ten wrapping anyway.
+#[must_use]
+pub fn row_text_width(metrics: &DisplayMetrics, area: ProseArea) -> i32 {
+    let padding = metrics.space(Space::Small);
+    let icon = metrics.touch_target_default();
+    max(1, area.width - icon - padding * 2)
+}
+
+/// Breaks a list of rows into pages that fit, returning the row indices on each.
+///
+/// There is no scrolling anywhere in this UI and there should not be: a panel
+/// that takes the better part of a second to repaint cannot follow a finger,
+/// and a partial refresh chasing a moving list is exactly the operation that
+/// leaves ghosting behind. A page turn is one refresh with a stable result,
+/// which is also what a book does.
+///
+/// So a list longer than the panel is paged rather than cut off, and this is
+/// how an application finds out where the folds are. Heights come from the
+/// same wrapping and spacing the layout engine uses, so a page that fits here
+/// is a page that will be drawn whole.
 #[must_use]
 pub fn paginate_rows(
     rows: &[(&str, &str)],
@@ -2255,7 +2648,7 @@ pub fn paginate_rows(
 ) -> Vec<Vec<usize>> {
     let padding = metrics.space(Space::Small);
     let icon = metrics.touch_target_default();
-    let text_width = max(1, area.width - icon - padding * 2);
+    let text_width = row_text_width(metrics, area);
     let separator = metrics.rule_thickness() + area.gap;
     let mut pages: Vec<Vec<usize>> = Vec::new();
     let mut page: Vec<usize> = Vec::new();
@@ -2292,6 +2685,40 @@ pub fn paginate_rows(
         pages.push(page);
     }
     pages
+}
+
+/// Breaks a grid of tiles into pages that fit, returning the tile indices on each.
+///
+/// The companion to [`paginate_rows`] for the tile shape. The arithmetic is
+/// the layout engine's own: an application that guessed a tile count would be
+/// right on one panel and wrong on every other, and being wrong here does not
+/// look like a layout bug — the layout engine drops what does not fit in
+/// silence, so the last few entries simply cease to exist.
+#[must_use]
+pub fn paginate_tiles(
+    count: usize,
+    metrics: &DisplayMetrics,
+    shape: TileShape,
+    area: ProseArea,
+) -> Vec<Vec<usize>> {
+    let columns = max(1, metrics.grid_columns(shape));
+    let gutter = metrics.space(Space::Small);
+    let cell = (area.width - gutter * (columns as i32 - 1)) / columns as i32;
+    let body = cell * shape.eighths() / 8;
+    let label_band = FontSize::Caption.line_height() + metrics.space(Space::Tight);
+    let cell_height = max(1, body.saturating_add(label_band));
+    // At least one row, however short the area is. A page that holds nothing
+    // is a catalogue that can never be read.
+    let rows = max(1, (area.height + gutter) / (cell_height + gutter));
+    let per_page = columns * rows as usize;
+    if count == 0 {
+        return vec![Vec::new()];
+    }
+    (0..count)
+        .collect::<Vec<_>>()
+        .chunks(per_page)
+        .map(<[usize]>::to_vec)
+        .collect()
 }
 
 /// Wraps at word boundaries and splits exceptionally long words deterministically.
@@ -2437,9 +2864,222 @@ impl Surface {
     }
 }
 
+/// Eight-bit grey pixels, row major, `width * height` of them.
+#[derive(Clone, Copy, Debug)]
+pub struct PicturePixels<'a> {
+    pub width: u32,
+    pub height: u32,
+    pub grey: &'a [u8],
+}
+
+/// Where the renderer finds the pictures an application handed over.
+///
+/// Pictures are looked up at paint time rather than travelling with the screen,
+/// so a source that has lost one — evicted, never delivered, or refused — is a
+/// normal condition and answers `None`. Nothing is drawn in that case, which is
+/// why a tile keeps its glyph as well as its picture.
+pub trait Pictures {
+    fn get(&self, handle: PictureHandle) -> Option<PicturePixels<'_>>;
+}
+
+/// A source holding nothing, for the many callers that draw no pictures.
+impl Pictures for () {
+    fn get(&self, _handle: PictureHandle) -> Option<PicturePixels<'_>> {
+        None
+    }
+}
+
+/// Eight megabytes, which is a shelf of about seventy covers.
+///
+/// The bound is on bytes rather than on a count, because a count would let one
+/// application holding a few large pictures use far more memory than another
+/// holding many small ones. This device has 512 MB and no swap, so an unbounded
+/// cache is a way to have the kernel kill the runtime.
+pub const DEFAULT_PICTURE_BUDGET: usize = 8 * 1024 * 1024;
+
+struct HeldPicture {
+    handle: PictureHandle,
+    width: u32,
+    height: u32,
+    grey: Vec<u8>,
+    used: std::cell::Cell<u64>,
+}
+
+/// The pictures one application has handed over, bounded by total size.
+///
+/// Eviction is least-recently-drawn. A picture that falls out is not an error:
+/// the screen still names it, the renderer finds nothing, and a tile falls back
+/// to its glyph. That is why nothing in the UI treats a missing picture as a
+/// failure.
+pub struct PictureCache {
+    budget: usize,
+    held: usize,
+    entries: Vec<HeldPicture>,
+    clock: std::cell::Cell<u64>,
+}
+
+impl Default for PictureCache {
+    fn default() -> Self {
+        Self::new(DEFAULT_PICTURE_BUDGET)
+    }
+}
+
+impl std::fmt::Debug for PictureCache {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PictureCache")
+            .field("held", &self.held)
+            .field("budget", &self.budget)
+            .field("pictures", &self.entries.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl PictureCache {
+    #[must_use]
+    pub const fn new(budget: usize) -> Self {
+        Self {
+            budget,
+            held: 0,
+            entries: Vec::new(),
+            clock: std::cell::Cell::new(0),
+        }
+    }
+
+    /// Accepts a picture, replacing any picture already under that handle.
+    ///
+    /// Returns `false` when the declared size does not match the bytes, or when
+    /// one picture alone exceeds the whole budget. Both are refusals rather
+    /// than truncations: a half-stored picture would draw as garbage.
+    pub fn put(&mut self, handle: PictureHandle, width: u32, height: u32, grey: Vec<u8>) -> bool {
+        let expected = usize::try_from(width).ok().and_then(|width| {
+            usize::try_from(height)
+                .ok()
+                .and_then(|h| width.checked_mul(h))
+        });
+        let Some(expected) = expected else {
+            return false;
+        };
+        if expected == 0 || expected != grey.len() || grey.len() > self.budget {
+            return false;
+        }
+        self.remove(handle);
+        while self.held + grey.len() > self.budget {
+            let Some(oldest) = self
+                .entries
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, entry)| entry.used.get())
+                .map(|(index, _)| index)
+            else {
+                break;
+            };
+            self.held -= self.entries[oldest].grey.len();
+            self.entries.remove(oldest);
+        }
+        self.held += grey.len();
+        self.clock.set(self.clock.get() + 1);
+        self.entries.push(HeldPicture {
+            handle,
+            width,
+            height,
+            grey,
+            used: std::cell::Cell::new(self.clock.get()),
+        });
+        true
+    }
+
+    pub fn remove(&mut self, handle: PictureHandle) {
+        if let Some(index) = self.entries.iter().position(|entry| entry.handle == handle) {
+            self.held -= self.entries[index].grey.len();
+            self.entries.remove(index);
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.held = 0;
+    }
+
+    #[must_use]
+    pub const fn bytes_held(&self) -> usize {
+        self.held
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+impl Pictures for PictureCache {
+    fn get(&self, handle: PictureHandle) -> Option<PicturePixels<'_>> {
+        let entry = self.entries.iter().find(|entry| entry.handle == handle)?;
+        // Drawing counts as use, so a cover on the current screen outlives one
+        // that was loaded later and never shown.
+        self.clock.set(self.clock.get() + 1);
+        entry.used.set(self.clock.get());
+        Some(PicturePixels {
+            width: entry.width,
+            height: entry.height,
+            grey: &entry.grey,
+        })
+    }
+}
+
 /// Rasterizes a retained screen. `dirty` limits writes to a changed rectangle when supplied.
 pub fn render(screen: &Screen, surface: &mut Surface, dirty: Option<Rect>) {
     render_with(screen, &CLARA_BW_METRICS, Chrome::default(), surface, dirty);
+}
+
+/// Draws `pixels` into `rect`, shrinking by averaging when the picture is
+/// larger than the space it was given.
+///
+/// Averaging rather than sampling matters here: dropping pixels from a
+/// halftoned image produces moire, which on a sixteen-grey panel looks like
+/// damage. An application that fitted the picture before handing it over lands
+/// in the exact-size path and pays nothing.
+fn draw_picture(surface: &mut Surface, rect: Rect, pixels: PicturePixels<'_>, clip: Rect) {
+    let Some(visible) = rect.intersection(clip) else {
+        return;
+    };
+    let source_width = pixels.width as usize;
+    let source_height = pixels.height as usize;
+    if rect.width <= 0 || rect.height <= 0 || source_width == 0 || source_height == 0 {
+        return;
+    }
+    if pixels.grey.len() < source_width * source_height {
+        return;
+    }
+    let target_width = rect.width as usize;
+    let target_height = rect.height as usize;
+    for y in visible.y..visible.y + visible.height {
+        let row = (y - rect.y) as usize;
+        let from_y = row * source_height / target_height;
+        let to_y = max(from_y + 1, (row + 1) * source_height / target_height);
+        for x in visible.x..visible.x + visible.width {
+            let column = (x - rect.x) as usize;
+            let from_x = column * source_width / target_width;
+            let to_x = max(from_x + 1, (column + 1) * source_width / target_width);
+            let mut total = 0u32;
+            let mut counted = 0u32;
+            for sample_y in from_y..to_y.min(source_height) {
+                let base = sample_y * source_width;
+                for sample_x in from_x..to_x.min(source_width) {
+                    total += u32::from(pixels.grey[base + sample_x]);
+                    counted += 1;
+                }
+            }
+            if let Some(mean) = total.checked_div(counted) {
+                surface.blend(x, y, u8::try_from(mean).unwrap_or(u8::MAX), 255);
+            }
+        }
+    }
 }
 
 /// Rasterizes a retained screen for a specific panel and runtime chrome.
@@ -2452,6 +3092,23 @@ pub fn render_with(
     screen: &Screen,
     metrics: &DisplayMetrics,
     chrome: Chrome,
+    surface: &mut Surface,
+    dirty: Option<Rect>,
+) {
+    render_all(screen, metrics, chrome, &(), surface, dirty);
+}
+
+/// Rasterizes a retained screen, drawing pictures from `pictures`.
+///
+/// This is the whole renderer; [`render_with`] is this with an empty picture
+/// source. Keeping one implementation is what stops the simulator and the panel
+/// from drifting apart, which has already happened once with typefaces.
+#[allow(clippy::match_same_arms)]
+pub fn render_all(
+    screen: &Screen,
+    metrics: &DisplayMetrics,
+    chrome: Chrome,
+    pictures: &dyn Pictures,
     surface: &mut Surface,
     dirty: Option<Rect>,
 ) {
@@ -2554,6 +3211,34 @@ pub fn render_with(
                 tone::INK,
                 clip,
             ),
+            LayoutKind::Quote(depth) => {
+                if depth > 0 {
+                    // The rule sits in the gutter to the left of the text,
+                    // which is where the layout reserved room for it.
+                    let step = metrics.space(Space::Small);
+                    let thickness = metrics.rule_thickness();
+                    fill_clipped(
+                        surface,
+                        Rect {
+                            x: node.rect.x - step,
+                            y: node.rect.y,
+                            width: thickness,
+                            height: node.rect.height,
+                        },
+                        tone::RULE,
+                        clip,
+                    );
+                }
+                draw_lines(
+                    surface,
+                    &node.text_lines,
+                    node.rect.x,
+                    node.rect.y,
+                    FontSize::Body,
+                    tone::INK,
+                    clip,
+                );
+            }
             LayoutKind::Text | LayoutKind::PagedList => draw_lines(
                 surface,
                 &node.text_lines,
@@ -2632,6 +3317,20 @@ pub fn render_with(
             ),
             LayoutKind::RowGlyph(glyph) => draw_glyph_icon(surface, glyph, node.rect, clip),
             LayoutKind::TileGlyph(glyph) => draw_glyph_icon(surface, glyph, node.rect, clip),
+            // Outlined, because a cover with pale edges on white paper has no
+            // boundary at all and reads as text floating in space.
+            LayoutKind::Picture(handle) => {
+                if let Some(pixels) = pictures.get(handle) {
+                    draw_picture(surface, node.rect, pixels, clip);
+                }
+                stroke_clipped(
+                    surface,
+                    node.rect,
+                    tone::RULE,
+                    metrics.rule_thickness(),
+                    clip,
+                );
+            }
             LayoutKind::TileLabel => draw_centered(
                 surface,
                 &node.text_lines,
@@ -2649,7 +3348,7 @@ pub fn render_with(
                 tone::INK,
                 clip,
             ),
-            LayoutKind::ChoiceOption(_) => {
+            LayoutKind::ChoiceOption(_, chosen) => {
                 stroke_clipped(
                     surface,
                     node.rect,
@@ -2667,6 +3366,23 @@ pub fn render_with(
                     tone::INK,
                     clip,
                 );
+                // The answer already given is marked at the far end, drawn
+                // from the icon atlas so it exists on every device whatever
+                // the installed face happens to contain.
+                if chosen {
+                    let size = FontSize::Body.line_height();
+                    draw_glyph_icon(
+                        surface,
+                        Glyph::Check,
+                        Rect {
+                            x: node.rect.x + node.rect.width - inset - size,
+                            y: node.rect.y + (node.rect.height - size) / 2,
+                            width: size,
+                            height: size,
+                        },
+                        clip,
+                    );
+                }
             }
             // Outlined in a lighter tone and set in muted ink, so the escape
             // hatch reads as secondary to the options above it.
@@ -3663,6 +4379,19 @@ mod chrome_tests {
                 .find(|node| node.kind == LayoutKind::TopBarTitle)
                 .expect("title");
             assert_eq!(title.text_lines.len(), 1, "{name}: title wrapped");
+            // And it says it was cut. Keeping the first wrapped line and
+            // dropping the rest reads as the whole title, which on a news
+            // headline is a different sentence rather than a shorter one.
+            assert!(
+                title.text_lines[0].ends_with('\u{2026}'),
+                "{name}: a cut title did not say so: {:?}",
+                title.text_lines[0]
+            );
+            assert!(
+                long.starts_with(title.text_lines[0].trim_end_matches(['\u{2026}', ' '])),
+                "{name}: the shown title is not the start of the real one: {:?}",
+                title.text_lines[0]
+            );
             let bar = layout
                 .nodes
                 .iter()
@@ -3901,25 +4630,41 @@ mod row_tests {
     }
 
     #[test]
-    fn a_list_is_denser_than_the_same_entries_as_tiles() {
-        // The reason this primitive exists: three tiles filled the panel.
+    fn tiles_pack_more_entries_than_rows_and_rows_say_more_about_each() {
+        // The trade between the two primitives, asserted rather than
+        // described. A tile is sized for an icon and a name, so nine of them
+        // fit in less height than nine rows; a row spends that height on the
+        // summary, which is text a tile has nowhere to put. Getting this
+        // backwards is how a launcher ends up showing four enormous buttons.
         let metrics = CLARA_BW_METRICS;
-        let rows = list(3, "A one line summary of the entry.").layout_for(&metrics);
+        let summary = "A one line summary of the entry.";
+        let rows = list(9, summary).layout_for(&metrics);
         let tiles = Screen::new(
             1,
             vec![Node::TileGrid {
+                shape: TileShape::Square,
                 id: NodeId(1),
-                tiles: (0..3)
+                tiles: (0..9)
                     .map(|index| Tile::new(ActionId(index + 1), "Entry", Glyph::App))
                     .collect(),
             }],
         )
         .layout_for(&metrics);
+        let said = |layout: &Layout| {
+            layout
+                .nodes
+                .iter()
+                .flat_map(|node| node.text_lines.clone())
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        assert!(said(&rows).contains("summary"), "a row drops its summary");
+        assert!(!said(&tiles).contains("summary"), "a tile grew a summary");
         let (Some(rows), Some(tiles)) = (rows.bounds(), tiles.bounds()) else {
             panic!("both layouts should have bounds");
         };
         assert!(
-            rows.height * 2 < tiles.height,
+            tiles.height < rows.height,
             "rows took {} and tiles took {}",
             rows.height,
             tiles.height
@@ -3942,6 +4687,7 @@ mod tile_tests {
         Screen::new(
             1,
             vec![Node::TileGrid {
+                shape: TileShape::Square,
                 id: NodeId(1),
                 tiles: (0..count)
                     .map(|index| Tile::new(ActionId(index + 1), format!("App {index}"), Glyph::App))
@@ -3962,9 +4708,9 @@ mod tile_tests {
                 .collect::<Vec<_>>();
             let first_row = tops.iter().filter(|top| **top == tops[0]).count();
             assert!(
-                first_row <= metrics.max_grid_columns(),
+                first_row <= metrics.grid_columns(TileShape::Square),
                 "{name}: {first_row} tiles on a row, budget is {}",
-                metrics.max_grid_columns()
+                metrics.grid_columns(TileShape::Square)
             );
         }
     }
@@ -4065,6 +4811,7 @@ mod choice_tests {
                         BarAction::new(ActionId(index as u32 + 1), format!("Option {index}"))
                     })
                     .collect(),
+                selected: None,
                 freeform: freeform.then(|| Freeform::new(ActionId(99), "Type something else")),
             }],
         )
@@ -4078,7 +4825,7 @@ mod choice_tests {
             for node in &layout.nodes {
                 if matches!(
                     node.kind,
-                    LayoutKind::ChoiceOption(_) | LayoutKind::ChoiceFreeform(_)
+                    LayoutKind::ChoiceOption(_, _) | LayoutKind::ChoiceFreeform(_)
                 ) {
                     assert_eq!(node.rect.width, usable, "{name}: option is not full width");
                     assert!(
@@ -4092,6 +4839,64 @@ mod choice_tests {
     }
 
     #[test]
+    fn the_answer_already_given_is_the_only_one_marked() {
+        let Screen { nodes, .. } = choice(4, false);
+        let [Node::Choice {
+            id,
+            prompt,
+            options,
+            freeform,
+            ..
+        }] = &nodes[..]
+        else {
+            unreachable!("the fixture is one choice")
+        };
+        let screen = Screen::new(
+            1,
+            vec![Node::Choice {
+                id: *id,
+                prompt: prompt.clone(),
+                options: options.clone(),
+                selected: Some(2),
+                freeform: freeform.clone(),
+            }],
+        );
+        let marked = screen
+            .layout()
+            .nodes
+            .iter()
+            .filter_map(|node| match node.kind {
+                LayoutKind::ChoiceOption(_, chosen) => Some(chosen),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(marked, vec![false, false, true, false]);
+    }
+
+    #[test]
+    fn an_answer_beyond_the_options_marks_nothing_rather_than_panicking() {
+        let Screen { nodes, .. } = choice(3, false);
+        let [Node::Choice { id, options, .. }] = &nodes[..] else {
+            unreachable!("the fixture is one choice")
+        };
+        let screen = Screen::new(
+            1,
+            vec![Node::Choice {
+                id: *id,
+                prompt: String::new(),
+                options: options.clone(),
+                selected: Some(200),
+                freeform: None,
+            }],
+        );
+        assert!(screen
+            .layout()
+            .nodes
+            .iter()
+            .all(|node| !matches!(node.kind, LayoutKind::ChoiceOption(_, true))));
+    }
+
+    #[test]
     fn the_freeform_row_comes_last() {
         let layout = choice(3, true).layout();
         let freeform = layout
@@ -4102,7 +4907,7 @@ mod choice_tests {
         let last_option = layout
             .nodes
             .iter()
-            .rposition(|node| matches!(node.kind, LayoutKind::ChoiceOption(_)))
+            .rposition(|node| matches!(node.kind, LayoutKind::ChoiceOption(_, _)))
             .expect("option");
         assert!(freeform > last_option);
     }
@@ -4115,7 +4920,7 @@ mod choice_tests {
         let count = layout
             .nodes
             .iter()
-            .filter(|node| matches!(node.kind, LayoutKind::ChoiceOption(_)))
+            .filter(|node| matches!(node.kind, LayoutKind::ChoiceOption(_, _)))
             .count();
         assert_eq!(count, MAX_CHOICE_OPTIONS);
     }
@@ -4129,7 +4934,7 @@ mod choice_tests {
             .filter(|node| {
                 matches!(
                     node.kind,
-                    LayoutKind::ChoiceOption(_) | LayoutKind::ChoiceFreeform(_)
+                    LayoutKind::ChoiceOption(_, _) | LayoutKind::ChoiceFreeform(_)
                 )
             })
             .collect::<Vec<_>>();
@@ -4137,7 +4942,7 @@ mod choice_tests {
             for other in rows.iter().skip(index + 1) {
                 assert!(row.rect.intersection(other.rect).is_none(), "rows overlap");
             }
-            let (LayoutKind::ChoiceOption(expected) | LayoutKind::ChoiceFreeform(expected)) =
+            let (LayoutKind::ChoiceOption(expected, _) | LayoutKind::ChoiceFreeform(expected)) =
                 row.kind
             else {
                 unreachable!("a choice lays out only options and a freeform field")
@@ -4342,6 +5147,7 @@ mod loading_tests {
                 rows: vec![Row::new(ActionId(11), "Row", "Summary", Glyph::App)],
             },
             Node::TileGrid {
+                shape: TileShape::Square,
                 id: NodeId(12),
                 tiles: vec![Tile::new(ActionId(12), "Tile", Glyph::App)],
             },
@@ -4349,6 +5155,7 @@ mod loading_tests {
                 id: NodeId(13),
                 prompt: "Pick one".into(),
                 options: vec![BarAction::new(ActionId(13), "Option")],
+                selected: Some(0),
                 freeform: Some(Freeform::new(ActionId(14), "Something else")),
             },
             Node::Banner {
@@ -4427,7 +5234,7 @@ mod loading_tests {
                 | LayoutKind::Tile(action)
                 | LayoutKind::Row(action)
                 | LayoutKind::Cell(action)
-                | LayoutKind::ChoiceOption(action)
+                | LayoutKind::ChoiceOption(action, _)
                 | LayoutKind::ChoiceFreeform(action) => Some((action, node.rect)),
                 _ => None,
             })
@@ -4551,6 +5358,143 @@ mod prose_tests {
                 }
             }
         }
+    }
+
+    /// The same measurement as `drawn`, for a page that carries depth.
+    fn drawn_quoted(page: &[(u8, String)], metrics: &DisplayMetrics) -> (usize, i32) {
+        let nodes = page
+            .iter()
+            .enumerate()
+            .map(|(index, (depth, paragraph))| Node::Quote {
+                id: NodeId(index as u32 + 1),
+                depth: *depth,
+                text: paragraph.clone(),
+            })
+            .collect();
+        let screen = Screen::new(1, nodes)
+            .with_top_bar(TopBar::new(NodeId(0), "A Thread"))
+            .with_nav_bar(NavBar::new(
+                NodeId(900),
+                vec![
+                    BarAction::new(ActionId(1), "Back"),
+                    BarAction::new(ActionId(2), "Stories"),
+                    BarAction::new(ActionId(3), "Next"),
+                ],
+                None,
+            ));
+        let layout = screen.layout_with(metrics, Chrome::with_back(true));
+        let quotes = layout
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, LayoutKind::Quote(_)))
+            .collect::<Vec<_>>();
+        let bottom = quotes
+            .iter()
+            .map(|node| node.rect.y + node.rect.height)
+            .max()
+            .unwrap_or(0);
+        (quotes.len(), bottom)
+    }
+
+    #[test]
+    fn every_page_of_a_thread_is_drawn_whole_on_every_panel() {
+        // An indented paragraph is narrower, so it wraps to more lines and
+        // takes more of the page. Paginating a thread flat and drawing it
+        // indented loses the bottom of nearly every page, and the layout
+        // engine reports nothing when it does.
+        for (name, metrics) in PANELS {
+            let area = metrics.prose_area(true, true);
+            let source = book(DIALOGUE, 12);
+            let paragraphs = source
+                .split("\n\n")
+                .enumerate()
+                .map(|(index, paragraph)| ((index % 5) as u8, paragraph))
+                .collect::<Vec<_>>();
+            let pages = paginate_quoted(&paragraphs, &metrics, area);
+            assert!(!pages.is_empty(), "{name} produced no pages");
+            for (index, page) in pages.iter().enumerate() {
+                let (shown, bottom) = drawn_quoted(page, &metrics);
+                assert_eq!(
+                    shown,
+                    page.len(),
+                    "{name} page {index}: {shown} of {} paragraphs were drawn",
+                    page.len()
+                );
+                assert!(
+                    bottom <= metrics.height - metrics.nav_bar_height(),
+                    "{name} page {index} ran {} pixels under the page controls",
+                    bottom - (metrics.height - metrics.nav_bar_height())
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_thread_holds_less_per_page_than_the_same_words_unindented() {
+        // If this ever stops being true, indentation is not being measured and
+        // the previous test is passing by luck.
+        let area = CLARA_BW_METRICS.prose_area(true, true);
+        let source = book(DESCRIPTION, 60);
+        let flat = source
+            .split("\n\n")
+            .map(|paragraph| (0, paragraph))
+            .collect::<Vec<_>>();
+        let nested = source
+            .split("\n\n")
+            .map(|paragraph| (3, paragraph))
+            .collect::<Vec<_>>();
+        let flat_pages = paginate_quoted(&flat, &CLARA_BW_METRICS, area).len();
+        let nested_pages = paginate_quoted(&nested, &CLARA_BW_METRICS, area).len();
+        assert!(
+            nested_pages > flat_pages,
+            "the same words took {nested_pages} pages indented and {flat_pages} flat"
+        );
+    }
+
+    #[test]
+    fn a_reply_is_set_in_from_what_it_answers_and_stops_at_the_cap() {
+        // Depth past the cap shares the deepest indent rather than marching
+        // off the panel: at forty levels there would be no measure left.
+        let nodes = (0..6)
+            .map(|depth| Node::Quote {
+                id: NodeId(depth + 1),
+                depth: depth as u8,
+                text: "A reply, which answers the one above it.".to_owned(),
+            })
+            .collect();
+        let layout = Screen::new(1, nodes).layout_with(&CLARA_BW_METRICS, Chrome::default());
+        let quotes = layout
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, LayoutKind::Quote(_)))
+            .collect::<Vec<_>>();
+        assert_eq!(quotes.len(), 6);
+        for pair in quotes.windows(2) {
+            let (shallow, deep) = (pair[0], pair[1]);
+            let capped = matches!(deep.kind, LayoutKind::Quote(depth) if depth == MAX_QUOTE_DEPTH)
+                && matches!(shallow.kind, LayoutKind::Quote(depth) if depth == MAX_QUOTE_DEPTH);
+            if capped {
+                assert_eq!(shallow.rect.x, deep.rect.x, "past the cap the indent moved");
+                assert_eq!(shallow.rect.width, deep.rect.width);
+            } else {
+                assert!(
+                    deep.rect.x > shallow.rect.x,
+                    "a reply at depth {:?} did not start further in than {:?}",
+                    deep.kind,
+                    shallow.kind
+                );
+                assert!(
+                    deep.rect.width < shallow.rect.width,
+                    "a deeper reply was not narrower"
+                );
+            }
+        }
+        let widest = quotes[0].rect.x;
+        let deepest = quotes[5].rect.x;
+        assert!(
+            deepest - widest < CLARA_BW_METRICS.prose_area(false, false).width / 3,
+            "the deepest indent spent more than a third of the measure"
+        );
     }
 
     #[test]
@@ -4679,5 +5623,204 @@ mod prose_tests {
             button("", long),
             "text below the button must not move it"
         );
+    }
+
+    #[test]
+    fn a_picture_is_never_enlarged_to_fill_its_space() {
+        // Upscaling a thumbnail is how a sharp cover becomes a soft one, and
+        // softness is the one thing a sixteen-grey panel cannot hide.
+        assert_eq!(fit_within((190, 300), 800, 800), (190, 300));
+    }
+
+    #[test]
+    fn a_picture_too_wide_and_too_tall_keeps_its_proportions() {
+        let (width, height) = fit_within((1000, 500), 400, 400);
+        assert_eq!((width, height), (400, 200));
+        let (width, height) = fit_within((500, 1000), 400, 400);
+        assert_eq!((width, height), (200, 400));
+    }
+
+    #[test]
+    fn a_portrait_tile_is_taller_than_a_square_one() {
+        let tiles = || vec![Tile::new(ActionId(7), "Moby Dick", Glyph::Book)];
+        let square = Screen::new(
+            1,
+            vec![Node::TileGrid {
+                id: NodeId(1),
+                tiles: tiles(),
+                shape: TileShape::Square,
+            }],
+        )
+        .layout();
+        let portrait = Screen::new(
+            1,
+            vec![Node::TileGrid {
+                id: NodeId(1),
+                tiles: tiles(),
+                shape: TileShape::Portrait,
+            }],
+        )
+        .layout();
+        let height = |layout: &Layout| {
+            layout
+                .nodes
+                .iter()
+                .find(|node| matches!(node.kind, LayoutKind::Tile(_)))
+                .expect("a tile")
+                .rect
+                .height
+        };
+        assert!(
+            height(&portrait) > height(&square),
+            "a shelf of covers has to be book shaped, not stamp shaped"
+        );
+    }
+
+    #[test]
+    fn a_tile_without_its_picture_yet_still_shows_its_glyph() {
+        // Covers arrive one network request at a time, so most of a shelf's
+        // life is spent with some of them missing. That has to be a usable
+        // screen rather than a broken one.
+        let screen =
+            Screen::new(
+                1,
+                vec![Node::TileGrid {
+                    id: NodeId(1),
+                    tiles: vec![
+                        Tile::new(ActionId(7), "Waiting", Glyph::Book),
+                        Tile::new(ActionId(8), "Arrived", Glyph::Book)
+                            .with_picture(TilePicture::new(PictureHandle(3), 190, 300)),
+                    ],
+                    shape: TileShape::Portrait,
+                }],
+            )
+            .layout();
+        assert_eq!(
+            screen
+                .nodes
+                .iter()
+                .filter(|node| matches!(node.kind, LayoutKind::TileGlyph(_)))
+                .count(),
+            1
+        );
+        assert_eq!(
+            screen
+                .nodes
+                .iter()
+                .filter(|node| matches!(node.kind, LayoutKind::Picture(_)))
+                .count(),
+            1
+        );
+        assert_eq!(
+            screen
+                .nodes
+                .iter()
+                .filter(|node| node.kind == LayoutKind::TileLabel)
+                .count(),
+            2,
+            "both tiles keep their label whatever is above it"
+        );
+    }
+
+    #[test]
+    fn the_cache_refuses_a_picture_whose_size_does_not_match_its_bytes() {
+        let mut cache = PictureCache::default();
+        assert!(!cache.put(PictureHandle(1), 10, 10, vec![0; 99]));
+        assert!(cache.get(PictureHandle(1)).is_none());
+        assert!(cache.put(PictureHandle(1), 10, 10, vec![0; 100]));
+        assert_eq!(cache.get(PictureHandle(1)).map(|p| p.width), Some(10));
+    }
+
+    #[test]
+    fn the_cache_evicts_what_was_drawn_longest_ago() {
+        let mut cache = PictureCache::new(200);
+        assert!(cache.put(PictureHandle(1), 10, 10, vec![1; 100]));
+        assert!(cache.put(PictureHandle(2), 10, 10, vec![2; 100]));
+        // Drawing the first one makes the second the older of the two.
+        assert!(cache.get(PictureHandle(1)).is_some());
+        assert!(cache.put(PictureHandle(3), 10, 10, vec![3; 100]));
+        assert!(cache.get(PictureHandle(1)).is_some(), "still on screen");
+        assert!(
+            cache.get(PictureHandle(2)).is_none(),
+            "least recently drawn"
+        );
+        assert!(cache.get(PictureHandle(3)).is_some());
+        assert_eq!(cache.bytes_held(), 200);
+    }
+
+    #[test]
+    fn replacing_a_picture_does_not_double_count_it() {
+        let mut cache = PictureCache::new(300);
+        assert!(cache.put(PictureHandle(1), 10, 10, vec![0; 100]));
+        assert!(cache.put(PictureHandle(1), 10, 10, vec![9; 100]));
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.bytes_held(), 100);
+        assert_eq!(cache.get(PictureHandle(1)).map(|p| p.grey[0]), Some(9));
+    }
+
+    #[test]
+    fn a_picture_is_drawn_where_it_was_placed_and_nowhere_else() {
+        let mut cache = PictureCache::default();
+        assert!(cache.put(PictureHandle(1), 2, 2, vec![0, 0, 0, 0]));
+        let mut surface = Surface::new(8, 8);
+        surface.clear(tone::PAPER);
+        let rect = Rect {
+            x: 2,
+            y: 3,
+            width: 2,
+            height: 2,
+        };
+        let clip = Rect {
+            x: 0,
+            y: 0,
+            width: 8,
+            height: 8,
+        };
+        draw_picture(
+            &mut surface,
+            rect,
+            cache.get(PictureHandle(1)).expect("held"),
+            clip,
+        );
+        for y in 0..8 {
+            for x in 0..8 {
+                let inside = (2..4).contains(&x) && (3..5).contains(&y);
+                let pixel = surface.pixels[y * 8 + x];
+                assert_eq!(
+                    pixel == 0,
+                    inside,
+                    "pixel ({x},{y}) should {} be ink",
+                    if inside { "" } else { "not" }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn shrinking_a_picture_averages_rather_than_drops_pixels() {
+        // Half the source is black and half white. Sampling would give one or
+        // the other; averaging gives the grey that is actually there.
+        let mut cache = PictureCache::default();
+        assert!(cache.put(PictureHandle(1), 2, 2, vec![0, 255, 0, 255]));
+        let mut surface = Surface::new(4, 4);
+        surface.clear(tone::PAPER);
+        let rect = Rect {
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+        };
+        draw_picture(
+            &mut surface,
+            rect,
+            cache.get(PictureHandle(1)).expect("held"),
+            Rect {
+                x: 0,
+                y: 0,
+                width: 4,
+                height: 4,
+            },
+        );
+        assert_eq!(surface.pixels[0], 127);
     }
 }

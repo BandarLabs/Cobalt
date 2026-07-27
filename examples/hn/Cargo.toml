@@ -1,5 +1,5 @@
 [package]
-name = "kobo-gutenshelf"
+name = "kobo-hn"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -7,7 +7,6 @@ license.workspace = true
 publish = false
 
 [dependencies]
-kobo-image = { path = "../../crates/kobo-image" }
 kobo-json = { path = "../../crates/kobo-json" }
 kobo-sdk = { path = "../../crates/kobo-sdk" }
 

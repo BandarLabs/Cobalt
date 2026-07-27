@@ -1,7 +1,7 @@
 use kobo_policy::{DeviceServices, TaskRunner};
 use kobo_profile::CLARA_BW_391;
 use kobo_protocol::{Frame, LogLevel, Message, TaskError, TaskOutcome};
-use kobo_ui::{render, Screen, Surface, CLARA_BW_METRICS, DISPLAY_HEIGHT, DISPLAY_WIDTH};
+use kobo_ui::{Screen, Surface, CLARA_BW_METRICS, DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use std::env;
 use std::error::Error;
 use std::fs::{self, OpenOptions};
@@ -181,6 +181,9 @@ fn restart_reader(state: &Path) -> Result<(), Box<dyn Error>> {
 /// Only paths derived from the directory the caller named are touched, and
 /// only after the reader is confirmed running, so a failed restart leaves
 /// everything in place for the next attempt.
+/// Only reachable through the reader restart today, which is a device build,
+/// but its tests run everywhere, so a default build compiles it unused.
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
 fn clear_session_files(state: &Path) -> String {
     let mut removed = Vec::new();
     let mut failed = Vec::new();
@@ -240,6 +243,12 @@ fn print_safety_state() {
 
 fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn Error>> {
     validate_simulation_paths(socket_path, frame_path)?;
+    // Without this the preview renders in the built-in bitmap fallback, which
+    // is uppercase-only and fixed width, so every line break, page count and
+    // paragraph height in the picture belongs to a panel nobody has. The
+    // preview exists to be looked at; a preview drawn in the wrong face is
+    // worse than none, because it is believed.
+    let _ = kobo_text::install(CLARA_BW_METRICS);
     if socket_path.exists() {
         return Err(format!("socket already exists: {}", socket_path.display()).into());
     }
@@ -268,6 +277,10 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
     serve_application(&mut stream, frame_path)
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one arm per message type; splitting the dispatch hides it"
+)]
 fn serve_application(stream: &mut UnixStream, frame_path: &Path) -> Result<(), Box<dyn Error>> {
     // In simulation the daemon owns no hardware, so every hardware-touching
     // request is answered honestly rather than pretended.
@@ -276,15 +289,41 @@ fn serve_application(stream: &mut UnixStream, frame_path: &Path) -> Result<(), B
     // runtime uses. Without the grant the backend could never run, so this
     // path claimed to be the real runtime while refusing every request an
     // application made.
-    let mut tasks = TaskRunner::simulated(std::env::temp_dir())
-        .with_fetch(std::sync::Arc::new(kobo_net::fetch_from))
-        .with_post(std::sync::Arc::new(kobo_net::post))
-        .with_capabilities([kobo_policy::Capability::Network]);
+    let tasks = std::sync::Arc::new(std::sync::Mutex::new(
+        TaskRunner::simulated(std::env::temp_dir())
+            .with_fetch(std::sync::Arc::new(kobo_net::fetch_from))
+            .with_post(std::sync::Arc::new(kobo_net::post))
+            .with_capabilities([kobo_policy::Capability::Network]),
+    ));
+    // Outcomes are delivered from their own thread. This loop blocks on the
+    // application's socket, so draining after a message meant a request that
+    // took two seconds arrived only when the developer next tapped something —
+    // and an application that taps nothing while it waits, which is every
+    // application that opens with a request, waited forever. Refusals were
+    // instant, which is exactly why nothing noticed.
+    let writer = std::sync::Arc::new(std::sync::Mutex::new(stream.try_clone()?));
+    {
+        let draining = std::sync::Arc::clone(&tasks);
+        let writer = std::sync::Arc::clone(&writer);
+        std::thread::spawn(move || deliver_outcomes(&draining, &writer));
+    }
     let store = kobo_policy::store::Store::new(std::env::temp_dir().join("cobalt-host-state"));
+    let mut pictures = kobo_ui::PictureCache::default();
     loop {
         let frame = kobo_protocol::read_from(stream)?;
         match frame.message {
-            Message::SetScreen(screen) => write_screen(frame_path, &screen)?,
+            Message::SetScreen(screen) => write_screen(frame_path, &screen, &pictures)?,
+            Message::PutPicture {
+                handle,
+                width,
+                height,
+                grey,
+            } => {
+                if !pictures.put(handle, width, height, grey) {
+                    println!("picture {} refused", handle.0);
+                }
+            }
+            Message::DropPicture { handle } => pictures.remove(handle),
             // This path renders one application to a file and owns no panel to
             // hand over, so the request is reported rather than performed.
             Message::Launch { name } => println!("launch requested: {name}"),
@@ -292,8 +331,8 @@ fn serve_application(stream: &mut UnixStream, frame_path: &Path) -> Result<(), B
             Message::DeviceRequest(request) => {
                 let result = services.handle(request);
                 println!("device request {request:?} -> {result:?}");
-                kobo_protocol::write_to(
-                    stream,
+                write_shared(
+                    &writer,
                     &Frame {
                         request_id: frame.request_id,
                         message: Message::DeviceResult(result),
@@ -301,10 +340,14 @@ fn serve_application(stream: &mut UnixStream, frame_path: &Path) -> Result<(), B
                 )?;
             }
             Message::Spawn { task, work } => {
-                if let Err(reason) = tasks.submit(task, work) {
+                let submitted = tasks
+                    .lock()
+                    .map_err(|_| "the task lock was poisoned")?
+                    .submit(task, work);
+                if let Err(reason) = submitted {
                     println!("task {} refused: {reason:?}", task.0);
-                    kobo_protocol::write_to(
-                        stream,
+                    write_shared(
+                        &writer,
                         &Frame {
                             request_id: frame.request_id,
                             message: Message::TaskOutcome {
@@ -317,8 +360,8 @@ fn serve_application(stream: &mut UnixStream, frame_path: &Path) -> Result<(), B
             }
             Message::StoreRequest(request) => {
                 let result = store.handle(&request);
-                kobo_protocol::write_to(
-                    stream,
+                write_shared(
+                    &writer,
                     &Frame {
                         request_id: frame.request_id,
                         message: Message::StoreResult(result),
@@ -330,8 +373,8 @@ fn serve_application(stream: &mut UnixStream, frame_path: &Path) -> Result<(), B
             // refused rather than opened, because a build performs only what
             // it has a backend for and a silently ignored request would leave
             // the application waiting for output forever.
-            Message::ShellRequest(_) => kobo_protocol::write_to(
-                stream,
+            Message::ShellRequest(_) => write_shared(
+                &writer,
                 &Frame {
                     request_id: frame.request_id,
                     message: Message::ShellEvent(kobo_protocol::ShellEvent::Refused(
@@ -339,10 +382,16 @@ fn serve_application(stream: &mut UnixStream, frame_path: &Path) -> Result<(), B
                     )),
                 },
             )?,
-            Message::Cancel { task } => tasks.cancel(task),
+            Message::Cancel { task } => tasks
+                .lock()
+                .map_err(|_| "the task lock was poisoned")?
+                .cancel(task),
             Message::Exit => {
                 // Nothing an application started may outlive it.
-                tasks.shutdown();
+                tasks
+                    .lock()
+                    .map_err(|_| "the task lock was poisoned")?
+                    .shutdown();
                 return Ok(());
             }
             Message::Hello { .. }
@@ -356,9 +405,38 @@ fn serve_application(stream: &mut UnixStream, frame_path: &Path) -> Result<(), B
                 return Err("application sent a daemon-only message".into());
             }
         }
-        for finished in tasks.drain() {
-            kobo_protocol::write_to(
-                stream,
+    }
+}
+
+/// Writes one frame to the application through the shared handle.
+///
+/// Every write goes through this, because the task thread and this loop both
+/// write to the same socket and two frames interleaved on a stream protocol is
+/// a stream that can never be read again.
+fn write_shared(
+    writer: &std::sync::Arc<std::sync::Mutex<UnixStream>>,
+    frame: &Frame,
+) -> Result<(), Box<dyn Error>> {
+    let mut stream = writer.lock().map_err(|_| "the writer lock was poisoned")?;
+    kobo_protocol::write_to(&mut *stream, frame)?;
+    Ok(())
+}
+
+/// Hands every finished task to the application, from its own thread.
+fn deliver_outcomes(
+    tasks: &std::sync::Arc<std::sync::Mutex<TaskRunner>>,
+    writer: &std::sync::Arc<std::sync::Mutex<UnixStream>>,
+) {
+    loop {
+        let Ok(finished) = tasks.lock().map(|mut tasks| tasks.drain()) else {
+            return;
+        };
+        for finished in finished {
+            let Ok(mut stream) = writer.lock() else {
+                return;
+            };
+            if kobo_protocol::write_to(
+                &mut *stream,
                 &Frame {
                     request_id: 0,
                     message: Message::TaskOutcome {
@@ -366,17 +444,33 @@ fn serve_application(stream: &mut UnixStream, frame_path: &Path) -> Result<(), B
                         outcome: finished.outcome,
                     },
                 },
-            )?;
+            )
+            .is_err()
+            {
+                return;
+            }
         }
+        std::thread::sleep(std::time::Duration::from_millis(20));
     }
 }
 
-fn write_screen(path: &Path, screen: &Screen) -> Result<(), Box<dyn Error>> {
+fn write_screen(
+    path: &Path,
+    screen: &Screen,
+    pictures: &dyn kobo_ui::Pictures,
+) -> Result<(), Box<dyn Error>> {
     let mut surface = Surface::new(
         usize::try_from(DISPLAY_WIDTH)?,
         usize::try_from(DISPLAY_HEIGHT)?,
     );
-    render(screen, &mut surface, None);
+    kobo_ui::render_all(
+        screen,
+        &kobo_ui::CLARA_BW_METRICS,
+        kobo_ui::Chrome::default(),
+        pictures,
+        &mut surface,
+        None,
+    );
 
     let temporary = path.with_extension(format!("raw.tmp-{}", std::process::id()));
     let mut file = OpenOptions::new()

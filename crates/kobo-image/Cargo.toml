@@ -1,0 +1,14 @@
+[package]
+name = "kobo-image"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+# Decoding only. The default feature set pulls in a dozen formats this device
+# will never meet, and every one of them is code that runs on a reader.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+
+[lints]
+workspace = true

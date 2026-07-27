@@ -4,6 +4,7 @@ members = [
     "crates/kobo-cli",
     "crates/kobo-doctor",
     "crates/kobo-hal",
+    "crates/kobo-image",
     "crates/kobo-json",
     "crates/kobo-net",
     "crates/kobo-term",
@@ -26,6 +27,7 @@ members = [
     "examples/terminal",
     "examples/gallery",
     "examples/gutenshelf",
+    "examples/hn",
     "examples/launcher",
 ]
 resolver = "2"
