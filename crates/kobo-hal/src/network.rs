@@ -201,8 +201,89 @@ pub fn has_carrier(link: &str) -> bool {
         .is_ok_and(|state| state.trim() == "up")
 }
 
+/// Where the kernel publishes wireless link quality.
+const WIRELESS: &str = "/proc/net/wireless";
+
+/// Reads the signal level on `link`, in dBm.
+///
+/// Read-only, like everything else in this module that reports rather than
+/// changes: a text file the kernel publishes, no socket, no ioctl and no
+/// `unsafe`. Returns `None` when the interface is not wireless, is not
+/// associated, or the device has no wireless stack at all — all of which are
+/// legitimately "no signal to report" rather than "a signal of zero".
+#[must_use]
+pub fn signal_dbm(link: &str) -> Option<i32> {
+    signal_dbm_in(&fs::read_to_string(WIRELESS).ok()?, link)
+}
+
+/// The same, against arbitrary contents, so the parsing is testable on a
+/// machine with no radio.
+///
+/// The file has two header lines and then one row per interface:
+///
+/// ```text
+/// Inter-| sta-|   Quality        |   Discarded packets ...
+///  face | tus | link level noise |  nwid  crypt  frag ...
+///  wlan0: 0000   54.  -56.  -256        0      0     0 ...
+/// ```
+///
+/// The level column carries a trailing full stop, and some drivers report it
+/// as an unsigned byte biased by 256 rather than as a negative number. Both
+/// spellings are accepted, because which one a device uses is a property of
+/// its driver and not something worth having a different build for.
+#[must_use]
+pub fn signal_dbm_in(table: &str, link: &str) -> Option<i32> {
+    let wanted = format!("{link}:");
+    for line in table.lines().skip(2) {
+        let mut columns = line.split_whitespace();
+        let interface = columns.next()?;
+        if interface != wanted {
+            continue;
+        }
+        // status, quality, then level.
+        let level = columns.nth(2)?.trim_end_matches('.');
+        let level: i32 = level.parse().ok()?;
+        // A level above zero is the biased spelling. Real Wi-Fi is never
+        // stronger than about -20 dBm, so there is no ambiguity to resolve.
+        return Some(if level > 0 { level - 256 } else { level });
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_signal_is_read_from_the_row_for_the_interface_asked_for() {
+        let table = "Inter-| sta-|   Quality        |   Discarded packets\n \
+                     face | tus | link level noise |  nwid  crypt   frag\n \
+                     lo: 0000    0.    0.    0        0      0      0\n \
+                     wlan0: 0000   54.  -56.  -256        0      0      0\n";
+        assert_eq!(signal_dbm_in(table, "wlan0"), Some(-56));
+        assert_eq!(
+            signal_dbm_in(table, "eth0"),
+            None,
+            "an interface that is not in the table reported a signal anyway"
+        );
+    }
+
+    #[test]
+    fn a_driver_that_biases_the_level_by_a_byte_is_understood() {
+        // Some drivers report the level as an unsigned byte offset by 256
+        // rather than as a negative number. Read literally that is a signal
+        // stronger than any radio produces, which would pin the mark to full
+        // on a device that is barely associated.
+        let table = "header\nheader\n wlan0: 0000   54.  200.  -256        0\n";
+        assert_eq!(signal_dbm_in(table, "wlan0"), Some(-56));
+    }
+
+    #[test]
+    fn no_wireless_stack_reports_nothing_rather_than_silence() {
+        // "" is a device with no radio; the mark for that is different in
+        // shape from a weak one, so the distinction has to survive the read.
+        assert_eq!(signal_dbm_in("", "wlan0"), None);
+        assert_eq!(signal_dbm_in("only\nheaders\n", "wlan0"), None);
+    }
+
     use super::{has_default_route, Connection};
 
     /// Taken verbatim from the device, header row included.

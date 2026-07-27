@@ -277,7 +277,7 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
             },
         },
     )?;
-    serve_application(&mut stream, frame_path, chrome, &name)
+    serve_application(&mut stream, frame_path, &chrome, &name)
 }
 
 #[allow(
@@ -287,7 +287,7 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
 fn serve_application(
     stream: &mut UnixStream,
     frame_path: &Path,
-    chrome: kobo_ui::Chrome,
+    chrome: &kobo_ui::Chrome,
     name: &str,
 ) -> Result<(), Box<dyn Error>> {
     // In simulation the daemon owns no hardware, so every hardware-touching
@@ -512,7 +512,7 @@ const HOME_APPLICATION: &str = "launcher";
 fn write_screen(
     path: &Path,
     screen: Screen,
-    chrome: kobo_ui::Chrome,
+    chrome: &kobo_ui::Chrome,
     name: &str,
     pictures: &dyn kobo_ui::Pictures,
 ) -> Result<(), Box<dyn Error>> {
@@ -522,7 +522,7 @@ fn write_screen(
     );
     // The same two steps the device takes, in the same order, because a
     // preview drawn with different chrome is a preview of a screen that will
-    // never exist. Rendering with Chrome::default() here meant the way back
+    // never exist. Rendering with &Chrome::default() here meant the way back
     // was the one part of every screen that could not be looked at without a
     // reader — and it is the part that traps somebody when it is missing.
     let screen = kobo_ui::ensure_way_back(screen, chrome, name);
@@ -609,7 +609,7 @@ mod tests {
     fn an_application_with_no_bar_of_its_own_is_given_one_to_go_back_from() {
         let bare = kobo_ui::Screen::new(1, Vec::new());
         assert!(bare.top_bar.is_none());
-        let fixed = kobo_ui::ensure_way_back(bare, super::simulated_chrome("rss"), "Feeds");
+        let fixed = kobo_ui::ensure_way_back(bare, &super::simulated_chrome("rss"), "Feeds");
         assert_eq!(
             fixed.top_bar.expect("a bar to hold the way back").title,
             "Feeds"
@@ -619,7 +619,7 @@ mod tests {
     #[test]
     fn the_home_screen_is_not_given_a_bar_it_did_not_ask_for() {
         let bare = kobo_ui::Screen::new(1, Vec::new());
-        let left = kobo_ui::ensure_way_back(bare, super::simulated_chrome("launcher"), "Cobalt");
+        let left = kobo_ui::ensure_way_back(bare, &super::simulated_chrome("launcher"), "Cobalt");
         assert!(left.top_bar.is_none());
     }
     use super::validate_simulation_paths;

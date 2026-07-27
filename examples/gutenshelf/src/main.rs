@@ -1255,7 +1255,7 @@ Please read this before you distribute or use this work.\n";
             application.page = page;
             let layout = application
                 .reading()
-                .layout_with(&CLARA_BW_METRICS, Chrome::with_back(true));
+                .layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
             let drawn = layout
                 .nodes
                 .iter()
@@ -1296,7 +1296,7 @@ Please read this before you distribute or use this work.\n";
         };
         let chrome = Chrome::with_back(true);
         let screen = application.results();
-        let layout = screen.layout_with(&CLARA_BW_METRICS, chrome);
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &chrome);
         let tiles = layout
             .nodes
             .iter()
@@ -1332,7 +1332,7 @@ Please read this before you distribute or use this work.\n";
         };
         let layout = application
             .reading()
-            .layout_with(&CLARA_BW_METRICS, Chrome::with_back(true));
+            .layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
         let controls = layout
             .nodes
             .iter()

@@ -423,7 +423,7 @@ mod tests {
             let mut seen = 0;
             let mut screen = painted(runner.start());
             loop {
-                let layout = screen.layout_with(&metrics, Chrome::with_back(false));
+                let layout = screen.layout_with(&metrics, &Chrome::with_back(false));
                 let reader = action_id("reader");
                 let found = layout.nodes.iter().any(|node| {
                     matches!(
@@ -456,7 +456,7 @@ mod tests {
             let mut found = Vec::new();
             let mut screen = painted(runner.start());
             loop {
-                let layout = screen.layout_with(&metrics, Chrome::with_back(false));
+                let layout = screen.layout_with(&metrics, &Chrome::with_back(false));
                 for node in &layout.nodes {
                     if let LayoutKind::Tile(action) = node.kind {
                         found.push(action);
@@ -492,7 +492,7 @@ mod tests {
         for (name, metrics) in PANELS {
             let mut runner = AppRunner::with_metrics(Launcher::default(), metrics);
             let screen = painted(runner.start());
-            let layout = screen.layout_with(&metrics, Chrome::with_back(false));
+            let layout = screen.layout_with(&metrics, &Chrome::with_back(false));
             let rows = layout
                 .nodes
                 .iter()
@@ -526,7 +526,7 @@ mod tests {
         );
         assert!(matches!(runner.app().view, View::Details(0)));
         let shown = painted(commands);
-        let layout = shown.layout_with(&CLARA_BW_METRICS, Chrome::with_back(false));
+        let layout = shown.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(false));
         let words = layout
             .nodes
             .iter()
@@ -579,7 +579,7 @@ mod tests {
                 _ => None,
             })
             .expect("leaving paints an explanation");
-        let layout = painted.layout_with(&CLARA_BW_METRICS, Chrome::with_back(false));
+        let layout = painted.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(false));
         assert!(
             layout
                 .nodes
@@ -641,7 +641,7 @@ mod tests {
             let mut runner = AppRunner::with_metrics(Launcher::default(), metrics);
             let mut screen = painted(runner.start());
             for page in 0..=ENTRIES.len() {
-                let layout = screen.layout_with(&metrics, Chrome::with_back(false));
+                let layout = screen.layout_with(&metrics, &Chrome::with_back(false));
                 for node in &layout.nodes {
                     let bottom = node.rect.y + node.rect.height;
                     assert!(

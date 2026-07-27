@@ -586,7 +586,7 @@ mod tests {
     /// Every line of text the panel would show, in order.
     fn shown(screen: &Screen) -> Vec<String> {
         screen
-            .layout_with(&CLARA_BW_METRICS, Chrome::default())
+            .layout_with(&CLARA_BW_METRICS, &Chrome::default())
             .nodes
             .iter()
             .flat_map(|node| node.text_lines.clone())
@@ -709,7 +709,7 @@ mod tests {
             .iter()
             .any(|line| line.contains("could not be reached")));
         let retry = screen
-            .layout_with(&CLARA_BW_METRICS, Chrome::default())
+            .layout_with(&CLARA_BW_METRICS, &Chrome::default())
             .rect_of_action(action_id("retry"));
         assert!(retry.is_some(), "there is no way back from a failed send");
         let commands = act(&mut chat, "retry");
@@ -723,7 +723,7 @@ mod tests {
         let (mut chat, _) = started();
         let commands = type_and_send(&mut chat, "hello");
         assert_eq!(chat.view, View::Waiting);
-        let layout = last_screen(&commands).layout_with(&CLARA_BW_METRICS, Chrome::default());
+        let layout = last_screen(&commands).layout_with(&CLARA_BW_METRICS, &Chrome::default());
         assert!(layout
             .nodes
             .iter()
@@ -760,7 +760,7 @@ mod tests {
         chat.conversation.push(Role::You, "the newest question");
         let layout = chat
             .screen()
-            .layout_with(&CLARA_BW_METRICS, Chrome::default());
+            .layout_with(&CLARA_BW_METRICS, &Chrome::default());
         let newest = layout
             .nodes
             .iter()
@@ -788,7 +788,7 @@ mod tests {
             .push(Role::Assistant, "First paragraph.\n\nSecond paragraph.");
         let paragraphs = chat
             .screen()
-            .layout_with(&CLARA_BW_METRICS, Chrome::default())
+            .layout_with(&CLARA_BW_METRICS, &Chrome::default())
             .nodes
             .iter()
             .filter(|node| node.kind == LayoutKind::Text)
@@ -843,7 +843,7 @@ mod tests {
         };
         let layout = chat
             .screen()
-            .layout_with(&CLARA_BW_METRICS, Chrome::default());
+            .layout_with(&CLARA_BW_METRICS, &Chrome::default());
         let send = layout
             .rect_of_action(action_id("kb.enter"))
             .expect("a send key");
@@ -865,7 +865,7 @@ mod tests {
             .iter()
             .any(|line| line.contains("Nothing said yet")));
         assert!(screen
-            .layout_with(&CLARA_BW_METRICS, Chrome::default())
+            .layout_with(&CLARA_BW_METRICS, &Chrome::default())
             .rect_of_action(action_id(TYPE))
             .is_some());
         assert!(chat.conversation.turns().is_empty());
@@ -882,7 +882,7 @@ mod tests {
         let (mut chat, mut context) = started();
         let empty = chat
             .screen()
-            .layout_with(&CLARA_BW_METRICS, Chrome::default())
+            .layout_with(&CLARA_BW_METRICS, &Chrome::default())
             .rect_of_action(action_id(TYPE))
             .expect("the empty conversation offers the keyboard");
         for turn in 0..12 {
@@ -895,7 +895,7 @@ mod tests {
         }
         let full = chat
             .screen()
-            .layout_with(&CLARA_BW_METRICS, Chrome::default())
+            .layout_with(&CLARA_BW_METRICS, &Chrome::default())
             .rect_of_action(action_id(TYPE))
             .expect("a full conversation still offers the keyboard");
         assert_eq!(empty, full, "the keyboard moved as the transcript grew");
@@ -911,13 +911,13 @@ mod tests {
         let (mut chat, mut context) = started();
         let talking = chat
             .screen()
-            .layout_with(&CLARA_BW_METRICS, Chrome::default())
+            .layout_with(&CLARA_BW_METRICS, &Chrome::default())
             .rect_of_action(action_id(TALK))
             .expect("the transcript names where it already is");
         act(&mut chat, TYPE);
         let composing = chat
             .screen()
-            .layout_with(&CLARA_BW_METRICS, Chrome::default())
+            .layout_with(&CLARA_BW_METRICS, &Chrome::default())
             .rect_of_action(action_id(TALK))
             .expect("the keyboard offers the way back");
         assert_eq!(talking, composing);
@@ -1070,7 +1070,7 @@ mod tests {
     fn the_bar_is_in_the_same_place_however_long_the_conversation_is() {
         let bar = |chat: &Chat| {
             chat.screen()
-                .layout_with(&CLARA_BW_METRICS, Chrome::default())
+                .layout_with(&CLARA_BW_METRICS, &Chrome::default())
                 .nodes
                 .iter()
                 .filter(|node| {

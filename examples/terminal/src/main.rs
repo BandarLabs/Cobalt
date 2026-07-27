@@ -223,7 +223,7 @@ mod tests {
     use kobo_ui::{Chrome, LayoutKind, Rect, Screen, CLARA_BW_METRICS};
 
     fn layout(screen: &Screen) -> kobo_ui::Layout {
-        screen.layout_with(&CLARA_BW_METRICS, Chrome::with_back(true))
+        screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true))
     }
 
     fn screens(commands: &[Command]) -> Vec<Screen> {

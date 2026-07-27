@@ -29,7 +29,7 @@
 //! one application to draw something indistinguishable from a system control.
 //! A curated set is the same choice the rest of this UI layer makes everywhere.
 
-use crate::Glyph;
+use crate::{Glyph, Percent, Signal};
 
 /// The side of the box every icon is designed in.
 ///
@@ -677,6 +677,98 @@ pub fn back_arrow() -> Vec<Shape> {
             .line_to(640, 820),
         width: 90,
     }]
+}
+
+/// A battery showing how much is left, rather than a battery.
+///
+/// The icon in [`shapes`] is a symbol: it means "battery" and says nothing
+/// about charge. A status band that showed it would tell a reader the device
+/// has a battery, which they know. The fill is proportional and the whole mark
+/// is drawn wider than tall so it reads at status-band size, where the square
+/// design box would leave it about three millimetres across.
+///
+/// `percent` is clamped by [`Percent`]. `charging` replaces the fill with a
+/// bolt, because a charging battery's level is the least interesting thing
+/// about it and an animated fill is not something this panel can afford.
+#[must_use]
+pub fn battery(percent: Percent, charging: bool) -> Vec<Shape> {
+    const W: i32 = 60;
+    // The shell, leaving room on the right for the terminal nub.
+    let (x, y, width, height) = (60, 300, 780, 400);
+    let mut shapes = vec![
+        Shape::Stroke {
+            path: Path::rounded(x, y, width, height, 60),
+            width: W,
+        },
+        Shape::Fill(Path::rounded(x + width + 40, 430, 60, 140, 30)),
+    ];
+    if charging {
+        // A bolt across the shell. Drawn as a fill so it survives being
+        // rasterised at eight pixels tall, where a stroked one closes up.
+        shapes.push(Shape::Fill(
+            Path::new()
+                .move_to(520, 340)
+                .line_to(300, 530)
+                .line_to(430, 530)
+                .line_to(380, 660)
+                .line_to(600, 470)
+                .line_to(470, 470)
+                .close(),
+        ));
+        return shapes;
+    }
+    // Inset by the stroke and one gap, so the fill never touches the shell:
+    // at this size a fill that meets the outline reads as a solid black brick.
+    let inset = W + 40;
+    let room = width - 2 * inset;
+    let filled = room * i32::from(percent.get()) / 100;
+    if filled > 0 {
+        shapes.push(Shape::Fill(Path::rounded(
+            x + inset,
+            y + inset,
+            filled,
+            height - 2 * inset,
+            20,
+        )));
+    }
+    shapes
+}
+
+/// The radio, drawn at the strength it is actually running at.
+///
+/// Arcs are added from the bottom up, so a weak signal is a dot and one arc
+/// and a strong one is a dot and three. An unlit arc is left out rather than
+/// drawn faintly: this panel has no colour to spare and a ghosted arc at eight
+/// pixels is indistinguishable from a lit one.
+#[must_use]
+pub fn wifi(strength: Signal) -> Vec<Shape> {
+    const W: i32 = 70;
+    let stroke = |path: Path| Shape::Stroke { path, width: W };
+    if strength == Signal::Off {
+        // The mark for "no radio" has to be different in shape, not just in
+        // quantity, or it reads as a weak signal. A struck-through dot is
+        // unambiguous and stays legible when it is eight pixels tall.
+        return vec![
+            Shape::Fill(Path::circle(500, 760, 90)),
+            stroke(Path::line(180, 180, 820, 820)),
+        ];
+    }
+    let mut shapes = vec![Shape::Fill(Path::circle(500, 830, 60))];
+    let arcs = [
+        Path::new().move_to(400, 710).quad_to(500, 630, 600, 710),
+        Path::new().move_to(270, 560).quad_to(500, 380, 730, 560),
+        Path::new().move_to(120, 400).quad_to(500, 100, 880, 400),
+    ];
+    let lit = match strength {
+        Signal::Off => 0,
+        Signal::Weak => 1,
+        Signal::Fair => 2,
+        Signal::Strong => 3,
+    };
+    for arc in arcs.into_iter().take(lit) {
+        shapes.push(stroke(arc));
+    }
+    shapes
 }
 
 #[cfg(test)]

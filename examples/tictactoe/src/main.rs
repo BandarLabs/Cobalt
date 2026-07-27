@@ -271,7 +271,7 @@ mod tests {
     /// The board must be tappable, square by square, on the real panel.
     #[test]
     fn every_square_is_reachable_and_larger_than_a_finger() {
-        let layout = screen(&Game::default()).layout_with(&CLARA_BW_METRICS, Chrome::default());
+        let layout = screen(&Game::default()).layout_with(&CLARA_BW_METRICS, &Chrome::default());
         for name in NAMES {
             let rect = layout
                 .rect_of_action(action_id(name))
@@ -288,11 +288,11 @@ mod tests {
     /// game played quickly lands somewhere else.
     #[test]
     fn the_board_does_not_move_as_it_fills() {
-        let empty = screen(&Game::default()).layout_with(&CLARA_BW_METRICS, Chrome::default());
+        let empty = screen(&Game::default()).layout_with(&CLARA_BW_METRICS, &Chrome::default());
         let mut game = Game::default();
         game.play(0);
         game.play(4);
-        let played = screen(&game).layout_with(&CLARA_BW_METRICS, Chrome::default());
+        let played = screen(&game).layout_with(&CLARA_BW_METRICS, &Chrome::default());
         for name in NAMES {
             assert_eq!(
                 empty.rect_of_action(action_id(name)),
@@ -309,7 +309,7 @@ mod tests {
 
     #[test]
     fn the_whole_board_fits_on_the_panel() {
-        let layout = screen(&Game::default()).layout_with(&CLARA_BW_METRICS, Chrome::default());
+        let layout = screen(&Game::default()).layout_with(&CLARA_BW_METRICS, &Chrome::default());
         let reset = layout
             .rect_of_action(action_id("reset"))
             .expect("a reset button");

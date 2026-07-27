@@ -233,7 +233,7 @@ impl Simulator {
         kobo_ui::render_with(
             &self.screen,
             &profile_metrics(),
-            kobo_ui::Chrome::default(),
+            &kobo_ui::Chrome::default(),
             &mut surface,
             None,
         );
@@ -855,7 +855,7 @@ impl AppSession {
         kobo_ui::render_all(
             &state.screen,
             &profile_metrics(),
-            kobo_ui::Chrome::default(),
+            &kobo_ui::Chrome::default(),
             state.active_pictures(),
             &mut surface,
             None,
@@ -1005,7 +1005,7 @@ impl AppSession {
 
 fn diagnostics_json(screen: &Screen, pictures: &kobo_ui::PictureCache) -> String {
     let diagnostics =
-        screen.diagnostics_with_pictures(&profile_metrics(), kobo_ui::Chrome::default(), pictures);
+        screen.diagnostics_with_pictures(&profile_metrics(), &kobo_ui::Chrome::default(), pictures);
     let mut json = String::from("{\"issues\":[");
     for (index, issue) in diagnostics.issues.iter().enumerate() {
         if index > 0 {

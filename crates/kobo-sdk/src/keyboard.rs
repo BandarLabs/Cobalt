@@ -518,7 +518,7 @@ mod tests {
             let screen = ScreenBuilder::new("keyboard")
                 .keyboard(&drawn, "Send")
                 .build();
-            let layout = screen.layout_with(&CLARA_BW_METRICS, Chrome::default());
+            let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
             let cells = layout
                 .nodes
                 .iter()

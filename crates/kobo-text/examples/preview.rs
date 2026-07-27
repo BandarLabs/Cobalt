@@ -52,7 +52,7 @@ fn write(name: &str, screen: &Screen, metrics: &DisplayMetrics) {
     std::fs::create_dir_all(directory).expect("make the preview directory");
     let name = directory.join(name);
     let mut surface = Surface::new(metrics.width as usize, metrics.height as usize);
-    render_with(screen, metrics, Chrome::default(), &mut surface, None);
+    render_with(screen, metrics, &Chrome::default(), &mut surface, None);
     let mut out = format!("P5\n{} {}\n255\n", surface.width, surface.height).into_bytes();
     out.extend_from_slice(&surface.pixels);
     std::fs::write(&name, out).expect("write the preview");

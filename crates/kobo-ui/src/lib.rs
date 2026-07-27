@@ -304,6 +304,18 @@ impl DisplayMetrics {
         self.tenth_mm(120)
     }
 
+    /// The strip carrying the clock, the radio and the battery.
+    ///
+    /// Five millimetres: tall enough for caption type with air around it, and
+    /// small enough that giving up four per cent of a 122 millimetre panel to
+    /// something nobody reads on purpose is defensible. Nothing in it is
+    /// tappable, so it is deliberately below [`Self::touch_target_minimum`] —
+    /// a strip the size of a control invites a finger that has nowhere to go.
+    #[must_use]
+    pub const fn status_band_height(&self) -> i32 {
+        self.tenth_mm(50)
+    }
+
     /// How many columns this panel can carry without the text becoming
     /// unreadable, derived from physical width rather than assumed.
     ///
@@ -479,16 +491,81 @@ impl ActionId {
 /// has no builder method. The runtime supplies it at render time from the
 /// navigation stack, which is the only way to guarantee that an application
 /// cannot trap the reader on a screen with no way out.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Chrome {
     pub back: bool,
+    /// What the runtime knows about the device, drawn above the top bar.
+    ///
+    /// `None` while reading and on any screen that has claimed the panel, so
+    /// a book is a book and not a book with a clock on it.
+    pub status: Option<Status>,
 }
 
 impl Chrome {
     #[must_use]
     pub const fn with_back(back: bool) -> Self {
-        Self { back }
+        Self { back, status: None }
     }
+
+    #[must_use]
+    pub fn with_status(mut self, status: Status) -> Self {
+        self.status = Some(status);
+        self
+    }
+}
+
+/// How much radio there is.
+///
+/// Four states rather than a percentage. A number would invite an application
+/// to draw its own bar, and the reader cannot act on the difference between
+/// sixty and sixty-five percent — only on whether a page is going to load.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum Signal {
+    /// No radio, or no network. Drawn as a struck-through dot rather than as
+    /// zero arcs, because zero arcs reads as a weak signal.
+    #[default]
+    Off,
+    Weak,
+    Fair,
+    Strong,
+}
+
+impl Signal {
+    /// The strength a link of this quality reports.
+    ///
+    /// The thresholds are the ones the stock reader uses, which matters
+    /// because a reader who has learned what two arcs means on this device
+    /// should not have to learn it again.
+    #[must_use]
+    pub const fn from_dbm(dbm: i32) -> Self {
+        if dbm >= -60 {
+            Self::Strong
+        } else if dbm >= -70 {
+            Self::Fair
+        } else {
+            Self::Weak
+        }
+    }
+}
+
+/// What the runtime knows about the device at the moment a screen is drawn.
+///
+/// Assembled by the daemon, never by an application: an application cannot
+/// read the battery, cannot read the radio, and should not be able to claim a
+/// stronger signal than there is. This is the same reasoning that makes the
+/// way back the runtime's to draw.
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+pub struct Status {
+    /// Already formatted, because what a time looks like is a question about
+    /// the reader's locale and the layer that knows the answer is the one that
+    /// read the clock. Empty means the device has no time worth showing.
+    pub clock: String,
+    pub signal: Signal,
+    /// `None` when the battery could not be read, which is drawn as nothing
+    /// rather than as zero: an empty battery and an unreadable one look the
+    /// same and mean opposite things.
+    pub battery: Option<Percent>,
+    pub charging: bool,
 }
 
 /// Gives a screen a top bar to put the way back in, when it has none.
@@ -503,7 +580,7 @@ impl Chrome {
 /// preview drawn without the way back is a preview of a screen that will never
 /// exist, and it hides the one defect that leaves somebody stuck.
 #[must_use]
-pub fn ensure_way_back(mut screen: Screen, chrome: Chrome, name: &str) -> Screen {
+pub fn ensure_way_back(mut screen: Screen, chrome: &Chrome, name: &str) -> Screen {
     if chrome.back && screen.top_bar.is_none() {
         screen = screen.with_top_bar(TopBar::new(NodeId(0), name));
     }
@@ -810,12 +887,12 @@ impl Screen {
     /// Lays the screen out for a specific panel.
     #[must_use]
     pub fn layout_for(&self, metrics: &DisplayMetrics) -> Layout {
-        self.layout_with(metrics, Chrome::default())
+        self.layout_with(metrics, &Chrome::default())
     }
 
     /// Lays the screen out for a panel, including runtime-owned decoration.
     #[must_use]
-    pub fn layout_with(&self, metrics: &DisplayMetrics, chrome: Chrome) -> Layout {
+    pub fn layout_with(&self, metrics: &DisplayMetrics, chrome: &Chrome) -> Layout {
         let margin = metrics.screen_margin();
         let gap = metrics.space(Space::Tight);
         let prose = if self.reading {
@@ -829,8 +906,17 @@ impl Screen {
         };
 
         let mut cursor = margin;
+        // The band sits above everything, including the top bar, which is
+        // where the stock reader puts it and where a reader's eye already
+        // goes. It is laid out first so the top bar starts below it rather
+        // than being drawn over.
+        let band = chrome
+            .status
+            .as_ref()
+            .map_or(0, |status| layout_status_band(status, metrics, &mut layout));
+        cursor = cursor.saturating_add(band);
         if let Some(top_bar) = &self.top_bar {
-            cursor = layout_top_bar(top_bar, chrome, metrics, &mut layout);
+            cursor = layout_top_bar(top_bar, chrome, metrics, band, &mut layout);
             cursor = cursor.saturating_add(gap);
         }
         let content_top = cursor;
@@ -889,10 +975,79 @@ impl Screen {
     }
 }
 
+/// Lays out the strip carrying the clock, the radio and the battery.
+///
+/// Returns the height it took, which is zero when there is nothing worth
+/// showing: a device with no clock, no battery reading and no radio would
+/// otherwise give up five millimetres of a small panel to an empty strip.
+fn layout_status_band(status: &Status, metrics: &DisplayMetrics, layout: &mut Layout) -> i32 {
+    let height = metrics.status_band_height();
+    let margin = metrics.screen_margin();
+    layout.nodes.push(LayoutNode {
+        id: NodeId(0),
+        rect: Rect {
+            x: 0,
+            y: 0,
+            width: metrics.width,
+            height,
+        },
+        kind: LayoutKind::StatusBand,
+        text_lines: Vec::new(),
+    });
+    if !status.clock.is_empty() {
+        layout.nodes.push(LayoutNode {
+            id: NodeId(0),
+            rect: Rect {
+                x: margin,
+                y: 0,
+                width: metrics.width / 3,
+                height,
+            },
+            kind: LayoutKind::StatusClock,
+            text_lines: vec![status.clock.clone()],
+        });
+    }
+    // Marks are placed from the trailing edge inwards, so the battery is
+    // outermost. That is the order every device this reader has used puts them
+    // in, and the order is the only thing making them identifiable at this
+    // size.
+    let mark = height - 2 * metrics.space(Space::Tight);
+    let gap = metrics.space(Space::Small);
+    let mut right = metrics.width - margin;
+    // Wider than tall: the design box is square, so a battery drawn into a
+    // square would come out about three millimetres across and read as a dot.
+    let battery_width = mark * 2;
+    layout.nodes.push(LayoutNode {
+        id: NodeId(0),
+        rect: Rect {
+            x: right - battery_width,
+            y: metrics.space(Space::Tight),
+            width: battery_width,
+            height: mark,
+        },
+        kind: LayoutKind::StatusBattery(status.battery, status.charging),
+        text_lines: Vec::new(),
+    });
+    right -= battery_width + gap;
+    layout.nodes.push(LayoutNode {
+        id: NodeId(0),
+        rect: Rect {
+            x: right - mark,
+            y: metrics.space(Space::Tight),
+            width: mark,
+            height: mark,
+        },
+        kind: LayoutKind::StatusSignal(status.signal),
+        text_lines: Vec::new(),
+    });
+    height
+}
+
 fn layout_top_bar(
     top_bar: &TopBar,
-    chrome: Chrome,
+    chrome: &Chrome,
     metrics: &DisplayMetrics,
+    top: i32,
     layout: &mut Layout,
 ) -> i32 {
     let margin = metrics.screen_margin();
@@ -902,7 +1057,7 @@ fn layout_top_bar(
         id: top_bar.id,
         rect: Rect {
             x: 0,
-            y: 0,
+            y: top,
             width: metrics.width,
             height,
         },
@@ -924,7 +1079,7 @@ fn layout_top_bar(
             id: top_bar.id,
             rect: Rect {
                 x: margin,
-                y: (height - control) / 2,
+                y: top + (height - control) / 2,
                 width: control,
                 height: control,
             },
@@ -945,7 +1100,7 @@ fn layout_top_bar(
             id: top_bar.id,
             rect: Rect {
                 x: metrics.width - margin - action_width,
-                y: (height - control) / 2,
+                y: top + (height - control) / 2,
                 width: action_width,
                 height: control,
             },
@@ -960,7 +1115,7 @@ fn layout_top_bar(
         id: top_bar.id,
         rect: Rect {
             x: title_x,
-            y: (height - FontSize::Title.line_height()) / 2,
+            y: top + (height - FontSize::Title.line_height()) / 2,
             width: max(0, title_width),
             height: FontSize::Title.line_height(),
         },
@@ -980,7 +1135,7 @@ fn layout_top_bar(
         id: top_bar.id,
         rect: Rect {
             x: 0,
-            y: height,
+            y: top + height,
             width: metrics.width,
             height: metrics.rule_thickness(),
         },
@@ -1697,6 +1852,15 @@ const fn min_i32(a: i32, b: i32) -> i32 {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LayoutKind {
+    /// The strip above the top bar. Emitted only by the runtime.
+    StatusBand,
+    /// The time, at the leading edge of the band.
+    StatusClock,
+    /// The radio, drawn at the strength the runtime measured.
+    StatusSignal(Signal),
+    /// The battery, drawn at the level the runtime read, and whether it is on
+    /// the charger. `None` means unreadable, which is drawn as nothing.
+    StatusBattery(Option<Percent>, bool),
     Heading,
     Text,
     /// A line of metadata: smaller than the body, and in the muted tone.
@@ -4111,12 +4275,12 @@ impl Screen {
     /// clean screen for content the panel would go on to clip.
     #[must_use]
     pub fn validate(&self, metrics: &DisplayMetrics) -> Vec<LayoutIssue> {
-        self.diagnostics(metrics, Chrome::with_back(true)).issues
+        self.diagnostics(metrics, &Chrome::with_back(true)).issues
     }
 
     /// Produces layout and diagnostics from one consistent set of metrics.
     #[must_use]
-    pub fn diagnostics(&self, metrics: &DisplayMetrics, chrome: Chrome) -> LayoutDiagnostics {
+    pub fn diagnostics(&self, metrics: &DisplayMetrics, chrome: &Chrome) -> LayoutDiagnostics {
         diagnose_screen(self, metrics, chrome, None)
     }
 
@@ -4125,7 +4289,7 @@ impl Screen {
     pub fn diagnostics_with_pictures(
         &self,
         metrics: &DisplayMetrics,
-        chrome: Chrome,
+        chrome: &Chrome,
         pictures: &dyn Pictures,
     ) -> LayoutDiagnostics {
         diagnose_screen(self, metrics, chrome, Some(pictures))
@@ -4135,7 +4299,7 @@ impl Screen {
 fn diagnose_screen(
     screen: &Screen,
     metrics: &DisplayMetrics,
-    chrome: Chrome,
+    chrome: &Chrome,
     pictures: Option<&dyn Pictures>,
 ) -> LayoutDiagnostics {
     let layout = screen.layout_with(metrics, chrome);
@@ -4779,7 +4943,13 @@ impl Pictures for PictureCache {
 
 /// Rasterizes a retained screen. `dirty` limits writes to a changed rectangle when supplied.
 pub fn render(screen: &Screen, surface: &mut Surface, dirty: Option<Rect>) {
-    render_with(screen, &CLARA_BW_METRICS, Chrome::default(), surface, dirty);
+    render_with(
+        screen,
+        &CLARA_BW_METRICS,
+        &Chrome::default(),
+        surface,
+        dirty,
+    );
 }
 
 /// Draws `pixels` into `rect`, shrinking by averaging when the picture is
@@ -4836,7 +5006,7 @@ fn draw_picture(surface: &mut Surface, rect: Rect, pixels: PicturePixels<'_>, cl
 pub fn render_with(
     screen: &Screen,
     metrics: &DisplayMetrics,
-    chrome: Chrome,
+    chrome: &Chrome,
     surface: &mut Surface,
     dirty: Option<Rect>,
 ) {
@@ -4852,7 +5022,7 @@ pub fn render_with(
 pub fn render_all(
     screen: &Screen,
     metrics: &DisplayMetrics,
-    chrome: Chrome,
+    chrome: &Chrome,
     pictures: &dyn Pictures,
     surface: &mut Surface,
     dirty: Option<Rect>,
@@ -5061,6 +5231,30 @@ pub fn render_all(
             // area and two small bands instead of the entire panel.
             LayoutKind::TopBar | LayoutKind::NavBar => {
                 fill_clipped(surface, node.rect, tone::PAPER, clip);
+            }
+            // Paper, not surface. The band is the quietest thing on the panel
+            // and a tinted strip across the top of every screen is a permanent
+            // horizontal line the eye has to learn to ignore.
+            LayoutKind::StatusBand => fill_clipped(surface, node.rect, tone::PAPER, clip),
+            LayoutKind::StatusClock => draw_lines(
+                surface,
+                &node.text_lines,
+                node.rect.x,
+                node.rect.y + (node.rect.height - FontSize::Caption.line_height()) / 2,
+                FontSize::Caption,
+                tone::MUTED,
+                clip,
+            ),
+            LayoutKind::StatusSignal(strength) => {
+                draw_vector(surface, &vector::wifi(strength), node.rect, clip);
+            }
+            LayoutKind::StatusBattery(level, charging) => {
+                // Nothing at all when it could not be read. An empty battery
+                // and an unreadable one look identical and mean the opposite
+                // things, so the honest drawing of "unknown" is no drawing.
+                if let Some(level) = level {
+                    draw_wide_vector(surface, &vector::battery(level, charging), node.rect, clip);
+                }
             }
             LayoutKind::TopBarTitle => draw_lines(
                 surface,
@@ -5452,11 +5646,31 @@ fn draw_glyph_icon(surface: &mut Surface, glyph: Glyph, rect: Rect, clip: Rect) 
 /// the renderer already picks a sixteen-level waveform when it sees grey, so a
 /// stepped diagonal costs exactly as much to draw as a smooth one and looks
 /// worse. This is the same reasoning that antialiases text.
+/// Rasterises art that is authored wider than tall.
+///
+/// The design box is square and [`draw_vector`] fits it to the shorter side,
+/// which is right for an icon and wrong for a battery: fitted to a status
+/// band's height a battery comes out about three millimetres across and reads
+/// as a dot. This fits the box to the width instead and centres it vertically.
+/// The rows that fall outside the rect are empty in the art, so nothing is
+/// lost — the geometry is authored to sit in the middle band of the box.
+fn draw_wide_vector(surface: &mut Surface, shapes: &[vector::Shape], rect: Rect, clip: Rect) {
+    if rect.width <= 0 {
+        return;
+    }
+    blit_vector(surface, shapes, rect.width, rect, clip);
+}
+
 fn draw_vector(surface: &mut Surface, shapes: &[vector::Shape], rect: Rect, clip: Rect) {
     let size = min(rect.width, rect.height);
     if size <= 0 {
         return;
     }
+    blit_vector(surface, shapes, size, rect, clip);
+}
+
+/// Renders the design box at `size` and centres it on `rect`.
+fn blit_vector(surface: &mut Surface, shapes: &[vector::Shape], size: i32, rect: Rect, clip: Rect) {
     let coverage = vector::render(shapes, size);
     let origin_x = rect.x + (rect.width - size) / 2;
     let origin_y = rect.y + (rect.height - size) / 2;
@@ -5873,7 +6087,7 @@ mod tests {
         );
         let diagnostics = screen.diagnostics_with_pictures(
             &CLARA_BW_METRICS,
-            Chrome::default(),
+            &Chrome::default(),
             &PictureCache::default(),
         );
         assert!(diagnostics.issues.iter().any(|issue| matches!(
@@ -6411,7 +6625,7 @@ mod page_turn_tests {
             ],
             Some(0),
         ));
-        let layout = screen.layout_with(&CLARA_BW_METRICS, Chrome::with_back(true));
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
         assert_eq!(layout.hit_page_turn(CLARA_BW_METRICS.width / 8, 10), None);
         assert_eq!(
             layout.hit_page_turn(
@@ -6448,17 +6662,17 @@ mod chrome_tests {
     fn back_is_absent_until_the_runtime_supplies_it() {
         let screen = Screen::new(1, Vec::new()).with_top_bar(TopBar::new(NodeId(1), "Settings"));
 
-        let without = screen.layout_with(&CLARA_BW_METRICS, Chrome::with_back(false));
+        let without = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(false));
         assert!(!kinds(&without).contains(&LayoutKind::Back));
 
-        let with = screen.layout_with(&CLARA_BW_METRICS, Chrome::with_back(true));
+        let with = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
         assert!(kinds(&with).contains(&LayoutKind::Back));
     }
 
     #[test]
     fn back_is_reachable_by_touch_and_reports_the_reserved_action() {
         let screen = Screen::new(1, Vec::new()).with_top_bar(TopBar::new(NodeId(1), "Settings"));
-        let layout = screen.layout_with(&CLARA_BW_METRICS, Chrome::with_back(true));
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
         let back = layout
             .nodes
             .iter()
@@ -6474,7 +6688,7 @@ mod chrome_tests {
     fn the_back_control_is_never_smaller_than_a_finger_on_any_panel() {
         let screen = Screen::new(1, Vec::new()).with_top_bar(TopBar::new(NodeId(1), "Title"));
         for (name, metrics) in PANELS {
-            let layout = screen.layout_with(&metrics, Chrome::with_back(true));
+            let layout = screen.layout_with(&metrics, &Chrome::with_back(true));
             let back = layout
                 .nodes
                 .iter()
@@ -6499,7 +6713,7 @@ mod chrome_tests {
         // over whatever the screen had put there.
         let screen = Screen::new(1, Vec::new()).with_top_bar(TopBar::new(NodeId(1), "Title"));
         for (name, metrics) in PANELS {
-            let layout = screen.layout_with(&metrics, Chrome::with_back(true));
+            let layout = screen.layout_with(&metrics, &Chrome::with_back(true));
             let bar = metrics.top_bar_height();
             for node in &layout.nodes {
                 if !matches!(node.kind, LayoutKind::Back | LayoutKind::BarAction(_)) {
@@ -7515,7 +7729,7 @@ mod prose_tests {
                 ],
                 None,
             ));
-        let layout = screen.layout_with(metrics, Chrome::with_back(true));
+        let layout = screen.layout_with(metrics, &Chrome::with_back(true));
         let text = layout
             .nodes
             .iter()
@@ -7581,7 +7795,7 @@ mod prose_tests {
                 ],
                 None,
             ));
-        let layout = screen.layout_with(metrics, Chrome::with_back(true));
+        let layout = screen.layout_with(metrics, &Chrome::with_back(true));
         let quotes = layout
             .nodes
             .iter()
@@ -7715,7 +7929,7 @@ mod prose_tests {
                 text: "A reply, which answers the one above it.".to_owned(),
             })
             .collect();
-        let layout = Screen::new(1, nodes).layout_with(&CLARA_BW_METRICS, Chrome::default());
+        let layout = Screen::new(1, nodes).layout_with(&CLARA_BW_METRICS, &Chrome::default());
         let quotes = layout
             .nodes
             .iter()
@@ -7773,6 +7987,178 @@ mod prose_tests {
         surface.clear(tone::PAPER);
         render(screen, &mut surface, None);
         (surface, stride)
+    }
+
+    fn a_status() -> Status {
+        Status {
+            clock: "09:41".to_owned(),
+            signal: Signal::Fair,
+            battery: Some(Percent::new(64)),
+            charging: false,
+        }
+    }
+
+    #[test]
+    fn the_band_sits_above_the_bar_rather_than_over_it() {
+        // Drawn without moving anything, the band would cover the title and
+        // the way back -- the one control that must always work.
+        let screen = Screen::new(1, vec![]).with_top_bar(TopBar::new(NodeId(0), "Feeds"));
+        let bare = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
+        let banded = screen.layout_with(
+            &CLARA_BW_METRICS,
+            &Chrome::with_back(true).with_status(a_status()),
+        );
+        let find = |layout: &Layout, kind: LayoutKind| {
+            layout
+                .nodes
+                .iter()
+                .find(|node| node.kind == kind)
+                .map(|node| node.rect)
+        };
+        let band = find(&banded, LayoutKind::StatusBand).expect("the band was laid out");
+        assert_eq!(band.y, 0, "the band was not at the top of the panel");
+        assert_eq!(band.height, CLARA_BW_METRICS.status_band_height());
+        let bar = find(&banded, LayoutKind::TopBar).expect("the bar was laid out");
+        assert_eq!(
+            bar.y, band.height,
+            "the top bar did not move down by the height of the band"
+        );
+        let back = find(&banded, LayoutKind::Back).expect("the way back was laid out");
+        assert!(
+            back.y >= band.y + band.height,
+            "the band was drawn over the way back"
+        );
+        let before = find(&bare, LayoutKind::TopBarTitle).expect("a title");
+        let after = find(&banded, LayoutKind::TopBarTitle).expect("a title");
+        assert_eq!(
+            after.y - before.y,
+            band.height,
+            "the title did not move with its bar"
+        );
+    }
+
+    #[test]
+    fn a_book_is_not_drawn_with_a_clock_on_it() {
+        // Withheld by the runtime rather than by the layout, so this checks
+        // the layout honours an absent status rather than inventing one.
+        let screen = Screen::new(1, vec![])
+            .with_reading(true)
+            .with_top_bar(TopBar::new(NodeId(0), "Moby-Dick"));
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
+        assert!(
+            !layout
+                .nodes
+                .iter()
+                .any(|node| node.kind == LayoutKind::StatusBand),
+            "a band was drawn on a screen whose chrome asked for none"
+        );
+    }
+
+    #[test]
+    fn the_battery_is_drawn_at_the_level_it_was_read_at() {
+        // The icon in the glyph set is a symbol: it means "battery" and says
+        // nothing about charge. A band that showed it would tell the reader
+        // their device has a battery, which they know.
+        let mark = |percent: u8| {
+            let shapes = vector::battery(Percent::new(percent), false);
+            let coverage = vector::render(&shapes, 64);
+            (0..64)
+                .flat_map(|row| (0..64).map(move |column| (column, row)))
+                .filter(|&(column, row)| coverage.at(column, row) > 128)
+                .count()
+        };
+        let (empty, half, full) = (mark(0), mark(50), mark(100));
+        assert!(
+            half > empty && full > half,
+            "the battery did not get darker as it filled: {empty}, {half}, {full}"
+        );
+        // A charging battery says so rather than showing a level, because the
+        // level of a battery on a charger is the least interesting thing about
+        // it and this panel cannot afford an animated fill.
+        let charging = vector::battery(Percent::new(0), true);
+        let coverage = vector::render(&charging, 64);
+        assert!(
+            (0..64)
+                .flat_map(|row| (0..64).map(move |column| (column, row)))
+                .any(|(column, row)| coverage.at(column, row) > 128),
+            "a charging battery at zero percent was drawn as an empty shell"
+        );
+    }
+
+    #[test]
+    fn no_radio_is_a_different_mark_from_a_weak_one() {
+        // Zero arcs and one arc differ by one small stroke, which at eight
+        // pixels tall is not a difference a reader can act on -- and the
+        // difference between "not connected" and "barely connected" is the
+        // whole reason to look.
+        let ink = |strength: Signal| {
+            let coverage = vector::render(&vector::wifi(strength), 64);
+            (0..64)
+                .flat_map(|row| (0..64).map(move |column| (column, row)))
+                .filter(|&(column, row)| coverage.at(column, row) > 128)
+                .count()
+        };
+        let (weak, fair, strong) = (ink(Signal::Weak), ink(Signal::Fair), ink(Signal::Strong));
+        assert!(
+            weak < fair && fair < strong,
+            "arcs did not accumulate with strength: {weak}, {fair}, {strong}"
+        );
+        // The off mark is struck through, so it carries ink where no arc does:
+        // along the diagonal. Comparing quantity alone would pass for a mark
+        // that was merely a fainter weak one.
+        let off = vector::render(&vector::wifi(Signal::Off), 64);
+        let weak_mark = vector::render(&vector::wifi(Signal::Weak), 64);
+        let diagonal = (8..56)
+            .filter(|&step| off.at(step, step) > 128 && weak_mark.at(step, step) == 0)
+            .count();
+        assert!(
+            diagonal > 8,
+            "the no-radio mark is not struck through, so it reads as a weak signal"
+        );
+    }
+
+    #[test]
+    fn the_strength_thresholds_are_the_ones_the_stock_reader_uses() {
+        assert_eq!(Signal::from_dbm(-45), Signal::Strong);
+        assert_eq!(Signal::from_dbm(-60), Signal::Strong);
+        assert_eq!(Signal::from_dbm(-61), Signal::Fair);
+        assert_eq!(Signal::from_dbm(-70), Signal::Fair);
+        assert_eq!(Signal::from_dbm(-71), Signal::Weak);
+        assert_eq!(Signal::from_dbm(-95), Signal::Weak);
+    }
+
+    #[test]
+    fn an_unreadable_battery_is_drawn_as_nothing_rather_than_as_empty() {
+        // An empty battery and an unreadable one look identical and mean the
+        // opposite things, so the honest drawing of "unknown" is no drawing.
+        let screen = Screen::new(1, vec![]).with_top_bar(TopBar::new(NodeId(0), "Cobalt"));
+        let status = Status {
+            battery: None,
+            ..a_status()
+        };
+        let chrome = Chrome::with_back(false).with_status(status);
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &chrome);
+        let rect = layout
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::StatusBattery(..)))
+            .expect("the slot is still reserved so the marks do not shuffle")
+            .rect;
+        let stride = usize::try_from(CLARA_BW_METRICS.width).expect("a positive width");
+        let height = usize::try_from(CLARA_BW_METRICS.height).expect("a positive height");
+        let mut surface = Surface::new(stride, height);
+        surface.clear(tone::PAPER);
+        render_with(&screen, &CLARA_BW_METRICS, &chrome, &mut surface, None);
+        let drawn = (rect.y..rect.y + rect.height)
+            .flat_map(|row| (rect.x..rect.x + rect.width).map(move |column| (column, row)))
+            .filter(|&(column, row)| {
+                let (Ok(row), Ok(column)) = (usize::try_from(row), usize::try_from(column)) else {
+                    return false;
+                };
+                surface.pixels[row * stride + column] != tone::PAPER
+            })
+            .count();
+        assert_eq!(drawn, 0, "an unreadable battery was drawn as an empty one");
     }
 
     #[test]
@@ -8490,7 +8876,7 @@ mod press_feedback_tests {
                 emphasis: Emphasis::Normal,
             }],
         );
-        let layout = screen.layout_with(&CLARA_BW_METRICS, Chrome::default());
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
         let button = layout
             .nodes
             .iter()
@@ -8513,7 +8899,7 @@ mod press_feedback_tests {
                 text: "Once upon a time".into(),
             }],
         );
-        let layout = screen.layout_with(&CLARA_BW_METRICS, Chrome::default());
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
         let text = layout
             .nodes
             .iter()

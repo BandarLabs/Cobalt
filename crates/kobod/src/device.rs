@@ -151,6 +151,129 @@ const POLL_FOR_STOP: Duration = Duration::from_millis(100);
 /// cannot turn a read into a busy one. A gauge does not move meaningfully
 /// inside half a minute, so nothing is lost.
 const BATTERY_INTERVAL: Duration = Duration::from_secs(30);
+
+/// The wireless interface every Kobo names the same thing.
+const WIFI_LINK: &str = "wlan0";
+
+/// How often the status band is allowed to change.
+///
+/// A minute, matching the finest thing the band shows. Faster would buy
+/// nothing a reader can see and would cost a panel update: the band is drawn
+/// with the rest of the screen, so a status that changed between two otherwise
+/// identical frames would make them different and force a repaint of a strip
+/// nobody was looking at.
+const STATUS_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Reads the clock, the radio and the gauge, no more often than it needs to.
+///
+/// Held by the session rather than read per frame. Every reading here is from
+/// a file the kernel publishes, so none of it needs `device-write` and none of
+/// it can disturb the stock reader.
+struct StatusSource {
+    last: kobo_ui::Status,
+    taken: Option<Instant>,
+}
+
+impl StatusSource {
+    fn new() -> Self {
+        Self {
+            last: kobo_ui::Status::default(),
+            taken: None,
+        }
+    }
+
+    /// The current status, re-read only when it has gone stale.
+    fn get(&mut self) -> &kobo_ui::Status {
+        let stale = self
+            .taken
+            .is_none_or(|taken| taken.elapsed() >= STATUS_INTERVAL);
+        if stale {
+            self.last = read_status();
+            self.taken = Some(Instant::now());
+        }
+        &self.last
+    }
+}
+
+/// The chrome a screen from `app` is drawn with.
+///
+/// The band is withheld from a reading screen. A book is a book: the stock
+/// reader hides its own status bar the moment a page is opened, and a clock
+/// ticking above a novel is both a distraction and a panel update per minute
+/// for something nobody opened the book to see.
+fn chrome_for(screen: &Screen, at_home: bool, status: &mut StatusSource) -> Chrome {
+    let chrome = Chrome::with_back(!at_home);
+    if screen.reading {
+        return chrome;
+    }
+    chrome.with_status(status.get().clone())
+}
+
+/// Assembles one reading of everything the band shows.
+fn read_status() -> kobo_ui::Status {
+    let battery = kobo_hal::battery::read();
+    kobo_ui::Status {
+        clock: clock(),
+        // A radio with no default route is not a usable connection however
+        // strong the association is, so reachability is checked before
+        // strength. Showing three arcs on a device that cannot load a page is
+        // the one thing this mark must never do.
+        signal: if kobo_hal::network::is_online(WIFI_LINK) {
+            kobo_hal::network::signal_dbm(WIFI_LINK)
+                .map_or(kobo_ui::Signal::Weak, kobo_ui::Signal::from_dbm)
+        } else {
+            kobo_ui::Signal::Off
+        },
+        battery: battery.map(|battery| kobo_ui::Percent::new(battery.percent)),
+        charging: battery.is_some_and(|battery| battery.charging),
+    }
+}
+
+/// The wall clock as `HH:MM`, or empty when it cannot be read.
+///
+/// Computed from the system clock without pulling in a date library: the band
+/// needs hours and minutes in local time and nothing else. The offset comes
+/// from the `TZ` the firmware already sets, read once per call because a
+/// reader who crosses a timezone should not have to restart anything.
+fn clock() -> String {
+    let Ok(since_epoch) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) else {
+        // A clock before 1970 is a device whose time was never set. Blank is
+        // the honest answer; a wrong time is worse than no time, because a
+        // reader will believe it.
+        return String::new();
+    };
+    // Seconds since 1970 does not reach i64 for another 292 billion years,
+    // so the only way this conversion fails is a clock that is already wrong.
+    let Ok(seconds) = i64::try_from(since_epoch.as_secs()) else {
+        return String::new();
+    };
+    let seconds = seconds + local_offset_seconds();
+    let day = seconds.rem_euclid(86_400);
+    format!("{:02}:{:02}", day / 3600, (day % 3600) / 60)
+}
+
+/// Seconds to add to UTC for local time.
+///
+/// Read from `TZ` in the `<NAME><offset>` form that POSIX specifies and that
+/// the firmware writes, where the sign is inverted from what everyone expects:
+/// `EST5` is five hours *behind* UTC. Anything not understood is treated as
+/// UTC rather than guessed at.
+fn local_offset_seconds() -> i64 {
+    let Ok(tz) = std::env::var("TZ") else {
+        return 0;
+    };
+    let rest = tz.trim_start_matches(|character: char| character.is_ascii_alphabetic());
+    let (sign, digits) = match rest.strip_prefix('-') {
+        Some(digits) => (1, digits),
+        None => (-1, rest.strip_prefix('+').unwrap_or(rest)),
+    };
+    let mut parts = digits.split(':');
+    let Some(Ok(hours)) = parts.next().map(str::parse::<i64>) else {
+        return 0;
+    };
+    let minutes = parts.next().and_then(|part| part.parse::<i64>().ok());
+    sign * (hours * 3600 + minutes.unwrap_or(0) * 60)
+}
 /// How long to wait for the restarted reader to feed the freeze watchdog
 /// before handing it back regardless.
 ///
@@ -541,6 +664,7 @@ fn host_applications(
     let _restore_light = FrontlightGuard(frontlight.clone());
     // Deliberately already stale, so the first read an application makes is a
     // real measurement rather than the default the services were built with.
+    let mut status = StatusSource::new();
     let mut battery_read_at = Instant::now()
         .checked_sub(BATTERY_INTERVAL)
         .unwrap_or_else(Instant::now);
@@ -621,6 +745,7 @@ fn host_applications(
                             &mut surface,
                             &mut panel,
                             &home,
+                            &mut status,
                         )?;
                     }
                 }
@@ -677,6 +802,7 @@ fn host_applications(
                             &mut surface,
                             &mut panel,
                             &home,
+                            &mut status,
                         )?;
                     }
                 }
@@ -685,8 +811,16 @@ fn host_applications(
                     let Some(index) = index_of(&apps, front) else {
                         return Ok(finish(&apps, &visited, "nothing is on the panel"));
                     };
-                    let chrome = Chrome::with_back(apps[index].path != home);
+                    let at_home = apps[index].path == home;
                     let screen = apps[index].screen.clone();
+                    // The chrome the frame was drawn with, band and all: the
+                    // band shifts everything below it down by its own height,
+                    // so laying a tap out against chrome without one puts every
+                    // hit rectangle five millimetres off.
+                    let chrome = screen.as_ref().map_or_else(
+                        || Chrome::with_back(!at_home),
+                        |screen| chrome_for(screen, at_home, &mut status),
+                    );
                     // A control shows that it has been touched, before anything
                     // it does can be seen. Without this the panel is simply
                     // still for as long as the application takes to answer —
@@ -701,7 +835,7 @@ fn host_applications(
                             TouchEvent::Down { x, y } => {
                                 if let (Ok(x), Ok(y)) = (i32::try_from(x), i32::try_from(y)) {
                                     if let Some(rect) = current
-                                        .layout_with(&metrics_for(current), chrome)
+                                        .layout_with(&metrics_for(current), &chrome)
                                         .pressed_control(x, y)
                                     {
                                         surface.invert_rect(rect);
@@ -739,7 +873,7 @@ fn host_applications(
                             }
                         }
                     }
-                    match deliver_touch(&mut apps[index].stream, event, screen.as_ref(), chrome)? {
+                    match deliver_touch(&mut apps[index].stream, event, screen.as_ref(), &chrome)? {
                         Tap::Handled => {}
                         Tap::OfferedBack => back_offered = Some((front, Instant::now())),
                         Tap::Leave => {
@@ -759,6 +893,7 @@ fn host_applications(
                                 &mut surface,
                                 &mut panel,
                                 &home,
+                                &mut status,
                             )?;
                         }
                     }
@@ -784,9 +919,9 @@ fn host_applications(
                             if back_offered.is_some_and(|(waiting, _)| waiting == id) {
                                 back_offered = None;
                             }
-                            let chrome = Chrome::with_back(apps[index].path != home);
+                            let chrome = chrome_for(&screen, apps[index].path == home, &mut status);
                             let screen =
-                                kobo_ui::ensure_way_back(screen, chrome, &apps[index].name);
+                                kobo_ui::ensure_way_back(screen, &chrome, &apps[index].name);
                             if is_front {
                                 trace(&format!("screen {} received", screen.id));
                                 println!("screen {}", screen.id);
@@ -798,7 +933,7 @@ fn host_applications(
                                 render_all(
                                     &screen,
                                     &metrics_for(&screen),
-                                    chrome,
+                                    &chrome,
                                     &apps[index].pictures,
                                     &mut surface,
                                     None,
@@ -948,6 +1083,7 @@ fn host_applications(
                                     &mut surface,
                                     &mut panel,
                                     &home,
+                                    &mut status,
                                 )?;
                             }
                         }
@@ -972,6 +1108,7 @@ fn host_applications(
                                         &mut surface,
                                         &mut panel,
                                         &home,
+                                        &mut status,
                                     )?;
                                 }
                                 // A launch that cannot be satisfied leaves the
@@ -1079,6 +1216,7 @@ fn switch_to(
     surface: &mut Surface,
     panel: &mut Painter,
     home: &Path,
+    status: &mut StatusSource,
 ) -> Result<u64, String> {
     if front == wanted {
         return Ok(front);
@@ -1098,11 +1236,11 @@ fn switch_to(
     // is the only case where the panel keeps the previous image for a moment,
     // and that is a genuinely new application rather than a returning one.
     if let Some(screen) = apps[index].screen.clone() {
-        let chrome = Chrome::with_back(apps[index].path != home);
+        let chrome = chrome_for(&screen, apps[index].path == home, status);
         render_all(
             &screen,
             &metrics_for(&screen),
-            chrome,
+            &chrome,
             &apps[index].pictures,
             surface,
             None,
@@ -1327,7 +1465,7 @@ fn stop_application(child: &mut Child) {
 /// Activation happens on release rather than on contact, so a finger that lands
 /// on the wrong control can be slid away from it without acting. That is what
 /// every touch interface the owner already uses has taught them to expect.
-fn action_for(event: TouchEvent, screen: Option<&Screen>, chrome: Chrome) -> Option<ActionId> {
+fn action_for(event: TouchEvent, screen: Option<&Screen>, chrome: &Chrome) -> Option<ActionId> {
     let TouchEvent::Up { x, y } = event else {
         return None;
     };
@@ -1456,7 +1594,7 @@ fn deliver_touch(
     stream: &mut std::os::unix::net::UnixStream,
     event: TouchEvent,
     current: Option<&Screen>,
-    chrome: Chrome,
+    chrome: &Chrome,
 ) -> Result<Tap, String> {
     let Some(action) = action_for(event, current, chrome) else {
         return Ok(Tap::Handled);
@@ -1657,6 +1795,71 @@ fn pump_application(
 
 #[cfg(test)]
 mod tests {
+    /// `TZ` is read from the environment, which is process-global, so these
+    /// are one test rather than several: two tests setting it at once would
+    /// see each other's value.
+    #[test]
+    fn the_clock_reads_the_offset_posix_spells_backwards() {
+        // POSIX inverts the sign everyone expects: EST5 is five hours *behind*
+        // UTC, not ahead. Getting this backwards puts the band ten hours out.
+        let cases = [
+            ("UTC0", 0),
+            ("EST5", -5 * 3600),
+            ("IST-5:30", 5 * 3600 + 30 * 60),
+            ("CET-1", 3600),
+            ("NZST-12:45", 12 * 3600 + 45 * 60),
+            // Nothing understood is UTC rather than a guess.
+            ("", 0),
+            ("Etc/Unknown", 0),
+        ];
+        for (tz, want) in cases {
+            std::env::set_var("TZ", tz);
+            assert_eq!(
+                super::local_offset_seconds(),
+                want,
+                "TZ={tz} was read as the wrong offset"
+            );
+        }
+        std::env::remove_var("TZ");
+        assert_eq!(
+            super::local_offset_seconds(),
+            0,
+            "a device with no TZ at all did not fall back to UTC"
+        );
+    }
+
+    #[test]
+    fn the_clock_is_two_fields_and_never_a_twenty_fifth_hour() {
+        let now = super::clock();
+        assert_eq!(now.len(), 5, "the clock was not HH:MM: {now}");
+        let (hours, minutes) = now.split_once(':').expect("a separator");
+        assert!(hours.parse::<u32>().expect("hours") < 24, "{now}");
+        assert!(minutes.parse::<u32>().expect("minutes") < 60, "{now}");
+    }
+
+    #[test]
+    fn a_book_is_drawn_without_the_band_and_everything_else_with_it() {
+        let mut status = super::StatusSource::new();
+        let reading = Screen::new(1, Vec::new()).with_reading(true);
+        assert!(
+            super::chrome_for(&reading, false, &mut status)
+                .status
+                .is_none(),
+            "a clock was put above a book"
+        );
+        let listing = Screen::new(1, Vec::new());
+        assert!(
+            super::chrome_for(&listing, false, &mut status)
+                .status
+                .is_some(),
+            "an ordinary screen lost its status band"
+        );
+        // Home has no way back, and the band is independent of that.
+        let home = super::chrome_for(&listing, true, &mut status);
+        assert!(!home.back, "the launcher was given a way out of itself");
+        assert!(home.status.is_some(), "the launcher lost its status band");
+    }
+
     use super::*;
 
     fn hello() -> Screen {
@@ -1727,14 +1930,14 @@ mod tests {
     #[test]
     fn the_runtime_draws_a_way_back_only_for_a_launched_application() {
         let home = PathBuf::from("/tmp/kobo-launcher");
-        assert!(!Chrome::with_back(*home.as_path() != *home.as_path()).back);
-        assert!(Chrome::with_back(Path::new("/tmp/kobo-hello") != home).back);
+        assert!(!&Chrome::with_back(*home.as_path() != *home.as_path()).back);
+        assert!(&Chrome::with_back(Path::new("/tmp/kobo-hello") != home).back);
     }
 
     #[test]
     fn an_application_that_forgot_a_top_bar_still_gets_a_way_back() {
         let bare = Screen::new(1, Vec::new());
-        let fixed = kobo_ui::ensure_way_back(bare, Chrome::with_back(true), "Hello");
+        let fixed = kobo_ui::ensure_way_back(bare, &Chrome::with_back(true), "Hello");
         assert_eq!(
             fixed.top_bar.as_ref().map(|bar| bar.title.as_str()),
             Some("Hello")
@@ -1742,7 +1945,7 @@ mod tests {
         // The launcher itself is not given one it did not ask for.
         assert!(kobo_ui::ensure_way_back(
             Screen::new(1, Vec::new()),
-            Chrome::default(),
+            &Chrome::default(),
             "Launcher"
         )
         .top_bar
@@ -1754,7 +1957,7 @@ mod tests {
         let screen = hello();
         let chrome = Chrome::with_back(true);
         let back = screen
-            .layout_with(&display_metrics_from_env(), chrome)
+            .layout_with(&display_metrics_from_env(), &chrome)
             .nodes
             .iter()
             .find(|node| node.kind == kobo_ui::LayoutKind::Back)
@@ -1766,7 +1969,7 @@ mod tests {
                 y: u32::try_from(back.y + back.height / 2).expect("inside the panel"),
             },
             Some(&screen),
-            chrome,
+            &chrome,
         );
         assert_eq!(hit, Some(ActionId::BACK));
         // Laid out without the affordance, the same tap must not invent one.
@@ -1777,7 +1980,7 @@ mod tests {
                     y: u32::try_from(back.y + back.height / 2).expect("inside the panel"),
                 },
                 Some(&screen),
-                Chrome::default(),
+                &Chrome::default(),
             ),
             Some(ActionId::BACK)
         );
@@ -1793,7 +1996,7 @@ mod tests {
         let chrome = Chrome::with_back(true);
         let screen = hello();
         let back = screen
-            .layout_with(&display_metrics_from_env(), chrome)
+            .layout_with(&display_metrics_from_env(), &chrome)
             .nodes
             .iter()
             .find(|node| node.kind == kobo_ui::LayoutKind::Back)
@@ -1807,14 +2010,14 @@ mod tests {
         let (mut runtime, mut app) =
             std::os::unix::net::UnixStream::pair().expect("a pair of sockets");
         assert_eq!(
-            deliver_touch(&mut runtime, tap, Some(&screen), chrome).expect("route the tap"),
+            deliver_touch(&mut runtime, tap, Some(&screen), &chrome).expect("route the tap"),
             Tap::Leave,
             "a screen that did not ask keeps the old behaviour"
         );
 
         let owning = screen.clone().with_own_back(true);
         assert_eq!(
-            deliver_touch(&mut runtime, tap, Some(&owning), chrome).expect("route the tap"),
+            deliver_touch(&mut runtime, tap, Some(&owning), &chrome).expect("route the tap"),
             Tap::OfferedBack
         );
         let frame = kobo_protocol::read_from(&mut app).expect("the application is told");

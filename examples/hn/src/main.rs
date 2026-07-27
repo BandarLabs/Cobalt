@@ -944,7 +944,7 @@ mod tests {
 
     fn tab_rects(screen: &kobo_sdk::Screen) -> Vec<Rect> {
         screen
-            .layout_with(&CLARA_BW_METRICS, Chrome::default())
+            .layout_with(&CLARA_BW_METRICS, &Chrome::default())
             .nodes
             .iter()
             .filter(|node| {
@@ -1114,7 +1114,7 @@ mod tests {
             showing.pages.clone_from(&application.pages);
             let layout = showing
                 .list()
-                .layout_with(&CLARA_BW_METRICS, Chrome::default());
+                .layout_with(&CLARA_BW_METRICS, &Chrome::default());
             let drawn = layout
                 .nodes
                 .iter()
@@ -1168,7 +1168,7 @@ mod tests {
         showing.pages.clone_from(&application.pages);
         let layout = showing
             .list()
-            .layout_with(&CLARA_BW_METRICS, Chrome::default());
+            .layout_with(&CLARA_BW_METRICS, &Chrome::default());
         let lines = layout
             .nodes
             .iter()
@@ -1231,7 +1231,7 @@ mod tests {
             showing.thread_pages.clone_from(&application.thread_pages);
             let layout = showing
                 .thread()
-                .layout_with(&CLARA_BW_METRICS, Chrome::default());
+                .layout_with(&CLARA_BW_METRICS, &Chrome::default());
             for node in &layout.nodes {
                 if let LayoutKind::Quote(depth, _) = node.kind {
                     lefts.push((depth, node.rect.x, node.rect.width));
@@ -1283,7 +1283,7 @@ mod tests {
             showing.thread_pages.clone_from(&application.thread_pages);
             let layout = showing
                 .thread()
-                .layout_with(&CLARA_BW_METRICS, Chrome::default());
+                .layout_with(&CLARA_BW_METRICS, &Chrome::default());
             let drawn = layout
                 .nodes
                 .iter()
@@ -1309,7 +1309,7 @@ mod tests {
         let layout = runner
             .app()
             .thread()
-            .layout_with(&CLARA_BW_METRICS, Chrome::default());
+            .layout_with(&CLARA_BW_METRICS, &Chrome::default());
         let controls = layout
             .nodes
             .iter()
