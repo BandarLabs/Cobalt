@@ -11,6 +11,7 @@ pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     framebuffer_id: "hwtcon",
     width: 1072,
     height: 1448,
+    pixels_per_inch: 300,
     virtual_width: 1072,
     virtual_height: 1448,
     x_offset: 0,
@@ -162,6 +163,7 @@ pub struct DeviceProfile {
     pub framebuffer_id: &'static str,
     pub width: u32,
     pub height: u32,
+    pub pixels_per_inch: u16,
     pub virtual_width: u32,
     pub virtual_height: u32,
     pub x_offset: u32,
@@ -314,6 +316,27 @@ impl DeviceProfile {
         let x = self.touch_y_max - raw_y;
         let y = raw_x;
         Some((u32::try_from(x).ok()?, u32::try_from(y).ok()?))
+    }
+
+    /// Converts a visible display coordinate back to the touch controller's
+    /// rotated coordinate space.
+    ///
+    /// The browser simulator deliberately takes this round trip before hit
+    /// testing, so the same measured transform that gates the device is also
+    /// exercised during ordinary application development.
+    #[must_use]
+    pub fn display_to_touch(&self, x: u32, y: u32) -> Option<(i32, i32)> {
+        if x >= self.width || y >= self.height {
+            return None;
+        }
+        let raw_x = i32::try_from(y).ok()?;
+        let raw_y = self.touch_y_max.checked_sub(i32::try_from(x).ok()?)?;
+        if !(self.touch_x_min..=self.touch_x_max).contains(&raw_x)
+            || !(self.touch_y_min..=self.touch_y_max).contains(&raw_y)
+        {
+            return None;
+        }
+        Some((raw_x, raw_y))
     }
 }
 
@@ -514,6 +537,18 @@ mod tests {
         assert_eq!(CLARA_BW_391.touch_to_display(1447, 1071), Some((0, 1447)));
         assert_eq!(CLARA_BW_391.touch_to_display(1447, 0), Some((1071, 1447)));
         assert_eq!(CLARA_BW_391.touch_to_display(1448, 0), None);
+    }
+
+    #[test]
+    fn display_and_touch_coordinates_round_trip_at_edges_and_inside() {
+        for display in [(0, 0), (1071, 0), (0, 1447), (1071, 1447), (109, 110)] {
+            let raw = CLARA_BW_391
+                .display_to_touch(display.0, display.1)
+                .expect("display point maps to controller");
+            assert_eq!(CLARA_BW_391.touch_to_display(raw.0, raw.1), Some(display));
+        }
+        assert_eq!(CLARA_BW_391.display_to_touch(1072, 0), None);
+        assert_eq!(CLARA_BW_391.display_to_touch(0, 1448), None);
     }
 
     /// Captured from a physical touch on the real Clara BW with

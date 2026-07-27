@@ -44,7 +44,8 @@ use kobo_policy::{Backends, Capability, Declared, DeviceServices, PowerPolicy, T
 use kobo_profile::{DeviceProfile, CLARA_BW_391};
 use kobo_protocol::{Frame, Lifecycle, Message, TaskError, TaskOutcome};
 use kobo_ui::{
-    display_metrics_from_env, render_all, ActionId, Chrome, PictureCache, Screen, Surface,
+    display_metrics_from_env, render_all, ActionId, Chrome, FramePlanner, PanelWaveform,
+    PictureCache, Screen, Surface,
 };
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -467,7 +468,7 @@ fn host_applications(
     let mut apps: Vec<Hosted> = Vec::new();
     let mut next_id = 1_u64;
     let mut surface = Surface::new(whole_screen.width as usize, whole_screen.height as usize);
-    let mut panel = Painter::new(surface.pixels.len());
+    let mut panel = Painter::new(surface.width, surface.height);
     // Not `simulated()`. On the real panel that answered every battery read
     // with the same invented 72 percent, which is worse than refusing: an
     // application cannot tell an invented number from a measured one, so it
@@ -1306,69 +1307,14 @@ fn describe_outcome(outcome: &TaskOutcome) -> String {
 /// So the waveform is chosen from the pixels themselves rather than from how
 /// important the caller believes the frame to be.
 struct Painter {
-    /// The last frame written, for working out what actually changed.
-    previous: Vec<u8>,
-    /// Frames drawn since the last de-ghosting pass.
-    since_flash: u32,
-    started: bool,
+    frames: FramePlanner,
 }
 
-/// Non-flashing updates leave a faint residue that accumulates. Clearing it
-/// costs one full update, so it is worth doing regularly and not constantly.
-const FLASH_INTERVAL: u32 = 8;
-
 impl Painter {
-    fn new(pixels: usize) -> Self {
+    fn new(width: usize, height: usize) -> Self {
         Self {
-            previous: vec![0; pixels],
-            since_flash: 0,
-            started: false,
+            frames: FramePlanner::new(width, height),
         }
-    }
-
-    /// The smallest rectangle covering every pixel that changed.
-    ///
-    /// Refreshing only this is both faster and cleaner, because the panel is
-    /// only disturbed where the screen actually differs.
-    fn changed(&self, surface: &Surface, whole_screen: Rect) -> Option<Rect> {
-        let width = usize::try_from(whole_screen.width).ok()?;
-        let (mut left, mut right) = (usize::MAX, 0usize);
-        let (mut top, mut bottom) = (usize::MAX, 0usize);
-        for (index, _) in surface
-            .pixels
-            .iter()
-            .zip(self.previous.iter())
-            .enumerate()
-            .filter(|(_, (current, previous))| current != previous)
-        {
-            let (x, y) = (index % width, index / width);
-            left = left.min(x);
-            right = right.max(x);
-            top = top.min(y);
-            bottom = bottom.max(y);
-        }
-        if left > right {
-            return None;
-        }
-        Some(Rect {
-            x: u32::try_from(left).ok()?,
-            y: u32::try_from(top).ok()?,
-            width: u32::try_from(right - left + 1).ok()?,
-            height: u32::try_from(bottom - top + 1).ok()?,
-        })
-    }
-
-    /// Whether a region holds any tone the two-level waveform cannot show.
-    fn has_grey(surface: &Surface, region: Rect, whole_screen: Rect) -> bool {
-        let width = whole_screen.width as usize;
-        (region.y..region.y.saturating_add(region.height))
-            .flat_map(|y| {
-                let row = (y as usize).saturating_mul(width);
-                let start = row.saturating_add(region.x as usize);
-                let end = start.saturating_add(region.width as usize);
-                surface.pixels.get(start..end).unwrap_or(&[])
-            })
-            .any(|tone| *tone != 0 && *tone != 255)
     }
 
     fn paint(
@@ -1377,23 +1323,21 @@ impl Painter {
         whole_screen: Rect,
         surface: &Surface,
     ) -> Result<(), String> {
-        // The first frame replaces the reader's own screen, so it is always a
-        // full clean update; anything less leaves the reader showing through.
-        let (region, intent) = if self.started {
-            let Some(region) = self.changed(surface, whole_screen) else {
-                // Nothing moved. Refreshing anyway costs a visible flicker and
-                // some battery to show exactly the same picture.
-                return Ok(());
-            };
-            if self.since_flash >= FLASH_INTERVAL {
-                (whole_screen, RefreshIntent::QualityContent)
-            } else if Self::has_grey(surface, region, whole_screen) {
-                (region, RefreshIntent::TextContent)
-            } else {
-                (region, RefreshIntent::FastFeedback)
-            }
-        } else {
-            (whole_screen, RefreshIntent::QualityContent)
+        let Some(transition) = self.frames.plan(surface) else {
+            // Nothing moved. Refreshing anyway costs a visible flicker and
+            // some battery to show exactly the same picture.
+            return Ok(());
+        };
+        let region = Rect {
+            x: u32::try_from(transition.region.x).unwrap_or(0),
+            y: u32::try_from(transition.region.y).unwrap_or(0),
+            width: u32::try_from(transition.region.width).unwrap_or(0),
+            height: u32::try_from(transition.region.height).unwrap_or(0),
+        };
+        let intent = match transition.waveform {
+            PanelWaveform::Du => RefreshIntent::FastFeedback,
+            PanelWaveform::Gl16 => RefreshIntent::TextContent,
+            PanelWaveform::Gc16 => RefreshIntent::QualityContent,
         };
 
         let frame =
@@ -1405,7 +1349,7 @@ impl Painter {
         let plan = RefreshPlan::new(
             region,
             intent,
-            intent == RefreshIntent::QualityContent,
+            transition.full,
             whole_screen.width,
             whole_screen.height,
         )
@@ -1414,14 +1358,9 @@ impl Painter {
             .refresh(plan)
             .map_err(|error| format!("show the frame: {error}"))?;
 
-        if intent == RefreshIntent::QualityContent {
-            self.since_flash = 0;
-        } else {
-            self.since_flash = self.since_flash.saturating_add(1);
+        if !self.frames.commit(surface, transition) {
+            return Err("the frame planner rejected a completed refresh".to_owned());
         }
-        self.previous.clear();
-        self.previous.extend_from_slice(&surface.pixels);
-        self.started = true;
         Ok(())
     }
 }
@@ -1688,68 +1627,6 @@ mod tests {
     #[test]
     fn a_name_is_bounded_in_length() {
         assert!(resolve(&catalogue(), &"a".repeat(33)).is_err());
-    }
-
-    fn surface(width: usize, height: usize, fill: u8) -> Surface {
-        let mut surface = Surface::new(width, height);
-        surface.clear(fill);
-        surface
-    }
-
-    const SCREEN: Rect = Rect {
-        x: 0,
-        y: 0,
-        width: 8,
-        height: 4,
-    };
-
-    #[test]
-    fn an_unchanged_screen_needs_no_refresh() {
-        // Refreshing an identical picture costs a visible flicker and battery.
-        let mut painter = Painter::new(32);
-        let frame = surface(8, 4, 255);
-        painter.previous.copy_from_slice(&frame.pixels);
-        assert!(painter.changed(&frame, SCREEN).is_none());
-    }
-
-    #[test]
-    fn only_the_changed_rectangle_is_reported() {
-        let painter = Painter::new(32);
-        let mut frame = surface(8, 4, 0);
-        // `previous` starts black, so painting one pixel white is the change.
-        frame.pixels[2 * 8 + 3] = 255;
-        assert_eq!(
-            painter.changed(&frame, SCREEN),
-            Some(Rect {
-                x: 3,
-                y: 2,
-                width: 1,
-                height: 1
-            })
-        );
-    }
-
-    #[test]
-    fn grey_is_detected_so_the_two_level_waveform_is_avoided() {
-        // This is the defect that made real type look dirty: a two-level
-        // waveform cannot show an antialiased edge at all.
-        let mut frame = surface(8, 4, 255);
-        assert!(!Painter::has_grey(&frame, SCREEN, SCREEN));
-        frame.pixels[9] = 96;
-        assert!(Painter::has_grey(&frame, SCREEN, SCREEN));
-    }
-
-    #[test]
-    fn grey_outside_the_changed_region_does_not_force_a_slower_waveform() {
-        let mut frame = surface(8, 4, 255);
-        frame.pixels[3 * 8 + 7] = 128;
-        let top_left = Rect {
-            x: 0,
-            y: 0,
-            width: 2,
-            height: 2,
-        };
-        assert!(!Painter::has_grey(&frame, top_left, SCREEN));
     }
 }
 

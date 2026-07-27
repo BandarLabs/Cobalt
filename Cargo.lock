@@ -637,6 +637,7 @@ version = "0.1.0"
 dependencies = [
  "kobo-net",
  "kobo-policy",
+ "kobo-profile",
  "kobo-protocol",
  "kobo-shell",
  "kobo-text",

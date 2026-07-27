@@ -3428,6 +3428,191 @@ impl Surface {
     }
 }
 
+/// Non-flashing updates permitted before the panel gets a cleaning refresh.
+pub const PANEL_CLEAN_INTERVAL: u32 = 8;
+
+/// The physical update strategy selected from a frame's changed pixels.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PanelWaveform {
+    /// Fast, two-level feedback for changes containing only black and white.
+    Du,
+    /// Sixteen-level partial refresh for text and images containing grey.
+    Gl16,
+    /// Full sixteen-level refresh that clears accumulated residue.
+    Gc16,
+}
+
+impl PanelWaveform {
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Du => "DU",
+            Self::Gl16 => "GL16",
+            Self::Gc16 => "GC16",
+        }
+    }
+}
+
+/// One refresh the runtime will ask the panel controller to perform.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FrameTransition {
+    pub region: Rect,
+    pub waveform: PanelWaveform,
+    pub full: bool,
+    /// One-based number of the refresh in this session.
+    pub refresh: u64,
+    /// Partial refreshes that will have accumulated after this transition.
+    pub partials_since_clean: u32,
+}
+
+/// Shared state machine for choosing Kobo panel transitions.
+///
+/// The device runtime and simulator both use this exact planner. Physics such
+/// as visible residue remains a simulator approximation, but the changed
+/// rectangle, waveform and cleaning cadence cannot drift from the device.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FramePlanner {
+    width: usize,
+    height: usize,
+    previous: Vec<u8>,
+    partials_since_clean: u32,
+    refreshes: u64,
+    started: bool,
+}
+
+impl FramePlanner {
+    #[must_use]
+    pub fn new(width: usize, height: usize) -> Self {
+        Self {
+            width,
+            height,
+            previous: vec![tone::INK; width.saturating_mul(height)],
+            partials_since_clean: 0,
+            refreshes: 0,
+            started: false,
+        }
+    }
+
+    /// Plans the next update without changing planner state.
+    ///
+    /// Returning `None` means the surface is the wrong size or no pixel has
+    /// changed. Call [`Self::commit`] only after the update succeeds.
+    #[must_use]
+    pub fn plan(&self, surface: &Surface) -> Option<FrameTransition> {
+        if surface.width != self.width
+            || surface.height != self.height
+            || surface.pixels.len() != self.previous.len()
+        {
+            return None;
+        }
+        let whole = Rect {
+            x: 0,
+            y: 0,
+            width: i32::try_from(self.width).ok()?,
+            height: i32::try_from(self.height).ok()?,
+        };
+        let (region, waveform) = if self.started {
+            let changed = self.changed(surface)?;
+            if self.partials_since_clean >= PANEL_CLEAN_INTERVAL {
+                (whole, PanelWaveform::Gc16)
+            } else if Self::has_grey(surface, changed) {
+                (changed, PanelWaveform::Gl16)
+            } else {
+                (changed, PanelWaveform::Du)
+            }
+        } else {
+            (whole, PanelWaveform::Gc16)
+        };
+        let full = waveform == PanelWaveform::Gc16;
+        Some(FrameTransition {
+            region,
+            waveform,
+            full,
+            refresh: self.refreshes.saturating_add(1),
+            partials_since_clean: if full {
+                0
+            } else {
+                self.partials_since_clean.saturating_add(1)
+            },
+        })
+    }
+
+    /// Records a successfully applied transition.
+    pub fn commit(&mut self, surface: &Surface, transition: FrameTransition) -> bool {
+        if surface.width != self.width
+            || surface.height != self.height
+            || surface.pixels.len() != self.previous.len()
+            || transition.refresh != self.refreshes.saturating_add(1)
+        {
+            return false;
+        }
+        self.previous.copy_from_slice(&surface.pixels);
+        self.partials_since_clean = transition.partials_since_clean;
+        self.refreshes = transition.refresh;
+        self.started = true;
+        true
+    }
+
+    #[must_use]
+    pub const fn refreshes(&self) -> u64 {
+        self.refreshes
+    }
+
+    #[must_use]
+    pub const fn partials_since_clean(&self) -> u32 {
+        self.partials_since_clean
+    }
+
+    fn changed(&self, surface: &Surface) -> Option<Rect> {
+        let (mut left, mut right) = (usize::MAX, 0usize);
+        let (mut top, mut bottom) = (usize::MAX, 0usize);
+        for (index, _) in surface
+            .pixels
+            .iter()
+            .zip(self.previous.iter())
+            .enumerate()
+            .filter(|(_, (current, previous))| current != previous)
+        {
+            let (x, y) = (index % self.width, index / self.width);
+            left = left.min(x);
+            right = right.max(x);
+            top = top.min(y);
+            bottom = bottom.max(y);
+        }
+        (left <= right).then(|| Rect {
+            x: i32::try_from(left).unwrap_or(i32::MAX),
+            y: i32::try_from(top).unwrap_or(i32::MAX),
+            width: i32::try_from(right - left + 1).unwrap_or(i32::MAX),
+            height: i32::try_from(bottom - top + 1).unwrap_or(i32::MAX),
+        })
+    }
+
+    fn has_grey(surface: &Surface, region: Rect) -> bool {
+        let Ok(left) = usize::try_from(region.x) else {
+            return false;
+        };
+        let Ok(top) = usize::try_from(region.y) else {
+            return false;
+        };
+        let Ok(width) = usize::try_from(region.width) else {
+            return false;
+        };
+        let Ok(height) = usize::try_from(region.height) else {
+            return false;
+        };
+        (top..top.saturating_add(height)).any(|y| {
+            let start = y.saturating_mul(surface.width).saturating_add(left);
+            let end = start.saturating_add(width);
+            surface
+                .pixels
+                .get(start..end)
+                .unwrap_or(&[])
+                .iter()
+                .any(|tone| *tone != tone::INK && *tone != tone::PAPER)
+        })
+    }
+}
+
 /// Eight-bit grey pixels, row major, `width * height` of them.
 #[derive(Clone, Copy, Debug)]
 pub struct PicturePixels<'a> {
@@ -5393,6 +5578,63 @@ mod tests {
             tone::SURFACE,
             "the border ran past the rule thickness into the card itself"
         );
+    }
+
+    #[test]
+    fn frame_planner_matches_the_panel_waveform_rules() {
+        let mut planner = FramePlanner::new(8, 4);
+        let mut frame = Surface::new(8, 4);
+        let first = planner.plan(&frame).expect("first frame refreshes");
+        assert_eq!(first.waveform, PanelWaveform::Gc16);
+        assert!(first.full);
+        assert!(planner.commit(&frame, first));
+        assert!(planner.plan(&frame).is_none(), "unchanged frame refreshes");
+
+        frame.pixels[2 * 8 + 3] = tone::INK;
+        let black_and_white = planner.plan(&frame).expect("one changed pixel");
+        assert_eq!(black_and_white.waveform, PanelWaveform::Du);
+        assert_eq!(
+            black_and_white.region,
+            Rect {
+                x: 3,
+                y: 2,
+                width: 1,
+                height: 1,
+            }
+        );
+        assert!(planner.commit(&frame, black_and_white));
+
+        frame.pixels[2 * 8 + 3] = tone::MUTED;
+        let grey = planner.plan(&frame).expect("grey changed");
+        assert_eq!(grey.waveform, PanelWaveform::Gl16);
+        assert!(planner.commit(&frame, grey));
+
+        frame.pixels[0] = tone::INK;
+        let grey_outside_change = planner.plan(&frame).expect("black pixel changed");
+        assert_eq!(grey_outside_change.waveform, PanelWaveform::Du);
+    }
+
+    #[test]
+    fn frame_planner_cleans_after_eight_partial_updates() {
+        let mut planner = FramePlanner::new(2, 1);
+        let mut frame = Surface::new(2, 1);
+        let first = planner.plan(&frame).expect("first");
+        assert!(planner.commit(&frame, first));
+        for index in 0..PANEL_CLEAN_INTERVAL {
+            frame.pixels[0] = if index % 2 == 0 {
+                tone::INK
+            } else {
+                tone::PAPER
+            };
+            let partial = planner.plan(&frame).expect("partial");
+            assert!(!partial.full);
+            assert!(planner.commit(&frame, partial));
+        }
+        frame.pixels[1] = tone::INK;
+        let cleaning = planner.plan(&frame).expect("cleaning refresh");
+        assert_eq!(cleaning.waveform, PanelWaveform::Gc16);
+        assert!(cleaning.full);
+        assert_eq!(cleaning.region.width, 2);
     }
 
     #[test]
