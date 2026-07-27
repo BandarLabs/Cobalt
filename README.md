@@ -82,6 +82,10 @@ layout engine, the same policy and the same typeface as the device, so a screen
 that fits in the browser fits on the panel. Network requests and terminals are
 real; `KOBO_SIM_OFFLINE=1` makes every network task fail, so error handling is
 something a developer runs on purpose rather than the only thing they can run.
+Its side panel also reports layout, text, touch-target and picture diagnostics,
+with optional outlines over the exact failing rectangles. Run with
+`KOBO_TEXT_SCALE=large` or `KOBO_TEXT_SCALE=extra-large` to verify the 120% and
+140% accessibility settings with the same metrics used for pagination.
 
 Create and run a new application:
 
