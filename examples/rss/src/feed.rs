@@ -862,4 +862,34 @@ mod tests {
         let feed = parse(b"<rss><channel><title>T</title><item></item></channel></rss>");
         assert_eq!(feed.expect("a feed").items.len(), 0);
     }
+
+    #[test]
+    fn an_entry_that_is_only_a_picture_still_reads_as_something() {
+        // The shape a comic feed sends: one escaped <img> in the summary and
+        // no prose at all. Stripping the tag left the article blank, which on
+        // the panel is indistinguishable from a download that failed.
+        let atom = br#"<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"><title>A comic</title>
+<link href="https://example.com/" rel="alternate"></link>
+<entry><title>Forth</title>
+<link href="https://example.com/1/" rel="alternate"></link>
+<updated>2026-07-27T00:00:00Z</updated>
+<summary type="html">&lt;img src="https://example.com/1.png" alt="NOTATION POLISH REVERSE" /&gt;</summary>
+</entry></feed>"#;
+        let feed = parse(atom).expect("an Atom feed");
+        assert_eq!(feed.title, "A comic");
+        let item = &feed.items[0];
+        assert_eq!(item.title, "Forth");
+        assert_eq!(item.body, "[NOTATION POLISH REVERSE]");
+    }
+
+    #[test]
+    fn a_decorative_image_does_not_become_an_empty_pair_of_brackets() {
+        let atom = br#"<feed xmlns="http://www.w3.org/2005/Atom"><title>T</title>
+<entry><title>E</title><link href="https://example.com/1/" rel="alternate"></link>
+<summary type="html">&lt;img src="px.gif" alt="" /&gt;Real words.</summary>
+</entry></feed>"#;
+        let feed = parse(atom).expect("an Atom feed");
+        assert_eq!(feed.items[0].body, "Real words.");
+    }
 }

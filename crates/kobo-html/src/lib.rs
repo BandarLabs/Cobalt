@@ -69,9 +69,10 @@ const NAMED: [(&str, &str); 12] = [
 /// Converts one HTML fragment into plain text with blank lines between
 /// paragraphs.
 ///
-/// `<p>` becomes a paragraph break, every other tag is removed, and entities
-/// are decoded. The result is what [`kobo_sdk::Context::paginate`] expects:
-/// paragraphs separated by a blank line, with no markup left in them.
+/// `<p>` becomes a paragraph break, an `<img>` becomes its bracketed `alt`
+/// text, every other tag is removed, and entities are decoded. The result is
+/// what [`kobo_sdk::Context::paginate`] expects: paragraphs separated by a
+/// blank line, with no markup left in them.
 #[must_use]
 pub fn to_text(html: &str) -> String {
     // Never larger than the input, and never larger than the ceiling. Both
@@ -151,10 +152,89 @@ fn take_tag<'a>(out: &mut String, tail: &'a str) -> &'a str {
     if breaks_paragraph(&name) {
         push_break(out);
     }
+    if name == "img" && !inside.starts_with('/') {
+        if let Some(alternative) = attribute(inside, "alt") {
+            push_alternative(out, alternative);
+        }
+    }
     if OPAQUE.contains(&name.as_str()) && !inside.starts_with('/') {
         return skip_element(after, &name);
     }
     after
+}
+
+/// Writes an image's alternative text in place of the image.
+///
+/// The panel cannot show the picture, so the text written to stand in for it
+/// is the whole of what that element says. A feed of comics is the clearest
+/// case: every entry is one `<img>` and nothing else, so dropping the tag
+/// silently produced an article that was entirely blank and looked like a
+/// failed download rather than a picture.
+///
+/// Bracketed, and on its own, because it is not the author's prose and reading
+/// it as though it were is worse than not showing it. An empty `alt` is the
+/// spelling for an image that carries no meaning — a spacer or a tracking
+/// pixel — and is honoured by writing nothing at all.
+fn push_alternative(out: &mut String, value: &str) {
+    let mut decoded = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(at) = rest.find('&') {
+        push_text(&mut decoded, &rest[..at]);
+        rest = take_entity(&mut decoded, &rest[at..]);
+    }
+    push_text(&mut decoded, rest);
+    let decoded = decoded.trim();
+    if decoded.is_empty() || out.len() + decoded.len() + 2 > MAX_TEXT {
+        return;
+    }
+    push_break(out);
+    out.push('[');
+    push_text(out, decoded);
+    out.push(']');
+    push_break(out);
+}
+
+/// The value of `wanted` in a tag body, however it happens to be quoted.
+///
+/// Matches on a whole attribute name rather than a substring, so `data-alt`
+/// and `salt` are not read as `alt`. An unquoted value runs to the next space,
+/// which is what a browser does with one.
+fn attribute<'a>(inside: &'a str, wanted: &str) -> Option<&'a str> {
+    // Lower-casing ASCII does not change any byte's length and leaves every
+    // other byte alone, so offsets found here are offsets into `inside` too.
+    let lower = inside.to_ascii_lowercase();
+    let mut from = 0;
+    while let Some(offset) = lower.get(from..)?.find(wanted) {
+        let start = from + offset;
+        let named = start == 0
+            || lower[..start].ends_with(|character: char| {
+                character.is_whitespace() || character == '/' || character == '"'
+            });
+        let after = inside.get(start + wanted.len()..)?.trim_start();
+        if named {
+            if let Some(assigned) = after.strip_prefix('=') {
+                return Some(quoted(assigned.trim_start()));
+            }
+        }
+        from = start + wanted.len();
+    }
+    None
+}
+
+/// The body of a quoted attribute value, or the word an unquoted one is.
+///
+/// A quote that never closes takes the rest of the tag, which is the reading
+/// that keeps the most of what was written.
+fn quoted(value: &str) -> &str {
+    let Some(quote) = value.chars().next().filter(|c| *c == '"' || *c == '\'') else {
+        let end = value.find(char::is_whitespace).unwrap_or(value.len());
+        return &value[..end];
+    };
+    let body = &value[quote.len_utf8()..];
+    match body.find(quote) {
+        Some(end) => &body[..end],
+        None => body,
+    }
 }
 
 /// The lower-case element name inside a tag body, without its attributes.
@@ -444,5 +524,79 @@ mod tests {
         assert_eq!(to_text("a  <p>  b"), "a\n\nb");
         assert_eq!(to_text(""), "");
         assert_eq!(to_text("   "), "");
+    }
+
+    #[test]
+    fn a_picture_is_replaced_by_what_it_was_written_to_say() {
+        // The xkcd feed is the case this was found on: every entry is one
+        // image and nothing else, so without this an article is blank.
+        assert_eq!(
+            to_text(r#"<img src="c.png" title="hover" alt="I NOTATION POLISH REVERSE" />"#),
+            "[I NOTATION POLISH REVERSE]"
+        );
+    }
+
+    #[test]
+    fn an_image_that_says_nothing_writes_nothing() {
+        // An empty alt is the spelling for a spacer or a tracking pixel.
+        // Not even a paragraph break: an image that says nothing is not
+        // there at all, so the sentence around it closes back up.
+        assert_eq!(
+            to_text(r#"before <img src="px.gif" alt=""> after"#),
+            "before  after"
+        );
+        assert_eq!(
+            to_text(r#"before <img src="px.gif"> after"#),
+            "before  after"
+        );
+    }
+
+    #[test]
+    fn alternative_text_stands_apart_from_the_prose_around_it() {
+        assert_eq!(
+            to_text(r#"<p>Look at this.<img alt="a cat, asleep">And this."#),
+            "Look at this.\n\n[a cat, asleep]\n\nAnd this."
+        );
+    }
+
+    #[test]
+    fn entities_inside_alternative_text_are_decoded_like_any_other() {
+        assert_eq!(
+            to_text(r#"<img alt="Ben &amp; Jerry&#39;s">"#),
+            "[Ben & Jerry's]"
+        );
+    }
+
+    #[test]
+    fn an_attribute_is_matched_whole_and_not_as_a_substring() {
+        assert_eq!(to_text(r#"<img data-alt="tracking" src="x.png">"#), "");
+        assert_eq!(to_text(r#"<img salt="no" src="x.png">"#), "");
+        assert_eq!(to_text(r#"<img data-alt="no" alt="yes">"#), "[yes]");
+    }
+
+    #[test]
+    fn every_way_an_attribute_can_be_quoted_is_read() {
+        assert_eq!(to_text("<img alt='single'>"), "[single]");
+        assert_eq!(to_text("<img alt=bare src=x.png>"), "[bare]");
+        assert_eq!(
+            to_text(r#"<img ALT = "spaced and shouted">"#),
+            "[spaced and shouted]"
+        );
+        // A quote that never closes takes the rest of the tag rather than
+        // discarding the words, which is the reading that loses least.
+        assert_eq!(to_text(r#"<img alt="never closed>"#), "[never closed]");
+    }
+
+    #[test]
+    fn alternative_text_cannot_push_the_output_past_its_ceiling() {
+        let long = "x".repeat(MAX_TEXT - 4);
+        let html = format!("{long}<img alt=\"{}\">", "y".repeat(64));
+        let text = to_text(&html);
+        assert!(text.len() <= MAX_TEXT + 4, "{}", text.len());
+    }
+
+    #[test]
+    fn a_closing_image_tag_is_not_a_second_picture() {
+        assert_eq!(to_text(r#"<img alt="one"></img>"#), "[one]");
     }
 }
