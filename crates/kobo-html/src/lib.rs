@@ -48,10 +48,16 @@ const OPAQUE: [&str; 2] = ["script", "style"];
 
 /// The named entities that appear in practice, with their replacements.
 ///
-/// Deliberately short. The full HTML5 table is two thousand entries; Hacker
-/// News uses six of them, and an unknown name is left alone rather than
-/// guessed at, so a name missing from here is displayed rather than lost.
-const NAMED: [(&str, &str); 12] = [
+/// Deliberately short. The full HTML5 table is two thousand entries; what is
+/// here is what typeset prose and the two feeds actually use, and an unknown
+/// name is left alone rather than guessed at, so a name missing from here is
+/// displayed rather than lost.
+///
+/// Matching is case-insensitive, which HTML's own table is not. That is a
+/// simplification, and the cost of it is that a pair differing only in case —
+/// `dagger` and `Dagger`, `prime` and `Prime` — cannot both live here. Only
+/// names with no such twin are listed.
+const NAMED: [(&str, &str); 34] = [
     ("amp", "&"),
     ("lt", "<"),
     ("gt", ">"),
@@ -64,6 +70,34 @@ const NAMED: [(&str, &str); 12] = [
     ("lsquo", "\u{2018}"),
     ("rsquo", "\u{2019}"),
     ("ldquo", "\u{201c}"),
+    // Typeset prose closes the quotation it opened. `ldquo` without `rdquo`
+    // meant every closing curly quotation mark in a book was drawn as
+    // `&rdquo;`.
+    ("rdquo", "\u{201d}"),
+    ("sbquo", "\u{201a}"),
+    ("bdquo", "\u{201e}"),
+    ("laquo", "\u{ab}"),
+    ("raquo", "\u{bb}"),
+    ("lsaquo", "\u{2039}"),
+    ("rsaquo", "\u{203a}"),
+    ("bull", "\u{2022}"),
+    ("middot", "\u{b7}"),
+    ("deg", "\u{b0}"),
+    ("copy", "\u{a9}"),
+    ("reg", "\u{ae}"),
+    ("trade", "\u{2122}"),
+    ("sect", "\u{a7}"),
+    ("para", "\u{b6}"),
+    ("pound", "\u{a3}"),
+    ("euro", "\u{20ac}"),
+    ("times", "\u{d7}"),
+    ("frac12", "\u{bd}"),
+    // A soft hyphen is a permission to break, not a hyphen. The line breaker
+    // does its own breaking, so the permission has nothing to say and drawing
+    // it would put a hyphen in the middle of an unbroken word.
+    ("shy", ""),
+    ("ensp", " "),
+    ("emsp", " "),
 ];
 
 /// Converts one HTML fragment into plain text with blank lines between
@@ -110,6 +144,27 @@ pub fn to_text(html: &str) -> String {
         out.push('\u{2026}');
     }
     out.trim().to_owned()
+}
+
+/// Decodes every entity in a run of text, leaving everything else alone.
+///
+/// Separated out because the structural parsers in `kobo-doc` do their own tag
+/// scanning — they need the shape of a book, which [`to_text`] deliberately
+/// throws away — but entity decoding is the same job wherever it happens, and
+/// two tables would drift.
+#[must_use]
+pub fn decode_entities(text: &str) -> String {
+    if !text.contains('&') {
+        return text.to_owned();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find('&') {
+        out.push_str(&rest[..at]);
+        rest = take_entity(&mut out, &rest[at..]);
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Appends literal text, dropping control characters.
@@ -199,7 +254,8 @@ fn push_alternative(out: &mut String, value: &str) {
 /// Matches on a whole attribute name rather than a substring, so `data-alt`
 /// and `salt` are not read as `alt`. An unquoted value runs to the next space,
 /// which is what a browser does with one.
-fn attribute<'a>(inside: &'a str, wanted: &str) -> Option<&'a str> {
+#[must_use]
+pub fn attribute<'a>(inside: &'a str, wanted: &str) -> Option<&'a str> {
     // Lower-casing ASCII does not change any byte's length and leaves every
     // other byte alone, so offsets found here are offsets into `inside` too.
     let lower = inside.to_ascii_lowercase();
@@ -242,7 +298,8 @@ fn quoted(value: &str) -> &str {
 /// `/p` and `a href="…"` both reduce to something this can compare, and a tag
 /// body containing another `<` — which is not a tag, but is a thing a stranger
 /// can send — reduces to a name that matches nothing.
-fn element_name(inside: &str) -> String {
+#[must_use]
+pub fn element_name(inside: &str) -> String {
     inside
         .trim_start_matches('/')
         .split(|c: char| c.is_whitespace() || c == '/' || c == '<')
@@ -276,29 +333,41 @@ fn push_break(out: &mut String) {
 
 /// Skips to the end of an element whose content is not text.
 ///
+/// Searches for the close tag as literal characters rather than walking the
+/// tags in between, because the content is not markup. A `<` inside a listing
+/// or a script — `if (a < b)` — is a less-than sign, and a scanner that treats
+/// it as the start of a tag finds the `>` of the real close tag first, decides
+/// that was not the one it wanted, and carries on past it. The whole rest of
+/// the document is then inside an element that already ended.
+///
 /// Falls off the end of the input when the close tag never arrives, which is
-/// the safe direction: an unterminated `<script>` swallows the rest of the
-/// comment rather than spilling its body onto the panel.
-fn skip_element<'a>(after: &'a str, name: &str) -> &'a str {
-    let mut rest = after;
-    while let Some(at) = rest.find('<') {
-        let candidate = &rest[at..];
-        let Some(end) = candidate.find('>') else {
+/// the safe direction: an unterminated `<script>` swallows what follows rather
+/// than spilling its body onto the panel.
+#[must_use]
+pub fn skip_element<'a>(after: &'a str, name: &str) -> &'a str {
+    // Lower-casing ASCII changes no byte's length, so offsets found in the
+    // copy are offsets into `after`.
+    let lower = after.to_ascii_lowercase();
+    let close = format!("</{name}");
+    let mut from = 0;
+    while let Some(offset) = lower.get(from..).and_then(|rest| rest.find(&close)) {
+        let start = from + offset;
+        let tail = &after[start..];
+        // `</scriptx>` does not close a `<script>`. Only a name that ends
+        // where the tag ends, or where its attributes would begin, counts.
+        let ends_the_name = tail[close.len()..]
+            .starts_with(|character: char| character == '>' || character.is_whitespace());
+        if ends_the_name {
+            if let Some(end) = tail.find('>') {
+                return &tail[end + 1..];
+            }
             return "";
-        };
-        if candidate[1..].starts_with('/') && element_name(&candidate[1..end]) == name {
-            return &candidate[end + 1..];
         }
-        rest = &candidate[end + 1..];
+        from = start + close.len();
     }
     ""
 }
 
-/// Consumes one entity from the front of `tail`, which begins with `&`.
-///
-/// Anything that is not a complete, known entity is left as the `&` it was:
-/// `AT&T` is a company, not a broken reference, and mangling it would be a
-/// worse outcome than not decoding something.
 fn take_entity<'a>(out: &mut String, tail: &'a str) -> &'a str {
     let body = &tail[1..];
     // A byte search over a fixed-length prefix rather than a search of the
@@ -361,6 +430,51 @@ fn numeric(digits: &str) -> Option<char> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_less_than_sign_inside_a_script_does_not_swallow_the_rest_of_the_page() {
+        // Walking the tags between here and the close tag reads `< 2;</script>`
+        // as one tag, steps past the real close tag, and everything after it
+        // is then inside a `<script>` that already ended.
+        let text = super::to_text("<p>Before.<script>if (1 < 2) {}</script><p>After.");
+        assert!(text.contains("After."), "the page was swallowed: {text:?}");
+        assert!(
+            !text.contains('2'),
+            "the script was read as prose: {text:?}"
+        );
+    }
+
+    #[test]
+    fn a_longer_name_does_not_close_a_shorter_one() {
+        let text = super::to_text("<p>Before.<script>x</scriptx> still script</script><p>After.");
+        assert!(!text.contains("still script"), "{text:?}");
+        assert!(text.contains("After."), "{text:?}");
+    }
+
+    #[test]
+    fn a_closing_curly_quotation_mark_is_decoded_like_the_opening_one() {
+        assert_eq!(
+            super::to_text("<p>&ldquo;Yes,&rdquo; she said."),
+            "\u{201c}Yes,\u{201d} she said."
+        );
+    }
+
+    #[test]
+    fn entities_decode_the_same_way_wherever_they_are_read() {
+        assert_eq!(
+            super::decode_entities("a &amp; b &mdash; c"),
+            "a & b \u{2014} c"
+        );
+        assert_eq!(
+            super::decode_entities("AT&T"),
+            "AT&T",
+            "a company was mangled"
+        );
+        assert_eq!(
+            super::decode_entities("no entities here"),
+            "no entities here"
+        );
+    }
+
     use super::{to_text, MAX_TEXT};
 
     #[test]

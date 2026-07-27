@@ -1,0 +1,15 @@
+[package]
+name = "kobo-doc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+kobo-html = { path = "../kobo-html" }
+miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
+pulldown-cmark = { version = "0.13.4", default-features = false }
+
+[lints]
+workspace = true

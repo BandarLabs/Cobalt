@@ -2,6 +2,7 @@
 members = [
     "crates/kobo-abi",
     "crates/kobo-cli",
+    "crates/kobo-doc",
     "crates/kobo-doctor",
     "crates/kobo-hal",
     "crates/kobo-html",
