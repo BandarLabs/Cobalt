@@ -1779,12 +1779,37 @@ fn remote_session_failure(
     result
 }
 
+/// Where the key `kobo setup` installs on the reader is kept on this machine.
+///
+/// A name of its own rather than `id_ed25519`, so that setting up a reader
+/// never touches whatever key somebody already uses for everything else.
+pub const DEVICE_KEY_NAME: &str = "kobo_cobalt";
+
+/// The path to that key, or `None` when this machine has no home directory or
+/// the key has not been made yet.
+#[must_use]
+pub fn device_key_path() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME")?;
+    let key = PathBuf::from(home).join(".ssh").join(DEVICE_KEY_NAME);
+    key.is_file().then_some(key)
+}
+
+/// An `ssh` invocation that will offer the reader's key.
+///
+/// Without `-i` this offered only the default identities, and the reader's key
+/// is deliberately not one of those, so every connection failed on a reader
+/// that was set up correctly — `kobo devices` reported the reader as some other
+/// host on the network. The key is added to the default identities rather than
+/// replacing them, so an agent or an `~/.ssh/config` entry still works.
 fn remote_shell_command(remote: &str) -> Command {
     let mut command = Command::new("ssh");
     command
         .args(["-T", "-o", "BatchMode=yes", "-o"])
-        .arg(format!("ConnectTimeout={REMOTE_CONNECT_TIMEOUT_SECONDS}"))
-        .arg(remote);
+        .arg(format!("ConnectTimeout={REMOTE_CONNECT_TIMEOUT_SECONDS}"));
+    if let Some(key) = device_key_path() {
+        command.arg("-i").arg(key);
+    }
+    command.arg(remote);
     command
 }
 
@@ -2223,7 +2248,14 @@ fn await_reader(subnet: &str) {
     let deadline = Instant::now() + setup::WAIT_LIMIT;
     let arrival = setup::wait_for_reader(
         || connect::sweep(subnet, connect::PROBE_TIMEOUT),
-        |address| connect::ssh_banner(address, connect::BANNER_TIMEOUT),
+        |address| match identify_device(&address.to_string()) {
+            Some(identity) if identity.is_kobo() => setup::Verdict::Reader,
+            // Told apart deliberately. A machine that answered and is not a
+            // reader is settled; one that could not be reached at all may
+            // simply still be booting, and is asked again next round.
+            Some(_) => setup::Verdict::Other,
+            None => setup::Verdict::Unknown,
+        },
         || {
             if Instant::now() >= deadline {
                 return false;
@@ -2265,8 +2297,7 @@ fn await_reader(subnet: &str) {
                     .join(", ");
                 println!(
                     "\nSomething else joined the network while waiting ({listed}) and was\n\
-                     passed over: a Kobo answers as {}, and those did not.",
-                    setup::READER_SSH
+                     passed over: each was asked what it was, and none of them is a reader."
                 );
             }
         }

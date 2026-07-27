@@ -152,39 +152,6 @@ fn answers(address: Ipv4Addr, timeout: Duration) -> bool {
     }
 }
 
-/// How long to wait for a banner, as against for a handshake.
-///
-/// A sweep touches 254 addresses and so must give up on each in well under a
-/// second, but a banner is only ever read for the handful that just appeared,
-/// and a real one measured here took 3.7 seconds to arrive — a server does not
-/// send its version until it is ready to talk. Reusing [`PROBE_TIMEOUT`] for
-/// this would report every machine as silent.
-pub const BANNER_TIMEOUT: Duration = Duration::from_secs(8);
-
-/// The version string an SSH server sends on connect, lowercased, empty when
-/// the address does not answer or sends nothing within `timeout`.
-///
-/// This is the only thing a server will say before anything is authenticated:
-/// it is sent unprompted, and reading it costs one handshake and not one byte
-/// written. That matters on a reader whose first login forces a password
-/// change, where a probe that authenticated would hang.
-///
-/// An empty answer means *could not tell*, not *not a reader*: a slow server
-/// and an absent one look the same from here.
-#[must_use]
-pub fn ssh_banner(address: Ipv4Addr, timeout: Duration) -> String {
-    let Ok(mut stream) =
-        TcpStream::connect_timeout(&SocketAddr::from((address, SSH_PORT)), timeout)
-    else {
-        return String::new();
-    };
-    let _ = stream.set_read_timeout(Some(timeout));
-    let mut line = [0u8; 128];
-    let read = std::io::Read::read(&mut stream, &mut line).unwrap_or(0);
-    let _ = stream.shutdown(std::net::Shutdown::Both);
-    String::from_utf8_lossy(&line[..read]).trim().to_lowercase()
-}
-
 /// A script that prints one `key=value` line per fact identifying a device.
 ///
 /// Reads only. A machine that is not a Kobo prints empty values rather than
