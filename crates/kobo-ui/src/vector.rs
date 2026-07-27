@@ -635,6 +635,30 @@ pub fn shapes(glyph: Glyph) -> Vec<Shape> {
             stroke(Path::line(280, 340, 720, 340)),
             stroke(Path::line(280, 500, 580, 500)),
         ],
+        // The feed mark: a dot at the corner with two arcs radiating from it.
+        // The one icon here that people read as a specific meaning rather than
+        // a category, so it is drawn as the mark itself and not as a metaphor
+        // for it.
+        //
+        // Each quarter is two quadratics rather than one, for the reason
+        // `circle` gives: a single quadratic per quarter sits about six percent
+        // proud of the radius at its midpoint, which at 24 pixels stops reading
+        // as a curve and starts reading as a corner.
+        Glyph::Rss => vec![
+            Shape::Fill(Path::circle(280, 700, 95)),
+            stroke(
+                Path::new()
+                    .move_to(180, 500)
+                    .quad_to(304, 500, 392, 588)
+                    .quad_to(480, 676, 480, 800),
+            ),
+            stroke(
+                Path::new()
+                    .move_to(180, 200)
+                    .quad_to(429, 200, 604, 376)
+                    .quad_to(780, 551, 780, 800),
+            ),
+        ],
     }
 }
 
@@ -660,7 +684,7 @@ mod tests {
     use super::{back_arrow, render, shapes, Path, Shape, UNITS};
     use crate::Glyph;
 
-    const EVERY: [Glyph; 18] = [
+    const EVERY: [Glyph; 19] = [
         Glyph::App,
         Glyph::Book,
         Glyph::Note,
@@ -679,6 +703,7 @@ mod tests {
         Glyph::Terminal,
         Glyph::Chat,
         Glyph::News,
+        Glyph::Rss,
     ];
 
     fn inked(glyph: Glyph, size: i32) -> usize {

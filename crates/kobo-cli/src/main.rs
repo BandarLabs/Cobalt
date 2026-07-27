@@ -39,6 +39,7 @@ const INSTALLED_PACKAGES: &[(&str, Option<&str>)] = &[
     ("kobo-gallery", None),
     ("kobo-tictactoe", None),
     ("kobo-hn", None),
+    ("kobo-rss", None),
 ];
 /// Proof that the daemon in the package can actually take the panel. The
 /// phrase only exists inside `present_on_panel`, which is behind

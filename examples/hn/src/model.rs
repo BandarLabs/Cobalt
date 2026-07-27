@@ -11,8 +11,6 @@
 //! reason to show nothing: a thread with one deleted comment in it is still a
 //! thread, and a story with no score is still a story.
 
-use crate::html;
-
 /// The most stories kept from one response.
 ///
 /// The API is asked for thirty. Anything past this is a response that did not
@@ -146,7 +144,7 @@ pub fn stories_from(value: &kobo_json::Value) -> Vec<Story> {
             let title = hit.get("title").and_then(kobo_json::Value::as_str)?;
             Some(Story {
                 id: id.to_owned(),
-                title: html::to_text(title),
+                title: kobo_html::to_text(title),
                 author: text_of(hit, "author").unwrap_or_else(|| "[deleted]".to_owned()),
                 points: count_of(hit, "points"),
                 comments: count_of(hit, "num_comments"),
@@ -157,7 +155,7 @@ pub fn stories_from(value: &kobo_json::Value) -> Vec<Story> {
                 text: hit
                     .get("story_text")
                     .and_then(kobo_json::Value::as_str)
-                    .map(html::to_text)
+                    .map(kobo_html::to_text)
                     .filter(|text| !text.is_empty()),
                 site: hit
                     .get("url")
@@ -191,7 +189,7 @@ pub fn flatten(root: &kobo_json::Value) -> Vec<Comment> {
         let body = node
             .get("text")
             .and_then(kobo_json::Value::as_str)
-            .map(html::to_text)
+            .map(kobo_html::to_text)
             .unwrap_or_default();
         let author = text_of(node, "author").unwrap_or_default();
         // A comment that was deleted keeps its place in the thread — the
@@ -239,7 +237,7 @@ pub fn flat_comments_from(value: &kobo_json::Value) -> Vec<Comment> {
             let body = hit
                 .get("comment_text")
                 .and_then(kobo_json::Value::as_str)
-                .map(html::to_text)?;
+                .map(kobo_html::to_text)?;
             if body.is_empty() {
                 return None;
             }
@@ -271,7 +269,7 @@ fn text_of(value: &kobo_json::Value, key: &str) -> Option<String> {
     value
         .get(key)
         .and_then(kobo_json::Value::as_str)
-        .map(html::to_text)
+        .map(kobo_html::to_text)
         .filter(|text| !text.is_empty())
 }
 

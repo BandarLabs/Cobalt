@@ -1504,6 +1504,9 @@ pub enum Glyph {
     Chat,
     /// A folded newspaper: stories, a feed, a front page.
     News,
+    /// A dot with two arcs radiating from it: the feed mark, as everyone
+    /// already reads it.
+    Rss,
 }
 
 impl Node {

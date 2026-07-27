@@ -29,7 +29,6 @@
 //! What never happens is a thread that silently stops halfway, or one that
 //! reads as complete when a third of it is missing.
 
-mod html;
 mod model;
 
 use kobo_sdk::{

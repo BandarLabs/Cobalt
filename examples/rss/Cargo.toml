@@ -1,5 +1,5 @@
 [package]
-name = "kobo-hn"
+name = "kobo-rss"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

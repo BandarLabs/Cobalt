@@ -117,6 +117,15 @@ const ENTRIES: &[Entry] = &[
         needs: "Needs the network while loading stories and threads.",
         glyph: Glyph::News,
     },
+    Entry {
+        name: "rss",
+        title: "Feeds",
+        label: "Feeds",
+        summary: "Follow a site by name and read its articles, not its layout.",
+        detail: "Type a site and it finds the feed, so you never have to know the address. Articles are read from the feed itself, which is the same words without the megabyte of layout and advertising around them. RSS, Atom and JSON Feed all read the same way. Feed search is powered by feedsearch.dev.",
+        needs: "Needs the network while searching and while fetching a feed. Keeps the list of feeds you follow in this application's own storage.",
+        glyph: Glyph::Rss,
+    },
 ];
 
 #[derive(Default)]

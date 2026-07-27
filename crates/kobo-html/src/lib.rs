@@ -1,10 +1,12 @@
-//! Turning a Hacker News comment into text a panel can draw.
+//! Turning a fragment of someone else's HTML into text a panel can draw.
 //!
-//! Comment bodies arrive as a fragment of HTML written by a stranger. Hacker
-//! News allows a small set of tags — `<p>`, `<i>`, `<a>`, `<pre><code>` — and
-//! escapes everything else into entities, but that is a statement about what
-//! the site *intends* to send, not a guarantee about what arrives. This module
-//! is written for the other case.
+//! Two applications need this and neither controls what arrives. A Hacker News
+//! comment body is HTML written by a stranger; an RSS item's description is
+//! HTML written by a stranger and then passed through a publishing system that
+//! may have escaped it once, twice, or not at all. Hacker News documents the
+//! small set of tags it allows — `<p>`, `<i>`, `<a>`, `<pre><code>` — but that
+//! is a statement about what a site *intends* to send, not a guarantee about
+//! what turns up on the wire. This module is written for the other case.
 //!
 //! Three properties, each of which has a test:
 //!
@@ -22,10 +24,10 @@
 
 /// The most text one converted body may produce.
 ///
-/// A Hacker News comment is a few hundred words. This is far above that and
-/// far below the point at which a page of them costs anything, and it exists
-/// so that a single hostile field cannot make one screen's worth of state
-/// larger than the whole response it came from.
+/// An article summary is a few hundred words. This is far above that and far
+/// below the point at which a page of them costs anything, and it exists so
+/// that a single hostile field cannot make one screen's worth of state larger
+/// than the whole response it came from.
 pub const MAX_TEXT: usize = 8 * 1024;
 
 /// The longest entity name this will consider, `&thetasym;` plus room.
@@ -37,11 +39,11 @@ const MAX_ENTITY: usize = 12;
 
 /// Elements whose *content* is dropped along with their tags.
 ///
-/// Hacker News never sends these. If one arrives, the text inside it was
-/// written to be executed rather than read, and rendering `alert(1)` as prose
-/// is not useful to anybody. Nothing here could run it — the output of this
-/// module is characters on an E Ink panel — but it is still noise, and noise
-/// that says something went wrong upstream.
+/// Neither source is supposed to send these. If one arrives, the text inside
+/// it was written to be executed rather than read, and rendering `alert(1)` as
+/// prose is not useful to anybody. Nothing here could run it — the output of
+/// this module is characters on an E Ink panel — but it is still noise, and
+/// noise that says something went wrong upstream.
 const OPAQUE: [&str; 2] = ["script", "style"];
 
 /// The named entities that appear in practice, with their replacements.

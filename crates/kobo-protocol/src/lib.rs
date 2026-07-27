@@ -2352,6 +2352,7 @@ const fn encode_glyph(glyph: Glyph) -> u8 {
         Glyph::Terminal => 15,
         Glyph::Chat => 16,
         Glyph::News => 17,
+        Glyph::Rss => 18,
     }
 }
 
@@ -2375,6 +2376,7 @@ const fn decode_glyph(tag: u8) -> Option<Glyph> {
         15 => Glyph::Terminal,
         16 => Glyph::Chat,
         17 => Glyph::News,
+        18 => Glyph::Rss,
         _ => return None,
     })
 }

@@ -560,10 +560,15 @@ dependencies = [
 name = "kobo-hn"
 version = "0.1.0"
 dependencies = [
+ "kobo-html",
  "kobo-json",
  "kobo-sdk",
  "kobo-ui",
 ]
+
+[[package]]
+name = "kobo-html"
+version = "0.1.0"
 
 [[package]]
 name = "kobo-image"
@@ -609,6 +614,16 @@ version = "0.1.0"
 name = "kobo-protocol"
 version = "0.1.0"
 dependencies = [
+ "kobo-ui",
+]
+
+[[package]]
+name = "kobo-rss"
+version = "0.1.0"
+dependencies = [
+ "kobo-html",
+ "kobo-json",
+ "kobo-sdk",
  "kobo-ui",
 ]
 
