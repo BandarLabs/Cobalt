@@ -19,9 +19,9 @@ partition the reader uses for books — and nothing else. No shell, no processes
 no `/proc`.
 
 The way in is the stock firmware's own developer switch: a `.kobo` config
-setting that starts an SSH server (Dropbear) on the device. Nothing was
-patched, no partition was written, no bootloader was touched. The device does
-this itself; it just does not advertise it.
+setting that starts the device's SSH server (OpenSSH, shipped in the firmware
+and switched off). Nothing was patched, no partition was written, no bootloader
+was touched. The device does this itself; it just does not advertise it.
 
 Two immediate surprises shaped every later tool:
 
