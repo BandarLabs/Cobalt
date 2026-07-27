@@ -630,6 +630,7 @@ fn clamp(text: &str, characters: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{attribute, decode_entities, parse, Feed, Item, MAX_ITEMS};
+    use std::fmt::Write as _;
 
     fn read(source: &str) -> Feed {
         parse(source.as_bytes()).expect("a feed")
@@ -891,5 +892,62 @@ mod tests {
 </entry></feed>"#;
         let feed = parse(atom).expect("an Atom feed");
         assert_eq!(feed.items[0].body, "Real words.");
+    }
+
+    #[test]
+    fn a_feed_cut_off_mid_flight_keeps_every_item_that_arrived_whole() {
+        // This is what the fetch budget's comment promises, so it is measured
+        // rather than assumed: a body that stops in the middle of an item
+        // keeps the items before it, and keeps them intact.
+        let mut xml = String::from("<rss><channel><title>Long</title>");
+        for number in 0..20 {
+            let _ = write!(
+                xml,
+                "<item><title>Item {number}</title>\
+                 <link>https://example.com/{number}</link>\
+                 <description>Body of item {number}.</description></item>"
+            );
+        }
+        xml.push_str("</channel></rss>");
+        let whole = parse(xml.as_bytes()).expect("the whole feed");
+        assert_eq!(whole.items.len(), 20);
+
+        let cut = parse(&xml.as_bytes()[..xml.len() / 2]).expect("a cut feed still reads");
+        assert!(
+            (1..20).contains(&cut.items.len()),
+            "expected some but not all, got {}",
+            cut.items.len()
+        );
+        assert_eq!(cut.title, "Long", "the channel title survives the cut");
+        for (index, item) in cut.items.iter().enumerate() {
+            assert_eq!(item.title, format!("Item {index}"));
+            assert_eq!(item.body, format!("Body of item {index}."));
+            assert_eq!(item.link, format!("https://example.com/{index}"));
+        }
+    }
+
+    #[test]
+    fn half_a_json_feed_is_not_a_feed_at_all() {
+        // The other half of the same promise, and the reason a cut answer is
+        // reported as too large rather than as not a feed: there is no prefix
+        // of a JSON document to recover, so nothing can be kept.
+        let mut items = String::new();
+        for number in 0..20 {
+            if number > 0 {
+                items.push(',');
+            }
+            let _ = write!(
+                items,
+                r#"{{"title":"Item {number}","url":"https://example.com/{number}","content_text":"Body {number}."}}"#
+            );
+        }
+        let json = format!(
+            r#"{{"version":"https://jsonfeed.org/version/1","title":"Long","items":[{items}]}}"#
+        );
+        assert_eq!(
+            parse(json.as_bytes()).expect("the whole feed").items.len(),
+            20
+        );
+        assert!(parse(&json.as_bytes()[..json.len() / 2]).is_none());
     }
 }

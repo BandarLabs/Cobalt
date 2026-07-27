@@ -66,10 +66,27 @@ const SEARCH_BYTES: u32 = 128 * 1024;
 /// How much of a feed to accept.
 ///
 /// A feed carrying fifty full articles is a few hundred kilobytes at the top
-/// end. Past this the answer is truncated rather than refused, and the parser
-/// keeps every item that arrived whole — which is the recent ones, because
-/// feeds are written newest first.
+/// end, and the largest this can ask for either way is the runtime's own
+/// [`kobo_sdk::MAX_TASK_BYTES`].
+///
+/// Past this the answer is truncated rather than refused, and what that costs
+/// depends on the format. A cut XML feed keeps every item that arrived whole —
+/// which is the recent ones, because feeds are written newest first — and that
+/// is measured, not assumed. A cut JSON feed yields nothing at all: half a
+/// JSON document is not a JSON document, and there is no prefix of one to
+/// recover. So a feed that will not parse at exactly this length is reported as
+/// too large rather than as not a feed.
 const FEED_BYTES: u32 = 512 * 1024;
+
+/// Whether an answer arrived at its budget, and so was probably cut short.
+///
+/// A body that is exactly the number of bytes asked for is one the far end had
+/// more of. It could be a feed that happens to be that length to the byte,
+/// which is why this only ever changes the wording of a failure and never
+/// discards an answer that parsed.
+fn truncated(bytes: &[u8], budget: u32) -> bool {
+    bytes.len() >= budget as usize
+}
 
 /// The attribution Feedsearch's terms ask for, on the screen where there is
 /// room for the whole sentence.
@@ -763,7 +780,11 @@ impl KoboApp for Feeds {
                 Awaiting::Search => {
                     self.found = search::results(&bytes);
                     if self.found.is_empty() {
-                        self.problem = None;
+                        // A search answer is JSON, and JSON that stops halfway
+                        // is not JSON at all, so a cut answer yields nothing
+                        // and looks exactly like a site with no feeds.
+                        self.problem = truncated(&bytes, SEARCH_BYTES)
+                            .then(|| "That site's answer was too large to read.".to_owned());
                     }
                 }
                 Awaiting::Feed => match feed::parse(&bytes) {
@@ -785,7 +806,14 @@ impl KoboApp for Feeds {
                         }
                     }
                     None => {
-                        self.problem = Some("That address did not answer with a feed.".to_owned());
+                        // It did answer with a feed; the feed did not fit.
+                        // Saying it was not a feed sends somebody looking for
+                        // a different address, which will not help.
+                        self.problem = Some(if truncated(&bytes, FEED_BYTES) {
+                            "That feed is larger than this can read.".to_owned()
+                        } else {
+                            "That address did not answer with a feed.".to_owned()
+                        });
                     }
                 },
             },
@@ -812,7 +840,7 @@ fn main() -> ExitCode {
 mod tests {
     use super::{
         article_text, byline, decode, encode, pretty_host, search, Awaiting, Feeds, Subscription,
-        View, MAX_FEEDS,
+        View, FEED_BYTES, MAX_FEEDS, SEARCH_BYTES,
     };
     use kobo_sdk::{action_id, AppRunner, Command, TaskId, TaskOutcome};
     use kobo_ui::CLARA_BW_METRICS;
@@ -1287,5 +1315,71 @@ mod tests {
             let commands = runner.action(action_id("list-next"));
             fits_the_panel(&screen_of(&commands), &format!("shelf page {page}"));
         }
+    }
+
+    #[test]
+    fn a_feed_too_large_to_read_is_not_reported_as_not_a_feed() {
+        // Sending somebody to look for a different address does not help when
+        // the address was right and the feed was simply bigger than the
+        // budget. The two failures read identically before this.
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            view: View::Items,
+            open: Some(0),
+            subscriptions: following(),
+            task: Some((TaskId(1), Awaiting::Feed)),
+            ..Feeds::default()
+        });
+        let cut = vec![b'{'; FEED_BYTES as usize];
+        let commands = runner.task_outcome(TaskId(1), TaskOutcome::Completed(cut));
+        let screen = screen_of(&commands);
+        assert!(format!("{screen:?}").contains("larger than this can read"));
+        fits_the_panel(&screen, "a feed that was too large");
+    }
+
+    #[test]
+    fn a_short_answer_that_is_not_a_feed_still_says_so() {
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            view: View::Items,
+            open: Some(0),
+            subscriptions: following(),
+            task: Some((TaskId(1), Awaiting::Feed)),
+            ..Feeds::default()
+        });
+        let commands =
+            runner.task_outcome(TaskId(1), TaskOutcome::Completed(b"<html></html>".to_vec()));
+        let screen = screen_of(&commands);
+        assert!(format!("{screen:?}").contains("did not answer with a feed"));
+    }
+
+    #[test]
+    fn a_search_answer_that_was_cut_short_says_so_rather_than_finding_nothing() {
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            view: View::Found,
+            query: "example.com".to_owned(),
+            task: Some((TaskId(1), Awaiting::Search)),
+            ..Feeds::default()
+        });
+        let cut = vec![b'['; SEARCH_BYTES as usize];
+        let commands = runner.task_outcome(TaskId(1), TaskOutcome::Completed(cut));
+        let screen = screen_of(&commands);
+        assert!(format!("{screen:?}").contains("too large to read"));
+        fits_the_panel(&screen, "a search answer that was cut short");
+    }
+
+    #[test]
+    fn a_site_with_no_feeds_is_not_accused_of_answering_too_much() {
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            view: View::Found,
+            query: "example.com".to_owned(),
+            task: Some((TaskId(1), Awaiting::Search)),
+            ..Feeds::default()
+        });
+        let commands = runner.task_outcome(TaskId(1), TaskOutcome::Completed(b"[]".to_vec()));
+        let screen = screen_of(&commands);
+        assert!(!format!("{screen:?}").contains("too large"));
     }
 }
