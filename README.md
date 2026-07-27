@@ -266,7 +266,7 @@ It finds the mounted reader, copies Cobalt into `.adds/cobalt`, reads every
 file back to prove it arrived intact, enables the firmware's **own** SSH server,
 sets `DeveloperSettings/ForceWifiOn` so the radio stays up between deploys and
 `PowerOptions/AutoSleepMinutes=90` so the reader is still reachable when you
-come back to it, and ejects.
+come back to it, adds a **Cobalt** entry to the reader's own menu, and ejects.
 
 Then it waits. The restart is the one step that has to happen on the reader —
 its SSH server only starts at boot, and nothing on this side can press the
@@ -275,18 +275,23 @@ reader to come back, printing its address and the exact `kobo deploy` line when
 it does. It identifies the reader by two things it can learn without writing a
 byte, because on a first setup there is no key installed and the firmware's
 first login forces a password change, so a probe that authenticated would hang.
-The first is *change*: it records which addresses answer on port 22 before the
-wait, and only ones that were not answering and now are can be the reader —
-which rules out the machine it is running on, the router and a NAS, since none
-of them just joined. The second is the SSH banner, which a server sends
-unprompted. Change alone was not enough: a laptop waking from sleep mid-wait
-was reported as the reader, and a confident wrong address is worse than none.
-A Kobo answers as Dropbear, so anything else is passed over and named as such
-at the end. An address that accepts a connection but says nothing is asked
-again next round rather than written off, because a booting reader does exactly
-that.
+It identifies the reader by *change*: it records which addresses answer on port
+22 before the wait, and only ones that were not answering and now are can be
+the reader — which rules out the machine it is running on, the router and a
+NAS, since none of them just joined.
 
-`--no-wait` skips that. `kobo setup --undo` puts every part of the setup back,
+Change alone was not enough. A laptop waking from sleep mid-wait was reported
+as the reader, and a confident wrong address is worse than none. The obvious
+second test was the SSH banner, and it was wrong: this firmware runs **OpenSSH**,
+not Dropbear as this file claimed for months, so a banner check rejected the
+very device it was written to find. What each newcomer gets asked instead is
+who it is, over the same identity script every other command uses. A reader
+says so. Anything else is passed over and named at the end. An address that
+accepts a connection but answers neither way is asked again next round rather
+than written off, because a booting reader does exactly that.
+
+`--no-wait` skips the wait and `--no-menu` skips the menu entry.
+`kobo setup --undo` puts every part of the setup back,
 and `kobo setup --dry-run` prints what it would do without touching anything —
 including for `--undo`, which is what `--undo --dry-run` means.
 
@@ -302,21 +307,20 @@ The SSH server is the part worth explaining, because it is not ours. Firmware
 partition: `.kobo/ssh-disabled`. Renaming it to `ssh-enabled` is the firmware's
 documented mechanism -- the file says so in its own text -- and renaming it back
 is the whole of the uninstall. This was found on a factory-reset Clara BW
-running 4.45.23697, and it replaces the two worse answers that came before it:
-NickelMenu, which is third-party, and `EnableDebugServices=true`, which brings
-up telnet and FTP as root **with no password at all** and still does not give
-you `kobo deploy`.
+running 4.45.23697, and it replaces the worse answer that came before it:
+`EnableDebugServices=true`, which brings up telnet and FTP as root **with no
+password at all** and still does not give you `kobo deploy`.
 
-### Why setup does not use `KoboRoot.tgz`
+### Why Cobalt itself is not a `KoboRoot.tgz`
 
 The ordinary way to install anything on a Kobo is to drop a `KoboRoot.tgz` into
 `.kobo/`, which the firmware unpacks **as root, at `/`, at the next boot**. It
 is also the one mechanism on the device that can leave it unbootable, because
 nothing checks the paths inside before extracting them over the running system.
 
-So `kobo setup` does not use it. It copies the same files straight into
-`.adds/cobalt` as a plain folder, which the reader never elevates. The cost is
-that a folder copy does not trigger the firmware's update-and-restart, so the
+So Cobalt is not shipped that way. `kobo setup` copies the same files straight
+into `.adds/cobalt` as a plain folder, which the reader never elevates. The cost
+is that a folder copy does not trigger the firmware's update-and-restart, so the
 reader has to be restarted by hand once for the SSH server to start. That is one
 button held down, in exchange for never handing the boot script an archive. The
 worst outcome of a setup that goes wrong is a folder to delete.
@@ -324,6 +328,61 @@ worst outcome of a setup that goes wrong is a folder to delete.
 `kobo package` still builds a `KoboRoot.tgz` for owners who want the usual
 route, and `kobo inspect` proves before it is copied that every path in it falls
 under `.adds/cobalt`.
+
+### The one archive setup does stage, and what is checked first
+
+There is exactly one exception, and it is the menu entry. A way into Cobalt from
+the reader's own home screen means running code inside `nickel`, and nothing on
+the book partition can do that. `kobo setup` therefore stages
+[NickelMenu](https://pgaskin.net/NickelMenu) — pinned to one release, downloaded
+over HTTPS and checked against a recorded SHA-256, so the transport does not have
+to be trusted — and writes a single entry beside it:
+
+```
+menu_item :main :Cobalt :cmd_spawn :quiet:/mnt/onboard/.adds/cobalt/start.sh
+```
+
+`--no-menu` skips all of it.
+
+Two things make this acceptable rather than a hole in the rule above.
+
+The first is NickelMenu's own failsafe, which is the reason it is worth using at
+all rather than reimplementing. It moves its plugin aside *before* it hooks
+anything and only puts it back some seconds after a successful start, so a
+reader that crashes while hooking comes up at the next boot with nothing to
+load. It cannot boot-loop, which is the failure that makes `KoboRoot.tgz`
+frightening in the first place.
+
+The second is ours. The firmware extracts the archive as root without looking
+inside it, so `kobo setup` looks: it lists the members and **refuses to write
+any archive** that is not exactly NickelMenu's two paths —
+`./usr/local/Kobo/imageformats/libnm.so` and `./mnt/onboard/.adds/nm/doc`. An
+archive naming `./etc/init.d/rcS` is the one that ends a device, and it is
+refused by name. It also refuses to overwrite an archive some other mod has
+already staged, since `.kobo/KoboRoot.tgz` is a single shared slot.
+
+`kobo setup --undo` takes the entry away. If the reader has not restarted yet it
+simply takes the staged archive back, and nothing was ever installed. If it has,
+it writes NickelMenu's own uninstall flag — unless another mod still has a
+configuration file beside ours, in which case the plugin stays and only the
+Cobalt entry goes, because it is shared.
+
+The entry starts Cobalt **on demand**, and deliberately not at boot. `kobod` has
+one mode and it is to stop `nickel` and take the panel, so starting it at boot
+would leave a device with no stock reader on it — and would spend the safety net
+every risky thing in this project leans on, which is that restarting always
+comes back to stock.
+
+#### Why not implement the menu ourselves
+
+The home screen is Qt, drawn by a stripped 24 MB `libnickel.so.1.0.0`. A menu
+entry means a shared library that Qt will load into that process, resolving
+mangled C++ symbols out of a proprietary binary and rewriting the GOT entry
+behind one of them under `mprotect`. None of that can be Rust in any useful
+sense, and all of it is `unsafe`, which this workspace confines to `kobo-abi`.
+It would be NickelMenu again, without NickelMenu's failsafe. The four symbols it
+depends on were checked against this device's firmware (4.45.23697) and are all
+present.
 
 ### When it will not answer
 

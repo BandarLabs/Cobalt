@@ -1,0 +1,4 @@
+# Names that are spelled with inner capitals because that is how their authors
+# spell them. They are products, not identifiers, so putting them in backticks
+# in prose would be wrong; `..` keeps clippy's own default list as well.
+doc-valid-idents = ["NickelMenu", "NickelHook", "KoboRoot", "KFMon", ".."]

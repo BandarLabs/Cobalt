@@ -528,6 +528,8 @@ pub struct Report {
     pub ssh: Option<Ssh>,
     /// Settings keys that changed.
     pub settings: Vec<String>,
+    /// What became of the reader's own menu entry, when one was asked for.
+    pub menu: Option<Result<crate::menu::Menu, String>>,
     /// Whether the volume was ejected.
     pub ejected: bool,
     /// Whether the command will wait for the restarted reader itself.
@@ -553,6 +555,17 @@ impl Report {
         } else {
             let _ = writeln!(text, "  · settings set: {}", self.settings.join(", "));
         }
+        match &self.menu {
+            Some(Ok(menu)) => {
+                let _ = writeln!(text, "  · {}", menu.describe());
+            }
+            // Reported, not raised. The install itself succeeded, and Cobalt
+            // still starts from start.sh over SSH without any menu entry.
+            Some(Err(error)) => {
+                let _ = writeln!(text, "  · no menu entry: {error}");
+            }
+            None => {}
+        }
         let _ = writeln!(
             text,
             "  · {}",
@@ -562,7 +575,10 @@ impl Report {
                 "volume left mounted"
             }
         );
-        text.push_str(&next_steps(self.waiting));
+        text.push_str(&next_steps(
+            self.waiting,
+            matches!(self.menu, Some(Ok(crate::menu::Menu::Staged))),
+        ));
         text
     }
 }
@@ -573,22 +589,44 @@ impl Report {
 /// Telling somebody to run `kobo devices` and then running it for them reads
 /// as though one of the two did not happen.
 #[must_use]
-pub fn next_steps(waiting: bool) -> String {
+pub fn next_steps(waiting: bool, staged: bool) -> String {
     let finding = if waiting {
         "  3. This command is waiting for it, and will print its address when it\n\
          \x20    appears. Ctrl-C stops the wait; nothing on the reader depends on it."
     } else {
         "  3. Find it with 'kobo devices', then 'kobo deploy' works from here on."
     };
-    format!("{NEXT_STEPS_HEAD}{finding}{NEXT_STEPS_TAIL}")
+    let scope = if staged {
+        STAGED_SCOPE
+    } else {
+        UNTOUCHED_SCOPE
+    };
+    format!("{scope}{NEXT_STEPS_HEAD}{finding}{NEXT_STEPS_TAIL}")
 }
 
-/// Everything above the step that differs.
-const NEXT_STEPS_HEAD: &str = "
+/// What was written, when the only thing written was the book partition.
+const UNTOUCHED_SCOPE: &str = "
 Nothing was written outside the book partition, and nothing was extracted as
 root. To undo all of it: 'kobo setup --undo', or delete .adds/cobalt and rename
 .kobo/ssh-enabled back to ssh-disabled.
+";
 
+/// What was written, when a menu entry was staged as well.
+///
+/// Said plainly because it is the one thing this command does that the owner
+/// cannot undo with a file manager. The archive was listed before it was
+/// written and contains only NickelMenu's plugin and its documentation, but it
+/// is still the firmware that extracts it, and it still extracts it as root.
+const STAGED_SCOPE: &str = "
+One archive was staged for the firmware to extract as root at the next restart:
+NickelMenu, checked first to contain nothing but its own plugin and its own
+documentation. Everything else was written to the book partition. NickelMenu
+removes itself if it fails to start, so it cannot leave the reader unable to
+boot. To undo all of it: 'kobo setup --undo'.
+";
+
+/// Everything above the step that differs.
+const NEXT_STEPS_HEAD: &str = "
 Next, on the reader:
 
   1. Restart it — hold the power button until it powers off, then press it
@@ -599,8 +637,9 @@ Next, on the reader:
 /// Everything below it.
 const NEXT_STEPS_TAIL: &str = "
 
-Cobalt itself is started from .adds/cobalt/start.sh. A restart always returns
-to the stock reader.
+Cobalt itself is started from the Cobalt entry in the reader's own menu, or
+from .adds/cobalt/start.sh. Starting it stops the reader and takes the screen;
+a restart always returns to the stock reader.
 
 The reader is also set to stay awake for ninety minutes rather than a few, so
 that it is still reachable when you come back to it. That costs battery. The
@@ -901,11 +940,11 @@ mod tests {
 
     #[test]
     fn the_reader_is_not_told_to_go_looking_for_it_while_this_is_looking_for_it() {
-        assert!(next_steps(true).contains("waiting for it"));
-        assert!(!next_steps(true).contains("Find it with"));
-        assert!(next_steps(false).contains("Find it with 'kobo devices'"));
+        assert!(next_steps(true, false).contains("waiting for it"));
+        assert!(!next_steps(true, false).contains("Find it with"));
+        assert!(next_steps(false, false).contains("Find it with 'kobo devices'"));
         for waiting in [true, false] {
-            let text = next_steps(waiting);
+            let text = next_steps(waiting, false);
             assert!(text.contains("kobo setup --undo"), "undo is always offered");
             assert!(
                 text.contains("Restart it"),
@@ -1090,6 +1129,7 @@ mod tests {
             installed: 13,
             ssh: Some(Ssh::Enabled),
             settings: vec!["DeveloperSettings/ForceWifiOn".to_owned()],
+            menu: None,
             ejected: true,
             waiting: false,
         };
@@ -1098,6 +1138,42 @@ mod tests {
         assert!(text.contains("SSH enabled"));
         assert!(text.contains("ForceWifiOn"));
         assert!(text.contains("--undo"));
+        assert!(text.contains("nothing was extracted as\nroot"), "{text}");
+    }
+
+    #[test]
+    fn a_report_that_staged_an_archive_stops_claiming_nothing_was_extracted() {
+        // The claim is the point. It is true of every other thing this command
+        // does, and staging KoboRoot.tgz is the one case where it is not.
+        let report = Report {
+            installed: 13,
+            ssh: Some(Ssh::Enabled),
+            settings: Vec::new(),
+            menu: Some(Ok(crate::menu::Menu::Staged)),
+            ejected: true,
+            waiting: false,
+        };
+        let text = report.describe(&PathBuf::from("/Volumes/KOBOeReader"));
+        assert!(!text.contains("nothing was extracted as"), "{text}");
+        assert!(text.contains("extract as root"), "{text}");
+        assert!(
+            text.contains("cannot leave the reader unable to\nboot"),
+            "{text}"
+        );
+        assert!(text.contains("--undo"), "{text}");
+    }
+
+    #[test]
+    fn a_report_that_only_wrote_the_entry_keeps_the_claim() {
+        let report = Report {
+            installed: 13,
+            ssh: Some(Ssh::Enabled),
+            settings: Vec::new(),
+            menu: Some(Ok(crate::menu::Menu::Added)),
+            ejected: true,
+            waiting: false,
+        };
+        let text = report.describe(&PathBuf::from("/Volumes/KOBOeReader"));
         assert!(text.contains("nothing was extracted as\nroot"), "{text}");
     }
 

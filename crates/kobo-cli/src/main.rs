@@ -10,6 +10,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod connect;
 mod devsession;
+mod menu;
 mod package;
 mod setup;
 mod sha256;
@@ -2111,11 +2112,25 @@ enum SetupMode {
     Undo,
 }
 
+/// Whether to give the reader its own way into Cobalt.
+///
+/// An enum rather than a fourth boolean because it is the one option that
+/// decides whether this command hands anything to a root extractor, and a
+/// named either/or is harder to pass in the wrong position than a bare `true`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MenuEntry {
+    /// Write the entry, staging NickelMenu if it is not already installed.
+    Add,
+    /// Leave the reader's menus alone.
+    Skip,
+}
+
 /// How `kobo setup` was asked to run.
 #[derive(Debug)]
 struct SetupOptions {
     volume: Option<PathBuf>,
     mode: SetupMode,
+    menu: MenuEntry,
     eject: bool,
     dry_run: bool,
     wait: bool,
@@ -2125,6 +2140,7 @@ fn parse_setup(arguments: &[String]) -> Result<SetupOptions, String> {
     let mut options = SetupOptions {
         volume: None,
         mode: SetupMode::Install,
+        menu: MenuEntry::Add,
         eject: true,
         dry_run: false,
         wait: true,
@@ -2142,11 +2158,13 @@ fn parse_setup(arguments: &[String]) -> Result<SetupOptions, String> {
             "--undo" => options.mode = SetupMode::Undo,
             "--no-eject" => options.eject = false,
             "--no-wait" => options.wait = false,
+            "--no-menu" => options.menu = MenuEntry::Skip,
             "--dry-run" => options.dry_run = true,
             other => {
                 return Err(format!(
                     "unknown option '{other}'\n\
-                     usage: kobo setup [--volume PATH] [--undo] [--no-eject] [--no-wait] [--dry-run]"
+                     usage: kobo setup [--volume PATH] [--undo] [--no-eject] [--no-wait] \
+                     [--no-menu] [--dry-run]"
                 ))
             }
         }
@@ -2210,6 +2228,7 @@ fn setup_device(arguments: &[String]) -> Result<(), String> {
     setup::verify_payload(&built.members, &reader.volume)?;
     let ssh = setup::enable_ssh(&reader.volume)?;
     let settings = setup::apply_settings(&reader.volume)?;
+    let menu = (options.menu == MenuEntry::Add).then(|| add_menu_entry(&reader.volume));
     let ejected = ejected_or_explained(&reader.volume, options.eject);
 
     // A reader that was never ejected has not seen the install and will not be
@@ -2223,6 +2242,7 @@ fn setup_device(arguments: &[String]) -> Result<(), String> {
             installed,
             ssh: Some(ssh),
             settings,
+            menu,
             ejected,
             waiting,
         }
@@ -2233,6 +2253,23 @@ fn setup_device(arguments: &[String]) -> Result<(), String> {
         await_reader(&subnet);
     }
     Ok(())
+}
+
+/// Adds the reader's own way into Cobalt, or explains why it could not.
+///
+/// Never fails the setup. Everything else this command does works without a
+/// menu entry — `start.sh` over SSH is how the whole project has been run so
+/// far — so a download that cannot happen on an aeroplane should not cost
+/// somebody the install they came for.
+fn add_menu_entry(volume: &Path) -> Result<menu::Menu, String> {
+    if menu::installed(volume) {
+        return menu::install(volume, None, setup::INSTALL_FOLDER);
+    }
+    let archive = env::temp_dir().join(format!("kobo-nickelmenu-{}.tgz", std::process::id()));
+    menu::download(&archive)?;
+    let outcome = menu::install(volume, Some(&archive), setup::INSTALL_FOLDER);
+    let _ = fs::remove_file(&archive);
+    outcome
 }
 
 /// Watches `subnet` until an address that was not answering starts to.
@@ -2319,28 +2356,72 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
             "would remove {}/{}\n\
              would disable the firmware's SSH server by renaming {} back\n\
              would clear {}\n\
+             would remove {} and ask NickelMenu to uninstall itself, unless another\n\
+             \x20 mod still has a configuration file beside it\n\
              nothing else on the reader is touched",
             reader.volume.display(),
             setup::INSTALL_FOLDER,
             setup::SSH_ENABLED,
-            keys
+            keys,
+            menu::CONFIG,
         );
     }
     format!(
         "would install Cobalt into {}/{}\n\
          would enable the firmware's SSH server by renaming {}\n\
          would set {keys}\n\
+         {}\n\
          would eject, then {}\n\
-         nothing outside the book partition, nothing extracted as root",
+         nothing outside the book partition{}",
         reader.volume.display(),
         setup::INSTALL_FOLDER,
         setup::SSH_DISABLED,
+        if options.menu == MenuEntry::Add {
+            format!(
+                "would write a Cobalt entry to {}, and stage NickelMenu {} in {}\n\
+                 \x20 for the firmware to extract, after checking that the archive contains\n\
+                 \x20 nothing but {}",
+                menu::CONFIG,
+                menu::VERSION,
+                menu::KOBOROOT,
+                menu::ARCHIVE_MEMBERS.join(" and "),
+            )
+        } else {
+            "would add no menu entry, because --no-menu was given".to_owned()
+        },
         if options.wait {
             "wait for the restarted reader to appear on the network"
         } else {
             "stop, because --no-wait was given"
+        },
+        if options.menu == MenuEntry::Add {
+            ", and nothing extracted as root but NickelMenu's own two files"
+        } else {
+            ", nothing extracted as root"
         }
     )
+}
+
+/// One line for what the undo did to the reader's own menus.
+fn describe_unmenu(removed: menu::Removed) -> String {
+    let entry = match (removed.entry, removed.unstaged) {
+        (true, true) => "menu entry removed, and the staged NickelMenu archive taken back before \
+                         the reader could extract it"
+            .to_owned(),
+        (true, false) => "menu entry removed".to_owned(),
+        (false, true) => "the staged NickelMenu archive was taken back".to_owned(),
+        (false, false) => return "there was no menu entry".to_owned(),
+    };
+    match removed.plugin {
+        menu::Plugin::Absent => entry,
+        menu::Plugin::Flagged => format!(
+            "{entry}; NickelMenu will uninstall itself at the next restart ({})",
+            menu::UNINSTALL_FLAG
+        ),
+        menu::Plugin::Shared => {
+            format!("{entry}; NickelMenu kept, because another mod is still configured to use it")
+        }
+    }
 }
 
 /// Puts a reader back to how it shipped.
@@ -2348,10 +2429,11 @@ fn undo_setup(reader: &setup::Mounted, eject: bool) -> Result<(), String> {
     let removed = setup::remove_payload(&reader.volume)?;
     let ssh = setup::disable_ssh(&reader.volume)?;
     let settings = setup::revert_settings(&reader.volume)?;
+    let unmenued = menu::remove(&reader.volume)?;
     let ejected = ejected_or_explained(&reader.volume, eject);
 
     println!(
-        "\nUndone on {}:\n  · {}\n  · {}\n  · {}\n  · {}",
+        "\nUndone on {}:\n  · {}\n  · {}\n  · {}\n  · {}\n  · {}",
         reader.volume.display(),
         if removed {
             "Cobalt removed"
@@ -2368,6 +2450,7 @@ fn undo_setup(reader: &setup::Mounted, eject: bool) -> Result<(), String> {
         } else {
             format!("settings removed: {}", settings.join(", "))
         },
+        describe_unmenu(unmenued),
         if ejected {
             "volume ejected"
         } else {
