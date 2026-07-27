@@ -12,6 +12,7 @@ pub use kobo_protocol::{
     MAX_HEADER_VALUE, MAX_INLINE_PICTURE_BYTES, MAX_PICTURE_BYTES, MAX_PICTURE_CHUNK_BYTES,
     MAX_SHELL_CHUNK, MAX_STORE_KEYS, MAX_STORE_VALUE, MAX_TASK_BYTES, MAX_URL_LEN,
 };
+pub use kobo_ui::QuoteRole;
 pub use kobo_ui::{
     terminal_grid, terminal_grid_for, ActionId, BannerLevel, BarAction, BottomAction, Caret, Cell,
     Chrome, ControlState, DiagnosticSeverity, DisplayMetrics, Freeform, Glyph, LayoutIssue,
@@ -364,11 +365,28 @@ impl ScreenBuilder {
     /// deep still reads: the deepest replies share an indent and say how deep
     /// they really are in their own words.
     #[must_use]
-    pub fn quote(mut self, depth: u8, text: impl Into<String>) -> Self {
+    pub fn quote(self, depth: u8, text: impl Into<String>) -> Self {
+        self.quote_as(depth, QuoteRole::Body, text)
+    }
+
+    /// The line above a reply that says who wrote it and when.
+    ///
+    /// Set as metadata rather than as prose: a byline drawn at body size in
+    /// body ink reads as the comment's opening sentence, which is what a real
+    /// thread on a real panel looked like before this existed.
+    #[must_use]
+    pub fn byline(self, depth: u8, text: impl Into<String>) -> Self {
+        self.quote_as(depth, QuoteRole::Byline, text)
+    }
+
+    /// A paragraph of a thread, saying what it is for.
+    #[must_use]
+    pub fn quote_as(mut self, depth: u8, role: QuoteRole, text: impl Into<String>) -> Self {
         let id = self.next_id();
         self.nodes.push(Node::Quote {
             id,
             depth: depth.min(MAX_QUOTE_DEPTH),
+            role,
             text: text.into(),
         });
         self
@@ -1142,9 +1160,9 @@ impl Context {
     #[must_use]
     pub fn paginate_quoted(
         &self,
-        paragraphs: &[(u8, &str)],
+        paragraphs: &[(u8, QuoteRole, &str)],
         nav_bar: bool,
-    ) -> Vec<Vec<(u8, String)>> {
+    ) -> Vec<Vec<(u8, QuoteRole, String)>> {
         kobo_ui::paginate_quoted(
             paragraphs,
             &self.metrics,

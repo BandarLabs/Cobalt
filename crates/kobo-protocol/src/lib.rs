@@ -1404,7 +1404,8 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
             length
         }
         Node::Quote { text, .. } => {
-            let mut length = 6;
+            // id, depth, role, then the text.
+            let mut length = 7;
             add_encoded_len(&mut length, encoded_string_len(text)?)?;
             length
         }
@@ -2039,10 +2040,19 @@ fn encode_node(
             push_u32(output, id.0);
             push_string(output, text)?;
         }
-        Node::Quote { id, depth, text } => {
+        Node::Quote {
+            id,
+            depth,
+            role,
+            text,
+        } => {
             output.push(18);
             push_u32(output, id.0);
             output.push((*depth).min(kobo_ui::MAX_QUOTE_DEPTH));
+            output.push(match role {
+                kobo_ui::QuoteRole::Body => 0,
+                kobo_ui::QuoteRole::Byline => 1,
+            });
             push_string(output, text)?;
         }
         Node::Button {
@@ -2520,12 +2530,20 @@ fn decode_node(
         }),
         18 => {
             let depth = reader.u8()?;
+            let role = reader.u8()?;
             Ok(Node::Quote {
                 id,
                 // Clamped rather than rejected: a depth past the cap is a
                 // deeper reply, not a malformed frame, and the renderer was
                 // always going to draw it at the cap anyway.
                 depth: depth.min(kobo_ui::MAX_QUOTE_DEPTH),
+                // An unknown role is prose. A frame from a newer application
+                // that has invented a third kind of line should still be
+                // readable, and the thing it certainly is not is a byline.
+                role: match role {
+                    1 => kobo_ui::QuoteRole::Byline,
+                    _ => kobo_ui::QuoteRole::Body,
+                },
                 text: reader.string()?,
             })
         }
@@ -3179,6 +3197,7 @@ mod node_coverage_tests {
             Node::Quote {
                 id: NodeId(30),
                 depth: 2,
+                role: kobo_ui::QuoteRole::Body,
                 text: "A reply".into(),
             },
             Node::Button {
@@ -3308,6 +3327,7 @@ mod node_coverage_tests {
             vec![Node::Quote {
                 id: NodeId(1),
                 depth: 40,
+                role: kobo_ui::QuoteRole::Body,
                 text: "Deep in an argument".into(),
             }],
         );
@@ -3316,6 +3336,7 @@ mod node_coverage_tests {
             vec![Node::Quote {
                 id: NodeId(1),
                 depth: kobo_ui::MAX_QUOTE_DEPTH,
+                role: kobo_ui::QuoteRole::Body,
                 text: "Deep in an argument".into(),
             }]
         );

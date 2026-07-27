@@ -32,8 +32,8 @@
 mod model;
 
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, KoboApp, Screen, ScreenBuilder, Task, TaskError,
-    TaskId, TaskOutcome,
+    action_id, ActionId, BannerLevel, Context, KoboApp, QuoteRole, Screen, ScreenBuilder, Task,
+    TaskError, TaskId, TaskOutcome,
 };
 use model::{Comment, Story};
 use std::process::ExitCode;
@@ -239,7 +239,7 @@ struct Hn {
     open: Option<usize>,
     comments: Vec<Comment>,
     /// The thread broken into pages of paragraphs that fit this panel.
-    thread_pages: Vec<Vec<(u8, String)>>,
+    thread_pages: Vec<Vec<(u8, QuoteRole, String)>>,
     /// Each story's title cut to the one line a row can show, measured against
     /// this panel rather than guessed at by character count.
     titles: Vec<String>,
@@ -371,13 +371,13 @@ impl Hn {
                 .nav_bar(None, THREAD_BAR)
                 .build();
         }
-        for (depth, paragraph) in self
+        for (depth, role, paragraph) in self
             .thread_pages
             .get(self.thread_page)
             .into_iter()
             .flatten()
         {
-            screen = screen.quote(*depth, paragraph.clone());
+            screen = screen.quote_as(*depth, *role, paragraph.clone());
         }
         if let Some(problem) = &self.problem {
             screen = screen.banner(BannerLevel::Attention, problem.clone());
@@ -401,33 +401,37 @@ impl Hn {
     /// Depth travels with each paragraph because an indented paragraph has a
     /// narrower measure: a thread paginated flat and then drawn indented would
     /// lose the bottom of nearly every page.
-    fn thread_paragraphs(&self) -> Vec<(u8, String)> {
+    fn thread_paragraphs(&self) -> Vec<(u8, QuoteRole, String)> {
         let Some(story) = self.open.and_then(|index| self.stories.get(index)) else {
             return Vec::new();
         };
         let mut paragraphs = vec![
-            (0, story.title.clone()),
-            (0, model::summary(story, self.now)),
+            (0, QuoteRole::Body, story.title.clone()),
+            // Domain, points, comment count and age are metadata about the
+            // story in exactly the way a comment's byline is metadata about
+            // the comment, and they were being set as though they were the
+            // story's opening sentence.
+            (0, QuoteRole::Byline, model::summary(story, self.now)),
         ];
         if let Some(note) = &self.note {
             // Inside the flow, not in a banner. A banner is chrome the
             // paginator never measured, so it would push the last paragraph of
             // every page off the panel.
-            paragraphs.push((0, note.clone()));
+            paragraphs.push((0, QuoteRole::Body, note.clone()));
         }
         if let Some(body) = &story.text {
-            paragraphs.push((0, body.clone()));
+            paragraphs.push((0, QuoteRole::Body, body.clone()));
         }
         if self.comments.is_empty() {
-            paragraphs.push((0, "No comments yet.".to_owned()));
+            paragraphs.push((0, QuoteRole::Body, "No comments yet.".to_owned()));
             return paragraphs;
         }
         for comment in &self.comments {
             let indent = comment.indent();
-            paragraphs.push((indent, comment.byline(self.now)));
+            paragraphs.push((indent, QuoteRole::Byline, comment.byline(self.now)));
             for body in comment.body.split("\n\n") {
                 if !body.trim().is_empty() {
-                    paragraphs.push((indent, body.to_owned()));
+                    paragraphs.push((indent, QuoteRole::Body, body.to_owned()));
                 }
             }
         }
@@ -689,7 +693,7 @@ impl Hn {
         let paragraphs = self.thread_paragraphs();
         let borrowed = paragraphs
             .iter()
-            .map(|(depth, text)| (*depth, text.as_str()))
+            .map(|(depth, role, text)| (*depth, *role, text.as_str()))
             .collect::<Vec<_>>();
         self.thread_pages = context.paginate_quoted(&borrowed, true);
         self.thread_page = self
@@ -1229,7 +1233,7 @@ mod tests {
                 .thread()
                 .layout_with(&CLARA_BW_METRICS, Chrome::default());
             for node in &layout.nodes {
-                if let LayoutKind::Quote(depth) = node.kind {
+                if let LayoutKind::Quote(depth, _) = node.kind {
                     lefts.push((depth, node.rect.x, node.rect.width));
                 }
             }
@@ -1283,7 +1287,7 @@ mod tests {
             let drawn = layout
                 .nodes
                 .iter()
-                .filter(|node| matches!(node.kind, LayoutKind::Quote(_)))
+                .filter(|node| matches!(node.kind, LayoutKind::Quote(..)))
                 .count();
             assert_eq!(
                 drawn,
@@ -1355,7 +1359,7 @@ mod tests {
         assert!(
             application.thread_pages[0]
                 .iter()
-                .any(|(_, paragraph)| paragraph.contains("flat")),
+                .any(|(_, _, paragraph)| paragraph.contains("flat")),
             "the note was not on the first page"
         );
     }

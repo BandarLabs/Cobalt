@@ -21,6 +21,46 @@ const MAX_LAYOUT_DEPTH: usize = 16;
 /// which is what [`Node::PagedList`] is for.
 pub const MAX_CHOICE_OPTIONS: usize = 6;
 
+/// What a paragraph of a threaded discussion is for.
+///
+/// A comment is two different things printed one above the other: a line
+/// saying who wrote it and when, and the thing they actually wrote. Drawn at
+/// one size in one tone they read as a single block of prose whose first
+/// sentence happens to be a username, which is what a real thread on a real
+/// panel looked like before this existed. The byline is metadata and is set
+/// like metadata.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum QuoteRole {
+    /// What was said.
+    #[default]
+    Body,
+    /// Who said it, and when. Smaller, and in the muted tone.
+    Byline,
+}
+
+impl QuoteRole {
+    /// The size this paragraph is measured and drawn at.
+    ///
+    /// One place, because wrapping at one size and drawing at another is what
+    /// puts a line past the margin it was fitted to.
+    #[must_use]
+    pub const fn size(self) -> FontSize {
+        match self {
+            Self::Body => FontSize::Body,
+            Self::Byline => FontSize::Caption,
+        }
+    }
+
+    /// The tone it is drawn in.
+    #[must_use]
+    pub const fn tone(self) -> u8 {
+        match self {
+            Self::Body => tone::INK,
+            Self::Byline => tone::MUTED,
+        }
+    }
+}
+
 /// The deepest a [`Node::Quote`] is drawn.
 ///
 /// Measured rather than picked: one indent step is one small space, and this
@@ -1073,6 +1113,8 @@ pub enum Node {
         id: NodeId,
         /// How many levels in. Clamped on construction.
         depth: u8,
+        /// Whether this paragraph is what was said, or who said it.
+        role: QuoteRole,
         text: String,
     },
     Button {
@@ -1615,9 +1657,10 @@ const fn min_i32(a: i32, b: i32) -> i32 {
 pub enum LayoutKind {
     Heading,
     Text,
-    /// An indented paragraph. The value is the clamped depth, so the renderer
-    /// can draw the gutter rule without consulting the tree.
-    Quote(u8),
+    /// An indented paragraph. The values are the clamped depth and what the
+    /// paragraph is for, so the renderer can draw the gutter rules and pick a
+    /// size without consulting the tree.
+    Quote(u8, QuoteRole),
     Button(ActionId, ControlState),
     Card,
     Divider,
@@ -2088,15 +2131,26 @@ fn layout_node(
             });
             y.saturating_add(height)
         }
-        Node::Quote { id, depth, text } => {
+        Node::Quote {
+            id,
+            depth,
+            role,
+            text,
+        } => {
             let depth = (*depth).min(MAX_QUOTE_DEPTH);
             let (offset, text_width) = quote_offsets(metrics, width, depth);
             let text_x = x.saturating_add(offset);
-            let lines = wrap_text_in(text, text_width, FontSize::Body, prose);
-            let height = max(
-                MIN_TEXT_HEIGHT,
-                lines.len() as i32 * FontSize::Body.line_height_in(prose),
-            );
+            let size = role.size();
+            let lines = wrap_text_in(text, text_width, size, prose);
+            // A byline is one short line and is allowed to be shorter than a
+            // finger: it is not a control, and forcing it to the minimum text
+            // height is what put a comment's author a whole blank line away
+            // from the comment.
+            let measured = lines.len() as i32 * size.line_height_in(prose);
+            let height = match role {
+                QuoteRole::Body => max(MIN_TEXT_HEIGHT, measured),
+                QuoteRole::Byline => measured,
+            };
             layout.nodes.push(LayoutNode {
                 id: *id,
                 rect: Rect {
@@ -2105,7 +2159,7 @@ fn layout_node(
                     width: text_width,
                     height,
                 },
-                kind: LayoutKind::Quote(depth),
+                kind: LayoutKind::Quote(depth, *role),
                 text_lines: lines,
             });
             y.saturating_add(height)
@@ -3163,14 +3217,14 @@ pub fn paginate(text: &str, area: ProseArea) -> Vec<Vec<String>> {
     let text = normalise_breaks(text);
     let paragraphs = text
         .split("\n\n")
-        .map(|paragraph| (0, paragraph))
+        .map(|paragraph| (0, QuoteRole::Body, paragraph))
         .collect::<Vec<_>>();
     // The metrics only ever reach `quote_offsets`, and at depth zero that
     // returns the full width whatever panel this is, so an unindented page is
     // measured identically on every device.
     paginate_quoted(&paragraphs, &DisplayMetrics::default(), area)
         .into_iter()
-        .map(|page| page.into_iter().map(|(_, text)| text).collect())
+        .map(|page| page.into_iter().map(|(_, _, text)| text).collect())
         .collect()
 }
 
@@ -3189,20 +3243,28 @@ const MIN_KEEP_LINES: usize = 2;
 /// then drawn indented loses the bottom of every page.
 #[must_use]
 pub fn paginate_quoted(
-    paragraphs: &[(u8, &str)],
+    paragraphs: &[(u8, QuoteRole, &str)],
     metrics: &DisplayMetrics,
     area: ProseArea,
-) -> Vec<Vec<(u8, String)>> {
-    let line_height = FontSize::Body.line_height_in(area.face);
-    let mut pages: Vec<Vec<(u8, String)>> = Vec::new();
-    let mut page: Vec<(u8, String)> = Vec::new();
+) -> Vec<Vec<(u8, QuoteRole, String)>> {
+    let mut pages: Vec<Page> = Vec::new();
+    let mut page: Page = Vec::new();
     let mut used = 0;
-    if area.width <= 0 || area.height < line_height {
+    let body_height = FontSize::Body.line_height_in(area.face);
+    if area.width <= 0 || area.height < body_height {
         return pages;
     }
 
-    for (depth, paragraph) in paragraphs {
+    // Who is speaking, carried across page breaks. A comment is a byline
+    // followed by its paragraphs, so the last byline seen is the author of
+    // everything until the next one.
+    let mut speaker: Option<(u8, String)> = None;
+
+    for (depth, role, paragraph) in paragraphs {
         let depth = (*depth).min(MAX_QUOTE_DEPTH);
+        let role = *role;
+        let size = role.size();
+        let line_height = size.line_height_in(area.face);
         let (_, width) = quote_offsets(metrics, area.width, depth);
         // Line breaks inside a paragraph are the source file's, not the
         // author's; Gutenberg's plain text is hard wrapped at seventy columns
@@ -3212,7 +3274,10 @@ pub fn paginate_quoted(
         if paragraph.is_empty() {
             continue;
         }
-        let mut lines = wrap_text_in(paragraph, width, FontSize::Body, area.face);
+        if role == QuoteRole::Byline {
+            speaker = Some((depth, paragraph.to_owned()));
+        }
+        let mut lines = wrap_text_in(paragraph, width, size, area.face);
         while !lines.is_empty() {
             let spacing = if page.is_empty() { 0 } else { area.gap };
             let room = area.height - used - spacing;
@@ -3220,15 +3285,20 @@ pub fn paginate_quoted(
             if fits == 0 {
                 // Nothing more will fit, so start a page rather than draw off
                 // the bottom of the panel.
-                pages.push(std::mem::take(&mut page));
-                used = 0;
+                used = turn_page(&mut pages, &mut page, speaker.as_ref(), role, area);
                 continue;
             }
             if fits >= lines.len() {
-                // The layout engine gives every text node a floor, so a
-                // one-line paragraph can occupy more than one line's height.
-                used += spacing + max_i32(MIN_TEXT_HEIGHT, lines.len() as i32 * line_height);
-                page.push((depth, lines.join(" ")));
+                // The layout engine gives a body paragraph a floor, so a
+                // one-line one can occupy more than one line's height. A
+                // byline has no floor, because it is not a control.
+                let measured = lines.len() as i32 * line_height;
+                used += spacing
+                    + match role {
+                        QuoteRole::Body => max_i32(MIN_TEXT_HEIGHT, measured),
+                        QuoteRole::Byline => measured,
+                    };
+                page.push((depth, role, lines.join(" ")));
                 break;
             }
             // The paragraph does not fit in what is left. Splitting it at a
@@ -3250,13 +3320,11 @@ pub fn paginate_quoted(
             let keep = if page.is_empty() { keep.max(1) } else { keep };
             if keep >= MIN_KEEP_LINES || (page.is_empty() && keep > 0) {
                 let rest = lines.split_off(keep);
-                page.push((depth, lines.join(" ")));
-                pages.push(std::mem::take(&mut page));
-                used = 0;
+                page.push((depth, role, lines.join(" ")));
+                used = turn_page(&mut pages, &mut page, speaker.as_ref(), role, area);
                 lines = rest;
             } else {
-                pages.push(std::mem::take(&mut page));
-                used = 0;
+                used = turn_page(&mut pages, &mut page, speaker.as_ref(), role, area);
             }
         }
     }
@@ -3264,6 +3332,43 @@ pub fn paginate_quoted(
         pages.push(page);
     }
     pages
+}
+
+/// One page of threaded prose: depth, what the paragraph is for, and the words.
+type Page = Vec<(u8, QuoteRole, String)>;
+
+/// Closes the current page and opens the next, naming the speaker again.
+///
+/// A comment longer than a page used to continue onto the next one with
+/// nothing above it, so a reader who turned the page was reading words with no
+/// idea whose they were — visible on a real thread, where a page began
+/// mid-sentence under a bare indent. The byline is repeated at the top of the
+/// continuation and charged to the new page's height, so repeating it cannot
+/// push the last line off the bottom.
+///
+/// Only for prose. A page that breaks immediately after a byline does not need
+/// the byline again; the comment has not started yet.
+fn turn_page(
+    pages: &mut Vec<Page>,
+    page: &mut Page,
+    speaker: Option<&(u8, String)>,
+    role: QuoteRole,
+    area: ProseArea,
+) -> i32 {
+    pages.push(std::mem::take(page));
+    let Some((depth, byline)) = speaker else {
+        return 0;
+    };
+    if role != QuoteRole::Body {
+        return 0;
+    }
+    let size = QuoteRole::Byline.size();
+    let height = size.line_height_in(area.face);
+    if height > area.height {
+        return 0;
+    }
+    page.push((*depth, QuoteRole::Byline, format!("{byline} \u{2026}")));
+    height
 }
 
 /// Folds every line-ending convention onto `\n`.
@@ -4349,7 +4454,7 @@ fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
         | LayoutKind::NavDestination(_)
         | LayoutKind::NavDestinationSelected(_) => FontSize::Caption,
         LayoutKind::Text
-        | LayoutKind::Quote(_)
+        | LayoutKind::Quote(..)
         | LayoutKind::Button(_, _)
         | LayoutKind::PagedList
         | LayoutKind::BarAction(_)
@@ -4803,16 +4908,19 @@ pub fn render_all(
                 tone::INK,
                 clip,
             ),
-            LayoutKind::Quote(depth) => {
-                if depth > 0 {
-                    // The rule sits in the gutter to the left of the text,
-                    // which is where the layout reserved room for it.
-                    let step = metrics.space(Space::Small);
-                    let thickness = metrics.rule_thickness();
+            LayoutKind::Quote(depth, role) => {
+                // One rule for every level, not one for the innermost. The
+                // indent step is two millimetres, so between a reply and a
+                // reply-to-a-reply there is otherwise nothing to see: on a
+                // photograph of the real panel the two were indistinguishable.
+                // Depth becomes something to count rather than to measure.
+                let step = metrics.space(Space::Small);
+                let thickness = metrics.rule_thickness();
+                for back in 1..=i32::from(depth) {
                     fill_clipped(
                         surface,
                         Rect {
-                            x: node.rect.x - step,
+                            x: node.rect.x - step * back,
                             y: node.rect.y,
                             width: thickness,
                             height: node.rect.height,
@@ -4826,8 +4934,8 @@ pub fn render_all(
                     &node.text_lines,
                     node.rect.x,
                     node.rect.y,
-                    FontSize::Body,
-                    tone::INK,
+                    role.size(),
+                    role.tone(),
                     clip,
                 );
             }
@@ -7315,13 +7423,14 @@ mod prose_tests {
     }
 
     /// The same measurement as `drawn`, for a page that carries depth.
-    fn drawn_quoted(page: &[(u8, String)], metrics: &DisplayMetrics) -> (usize, i32) {
+    fn drawn_quoted(page: &[(u8, QuoteRole, String)], metrics: &DisplayMetrics) -> (usize, i32) {
         let nodes = page
             .iter()
             .enumerate()
-            .map(|(index, (depth, paragraph))| Node::Quote {
+            .map(|(index, (depth, role, paragraph))| Node::Quote {
                 id: NodeId(index as u32 + 1),
                 depth: *depth,
+                role: *role,
                 text: paragraph.clone(),
             })
             .collect();
@@ -7340,7 +7449,7 @@ mod prose_tests {
         let quotes = layout
             .nodes
             .iter()
-            .filter(|node| matches!(node.kind, LayoutKind::Quote(_)))
+            .filter(|node| matches!(node.kind, LayoutKind::Quote(..)))
             .collect::<Vec<_>>();
         let bottom = quotes
             .iter()
@@ -7362,7 +7471,7 @@ mod prose_tests {
             let paragraphs = source
                 .split("\n\n")
                 .enumerate()
-                .map(|(index, paragraph)| ((index % 5) as u8, paragraph))
+                .map(|(index, paragraph)| ((index % 5) as u8, QuoteRole::Body, paragraph))
                 .collect::<Vec<_>>();
             let pages = paginate_quoted(&paragraphs, &metrics, area);
             assert!(!pages.is_empty(), "{name} produced no pages");
@@ -7396,7 +7505,10 @@ mod prose_tests {
         // Two of them, still as one paragraph: a reply this long is ordinary
         // on a thread about anything contentious.
         let reply = [LONG_REPLY; 2].join(" ");
-        let paragraphs = vec![(0_u8, "A short opening remark."), (1, reply.as_str())];
+        let paragraphs = vec![
+            (0_u8, QuoteRole::Body, "A short opening remark."),
+            (1, QuoteRole::Body, reply.as_str()),
+        ];
         let pages = paginate_quoted(&paragraphs, &CLARA_BW_METRICS, area);
         assert!(pages.len() > 1, "the reply was not long enough to split");
         assert_eq!(
@@ -7414,7 +7526,7 @@ mod prose_tests {
         for (index, page) in pages.iter().enumerate() {
             let lines = page
                 .iter()
-                .map(|(depth, text)| {
+                .map(|(depth, _, text)| {
                     let (_, width) = quote_offsets(&CLARA_BW_METRICS, area.width, *depth);
                     wrap_text(text, width, FontSize::Body).len()
                 })
@@ -7425,7 +7537,7 @@ mod prose_tests {
             );
         }
         let last = pages.last().expect("pages");
-        let (depth, text) = last.last().expect("a paragraph");
+        let (depth, _, text) = last.last().expect("a paragraph");
         let (_, width) = quote_offsets(&CLARA_BW_METRICS, area.width, *depth);
         assert!(
             wrap_text(text, width, FontSize::Body).len() >= MIN_KEEP_LINES,
@@ -7441,11 +7553,11 @@ mod prose_tests {
         let source = book(DESCRIPTION, 60);
         let flat = source
             .split("\n\n")
-            .map(|paragraph| (0, paragraph))
+            .map(|paragraph| (0, QuoteRole::Body, paragraph))
             .collect::<Vec<_>>();
         let nested = source
             .split("\n\n")
-            .map(|paragraph| (3, paragraph))
+            .map(|paragraph| (3, QuoteRole::Body, paragraph))
             .collect::<Vec<_>>();
         let flat_pages = paginate_quoted(&flat, &CLARA_BW_METRICS, area).len();
         let nested_pages = paginate_quoted(&nested, &CLARA_BW_METRICS, area).len();
@@ -7463,6 +7575,7 @@ mod prose_tests {
             .map(|depth| Node::Quote {
                 id: NodeId(depth + 1),
                 depth: depth as u8,
+                role: QuoteRole::Body,
                 text: "A reply, which answers the one above it.".to_owned(),
             })
             .collect();
@@ -7470,13 +7583,13 @@ mod prose_tests {
         let quotes = layout
             .nodes
             .iter()
-            .filter(|node| matches!(node.kind, LayoutKind::Quote(_)))
+            .filter(|node| matches!(node.kind, LayoutKind::Quote(..)))
             .collect::<Vec<_>>();
         assert_eq!(quotes.len(), 6);
         for pair in quotes.windows(2) {
             let (shallow, deep) = (pair[0], pair[1]);
-            let capped = matches!(deep.kind, LayoutKind::Quote(depth) if depth == MAX_QUOTE_DEPTH)
-                && matches!(shallow.kind, LayoutKind::Quote(depth) if depth == MAX_QUOTE_DEPTH);
+            let capped = matches!(deep.kind, LayoutKind::Quote(depth, _) if depth == MAX_QUOTE_DEPTH)
+                && matches!(shallow.kind, LayoutKind::Quote(depth, _) if depth == MAX_QUOTE_DEPTH);
             if capped {
                 assert_eq!(shallow.rect.x, deep.rect.x, "past the cap the indent moved");
                 assert_eq!(shallow.rect.width, deep.rect.width);
@@ -7499,6 +7612,161 @@ mod prose_tests {
             deepest - widest < CLARA_BW_METRICS.prose_area(false, false).width / 3,
             "the deepest indent spent more than a third of the measure"
         );
+    }
+
+    #[test]
+    fn depth_is_counted_in_rules_rather_than_left_to_the_indent() {
+        // Two millimetres of indent per level is invisible on the panel: on a
+        // photograph of a real thread a reply and a reply-to-a-reply looked
+        // the same. So every ancestor gets a rule, and the count is readable
+        // even when the measure is not.
+        let stride = usize::try_from(CLARA_BW_METRICS.width).expect("a positive width");
+        let height = usize::try_from(CLARA_BW_METRICS.height).expect("a positive height");
+        for depth in 0..=3u8 {
+            let screen = Screen::new(
+                1,
+                vec![Node::Quote {
+                    id: NodeId(1),
+                    depth,
+                    role: QuoteRole::Body,
+                    text: "A reply, which answers the one above it.".to_owned(),
+                }],
+            );
+            let quote = screen
+                .layout()
+                .nodes
+                .into_iter()
+                .find(|node| matches!(node.kind, LayoutKind::Quote(..)))
+                .expect("the reply was laid out");
+            let mut surface = Surface::new(stride, height);
+            surface.clear(tone::PAPER);
+            render(&screen, &mut surface, None);
+
+            // Count columns of rule ink to the left of the text, one row down
+            // into the paragraph so no ascender can be mistaken for a rule.
+            let row = usize::try_from(quote.rect.y + quote.rect.height / 2).expect("inside");
+            let left = usize::try_from(quote.rect.x).expect("inside the panel");
+            let mut columns = 0;
+            let mut inside_rule = false;
+            for column in 0..left {
+                let ink = surface.pixels[row * stride + column] == tone::RULE;
+                if ink && !inside_rule {
+                    columns += 1;
+                }
+                inside_rule = ink;
+            }
+            assert_eq!(
+                columns,
+                usize::from(depth),
+                "a reply at depth {depth} was marked with {columns} rules"
+            );
+        }
+    }
+
+    #[test]
+    fn a_byline_is_set_apart_from_what_it_introduces() {
+        // The author line was emitted as an ordinary paragraph: same size,
+        // same ink, so a thread read as one undifferentiated column and a page
+        // could open on a comment with no visible author at all.
+        let body = Screen::new(
+            1,
+            vec![Node::Quote {
+                id: NodeId(1),
+                depth: 1,
+                role: QuoteRole::Body,
+                text: "patio11 2 hours ago".to_owned(),
+            }],
+        );
+        let byline = Screen::new(
+            1,
+            vec![Node::Quote {
+                id: NodeId(1),
+                depth: 1,
+                role: QuoteRole::Byline,
+                text: "patio11 2 hours ago".to_owned(),
+            }],
+        );
+        assert_eq!(QuoteRole::Byline.size(), FontSize::Caption);
+        assert_eq!(QuoteRole::Byline.tone(), tone::MUTED);
+        assert!(
+            QuoteRole::Byline.size().tenth_mm() < QuoteRole::Body.size().tenth_mm(),
+            "the byline was not smaller than the comment it introduces"
+        );
+        let measure = |screen: &Screen| {
+            screen
+                .layout()
+                .nodes
+                .into_iter()
+                .find(|node| matches!(node.kind, LayoutKind::Quote(..)))
+                .expect("the line was laid out")
+                .rect
+                .height
+        };
+        assert!(
+            measure(&byline) < measure(&body),
+            "the byline took as much room as a paragraph"
+        );
+    }
+
+    #[test]
+    fn a_page_that_opens_mid_comment_says_whose_it_is() {
+        // Turning the page used to lose the author: the byline was on the page
+        // before, and what followed was an unattributed wall.
+        let area = CLARA_BW_METRICS.prose_area(true, true);
+        let long = book(DESCRIPTION, 40);
+        let mut source = vec![(1u8, QuoteRole::Byline, "patio11 2 hours ago".to_owned())];
+        source.extend(
+            long.split("\n\n")
+                .map(|paragraph| (1, QuoteRole::Body, paragraph.to_owned())),
+        );
+        let borrowed = source
+            .iter()
+            .map(|(depth, role, text)| (*depth, *role, text.as_str()))
+            .collect::<Vec<_>>();
+        let pages = paginate_quoted(&borrowed, &CLARA_BW_METRICS, area);
+        assert!(pages.len() > 1, "one page cannot break mid-comment");
+        for (index, page) in pages.iter().enumerate().skip(1) {
+            let (_, role, text) = page.first().expect("a page is never empty");
+            assert_eq!(
+                *role,
+                QuoteRole::Byline,
+                "page {index} opened on a comment with no author"
+            );
+            assert!(
+                text.starts_with("patio11"),
+                "page {index} named somebody else: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_repeated_byline_is_paid_for_out_of_the_page_it_opens() {
+        // A continuation line that is drawn but not measured is how the last
+        // paragraph of a page ends up below the panel.
+        let area = CLARA_BW_METRICS.prose_area(true, true);
+        let long = book(DESCRIPTION, 40);
+        let mut source = vec![(1u8, QuoteRole::Byline, "patio11 2 hours ago".to_owned())];
+        source.extend(
+            long.split("\n\n")
+                .map(|paragraph| (1, QuoteRole::Body, paragraph.to_owned())),
+        );
+        let borrowed = source
+            .iter()
+            .map(|(depth, role, text)| (*depth, *role, text.as_str()))
+            .collect::<Vec<_>>();
+        let floor = CLARA_BW_METRICS.height - CLARA_BW_METRICS.nav_bar_height();
+        for (index, page) in paginate_quoted(&borrowed, &CLARA_BW_METRICS, area)
+            .iter()
+            .enumerate()
+        {
+            let (shown, bottom) = drawn_quoted(page, &CLARA_BW_METRICS);
+            assert_eq!(shown, page.len(), "page {index} lost a paragraph");
+            assert!(
+                bottom <= floor,
+                "page {index} ran {} pixels under the page controls",
+                bottom - floor
+            );
+        }
     }
 
     #[test]
