@@ -154,6 +154,92 @@ pub mod process {
     }
 }
 
+/// Noticing that this process has been asked to stop.
+///
+/// A panel session owns the display, the touch panel, the stock reader and the
+/// firmware's freeze watchdog, and it gives all four back on the way out. Until
+/// this existed there was no way to *ask* it to: `kill` skipped the whole
+/// teardown, and the only thing that put the device right was the recovery
+/// watchdog, which polls, so the owner was left holding a device showing a
+/// stale image with no reader behind it and an unresponsive power button for up
+/// to two minutes. That is indistinguishable from a brick to the person holding
+/// it, which is the one impression this project exists to avoid.
+///
+/// The handler does exactly one async-signal-safe thing — a relaxed atomic
+/// store — and everything else happens on the session loop, which already
+/// wakes on a timer.
+pub mod stop {
+    use super::{c_int, io};
+    use std::sync::atomic::{AtomicI32, Ordering};
+
+    pub const SIGHUP: c_int = 1;
+    pub const SIGINT: c_int = 2;
+    pub const SIGTERM: c_int = 15;
+
+    /// Every signal that means "finish what you are doing and give things
+    /// back": a `kill` with no arguments, a Ctrl-C, and a closed terminal.
+    pub const CAUGHT: [c_int; 3] = [SIGTERM, SIGINT, SIGHUP];
+
+    const NONE: i32 = 0;
+    static REQUESTED: AtomicI32 = AtomicI32::new(NONE);
+
+    unsafe extern "C" {
+        fn signal(number: c_int, handler: usize) -> usize;
+    }
+
+    const SIG_ERR: usize = usize::MAX;
+
+    extern "C" fn record(number: c_int) {
+        REQUESTED.store(number, Ordering::Relaxed);
+    }
+
+    /// Asks the kernel to route termination signals here instead of killing
+    /// this process outright.
+    ///
+    /// # Errors
+    ///
+    /// Returns the kernel error if a handler cannot be installed. The caller
+    /// should carry on regardless: without a handler the process dies the way
+    /// it did before, which the recovery watchdog still covers.
+    pub fn catch_requests() -> io::Result<()> {
+        for number in CAUGHT {
+            // SAFETY: `record` is an `extern "C"` function of the right
+            // signature that performs one relaxed atomic store, which is
+            // async-signal-safe. The kernel keeps the handler installed.
+            let previous = unsafe { signal(number, record as *const () as usize) };
+            if previous == SIG_ERR {
+                return Err(io::Error::last_os_error());
+            }
+        }
+        Ok(())
+    }
+
+    /// The signal that asked this process to stop, if one has arrived.
+    #[must_use]
+    pub fn requested() -> Option<c_int> {
+        match REQUESTED.load(Ordering::Relaxed) {
+            NONE => None,
+            number => Some(number),
+        }
+    }
+
+    /// A name for the signal, for the line the session prints on the way out.
+    #[must_use]
+    pub fn name(number: c_int) -> &'static str {
+        match number {
+            SIGHUP => "SIGHUP",
+            SIGINT => "SIGINT",
+            SIGTERM => "SIGTERM",
+            _ => "a signal",
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn forget_for_test() {
+        REQUESTED.store(NONE, Ordering::Relaxed);
+    }
+}
+
 pub mod fb {
     use super::{query_ioctl, File};
     use std::io;
@@ -811,6 +897,33 @@ mod tests {
     use super::{hwtcon, input, ior, iow, iowr};
     #[cfg(feature = "device-write")]
     use std::fs::File;
+
+    /// Killing a panel session used to skip the whole teardown, leaving the
+    /// owner holding a device that showed a stale image, answered no touch and
+    /// ignored the power button until the recovery watchdog noticed, up to two
+    /// minutes later. The signal has to arrive as data the session loop can
+    /// act on instead of ending the process where it stands.
+    #[cfg(feature = "device-write")]
+    #[test]
+    fn a_termination_signal_arrives_as_something_to_act_on() {
+        use super::stop;
+        stop::forget_for_test();
+        assert_eq!(stop::requested(), None);
+        stop::catch_requests().expect("install the handlers");
+
+        // Sending it to ourselves is the whole point: if the handler were not
+        // installed this call would end the test process.
+        super::process::signal(std::process::id().cast_signed(), stop::SIGTERM)
+            .expect("signal this process");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while stop::requested().is_none() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+
+        assert_eq!(stop::requested(), Some(stop::SIGTERM));
+        assert_eq!(stop::name(stop::SIGTERM), "SIGTERM");
+        stop::forget_for_test();
+    }
 
     #[test]
     fn ioctl_numbers_match_vendor_arm_uapi() {

@@ -20,6 +20,9 @@ pub mod probe;
 #[cfg(feature = "device-write")]
 pub mod reader;
 pub mod refresh;
+/// Noticing that this process has been asked to stop, so that everything it
+/// took from the device is given back before it goes.
+pub use kobo_abi::stop;
 pub mod supervisor;
 pub mod surface;
 pub mod touch;

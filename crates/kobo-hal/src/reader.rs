@@ -544,6 +544,13 @@ fn sibling(state: &Path, suffix: &str) -> PathBuf {
 /// interval. Comparing counters rather than timestamps keeps this free of date
 /// arithmetic, which busybox spells differently everywhere, and makes it
 /// immune to the clock being set while a session is running.
+///
+/// It removes the heartbeat and the cancel marker on its way out because it is
+/// the last thing that reads either. The session cannot: the marker has to
+/// outlive the session that wrote it or a watchdog already sleeping would wake
+/// up, find nothing cancelled and restart a reader that is already running.
+/// Both files stayed in `/tmp` after every clean session until a real one was
+/// run on hardware and the directory was looked at.
 fn watchdog_script(
     beat: &Path,
     cancel: &Path,
@@ -556,11 +563,11 @@ fn watchdog_script(
          while :; do\n\
          before=$(cat '{beat}' 2>/dev/null)\n\
          sleep {seconds}\n\
-         [ -e '{cancel}' ] && exit 0\n\
+         [ -e '{cancel}' ] && {{ rm -f '{cancel}' '{beat}'; exit 0; }}\n\
          after=$(cat '{beat}' 2>/dev/null)\n\
          [ \"$before\" = \"$after\" ] && break\n\
          done\n\
-         [ -e '{cancel}' ] && exit 0\n\
+         [ -e '{cancel}' ] && {{ rm -f '{cancel}' '{beat}'; exit 0; }}\n\
          exec '{executable}' --restart-from '{state}'\n",
         beat = beat.display(),
         seconds = check.as_secs().max(1),
@@ -834,13 +841,37 @@ mod tests {
             Path::new("/tmp/s"),
             Duration::from_secs(60),
         );
-        let checks = script.matches("[ -e '/tmp/s.cancel' ] && exit 0").count();
+        let guard = "[ -e '/tmp/s.cancel' ]";
+        let checks = script.matches(guard).count();
         assert_eq!(checks, 2, "once inside the loop and once before acting");
         let acts_at = script.find("exec '/tmp/kobod'").expect("acts");
-        let last_check = script
-            .rfind("[ -e '/tmp/s.cancel' ] && exit 0")
-            .expect("checks");
+        let last_check = script.rfind(guard).expect("checks");
         assert!(last_check < acts_at);
+    }
+
+    /// Both files sat in `/tmp` after every clean session, because the session
+    /// cannot remove a marker a sleeping watchdog has yet to read. The script
+    /// is the last thing that reads either, so it is the thing that sweeps.
+    #[test]
+    fn the_watchdog_removes_its_own_files_when_it_stands_down() {
+        let script = watchdog_script(
+            Path::new("/tmp/s.beat"),
+            Path::new("/tmp/s.cancel"),
+            Path::new("/tmp/kobod"),
+            Path::new("/tmp/s"),
+            Duration::from_secs(60),
+        );
+        assert_eq!(
+            script
+                .matches("rm -f '/tmp/s.cancel' '/tmp/s.beat'; exit 0;")
+                .count(),
+            2,
+            "both stand-down paths have to sweep, or one of them leaks"
+        );
+        assert!(
+            !script[script.find("exec '/tmp/kobod'").expect("acts")..].contains("rm -f"),
+            "the recovery path must leave the state alone; kobod reads it"
+        );
     }
 
     #[test]

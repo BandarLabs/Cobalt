@@ -165,7 +165,56 @@ fn restart_reader(state: &Path) -> Result<(), Box<dyn Error>> {
             "reader restarted as pid {pid}, but the freeze watchdog could not be resumed ({error}); it returns on the next reboot"
         ),
     }
+    println!("{}", clear_session_files(state));
     Ok(())
+}
+
+/// Removes what a session that died without cleaning up left behind.
+///
+/// Recovery is not finished when the reader is running again; it is finished
+/// when the device looks like nothing happened. A killed session leaves its
+/// state directory, its heartbeat and its socket in `/tmp`, and while tmpfs
+/// clears them at the next boot, "no leftovers in `/tmp`" is one of the four
+/// things checked after every session on this device, and a leftover heartbeat
+/// is indistinguishable from a session still in progress.
+///
+/// Only paths derived from the directory the caller named are touched, and
+/// only after the reader is confirmed running, so a failed restart leaves
+/// everything in place for the next attempt.
+fn clear_session_files(state: &Path) -> String {
+    let mut removed = Vec::new();
+    let mut failed = Vec::new();
+    let mut discard = |path: PathBuf, directory: bool| {
+        if !path.exists() {
+            return;
+        }
+        let outcome = if directory {
+            fs::remove_dir_all(&path)
+        } else {
+            fs::remove_file(&path)
+        };
+        match outcome {
+            Ok(()) => removed.push(path),
+            Err(error) => failed.push(format!("{}: {error}", path.display())),
+        }
+    };
+    for suffix in ["beat", "sock", "cancel"] {
+        let mut sidecar = state.as_os_str().to_owned();
+        sidecar.push(format!(".{suffix}"));
+        discard(PathBuf::from(sidecar), false);
+    }
+    discard(state.to_path_buf(), true);
+    if failed.is_empty() {
+        format!("cleared {} leftover session files", removed.len())
+    } else {
+        format!(
+            "cleared {} leftover session files, but {} could not be removed ({}); \
+             they are in tmpfs and go at the next reboot",
+            removed.len(),
+            failed.len(),
+            failed.join(", ")
+        )
+    }
 }
 
 fn print_safety_state() {
@@ -390,6 +439,42 @@ mod tests {
     use super::validate_simulation_paths;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
+
+    /// Killing the daemon outright brought the reader back on hardware and
+    /// left the session directory, its heartbeat and its socket in `/tmp`. A
+    /// stale heartbeat is indistinguishable from a session in progress, so
+    /// recovery has to sweep up after itself.
+    #[cfg(feature = "device-write")]
+    #[test]
+    fn recovery_sweeps_up_what_a_killed_session_left_behind() {
+        let state = std::env::temp_dir().join(format!("kobo-clear-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&state);
+        fs::create_dir(&state).expect("create the session directory");
+        fs::write(state.join("argv"), b"nickel").expect("write a session file");
+        let sidecars = ["beat", "sock", "cancel"].map(|suffix| {
+            let mut path = state.as_os_str().to_owned();
+            path.push(format!(".{suffix}"));
+            std::path::PathBuf::from(path)
+        });
+        for sidecar in &sidecars {
+            fs::write(sidecar, b"1").expect("write a sidecar");
+        }
+
+        let report = super::clear_session_files(&state);
+
+        assert!(!state.exists(), "the session directory survived: {report}");
+        for sidecar in &sidecars {
+            assert!(
+                !sidecar.exists(),
+                "{} survived: {report}",
+                sidecar.display()
+            );
+        }
+        assert!(report.contains("cleared 4"), "unexpected report: {report}");
+        // Recovery runs on every abnormal exit, including ones that already
+        // cleaned up, so a second sweep has to be silent rather than an error.
+        assert!(super::clear_session_files(&state).contains("cleared 0"));
+    }
 
     #[test]
     fn simulation_paths_require_private_temp_directory() {

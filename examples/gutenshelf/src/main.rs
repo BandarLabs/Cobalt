@@ -251,7 +251,7 @@ impl Gutenshelf {
         screen
             .page_turns("page-back", "page-next")
             .nav_bar(
-                usize::MAX,
+                None,
                 [
                     ("page-back", "Back"),
                     ("results", "Library"),

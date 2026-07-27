@@ -13,23 +13,35 @@ mod package;
 mod sha256;
 
 const DEVICE_PACKAGES: &[&str] = &["kobo-doctor", "kobod", "kobo-todo", "kobo-terminal"];
-/// Everything an owner's device needs, in the order it is packaged.
+/// Everything an owner's device needs, in the order it is packaged, with the
+/// features each one has to be built with.
 ///
 /// The launcher is first because it is what `kobod` is pointed at, and the
 /// rest are what it can start. `kobo-doctor`, `kobo-smoke`, `kobo-handoff` and
 /// `kobo-guard` are deliberately absent: they are development tools, and two
 /// of them write to hardware.
-const INSTALLED_PACKAGES: &[&str] = &[
-    "kobod",
-    "kobo-launcher",
-    "kobo-terminal",
-    "kobo-todo",
-    "kobo-brief",
-    "kobo-chat",
-    "kobo-gutenshelf",
-    "kobo-gallery",
-    "kobo-tictactoe",
+///
+/// `kobod` needs `device-write` or `--present` is not compiled in at all, and
+/// `start.sh` — the only thing in the package an owner runs — fails with a
+/// usage message. That is exactly what shipped until an installed package was
+/// run on a real device, so `every_packaged_binary_is_built_with_what_it_needs`
+/// and the artifact check in `build_package` both exist to keep it shipped.
+const INSTALLED_PACKAGES: &[(&str, Option<&str>)] = &[
+    ("kobod", Some("device-write")),
+    ("kobo-launcher", None),
+    ("kobo-terminal", None),
+    ("kobo-todo", None),
+    ("kobo-brief", None),
+    ("kobo-chat", None),
+    ("kobo-gutenshelf", None),
+    ("kobo-gallery", None),
+    ("kobo-tictactoe", None),
 ];
+/// Proof that the daemon in the package can actually take the panel. The
+/// phrase only exists inside `present_on_panel`, which is behind
+/// `device-write`, so finding it in the finished binary is the artifact-level
+/// version of running `start.sh`.
+const PRESENT_UNLOCK_PHRASE: &[u8] = b"OWNER_ATTENDED_PANEL_SESSION";
 /// What the owner runs, and the only thing that starts a panel session.
 ///
 /// It sets the unlock the daemon requires, because on an installed device the
@@ -1595,22 +1607,46 @@ fn verify_command(arguments: &[String]) -> Result<(), String> {
 /// device's habit of ignoring remote arguments. They copy one file into
 /// `.kobo/`, eject, and the reader installs it at the next boot using its own
 /// battery-checked, recovery-bracketed installer.
+/// Refuses a daemon that cannot start a panel session.
+///
+/// A `kobod` built without `device-write` is a perfectly valid ARM binary that
+/// passes every other check in this file and then answers `start.sh` with a
+/// usage message. The phrase searched for here is the unlock `present_on_panel`
+/// compares against, and that function is the whole of what the feature adds.
+fn verify_present_is_compiled_in(bytes: &[u8], binary: &Path) -> Result<(), String> {
+    if bytes
+        .windows(PRESENT_UNLOCK_PHRASE.len())
+        .any(|window| window == PRESENT_UNLOCK_PHRASE)
+    {
+        return Ok(());
+    }
+    Err(format!(
+        "{}: built without the device-write feature, so --present is not compiled in \
+         and start.sh would fail with a usage message",
+        binary.display()
+    ))
+}
+
 fn build_package(arguments: &[String]) -> Result<(), String> {
     let (tarball, folder) = parse_package(arguments)?;
     let mut members = Vec::new();
-    for name in INSTALLED_PACKAGES {
+    for (name, features) in INSTALLED_PACKAGES {
         run_status(
-            &mut device_build_command(name, None)?,
+            &mut device_build_command(name, *features)?,
             format!("cargo build {name}"),
         )?;
         let binary = Path::new("target/armv7-unknown-linux-musleabihf/release").join(name);
         // The same check the device build already applies, repeated here
         // because this is the artifact somebody else's device will run.
         verify_arm_elf(&binary)?;
+        let bytes =
+            fs::read(&binary).map_err(|error| format!("read {}: {error}", binary.display()))?;
+        if *name == "kobod" {
+            verify_present_is_compiled_in(&bytes, &binary)?;
+        }
         members.push(package::Member {
             path: format!("{}/bin/{name}", package::INSTALL_ROOT),
-            bytes: fs::read(&binary)
-                .map_err(|error| format!("read {}: {error}", binary.display()))?,
+            bytes,
             program: true,
         });
     }
@@ -2129,7 +2165,7 @@ mod tests {
     #[test]
     fn every_installed_package_is_a_member_of_this_workspace() {
         let manifest = fs::read_to_string(super::workspace_manifest()).expect("read the workspace");
-        for name in super::INSTALLED_PACKAGES {
+        for (name, _) in super::INSTALLED_PACKAGES {
             let directory = if *name == "kobod" {
                 "crates/kobod".to_owned()
             } else {
@@ -2140,6 +2176,47 @@ mod tests {
                 "{name} is packaged but {directory} is not a workspace member"
             );
         }
+    }
+
+    /// The daemon shipped in the package was built without `device-write` for
+    /// as long as the packager existed, so `--present` was not compiled in and
+    /// `start.sh` answered the owner with a usage message. Everything else
+    /// about that binary was correct, which is why nothing else caught it.
+    #[test]
+    fn every_packaged_binary_is_built_with_what_it_needs() {
+        let features = super::INSTALLED_PACKAGES
+            .iter()
+            .find(|(name, _)| *name == "kobod")
+            .map(|(_, features)| *features)
+            .expect("kobod is packaged");
+        assert_eq!(
+            features,
+            Some("device-write"),
+            "a kobod without device-write cannot take the panel, and start.sh is \
+             the only thing in the package an owner runs"
+        );
+        let command = super::device_build_command("kobod", features).expect("build command");
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(
+            arguments.windows(2).any(|pair| pair[0] == "--features"
+                && pair[1].split(',').any(|one| one == "device-write")),
+            "the build command dropped the feature: {arguments:?}"
+        );
+    }
+
+    #[test]
+    fn a_daemon_without_the_panel_session_is_refused() {
+        let path = std::path::Path::new("target/kobod");
+        super::verify_present_is_compiled_in(b"nothing useful in here", path)
+            .expect_err("a binary without the unlock phrase is not shippable");
+        let mut bytes = b"padding".to_vec();
+        bytes.extend_from_slice(super::PRESENT_UNLOCK_PHRASE);
+        bytes.extend_from_slice(b"more padding");
+        super::verify_present_is_compiled_in(&bytes, path)
+            .expect("a binary carrying the unlock phrase is shippable");
     }
 
     #[test]

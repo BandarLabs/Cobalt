@@ -93,6 +93,12 @@ const IDLE_LIMIT: Duration = Duration::from_secs(60 * 60);
 /// The longest the loop waits between passes even when nothing is happening,
 /// which bounds how stale the recovery watchdog's heartbeat can get.
 const BEAT_INTERVAL: Duration = Duration::from_secs(10);
+/// How often the stop watcher looks at the flag a signal handler sets.
+///
+/// Bounds how long the owner holds a device that has been asked to stop and
+/// has not finished handing anything back. Ten times a second is far below
+/// what a panel refresh costs and far above what anybody can perceive.
+const POLL_FOR_STOP: Duration = Duration::from_millis(100);
 
 /// How stale a battery reading may be before it is taken again.
 ///
@@ -133,6 +139,10 @@ enum Event {
     /// owner touched the panel. That reads as a hung application, and it is
     /// what made both a chat reply and a book download look stuck.
     TaskReady,
+    /// The process was asked to stop, and the session has to end the ordinary
+    /// way so the panel, the touch device, the reader and the freeze watchdog
+    /// all go back.
+    Stopping(i32),
 }
 
 /// How long a session may run, and how long it may be ignored.
@@ -469,6 +479,17 @@ fn host_applications(
         .checked_sub(BATTERY_INTERVAL)
         .unwrap_or_else(Instant::now);
 
+    // Installed before anything is taken, so there is no window where the
+    // process holds the panel and cannot be asked for it back. A failure here
+    // is reported and not fatal: without a handler this behaves exactly as it
+    // did before, and the recovery watchdog still covers it.
+    match kobo_hal::stop::catch_requests() {
+        Ok(()) => watch_for_stop_requests(&sender),
+        Err(error) => {
+            println!("stop requests will not be caught ({error}); kill needs the watchdog");
+        }
+    }
+
     let result = (|| -> Result<String, String> {
         let front = start_application(
             &mut apps,
@@ -514,6 +535,16 @@ fn host_applications(
                 .min(idle_at.saturating_duration_since(now))
                 .min(BEAT_INTERVAL);
             match events.recv_timeout(wait) {
+                Ok(Event::Stopping(number)) => {
+                    return Ok(finish(
+                        &apps,
+                        &visited,
+                        &format!(
+                            "{} arrived, so the panel and the reader go back the ordinary way",
+                            kobo_hal::stop::name(number)
+                        ),
+                    ));
+                }
                 // Both fall through to the drain below rather than continuing.
                 // A heartbeat is a second chance to deliver a result, and a
                 // wake is the first: the drain is the only delivery path.
@@ -1364,6 +1395,28 @@ fn pump_touch(touch: &mut TouchSession, sink: &TouchSink) {
         while let Ok(event) = events.recv() {
             sink.send(event);
         }
+    });
+}
+
+/// Turns a caught signal into an ordinary loop event.
+///
+/// A signal handler may not lock, allocate or send on a channel, so it only
+/// records a number; this thread is what carries it into the loop. Polling is
+/// the right shape here despite the comment on [`Event`] about staying asleep:
+/// a tenth of a second of an idle thread costs nothing measurable next to the
+/// panel, and the alternative — a self pipe — buys latency that a session
+/// giving four pieces of hardware back cannot use.
+///
+/// The thread ends when it has delivered, and otherwise when the process does,
+/// which is immediately after the one session this process ever runs.
+fn watch_for_stop_requests(sender: &Sender<Event>) {
+    let sender = sender.clone();
+    thread::spawn(move || loop {
+        if let Some(number) = kobo_hal::stop::requested() {
+            let _ignored = sender.send(Event::Stopping(number));
+            return;
+        }
+        thread::sleep(POLL_FOR_STOP);
     });
 }
 

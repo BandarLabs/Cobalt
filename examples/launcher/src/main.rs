@@ -153,7 +153,7 @@ impl Launcher {
         if pages.len() > 1 {
             screen
                 .nav_bar(
-                    usize::MAX,
+                    None,
                     [
                         ("previous", "Previous"),
                         ("reader", "Return to Kobo reader"),
@@ -174,6 +174,16 @@ impl Launcher {
         }
     }
 
+    /// Painted between tapping an entry and that entry appearing.
+    ///
+    /// It carries a way back even though it is normally on the panel for under
+    /// a second, because every way this screen can fail to be replaced ends
+    /// with the reader looking at it. The runtime deliberately does not end the
+    /// session when a launch cannot be satisfied — that would cost the owner
+    /// the reader, half a minute and every other running application over one
+    /// missing entry — and it has no way to tell the launcher either, so a
+    /// missing binary, an application that exits before it draws, or one that
+    /// is simply slow all leave this screen up. One button answers all of them.
     fn starting(index: usize) -> kobo_sdk::Screen {
         let entry = &ENTRIES[index];
         ScreenBuilder::new("launcher-starting")
@@ -181,6 +191,8 @@ impl Launcher {
             .heading(entry.title)
             .text(entry.summary)
             .activity("Starting", None)
+            .divider()
+            .button("back", "Back to the list")
             .build()
     }
 
@@ -195,6 +207,23 @@ impl Launcher {
 
 impl KoboApp for Launcher {
     fn on_start(&mut self, context: &mut Context) {
+        self.show(context);
+    }
+
+    /// Returns to the list whenever the panel comes back to the launcher.
+    ///
+    /// Leaving an entry paints "Starting…" so the wait is explained, and the
+    /// runtime repaints a returning application from the last screen it drew
+    /// rather than waiting for a new one — which is what makes coming back
+    /// instant. Together those two correct decisions meant that tapping back
+    /// out of an application landed on a "Starting…" screen for an application
+    /// that had already started and already finished, with no way forward. The
+    /// transient has to be cleared by the only party that knows it was a
+    /// transient.
+    fn on_foreground(&mut self, context: &mut Context) {
+        if !matches!(self.view, View::Home) {
+            self.view = View::Home;
+        }
         self.show(context);
     }
 
@@ -253,8 +282,8 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{Launcher, View, ENTRIES};
-    use kobo_sdk::{action_id, AppRunner, Command};
-    use kobo_ui::{Chrome, DisplayMetrics, LayoutKind, CLARA_BW_METRICS};
+    use kobo_sdk::{action_id, AppRunner, Command, Lifecycle};
+    use kobo_ui::{Chrome, DisplayMetrics, LayoutKind, Node, CLARA_BW_METRICS};
 
     const PANELS: [(&str, DisplayMetrics); 3] = [
         ("clara-bw", CLARA_BW_METRICS),
@@ -392,5 +421,73 @@ mod tests {
             .iter()
             .any(|command| matches!(command, Command::Launch(name) if name == ENTRIES[0].name)));
         assert!(matches!(runner.app().view, View::Starting(0)));
+    }
+
+    /// A launch the runtime cannot satisfy leaves the panel on this screen and
+    /// tells the launcher nothing, by design — ending the session over one
+    /// missing entry would cost the owner the reader and every other running
+    /// application. So the screen itself has to offer the way out.
+    #[test]
+    fn the_starting_screen_is_never_a_dead_end() {
+        let mut runner = AppRunner::new(Launcher::default());
+        runner.start();
+        let commands = runner.action(action_id(ENTRIES[0].name));
+        let painted = commands
+            .iter()
+            .find_map(|command| match command {
+                Command::SetScreen(screen) => Some(screen.clone()),
+                _ => None,
+            })
+            .expect("leaving paints an explanation");
+        let layout = painted.layout_with(&CLARA_BW_METRICS, Chrome::with_back(false));
+        assert!(
+            layout
+                .nodes
+                .iter()
+                .any(|node| matches!(node.kind, LayoutKind::Button(_))),
+            "nothing on this screen goes anywhere, and the runtime will not \
+             repaint it if the application never arrives"
+        );
+
+        runner.action(action_id("back"));
+        assert!(
+            matches!(runner.app().view, View::Home),
+            "the way back did not lead back"
+        );
+    }
+
+    /// Tapping back out of an application used to land on "Starting Terminal",
+    /// for a terminal that had already started and already been left, with no
+    /// control on the screen that went anywhere. The runtime repaints a
+    /// returning application from the last screen it drew — that is what makes
+    /// coming back instant — so the transient has to be cleared here.
+    #[test]
+    fn coming_back_from_an_application_shows_the_list_again() {
+        let mut runner = AppRunner::new(Launcher::default());
+        runner.start();
+        runner.action(action_id(ENTRIES[0].name));
+        assert!(matches!(runner.app().view, View::Starting(0)));
+
+        runner.lifecycle(Lifecycle::Background);
+        let commands = runner.lifecycle(Lifecycle::Foreground);
+
+        assert!(
+            matches!(runner.app().view, View::Home),
+            "the launcher stayed on the screen it painted while leaving"
+        );
+        let painted = commands
+            .iter()
+            .find_map(|command| match command {
+                Command::SetScreen(screen) => Some(screen),
+                _ => None,
+            })
+            .expect("coming back has to repaint, or the stale screen stays on the panel");
+        assert!(
+            painted
+                .nodes
+                .iter()
+                .any(|node| matches!(node, Node::Rows { .. })),
+            "the list came back without any entries on it"
+        );
     }
 }

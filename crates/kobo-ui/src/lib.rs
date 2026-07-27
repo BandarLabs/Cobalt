@@ -362,12 +362,22 @@ impl TopBar {
 pub struct NavBar {
     pub id: NodeId,
     pub destinations: Vec<BarAction>,
-    pub selected: usize,
+    /// Which destination the reader is currently looking at, if any.
+    ///
+    /// `None` is a real answer rather than a missing one. A bar whose entries
+    /// are *actions* — previous page, next page, the way out — has no current
+    /// destination to mark, and marking one anyway tells the reader they are
+    /// somewhere they are not. This used to be a plain `usize`, and the two
+    /// screens that meant "none" said `usize::MAX`, which survived exactly as
+    /// far as the wire: the byte saturated to 255 and the decoder clamped it
+    /// to the last destination, so both screens shipped with the wrong entry
+    /// underlined on the panel.
+    pub selected: Option<usize>,
 }
 
 impl NavBar {
     #[must_use]
-    pub fn new(id: NodeId, destinations: Vec<BarAction>, selected: usize) -> Self {
+    pub fn new(id: NodeId, destinations: Vec<BarAction>, selected: Option<usize>) -> Self {
         Self {
             id,
             destinations,
@@ -680,7 +690,7 @@ fn layout_nav_bar(nav_bar: &NavBar, metrics: &DisplayMetrics, layout: &mut Layou
                 width,
                 height,
             },
-            kind: if index == nav_bar.selected {
+            kind: if nav_bar.selected == Some(index) {
                 LayoutKind::NavDestinationSelected(destination.action)
             } else {
                 LayoutKind::NavDestination(destination.action)
@@ -3557,7 +3567,7 @@ mod page_turn_tests {
                 BarAction::new(ActionId(5), "One"),
                 BarAction::new(ActionId(6), "Two"),
             ],
-            0,
+            Some(0),
         ));
         let layout = screen.layout_with(&CLARA_BW_METRICS, Chrome::with_back(true));
         assert_eq!(layout.hit_page_turn(CLARA_BW_METRICS.width / 8, 10), None);
@@ -3668,8 +3678,11 @@ mod chrome_tests {
 
     #[test]
     fn the_nav_bar_sits_on_the_bottom_edge_and_spans_the_panel() {
-        let screen =
-            Screen::new(1, Vec::new()).with_nav_bar(NavBar::new(NodeId(1), destinations(3), 0));
+        let screen = Screen::new(1, Vec::new()).with_nav_bar(NavBar::new(
+            NodeId(1),
+            destinations(3),
+            Some(0),
+        ));
         for (name, metrics) in PANELS {
             let layout = screen.layout_for(&metrics);
             let slots = layout
@@ -3703,8 +3716,11 @@ mod chrome_tests {
     fn destinations_are_never_narrower_than_a_finger_on_any_panel() {
         for (name, metrics) in PANELS {
             // Ask for more than the panel can carry, on purpose.
-            let screen =
-                Screen::new(1, Vec::new()).with_nav_bar(NavBar::new(NodeId(1), destinations(5), 0));
+            let screen = Screen::new(1, Vec::new()).with_nav_bar(NavBar::new(
+                NodeId(1),
+                destinations(5),
+                Some(0),
+            ));
             let layout = screen.layout_for(&metrics);
             for node in &layout.nodes {
                 if matches!(
@@ -3731,7 +3747,7 @@ mod chrome_tests {
             })
             .collect();
         let screen =
-            Screen::new(1, nodes).with_nav_bar(NavBar::new(NodeId(99), destinations(3), 0));
+            Screen::new(1, nodes).with_nav_bar(NavBar::new(NodeId(99), destinations(3), Some(0)));
         for (name, metrics) in PANELS {
             let layout = screen.layout_for(&metrics);
             let content_bottom = metrics.height - metrics.nav_bar_height();
@@ -3748,8 +3764,11 @@ mod chrome_tests {
 
     #[test]
     fn exactly_one_destination_reads_as_selected() {
-        let screen =
-            Screen::new(1, Vec::new()).with_nav_bar(NavBar::new(NodeId(1), destinations(3), 2));
+        let screen = Screen::new(1, Vec::new()).with_nav_bar(NavBar::new(
+            NodeId(1),
+            destinations(3),
+            Some(2),
+        ));
         let layout = screen.layout();
         let selected = layout
             .nodes
@@ -4489,7 +4508,7 @@ mod prose_tests {
                     BarAction::new(ActionId(2), "Library"),
                     BarAction::new(ActionId(3), "Next"),
                 ],
-                usize::MAX,
+                None,
             ));
         let layout = screen.layout_with(metrics, Chrome::with_back(true));
         let text = layout

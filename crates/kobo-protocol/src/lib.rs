@@ -18,6 +18,12 @@ pub const HEADER_LEN: usize = 14;
 pub const MAX_FRAME_LEN: usize = 1_048_576;
 pub const MAX_STRING_LEN: usize = 16_384;
 pub const MAX_NODES: usize = 512;
+/// The byte a nav bar sends when no destination is the current one.
+///
+/// Out of band by construction: the destination count travels in a byte of its
+/// own, so a bar with 255 destinations could not name this index anyway, and
+/// the panel shows a handful at most.
+pub const NAV_SELECTION_NONE: u8 = u8::MAX;
 const MAX_DEPTH: usize = 16;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1515,7 +1521,17 @@ fn encode_screen(
             let len = u8::try_from(nav_bar.destinations.len())
                 .map_err(|_| ProtocolError::TooManyNodes)?;
             output.push(len);
-            output.push(u8::try_from(nav_bar.selected).unwrap_or(u8::MAX));
+            // 255 is the "no destination is current" sentinel. A bar can never
+            // have that many destinations — the length above is a byte and the
+            // panel clamps to a handful — so the value is safely out of band,
+            // and it has to be expressible: without it a bar of actions is
+            // forced to claim one of them is where the reader is.
+            output.push(match nav_bar.selected {
+                Some(selected) => u8::try_from(selected)
+                    .map_err(|_| ProtocolError::InvalidValue("nav bar selection"))?
+                    .min(NAV_SELECTION_NONE - 1),
+                None => NAV_SELECTION_NONE,
+            });
             for destination in &nav_bar.destinations {
                 encode_bar_action(output, destination)?;
             }
@@ -1915,8 +1931,14 @@ fn decode_screen(
                 id: bar_id,
                 // Clamped rather than rejected: an out of range selection is a
                 // caller mistake, and refusing the frame would leave the reader
-                // with no navigation at all.
-                selected: min(selected, destinations.len() - 1),
+                // with no navigation at all. `None` is not a mistake, though,
+                // so it is passed through rather than clamped onto the last
+                // destination, which is what used to happen.
+                selected: if selected == usize::from(NAV_SELECTION_NONE) {
+                    None
+                } else {
+                    Some(min(selected, destinations.len() - 1))
+                },
                 destinations,
             })
         }
@@ -2626,7 +2648,7 @@ mod node_coverage_tests {
                     BarAction::new(ActionId(61), "Books"),
                     BarAction::new(ActionId(62), "More"),
                 ],
-                1,
+                Some(1),
             ));
         let decoded = round_trip(screen.clone());
         assert_eq!(decoded, screen);
@@ -2643,7 +2665,7 @@ mod node_coverage_tests {
                 BarAction::new(ActionId(1), "A"),
                 BarAction::new(ActionId(2), "B"),
             ],
-            0,
+            Some(0),
         ));
         assert_eq!(round_trip(only_nav.clone()), only_nav);
 
@@ -2674,7 +2696,7 @@ mod node_coverage_tests {
         let screen = Screen::new(1, Vec::new()).with_nav_bar(NavBar::new(
             NodeId(1),
             vec![BarAction::new(ActionId(1), "Only")],
-            0,
+            Some(0),
         ));
         let frame = Frame {
             request_id: 1,
@@ -2687,6 +2709,30 @@ mod node_coverage_tests {
         ));
     }
 
+    /// The launcher and the library both meant "none of these is where you
+    /// are" and both said `usize::MAX`. The byte saturated to 255 and the
+    /// decoder clamped it onto the last destination, so both shipped with the
+    /// rightmost entry underlined on the panel — "More apps" on a launcher
+    /// showing page one, "Next" on a library showing the first page.
+    #[test]
+    fn no_destination_being_current_survives_the_wire() {
+        let screen = Screen::new(1, Vec::new()).with_nav_bar(NavBar::new(
+            NodeId(1),
+            vec![
+                BarAction::new(ActionId(1), "Back"),
+                BarAction::new(ActionId(2), "Library"),
+                BarAction::new(ActionId(3), "Next"),
+            ],
+            None,
+        ));
+        let decoded = round_trip(screen);
+        assert_eq!(
+            decoded.nav_bar.expect("nav bar").selected,
+            None,
+            "a bar of actions must not claim the reader is standing on one of them"
+        );
+    }
+
     #[test]
     fn an_out_of_range_selection_clamps_rather_than_losing_navigation() {
         let screen = Screen::new(1, Vec::new()).with_nav_bar(NavBar::new(
@@ -2695,10 +2741,10 @@ mod node_coverage_tests {
                 BarAction::new(ActionId(1), "A"),
                 BarAction::new(ActionId(2), "B"),
             ],
-            250,
+            Some(250),
         ));
         let decoded = round_trip(screen);
-        assert_eq!(decoded.nav_bar.expect("nav bar").selected, 1);
+        assert_eq!(decoded.nav_bar.expect("nav bar").selected, Some(1));
     }
 
     #[test]

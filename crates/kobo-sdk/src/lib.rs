@@ -206,19 +206,26 @@ impl ScreenBuilder {
         self
     }
 
+    /// Adds the fixed bar at the bottom of the screen.
+    ///
+    /// `selected` takes an index or `None`. `None` is for a bar whose entries
+    /// are actions rather than places — page back, page forward, the way out —
+    /// where marking any of them as current would tell the reader they are
+    /// somewhere they are not.
     #[must_use]
-    pub fn nav_bar<I, N, L>(mut self, selected: usize, destinations: I) -> Self
+    pub fn nav_bar<I, N, L, S>(mut self, selected: S, destinations: I) -> Self
     where
         I: IntoIterator<Item = (N, L)>,
         N: AsRef<str>,
         L: Into<String>,
+        S: Into<Option<usize>>,
     {
         let id = self.next_id();
         let destinations = destinations
             .into_iter()
             .map(|(name, label)| BarAction::new(self.register(name.as_ref()), label))
             .collect::<Vec<_>>();
-        self.nav_bar = Some(NavBar::new(id, destinations, selected));
+        self.nav_bar = Some(NavBar::new(id, destinations, selected.into()));
         self
     }
 
