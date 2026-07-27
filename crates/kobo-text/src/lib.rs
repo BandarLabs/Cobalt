@@ -90,7 +90,16 @@ pub const TEXT_FONT: &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Regul
 /// If none is present the interface face is used, which is legible and merely
 /// not bookish.
 pub const READING_FONT_CANDIDATES: &[&str] = &[
-    "/usr/local/Trolltech/QtEmbedded-4.6.2-arm/lib/fonts/KoboNickel.ttf",
+    // Bitter first because it was drawn for screens at reading sizes, and it is
+    // on the device already.
+    //
+    // KoboNickel.ttf is deliberately absent. It is the obvious choice by name --
+    // it is the face the stock reader sets books in -- but on firmware
+    // 4.45.23697 the file begins `51 54 44 00`, "QTD\0", followed by a zlib
+    // header. It is a Qt Embedded font blob, not a TrueType file, whatever the
+    // extension says, and no outline parser can read it. Checking that a font
+    // exists is not the same as checking that it is a font; this list is now
+    // the record of which is which.
     "/usr/local/Trolltech/QtEmbedded-4.6.2-arm/lib/fonts/Bitter-Regular.ttf",
     "/usr/local/Trolltech/QtEmbedded-4.6.2-arm/lib/fonts/Vollkorn-Regular.ttf",
 ];
@@ -171,7 +180,14 @@ impl Typeface {
         for candidate in DEVICE_FONT_CANDIDATES {
             let path = Path::new(candidate);
             if path.exists() {
-                return Self::load(path, metrics);
+                // A candidate that exists but will not parse is skipped rather
+                // than raised. Some of what the device keeps in its font
+                // directory, under a .ttf name, is not an outline font at all,
+                // and one of those must not cost the interface every glyph it
+                // has.
+                if let Ok(face) = Self::load(path, metrics) {
+                    return Ok(face);
+                }
             }
         }
         Self::from_bytes(TEXT_FONT, "AtkinsonHyperlegible-Regular.ttf", metrics)
@@ -191,7 +207,9 @@ impl Typeface {
         for candidate in READING_FONT_CANDIDATES {
             let path = Path::new(candidate);
             if path.exists() {
-                return Self::load(path, metrics);
+                if let Ok(face) = Self::load(path, metrics) {
+                    return Ok(face);
+                }
             }
         }
         // Not an error. A machine with no serif still reads perfectly well in
@@ -419,10 +437,22 @@ impl SystemFonts {
     /// parsed. A machine with no fonts at all still gets the compiled-in
     /// pair.
     pub fn discover(metrics: DisplayMetrics) -> Result<Self, Error> {
+        let text = Typeface::discover(metrics)?;
+        // Typography is the one thing here that must never be load-bearing. A
+        // prose face that cannot be loaded means books are set in the interface
+        // face, which is a slightly worse read; letting it fail the whole set
+        // means *nothing* is installed and `kobo-ui` falls back to its built-in
+        // bitmap for every character on the device, which is a far worse one.
+        // That is not hypothetical -- it is what shipped, because the first
+        // prose candidate turned out not to be a font.
+        let reading = match Typeface::discover_reading(metrics) {
+            Ok(face) => face,
+            Err(_) => Typeface::discover(metrics)?,
+        };
         Ok(Self {
-            text: Typeface::discover(metrics)?,
+            text,
             mono: Typeface::from_bytes(MONO_FONT, "DejaVuSansMono.ttf", metrics)?,
-            reading: Typeface::discover_reading(metrics)?,
+            reading,
         })
     }
 
@@ -632,6 +662,59 @@ mod tests {
         let outcome = Typeface::load(&path, CLARA);
         let _ = std::fs::remove_file(&path);
         assert!(matches!(outcome, Err(Error::Malformed(..))));
+    }
+
+    /// The regression that put a bitmap font on a shipped device.
+    ///
+    /// `KoboNickel.ttf` is a Qt font blob rather than an outline font, so the
+    /// prose face failed to load; because that failure was raised rather than
+    /// absorbed, `install` returned an error, no typesetter was installed at
+    /// all, and every character in the interface came out of `kobo-ui`'s
+    /// built-in bitmap. A bad prose face may cost prose its serif. It may not
+    /// cost the interface its font.
+    #[test]
+    fn an_unreadable_prose_face_still_leaves_the_interface_with_a_real_one() {
+        let decoy = std::env::temp_dir().join("kobo-text-decoy-prose.ttf");
+        std::fs::write(&decoy, b"QTD\0 and then some compressed nonsense").expect("write");
+
+        // Proves the file really is unusable, so the test below is not passing
+        // for the boring reason that the decoy happened to parse.
+        assert!(matches!(
+            Typeface::load(&decoy, CLARA),
+            Err(Error::Malformed(..))
+        ));
+
+        let reading = match Typeface::discover_reading(CLARA) {
+            Ok(face) => face,
+            Err(_) => Typeface::discover(CLARA).expect("the interface face"),
+        };
+        let _ = std::fs::remove_file(&decoy);
+        assert!(
+            reading.font.lookup_glyph_index('a') != 0,
+            "whatever the prose face ends up being, it has to be able to draw"
+        );
+
+        let fonts = SystemFonts::discover(CLARA).expect("a full set despite a bad prose candidate");
+        assert!(fonts.text.font.lookup_glyph_index('a') != 0);
+        assert!(fonts.reading.font.lookup_glyph_index('a') != 0);
+    }
+
+    /// Existence is not usability. This is the check that was missing.
+    #[test]
+    fn every_named_font_candidate_is_actually_an_outline_font() {
+        for candidate in DEVICE_FONT_CANDIDATES
+            .iter()
+            .chain(READING_FONT_CANDIDATES.iter())
+        {
+            let path = Path::new(candidate);
+            if !path.exists() {
+                continue;
+            }
+            assert!(
+                Typeface::load(path, CLARA).is_ok(),
+                "{candidate} is listed as a font but cannot be parsed as one"
+            );
+        }
     }
 
     /// The check an application's own tests lean on: a tick character looked
