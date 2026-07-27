@@ -788,7 +788,13 @@ fn layout_top_bar(
         text_lines: Vec::new(),
     });
 
-    let control = metrics.touch_target_default();
+    // Never taller than the bar it sits in. The comfortable control default is
+    // ten millimetres and the bar is eight and a half, so taken literally this
+    // put a control that overhangs its own bar at a negative offset — the back
+    // chevron was drawn larger than the bar, sticking out above it. Clamped
+    // here rather than at each control, because every one of them is centred
+    // against the same height.
+    let control = min(metrics.touch_target_default(), height);
     let mut title_x = margin;
     let mut title_width = width;
     if chrome.back {
@@ -4946,8 +4952,22 @@ fn draw_nav_label(
     }
 }
 
+/// Draws the way back, inset inside its touch target.
+///
+/// The target is a finger and the mark is for an eye, and they are not the
+/// same size. Drawn to fill the target the chevron was half again the height
+/// of the title beside it, which reads as a mistake rather than as a control.
+/// Four fifths keeps the mark in proportion to the words it sits next to while
+/// the tappable area stays exactly as large as it was.
 fn draw_back_arrow(surface: &mut Surface, rect: Rect, clip: Rect) {
-    draw_vector(surface, &vector::back_arrow(), rect, clip);
+    let inset = min(rect.width, rect.height) / 10;
+    let mark = Rect {
+        x: rect.x + inset,
+        y: rect.y + inset,
+        width: rect.width - 2 * inset,
+        height: rect.height - 2 * inset,
+    };
+    draw_vector(surface, &vector::back_arrow(), mark, clip);
 }
 
 /// Draws whatever stands at the head of a row.
@@ -5942,6 +5962,31 @@ mod chrome_tests {
                 back.rect.height,
                 metrics.touch_target_minimum()
             );
+        }
+    }
+
+    #[test]
+    fn the_back_control_stays_inside_the_bar_it_belongs_to() {
+        // It did not, once. The comfortable control size is ten millimetres
+        // and the bar was narrowed to eight and a half, so the chevron was
+        // laid out taller than the bar at a negative offset and drew above it,
+        // over whatever the screen had put there.
+        let screen = Screen::new(1, Vec::new()).with_top_bar(TopBar::new(NodeId(1), "Title"));
+        for (name, metrics) in PANELS {
+            let layout = screen.layout_with(&metrics, Chrome::with_back(true));
+            let bar = metrics.top_bar_height();
+            for node in &layout.nodes {
+                if !matches!(node.kind, LayoutKind::Back | LayoutKind::BarAction(_)) {
+                    continue;
+                }
+                assert!(
+                    node.rect.y >= 0 && node.rect.y + node.rect.height <= bar,
+                    "{name}: {:?} spans {}..{} outside a bar {bar} tall",
+                    node.kind,
+                    node.rect.y,
+                    node.rect.y + node.rect.height
+                );
+            }
         }
     }
 
