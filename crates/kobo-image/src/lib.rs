@@ -409,18 +409,20 @@ pub fn decode(bytes: &[u8]) -> Result<Picture, ImageError> {
     // black rectangle. Luminance uses perceptual channel weights rather than
     // an average, which keeps coloured title lettering distinguishable once
     // the panel has no colour left to show.
-    let rgba = image.to_rgba8();
-    let mut grey = Vec::with_capacity(rgba.width() as usize * rgba.height() as usize);
-    for pixel in rgba.pixels() {
-        let alpha = u32::from(pixel[3]);
-        let on_paper = |channel: u8| (u32::from(channel) * alpha + 255 * (255 - alpha) + 127) / 255;
-        let red = on_paper(pixel[0]);
-        let green = on_paper(pixel[1]);
-        let blue = on_paper(pixel[2]);
-        let luminance = (2126 * red + 7152 * green + 722 * blue + 5000) / 10_000;
-        grey.push(u8::try_from(luminance).unwrap_or(255));
+    //
+    // Reduced to luminance before compositing rather than after, which is the
+    // same number — luminance is an affine combination whose weights sum to
+    // one, so compositing commutes with it — at half the peak memory. A source
+    // at `MAX_PIXELS` is twenty-five megabytes as RGBA and twelve as grey with
+    // alpha, on a device with no swap.
+    let luma = image.to_luma_alpha8();
+    let mut grey = Vec::with_capacity(luma.width() as usize * luma.height() as usize);
+    for pixel in luma.pixels() {
+        let alpha = u32::from(pixel[1]);
+        let on_paper = (u32::from(pixel[0]) * alpha + 255 * (255 - alpha) + 127) / 255;
+        grey.push(u8::try_from(on_paper).unwrap_or(255));
     }
-    Picture::from_grey(rgba.width(), rgba.height(), grey)
+    Picture::from_grey(luma.width(), luma.height(), grey)
 }
 
 #[cfg(test)]
@@ -506,6 +508,28 @@ mod tests {
     fn transparent_pixels_are_composited_onto_paper() {
         let picture = decode(&png(2, 1, vec![0, 0, 0, 0, 0, 0, 0, 255])).expect("png");
         assert_eq!(picture.grey(), &[255, 0]);
+    }
+
+    #[test]
+    fn colour_is_reduced_by_perceptual_weight_rather_than_by_average() {
+        // An averaged red and an averaged blue come out the same grey, which
+        // on a book cover is the title disappearing into its background.
+        let picture = decode(&png(
+            3,
+            1,
+            vec![255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255],
+        ))
+        .expect("png");
+        let [red, green, blue] = <[u8; 3]>::try_from(picture.grey()).expect("three pixels");
+        assert!(green > red && red > blue, "{red} {green} {blue}");
+    }
+
+    #[test]
+    fn a_half_transparent_pixel_lands_between_its_colour_and_the_paper() {
+        let opaque = decode(&png(1, 1, vec![0, 0, 0, 255])).expect("png");
+        let half = decode(&png(1, 1, vec![0, 0, 0, 128])).expect("png");
+        assert_eq!(opaque.grey(), &[0]);
+        assert_eq!(half.grey(), &[127]);
     }
 
     #[test]

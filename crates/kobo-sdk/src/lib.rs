@@ -1538,6 +1538,10 @@ pub struct AppRunner<A> {
     metrics: DisplayMetrics,
     started: bool,
     pending: VecDeque<DeviceRequest>,
+    /// Store requests sent but not yet answered. Every request is answered
+    /// exactly once, so a count is enough and the request itself need not be
+    /// kept: unlike a device answer, a store answer names its own key.
+    pending_stores: usize,
     /// Task counters live here rather than in `Context`, because a fresh
     /// context is built for every callback. Left in the context they would
     /// restart at one on each dispatch, so the second callback to spawn work
@@ -1563,6 +1567,7 @@ impl<A: KoboApp> AppRunner<A> {
             metrics: DisplayMetrics::default(),
             started: false,
             pending: VecDeque::new(),
+            pending_stores: 0,
             next_task: 0,
             in_flight: 0,
             settled: false,
@@ -1667,6 +1672,7 @@ impl<A: KoboApp> AppRunner<A> {
 
     /// Delivers one store answer.
     pub fn store_result(&mut self, result: StoreResult) -> Vec<Command> {
+        self.pending_stores = self.pending_stores.saturating_sub(1);
         self.dispatch(|app, context| app.on_store(context, result))
     }
 
@@ -1679,6 +1685,16 @@ impl<A: KoboApp> AppRunner<A> {
     #[must_use]
     pub fn outstanding_requests(&self) -> usize {
         self.pending.len()
+    }
+
+    /// Every answer the runtime still owes this application.
+    ///
+    /// A harness that leaves while an answer is in flight closes the socket
+    /// under a runtime that is about to write to it, which is a broken pipe on
+    /// the runtime rather than the clean shutdown it looks like from here.
+    #[must_use]
+    pub fn outstanding_answers(&self) -> usize {
+        self.pending.len() + self.pending_stores
     }
 
     #[must_use]
@@ -1703,8 +1719,12 @@ impl<A: KoboApp> AppRunner<A> {
         self.in_flight = context.in_flight;
         let mut commands = context.take_commands();
         for command in &commands {
-            if let Command::Device(request) = command {
-                self.pending.push_back(*request);
+            match command {
+                Command::Device(request) => self.pending.push_back(*request),
+                Command::Store(_) => {
+                    self.pending_stores = self.pending_stores.saturating_add(1);
+                }
+                _ => {}
             }
         }
         // An application that blocks here has already held the only thread that
@@ -1981,6 +2001,32 @@ mod tests {
     #[should_panic(expected = "which the installed face cannot draw")]
     fn a_screen_carrying_a_character_the_face_cannot_draw_fails_here() {
         AppRunner::new(Tofu).start();
+    }
+
+    #[test]
+    fn an_unanswered_store_request_keeps_an_application_from_leaving() {
+        struct Loader;
+
+        impl KoboApp for Loader {
+            fn on_start(&mut self, context: &mut Context) {
+                context.store().load("items");
+            }
+
+            fn on_action(&mut self, _context: &mut Context, _action: ActionId) {}
+        }
+
+        let mut runner = AppRunner::new(Loader);
+        assert!(matches!(runner.start().as_slice(), [Command::Store(_)]));
+        // Nothing is outstanding by the device's reckoning, which is exactly
+        // why a harness that only counted those closed the socket under a
+        // runtime still holding an answer for it.
+        assert_eq!(runner.outstanding_requests(), 0);
+        assert_eq!(runner.outstanding_answers(), 1);
+        runner.store_result(StoreResult::Loaded {
+            key: "items".into(),
+            value: None,
+        });
+        assert_eq!(runner.outstanding_answers(), 0);
     }
 
     #[test]
@@ -2397,7 +2443,7 @@ pub fn run_on<A: KoboApp>(name: &str, app: A, socket: &Path) -> Result<(), Clien
     // for a touch that will never come.
     let oneshot = std::env::var_os("KOBO_SIM_ONESHOT").is_some();
     if oneshot {
-        while runner.outstanding_requests() > 0 {
+        while runner.outstanding_answers() > 0 {
             match client.next_event()? {
                 ClientEvent::Device(result) => {
                     client.send_commands(runner.device_result(result))?;

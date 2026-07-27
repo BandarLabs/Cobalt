@@ -135,7 +135,7 @@ one cannot.
 | `heading(text)` | One line of display type. |
 | `text(text)` | A paragraph. Wraps by measured glyph width and Unicode line-break rules. |
 | `button(name, label)` | A full-width action. |
-| `disabled_button(name, label)` | A visible, outlined action excluded from hit testing. |
+| `disabled_button(name, label)` | A visible, outlined action that yields nothing and absorbs its tap. |
 | `rows([(name, title, summary, glyph), …])` | A list. Title, one line of detail, an icon. |
 | `checklist([(name, title, summary, done), …])` | The same list, where a finished row is struck through. |
 | `tiles([(name, label, glyph), …])` | A grid of square destinations. |
@@ -202,7 +202,9 @@ the face cannot draw, so an application's own tests fail rather than the panel.
 
 A disabled button is state as well. Use `disabled_button` or
 `button_with_state`; the renderer gives it an outlined, muted treatment and the
-layout engine does not return its action from hit testing.
+layout engine returns no action for it. It still consumes the tap that lands on
+it, so a greyed-out control on a paginated screen cannot turn the page instead
+of doing nothing.
 
 ### Navigation, confirmations and standard states
 
@@ -335,6 +337,10 @@ let screen = builder.build_checked()?;            // collection truncation
 let issues = screen.validate(&context.metrics()); // overflow, clipping, text,
                                                    // touch targets and glyphs
 ```
+
+`validate` measures with the back chrome the runtime gives every application,
+which is the smaller content area, so a screen that passes here is not clipped
+once the runtime adds it.
 
 `Screen::diagnostics` returns the measured layout and its issues from one pass.
 The browser simulator lists those issues beside the panel and can outline their

@@ -432,8 +432,9 @@ pub struct BarAction {
 /// Whether a control can currently be activated.
 ///
 /// Disabled is semantic state rather than a colour chosen by the application:
-/// the renderer gives it a quiet, outlined treatment and hit testing excludes
-/// it completely.
+/// the renderer gives it a quiet, outlined treatment, it yields no action, and
+/// it still absorbs the tap that lands on it rather than letting the page turn
+/// underneath answer instead.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub enum ControlState {
     #[default]
@@ -1684,6 +1685,13 @@ impl Layout {
         if let Some(action) = self.hit_control(x, y) {
             return Some(action);
         }
+        // A disabled control is still a control. Falling through here would
+        // turn the page under a greyed-out button, which is worse than doing
+        // nothing: the reader taps something that cannot act and the screen
+        // answers with a different action entirely.
+        if self.hit_inert_control(x, y) {
+            return None;
+        }
         self.hit_page_turn(x, y)
     }
 
@@ -1718,6 +1726,14 @@ impl Layout {
             }
             LayoutKind::Back if node.rect.contains(x, y) => Some(ActionId::BACK),
             _ => None,
+        })
+    }
+
+    /// Whether the tap landed on a control that exists but cannot act.
+    fn hit_inert_control(&self, x: i32, y: i32) -> bool {
+        self.nodes.iter().rev().any(|node| {
+            matches!(node.kind, LayoutKind::Button(_, ControlState::Disabled))
+                && node.rect.contains(x, y)
         })
     }
 
@@ -2835,9 +2851,16 @@ pub fn mono_cell(size: FontSize) -> (i32, i32) {
 
 fn fallback_line_breaks(text: &str) -> Vec<(usize, BreakOpportunity)> {
     let mut breaks = Vec::new();
+    let mut previous = None;
     for (offset, character) in text.char_indices() {
         let end = offset + character.len_utf8();
         let opportunity = if is_line_separator(character) {
+            // A carriage return and the line feed after it are one separator,
+            // not two. Breaking after both leaves an empty line between every
+            // pair of lines, and text arriving over a network is full of them.
+            if character == '\n' && previous == Some('\r') {
+                breaks.pop();
+            }
             Some(BreakOpportunity::Mandatory)
         } else if character.is_whitespace() || is_cjk(character) {
             Some(BreakOpportunity::Allowed)
@@ -2847,6 +2870,7 @@ fn fallback_line_breaks(text: &str) -> Vec<(usize, BreakOpportunity)> {
         if let Some(opportunity) = opportunity {
             breaks.push((end, opportunity));
         }
+        previous = Some(character);
     }
     if breaks.last().map(|entry| entry.0) != Some(text.len()) {
         breaks.push((text.len(), BreakOpportunity::Mandatory));
@@ -3646,9 +3670,14 @@ impl Pictures for () {
 impl Screen {
     /// Validates layout, text coverage, limits, and touch targets without
     /// assuming that asynchronous pictures have arrived yet.
+    ///
+    /// Measured with the back chrome the runtime gives every application other
+    /// than the home screen, because that is the smaller content area and the
+    /// one that decides what is cut off. Validating without it reported a
+    /// clean screen for content the panel would go on to clip.
     #[must_use]
     pub fn validate(&self, metrics: &DisplayMetrics) -> Vec<LayoutIssue> {
-        self.diagnostics(metrics, Chrome::default()).issues
+        self.diagnostics(metrics, Chrome::with_back(true)).issues
     }
 
     /// Produces layout and diagnostics from one consistent set of metrics.
@@ -5488,6 +5517,33 @@ mod tests {
     }
 
     #[test]
+    fn a_disabled_button_absorbs_the_tap_rather_than_turning_the_page() {
+        // A greyed-out control answering with somebody else's action is worse
+        // than one that does nothing at all.
+        let screen = Screen::new(
+            8,
+            vec![Node::Button {
+                id: NodeId(1),
+                action: ActionId(2),
+                label: "Unavailable".into(),
+                state: ControlState::Disabled,
+            }],
+        )
+        .with_page_turns(ActionId(10), ActionId(11));
+        let layout = screen.layout();
+        let button = layout.nodes[0].rect;
+        assert_eq!(screen.hit_test(button.x + 1, button.y + 1), None);
+        // Content the button does not cover still turns the page.
+        assert_eq!(
+            screen.hit_test(
+                layout.content.x + layout.content.width - 1,
+                button.y + button.height + 1
+            ),
+            Some(ActionId(11))
+        );
+    }
+
+    #[test]
     fn renderer_writes_grayscale_pixels() {
         let screen = Screen::new(
             1,
@@ -6742,6 +6798,20 @@ mod loading_tests {
 mod prose_tests {
     use super::tests::PANELS;
     use super::*;
+
+    #[test]
+    fn the_fallback_typesetter_treats_crlf_as_one_separator() {
+        // Without a typesetter installed the fallback answers every wrap, and
+        // breaking after the carriage return as well as after the line feed
+        // put a blank line between every pair of lines in CRLF text.
+        assert_eq!(
+            fallback_line_breaks("a\r\nb"),
+            vec![
+                (3, BreakOpportunity::Mandatory),
+                (4, BreakOpportunity::Mandatory)
+            ]
+        );
+    }
 
     #[test]
     fn a_book_with_windows_line_endings_still_has_paragraphs() {
