@@ -273,6 +273,35 @@ what a session is actually doing. The runtime writes it only when started with
 impose on a session nobody is debugging; `kobo logs` says so rather than
 showing an empty file when the trace is not there.
 
+### Wi-Fi across a session
+
+Stopping and restarting the stock reader reliably drops the Wi-Fi connection.
+The reader owns the radio and drives it inside `libnickel`, and the restarted
+one begins from its own "not connected" state; there is no D-Bus service, no
+script and no supported way to ask it to reconnect. So every session costs the
+connection, and the reader picks it up again by itself.
+
+The runtime can put the link back by restarting the supplicant and DHCP client
+it recorded, but it does **not** do so by default, and that is deliberate. Those
+daemons attach to `wlan0`, the restarted reader drives the same radio and cannot
+be told what we started behind it, and two owners of one radio leaves the
+reader's own network panel unable to scan at all — not merely disconnected, but
+unable to see a network it has known for months. A reboot clears it, as a reboot
+clears everything here, but that is a poor thing to owe someone who only opened
+an application.
+
+Restoring it is therefore a convenience for one case only: working on a device
+over Wi-Fi, where losing the link loses the session driving it. Ask for it
+explicitly:
+
+```sh
+KOBO_KEEP_NETWORK=1 KOBO_PRESENT_UNLOCK=OWNER_ATTENDED_PANEL_SESSION kobod --present ...
+```
+
+`start.sh` in the installed package does not set it, so an owner launching from
+NickelMenu never gets it. If a session does leave the radio confused, a reboot
+always returns the stock reader with its network intact.
+
 ### If you have shipped for Android or iOS
 
 The concepts are the same and only the spelling differs, so the spellings you

@@ -347,7 +347,11 @@ impl Gutenshelf {
             .open
             .and_then(|index| self.books.get(index))
             .map_or_else(|| "Reading".to_owned(), |book| book.title.clone());
-        let mut screen = ScreenBuilder::new("gutenshelf-reading").top_bar(title);
+        // The one screen in this application that is a book rather than an
+        // interface, and the only one that asks for the reading face.
+        let mut screen = ScreenBuilder::new("gutenshelf-reading")
+            .reading(true)
+            .top_bar(title);
         let Some(body) = body else {
             return screen.activity("Downloading", None).build();
         };
@@ -607,7 +611,11 @@ impl Gutenshelf {
         // Cleaned from the whole accumulated text rather than piece by piece,
         // because every marker this looks for can be split down the middle by
         // a chunk boundary.
-        self.pages = context.paginate(&readable(&self.text), true);
+        // Measured in the face it will be set in. A book is drawn in a serif
+        // with book leading, which is wider and taller than the interface
+        // face, so paginating with the default would run every page past the
+        // bottom of the panel and lose its last lines.
+        self.pages = context.paginate_reading(&readable(&self.text), true);
         self.view = View::Reading;
     }
 }

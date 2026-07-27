@@ -83,6 +83,16 @@ fn metrics_for(screen: &Screen) -> kobo_ui::DisplayMetrics {
     metrics
 }
 
+/// Whether this session was asked to put the Wi-Fi connection back itself.
+///
+/// Off unless stated, because the restarted reader owns the radio and does not
+/// know what we would be starting behind it. Set `KOBO_KEEP_NETWORK=1` when the
+/// session is being driven over Wi-Fi and losing the link would lose the
+/// session — which is a developer working remotely, and nobody else.
+fn keep_network_requested() -> bool {
+    std::env::var_os("KOBO_KEEP_NETWORK").is_some_and(|value| value == "1" || value == "true")
+}
+
 /// Puts the front light back to where the session found it, on the way out.
 ///
 /// Holds a clone rather than a borrow so that the loop can go on using the
@@ -335,7 +345,27 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     trace("panel and touch released, restarting the reader");
     println!("panel released, restarting the reader");
     let restarted = reader.start(START_GRACE);
-    let network = connection.restore(NETWORK_GRACE);
+    // Only when someone asked for it. Putting the connection back means
+    // starting a supplicant and a DHCP client on `wlan0`, and the reader that
+    // has just been restarted drives that same radio itself, from inside
+    // libnickel, with no way to be told what we did. Two owners of one radio is
+    // the mistake the display is careful to avoid twelve lines above, and it
+    // has the same shape here: the reader's own network panel then finds an
+    // interface it did not configure, and stops being able to scan at all — not
+    // merely disconnected, but unable to list a network it has known for
+    // months. A reboot clears it, as it clears everything here, but a reboot is
+    // a poor thing to owe someone who only opened an application.
+    //
+    // So this is now what it always really was: a convenience for working on a
+    // device over Wi-Fi, where losing the link means losing the session that is
+    // driving it. That case is exactly the one that already had to say out loud
+    // that a human is present, so it is gated on the same statement rather than
+    // on a new one.
+    let network = if keep_network_requested() {
+        connection.restore(NETWORK_GRACE)
+    } else {
+        Ok(kobo_hal::network::Restored::Unaffected)
+    };
     trace("reader restart returned, waiting for it to feed the freeze watchdog");
     println!("waiting for the reader to feed the freeze watchdog");
     // Resumed only once the reader is feeding it again. Resuming the moment

@@ -73,6 +73,31 @@ pub const DEVICE_FONT_CANDIDATES: &[&str] = &[
 /// is present, because that one is exact by definition.
 pub const TEXT_FONT: &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Regular.ttf");
 
+/// Faces to look for for prose, best first.
+///
+/// A different job from the interface, so a different list. The interface face
+/// is chosen so a label glanced at once cannot be misread; a book is read in
+/// sequence for an hour and wants type the eye stops noticing. Every one of
+/// these is a serif drawn for continuous reading, and all of them are already
+/// on the device.
+///
+/// KoboNickel leads because it is the face the reader's own software sets books
+/// in, so a book here looks like a book there. Bitter follows: a slab serif
+/// drawn specifically for screens, whose sturdy stems survive a panel that
+/// resolves few tones. Vollkorn is a classic book face and the last serif
+/// resort. Nothing is guessed — every path was listed off the device.
+///
+/// If none is present the interface face is used, which is legible and merely
+/// not bookish.
+pub const READING_FONT_CANDIDATES: &[&str] = &[
+    "/usr/local/Trolltech/QtEmbedded-4.6.2-arm/lib/fonts/KoboNickel.ttf",
+    "/usr/local/Trolltech/QtEmbedded-4.6.2-arm/lib/fonts/Bitter-Regular.ttf",
+    "/usr/local/Trolltech/QtEmbedded-4.6.2-arm/lib/fonts/Vollkorn-Regular.ttf",
+];
+
+/// The environment variable that overrides the prose face alone.
+pub const READING_FONT_OVERRIDE: &str = "KOBO_READING_FONT";
+
 /// The environment variable that overrides every search.
 pub const FONT_OVERRIDE: &str = "KOBO_FONT";
 
@@ -150,6 +175,29 @@ impl Typeface {
             }
         }
         Self::from_bytes(TEXT_FONT, "AtkinsonHyperlegible-Regular.ttf", metrics)
+    }
+
+    /// Loads the device's own face for prose, falling back to the interface
+    /// face when it carries no serif.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error only if `KOBO_READING_FONT` names something unusable,
+    /// or a device path exists but cannot be read or parsed.
+    pub fn discover_reading(metrics: DisplayMetrics) -> Result<Self, Error> {
+        if let Some(override_path) = std::env::var_os(READING_FONT_OVERRIDE) {
+            return Self::load(PathBuf::from(override_path), metrics);
+        }
+        for candidate in READING_FONT_CANDIDATES {
+            let path = Path::new(candidate);
+            if path.exists() {
+                return Self::load(path, metrics);
+            }
+        }
+        // Not an error. A machine with no serif still reads perfectly well in
+        // the interface face, and refusing to start over typography would be
+        // absurd.
+        Self::discover(metrics)
     }
 
     /// Loads one specific face.
@@ -359,6 +407,7 @@ impl Typeface {
 pub struct SystemFonts {
     text: Typeface,
     mono: Typeface,
+    reading: Typeface,
 }
 
 impl SystemFonts {
@@ -373,6 +422,7 @@ impl SystemFonts {
         Ok(Self {
             text: Typeface::discover(metrics)?,
             mono: Typeface::from_bytes(MONO_FONT, "DejaVuSansMono.ttf", metrics)?,
+            reading: Typeface::discover_reading(metrics)?,
         })
     }
 
@@ -386,13 +436,14 @@ impl SystemFonts {
         match face {
             Face::Text => &self.text,
             Face::Mono => &self.mono,
+            Face::Reading => &self.reading,
         }
     }
 
     /// The fixed cell a face lays out on, if it lays out on one.
     fn cell(&self, size: FontSize, face: Face) -> Option<i32> {
         match face {
-            Face::Text => None,
+            Face::Text | Face::Reading => None,
             Face::Mono => Some(self.cell_width(size)),
         }
     }
@@ -405,7 +456,18 @@ impl Typesetter for SystemFonts {
     }
 
     fn line_height(&self, size: FontSize, face: Face) -> i32 {
-        self.face(face).height(size)
+        let natural = self.face(face).height(size);
+        match face {
+            // A font's own line height is set for a paragraph in a document,
+            // not for a page of a novel. Typesetters have always opened books
+            // up further than that, and on a reflective panel it matters more
+            // than on paper: with only a few tones to work with, tight lines
+            // let the eye drift onto the wrong one and re-read it. A fifth
+            // again is the usual book measure and is what the reader's own
+            // software is doing on the next screen over.
+            Face::Reading => natural + natural / 5,
+            Face::Text | Face::Mono => natural,
+        }
     }
 
     fn draw(
@@ -683,6 +745,45 @@ mod tests {
         let heading = face.measure_run("Chapter", FontSize::Heading, None);
         assert!(caption.0 < heading.0);
         assert!(caption.1 < heading.1);
+    }
+
+    #[test]
+    fn a_book_is_set_on_more_open_lines_than_an_interface() {
+        // The whole point of a separate reading face. A font's own line height
+        // is set for a paragraph in a document, not for a page of a novel, and
+        // on a panel resolving few tones tight lines let the eye drop onto the
+        // wrong one and read it twice.
+        let Some(fonts) = fonts() else {
+            return;
+        };
+        let interface = fonts.line_height(FontSize::Body, Face::Text);
+        let book = fonts.line_height(FontSize::Body, Face::Reading);
+        assert!(
+            book > interface,
+            "prose is set at {book} and the interface at {interface}; a book should be the more open of the two"
+        );
+        // And not so open that the page holds nothing. A fifth again is the
+        // usual book measure; double would be a poster.
+        assert!(
+            book < interface * 3 / 2,
+            "prose at {book} against an interface at {interface} is too loose to be a book"
+        );
+    }
+
+    #[test]
+    fn the_prose_face_is_a_real_face_rather_than_a_missing_one() {
+        // A machine with no serif falls back to the interface face rather than
+        // failing, so this asserts only that something usable was loaded and
+        // that it can draw the punctuation a book is full of.
+        let Some(fonts) = fonts() else {
+            return;
+        };
+        for character in ['\u{201C}', '\u{201D}', '\u{2019}', '\u{2014}', '\u{2026}'] {
+            assert!(
+                fonts.has_glyph(character, Face::Reading),
+                "the reading face cannot draw {character:?}, which every book contains"
+            );
+        }
     }
 
     fn fonts() -> Option<SystemFonts> {

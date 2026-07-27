@@ -604,6 +604,14 @@ pub struct Screen {
     /// does not then draw something new is left behind and the launcher shown
     /// anyway, so the worst this can do is delay the way out once.
     pub owns_back: bool,
+    /// Whether this screen's text is a book rather than an interface.
+    ///
+    /// Sets prose in a serif drawn for continuous reading and opens the lines
+    /// up to the measure books have always used. Off everywhere else, because
+    /// the interface face is chosen so that a label glanced at once cannot be
+    /// misread, which is a different job and a different answer.
+    pub reading: bool,
+
     /// A text size this screen asks for, overriding the reader's own setting.
     ///
     /// `None` means inherit, which is what almost every screen should do: the
@@ -654,6 +662,7 @@ impl Screen {
             bottom_action: None,
             page_turns: None,
             owns_back: false,
+            reading: false,
             text_scale: None,
         }
     }
@@ -663,6 +672,12 @@ impl Screen {
     /// Pass the application's own answer to "is there anywhere to go back to",
     /// so the last screen of an application's own stack still leaves for the
     /// launcher rather than swallowing the tap and appearing to do nothing.
+    #[must_use]
+    pub const fn with_reading(mut self, reading: bool) -> Self {
+        self.reading = reading;
+        self
+    }
+
     #[must_use]
     pub const fn with_text_scale(mut self, text_scale: Option<TextScale>) -> Self {
         self.text_scale = text_scale;
@@ -724,7 +739,15 @@ impl Screen {
     pub fn layout_with(&self, metrics: &DisplayMetrics, chrome: Chrome) -> Layout {
         let margin = metrics.screen_margin();
         let gap = metrics.space(Space::Tight);
-        let mut layout = Layout::default();
+        let prose = if self.reading {
+            Face::Reading
+        } else {
+            Face::Text
+        };
+        let mut layout = Layout {
+            prose_face: prose,
+            ..Layout::default()
+        };
 
         let mut cursor = margin;
         if let Some(top_bar) = &self.top_bar {
@@ -755,6 +778,7 @@ impl Screen {
                 metrics.width - 2 * margin,
                 0,
                 metrics,
+                prose,
                 &mut layout,
             );
             cursor = cursor.saturating_add(gap);
@@ -1630,6 +1654,13 @@ pub struct Layout {
     pub content: Rect,
     /// Set when the screen asked for tap-to-turn.
     pub page_turns: Option<PageTurns>,
+    /// The face this screen's prose was wrapped in, and must be drawn in.
+    ///
+    /// Kept on the layout rather than on each node because it is a property of
+    /// the screen, and kept at all because measuring and drawing have to agree:
+    /// text wrapped in one face and drawn in another does not end where the
+    /// wrapping said it would.
+    pub prose_face: Face,
 }
 
 /// How urgently a screen diagnostic should be treated.
@@ -1948,6 +1979,7 @@ pub fn clamp_lines(text: &str, width: i32, size: FontSize, lines: usize) -> Stri
     format!("{}\u{2026}", kept.trim_end())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn layout_node(
     node: &Node,
     x: i32,
@@ -1955,6 +1987,7 @@ fn layout_node(
     width: i32,
     depth: usize,
     metrics: &DisplayMetrics,
+    prose: Face,
     layout: &mut Layout,
 ) -> i32 {
     if depth > MAX_LAYOUT_DEPTH || layout.nodes.len() >= MAX_LAYOUT_NODES {
@@ -1979,10 +2012,10 @@ fn layout_node(
             y.saturating_add(height)
         }
         Node::Text { id, text } => {
-            let lines = wrap_text(text, width, FontSize::Body);
+            let lines = wrap_text_in(text, width, FontSize::Body, prose);
             let height = max(
                 MIN_TEXT_HEIGHT,
-                lines.len() as i32 * FontSize::Body.line_height(),
+                lines.len() as i32 * FontSize::Body.line_height_in(prose),
             );
             layout.nodes.push(LayoutNode {
                 id: *id,
@@ -2001,10 +2034,10 @@ fn layout_node(
             let depth = (*depth).min(MAX_QUOTE_DEPTH);
             let (offset, text_width) = quote_offsets(metrics, width, depth);
             let text_x = x.saturating_add(offset);
-            let lines = wrap_text(text, text_width, FontSize::Body);
+            let lines = wrap_text_in(text, text_width, FontSize::Body, prose);
             let height = max(
                 MIN_TEXT_HEIGHT,
-                lines.len() as i32 * FontSize::Body.line_height(),
+                lines.len() as i32 * FontSize::Body.line_height_in(prose),
             );
             layout.nodes.push(LayoutNode {
                 id: *id,
@@ -2071,6 +2104,7 @@ fn layout_node(
                     width.saturating_sub(2 * padding),
                     depth + 1,
                     metrics,
+                    prose,
                     layout,
                 )
                 .saturating_add(inner_gap);
@@ -2754,9 +2788,9 @@ impl FontSize {
 /// rather than a pixel count: the runtime owns the answer and can change it for
 /// a different panel without touching a line of application code.
 ///
-/// There are exactly two, and there is no third. A weight axis would multiply
-/// the faces the runtime has to find, and on a panel with two usable tones bold
-/// buys far less separation than size and space already do.
+/// A weight axis is still deliberately absent. It would multiply the faces the
+/// runtime has to find, and on a panel with two usable tones bold buys far less
+/// separation than size and space already do.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub enum Face {
     /// Proportional. Everything a reader reads.
@@ -2766,6 +2800,17 @@ pub enum Face {
     /// a file size. Every glyph has the same advance, so `n` characters are
     /// always exactly `n` cells wide.
     Mono,
+    /// A book, read for an hour at a time.
+    ///
+    /// Distinct from [`Self::Text`] because the two jobs genuinely differ. The
+    /// interface face is chosen so that a label glanced at once cannot be
+    /// misread — that is why it is Atkinson Hyperlegible, drawn by the Braille
+    /// Institute to keep similar letterforms apart. Prose is the opposite
+    /// problem: nothing is glanced at, everything is read in sequence, and what
+    /// matters is that the eye is carried along the line without noticing the
+    /// type at all. Every dedicated reader answers that with a serif, and this
+    /// one does too.
+    Reading,
 }
 
 /// Supplies real type to the layout and the renderer.
@@ -2977,6 +3022,9 @@ pub struct ProseArea {
     pub height: i32,
     /// The space the layout leaves between two adjacent nodes.
     pub gap: i32,
+    /// The face this prose will be set in, which decides both how wide the
+    /// words come out and how far apart the lines sit.
+    pub face: Face,
 }
 
 impl DisplayMetrics {
@@ -3019,6 +3067,20 @@ impl DisplayMetrics {
             width: max_i32(0, self.width - 2 * margin),
             height: max_i32(0, bottom - top),
             gap,
+            face: Face::Text,
+        }
+    }
+
+    /// The same area, to be set in a named face.
+    ///
+    /// A serif sets the same words wider and on more generous lines, so a page
+    /// measured in the interface face and drawn in the reading one loses its
+    /// last lines off the bottom.
+    #[must_use]
+    pub fn prose_area_in(&self, top_bar: bool, nav_bar: bool, face: Face) -> ProseArea {
+        ProseArea {
+            face,
+            ..self.prose_area(top_bar, nav_bar)
         }
     }
 }
@@ -3073,7 +3135,7 @@ pub fn paginate_quoted(
     metrics: &DisplayMetrics,
     area: ProseArea,
 ) -> Vec<Vec<(u8, String)>> {
-    let line_height = FontSize::Body.line_height();
+    let line_height = FontSize::Body.line_height_in(area.face);
     let mut pages: Vec<Vec<(u8, String)>> = Vec::new();
     let mut page: Vec<(u8, String)> = Vec::new();
     let mut used = 0;
@@ -3092,7 +3154,7 @@ pub fn paginate_quoted(
         if paragraph.is_empty() {
             continue;
         }
-        let mut lines = wrap_text(paragraph, width, FontSize::Body);
+        let mut lines = wrap_text_in(paragraph, width, FontSize::Body, area.face);
         while !lines.is_empty() {
             let spacing = if page.is_empty() { 0 } else { area.gap };
             let room = area.height - used - spacing;
@@ -3287,6 +3349,16 @@ pub fn paginate_tiles(
 /// line, and combining marks are never detached from their base character.
 #[must_use]
 pub fn wrap_text(text: &str, max_width: i32, size: FontSize) -> Vec<String> {
+    wrap_text_in(text, max_width, size, Face::Text)
+}
+
+/// Breaks `text` to `max_width`, measured in the face it will be drawn in.
+///
+/// The face is not decoration here. A serif and a sans of the same size set the
+/// same words to different widths, so wrapping against one and drawing in the
+/// other puts lines past the margin and loses the end of a page.
+#[must_use]
+pub fn wrap_text_in(text: &str, max_width: i32, size: FontSize, face: Face) -> Vec<String> {
     if text.is_empty() || max_width <= 0 {
         return vec![String::new()];
     }
@@ -3318,7 +3390,7 @@ pub fn wrap_text(text: &str, max_width: i32, size: FontSize) -> Vec<String> {
                 end
             };
             let candidate = text[start..visible_end].trim_end_matches(char::is_whitespace);
-            if measure_text(candidate, size).0 <= max_width {
+            if measure_text_in(candidate, size, face).0 <= max_width {
                 best = Some((end, candidate.to_owned()));
                 if opportunity == BreakOpportunity::Mandatory {
                     lines.push(candidate.to_owned());
@@ -4495,7 +4567,9 @@ pub fn render_all(
         height: i32::try_from(surface.height).unwrap_or(i32::MAX),
     });
     surface.fill_rect(clip, tone::PAPER);
-    for node in screen.layout_with(metrics, chrome).nodes {
+    let layout = screen.layout_with(metrics, chrome);
+    let prose = layout.prose_face;
+    for node in layout.nodes {
         if node.rect.intersection(clip).is_none() {
             continue;
         }
@@ -4632,12 +4706,16 @@ pub fn render_all(
                     clip,
                 );
             }
-            LayoutKind::Text | LayoutKind::PagedList => draw_lines(
+            // The face the layout wrapped these lines in, never a default.
+            // Measuring in one face and drawing in another is what puts a line
+            // past the margin it was fitted to.
+            LayoutKind::Text | LayoutKind::PagedList => draw_lines_in(
                 surface,
                 &node.text_lines,
                 node.rect.x,
                 node.rect.y,
                 FontSize::Body,
+                prose,
                 tone::INK,
                 clip,
             ),
@@ -5097,14 +5175,29 @@ fn draw_lines(
     surface: &mut Surface,
     lines: &[String],
     x: i32,
-    mut y: i32,
+    y: i32,
     size: FontSize,
     tone: u8,
     clip: Rect,
 ) {
+    draw_lines_in(surface, lines, x, y, size, Face::Text, tone, clip);
+}
+
+/// The same, in a named face.
+#[allow(clippy::too_many_arguments)]
+fn draw_lines_in(
+    surface: &mut Surface,
+    lines: &[String],
+    x: i32,
+    mut y: i32,
+    size: FontSize,
+    face: Face,
+    tone: u8,
+    clip: Rect,
+) {
     for line in lines {
-        draw_text(surface, line, x, y, size, tone, clip);
-        y = y.saturating_add(size.line_height());
+        draw_text_in(surface, line, x, y, size, face, tone, clip);
+        y = y.saturating_add(size.line_height_in(face));
     }
 }
 
@@ -7296,6 +7389,7 @@ mod prose_tests {
                 width: 400,
                 height: 2,
                 gap: 4,
+                face: Face::Text,
             },
         );
         assert!(pages.is_empty());

@@ -248,6 +248,7 @@ pub struct ScreenBuilder {
     page_turns: Option<kobo_ui::PageTurns>,
     owns_back: bool,
     text_scale: Option<kobo_ui::TextScale>,
+    reading: bool,
     actions: Vec<(String, ActionId)>,
     warnings: Vec<LayoutIssue>,
 }
@@ -265,6 +266,7 @@ impl ScreenBuilder {
             page_turns: None,
             owns_back: false,
             text_scale: None,
+            reading: false,
             actions: Vec::new(),
             warnings: Vec::new(),
         }
@@ -485,6 +487,23 @@ impl ScreenBuilder {
     #[must_use]
     pub const fn text_scale(mut self, scale: kobo_ui::TextScale) -> Self {
         self.text_scale = Some(scale);
+        self
+    }
+
+    /// Says this screen's text is a book rather than an interface.
+    ///
+    /// Sets prose in a serif drawn for continuous reading — the device's own
+    /// reading face where it has one — and opens the lines to the measure books
+    /// have always used. For the pages of a reader and nothing else: the
+    /// interface face is chosen so a label glanced at once cannot be misread,
+    /// which is a different problem with a different answer.
+    ///
+    /// Paginate with [`Context::paginate_reading`], because a serif sets the
+    /// same words wider and a page measured in the wrong face loses its last
+    /// lines.
+    #[must_use]
+    pub const fn reading(mut self, reading: bool) -> Self {
+        self.reading = reading;
         self
     }
 
@@ -924,6 +943,7 @@ impl ScreenBuilder {
             page_turns: self.page_turns,
             owns_back: self.owns_back,
             text_scale: self.text_scale,
+            reading: self.reading,
         }
     }
 
@@ -1080,6 +1100,22 @@ impl Context {
         kobo_ui::paginate(text, self.metrics.prose_area(true, nav_bar))
     }
 
+    /// Breaks a book into pages, measured in the reading face.
+    ///
+    /// The companion to [`ScreenBuilder::reading`], and the only correct way to
+    /// paginate for it: a serif sets the same words wider and on more generous
+    /// lines, so a page measured in the interface face runs past the bottom of
+    /// the one it is drawn on and loses its last lines with nothing on the
+    /// panel to say so.
+    #[must_use]
+    pub fn paginate_reading(&self, text: &str, nav_bar: bool) -> Vec<Vec<String>> {
+        kobo_ui::paginate(
+            text,
+            self.metrics
+                .prose_area_in(true, nav_bar, kobo_ui::Face::Reading),
+        )
+    }
+
     /// The same, at a text size other than the reader's own.
     ///
     /// Pair with [`ScreenBuilder::text_scale`] set to the same value.
@@ -1090,7 +1126,11 @@ impl Context {
         nav_bar: bool,
         scale: kobo_ui::TextScale,
     ) -> Vec<Vec<String>> {
-        kobo_ui::paginate(text, self.metrics_at(scale).prose_area(true, nav_bar))
+        kobo_ui::paginate(
+            text,
+            self.metrics_at(scale)
+                .prose_area_in(true, nav_bar, kobo_ui::Face::Reading),
+        )
     }
 
     /// Breaks threaded prose into pages that fit this panel, keeping the
