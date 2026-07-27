@@ -298,7 +298,9 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "deploy" => deploy_package(&arguments[1..]),
         "inspect" => inspect_package(&arguments[1..]),
         "verify" => verify_command(&arguments[1..]),
-        "run" if arguments.get(1).is_some_and(|value| value == "--sim") => run_simulation(),
+        "run" if arguments.get(1).is_some_and(|value| value == "--sim") => {
+            run_simulation(&arguments[2..])
+        }
         "run" => {
             Err("device execution is safety-gated; use 'kobo run --sim' on the host".to_owned())
         }
@@ -2613,9 +2615,10 @@ fn pipe_through(command: &mut Command, input: &[u8]) -> Result<Vec<u8>, String> 
     }
 }
 
-fn run_simulation() -> Result<(), String> {
+fn run_simulation(arguments: &[String]) -> Result<(), String> {
+    let package = simulated_package(arguments)?;
     let mut build = Command::new("cargo");
-    build.args(["build", "-p", "kobod", "-p", "kobo-todo"]);
+    build.args(["build", "-p", "kobod", "-p", package]);
     run_status(&mut build, "build host simulation")?;
 
     let mut simulation = SimulationGuard::new()?;
@@ -2638,11 +2641,11 @@ fn run_simulation() -> Result<(), String> {
         ));
     }
 
-    let app_status = Command::new("target/debug/kobo-todo")
+    let app_status = Command::new(format!("target/debug/{package}"))
         .env("KOBO_SOCKET", &simulation.socket)
         .env("KOBO_SIM_ONESHOT", "1")
         .status()
-        .map_err(|error| format!("run todo app: {error}"))?;
+        .map_err(|error| format!("run {package}: {error}"))?;
     let daemon_status = simulation.daemon_wait()?;
     if !app_status.success() || !daemon_status.success() {
         return Err(format!(
@@ -2660,8 +2663,58 @@ fn run_simulation() -> Result<(), String> {
     }
     let output = Path::new("target/kobo-sim-last.raw");
     fs::copy(&simulation.frame, output).map_err(|error| format!("save rendered frame: {error}"))?;
-    println!("host runtime completed; frame: {}", output.display());
+    println!(
+        "host runtime completed for {package}; frame: {}",
+        output.display()
+    );
     Ok(())
+}
+
+/// The package `--app` named, checked against the ones that are shipped.
+///
+/// Restricted to that list rather than taking any string, because the name
+/// becomes both a cargo argument and a path under `target/debug`, and because
+/// a typo is worth a list of what exists rather than a build failure four
+/// minutes later. `kobod` is on that list and is not an application: it is the
+/// runtime the simulation is already starting.
+fn simulated_package(arguments: &[String]) -> Result<&'static str, String> {
+    let mut wanted = "todo";
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--app" | "-a" => {
+                wanted = arguments
+                    .get(index + 1)
+                    .ok_or_else(|| format!("--app needs a name; one of {}", simulatable()))?;
+                index += 1;
+            }
+            other => {
+                return Err(format!(
+                    "unknown option '{other}'\nusage: kobo run --sim [--app NAME]"
+                ))
+            }
+        }
+        index += 1;
+    }
+    // Both spellings work, because the launcher calls it 'rss' and cargo calls
+    // it 'kobo-rss', and somebody reading either should not have to know.
+    INSTALLED_PACKAGES
+        .iter()
+        .map(|(package, _)| *package)
+        .find(|package| {
+            *package != "kobod"
+                && (*package == wanted || package.strip_prefix("kobo-") == Some(wanted))
+        })
+        .ok_or_else(|| format!("no application called '{wanted}'; one of {}", simulatable()))
+}
+
+/// The application names `--app` accepts, for an error message to list.
+fn simulatable() -> String {
+    INSTALLED_PACKAGES
+        .iter()
+        .filter_map(|(package, _)| package.strip_prefix("kobo-"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 struct SimulationGuard {
@@ -2873,7 +2926,7 @@ fn print_help() {
            deploy --device IP [--package PATH]   Install over Wi-Fi, no reboot\n\
            inspect <package>       List a package and prove it writes nothing to the rootfs\n\
            verify <arm-binary>     Verify static ARM hard-float format\n\
-           run --sim              Run SDK, IPC, daemon and app on host\n\
+           run --sim [--app NAME]  Run SDK, IPC, daemon and one app on host\n\
            run                    Device execution remains safety-gated\n\
            version                Print version\n\n\
          Every command that takes --device also takes -s, and these names\n\
@@ -3755,6 +3808,56 @@ mod tests {
             assert_eq!(changed_lines(b"applied; changed_lines=lots\n"), 0);
             assert_eq!(changed_lines(b"something else entirely\n"), 0);
             assert_eq!(changed_lines(&[0xff, 0xfe, 0x00]), 0);
+        }
+    }
+
+    mod simulating {
+        use super::super::simulated_package;
+
+        fn arguments(values: &[&str]) -> Vec<String> {
+            values.iter().map(|value| (*value).to_owned()).collect()
+        }
+
+        #[test]
+        fn without_an_app_it_runs_the_one_it_always_ran() {
+            assert_eq!(simulated_package(&arguments(&[])), Ok("kobo-todo"));
+        }
+
+        #[test]
+        fn an_app_can_be_named_the_way_the_launcher_names_it() {
+            assert_eq!(
+                simulated_package(&arguments(&["--app", "rss"])),
+                Ok("kobo-rss")
+            );
+            assert_eq!(
+                simulated_package(&arguments(&["-a", "gutenshelf"])),
+                Ok("kobo-gutenshelf")
+            );
+        }
+
+        #[test]
+        fn an_app_can_also_be_named_the_way_cargo_names_it() {
+            assert_eq!(
+                simulated_package(&arguments(&["--app", "kobo-hn"])),
+                Ok("kobo-hn")
+            );
+        }
+
+        #[test]
+        fn the_runtime_is_not_an_application_to_run_against_itself() {
+            // kobod is on the packages list and is the thing already being
+            // started; asking for it would start two of them.
+            assert!(simulated_package(&arguments(&["--app", "kobod"])).is_err());
+        }
+
+        #[test]
+        fn a_name_that_is_not_an_app_is_refused_with_the_ones_that_are() {
+            let error =
+                simulated_package(&arguments(&["--app", "../../etc/passwd"])).expect_err("refused");
+            assert!(error.contains("rss"), "{error}");
+            assert!(error.contains("todo"), "{error}");
+            let missing = simulated_package(&arguments(&["--app"])).expect_err("refused");
+            assert!(missing.contains("needs a name"), "{missing}");
         }
     }
 
