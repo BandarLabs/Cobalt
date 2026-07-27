@@ -133,11 +133,13 @@ one cannot.
 | Method | What it is |
 |---|---|
 | `heading(text)` | One line of display type. |
-| `text(text)` | A paragraph. Wraps at a measure derived from physical width. |
+| `text(text)` | A paragraph. Wraps by measured glyph width and Unicode line-break rules. |
 | `button(name, label)` | A full-width action. |
+| `disabled_button(name, label)` | A visible, outlined action that yields nothing and absorbs its tap. |
 | `rows([(name, title, summary, glyph), …])` | A list. Title, one line of detail, an icon. |
 | `checklist([(name, title, summary, done), …])` | The same list, where a finished row is struck through. |
 | `tiles([(name, label, glyph), …])` | A grid of square destinations. |
+| `apps([metadata, …])` | Launcher tiles from `AppMetadata`, with picture-to-glyph fallback. |
 | `grid(columns, square, cells)` | A board. What tic-tac-toe is drawn with. |
 | `choose(prompt, [(name, label), …])` | A question with tappable answers. |
 | `chosen(index)` | Marks which answer of the preceding `choose` is already given. |
@@ -145,7 +147,8 @@ one cannot.
 | `quote(depth, text)` | A paragraph set in by reply depth, with a gutter rule. |
 | `picture(picture, max_height_mm)` | One picture, as large as the width and that height allow. |
 | `picture_tiles(shape, […])` | A grid of tiles that each carry a picture, falling back to a glyph. |
-| `banner(level, text)` | `Info` or `Attention`. Attention is drawn inverted. || `progress(percent)` | A determinate bar. |
+| `banner(level, text)` | `Info` or `Attention`. Attention is drawn inverted. |
+| `progress(percent)` | A determinate bar. |
 | `activity(label, progress)` | An indeterminate wait. |
 | `cancellable(name, label)` | Adds a cancel control to the preceding activity. |
 | `skeleton(lines)` | Placeholder lines, occupying where content will land. |
@@ -155,12 +158,25 @@ one cannot.
 | `text_entry(&entry, prompt, submit)` | A prompt, what has been typed, and the keys. |
 | `terminal(rows, cursor)` | A character grid with a block caret. |
 | `terminal_keys(&keys)` | Keys that send a byte the moment they are tapped. |
+| `empty_state(message)` | A standard empty result with a useful default title. |
+| `offline_state(message)` | A standard offline presentation; chain a retry button when useful. |
+| `permission_denied_state(message)` | A standard denied-capability presentation. |
+| `error_state(message)` | A standard recoverable-error presentation. |
+| `confirmation(title, message, primary, secondary)` | A whole-screen confirmation with two `DialogAction`s. |
 
 There is no free-form drawing, no colour, no font choice and no pixel
 positioning. Every size comes from the panel's *physical* dimensions, so a
 control that is comfortable under a thumb on a six inch panel is comfortable on
 a ten inch one, and a line of text holds roughly the same number of words on
 both.
+
+Wrapping uses the installed face's measured glyph advances, Unicode line-break
+opportunities and grapheme boundaries. It does not estimate from character
+count, split a combining sequence, or assume spaces are the only place a line
+can break. Set `KOBO_TEXT_SCALE=large` or
+`KOBO_TEXT_SCALE=extra-large` to run the simulator and runtime at 120% or 140%.
+The selected scale is part of the runtime handshake, so application pagination
+and device rendering use the same metrics.
 
 ### Icons
 
@@ -183,6 +199,59 @@ indent, and that is deliberate — an application that marks its own choice with
 a character picks one the installed face may not have, and gets an empty box on
 the panel. In debug builds `set_screen` refuses a screen carrying a character
 the face cannot draw, so an application's own tests fail rather than the panel.
+
+A disabled button is state as well. Use `disabled_button` or
+`button_with_state`; the renderer gives it an outlined, muted treatment and the
+layout engine returns no action for it. It still consumes the tap that lands on
+it, so a greyed-out control on a paginated screen cannot turn the page instead
+of doing nothing.
+
+### Navigation, confirmations and standard states
+
+Applications still own their destinations, but they no longer need to
+hand-roll a fallible `Vec` stack:
+
+```rust
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum Route { Home, Details(u32), ConfirmDelete(u32) }
+
+let mut nav = kobo_sdk::Navigator::new(Route::Home);
+nav.push(Route::Details(42));
+nav.replace(Route::ConfirmDelete(42));
+assert!(nav.back());
+```
+
+The root can never be popped and `current()` always returns a route. This is
+application navigation; the runtime-owned Back control remains separate and
+cannot be hidden by an application.
+
+Confirmations are deliberately whole screens, not floating desktop windows:
+
+```rust
+ScreenBuilder::new("delete-note")
+    .confirmation(
+        "Delete this note?",
+        "This cannot be undone.",
+        kobo_sdk::DialogAction::new("delete", "Delete"),
+        kobo_sdk::DialogAction::new("cancel", "Cancel"),
+    )
+    .build()
+```
+
+For catalogue entries, declare one compile-time `AppMetadata` value. Its
+`AppIcon` may be a built-in vector glyph or a prepared square picture with a
+glyph fallback, so a missing or evicted bitmap never leaves a blank tile.
+
+```rust
+const APP: kobo_sdk::AppMetadata = kobo_sdk::AppMetadata::new(
+    "notes",
+    "Notes",
+    "Write without distraction.",
+    kobo_sdk::AppIcon::glyph(kobo_sdk::Glyph::Note),
+);
+
+let launcher = ScreenBuilder::new("apps").apps([APP]).build();
+```
 
 ### Threaded replies
 
@@ -235,14 +304,20 @@ numbers some rows and illustrates others still lines up down its left edge.
 
 ### Pictures
 
-`kobo-image` decodes JPEG and PNG on the host and on the device, halftones to
-the sixteen greys the panel resolves with `dither(PANEL_GREYS)`, and fits a
-picture to the cell it will occupy. `fit` shrinks only; `fit_enlarging` will
-blow a small picture up to `MAX_ENLARGEMENT` times, which is what a book cover
-published at 190 by 300 needs to fill a tile on a 300 pixel-per-inch panel.
-The application decodes and hands the runtime the pixels at the size they will
-be drawn, so the picture cache holds what is on the screen rather than what was
-downloaded.
+`kobo-image` decodes JPEG and PNG on the host and on the device. Decode applies
+JPEG EXIF orientation and composites transparent PNG pixels onto the panel's
+white paper rather than black. `prepare(width, height, mode)` makes the crop
+policy explicit: `FitMode::Contain`, `ContainEnlarging`, or centre-cropped
+`Cover`. Every allocation is checked against the decoded-pixel limit before it
+is made. `dither(PANEL_GREYS)` then reduces the result to the sixteen greys the
+panel resolves using two scanline error buffers rather than another full-image
+allocation.
+
+Pass the prepared pixels to `context.put_picture`. The SDK sends small images
+inline and automatically streams large or full-panel images in bounded chunks.
+The runtime publishes a picture to the cache only after the final complete,
+ordered chunk commits, so a partially transferred photograph can never flash
+onto the panel. The application API is the same at either size.
 
 ---
 
@@ -252,11 +327,24 @@ There is no scroll view and there should not be. A panel that takes the better
 part of a second to repaint cannot follow a finger, and a partial refresh
 chasing a moving list is precisely the operation that leaves ghosting behind.
 
-There is also a trap: **the layout engine silently drops whatever does not
-fit.** It stops placing nodes once the cursor passes the bottom of the content
-area, and nothing tells you. So anything that must stay reachable belongs in
-the nav bar, which is reserved before content is placed — never at the end of
-the flow, where it is the first thing to be dropped.
+The layout engine stops placing nodes once the cursor passes the bottom of the
+content area. Anything that must stay reachable therefore belongs in the nav
+bar, which is reserved before content is placed — never at the end of the flow,
+where it is the first thing to be dropped. This failure is observable:
+
+```rust
+let screen = builder.build_checked()?;            // collection truncation
+let issues = screen.validate(&context.metrics()); // overflow, clipping, text,
+                                                   // touch targets and glyphs
+```
+
+`validate` measures with the back chrome the runtime gives every application,
+which is the smaller content area, so a screen that passes here is not clipped
+once the runtime adds it.
+
+`Screen::diagnostics` returns the measured layout and its issues from one pass.
+The browser simulator lists those issues beside the panel and can outline their
+rectangles, including missing pictures held only by the runtime cache.
 
 Ask the runtime where the folds are:
 
@@ -492,8 +580,31 @@ different machines see the same line breaks. An application that could only
 reach the network on the device could only be built on the device, which is
 the one thing this is arranged to avoid.
 
-Failure handling is still code that has to run, so set `KOBO_SIM_OFFLINE=1` to
-make every network task fail. Deliberately, rather than always.
+The current target is the measured `clara-bw-391` profile: 1072 × 1448 at 300
+PPI, rotation 3, with display taps converted through the Clara's raw controller
+ranges before SDK hit testing. The runtime and simulator share the exact Rust
+refresh planner, including dirty rectangles, DU/GL16/GC16 selection and an
+eight-partial-update cleaning cadence. The browser's visible residue is an
+explicit approximation—an LCD cannot reproduce electrophoretic physics—and
+the **Show ideal pixels** control makes that boundary inspectable. Keeping this
+authoritative logic in the native simulator avoids adding a second WASM build
+and download to the development loop; a Rust-to-WASM renderer can be added
+later for a fully static/offline embed without changing the simulation model.
+
+Failure handling is still code that has to run. Select a deterministic scenario
+in the inspector to exercise offline, low-battery, permission-denied,
+missing-secret, network-timeout, storage-full and image-cache-pressure paths.
+The foreground and background buttons deliver real SDK lifecycle messages.
+`KOBO_SIM_OFFLINE=1` remains available for headless or scripted development.
+
+The simulator's diagnostics panel is part of the normal development loop. It
+reports content beyond the fold, clipping, undersized targets, text overflow,
+unsupported characters, duplicate node IDs, truncated collections, invalid
+picture sizes and missing cache entries. Toggle **Show diagnostic outlines**
+to draw each issue over the exact rectangle returned by the shared layout
+engine. The adjacent panel inspector names every refresh waveform, whether it
+is partial or cleaning, its pixel rectangle, refresh count and accumulated
+partials. Raw and display touch coordinates are shown after every tap.
 
 `package` produces the single `KoboRoot.tgz` an owner copies into `.kobo/` over
 USB; the reader installs it at the next boot. Everything lands in
@@ -595,9 +706,9 @@ writes), `kobo-handoff` (stopping and restarting the stock reader) and
 `kobo-profile` sit under `kobo-hal`: the only `unsafe` in the workspace, and the
 exact hardware identity that gates it.
 
-Outside dependencies live in exactly three of those crates, each behind one
-interface: `kobo-net`, `kobo-text` and `kobo-term`. Nothing an application
-imports has any.
+Outside dependencies live in exactly four of those crates, each behind one
+interface: `kobo-net`, `kobo-text`, `kobo-term` and `kobo-image`. Nothing an
+application imports has any.
 
 Worked examples, smallest first: `examples/tictactoe`, `examples/todo` (state
 that survives a restart), `examples/gallery` (every primitive on one screen),

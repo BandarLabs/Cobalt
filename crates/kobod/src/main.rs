@@ -1,7 +1,7 @@
 use kobo_policy::{DeviceServices, TaskRunner};
 use kobo_profile::CLARA_BW_391;
 use kobo_protocol::{Frame, LogLevel, Message, TaskError, TaskOutcome};
-use kobo_ui::{Screen, Surface, CLARA_BW_METRICS, DISPLAY_HEIGHT, DISPLAY_WIDTH};
+use kobo_ui::{display_metrics_from_env, Screen, Surface, DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use std::env;
 use std::error::Error;
 use std::fs::{self, OpenOptions};
@@ -248,7 +248,8 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
     // paragraph height in the picture belongs to a panel nobody has. The
     // preview exists to be looked at; a preview drawn in the wrong face is
     // worse than none, because it is believed.
-    let _ = kobo_text::install(CLARA_BW_METRICS);
+    let metrics = display_metrics_from_env();
+    let _ = kobo_text::install(metrics);
     if socket_path.exists() {
         return Err(format!("socket already exists: {}", socket_path.display()).into());
     }
@@ -270,7 +271,8 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
             message: Message::Welcome {
                 width: u16::try_from(DISPLAY_WIDTH)?,
                 height: u16::try_from(DISPLAY_HEIGHT)?,
-                pixels_per_inch: u16::try_from(CLARA_BW_METRICS.pixels_per_inch)?,
+                pixels_per_inch: u16::try_from(metrics.pixels_per_inch)?,
+                text_scale: metrics.text_scale,
             },
         },
     )?;
@@ -318,11 +320,42 @@ fn serve_application(stream: &mut UnixStream, frame_path: &Path) -> Result<(), B
                 width,
                 height,
                 grey,
+            } => match pictures.put_report(handle, width, height, grey) {
+                None => println!("picture {} refused", handle.0),
+                Some(evicted) if !evicted.is_empty() => {
+                    println!("picture {} evicted {evicted:?}", handle.0);
+                }
+                Some(_) => {}
+            },
+            Message::BeginPicture {
+                handle,
+                width,
+                height,
             } => {
-                if !pictures.put(handle, width, height, grey) {
-                    println!("picture {} refused", handle.0);
+                if !pictures.begin_upload(handle, width, height) {
+                    println!("picture {} upload refused", handle.0);
                 }
             }
+            Message::PictureChunk {
+                handle,
+                offset,
+                grey,
+            } => {
+                if !pictures.upload_chunk(
+                    handle,
+                    usize::try_from(offset).unwrap_or(usize::MAX),
+                    &grey,
+                ) {
+                    println!("picture {} chunk refused", handle.0);
+                }
+            }
+            Message::CommitPicture { handle } => match pictures.commit_upload(handle) {
+                None => println!("picture {} commit refused", handle.0),
+                Some(evicted) if !evicted.is_empty() => {
+                    println!("picture {} evicted {evicted:?}", handle.0);
+                }
+                Some(_) => {}
+            },
             Message::DropPicture { handle } => pictures.remove(handle),
             // This path renders one application to a file and owns no panel to
             // hand over, so the request is reported rather than performed.
@@ -465,7 +498,7 @@ fn write_screen(
     );
     kobo_ui::render_all(
         screen,
-        &kobo_ui::CLARA_BW_METRICS,
+        &kobo_ui::display_metrics_from_env(),
         kobo_ui::Chrome::default(),
         pictures,
         &mut surface,

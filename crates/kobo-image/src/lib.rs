@@ -12,7 +12,7 @@
 //! reader with it.
 
 use image::imageops::FilterType;
-use image::ImageReader;
+use image::{DynamicImage, ImageDecoder, ImageReader};
 use std::fmt;
 use std::io::Cursor;
 
@@ -42,6 +42,18 @@ pub const MAX_ENLARGEMENT: u32 = 3;
 /// that makes dithering worth doing: at 256 the reduction is invisible, and at
 /// two everything becomes a woodcut.
 pub const PANEL_GREYS: u8 = 16;
+
+/// How a picture should occupy the rectangle a component assigned to it.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum FitMode {
+    /// Show the whole picture and leave any remainder as paper.
+    #[default]
+    Contain,
+    /// Contain, but enlarge small sources by at most [`MAX_ENLARGEMENT`].
+    ContainEnlarging,
+    /// Fill the rectangle exactly, cropping equal amounts from opposite edges.
+    Cover,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ImageError {
@@ -211,6 +223,60 @@ impl Picture {
         self.scaled_to(width.min(ceiling_width), height.min(ceiling_height))
     }
 
+    /// Prepares a picture with an explicit, discoverable fit policy.
+    ///
+    /// This is the preferred entry point for application code; the older
+    /// `fit` methods remain available for source compatibility.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ImageError::EmptyBox`] for a zero-sized target and
+    /// [`ImageError::TooManyPixels`] before an oversized result is allocated.
+    pub fn prepare(&self, width: u32, height: u32, mode: FitMode) -> Result<Self, ImageError> {
+        match mode {
+            FitMode::Contain => self.fit(width, height),
+            FitMode::ContainEnlarging => self.fit_enlarging(width, height),
+            FitMode::Cover => self.cover(width, height),
+        }
+    }
+
+    /// Fills `width` by `height`, preserving aspect ratio and cropping from the
+    /// centre. Useful for tile artwork and full-bleed hero images where empty
+    /// bands are more distracting than losing the outer edge of a photograph.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ImageError::EmptyBox`] for a zero-sized target and
+    /// [`ImageError::TooManyPixels`] before an oversized result is allocated.
+    pub fn cover(&self, width: u32, height: u32) -> Result<Self, ImageError> {
+        checked_pixels(width, height)?;
+        if width == 0 || height == 0 || self.width == 0 || self.height == 0 {
+            return Err(ImageError::EmptyBox);
+        }
+        let width_limited =
+            u64::from(width) * u64::from(self.height) >= u64::from(height) * u64::from(self.width);
+        let (scaled_width, scaled_height) = if width_limited {
+            (
+                width,
+                div_ceil(u64::from(width) * u64::from(self.height), self.width),
+            )
+        } else {
+            (
+                div_ceil(u64::from(height) * u64::from(self.width), self.height),
+                height,
+            )
+        };
+        checked_pixels(scaled_width, scaled_height)?;
+        let source = image::GrayImage::from_raw(self.width, self.height, self.grey.clone())
+            .ok_or_else(|| ImageError::Undecodable("the picture is not its own size".to_owned()))?;
+        let scaled =
+            image::imageops::resize(&source, scaled_width, scaled_height, FilterType::Lanczos3);
+        let left = (scaled_width - width) / 2;
+        let top = (scaled_height - height) / 2;
+        let cropped = image::imageops::crop_imm(&scaled, left, top, width, height).to_image();
+        Self::from_grey(width, height, cropped.into_raw())
+    }
+
     /// Resamples to the largest size inside the box, in either direction.
     fn scaled_to(&self, width: u32, height: u32) -> Result<Self, ImageError> {
         let (target_width, target_height) = self.size_within(width, height);
@@ -220,6 +286,7 @@ impl Picture {
         if target_width == self.width && target_height == self.height {
             return Ok(self.clone());
         }
+        checked_pixels(target_width, target_height)?;
         let source = image::GrayImage::from_raw(self.width, self.height, self.grey.clone())
             .ok_or_else(|| ImageError::Undecodable("the picture is not its own size".to_owned()))?;
         let scaled =
@@ -248,34 +315,48 @@ impl Picture {
         // Carried beside the pixels rather than inside them. Rounding the
         // error back into a byte at every step is what makes naive error
         // diffusion drift dark.
-        let mut error = vec![0_i32; width * height];
+        let mut current_error = vec![0_i32; width];
+        let mut next_error = vec![0_i32; width];
         for y in 0..height {
             for x in 0..width {
                 let index = y * width + x;
-                let wanted = i32::from(self.grey[index]) + error[index];
+                let wanted = i32::from(self.grey[index]) + current_error[x];
                 let quantized = nearest_level(wanted, levels);
                 self.grey[index] = u8::try_from(quantized.clamp(0, 255)).unwrap_or(255);
                 let residue = wanted - quantized;
                 if residue == 0 {
                     continue;
                 }
-                let mut spread = |dx: isize, dy: usize, numerator: i32| {
-                    let Some(nx) = x.checked_add_signed(dx) else {
-                        return;
-                    };
-                    let ny = y + dy;
-                    if nx >= width || ny >= height {
-                        return;
+                if x + 1 < width {
+                    current_error[x + 1] += residue * 7 / 16;
+                }
+                if y + 1 < height {
+                    if x > 0 {
+                        next_error[x - 1] += residue * 3 / 16;
                     }
-                    error[ny * width + nx] += residue * numerator / 16;
-                };
-                spread(1, 0, 7);
-                spread(-1, 1, 3);
-                spread(0, 1, 5);
-                spread(1, 1, 1);
+                    next_error[x] += residue * 5 / 16;
+                    if x + 1 < width {
+                        next_error[x + 1] += residue / 16;
+                    }
+                }
             }
+            std::mem::swap(&mut current_error, &mut next_error);
+            next_error.fill(0);
         }
     }
+}
+
+fn div_ceil(numerator: u64, denominator: u32) -> u32 {
+    let denominator = u64::from(denominator);
+    u32::try_from(numerator.div_ceil(denominator)).unwrap_or(u32::MAX)
+}
+
+fn checked_pixels(width: u32, height: u32) -> Result<u64, ImageError> {
+    let pixels = u64::from(width) * u64::from(height);
+    if pixels > MAX_PIXELS {
+        return Err(ImageError::TooManyPixels { pixels });
+    }
+    Ok(pixels)
 }
 
 fn nearest_level(value: i32, levels: u32) -> i32 {
@@ -311,22 +392,44 @@ pub fn decode(bytes: &[u8]) -> Result<Picture, ImageError> {
     if pixels > MAX_PIXELS {
         return Err(ImageError::TooManyPixels { pixels });
     }
-    let decoded = ImageReader::new(Cursor::new(bytes))
+    let mut decoder = ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
         .map_err(|error| ImageError::Undecodable(error.to_string()))?
-        .decode()
+        .into_decoder()
         .map_err(|error| ImageError::Undecodable(error.to_string()))?;
-    // Luminance weights rather than an average of the channels, which matters
-    // more here than on a colour panel: an averaged red and an averaged blue
-    // come out the same grey, and on a book cover that is the title
-    // disappearing into its own background.
-    let grey = decoded.to_luma8();
-    Picture::from_grey(grey.width(), grey.height(), grey.into_raw())
+    let orientation = decoder
+        .orientation()
+        .map_err(|error| ImageError::Undecodable(error.to_string()))?;
+    let mut image = DynamicImage::from_decoder(decoder)
+        .map_err(|error| ImageError::Undecodable(error.to_string()))?;
+    image.apply_orientation(orientation);
+
+    // Transparency is composited onto the same white paper the renderer
+    // clears to. Discarding alpha first turns a transparent black logo into a
+    // black rectangle. Luminance uses perceptual channel weights rather than
+    // an average, which keeps coloured title lettering distinguishable once
+    // the panel has no colour left to show.
+    //
+    // Reduced to luminance before compositing rather than after, which is the
+    // same number — luminance is an affine combination whose weights sum to
+    // one, so compositing commutes with it — at half the peak memory. A source
+    // at `MAX_PIXELS` is twenty-five megabytes as RGBA and twelve as grey with
+    // alpha, on a device with no swap.
+    let luma = image.to_luma_alpha8();
+    let mut grey = Vec::with_capacity(luma.width() as usize * luma.height() as usize);
+    for pixel in luma.pixels() {
+        let alpha = u32::from(pixel[1]);
+        let on_paper = (u32::from(pixel[0]) * alpha + 255 * (255 - alpha) + 127) / 255;
+        grey.push(u8::try_from(on_paper).unwrap_or(255));
+    }
+    Picture::from_grey(luma.width(), luma.height(), grey)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{decode, ImageError, Picture, MAX_ENLARGEMENT, MAX_PIXELS, PANEL_GREYS};
+    use super::{decode, FitMode, ImageError, Picture, MAX_ENLARGEMENT, MAX_PIXELS, PANEL_GREYS};
+    use image::{DynamicImage, ImageFormat, RgbImage, RgbaImage};
+    use std::io::Cursor;
 
     /// A real four by four JPEG, so the decoder is exercised against a file
     /// rather than against a mock of one.
@@ -364,12 +467,75 @@ mod tests {
         out
     }
 
+    fn png(width: u32, height: u32, rgba: Vec<u8>) -> Vec<u8> {
+        let image = RgbaImage::from_raw(width, height, rgba).expect("rgba fixture");
+        let mut bytes = Cursor::new(Vec::new());
+        DynamicImage::ImageRgba8(image)
+            .write_to(&mut bytes, ImageFormat::Png)
+            .expect("encode png");
+        bytes.into_inner()
+    }
+
+    fn oriented_jpeg() -> Vec<u8> {
+        let image = RgbImage::from_raw(2, 1, vec![255, 0, 0, 0, 0, 0]).expect("rgb fixture");
+        let mut encoded = Cursor::new(Vec::new());
+        DynamicImage::ImageRgb8(image)
+            .write_to(&mut encoded, ImageFormat::Jpeg)
+            .expect("encode jpeg");
+        let jpeg = encoded.into_inner();
+
+        // Minimal little-endian Exif IFD carrying orientation 6 (rotate 90°).
+        let exif: [u8; 36] = [
+            0xff, 0xe1, 0x00, 0x22, b'E', b'x', b'i', b'f', 0, 0, b'I', b'I', 0x2a, 0, 8, 0, 0, 0,
+            1, 0, 0x12, 0x01, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        let mut result = Vec::with_capacity(jpeg.len() + exif.len());
+        result.extend_from_slice(&jpeg[..2]);
+        result.extend_from_slice(&exif);
+        result.extend_from_slice(&jpeg[2..]);
+        result
+    }
+
     #[test]
     fn a_real_jpeg_decodes_to_grey_bytes() {
         let picture = decode(&tiny_jpeg()).expect("decode the jpeg");
         assert_eq!(picture.width(), 4);
         assert_eq!(picture.height(), 4);
         assert_eq!(picture.grey().len(), 16);
+    }
+
+    #[test]
+    fn transparent_pixels_are_composited_onto_paper() {
+        let picture = decode(&png(2, 1, vec![0, 0, 0, 0, 0, 0, 0, 255])).expect("png");
+        assert_eq!(picture.grey(), &[255, 0]);
+    }
+
+    #[test]
+    fn colour_is_reduced_by_perceptual_weight_rather_than_by_average() {
+        // An averaged red and an averaged blue come out the same grey, which
+        // on a book cover is the title disappearing into its background.
+        let picture = decode(&png(
+            3,
+            1,
+            vec![255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255],
+        ))
+        .expect("png");
+        let [red, green, blue] = <[u8; 3]>::try_from(picture.grey()).expect("three pixels");
+        assert!(green > red && red > blue, "{red} {green} {blue}");
+    }
+
+    #[test]
+    fn a_half_transparent_pixel_lands_between_its_colour_and_the_paper() {
+        let opaque = decode(&png(1, 1, vec![0, 0, 0, 255])).expect("png");
+        let half = decode(&png(1, 1, vec![0, 0, 0, 128])).expect("png");
+        assert_eq!(opaque.grey(), &[0]);
+        assert_eq!(half.grey(), &[127]);
+    }
+
+    #[test]
+    fn jpeg_exif_orientation_is_applied_before_layout() {
+        let picture = decode(&oriented_jpeg()).expect("oriented jpeg");
+        assert_eq!((picture.width(), picture.height()), (1, 2));
     }
 
     #[test]
@@ -405,6 +571,24 @@ mod tests {
         assert_eq!(fitted.height(), 120, "the tall edge is the one that binds");
         assert_eq!(fitted.width(), 76, "190/300 of 120, kept exactly");
         assert_eq!(fitted.grey().len(), 76 * 120);
+    }
+
+    #[test]
+    fn cover_fills_the_box_and_crops_from_the_centre() {
+        let picture =
+            Picture::from_grey(4, 2, vec![10, 20, 30, 40, 10, 20, 30, 40]).expect("build");
+        let covered = picture.prepare(2, 2, FitMode::Cover).expect("cover");
+        assert_eq!((covered.width(), covered.height()), (2, 2));
+        assert_eq!(covered.grey(), &[20, 30, 20, 30]);
+    }
+
+    #[test]
+    fn resize_targets_are_bounded_before_allocation() {
+        let picture = Picture::from_grey(1, 1, vec![0]).expect("build");
+        assert!(matches!(
+            picture.cover(u32::MAX, u32::MAX),
+            Err(ImageError::TooManyPixels { .. })
+        ));
     }
 
     #[test]

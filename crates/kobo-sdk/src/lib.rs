@@ -9,15 +9,15 @@ pub use kobo_protocol::{
     Credential, DenyReason, DeviceRequest, DeviceResult, Frame, Header, Lifecycle, LogLevel,
     Message, SecretHeader, ShellError, ShellEvent, ShellRequest, StoreError, StoreRequest,
     StoreResult, StreamError, Task, TaskError, TaskId, TaskOutcome, MAX_HEADERS, MAX_HEADER_NAME,
-    MAX_HEADER_VALUE, MAX_PICTURE_BYTES, MAX_SHELL_CHUNK, MAX_STORE_KEYS, MAX_STORE_VALUE,
-    MAX_TASK_BYTES, MAX_URL_LEN,
+    MAX_HEADER_VALUE, MAX_INLINE_PICTURE_BYTES, MAX_PICTURE_BYTES, MAX_PICTURE_CHUNK_BYTES,
+    MAX_SHELL_CHUNK, MAX_STORE_KEYS, MAX_STORE_VALUE, MAX_TASK_BYTES, MAX_URL_LEN,
 };
 pub use kobo_ui::{
     terminal_grid, terminal_grid_for, ActionId, BannerLevel, BarAction, BottomAction, Caret, Cell,
-    Chrome, DisplayMetrics, Freeform, Glyph, NavBar, Node, NodeId, Percent, PictureHandle,
-    ProseArea, Row, RowLead, Screen, Space, Tile, TilePicture, TileShape, TopBar, MAX_CELLS,
-    MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_QUOTE_DEPTH, MAX_ROWS, MAX_TERMINAL_COLUMNS,
-    MAX_TERMINAL_ROWS,
+    Chrome, ControlState, DiagnosticSeverity, DisplayMetrics, Freeform, Glyph, LayoutIssue,
+    LayoutIssueKind, NavBar, Node, NodeId, Percent, PictureHandle, ProseArea, Row, RowLead, Screen,
+    Space, Tile, TilePicture, TileShape, TopBar, MAX_CELLS, MAX_CHOICE_OPTIONS, MAX_COLUMNS,
+    MAX_QUOTE_DEPTH, MAX_ROWS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS,
 };
 use std::collections::VecDeque;
 use std::fmt;
@@ -36,11 +36,200 @@ pub mod terminal;
 
 pub mod prelude {
     pub use crate::{
-        action_id, ActionId, AppRunner, AppShell, AppStore, Capability, Client, ClientEvent,
-        Command, Context, DenyReason, Device, DeviceRequest, DeviceResult, Grant, Grants, KoboApp,
-        Lifecycle, Node, NodeId, PowerPolicy, Screen, ScreenBuilder, ShellError, ShellEvent,
-        ShellRequest, StoreError, StoreRequest, StoreResult,
+        action_id, ActionId, AppIcon, AppMetadata, AppRunner, AppShell, AppStore, Capability,
+        Client, ClientEvent, Command, Context, ControlState, DenyReason, Device, DeviceRequest,
+        DeviceResult, DialogAction, Grant, Grants, KoboApp, Lifecycle, Navigator, Node, NodeId,
+        PowerPolicy, Screen, ScreenBuilder, ShellError, ShellEvent, ShellRequest, StandardState,
+        StoreError, StoreRequest, StoreResult,
     };
+}
+
+/// A small, typed back stack for application-owned destinations.
+///
+/// The root can never be popped, so an action handler can call [`Self::back`]
+/// without manufacturing an impossible "no current screen" case.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Navigator<Route> {
+    root: Route,
+    stack: Vec<Route>,
+}
+
+impl<Route> Navigator<Route> {
+    #[must_use]
+    pub fn new(root: Route) -> Self {
+        Self {
+            root,
+            stack: Vec::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn current(&self) -> &Route {
+        self.stack.last().unwrap_or(&self.root)
+    }
+
+    #[must_use]
+    pub fn can_go_back(&self) -> bool {
+        !self.stack.is_empty()
+    }
+
+    #[must_use]
+    pub fn depth(&self) -> usize {
+        self.stack.len() + 1
+    }
+
+    pub fn push(&mut self, route: Route) {
+        self.stack.push(route);
+    }
+
+    /// Replaces the current destination without adding a back-stack entry.
+    pub fn replace(&mut self, route: Route) {
+        if let Some(current) = self.stack.last_mut() {
+            *current = route;
+        } else {
+            self.root = route;
+        }
+    }
+
+    /// Returns to the previous destination, or leaves the root unchanged.
+    #[must_use]
+    pub fn back(&mut self) -> bool {
+        if self.can_go_back() {
+            self.stack.pop();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn reset(&mut self, root: Route) {
+        self.stack.clear();
+        self.root = root;
+    }
+}
+
+/// An application icon that remains legible when an image is unavailable.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AppIcon {
+    Glyph(Glyph),
+    Picture {
+        picture: TilePicture,
+        fallback: Glyph,
+    },
+}
+
+impl AppIcon {
+    #[must_use]
+    pub const fn glyph(glyph: Glyph) -> Self {
+        Self::Glyph(glyph)
+    }
+
+    #[must_use]
+    pub const fn picture(picture: TilePicture, fallback: Glyph) -> Self {
+        Self::Picture { picture, fallback }
+    }
+
+    fn tile(self, action: ActionId, label: impl Into<String>) -> Tile {
+        match self {
+            Self::Glyph(glyph) => Tile::new(action, label, glyph),
+            Self::Picture { picture, fallback } => {
+                Tile::new(action, label, fallback).with_picture(picture)
+            }
+        }
+    }
+}
+
+/// Compile-time application identity and launcher presentation.
+///
+/// Keeping this borrowed makes a manifest usable as a `const`, while
+/// [`Self::tile`] turns it directly into the SDK's launcher primitive.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AppMetadata {
+    pub id: &'static str,
+    pub display_name: &'static str,
+    pub summary: &'static str,
+    pub icon: AppIcon,
+}
+
+impl AppMetadata {
+    #[must_use]
+    pub const fn new(
+        id: &'static str,
+        display_name: &'static str,
+        summary: &'static str,
+        icon: AppIcon,
+    ) -> Self {
+        Self {
+            id,
+            display_name,
+            summary,
+            icon,
+        }
+    }
+
+    #[must_use]
+    pub fn tile(self, action: ActionId) -> Tile {
+        self.icon.tile(action, self.display_name)
+    }
+}
+
+/// Standard whole-screen conditions with consistent titles and urgency.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StandardState {
+    Empty,
+    Offline,
+    PermissionDenied,
+    Error,
+}
+
+impl StandardState {
+    #[must_use]
+    pub const fn title(self) -> &'static str {
+        match self {
+            Self::Empty => "Nothing here yet",
+            Self::Offline => "You're offline",
+            Self::PermissionDenied => "Permission needed",
+            Self::Error => "Something went wrong",
+        }
+    }
+
+    const fn banner(self) -> Option<&'static str> {
+        match self {
+            Self::Empty => None,
+            Self::Offline => Some("No network connection"),
+            Self::PermissionDenied => Some("Access is not available"),
+            Self::Error => Some("The operation could not be completed"),
+        }
+    }
+}
+
+/// One action in a standard confirmation screen.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DialogAction {
+    pub name: String,
+    pub label: String,
+    pub state: ControlState,
+}
+
+impl DialogAction {
+    #[must_use]
+    pub fn new(name: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            label: label.into(),
+            state: ControlState::Enabled,
+        }
+    }
+
+    #[must_use]
+    pub const fn disabled(mut self, disabled: bool) -> Self {
+        self.state = if disabled {
+            ControlState::Disabled
+        } else {
+            ControlState::Enabled
+        };
+        self
+    }
 }
 
 /// Builds a retained screen with deterministic identifiers.
@@ -58,6 +247,7 @@ pub struct ScreenBuilder {
     bottom_action: Option<BottomAction>,
     page_turns: Option<kobo_ui::PageTurns>,
     actions: Vec<(String, ActionId)>,
+    warnings: Vec<LayoutIssue>,
 }
 
 impl ScreenBuilder {
@@ -72,6 +262,7 @@ impl ScreenBuilder {
             bottom_action: None,
             page_turns: None,
             actions: Vec::new(),
+            warnings: Vec::new(),
         }
     }
 
@@ -95,6 +286,71 @@ impl ScreenBuilder {
         self
     }
 
+    /// Adds a consistent empty, offline, denied, or error presentation.
+    ///
+    /// Chain [`Self::button`] when the condition has a recovery action. The
+    /// state itself owns no action so an empty collection is never forced to
+    /// pretend it can be fixed.
+    #[must_use]
+    pub fn standard_state(self, state: StandardState, message: impl Into<String>) -> Self {
+        let builder = if let Some(banner) = state.banner() {
+            self.banner(BannerLevel::Attention, banner)
+        } else {
+            self
+        };
+        builder.heading(state.title()).text(message)
+    }
+
+    #[must_use]
+    pub fn empty_state(self, message: impl Into<String>) -> Self {
+        self.standard_state(StandardState::Empty, message)
+    }
+
+    #[must_use]
+    pub fn offline_state(self, message: impl Into<String>) -> Self {
+        self.standard_state(StandardState::Offline, message)
+    }
+
+    #[must_use]
+    pub fn permission_denied_state(self, message: impl Into<String>) -> Self {
+        self.standard_state(StandardState::PermissionDenied, message)
+    }
+
+    #[must_use]
+    pub fn error_state(self, message: impl Into<String>) -> Self {
+        self.standard_state(StandardState::Error, message)
+    }
+
+    /// Builds a sparse, full-screen confirmation using standard controls.
+    ///
+    /// Kobo applications do not open floating windows: the display is a
+    /// single retained page, so confirmations replace the page and use the
+    /// application's typed navigator to return.
+    #[must_use]
+    pub fn confirmation(
+        self,
+        title: impl Into<String>,
+        message: impl Into<String>,
+        primary: DialogAction,
+        secondary: DialogAction,
+    ) -> Self {
+        let DialogAction {
+            name: primary_name,
+            label: primary_label,
+            state: primary_state,
+        } = primary;
+        let DialogAction {
+            name: secondary_name,
+            label: secondary_label,
+            state: secondary_state,
+        } = secondary;
+        self.heading(title)
+            .text(message)
+            .divider()
+            .button_with_state(primary_name, primary_label, primary_state)
+            .button_with_state(secondary_name, secondary_label, secondary_state)
+    }
+
     /// A paragraph set in from the left by `depth` levels, with a rule beside
     /// it, for a reply that answers what came before it.
     ///
@@ -113,13 +369,31 @@ impl ScreenBuilder {
     }
 
     #[must_use]
-    pub fn button(mut self, name: impl AsRef<str>, label: impl Into<String>) -> Self {
+    pub fn button(self, name: impl AsRef<str>, label: impl Into<String>) -> Self {
+        self.button_with_state(name, label, ControlState::Enabled)
+    }
+
+    /// Adds a button that is visible but cannot currently be activated.
+    #[must_use]
+    pub fn disabled_button(self, name: impl AsRef<str>, label: impl Into<String>) -> Self {
+        self.button_with_state(name, label, ControlState::Disabled)
+    }
+
+    /// Adds a button with explicit semantic enabled state.
+    #[must_use]
+    pub fn button_with_state(
+        mut self,
+        name: impl AsRef<str>,
+        label: impl Into<String>,
+        state: ControlState,
+    ) -> Self {
         let action = self.register(name.as_ref());
         let id = self.next_id();
         self.nodes.push(Node::Button {
             id,
             action,
             label: label.into(),
+            state,
         });
         self
     }
@@ -293,6 +567,25 @@ impl ScreenBuilder {
         self
     }
 
+    /// Adds launcher tiles directly from application metadata.
+    #[must_use]
+    pub fn apps<I>(mut self, apps: I) -> Self
+    where
+        I: IntoIterator<Item = AppMetadata>,
+    {
+        let id = self.next_id();
+        let tiles = apps
+            .into_iter()
+            .map(|app| app.tile(self.register(app.id)))
+            .collect();
+        self.nodes.push(Node::TileGrid {
+            id,
+            tiles,
+            shape: TileShape::Square,
+        });
+        self
+    }
+
     /// Adds a grid of tiles that may each carry a picture.
     ///
     /// Use [`TileShape::Portrait`] for covers and posters: a square cell
@@ -356,13 +649,14 @@ impl ScreenBuilder {
         L: Into<RowLead>,
     {
         let id = self.next_id();
-        let rows = rows
-            .into_iter()
-            .take(MAX_ROWS)
-            .map(|(name, title, summary, lead)| {
-                Row::new(self.register(name.as_ref()), title, summary, lead)
-            })
-            .collect();
+        let mut source = rows.into_iter();
+        let mut rows = Vec::new();
+        for (name, title, summary, lead) in source.by_ref().take(MAX_ROWS) {
+            rows.push(Row::new(self.register(name.as_ref()), title, summary, lead));
+        }
+        if source.next().is_some() {
+            self.warn_limit(id, "rows", MAX_ROWS);
+        }
         self.nodes.push(Node::Rows { id, rows });
         self
     }
@@ -386,14 +680,15 @@ impl ScreenBuilder {
         S: Into<String>,
     {
         let id = self.next_id();
-        let rows = items
-            .into_iter()
-            .take(MAX_ROWS)
-            .map(|(name, title, summary, done)| {
-                let glyph = if done { Glyph::Check } else { Glyph::Circle };
-                Row::new(self.register(name.as_ref()), title, summary, glyph).done(done)
-            })
-            .collect();
+        let mut source = items.into_iter();
+        let mut rows = Vec::new();
+        for (name, title, summary, done) in source.by_ref().take(MAX_ROWS) {
+            let glyph = if done { Glyph::Check } else { Glyph::Circle };
+            rows.push(Row::new(self.register(name.as_ref()), title, summary, glyph).done(done));
+        }
+        if source.next().is_some() {
+            self.warn_limit(id, "rows", MAX_ROWS);
+        }
         self.nodes.push(Node::Rows { id, rows });
         self
     }
@@ -416,11 +711,15 @@ impl ScreenBuilder {
         R: Into<String>,
     {
         let id = self.next_id();
-        let rows = rows
-            .into_iter()
+        let mut source = rows.into_iter();
+        let rows = source
+            .by_ref()
             .take(MAX_TERMINAL_ROWS)
             .map(Into::into)
             .collect();
+        if source.next().is_some() {
+            self.warn_limit(id, "terminal rows", MAX_TERMINAL_ROWS);
+        }
         self.nodes.push(Node::Terminal { id, rows, cursor });
         self
     }
@@ -441,11 +740,14 @@ impl ScreenBuilder {
         L: Into<String>,
     {
         let id = self.next_id();
-        let cells = cells
-            .into_iter()
-            .take(MAX_CELLS)
-            .map(|(name, label)| Cell::new(self.register(name.as_ref()), label))
-            .collect();
+        let mut source = cells.into_iter();
+        let mut cells = Vec::new();
+        for (name, label) in source.by_ref().take(MAX_CELLS) {
+            cells.push(Cell::new(self.register(name.as_ref()), label));
+        }
+        if source.next().is_some() {
+            self.warn_limit(id, "grid cells", MAX_CELLS);
+        }
         self.nodes.push(Node::Grid {
             id,
             columns: columns.clamp(1, MAX_COLUMNS),
@@ -468,11 +770,14 @@ impl ScreenBuilder {
         L: Into<String>,
     {
         let id = self.next_id();
-        let options = options
-            .into_iter()
-            .take(MAX_CHOICE_OPTIONS)
-            .map(|(name, label)| BarAction::new(self.register(name.as_ref()), label))
-            .collect();
+        let mut source = options.into_iter();
+        let mut options = Vec::new();
+        for (name, label) in source.by_ref().take(MAX_CHOICE_OPTIONS) {
+            options.push(BarAction::new(self.register(name.as_ref()), label));
+        }
+        if source.next().is_some() {
+            self.warn_limit(id, "choice options", MAX_CHOICE_OPTIONS);
+        }
         self.nodes.push(Node::Choice {
             id,
             prompt: prompt.into(),
@@ -582,6 +887,31 @@ impl ScreenBuilder {
         }
     }
 
+    /// Returns warnings raised while bounded collections were added.
+    ///
+    /// Builders consume at most one item past each limit, so an accidental
+    /// infinite iterator remains safe while the caller still learns that data
+    /// was omitted.
+    #[must_use]
+    pub fn warnings(&self) -> &[LayoutIssue] {
+        &self.warnings
+    }
+
+    /// Builds only when no rows, options, cells, or terminal lines were
+    /// silently omitted.
+    ///
+    /// # Errors
+    ///
+    /// Returns every collection-limit warning raised while building. The
+    /// ordinary [`Self::build`] remains available for compatibility.
+    pub fn build_checked(self) -> Result<Screen, Vec<LayoutIssue>> {
+        if self.warnings.is_empty() {
+            Ok(self.build())
+        } else {
+            Err(self.warnings)
+        }
+    }
+
     fn register(&mut self, name: &str) -> ActionId {
         let action = action_id(name);
         if !self.actions.iter().any(|(known, _)| known == name) {
@@ -594,6 +924,19 @@ impl ScreenBuilder {
         let id = NodeId(self.next_node);
         self.next_node = self.next_node.saturating_add(1);
         id
+    }
+
+    fn warn_limit(&mut self, id: NodeId, collection: &'static str, visible: usize) {
+        self.warnings.push(LayoutIssue {
+            severity: DiagnosticSeverity::Warning,
+            node: Some(id),
+            kind: LayoutIssueKind::CollectionTruncated {
+                collection,
+                provided: visible + 1,
+                visible,
+            },
+            rect: None,
+        });
     }
 }
 
@@ -842,8 +1185,9 @@ impl Context {
     /// immediately averaged away costs the wire, the runtime's cache and the
     /// battery for nothing.
     ///
-    /// Returns `None` when the picture is empty, mis-sized, or larger than one
-    /// frame allows.
+    /// Returns `None` when the picture is empty, mis-sized, or larger than the
+    /// bounded per-picture budget. Large pictures are chunked transparently by
+    /// the socket client and become visible only after the final chunk arrives.
     pub fn put_picture(
         &mut self,
         handle: PictureHandle,
@@ -1194,6 +1538,10 @@ pub struct AppRunner<A> {
     metrics: DisplayMetrics,
     started: bool,
     pending: VecDeque<DeviceRequest>,
+    /// Store requests sent but not yet answered. Every request is answered
+    /// exactly once, so a count is enough and the request itself need not be
+    /// kept: unlike a device answer, a store answer names its own key.
+    pending_stores: usize,
     /// Task counters live here rather than in `Context`, because a fresh
     /// context is built for every callback. Left in the context they would
     /// restart at one on each dispatch, so the second callback to spawn work
@@ -1219,6 +1567,7 @@ impl<A: KoboApp> AppRunner<A> {
             metrics: DisplayMetrics::default(),
             started: false,
             pending: VecDeque::new(),
+            pending_stores: 0,
             next_task: 0,
             in_flight: 0,
             settled: false,
@@ -1323,6 +1672,7 @@ impl<A: KoboApp> AppRunner<A> {
 
     /// Delivers one store answer.
     pub fn store_result(&mut self, result: StoreResult) -> Vec<Command> {
+        self.pending_stores = self.pending_stores.saturating_sub(1);
         self.dispatch(|app, context| app.on_store(context, result))
     }
 
@@ -1335,6 +1685,16 @@ impl<A: KoboApp> AppRunner<A> {
     #[must_use]
     pub fn outstanding_requests(&self) -> usize {
         self.pending.len()
+    }
+
+    /// Every answer the runtime still owes this application.
+    ///
+    /// A harness that leaves while an answer is in flight closes the socket
+    /// under a runtime that is about to write to it, which is a broken pipe on
+    /// the runtime rather than the clean shutdown it looks like from here.
+    #[must_use]
+    pub fn outstanding_answers(&self) -> usize {
+        self.pending.len() + self.pending_stores
     }
 
     #[must_use]
@@ -1359,8 +1719,12 @@ impl<A: KoboApp> AppRunner<A> {
         self.in_flight = context.in_flight;
         let mut commands = context.take_commands();
         for command in &commands {
-            if let Command::Device(request) = command {
-                self.pending.push_back(*request);
+            match command {
+                Command::Device(request) => self.pending.push_back(*request),
+                Command::Store(_) => {
+                    self.pending_stores = self.pending_stores.saturating_add(1);
+                }
+                _ => {}
             }
         }
         // An application that blocks here has already held the only thread that
@@ -1465,6 +1829,7 @@ impl Client {
             width,
             height,
             pixels_per_inch,
+            text_scale,
         } = response.message
         else {
             return Err(ClientError::UnexpectedMessage);
@@ -1476,6 +1841,7 @@ impl Client {
                 width: i32::from(width),
                 height: i32::from(height),
                 pixels_per_inch: i32::from(pixels_per_inch),
+                text_scale,
             },
         })
     }
@@ -1499,6 +1865,45 @@ impl Client {
         commands: impl IntoIterator<Item = Command>,
     ) -> Result<(), ClientError> {
         for command in commands {
+            let command = match command {
+                Command::PutPicture {
+                    handle,
+                    width,
+                    height,
+                    grey,
+                } => {
+                    if grey.len() <= MAX_INLINE_PICTURE_BYTES {
+                        self.send(Message::PutPicture {
+                            handle,
+                            width,
+                            height,
+                            grey,
+                        })?;
+                    } else {
+                        self.send(Message::BeginPicture {
+                            handle,
+                            width,
+                            height,
+                        })?;
+                        for (index, chunk) in grey.chunks(MAX_PICTURE_CHUNK_BYTES).enumerate() {
+                            let offset = index
+                                .checked_mul(MAX_PICTURE_CHUNK_BYTES)
+                                .and_then(|offset| u32::try_from(offset).ok())
+                                .ok_or(ClientError::Stream(StreamError::Protocol(
+                                    kobo_protocol::ProtocolError::FrameTooLarge,
+                                )))?;
+                            self.send(Message::PictureChunk {
+                                handle,
+                                offset,
+                                grey: chunk.to_vec(),
+                            })?;
+                        }
+                        self.send(Message::CommitPicture { handle })?;
+                    }
+                    continue;
+                }
+                other => other,
+            };
             let message = match command {
                 Command::SetScreen(screen) => Message::SetScreen(screen),
                 Command::Log { level, message } => Message::Log { level, message },
@@ -1509,17 +1914,7 @@ impl Client {
                 Command::Shell(request) => Message::ShellRequest(request),
                 Command::Exit => Message::Exit,
                 Command::Launch(name) => Message::Launch { name },
-                Command::PutPicture {
-                    handle,
-                    width,
-                    height,
-                    grey,
-                } => Message::PutPicture {
-                    handle,
-                    width,
-                    height,
-                    grey,
-                },
+                Command::PutPicture { .. } => unreachable!("handled above"),
                 Command::DropPicture(handle) => Message::DropPicture { handle },
             };
             self.send(message)?;
@@ -1575,6 +1970,7 @@ mod tests {
                     id: NodeId(1),
                     action: ActionId(1),
                     label: "Tap".into(),
+                    state: ControlState::Enabled,
                 }],
             ));
         }
@@ -1608,6 +2004,32 @@ mod tests {
     }
 
     #[test]
+    fn an_unanswered_store_request_keeps_an_application_from_leaving() {
+        struct Loader;
+
+        impl KoboApp for Loader {
+            fn on_start(&mut self, context: &mut Context) {
+                context.store().load("items");
+            }
+
+            fn on_action(&mut self, _context: &mut Context, _action: ActionId) {}
+        }
+
+        let mut runner = AppRunner::new(Loader);
+        assert!(matches!(runner.start().as_slice(), [Command::Store(_)]));
+        // Nothing is outstanding by the device's reckoning, which is exactly
+        // why a harness that only counted those closed the socket under a
+        // runtime still holding an answer for it.
+        assert_eq!(runner.outstanding_requests(), 0);
+        assert_eq!(runner.outstanding_answers(), 1);
+        runner.store_result(StoreResult::Loaded {
+            key: "items".into(),
+            value: None,
+        });
+        assert_eq!(runner.outstanding_answers(), 0);
+    }
+
+    #[test]
     fn runner_collects_lifecycle_commands() {
         let mut runner = AppRunner::new(Example);
         assert!(matches!(runner.start().as_slice(), [Command::SetScreen(_)]));
@@ -1638,6 +2060,93 @@ mod tests {
     }
 
     #[test]
+    fn navigator_keeps_a_root_and_supports_push_replace_and_reset() {
+        let mut navigation = Navigator::new("home");
+        assert_eq!(navigation.current(), &"home");
+        assert!(!navigation.back());
+        navigation.push("details");
+        navigation.replace("confirmation");
+        assert_eq!(navigation.depth(), 2);
+        assert_eq!(navigation.current(), &"confirmation");
+        assert!(navigation.back());
+        assert_eq!(navigation.current(), &"home");
+        navigation.reset("library");
+        assert_eq!(navigation.current(), &"library");
+        assert!(!navigation.can_go_back());
+    }
+
+    #[test]
+    fn standard_states_and_confirmations_have_consistent_structure() {
+        let state = ScreenBuilder::new("offline")
+            .offline_state("Reconnect, then try again.")
+            .button("retry", "Try again")
+            .build();
+        assert!(matches!(state.nodes.first(), Some(Node::Banner { .. })));
+        assert!(state
+            .nodes
+            .iter()
+            .any(|node| matches!(node, Node::Heading { text, .. } if text == "You're offline")));
+
+        let confirmation = ScreenBuilder::new("delete")
+            .confirmation(
+                "Delete this note?",
+                "This cannot be undone.",
+                DialogAction::new("delete", "Delete"),
+                DialogAction::new("cancel", "Cancel").disabled(true),
+            )
+            .build();
+        let states = confirmation
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                Node::Button { state, .. } => Some(*state),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(states, vec![ControlState::Enabled, ControlState::Disabled]);
+    }
+
+    #[test]
+    fn application_metadata_builds_launcher_tiles_with_image_fallbacks() {
+        const APP: AppMetadata = AppMetadata::new(
+            "notes",
+            "Notes",
+            "Write without distraction.",
+            AppIcon::picture(TilePicture::new(PictureHandle(8), 128, 128), Glyph::Note),
+        );
+        let screen = ScreenBuilder::new("apps").apps([APP]).build();
+        let Node::TileGrid { tiles, .. } = &screen.nodes[0] else {
+            panic!("metadata did not produce a tile grid");
+        };
+        assert_eq!(tiles[0].action, action_id(APP.id));
+        assert_eq!(tiles[0].label, APP.display_name);
+        assert_eq!(tiles[0].glyph, Glyph::Note);
+        assert_eq!(
+            tiles[0].picture,
+            Some(TilePicture::new(PictureHandle(8), 128, 128))
+        );
+    }
+
+    #[test]
+    fn checked_build_reports_collection_items_it_had_to_drop() {
+        let builder = ScreenBuilder::new("choice").choose(
+            "Pick one",
+            (0..=MAX_CHOICE_OPTIONS).map(|index| {
+                let name = format!("option-{index}");
+                (name, format!("Option {index}"))
+            }),
+        );
+        assert!(builder.warnings().iter().any(|issue| matches!(
+            issue.kind,
+            LayoutIssueKind::CollectionTruncated {
+                collection: "choice options",
+                ..
+            }
+        )));
+        assert!(builder.build_checked().is_err());
+    }
+
+    #[test]
     fn action_ids_are_name_deterministic() {
         assert_eq!(action_id("increment"), action_id("increment"));
         assert_ne!(action_id("increment"), action_id("close"));
@@ -1657,6 +2166,7 @@ mod tests {
                         width: 1072,
                         height: 1448,
                         pixels_per_inch: 300,
+                        text_scale: kobo_ui::TextScale::Default,
                     },
                 },
             )
@@ -1671,6 +2181,74 @@ mod tests {
                 ScreenBuilder::new("counter").heading("Counter").build(),
             )])
             .expect("send screen");
+        daemon.join().expect("daemon");
+    }
+
+    #[test]
+    fn client_transparently_chunks_a_full_width_picture() {
+        let (client_stream, mut daemon_stream) = UnixStream::pair().expect("socket pair");
+        let daemon = thread::spawn(move || {
+            let hello = kobo_protocol::read_from(&mut daemon_stream).expect("hello");
+            kobo_protocol::write_to(
+                &mut daemon_stream,
+                &Frame {
+                    request_id: hello.request_id,
+                    message: Message::Welcome {
+                        width: 1072,
+                        height: 1448,
+                        pixels_per_inch: 300,
+                        text_scale: kobo_ui::TextScale::Default,
+                    },
+                },
+            )
+            .expect("welcome");
+
+            assert!(matches!(
+                kobo_protocol::read_from(&mut daemon_stream)
+                    .expect("begin")
+                    .message,
+                Message::BeginPicture {
+                    handle: PictureHandle(9),
+                    width: 1072,
+                    height: 1448
+                }
+            ));
+            let expected = 1072_usize * 1448;
+            let mut received = 0;
+            while received < expected {
+                let Message::PictureChunk {
+                    handle,
+                    offset,
+                    grey,
+                } = kobo_protocol::read_from(&mut daemon_stream)
+                    .expect("chunk")
+                    .message
+                else {
+                    panic!("expected a picture chunk");
+                };
+                assert_eq!(handle, PictureHandle(9));
+                assert_eq!(usize::try_from(offset).expect("offset"), received);
+                assert!(grey.len() <= MAX_PICTURE_CHUNK_BYTES);
+                received += grey.len();
+            }
+            assert!(matches!(
+                kobo_protocol::read_from(&mut daemon_stream)
+                    .expect("commit")
+                    .message,
+                Message::CommitPicture {
+                    handle: PictureHandle(9)
+                }
+            ));
+        });
+        let mut client = Client::from_stream(client_stream, "gallery").expect("connect");
+        client
+            .send_commands([Command::PutPicture {
+                handle: PictureHandle(9),
+                width: 1072,
+                height: 1448,
+                grey: vec![127; 1072 * 1448],
+            }])
+            .expect("upload");
         daemon.join().expect("daemon");
     }
 }
@@ -1865,7 +2443,7 @@ pub fn run_on<A: KoboApp>(name: &str, app: A, socket: &Path) -> Result<(), Clien
     // for a touch that will never come.
     let oneshot = std::env::var_os("KOBO_SIM_ONESHOT").is_some();
     if oneshot {
-        while runner.outstanding_requests() > 0 {
+        while runner.outstanding_answers() > 0 {
             match client.next_event()? {
                 ClientEvent::Device(result) => {
                     client.send_commands(runner.device_result(result))?;

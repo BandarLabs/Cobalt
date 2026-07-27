@@ -85,6 +85,62 @@ pub struct DisplayMetrics {
     pub width: i32,
     pub height: i32,
     pub pixels_per_inch: i32,
+    /// The reader's preferred text size, supplied by the runtime.
+    pub text_scale: TextScale,
+}
+
+/// A small, deliberate accessibility scale rather than an arbitrary zoom.
+///
+/// Applications continue to ask for semantic sizes such as [`FontSize::Body`].
+/// The runtime applies this preference to every face, so pagination performed
+/// in an application and rendering performed on the device remain identical.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[repr(u8)]
+pub enum TextScale {
+    #[default]
+    Default = 0,
+    Large = 1,
+    ExtraLarge = 2,
+}
+
+impl TextScale {
+    /// Percentage applied to the physical type size.
+    #[must_use]
+    pub const fn percent(self) -> i32 {
+        match self {
+            Self::Default => 100,
+            Self::Large => 120,
+            Self::ExtraLarge => 140,
+        }
+    }
+
+    /// A stable wire representation used by `kobo-protocol`.
+    #[must_use]
+    pub const fn wire_value(self) -> u8 {
+        self as u8
+    }
+
+    /// Decodes the stable wire representation.
+    #[must_use]
+    pub const fn from_wire(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::Default),
+            1 => Some(Self::Large),
+            2 => Some(Self::ExtraLarge),
+            _ => None,
+        }
+    }
+
+    /// Parses values accepted by the runtime's `KOBO_TEXT_SCALE` setting.
+    #[must_use]
+    pub fn from_name(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "default" | "100" | "100%" => Some(Self::Default),
+            "large" | "120" | "120%" => Some(Self::Large),
+            "extra-large" | "extra_large" | "xl" | "140" | "140%" => Some(Self::ExtraLarge),
+            _ => None,
+        }
+    }
 }
 
 /// The only panel with hardware support today.
@@ -92,7 +148,20 @@ pub const CLARA_BW_METRICS: DisplayMetrics = DisplayMetrics {
     width: 1072,
     height: 1448,
     pixels_per_inch: 300,
+    text_scale: TextScale::Default,
 };
+
+/// Returns the supported panel with the process-level accessibility setting.
+#[must_use]
+pub fn display_metrics_from_env() -> DisplayMetrics {
+    let mut metrics = CLARA_BW_METRICS;
+    if let Ok(value) = std::env::var("KOBO_TEXT_SCALE") {
+        if let Some(scale) = TextScale::from_name(&value) {
+            metrics.text_scale = scale;
+        }
+    }
+    metrics
+}
 
 impl Default for DisplayMetrics {
     fn default() -> Self {
@@ -110,6 +179,14 @@ impl DisplayMetrics {
     pub const fn tenth_mm(&self, tenths: i32) -> i32 {
         // pixels = tenths / 10 / 25.4 * dpi, rearranged to stay in integers.
         (tenths * self.pixels_per_inch + 127) / 254
+    }
+
+    /// Converts a semantic type measurement to pixels with the user's text
+    /// preference applied. Spacing and touch targets intentionally do not use
+    /// this path: larger type needs more room, not larger fingers.
+    #[must_use]
+    pub const fn scaled_type_tenth_mm(&self, tenths: i32) -> i32 {
+        self.tenth_mm((tenths * self.text_scale.percent() + 50) / 100)
     }
 
     /// Physical width in tenths of a millimetre.
@@ -350,6 +427,26 @@ impl Chrome {
 pub struct BarAction {
     pub action: ActionId,
     pub label: String,
+}
+
+/// Whether a control can currently be activated.
+///
+/// Disabled is semantic state rather than a colour chosen by the application:
+/// the renderer gives it a quiet, outlined treatment, it yields no action, and
+/// it still absorbs the tap that lands on it rather than letting the page turn
+/// underneath answer instead.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum ControlState {
+    #[default]
+    Enabled,
+    Disabled,
+}
+
+impl ControlState {
+    #[must_use]
+    pub const fn is_enabled(self) -> bool {
+        matches!(self, Self::Enabled)
+    }
 }
 
 impl BarAction {
@@ -788,7 +885,7 @@ fn layout_bottom_action(bottom: &BottomAction, metrics: &DisplayMetrics, layout:
             width,
             height,
         },
-        kind: LayoutKind::Button(bottom.action.action),
+        kind: LayoutKind::Button(bottom.action.action, ControlState::Enabled),
         text_lines: vec![one_line(&bottom.action.label, width - 32, FontSize::Body)],
     });
 }
@@ -881,6 +978,7 @@ pub enum Node {
         id: NodeId,
         action: ActionId,
         label: String,
+        state: ControlState,
     },
     Card {
         id: NodeId,
@@ -1407,7 +1505,7 @@ pub enum LayoutKind {
     /// An indented paragraph. The value is the clamped depth, so the renderer
     /// can draw the gutter rule without consulting the tree.
     Quote(u8),
-    Button(ActionId),
+    Button(ActionId, ControlState),
     Card,
     Divider,
     Spacer,
@@ -1467,6 +1565,117 @@ pub struct Layout {
     pub page_turns: Option<PageTurns>,
 }
 
+/// How urgently a screen diagnostic should be treated.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum DiagnosticSeverity {
+    Warning,
+    Error,
+}
+
+/// A concrete reason a screen will not render as its author intended.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LayoutIssueKind {
+    ContentOverflow {
+        hidden_nodes: usize,
+    },
+    Clipped,
+    TouchTargetTooSmall {
+        minimum: i32,
+    },
+    TextOverflow,
+    MissingPicture(PictureHandle),
+    UnsupportedCharacter {
+        character: char,
+        face: Face,
+    },
+    DuplicateNodeId,
+    CollectionTruncated {
+        collection: &'static str,
+        provided: usize,
+        visible: usize,
+    },
+    EmptyChoice,
+    InvalidPictureSource,
+}
+
+/// One actionable screen diagnostic, optionally tied to a drawn rectangle.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LayoutIssue {
+    pub severity: DiagnosticSeverity,
+    pub node: Option<NodeId>,
+    pub kind: LayoutIssueKind,
+    pub rect: Option<Rect>,
+}
+
+impl std::fmt::Display for LayoutIssue {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let node = self
+            .node
+            .map_or_else(|| "screen".to_owned(), |node| format!("node {}", node.0));
+        match &self.kind {
+            LayoutIssueKind::ContentOverflow { hidden_nodes } => {
+                write!(
+                    formatter,
+                    "{node}: {hidden_nodes} node(s) are below the content area"
+                )
+            }
+            LayoutIssueKind::Clipped => {
+                write!(formatter, "{node}: content is clipped by a panel edge")
+            }
+            LayoutIssueKind::TouchTargetTooSmall { minimum } => write!(
+                formatter,
+                "{node}: touch target is smaller than the {minimum}px minimum"
+            ),
+            LayoutIssueKind::TextOverflow => {
+                write!(formatter, "{node}: rendered text exceeds its rectangle")
+            }
+            LayoutIssueKind::MissingPicture(handle) => {
+                write!(
+                    formatter,
+                    "{node}: picture {} is not in the runtime cache",
+                    handle.0
+                )
+            }
+            LayoutIssueKind::UnsupportedCharacter { character, face } => {
+                write!(formatter, "{node}: {face:?} face cannot draw {character:?}")
+            }
+            LayoutIssueKind::DuplicateNodeId => {
+                write!(formatter, "{node}: node identifier is used more than once")
+            }
+            LayoutIssueKind::CollectionTruncated {
+                collection,
+                provided,
+                visible,
+            } => write!(
+                formatter,
+                "{node}: {collection} contains {provided} items but only {visible} are visible"
+            ),
+            LayoutIssueKind::EmptyChoice => {
+                write!(formatter, "{node}: choice has no tappable answers")
+            }
+            LayoutIssueKind::InvalidPictureSource => {
+                write!(formatter, "{node}: picture source has no area")
+            }
+        }
+    }
+}
+
+/// Layout plus diagnostics from the same measurement pass.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct LayoutDiagnostics {
+    pub layout: Layout,
+    pub issues: Vec<LayoutIssue>,
+}
+
+impl LayoutDiagnostics {
+    #[must_use]
+    pub fn has_errors(&self) -> bool {
+        self.issues
+            .iter()
+            .any(|issue| issue.severity == DiagnosticSeverity::Error)
+    }
+}
+
 impl Layout {
     #[must_use]
     pub fn hit_test(&self, x: i32, y: i32) -> Option<ActionId> {
@@ -1475,6 +1684,13 @@ impl Layout {
         // be shadowed by a zone sitting underneath it.
         if let Some(action) = self.hit_control(x, y) {
             return Some(action);
+        }
+        // A disabled control is still a control. Falling through here would
+        // turn the page under a greyed-out button, which is worse than doing
+        // nothing: the reader taps something that cannot act and the screen
+        // answers with a different action entirely.
+        if self.hit_inert_control(x, y) {
+            return None;
         }
         self.hit_page_turn(x, y)
     }
@@ -1495,7 +1711,7 @@ impl Layout {
 
     fn hit_control(&self, x: i32, y: i32) -> Option<ActionId> {
         self.nodes.iter().rev().find_map(|node| match node.kind {
-            LayoutKind::Button(action)
+            LayoutKind::Button(action, ControlState::Enabled)
             | LayoutKind::BarAction(action)
             | LayoutKind::NavDestination(action)
             | LayoutKind::NavDestinationSelected(action)
@@ -1510,6 +1726,14 @@ impl Layout {
             }
             LayoutKind::Back if node.rect.contains(x, y) => Some(ActionId::BACK),
             _ => None,
+        })
+    }
+
+    /// Whether the tap landed on a control that exists but cannot act.
+    fn hit_inert_control(&self, x: i32, y: i32) -> bool {
+        self.nodes.iter().rev().any(|node| {
+            matches!(node.kind, LayoutKind::Button(_, ControlState::Disabled))
+                && node.rect.contains(x, y)
         })
     }
 
@@ -1545,7 +1769,7 @@ impl Layout {
         self.nodes
             .iter()
             .find(|node| match node.kind {
-                LayoutKind::Button(candidate)
+                LayoutKind::Button(candidate, ControlState::Enabled)
                 | LayoutKind::BarAction(candidate)
                 | LayoutKind::NavDestination(candidate)
                 | LayoutKind::NavDestinationSelected(candidate)
@@ -1728,7 +1952,12 @@ fn layout_node(
             });
             y.saturating_add(height)
         }
-        Node::Button { id, action, label } => {
+        Node::Button {
+            id,
+            action,
+            label,
+            state,
+        } => {
             // A control is never smaller than a finger, by construction. The
             // author never gets to choose a height at all.
             let height = max(
@@ -1743,7 +1972,7 @@ fn layout_node(
                     width,
                     height,
                 },
-                kind: LayoutKind::Button(*action),
+                kind: LayoutKind::Button(*action, *state),
                 text_lines: wrap_text(label, width - 32, FontSize::Body),
             });
             y.saturating_add(height)
@@ -2506,6 +2735,21 @@ pub trait Typesetter: Send + Sync {
         true
     }
 
+    /// Unicode byte offsets after which a line may or must end.
+    fn line_breaks(&self, text: &str) -> Vec<(usize, BreakOpportunity)> {
+        fallback_line_breaks(text)
+    }
+
+    /// Byte offsets at the end of each user-perceived character.
+    ///
+    /// Used when one unbroken token is wider than the line, so combining
+    /// sequences and emoji remain intact while wrapping still makes progress.
+    fn grapheme_boundaries(&self, text: &str) -> Vec<usize> {
+        text.char_indices()
+            .map(|(offset, character)| offset + character.len_utf8())
+            .collect()
+    }
+
     /// The advance of a single [`Face::Mono`] cell.
     ///
     /// A grid of characters cannot be laid out by measuring strings: a terminal
@@ -2516,6 +2760,13 @@ pub trait Typesetter: Send + Sync {
         let (width, _) = self.measure("0", size, Face::Mono);
         max(1, width)
     }
+}
+
+/// Whether a Unicode line-break position is optional or compulsory.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum BreakOpportunity {
+    Allowed,
+    Mandatory,
 }
 
 /// The one typeface for the device, installed once by the runtime.
@@ -2598,16 +2849,46 @@ pub fn mono_cell(size: FontSize) -> (i32, i32) {
     )
 }
 
-/// The width of one average character, used to wrap without measuring every
-/// candidate line.
-fn average_advance(size: FontSize) -> i32 {
-    TYPESETTER.get().map_or(6 * size.scale(), |typesetter| {
-        // Measuring a representative run is closer to the truth than any one
-        // character, and proportional type has no single answer.
-        const SAMPLE: &str = "abcdefghijklmnopqrstuvwxyz";
-        let (width, _) = typesetter.measure(SAMPLE, size, Face::Text);
-        max(1, width / 26)
-    })
+fn fallback_line_breaks(text: &str) -> Vec<(usize, BreakOpportunity)> {
+    let mut breaks = Vec::new();
+    let mut previous = None;
+    for (offset, character) in text.char_indices() {
+        let end = offset + character.len_utf8();
+        let opportunity = if is_line_separator(character) {
+            // A carriage return and the line feed after it are one separator,
+            // not two. Breaking after both leaves an empty line between every
+            // pair of lines, and text arriving over a network is full of them.
+            if character == '\n' && previous == Some('\r') {
+                breaks.pop();
+            }
+            Some(BreakOpportunity::Mandatory)
+        } else if character.is_whitespace() || is_cjk(character) {
+            Some(BreakOpportunity::Allowed)
+        } else {
+            None
+        };
+        if let Some(opportunity) = opportunity {
+            breaks.push((end, opportunity));
+        }
+        previous = Some(character);
+    }
+    if breaks.last().map(|entry| entry.0) != Some(text.len()) {
+        breaks.push((text.len(), BreakOpportunity::Mandatory));
+    } else if let Some(last) = breaks.last_mut() {
+        last.1 = BreakOpportunity::Mandatory;
+    }
+    breaks
+}
+
+const fn is_cjk(character: char) -> bool {
+    matches!(
+        character as u32,
+        0x3040..=0x30ff
+            | 0x3400..=0x4dbf
+            | 0x4e00..=0x9fff
+            | 0xac00..=0xd7af
+            | 0xf900..=0xfaff
+    )
 }
 
 /// The least vertical space a block of body text occupies.
@@ -2932,39 +3213,135 @@ pub fn paginate_tiles(
         .collect()
 }
 
-/// Wraps at word boundaries and splits exceptionally long words deterministically.
+/// Wraps at Unicode line-break opportunities using the typeface's exact width.
+///
+/// Exceptionally long tokens are split at grapheme boundaries. A proportional
+/// run of `W`s therefore cannot overflow while a run of `i`s wastes half a
+/// line, and combining marks are never detached from their base character.
 #[must_use]
 pub fn wrap_text(text: &str, max_width: i32, size: FontSize) -> Vec<String> {
     if text.is_empty() || max_width <= 0 {
         return vec![String::new()];
     }
-    let max_chars = max(1, max_width / average_advance(size)) as usize;
+    let opportunities = TYPESETTER
+        .get()
+        .map_or_else(|| fallback_line_breaks(text), |face| face.line_breaks(text));
+    let graphemes = TYPESETTER.get().map_or_else(
+        || {
+            text.char_indices()
+                .map(|(offset, character)| offset + character.len_utf8())
+                .collect()
+        },
+        |face| face.grapheme_boundaries(text),
+    );
     let mut lines = Vec::new();
-    let mut current = String::new();
-    for word in text.split_whitespace() {
-        if current.is_empty() {
-            current.push_str(word);
-        } else if current.chars().count() + 1 + word.chars().count() <= max_chars {
-            current.push(' ');
-            current.push_str(word);
-        } else {
-            lines.push(current);
-            current = word.to_owned();
+    let mut start = 0;
+    while start < text.len() {
+        start = skip_soft_whitespace(text, start);
+        if start == text.len() {
+            break;
         }
-        while current.chars().count() > max_chars {
-            let head = current.chars().take(max_chars).collect::<String>();
-            let tail = current.chars().skip(max_chars).collect::<String>();
-            lines.push(head);
-            current = tail;
+
+        let mut best = None;
+        let mut emitted = false;
+        for &(end, opportunity) in opportunities.iter().filter(|entry| entry.0 > start) {
+            let visible_end = if opportunity == BreakOpportunity::Mandatory {
+                trim_line_separator(text, start, end)
+            } else {
+                end
+            };
+            let candidate = text[start..visible_end].trim_end_matches(char::is_whitespace);
+            if measure_text(candidate, size).0 <= max_width {
+                best = Some((end, candidate.to_owned()));
+                if opportunity == BreakOpportunity::Mandatory {
+                    lines.push(candidate.to_owned());
+                    start = end;
+                    emitted = true;
+                    break;
+                }
+                continue;
+            }
+
+            if let Some((best_end, line)) = best.take() {
+                lines.push(line);
+                start = best_end;
+            } else {
+                let forced_end =
+                    force_grapheme_break(text, start, visible_end, max_width, size, &graphemes);
+                lines.push(text[start..forced_end].trim_end().to_owned());
+                start = forced_end;
+            }
+            emitted = true;
+            break;
         }
-    }
-    if !current.is_empty() {
-        lines.push(current);
+
+        if !emitted {
+            let forced_end =
+                force_grapheme_break(text, start, text.len(), max_width, size, &graphemes);
+            lines.push(text[start..forced_end].trim_end().to_owned());
+            start = forced_end;
+        }
     }
     if lines.is_empty() {
         lines.push(String::new());
     }
     lines
+}
+
+fn skip_soft_whitespace(text: &str, mut offset: usize) -> usize {
+    while let Some(character) = text[offset..].chars().next() {
+        if !character.is_whitespace() || is_line_separator(character) {
+            break;
+        }
+        offset += character.len_utf8();
+        if offset == text.len() {
+            break;
+        }
+    }
+    offset
+}
+
+fn trim_line_separator(text: &str, start: usize, mut end: usize) -> usize {
+    while end > start {
+        let Some((offset, character)) = text[start..end].char_indices().last() else {
+            break;
+        };
+        if !is_line_separator(character) {
+            break;
+        }
+        end = start + offset;
+    }
+    end
+}
+
+const fn is_line_separator(character: char) -> bool {
+    matches!(character, '\n' | '\r' | '\u{2028}' | '\u{2029}')
+}
+
+fn force_grapheme_break(
+    text: &str,
+    start: usize,
+    limit: usize,
+    max_width: i32,
+    size: FontSize,
+    graphemes: &[usize],
+) -> usize {
+    let mut first = None;
+    let mut best = None;
+    for &end in graphemes.iter().filter(|&&end| end > start && end <= limit) {
+        first.get_or_insert(end);
+        if measure_text(&text[start..end], size).0 <= max_width {
+            best = Some(end);
+        } else {
+            break;
+        }
+    }
+    best.or(first).unwrap_or_else(|| {
+        text[start..]
+            .chars()
+            .next()
+            .map_or(text.len(), |character| start + character.len_utf8())
+    })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3075,6 +3452,191 @@ impl Surface {
     }
 }
 
+/// Non-flashing updates permitted before the panel gets a cleaning refresh.
+pub const PANEL_CLEAN_INTERVAL: u32 = 8;
+
+/// The physical update strategy selected from a frame's changed pixels.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PanelWaveform {
+    /// Fast, two-level feedback for changes containing only black and white.
+    Du,
+    /// Sixteen-level partial refresh for text and images containing grey.
+    Gl16,
+    /// Full sixteen-level refresh that clears accumulated residue.
+    Gc16,
+}
+
+impl PanelWaveform {
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Du => "DU",
+            Self::Gl16 => "GL16",
+            Self::Gc16 => "GC16",
+        }
+    }
+}
+
+/// One refresh the runtime will ask the panel controller to perform.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FrameTransition {
+    pub region: Rect,
+    pub waveform: PanelWaveform,
+    pub full: bool,
+    /// One-based number of the refresh in this session.
+    pub refresh: u64,
+    /// Partial refreshes that will have accumulated after this transition.
+    pub partials_since_clean: u32,
+}
+
+/// Shared state machine for choosing Kobo panel transitions.
+///
+/// The device runtime and simulator both use this exact planner. Physics such
+/// as visible residue remains a simulator approximation, but the changed
+/// rectangle, waveform and cleaning cadence cannot drift from the device.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FramePlanner {
+    width: usize,
+    height: usize,
+    previous: Vec<u8>,
+    partials_since_clean: u32,
+    refreshes: u64,
+    started: bool,
+}
+
+impl FramePlanner {
+    #[must_use]
+    pub fn new(width: usize, height: usize) -> Self {
+        Self {
+            width,
+            height,
+            previous: vec![tone::INK; width.saturating_mul(height)],
+            partials_since_clean: 0,
+            refreshes: 0,
+            started: false,
+        }
+    }
+
+    /// Plans the next update without changing planner state.
+    ///
+    /// Returning `None` means the surface is the wrong size or no pixel has
+    /// changed. Call [`Self::commit`] only after the update succeeds.
+    #[must_use]
+    pub fn plan(&self, surface: &Surface) -> Option<FrameTransition> {
+        if surface.width != self.width
+            || surface.height != self.height
+            || surface.pixels.len() != self.previous.len()
+        {
+            return None;
+        }
+        let whole = Rect {
+            x: 0,
+            y: 0,
+            width: i32::try_from(self.width).ok()?,
+            height: i32::try_from(self.height).ok()?,
+        };
+        let (region, waveform) = if self.started {
+            let changed = self.changed(surface)?;
+            if self.partials_since_clean >= PANEL_CLEAN_INTERVAL {
+                (whole, PanelWaveform::Gc16)
+            } else if Self::has_grey(surface, changed) {
+                (changed, PanelWaveform::Gl16)
+            } else {
+                (changed, PanelWaveform::Du)
+            }
+        } else {
+            (whole, PanelWaveform::Gc16)
+        };
+        let full = waveform == PanelWaveform::Gc16;
+        Some(FrameTransition {
+            region,
+            waveform,
+            full,
+            refresh: self.refreshes.saturating_add(1),
+            partials_since_clean: if full {
+                0
+            } else {
+                self.partials_since_clean.saturating_add(1)
+            },
+        })
+    }
+
+    /// Records a successfully applied transition.
+    pub fn commit(&mut self, surface: &Surface, transition: FrameTransition) -> bool {
+        if surface.width != self.width
+            || surface.height != self.height
+            || surface.pixels.len() != self.previous.len()
+            || transition.refresh != self.refreshes.saturating_add(1)
+        {
+            return false;
+        }
+        self.previous.copy_from_slice(&surface.pixels);
+        self.partials_since_clean = transition.partials_since_clean;
+        self.refreshes = transition.refresh;
+        self.started = true;
+        true
+    }
+
+    #[must_use]
+    pub const fn refreshes(&self) -> u64 {
+        self.refreshes
+    }
+
+    #[must_use]
+    pub const fn partials_since_clean(&self) -> u32 {
+        self.partials_since_clean
+    }
+
+    fn changed(&self, surface: &Surface) -> Option<Rect> {
+        let (mut left, mut right) = (usize::MAX, 0usize);
+        let (mut top, mut bottom) = (usize::MAX, 0usize);
+        for (index, _) in surface
+            .pixels
+            .iter()
+            .zip(self.previous.iter())
+            .enumerate()
+            .filter(|(_, (current, previous))| current != previous)
+        {
+            let (x, y) = (index % self.width, index / self.width);
+            left = left.min(x);
+            right = right.max(x);
+            top = top.min(y);
+            bottom = bottom.max(y);
+        }
+        (left <= right).then(|| Rect {
+            x: i32::try_from(left).unwrap_or(i32::MAX),
+            y: i32::try_from(top).unwrap_or(i32::MAX),
+            width: i32::try_from(right - left + 1).unwrap_or(i32::MAX),
+            height: i32::try_from(bottom - top + 1).unwrap_or(i32::MAX),
+        })
+    }
+
+    fn has_grey(surface: &Surface, region: Rect) -> bool {
+        let Ok(left) = usize::try_from(region.x) else {
+            return false;
+        };
+        let Ok(top) = usize::try_from(region.y) else {
+            return false;
+        };
+        let Ok(width) = usize::try_from(region.width) else {
+            return false;
+        };
+        let Ok(height) = usize::try_from(region.height) else {
+            return false;
+        };
+        (top..top.saturating_add(height)).any(|y| {
+            let start = y.saturating_mul(surface.width).saturating_add(left);
+            let end = start.saturating_add(width);
+            surface
+                .pixels
+                .get(start..end)
+                .unwrap_or(&[])
+                .iter()
+                .any(|tone| *tone != tone::INK && *tone != tone::PAPER)
+        })
+    }
+}
+
 /// Eight-bit grey pixels, row major, `width * height` of them.
 #[derive(Clone, Copy, Debug)]
 pub struct PicturePixels<'a> {
@@ -3091,6 +3653,11 @@ pub struct PicturePixels<'a> {
 /// why a tile keeps its glyph as well as its picture.
 pub trait Pictures {
     fn get(&self, handle: PictureHandle) -> Option<PicturePixels<'_>>;
+
+    /// Checks availability without marking the picture recently drawn.
+    fn contains(&self, handle: PictureHandle) -> bool {
+        self.get(handle).is_some()
+    }
 }
 
 /// A source holding nothing, for the many callers that draw no pictures.
@@ -3098,6 +3665,451 @@ impl Pictures for () {
     fn get(&self, _handle: PictureHandle) -> Option<PicturePixels<'_>> {
         None
     }
+}
+
+impl Screen {
+    /// Validates layout, text coverage, limits, and touch targets without
+    /// assuming that asynchronous pictures have arrived yet.
+    ///
+    /// Measured with the back chrome the runtime gives every application other
+    /// than the home screen, because that is the smaller content area and the
+    /// one that decides what is cut off. Validating without it reported a
+    /// clean screen for content the panel would go on to clip.
+    #[must_use]
+    pub fn validate(&self, metrics: &DisplayMetrics) -> Vec<LayoutIssue> {
+        self.diagnostics(metrics, Chrome::with_back(true)).issues
+    }
+
+    /// Produces layout and diagnostics from one consistent set of metrics.
+    #[must_use]
+    pub fn diagnostics(&self, metrics: &DisplayMetrics, chrome: Chrome) -> LayoutDiagnostics {
+        diagnose_screen(self, metrics, chrome, None)
+    }
+
+    /// Also reports picture handles absent from the runtime cache.
+    #[must_use]
+    pub fn diagnostics_with_pictures(
+        &self,
+        metrics: &DisplayMetrics,
+        chrome: Chrome,
+        pictures: &dyn Pictures,
+    ) -> LayoutDiagnostics {
+        diagnose_screen(self, metrics, chrome, Some(pictures))
+    }
+}
+
+fn diagnose_screen(
+    screen: &Screen,
+    metrics: &DisplayMetrics,
+    chrome: Chrome,
+    pictures: Option<&dyn Pictures>,
+) -> LayoutDiagnostics {
+    let layout = screen.layout_with(metrics, chrome);
+    let mut issues = Vec::new();
+    let mut nodes = Vec::new();
+    collect_nodes(&screen.nodes, 0, &mut nodes, &mut issues);
+
+    let mut identifiers = Vec::new();
+    if let Some(top) = &screen.top_bar {
+        check_identifier(top.id, &mut identifiers, &mut issues);
+        check_text_coverage(top.id, &top.title, Face::Text, &mut issues);
+        if let Some(action) = &top.action {
+            check_text_coverage(top.id, &action.label, Face::Text, &mut issues);
+        }
+    }
+    if let Some(nav) = &screen.nav_bar {
+        check_identifier(nav.id, &mut identifiers, &mut issues);
+        if nav.destinations.len() > nav.visible(metrics).len() {
+            issues.push(limit_issue(
+                nav.id,
+                "navigation destinations",
+                nav.destinations.len(),
+                nav.visible(metrics).len(),
+            ));
+        }
+        for destination in &nav.destinations {
+            check_text_coverage(nav.id, &destination.label, Face::Text, &mut issues);
+        }
+    }
+    if let Some(bottom) = &screen.bottom_action {
+        check_identifier(bottom.id, &mut identifiers, &mut issues);
+        check_text_coverage(bottom.id, &bottom.action.label, Face::Text, &mut issues);
+    }
+    for node in &nodes {
+        check_identifier(node.id(), &mut identifiers, &mut issues);
+        validate_node(node, metrics, pictures, &mut issues);
+    }
+
+    validate_content_bounds(&nodes, &layout, metrics, &mut issues);
+    validate_layout_nodes(&layout, metrics, &mut issues);
+    LayoutDiagnostics { layout, issues }
+}
+
+fn collect_nodes<'a>(
+    nodes: &'a [Node],
+    depth: usize,
+    collected: &mut Vec<&'a Node>,
+    issues: &mut Vec<LayoutIssue>,
+) {
+    if depth > MAX_LAYOUT_DEPTH {
+        if let Some(node) = nodes.first() {
+            issues.push(limit_issue(
+                node.id(),
+                "layout depth",
+                depth,
+                MAX_LAYOUT_DEPTH,
+            ));
+        }
+        return;
+    }
+    for node in nodes {
+        collected.push(node);
+        if let Node::Card { children, .. } = node {
+            collect_nodes(children, depth + 1, collected, issues);
+        }
+    }
+}
+
+fn check_identifier(id: NodeId, identifiers: &mut Vec<NodeId>, issues: &mut Vec<LayoutIssue>) {
+    if identifiers.contains(&id) {
+        issues.push(LayoutIssue {
+            severity: DiagnosticSeverity::Error,
+            node: Some(id),
+            kind: LayoutIssueKind::DuplicateNodeId,
+            rect: None,
+        });
+    } else {
+        identifiers.push(id);
+    }
+}
+
+fn limit_issue(
+    node: NodeId,
+    collection: &'static str,
+    provided: usize,
+    visible: usize,
+) -> LayoutIssue {
+    LayoutIssue {
+        severity: DiagnosticSeverity::Warning,
+        node: Some(node),
+        kind: LayoutIssueKind::CollectionTruncated {
+            collection,
+            provided,
+            visible,
+        },
+        rect: None,
+    }
+}
+
+fn validate_node(
+    node: &Node,
+    metrics: &DisplayMetrics,
+    pictures: Option<&dyn Pictures>,
+    issues: &mut Vec<LayoutIssue>,
+) {
+    let id = node.id();
+    match node {
+        Node::Heading { text, .. }
+        | Node::Text { text, .. }
+        | Node::Quote { text, .. }
+        | Node::Banner { text, .. } => check_text_coverage(id, text, Face::Text, issues),
+        Node::Button { label, .. } => check_text_coverage(id, label, Face::Text, issues),
+        Node::Card { .. }
+        | Node::Divider { .. }
+        | Node::Spacer { .. }
+        | Node::Progress { .. }
+        | Node::Skeleton { .. } => {}
+        Node::PagedList { items, .. } => {
+            for item in items {
+                check_text_coverage(id, item, Face::Text, issues);
+            }
+        }
+        Node::Grid { cells, .. } => {
+            if cells.len() > MAX_CELLS {
+                issues.push(limit_issue(id, "grid cells", cells.len(), MAX_CELLS));
+            }
+            for cell in cells {
+                check_text_coverage(id, &cell.label, Face::Text, issues);
+            }
+        }
+        Node::Rows { rows, .. } => {
+            if rows.len() > MAX_ROWS {
+                issues.push(limit_issue(id, "rows", rows.len(), MAX_ROWS));
+            }
+            for row in rows {
+                check_text_coverage(id, &row.title, Face::Text, issues);
+                check_text_coverage(id, &row.summary, Face::Text, issues);
+            }
+        }
+        Node::TileGrid { tiles, .. } => {
+            for tile in tiles {
+                check_text_coverage(id, &tile.label, Face::Text, issues);
+                if let (Some(pictures), Some(picture)) = (pictures, tile.picture) {
+                    check_picture(id, picture.handle, picture.source, pictures, issues);
+                }
+            }
+        }
+        Node::Choice {
+            prompt,
+            options,
+            freeform,
+            ..
+        } => {
+            check_text_coverage(id, prompt, Face::Text, issues);
+            if options.is_empty() && freeform.is_none() {
+                issues.push(LayoutIssue {
+                    severity: DiagnosticSeverity::Error,
+                    node: Some(id),
+                    kind: LayoutIssueKind::EmptyChoice,
+                    rect: None,
+                });
+            }
+            if options.len() > MAX_CHOICE_OPTIONS {
+                issues.push(limit_issue(
+                    id,
+                    "choice options",
+                    options.len(),
+                    MAX_CHOICE_OPTIONS,
+                ));
+            }
+            for option in options {
+                check_text_coverage(id, &option.label, Face::Text, issues);
+            }
+            if let Some(freeform) = freeform {
+                check_text_coverage(id, &freeform.placeholder, Face::Text, issues);
+            }
+        }
+        Node::Picture { handle, source, .. } => match pictures {
+            Some(pictures) => check_picture(id, *handle, *source, pictures, issues),
+            None if source.0 == 0 || source.1 == 0 => issues.push(LayoutIssue {
+                severity: DiagnosticSeverity::Error,
+                node: Some(id),
+                kind: LayoutIssueKind::InvalidPictureSource,
+                rect: None,
+            }),
+            None => {}
+        },
+        Node::Activity { label, cancel, .. } => {
+            check_text_coverage(id, label, Face::Text, issues);
+            if let Some(cancel) = cancel {
+                check_text_coverage(id, &cancel.label, Face::Text, issues);
+            }
+        }
+        Node::Terminal { rows, .. } => {
+            if rows.len() > MAX_TERMINAL_ROWS {
+                issues.push(limit_issue(
+                    id,
+                    "terminal rows",
+                    rows.len(),
+                    MAX_TERMINAL_ROWS,
+                ));
+            }
+            for row in rows {
+                check_text_coverage(id, row, Face::Mono, issues);
+                let columns = row.chars().count();
+                if columns > MAX_TERMINAL_COLUMNS {
+                    issues.push(limit_issue(
+                        id,
+                        "terminal columns",
+                        columns,
+                        MAX_TERMINAL_COLUMNS,
+                    ));
+                    break;
+                }
+            }
+        }
+    }
+
+    // Keep this parameter part of the validation contract: very narrow panels
+    // can expose limit failures even if the current supported one does not.
+    let _ = metrics;
+}
+
+fn check_picture(
+    id: NodeId,
+    handle: PictureHandle,
+    source: (u32, u32),
+    pictures: &dyn Pictures,
+    issues: &mut Vec<LayoutIssue>,
+) {
+    if source.0 == 0 || source.1 == 0 {
+        issues.push(LayoutIssue {
+            severity: DiagnosticSeverity::Error,
+            node: Some(id),
+            kind: LayoutIssueKind::InvalidPictureSource,
+            rect: None,
+        });
+    } else if !pictures.contains(handle) {
+        issues.push(LayoutIssue {
+            severity: DiagnosticSeverity::Warning,
+            node: Some(id),
+            kind: LayoutIssueKind::MissingPicture(handle),
+            rect: None,
+        });
+    }
+}
+
+fn check_text_coverage(id: NodeId, text: &str, face: Face, issues: &mut Vec<LayoutIssue>) {
+    if let Some(character) = undrawable_in(text, face) {
+        issues.push(LayoutIssue {
+            severity: DiagnosticSeverity::Error,
+            node: Some(id),
+            kind: LayoutIssueKind::UnsupportedCharacter { character, face },
+            rect: None,
+        });
+    }
+}
+
+fn validate_content_bounds(
+    nodes: &[&Node],
+    layout: &Layout,
+    metrics: &DisplayMetrics,
+    issues: &mut Vec<LayoutIssue>,
+) {
+    let mut hidden = Vec::new();
+    let mut clipped = Vec::new();
+    for node in nodes {
+        let id = node.id();
+        let laid_out = layout.nodes.iter().filter(|laid_out| laid_out.id == id);
+        let rects = laid_out.map(|laid_out| laid_out.rect).collect::<Vec<_>>();
+        let expects_rect = !matches!(node, Node::Rows { rows, .. } if rows.is_empty());
+        if expects_rect
+            && (rects.is_empty()
+                || rects
+                    .iter()
+                    .all(|rect| rect.intersection(layout.content).is_none()))
+        {
+            hidden.push(id);
+        } else if rects
+            .iter()
+            .any(|rect| !rect_is_inside(*rect, layout.content))
+            && !clipped.contains(&id)
+        {
+            clipped.push(id);
+            let rect = rects
+                .iter()
+                .copied()
+                .find(|rect| !rect_is_inside(*rect, layout.content));
+            issues.push(LayoutIssue {
+                severity: DiagnosticSeverity::Error,
+                node: Some(id),
+                kind: LayoutIssueKind::Clipped,
+                rect,
+            });
+        }
+    }
+    if let Some(first) = hidden.first().copied() {
+        issues.push(LayoutIssue {
+            severity: DiagnosticSeverity::Error,
+            node: Some(first),
+            kind: LayoutIssueKind::ContentOverflow {
+                hidden_nodes: hidden.len(),
+            },
+            rect: None,
+        });
+    }
+    if layout.nodes.len() >= MAX_LAYOUT_NODES {
+        issues.push(limit_issue(
+            NodeId(0),
+            "layout nodes",
+            layout.nodes.len(),
+            MAX_LAYOUT_NODES,
+        ));
+    }
+    let _ = metrics;
+}
+
+fn validate_layout_nodes(layout: &Layout, metrics: &DisplayMetrics, issues: &mut Vec<LayoutIssue>) {
+    let minimum = metrics.touch_target_minimum();
+    for node in &layout.nodes {
+        if is_tappable(node.kind) && (node.rect.width < minimum || node.rect.height < minimum) {
+            issues.push(LayoutIssue {
+                severity: DiagnosticSeverity::Error,
+                node: Some(node.id),
+                kind: LayoutIssueKind::TouchTargetTooSmall { minimum },
+                rect: Some(node.rect),
+            });
+        }
+        let Some((size, face)) = layout_text_style(node) else {
+            continue;
+        };
+        let too_wide = node
+            .text_lines
+            .iter()
+            .any(|line| measure_text_in(line, size, face).0 > node.rect.width);
+        let too_tall = i32::try_from(node.text_lines.len())
+            .unwrap_or(i32::MAX)
+            .saturating_mul(size.line_height_in(face))
+            > node.rect.height;
+        if too_wide || too_tall {
+            issues.push(LayoutIssue {
+                severity: DiagnosticSeverity::Error,
+                node: Some(node.id),
+                kind: LayoutIssueKind::TextOverflow,
+                rect: Some(node.rect),
+            });
+        }
+    }
+}
+
+const fn is_tappable(kind: LayoutKind) -> bool {
+    matches!(
+        kind,
+        LayoutKind::Button(_, ControlState::Enabled)
+            | LayoutKind::Back
+            | LayoutKind::BarAction(_)
+            | LayoutKind::NavDestination(_)
+            | LayoutKind::NavDestinationSelected(_)
+            | LayoutKind::Row(_)
+            | LayoutKind::Cell(_)
+            | LayoutKind::Tile(_)
+            | LayoutKind::ChoiceOption(_, _)
+            | LayoutKind::ChoiceFreeform(_)
+    )
+}
+
+fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
+    let size = match node.kind {
+        LayoutKind::Heading => FontSize::Heading,
+        LayoutKind::CellLabel
+            if node
+                .text_lines
+                .first()
+                .is_some_and(|text| text.chars().count() <= 2) =>
+        {
+            FontSize::Heading
+        }
+        LayoutKind::TopBarTitle => FontSize::Title,
+        LayoutKind::RowSummary
+        | LayoutKind::TileLabel
+        | LayoutKind::NavDestination(_)
+        | LayoutKind::NavDestinationSelected(_) => FontSize::Caption,
+        LayoutKind::Text
+        | LayoutKind::Quote(_)
+        | LayoutKind::Button(_, _)
+        | LayoutKind::PagedList
+        | LayoutKind::BarAction(_)
+        | LayoutKind::RowTitle
+        | LayoutKind::RowTitleDone
+        | LayoutKind::CellLabel
+        | LayoutKind::ChoicePrompt
+        | LayoutKind::ChoiceOption(_, _)
+        | LayoutKind::ChoiceFreeform(_)
+        | LayoutKind::Banner(_)
+        | LayoutKind::ActivityLabel => FontSize::Body,
+        LayoutKind::TerminalGrid | LayoutKind::TerminalCursor => {
+            return Some((TERMINAL_SIZE, Face::Mono));
+        }
+        _ => return None,
+    };
+    Some((size, Face::Text))
+}
+
+const fn rect_is_inside(rect: Rect, bounds: Rect) -> bool {
+    rect.x >= bounds.x
+        && rect.y >= bounds.y
+        && rect.x.saturating_add(rect.width) <= bounds.x.saturating_add(bounds.width)
+        && rect.y.saturating_add(rect.height) <= bounds.y.saturating_add(bounds.height)
 }
 
 /// Eight megabytes, which is a shelf of about seventy covers.
@@ -3116,6 +4128,14 @@ struct HeldPicture {
     used: std::cell::Cell<u64>,
 }
 
+struct PendingPicture {
+    handle: PictureHandle,
+    width: u32,
+    height: u32,
+    expected: usize,
+    grey: Vec<u8>,
+}
+
 /// The pictures one application has handed over, bounded by total size.
 ///
 /// Eviction is least-recently-drawn. A picture that falls out is not an error:
@@ -3127,6 +4147,7 @@ pub struct PictureCache {
     held: usize,
     entries: Vec<HeldPicture>,
     clock: std::cell::Cell<u64>,
+    pending: Option<PendingPicture>,
 }
 
 impl Default for PictureCache {
@@ -3154,6 +4175,7 @@ impl PictureCache {
             held: 0,
             entries: Vec::new(),
             clock: std::cell::Cell::new(0),
+            pending: None,
         }
     }
 
@@ -3163,18 +4185,32 @@ impl PictureCache {
     /// one picture alone exceeds the whole budget. Both are refusals rather
     /// than truncations: a half-stored picture would draw as garbage.
     pub fn put(&mut self, handle: PictureHandle, width: u32, height: u32, grey: Vec<u8>) -> bool {
+        self.put_report(handle, width, height, grey).is_some()
+    }
+
+    /// Stores a complete picture and reports any handles evicted to make room.
+    ///
+    /// `None` means the picture was refused. An empty vector means it fitted
+    /// without eviction. This gives runtimes and simulator diagnostics a way
+    /// to explain a missing image instead of silently falling back forever.
+    pub fn put_report(
+        &mut self,
+        handle: PictureHandle,
+        width: u32,
+        height: u32,
+        grey: Vec<u8>,
+    ) -> Option<Vec<PictureHandle>> {
         let expected = usize::try_from(width).ok().and_then(|width| {
             usize::try_from(height)
                 .ok()
                 .and_then(|h| width.checked_mul(h))
         });
-        let Some(expected) = expected else {
-            return false;
-        };
+        let expected = expected?;
         if expected == 0 || expected != grey.len() || grey.len() > self.budget {
-            return false;
+            return None;
         }
         self.remove(handle);
+        let mut evicted = Vec::new();
         while self.held + grey.len() > self.budget {
             let Some(oldest) = self
                 .entries
@@ -3185,6 +4221,7 @@ impl PictureCache {
             else {
                 break;
             };
+            evicted.push(self.entries[oldest].handle);
             self.held -= self.entries[oldest].grey.len();
             self.entries.remove(oldest);
         }
@@ -3197,7 +4234,63 @@ impl PictureCache {
             grey,
             used: std::cell::Cell::new(self.clock.get()),
         });
+        Some(evicted)
+    }
+
+    /// Starts a bounded, in-order upload without replacing the live picture.
+    ///
+    /// Starting another upload cancels the incomplete one. The previous live
+    /// value under `handle` remains drawable until [`Self::commit_upload`].
+    pub fn begin_upload(&mut self, handle: PictureHandle, width: u32, height: u32) -> bool {
+        let expected = usize::try_from(width).ok().and_then(|width| {
+            usize::try_from(height)
+                .ok()
+                .and_then(|height| width.checked_mul(height))
+        });
+        let Some(expected) = expected else {
+            self.pending = None;
+            return false;
+        };
+        if expected == 0 || expected > self.budget {
+            self.pending = None;
+            return false;
+        }
+        self.pending = Some(PendingPicture {
+            handle,
+            width,
+            height,
+            expected,
+            grey: Vec::with_capacity(expected),
+        });
         true
+    }
+
+    /// Appends one chunk at its exact expected offset.
+    pub fn upload_chunk(&mut self, handle: PictureHandle, offset: usize, bytes: &[u8]) -> bool {
+        let Some(pending) = self.pending.as_mut() else {
+            return false;
+        };
+        if pending.handle != handle
+            || offset != pending.grey.len()
+            || pending.grey.len().saturating_add(bytes.len()) > pending.expected
+        {
+            self.pending = None;
+            return false;
+        }
+        pending.grey.extend_from_slice(bytes);
+        true
+    }
+
+    /// Atomically replaces the live picture after every byte has arrived.
+    ///
+    /// Returns evicted handles on success and `None` for an incomplete or
+    /// mismatched upload.
+    pub fn commit_upload(&mut self, handle: PictureHandle) -> Option<Vec<PictureHandle>> {
+        let pending = self.pending.take()?;
+        if pending.handle != handle || pending.grey.len() != pending.expected {
+            return None;
+        }
+        self.put_report(pending.handle, pending.width, pending.height, pending.grey)
     }
 
     pub fn remove(&mut self, handle: PictureHandle) {
@@ -3210,6 +4303,7 @@ impl PictureCache {
     pub fn clear(&mut self) {
         self.entries.clear();
         self.held = 0;
+        self.pending = None;
     }
 
     #[must_use]
@@ -3240,6 +4334,10 @@ impl Pictures for PictureCache {
             height: entry.height,
             grey: &entry.grey,
         })
+    }
+
+    fn contains(&self, handle: PictureHandle) -> bool {
+        self.entries.iter().any(|entry| entry.handle == handle)
     }
 }
 
@@ -3345,7 +4443,7 @@ pub fn render_all(
                     clip,
                 );
             }
-            LayoutKind::Button(_) => {
+            LayoutKind::Button(_, ControlState::Enabled) => {
                 fill_clipped(surface, node.rect, tone::INK, clip);
                 draw_centered(
                     surface,
@@ -3353,6 +4451,23 @@ pub fn render_all(
                     node.rect,
                     FontSize::Body,
                     tone::PAPER,
+                    clip,
+                );
+            }
+            LayoutKind::Button(_, ControlState::Disabled) => {
+                stroke_clipped(
+                    surface,
+                    node.rect,
+                    tone::RULE,
+                    metrics.rule_thickness(),
+                    clip,
+                );
+                draw_centered(
+                    surface,
+                    &node.text_lines,
+                    node.rect,
+                    FontSize::Body,
+                    tone::MUTED,
                     clip,
                 );
             }
@@ -4157,6 +5272,87 @@ mod tests {
         );
     }
 
+    #[test]
+    fn text_scale_has_stable_names_and_wire_values() {
+        assert_eq!(TextScale::from_name("large"), Some(TextScale::Large));
+        assert_eq!(TextScale::from_name("140%"), Some(TextScale::ExtraLarge));
+        assert_eq!(TextScale::from_wire(1), Some(TextScale::Large));
+        assert_eq!(TextScale::from_wire(9), None);
+        assert_eq!(TextScale::ExtraLarge.percent(), 140);
+    }
+
+    #[test]
+    fn validation_reports_content_that_layout_would_hide() {
+        let nodes = (0..80)
+            .map(|index| Node::Text {
+                id: NodeId(index + 1),
+                text: "A paragraph that occupies a real line.".into(),
+            })
+            .collect();
+        let issues = Screen::new(1, nodes).validate(&CLARA_BW_METRICS);
+        assert!(issues.iter().any(|issue| matches!(
+            issue.kind,
+            LayoutIssueKind::ContentOverflow { hidden_nodes } if hidden_nodes > 0
+        )));
+    }
+
+    #[test]
+    fn validation_reports_truncation_and_undersized_targets() {
+        let screen = Screen::new(
+            1,
+            vec![
+                Node::Choice {
+                    id: NodeId(1),
+                    prompt: "Choose".into(),
+                    options: (0..=MAX_CHOICE_OPTIONS)
+                        .map(|index| BarAction::new(ActionId(index as u32 + 1), "Option"))
+                        .collect(),
+                    selected: None,
+                    freeform: None,
+                },
+                Node::Grid {
+                    id: NodeId(2),
+                    columns: MAX_COLUMNS,
+                    square: false,
+                    cells: vec![Cell::new(ActionId(20), "1")],
+                },
+            ],
+        );
+        let issues = screen.validate(&PANELS[1].1);
+        assert!(issues.iter().any(|issue| matches!(
+            issue.kind,
+            LayoutIssueKind::CollectionTruncated {
+                collection: "choice options",
+                ..
+            }
+        )));
+        assert!(issues
+            .iter()
+            .any(|issue| matches!(issue.kind, LayoutIssueKind::TouchTargetTooSmall { .. })));
+    }
+
+    #[test]
+    fn validation_can_distinguish_a_missing_picture_from_layout() {
+        let screen = Screen::new(
+            1,
+            vec![Node::Picture {
+                id: NodeId(1),
+                handle: PictureHandle(7),
+                source: (10, 10),
+                max_height_tenths_mm: 100,
+            }],
+        );
+        let diagnostics = screen.diagnostics_with_pictures(
+            &CLARA_BW_METRICS,
+            Chrome::default(),
+            &PictureCache::default(),
+        );
+        assert!(diagnostics.issues.iter().any(|issue| matches!(
+            issue.kind,
+            LayoutIssueKind::MissingPicture(PictureHandle(7))
+        )));
+    }
+
     /// Panels this SDK is expected to reach eventually. None of them is
     /// supported by the hardware gate yet; they exist here so the design
     /// system is exercised against real densities rather than one device.
@@ -4168,6 +5364,7 @@ mod tests {
                 width: 758,
                 height: 1024,
                 pixels_per_inch: 212,
+                text_scale: TextScale::Default,
             },
         ),
         (
@@ -4176,6 +5373,7 @@ mod tests {
                 width: 1264,
                 height: 1680,
                 pixels_per_inch: 300,
+                text_scale: TextScale::Default,
             },
         ),
         (
@@ -4184,6 +5382,7 @@ mod tests {
                 width: 1440,
                 height: 1920,
                 pixels_per_inch: 300,
+                text_scale: TextScale::Default,
             },
         ),
         (
@@ -4192,6 +5391,7 @@ mod tests {
                 width: 1404,
                 height: 1872,
                 pixels_per_inch: 227,
+                text_scale: TextScale::Default,
             },
         ),
     ];
@@ -4284,6 +5484,7 @@ mod tests {
                 id: NodeId(1),
                 action: ActionId(2),
                 label: "Increment".into(),
+                state: ControlState::Enabled,
             }],
         );
         let button = screen.layout().nodes[0].rect;
@@ -4293,6 +5494,53 @@ mod tests {
             Some(ActionId(2))
         );
         assert_eq!(screen.hit_test(0, 0), None);
+    }
+
+    #[test]
+    fn a_disabled_button_is_visible_but_not_tappable() {
+        let screen = Screen::new(
+            7,
+            vec![Node::Button {
+                id: NodeId(1),
+                action: ActionId(2),
+                label: "Unavailable".into(),
+                state: ControlState::Disabled,
+            }],
+        );
+        let layout = screen.layout();
+        let button = &layout.nodes[0];
+        assert_eq!(
+            button.kind,
+            LayoutKind::Button(ActionId(2), ControlState::Disabled)
+        );
+        assert_eq!(screen.hit_test(button.rect.x + 1, button.rect.y + 1), None);
+    }
+
+    #[test]
+    fn a_disabled_button_absorbs_the_tap_rather_than_turning_the_page() {
+        // A greyed-out control answering with somebody else's action is worse
+        // than one that does nothing at all.
+        let screen = Screen::new(
+            8,
+            vec![Node::Button {
+                id: NodeId(1),
+                action: ActionId(2),
+                label: "Unavailable".into(),
+                state: ControlState::Disabled,
+            }],
+        )
+        .with_page_turns(ActionId(10), ActionId(11));
+        let layout = screen.layout();
+        let button = layout.nodes[0].rect;
+        assert_eq!(screen.hit_test(button.x + 1, button.y + 1), None);
+        // Content the button does not cover still turns the page.
+        assert_eq!(
+            screen.hit_test(
+                layout.content.x + layout.content.width - 1,
+                button.y + button.height + 1
+            ),
+            Some(ActionId(11))
+        );
     }
 
     #[test]
@@ -4317,6 +5565,7 @@ mod tests {
                 id: NodeId(1),
                 action: ActionId(1),
                 label: "Go".into(),
+                state: ControlState::Enabled,
             }],
         );
         let mut surface = Surface::new(128, 128);
@@ -4385,6 +5634,63 @@ mod tests {
             tone::SURFACE,
             "the border ran past the rule thickness into the card itself"
         );
+    }
+
+    #[test]
+    fn frame_planner_matches_the_panel_waveform_rules() {
+        let mut planner = FramePlanner::new(8, 4);
+        let mut frame = Surface::new(8, 4);
+        let first = planner.plan(&frame).expect("first frame refreshes");
+        assert_eq!(first.waveform, PanelWaveform::Gc16);
+        assert!(first.full);
+        assert!(planner.commit(&frame, first));
+        assert!(planner.plan(&frame).is_none(), "unchanged frame refreshes");
+
+        frame.pixels[2 * 8 + 3] = tone::INK;
+        let black_and_white = planner.plan(&frame).expect("one changed pixel");
+        assert_eq!(black_and_white.waveform, PanelWaveform::Du);
+        assert_eq!(
+            black_and_white.region,
+            Rect {
+                x: 3,
+                y: 2,
+                width: 1,
+                height: 1,
+            }
+        );
+        assert!(planner.commit(&frame, black_and_white));
+
+        frame.pixels[2 * 8 + 3] = tone::MUTED;
+        let grey = planner.plan(&frame).expect("grey changed");
+        assert_eq!(grey.waveform, PanelWaveform::Gl16);
+        assert!(planner.commit(&frame, grey));
+
+        frame.pixels[0] = tone::INK;
+        let grey_outside_change = planner.plan(&frame).expect("black pixel changed");
+        assert_eq!(grey_outside_change.waveform, PanelWaveform::Du);
+    }
+
+    #[test]
+    fn frame_planner_cleans_after_eight_partial_updates() {
+        let mut planner = FramePlanner::new(2, 1);
+        let mut frame = Surface::new(2, 1);
+        let first = planner.plan(&frame).expect("first");
+        assert!(planner.commit(&frame, first));
+        for index in 0..PANEL_CLEAN_INTERVAL {
+            frame.pixels[0] = if index % 2 == 0 {
+                tone::INK
+            } else {
+                tone::PAPER
+            };
+            let partial = planner.plan(&frame).expect("partial");
+            assert!(!partial.full);
+            assert!(planner.commit(&frame, partial));
+        }
+        frame.pixels[1] = tone::INK;
+        let cleaning = planner.plan(&frame).expect("cleaning refresh");
+        assert_eq!(cleaning.waveform, PanelWaveform::Gc16);
+        assert!(cleaning.full);
+        assert_eq!(cleaning.region.width, 2);
     }
 
     #[test]
@@ -4488,6 +5794,7 @@ mod page_turn_tests {
                 id: NodeId(2),
                 action: ActionId(99),
                 label: "Press me".to_owned(),
+                state: ControlState::Enabled,
             }],
         )
         .with_page_turns(ActionId(10), ActionId(20));
@@ -4495,7 +5802,7 @@ mod page_turn_tests {
         let button = layout
             .nodes
             .iter()
-            .find(|node| matches!(node.kind, LayoutKind::Button(_)))
+            .find(|node| matches!(node.kind, LayoutKind::Button(..)))
             .expect("a button");
         let (x, y) = (
             button.rect.x + button.rect.width / 2,
@@ -5343,6 +6650,7 @@ mod loading_tests {
                 id: NodeId(3),
                 action: ActionId(3),
                 label: "Button".into(),
+                state: ControlState::Enabled,
             },
             Node::Card {
                 id: NodeId(4),
@@ -5426,6 +6734,7 @@ mod loading_tests {
                         id: NodeId(900),
                         action: ActionId(900),
                         label: "After".into(),
+                        state: ControlState::Enabled,
                     },
                 ],
             );
@@ -5433,11 +6742,13 @@ mod loading_tests {
             let after = layout
                 .nodes
                 .iter()
-                .find(|candidate| candidate.kind == LayoutKind::Button(ActionId(900)))
+                .find(|candidate| {
+                    candidate.kind == LayoutKind::Button(ActionId(900), ControlState::Enabled)
+                })
                 .expect("the following button was laid out")
                 .rect;
             for other in &layout.nodes {
-                if other.kind == LayoutKind::Button(ActionId(900)) {
+                if other.kind == LayoutKind::Button(ActionId(900), ControlState::Enabled) {
                     continue;
                 }
                 assert!(
@@ -5460,7 +6771,7 @@ mod loading_tests {
             .nodes
             .iter()
             .filter_map(|node| match node.kind {
-                LayoutKind::Button(action)
+                LayoutKind::Button(action, ControlState::Enabled)
                 | LayoutKind::BarAction(action)
                 | LayoutKind::Tile(action)
                 | LayoutKind::Row(action)
@@ -5487,6 +6798,20 @@ mod loading_tests {
 mod prose_tests {
     use super::tests::PANELS;
     use super::*;
+
+    #[test]
+    fn the_fallback_typesetter_treats_crlf_as_one_separator() {
+        // Without a typesetter installed the fallback answers every wrap, and
+        // breaking after the carriage return as well as after the line feed
+        // put a blank line between every pair of lines in CRLF text.
+        assert_eq!(
+            fallback_line_breaks("a\r\nb"),
+            vec![
+                (3, BreakOpportunity::Mandatory),
+                (4, BreakOpportunity::Mandatory)
+            ]
+        );
+    }
 
     #[test]
     fn a_book_with_windows_line_endings_still_has_paragraphs() {
@@ -5896,6 +7221,7 @@ mod prose_tests {
                 id: NodeId(2),
                 action,
                 label: "Do it".to_string(),
+                state: ControlState::Enabled,
             });
             if !after.is_empty() {
                 nodes.push(Node::Text {
@@ -6047,6 +7373,41 @@ mod prose_tests {
         );
         assert!(cache.get(PictureHandle(3)).is_some());
         assert_eq!(cache.bytes_held(), 200);
+    }
+
+    #[test]
+    fn cache_evictions_are_reported_to_the_runtime() {
+        let mut cache = PictureCache::new(150);
+        assert_eq!(
+            cache.put_report(PictureHandle(1), 10, 10, vec![1; 100]),
+            Some(Vec::new())
+        );
+        assert_eq!(
+            cache.put_report(PictureHandle(2), 10, 10, vec![2; 100]),
+            Some(vec![PictureHandle(1)])
+        );
+    }
+
+    #[test]
+    fn chunked_picture_becomes_live_only_after_a_complete_commit() {
+        let mut cache = PictureCache::new(300);
+        assert!(cache.begin_upload(PictureHandle(7), 10, 10));
+        assert!(cache.upload_chunk(PictureHandle(7), 0, &[3; 40]));
+        assert!(
+            cache.get(PictureHandle(7)).is_none(),
+            "not partially visible"
+        );
+        assert!(cache.upload_chunk(PictureHandle(7), 40, &[3; 60]));
+        assert_eq!(cache.commit_upload(PictureHandle(7)), Some(Vec::new()));
+        assert_eq!(cache.get(PictureHandle(7)).map(|p| p.grey[0]), Some(3));
+    }
+
+    #[test]
+    fn an_out_of_order_chunk_cancels_the_upload() {
+        let mut cache = PictureCache::new(300);
+        assert!(cache.begin_upload(PictureHandle(7), 10, 10));
+        assert!(!cache.upload_chunk(PictureHandle(7), 1, &[3; 40]));
+        assert_eq!(cache.commit_upload(PictureHandle(7)), None);
     }
 
     #[test]

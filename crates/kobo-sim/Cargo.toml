@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 kobo-net = { path = "../kobo-net" }
 kobo-policy = { path = "../kobo-policy" }
+kobo-profile = { path = "../kobo-profile" }
 kobo-shell = { path = "../kobo-shell" }
 kobo-text = { path = "../kobo-text" }
 kobo-protocol = { path = "../kobo-protocol" }

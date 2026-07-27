@@ -8,6 +8,8 @@ description = "Real type for the Kobo application platform"
 [dependencies]
 fontdue = "0.9"
 kobo-ui = { path = "../kobo-ui" }
+unicode-linebreak = "0.1.5"
+unicode-segmentation = "1.12"
 
 [dev-dependencies]
 kobo-sdk = { path = "../kobo-sdk" }
