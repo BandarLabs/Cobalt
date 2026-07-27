@@ -67,6 +67,27 @@ const COVER_BYTES: u32 = 512 * 1024;
 /// books and a mistake. The grid itself is measured; this only decides where
 /// the shelf is cut, so it has to agree with the grid or the same thing
 /// happens again.
+/// Cover fetches allowed at once.
+///
+/// One below the runtime's ceiling of four on purpose, so a shelf filling in
+/// can never leave a search or a download with nowhere to go.
+/// How tall the cover on a book's page is drawn.
+///
+/// A third of the panel: large enough to be the picture of the book rather
+/// than a thumbnail of it, and small enough that the title, the author and the
+/// Read button are all still on screen under it without scrolling.
+const DETAILS_COVER_MM: u16 = 40;
+
+const COVER_LANES: usize = 3;
+
+/// Checked here rather than in a test, because the cost of getting it wrong is
+/// a shelf that silently delays every search behind its own artwork, and that
+/// is a mistake worth refusing to compile.
+const _: () = assert!(COVER_LANES < kobo_sdk::MAX_TASKS_IN_FLIGHT);
+
+/// Attempts spent on one cover before it is given up on.
+const COVER_TRIES: u8 = 3;
+
 const SHELF_PAGE: usize = 6;
 
 /// How close to the end of what has been downloaded the reader may get before
@@ -93,16 +114,16 @@ enum View {
     Reading,
 }
 
-/// What the outstanding request is for.
+/// What the one exclusive request is for.
 ///
-/// Only one is ever in flight. A second would either race the first onto the
-/// panel or need a screen that can describe two kinds of waiting at once.
+/// Covers are not in here. These two are the requests the reader is actually
+/// waiting on, and only one can be outstanding: a catalogue and a book text
+/// arriving together would need a screen that describes two kinds of waiting
+/// at once. Cover fetches run alongside in their own lanes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Awaiting {
     Catalogue,
     Text,
-    /// The cover of one book, named by its index.
-    Cover(usize),
 }
 
 struct Gutenshelf {
@@ -134,7 +155,13 @@ struct Gutenshelf {
     /// shelf of sixteen would otherwise hold the radio open for a dozen
     /// pictures the reader may never scroll to, and on a device that reads for
     /// weeks on a charge that is the difference between free and not.
-    wanted: Vec<usize>,
+    /// Covers still to fetch, each with the number of attempts already spent
+    /// on it. Popped from the back, so a retry pushed to the front is tried
+    /// last and one dead URL cannot starve the rest of the page.
+    wanted: Vec<(usize, u8)>,
+    /// Cover fetches in flight at once, which is the whole point: the panel
+    /// spends its time waiting on the radio, not on the decoder.
+    covers: Vec<(TaskId, usize, u8)>,
     task: Option<(TaskId, Awaiting)>,
     problem: Option<String>,
 }
@@ -154,6 +181,7 @@ impl Default for Gutenshelf {
             page: 0,
             shelf: 0,
             wanted: Vec::new(),
+            covers: Vec::new(),
             task: None,
             problem: None,
         }
@@ -290,6 +318,13 @@ impl Gutenshelf {
             .top_bar(book.title.clone())
             .heading(book.title.clone())
             .text(book.author.clone());
+        // The same cover the shelf already fetched, at a fixed height so every
+        // book's page has the same shape whatever its artwork happens to be.
+        // Given in millimetres rather than pixels, so it is a third of the
+        // panel on any device rather than a third of one particular one.
+        if let Some(picture) = book.picture {
+            screen = screen.picture(picture, DETAILS_COVER_MM);
+        }
         if let Some(problem) = &self.problem {
             screen = screen.banner(BannerLevel::Attention, problem.clone());
         }
@@ -364,14 +399,16 @@ impl Gutenshelf {
         }
     }
 
-    /// Queues the covers for the shelf page being looked at, then starts the
-    /// first one.
+    /// Queues the covers for the shelf page being looked at, then starts as
+    /// many as the runtime will carry.
     ///
-    /// Deliberately not one request per book at once. Four could be in flight,
-    /// but each arrival would repaint the shelf, and every repaint on this
-    /// panel is a full refresh the reader watches happen. One at a time, with
-    /// a single repaint when the page is complete, costs one refresh instead
-    /// of six.
+    /// Several at once, not one after another. The earlier version chained
+    /// them to spend exactly one full refresh on the finished page, which is
+    /// the right instinct on a panel that flashes when it repaints — but six
+    /// covers fetched end to end meant six round trips over a slow radio, and
+    /// the shelf sat empty for the whole of it. Fetching in parallel and still
+    /// painting only when a batch lands keeps the refresh count to two while
+    /// cutting the wait to a third.
     fn want_covers(&mut self, context: &mut Context) {
         let first = self.shelf * SHELF_PAGE;
         self.wanted = self
@@ -381,17 +418,22 @@ impl Gutenshelf {
             .skip(first)
             .take(SHELF_PAGE)
             .filter(|(_, book)| book.picture.is_none() && book.cover.is_some())
-            .map(|(index, _)| index)
+            .map(|(index, _)| (index, 0))
             .rev()
             .collect();
         self.ask_cover(context);
     }
 
+    /// Fills the cover lanes from the queue.
+    ///
+    /// One fewer lane than the runtime allows, always. The spare is what lets
+    /// a search or a download start straight away instead of queueing behind
+    /// a shelf of artwork.
     fn ask_cover(&mut self, context: &mut Context) {
-        if self.task.is_some() {
-            return;
-        }
-        while let Some(index) = self.wanted.pop() {
+        while self.covers.len() < COVER_LANES {
+            let Some((index, tries)) = self.wanted.pop() else {
+                return;
+            };
             let Some(url) = self.books.get(index).and_then(|book| book.cover.clone()) else {
                 continue;
             };
@@ -400,13 +442,33 @@ impl Gutenshelf {
                 offset: 0,
                 max_bytes: COVER_BYTES,
             }) {
-                self.task = Some((task, Awaiting::Cover(index)));
-                return;
+                self.covers.push((task, index, tries));
+                continue;
             }
             // Out of slots rather than out of covers. Put it back and let the
             // next arrival try again, so a busy moment loses nothing.
-            self.wanted.push(index);
+            self.wanted.push((index, tries));
             return;
+        }
+    }
+
+    /// Takes a cover task off the in-flight list, if it is one of ours.
+    fn finish_cover(&mut self, task: TaskId) -> Option<(usize, u8)> {
+        let at = self.covers.iter().position(|(id, _, _)| *id == task)?;
+        let (_, index, tries) = self.covers.remove(at);
+        Some((index, tries))
+    }
+
+    /// Puts a cover that did not arrive back in the queue, up to a point.
+    ///
+    /// Gutendex serves these from a CDN that intermittently refuses, and the
+    /// same URL asked again a moment later usually works. Retried quietly and
+    /// a bounded number of times: a reader who cannot see a thumbnail is not
+    /// helped by being told about it, and an unbounded retry would keep the
+    /// radio awake for a cover that is genuinely gone.
+    fn retry_cover(&mut self, index: usize, tries: u8) {
+        if tries + 1 < COVER_TRIES {
+            self.wanted.insert(0, (index, tries + 1));
         }
     }
 
@@ -448,14 +510,15 @@ impl Gutenshelf {
         }
     }
 
-    /// Starts the next cover, or repaints once the page is complete.
+    /// Refills the lanes, and repaints each time they all drain.
     ///
-    /// The repaint is deferred to exactly here. Painting on each arrival would
-    /// cost one full refresh per cover, and the reader would watch the shelf
-    /// fill in one tile at a time over several seconds.
+    /// Not on every arrival. Each repaint is a full panel refresh the reader
+    /// watches happen, so painting per cover would flash six times for one
+    /// shelf. Painting when a batch completes gives the shelf in two steps,
+    /// which reads as filling in rather than as a fault.
     fn next_cover(&mut self, context: &mut Context) {
         self.ask_cover(context);
-        if self.task.is_none() {
+        if self.covers.is_empty() {
             self.show(context);
         }
     }
@@ -646,6 +709,21 @@ impl KoboApp for Gutenshelf {
     }
 
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
+        // Covers first, and separately. They arrive several at a time and out
+        // of order, so they cannot share the single slot the catalogue and the
+        // book text take turns in.
+        if let Some((index, tries)) = self.finish_cover(task) {
+            match outcome {
+                TaskOutcome::Completed(bytes) => self.took_cover(context, index, &bytes),
+                // Silent on purpose. A missing cover leaves a tile with its
+                // glyph, which is a shelf that still works; a banner about
+                // artwork over a usable library is noise.
+                TaskOutcome::Failed(_) => self.retry_cover(index, tries),
+                TaskOutcome::Cancelled => {}
+            }
+            self.next_cover(context);
+            return;
+        }
         let Some((outstanding, awaiting)) = self.task else {
             return;
         };
@@ -660,18 +738,8 @@ impl KoboApp for Gutenshelf {
                     self.want_covers(context);
                 }
                 Awaiting::Text => self.took_text(context, &bytes),
-                Awaiting::Cover(index) => {
-                    self.took_cover(context, index, &bytes);
-                    return self.next_cover(context);
-                }
             },
             TaskOutcome::Failed(error) => {
-                if let Awaiting::Cover(_) = awaiting {
-                    // Silent on purpose. A missing cover leaves a tile with its
-                    // glyph, which is a shelf that still works; a banner about
-                    // artwork over a usable library is noise.
-                    return self.next_cover(context);
-                }
                 // Named rather than summarised. "Not found" and "the network
                 // could not be reached" call for completely different things
                 // from the reader.
@@ -683,9 +751,6 @@ impl KoboApp for Gutenshelf {
                 }
             }
             TaskOutcome::Cancelled => {
-                if let Awaiting::Cover(_) = awaiting {
-                    return self.next_cover(context);
-                }
                 self.problem = Some("Cancelled.".to_owned());
             }
         }
@@ -963,7 +1028,9 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{books_from, encode_query, plain_text_url, readable, Awaiting, Gutenshelf, View};
+    use super::{
+        books_from, encode_query, plain_text_url, readable, Awaiting, Gutenshelf, View, COVER_TRIES,
+    };
     use kobo_sdk::{action_id, AppRunner, Command};
     use kobo_ui::{Chrome, LayoutKind, CLARA_BW_METRICS};
 
@@ -1077,6 +1144,27 @@ Please read this before you distribute or use this work.\n";
 
     fn parsed() -> kobo_json::Value {
         kobo_json::parse(ANSWER).expect("the sample answer parses")
+    }
+
+    #[test]
+    fn a_cover_that_did_not_arrive_is_asked_for_again_but_not_forever() {
+        // Gutendex serves these from a CDN that intermittently refuses, and
+        // the same URL a moment later usually works.
+        let mut app = Gutenshelf::default();
+        app.retry_cover(4, 0);
+        assert_eq!(app.wanted, vec![(4, 1)]);
+
+        // Retried at the front, which is the end taken last: one dead URL must
+        // not be re-tried ahead of covers that have not been tried at all.
+        app.wanted = vec![(7, 0)];
+        app.retry_cover(4, 1);
+        assert_eq!(app.wanted, vec![(4, 2), (7, 0)]);
+
+        // And it does give up, or a cover that is genuinely gone would keep
+        // the radio awake for as long as the shelf is open.
+        let mut app = Gutenshelf::default();
+        app.retry_cover(4, COVER_TRIES - 1);
+        assert!(app.wanted.is_empty());
     }
 
     #[test]
