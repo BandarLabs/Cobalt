@@ -87,6 +87,7 @@ impl Simulator {
                     id: NodeId(3),
                     action: ActionId(1),
                     label: "Increment".into(),
+                    state: kobo_ui::ControlState::Enabled,
                 },
             ],
         );
@@ -1499,6 +1500,7 @@ mod tests {
                             id: NodeId(1),
                             action: ActionId(9),
                             label: "Tap".into(),
+                            state: kobo_ui::ControlState::Enabled,
                         }],
                     )),
                 },

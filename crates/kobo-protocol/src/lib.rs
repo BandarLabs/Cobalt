@@ -6,9 +6,9 @@ use std::fmt;
 use std::io::{self, Read, Write};
 
 use kobo_ui::{
-    ActionId, BannerLevel, BarAction, BottomAction, Caret, Cell, Freeform, Glyph, NavBar, Node,
-    NodeId, PageTurns, Percent, PictureHandle, Row, RowLead, RowState, Screen, Space, TextScale,
-    Tile, TilePicture, TileShape, TopBar, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS,
+    ActionId, BannerLevel, BarAction, BottomAction, Caret, Cell, ControlState, Freeform, Glyph,
+    NavBar, Node, NodeId, PageTurns, Percent, PictureHandle, Row, RowLead, RowState, Screen, Space,
+    TextScale, Tile, TilePicture, TileShape, TopBar, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS,
     MIN_NAV_DESTINATIONS,
 };
 use std::cmp::min;
@@ -1405,7 +1405,7 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
             length
         }
         Node::Button { label, .. } => {
-            let mut length = 9;
+            let mut length = 10;
             add_encoded_len(&mut length, encoded_string_len(label)?)?;
             length
         }
@@ -2036,10 +2036,19 @@ fn encode_node(
             output.push((*depth).min(kobo_ui::MAX_QUOTE_DEPTH));
             push_string(output, text)?;
         }
-        Node::Button { id, action, label } => {
+        Node::Button {
+            id,
+            action,
+            label,
+            state,
+        } => {
             output.push(3);
             push_u32(output, id.0);
             push_u32(output, action.0);
+            output.push(match state {
+                ControlState::Enabled => 0,
+                ControlState::Disabled => 1,
+            });
             push_string(output, label)?;
         }
         Node::Card { id, children } => {
@@ -2493,6 +2502,11 @@ fn decode_node(
         3 => Ok(Node::Button {
             id,
             action: ActionId(reader.u32()?),
+            state: match reader.u8()? {
+                0 => ControlState::Enabled,
+                1 => ControlState::Disabled,
+                _ => return Err(ProtocolError::InvalidValue("control state")),
+            },
             label: reader.string()?,
         }),
         4 => {
@@ -2952,6 +2966,7 @@ mod tests {
                         id: NodeId(2),
                         action: ActionId(3),
                         label: "Go".into(),
+                        state: ControlState::Enabled,
                     }],
                 }],
             )),
@@ -3096,6 +3111,7 @@ mod node_coverage_tests {
                 id: NodeId(3),
                 action: ActionId(1),
                 label: "Press".into(),
+                state: ControlState::Disabled,
             },
             Node::Card {
                 id: NodeId(4),

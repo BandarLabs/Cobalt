@@ -14,10 +14,10 @@ pub use kobo_protocol::{
 };
 pub use kobo_ui::{
     terminal_grid, terminal_grid_for, ActionId, BannerLevel, BarAction, BottomAction, Caret, Cell,
-    Chrome, DiagnosticSeverity, DisplayMetrics, Freeform, Glyph, LayoutIssue, LayoutIssueKind,
-    NavBar, Node, NodeId, Percent, PictureHandle, ProseArea, Row, RowLead, Screen, Space, Tile,
-    TilePicture, TileShape, TopBar, MAX_CELLS, MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_QUOTE_DEPTH,
-    MAX_ROWS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS,
+    Chrome, ControlState, DiagnosticSeverity, DisplayMetrics, Freeform, Glyph, LayoutIssue,
+    LayoutIssueKind, NavBar, Node, NodeId, Percent, PictureHandle, ProseArea, Row, RowLead, Screen,
+    Space, Tile, TilePicture, TileShape, TopBar, MAX_CELLS, MAX_CHOICE_OPTIONS, MAX_COLUMNS,
+    MAX_QUOTE_DEPTH, MAX_ROWS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS,
 };
 use std::collections::VecDeque;
 use std::fmt;
@@ -36,11 +36,200 @@ pub mod terminal;
 
 pub mod prelude {
     pub use crate::{
-        action_id, ActionId, AppRunner, AppShell, AppStore, Capability, Client, ClientEvent,
-        Command, Context, DenyReason, Device, DeviceRequest, DeviceResult, Grant, Grants, KoboApp,
-        Lifecycle, Node, NodeId, PowerPolicy, Screen, ScreenBuilder, ShellError, ShellEvent,
-        ShellRequest, StoreError, StoreRequest, StoreResult,
+        action_id, ActionId, AppIcon, AppMetadata, AppRunner, AppShell, AppStore, Capability,
+        Client, ClientEvent, Command, Context, ControlState, DenyReason, Device, DeviceRequest,
+        DeviceResult, DialogAction, Grant, Grants, KoboApp, Lifecycle, Navigator, Node, NodeId,
+        PowerPolicy, Screen, ScreenBuilder, ShellError, ShellEvent, ShellRequest, StandardState,
+        StoreError, StoreRequest, StoreResult,
     };
+}
+
+/// A small, typed back stack for application-owned destinations.
+///
+/// The root can never be popped, so an action handler can call [`Self::back`]
+/// without manufacturing an impossible "no current screen" case.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Navigator<Route> {
+    root: Route,
+    stack: Vec<Route>,
+}
+
+impl<Route> Navigator<Route> {
+    #[must_use]
+    pub fn new(root: Route) -> Self {
+        Self {
+            root,
+            stack: Vec::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn current(&self) -> &Route {
+        self.stack.last().unwrap_or(&self.root)
+    }
+
+    #[must_use]
+    pub fn can_go_back(&self) -> bool {
+        !self.stack.is_empty()
+    }
+
+    #[must_use]
+    pub fn depth(&self) -> usize {
+        self.stack.len() + 1
+    }
+
+    pub fn push(&mut self, route: Route) {
+        self.stack.push(route);
+    }
+
+    /// Replaces the current destination without adding a back-stack entry.
+    pub fn replace(&mut self, route: Route) {
+        if let Some(current) = self.stack.last_mut() {
+            *current = route;
+        } else {
+            self.root = route;
+        }
+    }
+
+    /// Returns to the previous destination, or leaves the root unchanged.
+    #[must_use]
+    pub fn back(&mut self) -> bool {
+        if self.can_go_back() {
+            self.stack.pop();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn reset(&mut self, root: Route) {
+        self.stack.clear();
+        self.root = root;
+    }
+}
+
+/// An application icon that remains legible when an image is unavailable.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AppIcon {
+    Glyph(Glyph),
+    Picture {
+        picture: TilePicture,
+        fallback: Glyph,
+    },
+}
+
+impl AppIcon {
+    #[must_use]
+    pub const fn glyph(glyph: Glyph) -> Self {
+        Self::Glyph(glyph)
+    }
+
+    #[must_use]
+    pub const fn picture(picture: TilePicture, fallback: Glyph) -> Self {
+        Self::Picture { picture, fallback }
+    }
+
+    fn tile(self, action: ActionId, label: impl Into<String>) -> Tile {
+        match self {
+            Self::Glyph(glyph) => Tile::new(action, label, glyph),
+            Self::Picture { picture, fallback } => {
+                Tile::new(action, label, fallback).with_picture(picture)
+            }
+        }
+    }
+}
+
+/// Compile-time application identity and launcher presentation.
+///
+/// Keeping this borrowed makes a manifest usable as a `const`, while
+/// [`Self::tile`] turns it directly into the SDK's launcher primitive.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AppMetadata {
+    pub id: &'static str,
+    pub display_name: &'static str,
+    pub summary: &'static str,
+    pub icon: AppIcon,
+}
+
+impl AppMetadata {
+    #[must_use]
+    pub const fn new(
+        id: &'static str,
+        display_name: &'static str,
+        summary: &'static str,
+        icon: AppIcon,
+    ) -> Self {
+        Self {
+            id,
+            display_name,
+            summary,
+            icon,
+        }
+    }
+
+    #[must_use]
+    pub fn tile(self, action: ActionId) -> Tile {
+        self.icon.tile(action, self.display_name)
+    }
+}
+
+/// Standard whole-screen conditions with consistent titles and urgency.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StandardState {
+    Empty,
+    Offline,
+    PermissionDenied,
+    Error,
+}
+
+impl StandardState {
+    #[must_use]
+    pub const fn title(self) -> &'static str {
+        match self {
+            Self::Empty => "Nothing here yet",
+            Self::Offline => "You're offline",
+            Self::PermissionDenied => "Permission needed",
+            Self::Error => "Something went wrong",
+        }
+    }
+
+    const fn banner(self) -> Option<&'static str> {
+        match self {
+            Self::Empty => None,
+            Self::Offline => Some("No network connection"),
+            Self::PermissionDenied => Some("Access is not available"),
+            Self::Error => Some("The operation could not be completed"),
+        }
+    }
+}
+
+/// One action in a standard confirmation screen.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DialogAction {
+    pub name: String,
+    pub label: String,
+    pub state: ControlState,
+}
+
+impl DialogAction {
+    #[must_use]
+    pub fn new(name: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            label: label.into(),
+            state: ControlState::Enabled,
+        }
+    }
+
+    #[must_use]
+    pub const fn disabled(mut self, disabled: bool) -> Self {
+        self.state = if disabled {
+            ControlState::Disabled
+        } else {
+            ControlState::Enabled
+        };
+        self
+    }
 }
 
 /// Builds a retained screen with deterministic identifiers.
@@ -97,6 +286,71 @@ impl ScreenBuilder {
         self
     }
 
+    /// Adds a consistent empty, offline, denied, or error presentation.
+    ///
+    /// Chain [`Self::button`] when the condition has a recovery action. The
+    /// state itself owns no action so an empty collection is never forced to
+    /// pretend it can be fixed.
+    #[must_use]
+    pub fn standard_state(self, state: StandardState, message: impl Into<String>) -> Self {
+        let builder = if let Some(banner) = state.banner() {
+            self.banner(BannerLevel::Attention, banner)
+        } else {
+            self
+        };
+        builder.heading(state.title()).text(message)
+    }
+
+    #[must_use]
+    pub fn empty_state(self, message: impl Into<String>) -> Self {
+        self.standard_state(StandardState::Empty, message)
+    }
+
+    #[must_use]
+    pub fn offline_state(self, message: impl Into<String>) -> Self {
+        self.standard_state(StandardState::Offline, message)
+    }
+
+    #[must_use]
+    pub fn permission_denied_state(self, message: impl Into<String>) -> Self {
+        self.standard_state(StandardState::PermissionDenied, message)
+    }
+
+    #[must_use]
+    pub fn error_state(self, message: impl Into<String>) -> Self {
+        self.standard_state(StandardState::Error, message)
+    }
+
+    /// Builds a sparse, full-screen confirmation using standard controls.
+    ///
+    /// Kobo applications do not open floating windows: the display is a
+    /// single retained page, so confirmations replace the page and use the
+    /// application's typed navigator to return.
+    #[must_use]
+    pub fn confirmation(
+        self,
+        title: impl Into<String>,
+        message: impl Into<String>,
+        primary: DialogAction,
+        secondary: DialogAction,
+    ) -> Self {
+        let DialogAction {
+            name: primary_name,
+            label: primary_label,
+            state: primary_state,
+        } = primary;
+        let DialogAction {
+            name: secondary_name,
+            label: secondary_label,
+            state: secondary_state,
+        } = secondary;
+        self.heading(title)
+            .text(message)
+            .divider()
+            .button_with_state(primary_name, primary_label, primary_state)
+            .button_with_state(secondary_name, secondary_label, secondary_state)
+    }
+
     /// A paragraph set in from the left by `depth` levels, with a rule beside
     /// it, for a reply that answers what came before it.
     ///
@@ -115,13 +369,31 @@ impl ScreenBuilder {
     }
 
     #[must_use]
-    pub fn button(mut self, name: impl AsRef<str>, label: impl Into<String>) -> Self {
+    pub fn button(self, name: impl AsRef<str>, label: impl Into<String>) -> Self {
+        self.button_with_state(name, label, ControlState::Enabled)
+    }
+
+    /// Adds a button that is visible but cannot currently be activated.
+    #[must_use]
+    pub fn disabled_button(self, name: impl AsRef<str>, label: impl Into<String>) -> Self {
+        self.button_with_state(name, label, ControlState::Disabled)
+    }
+
+    /// Adds a button with explicit semantic enabled state.
+    #[must_use]
+    pub fn button_with_state(
+        mut self,
+        name: impl AsRef<str>,
+        label: impl Into<String>,
+        state: ControlState,
+    ) -> Self {
         let action = self.register(name.as_ref());
         let id = self.next_id();
         self.nodes.push(Node::Button {
             id,
             action,
             label: label.into(),
+            state,
         });
         self
     }
@@ -286,6 +558,25 @@ impl ScreenBuilder {
         let tiles = tiles
             .into_iter()
             .map(|(name, label, glyph)| Tile::new(self.register(name.as_ref()), label, glyph))
+            .collect();
+        self.nodes.push(Node::TileGrid {
+            id,
+            tiles,
+            shape: TileShape::Square,
+        });
+        self
+    }
+
+    /// Adds launcher tiles directly from application metadata.
+    #[must_use]
+    pub fn apps<I>(mut self, apps: I) -> Self
+    where
+        I: IntoIterator<Item = AppMetadata>,
+    {
+        let id = self.next_id();
+        let tiles = apps
+            .into_iter()
+            .map(|app| app.tile(self.register(app.id)))
             .collect();
         self.nodes.push(Node::TileGrid {
             id,
@@ -1659,6 +1950,7 @@ mod tests {
                     id: NodeId(1),
                     action: ActionId(1),
                     label: "Tap".into(),
+                    state: ControlState::Enabled,
                 }],
             ));
         }
@@ -1719,6 +2011,74 @@ mod tests {
             screen.nodes.last(),
             Some(Node::Button { action, .. }) if *action == action_id("close")
         ));
+    }
+
+    #[test]
+    fn navigator_keeps_a_root_and_supports_push_replace_and_reset() {
+        let mut navigation = Navigator::new("home");
+        assert_eq!(navigation.current(), &"home");
+        assert!(!navigation.back());
+        navigation.push("details");
+        navigation.replace("confirmation");
+        assert_eq!(navigation.depth(), 2);
+        assert_eq!(navigation.current(), &"confirmation");
+        assert!(navigation.back());
+        assert_eq!(navigation.current(), &"home");
+        navigation.reset("library");
+        assert_eq!(navigation.current(), &"library");
+        assert!(!navigation.can_go_back());
+    }
+
+    #[test]
+    fn standard_states_and_confirmations_have_consistent_structure() {
+        let state = ScreenBuilder::new("offline")
+            .offline_state("Reconnect, then try again.")
+            .button("retry", "Try again")
+            .build();
+        assert!(matches!(state.nodes.first(), Some(Node::Banner { .. })));
+        assert!(state
+            .nodes
+            .iter()
+            .any(|node| matches!(node, Node::Heading { text, .. } if text == "You're offline")));
+
+        let confirmation = ScreenBuilder::new("delete")
+            .confirmation(
+                "Delete this note?",
+                "This cannot be undone.",
+                DialogAction::new("delete", "Delete"),
+                DialogAction::new("cancel", "Cancel").disabled(true),
+            )
+            .build();
+        let states = confirmation
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                Node::Button { state, .. } => Some(*state),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(states, vec![ControlState::Enabled, ControlState::Disabled]);
+    }
+
+    #[test]
+    fn application_metadata_builds_launcher_tiles_with_image_fallbacks() {
+        const APP: AppMetadata = AppMetadata::new(
+            "notes",
+            "Notes",
+            "Write without distraction.",
+            AppIcon::picture(TilePicture::new(PictureHandle(8), 128, 128), Glyph::Note),
+        );
+        let screen = ScreenBuilder::new("apps").apps([APP]).build();
+        let Node::TileGrid { tiles, .. } = &screen.nodes[0] else {
+            panic!("metadata did not produce a tile grid");
+        };
+        assert_eq!(tiles[0].action, action_id(APP.id));
+        assert_eq!(tiles[0].label, APP.display_name);
+        assert_eq!(tiles[0].glyph, Glyph::Note);
+        assert_eq!(
+            tiles[0].picture,
+            Some(TilePicture::new(PictureHandle(8), 128, 128))
+        );
     }
 
     #[test]

@@ -429,6 +429,25 @@ pub struct BarAction {
     pub label: String,
 }
 
+/// Whether a control can currently be activated.
+///
+/// Disabled is semantic state rather than a colour chosen by the application:
+/// the renderer gives it a quiet, outlined treatment and hit testing excludes
+/// it completely.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum ControlState {
+    #[default]
+    Enabled,
+    Disabled,
+}
+
+impl ControlState {
+    #[must_use]
+    pub const fn is_enabled(self) -> bool {
+        matches!(self, Self::Enabled)
+    }
+}
+
 impl BarAction {
     #[must_use]
     pub fn new(action: ActionId, label: impl Into<String>) -> Self {
@@ -865,7 +884,7 @@ fn layout_bottom_action(bottom: &BottomAction, metrics: &DisplayMetrics, layout:
             width,
             height,
         },
-        kind: LayoutKind::Button(bottom.action.action),
+        kind: LayoutKind::Button(bottom.action.action, ControlState::Enabled),
         text_lines: vec![one_line(&bottom.action.label, width - 32, FontSize::Body)],
     });
 }
@@ -958,6 +977,7 @@ pub enum Node {
         id: NodeId,
         action: ActionId,
         label: String,
+        state: ControlState,
     },
     Card {
         id: NodeId,
@@ -1484,7 +1504,7 @@ pub enum LayoutKind {
     /// An indented paragraph. The value is the clamped depth, so the renderer
     /// can draw the gutter rule without consulting the tree.
     Quote(u8),
-    Button(ActionId),
+    Button(ActionId, ControlState),
     Card,
     Divider,
     Spacer,
@@ -1683,7 +1703,7 @@ impl Layout {
 
     fn hit_control(&self, x: i32, y: i32) -> Option<ActionId> {
         self.nodes.iter().rev().find_map(|node| match node.kind {
-            LayoutKind::Button(action)
+            LayoutKind::Button(action, ControlState::Enabled)
             | LayoutKind::BarAction(action)
             | LayoutKind::NavDestination(action)
             | LayoutKind::NavDestinationSelected(action)
@@ -1733,7 +1753,7 @@ impl Layout {
         self.nodes
             .iter()
             .find(|node| match node.kind {
-                LayoutKind::Button(candidate)
+                LayoutKind::Button(candidate, ControlState::Enabled)
                 | LayoutKind::BarAction(candidate)
                 | LayoutKind::NavDestination(candidate)
                 | LayoutKind::NavDestinationSelected(candidate)
@@ -1916,7 +1936,12 @@ fn layout_node(
             });
             y.saturating_add(height)
         }
-        Node::Button { id, action, label } => {
+        Node::Button {
+            id,
+            action,
+            label,
+            state,
+        } => {
             // A control is never smaller than a finger, by construction. The
             // author never gets to choose a height at all.
             let height = max(
@@ -1931,7 +1956,7 @@ fn layout_node(
                     width,
                     height,
                 },
-                kind: LayoutKind::Button(*action),
+                kind: LayoutKind::Button(*action, *state),
                 text_lines: wrap_text(label, width - 32, FontSize::Body),
             });
             y.saturating_add(height)
@@ -3816,7 +3841,7 @@ fn validate_layout_nodes(layout: &Layout, metrics: &DisplayMetrics, issues: &mut
 const fn is_tappable(kind: LayoutKind) -> bool {
     matches!(
         kind,
-        LayoutKind::Button(_)
+        LayoutKind::Button(_, ControlState::Enabled)
             | LayoutKind::Back
             | LayoutKind::BarAction(_)
             | LayoutKind::NavDestination(_)
@@ -3847,7 +3872,7 @@ fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
         | LayoutKind::NavDestinationSelected(_) => FontSize::Caption,
         LayoutKind::Text
         | LayoutKind::Quote(_)
-        | LayoutKind::Button(_)
+        | LayoutKind::Button(_, _)
         | LayoutKind::PagedList
         | LayoutKind::BarAction(_)
         | LayoutKind::RowTitle
@@ -4204,7 +4229,7 @@ pub fn render_all(
                     clip,
                 );
             }
-            LayoutKind::Button(_) => {
+            LayoutKind::Button(_, ControlState::Enabled) => {
                 fill_clipped(surface, node.rect, tone::INK, clip);
                 draw_centered(
                     surface,
@@ -4212,6 +4237,23 @@ pub fn render_all(
                     node.rect,
                     FontSize::Body,
                     tone::PAPER,
+                    clip,
+                );
+            }
+            LayoutKind::Button(_, ControlState::Disabled) => {
+                stroke_clipped(
+                    surface,
+                    node.rect,
+                    tone::RULE,
+                    metrics.rule_thickness(),
+                    clip,
+                );
+                draw_centered(
+                    surface,
+                    &node.text_lines,
+                    node.rect,
+                    FontSize::Body,
+                    tone::MUTED,
                     clip,
                 );
             }
@@ -5228,6 +5270,7 @@ mod tests {
                 id: NodeId(1),
                 action: ActionId(2),
                 label: "Increment".into(),
+                state: ControlState::Enabled,
             }],
         );
         let button = screen.layout().nodes[0].rect;
@@ -5237,6 +5280,26 @@ mod tests {
             Some(ActionId(2))
         );
         assert_eq!(screen.hit_test(0, 0), None);
+    }
+
+    #[test]
+    fn a_disabled_button_is_visible_but_not_tappable() {
+        let screen = Screen::new(
+            7,
+            vec![Node::Button {
+                id: NodeId(1),
+                action: ActionId(2),
+                label: "Unavailable".into(),
+                state: ControlState::Disabled,
+            }],
+        );
+        let layout = screen.layout();
+        let button = &layout.nodes[0];
+        assert_eq!(
+            button.kind,
+            LayoutKind::Button(ActionId(2), ControlState::Disabled)
+        );
+        assert_eq!(screen.hit_test(button.rect.x + 1, button.rect.y + 1), None);
     }
 
     #[test]
@@ -5261,6 +5324,7 @@ mod tests {
                 id: NodeId(1),
                 action: ActionId(1),
                 label: "Go".into(),
+                state: ControlState::Enabled,
             }],
         );
         let mut surface = Surface::new(128, 128);
@@ -5432,6 +5496,7 @@ mod page_turn_tests {
                 id: NodeId(2),
                 action: ActionId(99),
                 label: "Press me".to_owned(),
+                state: ControlState::Enabled,
             }],
         )
         .with_page_turns(ActionId(10), ActionId(20));
@@ -5439,7 +5504,7 @@ mod page_turn_tests {
         let button = layout
             .nodes
             .iter()
-            .find(|node| matches!(node.kind, LayoutKind::Button(_)))
+            .find(|node| matches!(node.kind, LayoutKind::Button(..)))
             .expect("a button");
         let (x, y) = (
             button.rect.x + button.rect.width / 2,
@@ -6287,6 +6352,7 @@ mod loading_tests {
                 id: NodeId(3),
                 action: ActionId(3),
                 label: "Button".into(),
+                state: ControlState::Enabled,
             },
             Node::Card {
                 id: NodeId(4),
@@ -6370,6 +6436,7 @@ mod loading_tests {
                         id: NodeId(900),
                         action: ActionId(900),
                         label: "After".into(),
+                        state: ControlState::Enabled,
                     },
                 ],
             );
@@ -6377,11 +6444,13 @@ mod loading_tests {
             let after = layout
                 .nodes
                 .iter()
-                .find(|candidate| candidate.kind == LayoutKind::Button(ActionId(900)))
+                .find(|candidate| {
+                    candidate.kind == LayoutKind::Button(ActionId(900), ControlState::Enabled)
+                })
                 .expect("the following button was laid out")
                 .rect;
             for other in &layout.nodes {
-                if other.kind == LayoutKind::Button(ActionId(900)) {
+                if other.kind == LayoutKind::Button(ActionId(900), ControlState::Enabled) {
                     continue;
                 }
                 assert!(
@@ -6404,7 +6473,7 @@ mod loading_tests {
             .nodes
             .iter()
             .filter_map(|node| match node.kind {
-                LayoutKind::Button(action)
+                LayoutKind::Button(action, ControlState::Enabled)
                 | LayoutKind::BarAction(action)
                 | LayoutKind::Tile(action)
                 | LayoutKind::Row(action)
@@ -6840,6 +6909,7 @@ mod prose_tests {
                 id: NodeId(2),
                 action,
                 label: "Do it".to_string(),
+                state: ControlState::Enabled,
             });
             if !after.is_empty() {
                 nodes.push(Node::Text {

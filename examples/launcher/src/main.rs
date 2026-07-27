@@ -419,7 +419,7 @@ mod tests {
                 let found = layout.nodes.iter().any(|node| {
                     matches!(
                         node.kind,
-                        LayoutKind::Button(action) | LayoutKind::NavDestination(action)
+                        LayoutKind::Button(action, _) | LayoutKind::NavDestination(action)
                         if action == reader
                     )
                 });
@@ -575,7 +575,7 @@ mod tests {
             layout
                 .nodes
                 .iter()
-                .any(|node| matches!(node.kind, LayoutKind::Button(_))),
+                .any(|node| matches!(node.kind, LayoutKind::Button(..))),
             "nothing on this screen goes anywhere, and the runtime will not \
              repaint it if the application never arrives"
         );
