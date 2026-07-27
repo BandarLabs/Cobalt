@@ -225,9 +225,18 @@ impl DisplayMetrics {
         self.tenth_mm(3)
     }
 
+    /// The height of the fixed bar that carries the title and the way back.
+    ///
+    /// Eleven millimetres to start with, which was a millimetre more than the
+    /// comfortable control default for no reason beyond looking settled, and
+    /// on a 122 millimetre panel that is nine per cent of everything the
+    /// reader has. Eight and a half is a quarter off and still one and a half
+    /// millimetres above [`Self::touch_target_minimum`], which matters because
+    /// this bar carries Back — the one control that is guaranteed to work, and
+    /// so the one that must never be the size of a guess.
     #[must_use]
     pub const fn top_bar_height(&self) -> i32 {
-        self.tenth_mm(110)
+        self.tenth_mm(85)
     }
 
     #[must_use]
@@ -583,6 +592,18 @@ pub struct Screen {
     /// has been hit-tested, so a button, a row or a keyboard key always wins:
     /// a tap can never turn the page *and* press something.
     pub page_turns: Option<PageTurns>,
+    /// Whether the application has somewhere of its own to go back to.
+    ///
+    /// The runtime still owns the control and still decides. This only says
+    /// that the application would like first refusal on it: when set, the tap
+    /// arrives as [`ActionId::BACK`] instead of leaving for the launcher, so a
+    /// screen reached from inside an application returns to the screen it was
+    /// reached from rather than out of the application altogether.
+    ///
+    /// It cannot be used to trap the reader. An application offered Back that
+    /// does not then draw something new is left behind and the launcher shown
+    /// anyway, so the worst this can do is delay the way out once.
+    pub owns_back: bool,
 }
 
 /// The actions a tap on the left or right of the content area sends.
@@ -620,7 +641,19 @@ impl Screen {
             nav_bar: None,
             bottom_action: None,
             page_turns: None,
+            owns_back: false,
         }
+    }
+
+    /// Asks for first refusal on the runtime's Back control.
+    ///
+    /// Pass the application's own answer to "is there anywhere to go back to",
+    /// so the last screen of an application's own stack still leaves for the
+    /// launcher rather than swallowing the tap and appearing to do nothing.
+    #[must_use]
+    pub const fn with_own_back(mut self, owns_back: bool) -> Self {
+        self.owns_back = owns_back;
+        self
     }
 
     /// Turns the sides of the content area into page turns.
@@ -1203,11 +1236,20 @@ impl TileShape {
     /// A physical measurement rather than a pixel count, for the same reason
     /// every other size here is: 25 millimetres is a comfortable icon on any
     /// panel, and 25 pixels is a different thing on each one.
+    ///
+    /// Portrait was 40 millimetres, which on a six inch panel is two columns,
+    /// and two columns of a shape half again as tall as it is wide is a row
+    /// and a half of shelf between the bars — the third row was cut in half by
+    /// the nav bar, so a shelf of six read as four books and a mistake. Three
+    /// columns of 26 millimetres puts two whole rows on the panel. It is a
+    /// smaller cover and it is 310 by 465 pixels at 300 pixels per inch, which
+    /// is a larger thumbnail than a phone bookshelf shows, so nothing about
+    /// recognising a cover is lost by it.
     #[must_use]
     pub const fn minimum_cell_tenth_mm(self) -> i32 {
         match self {
             Self::Square => 250,
-            Self::Portrait => 400,
+            Self::Portrait => 260,
         }
     }
 }

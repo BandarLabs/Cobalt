@@ -15,6 +15,47 @@ taught us.
 The hardware target is the Kobo Clara BW N365, device code 391. Unknown
 hardware is rejected rather than mapped to a similar model.
 
+## What is here, and what is not
+
+Verified on the physical Clara BW unless stated otherwise.
+
+**Working on the device**
+
+| | |
+|---|---|
+| Runtime | Sessions with guaranteed teardown, screen snapshot and restore, watchdog, exclusive touch grab, idle and ceiling limits |
+| Display | Full and partial refresh, GC16 and DU waveforms, measured layout at 1072×1448 |
+| Input | Touch with the panel's own transform, verified against a physical tap |
+| UI | Bars, tiles, picture tiles, grids, rows, checklists, keyboard, terminal, prose pagination, skeletons, banners, dialogs |
+| Pictures | Chunked upload, an LRU cache, greyscale conversion, glyph fallback |
+| Network | HTTPS `Fetch` and `Post`, ranged downloads, a 24 MB transfer, named credentials the application never sees |
+| Storage | Per-application keyed state under its own directory |
+| Navigation | A runtime-owned Back the application may answer first (see below) |
+| Tooling | `devices`, `doctor`, `package`, `deploy`, `inspect`, `verify`, `session`, `wait`, `logs`, `touch-probe`, and a Clara BW simulator in the browser |
+| Applications | `launcher`, `hn`, `gutenshelf`, `chat`, `todo`, `terminal`, `tictactoe`, `gallery`, `brief` |
+
+**Not here yet, stated plainly**
+
+- **`schedule_wake` has no device backend.** The runtime does not own suspend
+  or the RTC alarm, so a scheduled wake is refused rather than silently
+  dropped. This costs the entire ambient genre, which is arguably E Ink's
+  native one: `brief` is the shape of it and on a device it only collects while
+  it is in the foreground. Making it real means `kobod` owning suspend on the
+  only device there is.
+- **One device.** Clara BW N365, device code 391. Everything else is refused
+  rather than mapped to a similar model, so there is no second profile to test
+  against and no evidence any of this holds elsewhere.
+- **No install without SSH.** Deploying over Wi-Fi needs an SSH server the
+  platform does not ship. The USB route (`kobo package`, copy to
+  `.kobo/KoboRoot.tgz`) always works and needs nothing.
+- **The simulator does not draw the runtime chrome.** It lays screens out with
+  no back bar, so Back and the grace period that backs it can only be exercised
+  on hardware or in `kobod`'s tests.
+- **Nothing is signed or verified at rest.** `kobo deploy` checksums what it
+  uploads end to end, but a package already on the drive is trusted.
+- **No power budget.** Nothing measures or bounds what a session costs the
+  battery beyond the idle and ceiling timers.
+
 ## The governing rule
 
 **Nothing that cannot be undone by a reboot.**
@@ -220,7 +261,35 @@ has never set one up installs over USB and never encounters any of this.
 ```sh
 kobo doctor  --device <address>              # read-only identity probe
 kobo session --device <address> --status     # power and network state
+kobo logs    --device <address>              # follow the runtime trace
+kobo logs    --device <address> --dump -t 50 # the last 50 lines, then exit
+kobo logs    --device <address> --clear      # empty it before a test run
 ```
+
+`kobo logs` reads `/mnt/onboard/.kobo-blackbox.log`, which is where the runtime
+writes every tap, every screen and every task result. It is the only view into
+what a session is actually doing. The runtime writes it only when started with
+`KOBO_BLACKBOX=1`, because a synchronous write per event is not something to
+impose on a session nobody is debugging; `kobo logs` says so rather than
+showing an empty file when the trace is not there.
+
+### If you have shipped for Android or iOS
+
+The concepts are the same and only the spelling differs, so the spellings you
+already know work:
+
+| You may type | It runs |
+| --- | --- |
+| `kobo logcat` | `kobo logs` |
+| `kobo install` | `kobo deploy` |
+| `kobo wait-for-device` | `kobo wait` |
+| `kobo sim`, `kobo simulator` | `kobo dev` |
+| `kobo init`, `kobo create` | `kobo new` |
+
+`kobo logs` takes `adb logcat`'s flags too — `-f` follow, `-d` dump, `-t N`
+lines, `-c` clear — and every command that takes `--device` also takes `-s`.
+These are aliases onto one implementation rather than second commands, so there
+is nothing extra to keep in step.
 
 `scp` cannot be used with this device: its SSH server ignores remote arguments,
 so the `scp -t` helper never runs and the transfer hangs. Files go through the
@@ -449,6 +518,25 @@ application marking its own state with a character the installed face has no
 glyph for — in debug builds `set_screen` refuses a screen carrying one, so an
 application's own tests fail instead of the panel showing an empty box.
 
+### Back belongs to the reader, and can be lent
+
+The Back control in the top bar is drawn by the runtime, on top of whatever the
+application asked for. It cannot be removed, cannot be forged — `ActionId::BACK`
+is refused if an application tries to bind it — and always ends at the launcher.
+That is what makes it the reliable way out of anything.
+
+It used to end there *immediately*, which was wrong in a way only the device
+showed: tapping Back inside a book left the whole application, and reopening it
+came back to the book rather than the shelf, because its retained screen had
+never changed. An application had no way to have any history at all.
+
+A screen may now ask for first refusal with `owns_back(true)`. The runtime
+delivers `ActionId::BACK` as an ordinary action instead of leaving, and starts a
+two second clock. If a screen arrives, the application went back inside itself.
+If none does, the launcher appears anyway. So an application can have history,
+and still cannot trap a reader — the guarantee is a deadline rather than a
+promise, which is the only kind an application cannot break.
+
 Pictures are decoded by `kobo-image`, halftoned to the sixteen greys this panel
 resolves, and scaled to the cell they will occupy — including *up*, bounded, so
 a book cover published at 190 by 300 fills a tile on a 300 pixel-per-inch panel
@@ -527,15 +615,11 @@ else: every hardware-changing request is honestly refused. The simulator
 implements all of them, so application logic can be written and tested now and
 will behave identically when a backend is turned on.
 
-### What is not there yet, stated plainly
+### Refusing rather than inventing
 
-`schedule_wake` has no device backend. On hardware the runtime does not own
-suspend or the RTC alarm, so a scheduled wake is refused rather than silently
-dropped — but that means the entire ambient genre, which is arguably E Ink's
-native one, works in the simulator and not on the panel. `brief` is the example
-of the shape; on a device it collects its stories while it is in the
-foreground. Making it real means `kobod` owning suspend on the only device
-there is, which is deliberately not something done unattended.
+`schedule_wake` is the largest refusal and is listed under
+[what is not here](#what-is-here-and-what-is-not). The principle behind it
+applies to every backend:
 
 **An invented reading is worse than a refusal**, because an application cannot
 tell one from the other and will act on it. The battery backend finds the supply

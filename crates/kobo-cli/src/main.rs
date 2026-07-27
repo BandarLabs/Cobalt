@@ -227,19 +227,55 @@ fn main() -> ExitCode {
     }
 }
 
+/// Other names for commands that already exist.
+///
+/// Nobody arrives here without habits. Somebody who has shipped an Android or
+/// iOS application has `adb logcat`, `adb install` and `adb wait-for-device`
+/// in their fingers, and a tool that answers "unknown command" to those is
+/// spending the reader's goodwill on nothing: the concepts are the same and
+/// only the spelling differs. These map onto the canonical name rather than
+/// duplicating it, so there is still one implementation and one help entry.
+const ALIASES: &[(&str, &str)] = &[
+    ("logcat", "logs"),
+    ("install", "deploy"),
+    ("wait-for-device", "wait"),
+    ("simulator", "dev"),
+    ("sim", "dev"),
+    ("init", "new"),
+    ("create", "new"),
+];
+
+/// Whether an argument names the device to act on.
+///
+/// `-s` because that is what `adb` calls it and the muscle memory is real;
+/// `--device` because that is what this tool called it first and what every
+/// example still says.
+fn is_device_flag(argument: &str) -> bool {
+    argument == "--device" || argument == "-s"
+}
+
+/// Resolves an alias to the command it stands for.
+fn canonical(command: &str) -> &str {
+    ALIASES
+        .iter()
+        .find_map(|(alias, name)| (*alias == command).then_some(*name))
+        .unwrap_or(command)
+}
+
 fn run(arguments: &[String]) -> Result<(), String> {
     let Some(command) = arguments.first().map(String::as_str) else {
         print_help();
         return Ok(());
     };
-    match command {
+    match canonical(command) {
         "new" => create_app(arguments.get(1).ok_or("usage: kobo new <name>")?),
         "dev" => dev(&arguments[1..]),
-        "build" => build_device(arguments.iter().any(|argument| argument == "--device")),
+        "build" => build_device(arguments.iter().any(|argument| is_device_flag(argument))),
         "doctor" => doctor(&arguments[1..]),
         "devices" => list_devices(&arguments[1..]),
         "session" => dev_session(&arguments[1..]),
         "wait" => wait_for_device(&arguments[1..]),
+        "logs" => device_logs(&arguments[1..]),
         "touch-probe" => touch_probe(&arguments[1..]),
         #[cfg(feature = "device-write")]
         "smoke-display" => smoke_display(&arguments[1..]),
@@ -681,7 +717,10 @@ fn build_device(device: bool) -> Result<(), String> {
 }
 
 fn doctor(arguments: &[String]) -> Result<(), String> {
-    if let Some(position) = arguments.iter().position(|argument| argument == "--device") {
+    if let Some(position) = arguments
+        .iter()
+        .position(|argument| is_device_flag(argument))
+    {
         let host = arguments
             .get(position + 1)
             .ok_or("usage: kobo doctor --device <host>")?;
@@ -706,8 +745,8 @@ fn touch_probe(arguments: &[String]) -> Result<(), String> {
 
 fn parse_touch_probe(arguments: &[String]) -> Result<(&str, u64), String> {
     let (host, seconds) = match arguments {
-        [device, host] if device == "--device" => (host, TOUCH_PROBE_DEFAULT_SECONDS),
-        [device, host, flag, value] if device == "--device" && flag == "--seconds" => {
+        [device, host] if is_device_flag(device) => (host, TOUCH_PROBE_DEFAULT_SECONDS),
+        [device, host, flag, value] if is_device_flag(device) && flag == "--seconds" => {
             let seconds = value
                 .parse::<u64>()
                 .map_err(|_| "--seconds must be a whole number".to_owned())?;
@@ -990,6 +1029,164 @@ fn wait_for_device(arguments: &[String]) -> Result<(), String> {
     }
 }
 
+/// Where the runtime's trace lands on the device.
+///
+/// Named here rather than shared with `kobod`, because the CLI is built for
+/// the host and the runtime for the device: a common constant would mean one
+/// crate depending on the other for a string neither owns.
+const DEVICE_TRACE_LOG: &str = "/mnt/onboard/.kobo-blackbox.log";
+/// The most trace lines a single `kobo logs` may print without `--lines`.
+const DEFAULT_TRACE_LINES: u32 = 200;
+const MAXIMUM_TRACE_LINES: u32 = 10_000;
+
+/// What a `kobo logs` invocation asked for.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct LogRequest<'a> {
+    host: &'a str,
+    follow: bool,
+    lines: u32,
+    clear: bool,
+}
+
+/// Prints the runtime's trace from the device, optionally as it is written.
+///
+/// The trace is the only view into what a session is actually doing — which
+/// taps landed, which screens were drawn, which tasks came back — and without
+/// this it can only be read by opening a shell by hand.
+///
+/// Spelled for hands that already know `adb logcat`: `-f` follows, `-d` dumps
+/// what is there and exits, `-t` takes a line count and `-c` clears. Following
+/// is a plain `tail -f` over the same bounded SSH session everything else
+/// uses, with output inherited rather than captured so lines appear as they
+/// happen rather than in one lump at the end.
+fn device_logs(arguments: &[String]) -> Result<(), String> {
+    let request = parse_logs(arguments)?;
+    let remote = format!("root@{}", request.host);
+    if request.clear {
+        // Truncated rather than removed, so a session already holding the file
+        // open keeps writing to the same one instead of into a deleted inode.
+        let script = format!(": > {DEVICE_TRACE_LOG}\n");
+        let output =
+            run_remote_shell(&remote, &script, DEVICE_PROBE_TIMEOUT).map_err(unreachable_device)?;
+        if !output.status.success() {
+            return Err(unreachable_device(format!(
+                "clearing the trace on {} failed",
+                request.host
+            )));
+        }
+        println!("cleared {DEVICE_TRACE_LOG} on {}", request.host);
+        if !request.follow {
+            return Ok(());
+        }
+    }
+    // Reported before the shell opens, because a reader looking at an empty
+    // trace should learn why here rather than conclude the device is broken.
+    if request.follow {
+        eprintln!(
+            "following {DEVICE_TRACE_LOG} on {}; press Ctrl-C to stop",
+            request.host
+        );
+    }
+    let script = format!(
+        "if [ ! -f {log} ]; then\n\
+         echo 'no trace on this device yet' >&2\n\
+         echo 'the runtime only writes one when started with KOBO_BLACKBOX=1' >&2\n\
+         exit 3\n\
+         fi\n\
+         exec tail -n {lines}{follow} {log}\n",
+        log = DEVICE_TRACE_LOG,
+        lines = request.lines,
+        follow = if request.follow { " -f" } else { "" },
+    );
+    let mut command = remote_shell_command(&remote);
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("start remote shell: {error}"))?;
+    let stdin_handle = child.stdin.take();
+    let mut stdin = take_remote_pipe(&mut child, stdin_handle, "stdin")?;
+    stdin
+        .write_all(script.as_bytes())
+        .and_then(|()| stdin.flush())
+        .map_err(|error| format!("send the log request: {error}"))?;
+    // Closed so the remote shell sees end of input and the session ends when
+    // the reader interrupts rather than waiting for a line that never comes.
+    drop(stdin);
+    let status = child
+        .wait()
+        .map_err(|error| format!("wait for the log session: {error}"))?;
+    match status.code() {
+        Some(0) | None => Ok(()),
+        // The script's own refusal, already explained on stderr.
+        Some(3) => Err("no trace to read".to_owned()),
+        Some(code) => Err(unreachable_device(format!(
+            "reading the trace from {} failed with status {code}",
+            request.host
+        ))),
+    }
+}
+
+fn parse_logs(arguments: &[String]) -> Result<LogRequest<'_>, String> {
+    const USAGE: &str =
+        "usage: kobo logs --device <host> [--follow|-f] [--dump|-d] [--lines|-t <count>] \
+         [--clear|-c]";
+    let (host, mut rest) = match arguments {
+        [device, host, rest @ ..] if is_device_flag(device) => (host.as_str(), rest),
+        _ => return Err(USAGE.to_owned()),
+    };
+    if !valid_device_host(host) {
+        return Err("device host contains unsupported characters".to_owned());
+    }
+    // Left unset until asked, so the default can depend on `--clear` without
+    // depending on the order the two were written in.
+    let mut follow: Option<bool> = None;
+    let mut lines = DEFAULT_TRACE_LINES;
+    let mut clear = false;
+    while let Some(argument) = rest.first() {
+        match argument.as_str() {
+            "--follow" | "-f" => {
+                follow = Some(true);
+                rest = &rest[1..];
+            }
+            "--dump" | "-d" => {
+                follow = Some(false);
+                rest = &rest[1..];
+            }
+            "--clear" | "-c" => {
+                clear = true;
+                rest = &rest[1..];
+            }
+            "--lines" | "-t" | "-n" => {
+                let value = rest.get(1).ok_or_else(|| USAGE.to_owned())?;
+                lines = value
+                    .parse::<u32>()
+                    .map_err(|_| "--lines takes a whole number".to_owned())?;
+                if lines == 0 || lines > MAXIMUM_TRACE_LINES {
+                    return Err(format!(
+                        "--lines must be between 1 and {MAXIMUM_TRACE_LINES}"
+                    ));
+                }
+                rest = &rest[2..];
+            }
+            _ => return Err(USAGE.to_owned()),
+        }
+    }
+    Ok(LogRequest {
+        host,
+        // Following is the default, because the reason to ask for a device's
+        // log is almost always to watch what happens next. Clearing on its own
+        // clears and exits, which is what `adb logcat -c` does; asked for
+        // together they clear first and then watch, which is the useful shape
+        // before a test run.
+        follow: follow.unwrap_or(!clear),
+        lines,
+        clear,
+    })
+}
+
 /// Returns true when a bounded shell session opens and exits cleanly.
 fn device_answers(remote: &str) -> bool {
     run_remote_shell(remote, "exit\n", DEVICE_PROBE_TIMEOUT)
@@ -999,7 +1196,7 @@ fn device_answers(remote: &str) -> bool {
 fn parse_wait(arguments: &[String]) -> Result<(&str, Duration), String> {
     const USAGE: &str = "usage: kobo wait --device <host> [--timeout <seconds>]";
     let (host, rest) = match arguments {
-        [device, host, rest @ ..] if device == "--device" => (host, rest),
+        [device, host, rest @ ..] if is_device_flag(device) => (host, rest),
         _ => return Err(USAGE.to_owned()),
     };
     if !valid_device_host(host) {
@@ -1037,7 +1234,7 @@ fn parse_dev_session(arguments: &[String]) -> Result<(&str, DevSessionAction), S
                          | --sleep-after <minutes> | --sleep-after default \
                          | --hold [minutes] | --restore-reader-config]";
     let (host, rest) = match arguments {
-        [device, host, rest @ ..] if device == "--device" => (host, rest),
+        [device, host, rest @ ..] if is_device_flag(device) => (host, rest),
         _ => return Err(USAGE.to_owned()),
     };
     if !valid_device_host(host) {
@@ -1104,7 +1301,7 @@ fn guard_test(arguments: &[String]) -> Result<(), String> {
 #[cfg(feature = "device-write")]
 fn parse_guard_test(arguments: &[String]) -> Result<&str, String> {
     match arguments {
-        [device, host, confirm, value] if device == "--device" && confirm == "--confirm" => {
+        [device, host, confirm, value] if is_device_flag(device) && confirm == "--confirm" => {
             if value != GUARD_TEST_CONFIRMATION {
                 return Err(format!(
                     "confirmation must be exactly {GUARD_TEST_CONFIRMATION}"
@@ -1125,7 +1322,7 @@ fn parse_guard_test(arguments: &[String]) -> Result<&str, String> {
 #[cfg(feature = "device-write")]
 fn parse_smoke_display(arguments: &[String]) -> Result<(&str, SmokeStage), String> {
     match arguments {
-        [device, host, confirm, value] if device == "--device" && confirm == "--confirm" => {
+        [device, host, confirm, value] if is_device_flag(device) && confirm == "--confirm" => {
             let stage = SmokeStage::from_confirmation(value).ok_or_else(|| {
                 format!(
                     "confirmation must be exactly one of {}",
@@ -1634,11 +1831,19 @@ fn run_remote_shell(
         .map_err(|error| format!("read remote stderr: {error}"))?;
     let status = status.map_err(|error| remote_shell_error(error, &stdout, &stderr))?;
     if let Err(error) = writer_result {
-        return Err(remote_shell_error(
-            format!("write remote script: {error}"),
-            &stdout,
-            &stderr,
-        ));
+        // A script that decides not to read the rest of its input — because it
+        // refused, or because it ended in `exec` — closes the pipe under this
+        // writer, and that is not a transport failure. The device answered;
+        // its status and its stderr are what the caller has to be told, and
+        // reporting a broken pipe instead buries a plain refusal under advice
+        // about Wi-Fi and sleeping readers.
+        if error.kind() != std::io::ErrorKind::BrokenPipe {
+            return Err(remote_shell_error(
+                format!("write remote script: {error}"),
+                &stdout,
+                &stderr,
+            ));
+        }
     }
     Ok(RemoteShellOutput {
         status,
@@ -1979,7 +2184,7 @@ fn validated_package(path: &Path) -> Result<(Vec<u8>, usize), String> {
 fn parse_deploy(arguments: &[String]) -> Result<(&str, Option<PathBuf>), String> {
     const USAGE: &str = "usage: kobo deploy --device <host> [--package <path>]";
     let (host, rest) = match arguments {
-        [device, host, rest @ ..] if device == "--device" => (host.as_str(), rest),
+        [device, host, rest @ ..] if is_device_flag(device) => (host.as_str(), rest),
         _ => return Err(USAGE.to_owned()),
     };
     if !valid_device_host(host) {
@@ -2368,6 +2573,7 @@ fn print_help() {
            session --device IP    Keep a device awake and on Wi-Fi while developing\n\
            session --device IP --hold [minutes]  Keep it reachable for unattended testing\n\
            wait --device IP       Block until a device answers again\n\
+           logs --device IP [--follow] [--lines N]  Read the runtime trace from the device\n\
            touch-probe --device IP [--seconds N]  Watch touch read-only to check the transform\n\
            guard-test --device IP --confirm ...   Prove the guardian restores the screen\n\
            package [--out PATH] [--folder PATH]  Build the KoboRoot.tgz an owner copies\n\
@@ -2376,7 +2582,11 @@ fn print_help() {
            verify <arm-binary>     Verify static ARM hard-float format\n\
            run --sim              Run SDK, IPC, daemon and app on host\n\
            run                    Device execution remains safety-gated\n\
-           version                Print version"
+           version                Print version\n\n\
+         Every command that takes --device also takes -s, and these names\n\
+         work if they are the ones you already know:\n\
+           logcat -> logs   install -> deploy   wait-for-device -> wait\n\
+           sim, simulator -> dev   init, create -> new"
     );
 }
 
@@ -2384,10 +2594,11 @@ fn print_help() {
 mod tests {
     use super::package;
     use super::{
-        build_executables, manifest_uses_sdk, parse_deploy, parse_devices, parse_touch_probe,
-        unreachable_device, valid_device_host, valid_slug, verify_arm_elf, wait_for_remote_child,
-        workspace_doctor_binary, DevSessionGuard, RemoteArtifact, SimulationGuard, DEPLOY_TIMEOUT,
-        DEVICE_PACKAGES, GENERATED_APP_SOURCE, TOUCH_PROBE_DEFAULT_SECONDS,
+        build_executables, canonical, is_device_flag, manifest_uses_sdk, parse_deploy,
+        parse_devices, parse_logs, parse_touch_probe, unreachable_device, valid_device_host,
+        valid_slug, verify_arm_elf, wait_for_remote_child, workspace_doctor_binary,
+        DevSessionGuard, RemoteArtifact, SimulationGuard, ALIASES, DEFAULT_TRACE_LINES,
+        DEPLOY_TIMEOUT, DEVICE_PACKAGES, GENERATED_APP_SOURCE, TOUCH_PROBE_DEFAULT_SECONDS,
         TOUCH_PROBE_MAXIMUM_SECONDS,
     };
     #[cfg(feature = "device-write")]
@@ -2401,6 +2612,90 @@ mod tests {
     use std::path::PathBuf;
     use std::process::Command;
     use std::time::Duration;
+
+    #[test]
+    fn a_log_request_reads_the_way_adb_logcat_does() {
+        let arguments = |parts: &[&str]| {
+            parts
+                .iter()
+                .map(|part| (*part).to_owned())
+                .collect::<Vec<_>>()
+        };
+        let parse = |parts: &[&str]| {
+            parse_logs(&arguments(parts))
+                .map(|request| (request.follow, request.lines, request.clear))
+        };
+        // Watching is the point, so it is what asking for nothing gets.
+        assert_eq!(
+            parse(&["--device", "192.168.1.15"]),
+            Ok((true, DEFAULT_TRACE_LINES, false))
+        );
+        // -s is adb's spelling of the same flag and has to reach the same code.
+        assert_eq!(
+            parse(&["-s", "192.168.1.15", "-d"]),
+            Ok((false, DEFAULT_TRACE_LINES, false))
+        );
+        assert_eq!(
+            parse(&["--device", "host", "-t", "40"]),
+            Ok((true, 40, false))
+        );
+        assert_eq!(
+            parse(&["--device", "host", "--lines", "40", "--dump"]),
+            Ok((false, 40, false))
+        );
+        // Clearing alone clears and stops; asked for with --follow it clears
+        // and then watches, whichever order the two were written in.
+        assert_eq!(
+            parse(&["--device", "host", "-c"]),
+            Ok((false, DEFAULT_TRACE_LINES, true))
+        );
+        assert_eq!(
+            parse(&["--device", "host", "-c", "-f"]),
+            Ok((true, DEFAULT_TRACE_LINES, true))
+        );
+        assert_eq!(
+            parse(&["--device", "host", "-f", "-c"]),
+            Ok((true, DEFAULT_TRACE_LINES, true))
+        );
+        for rejected in [
+            // A host that could carry a second command into the remote shell.
+            vec!["--device", "192.168.1.15; reboot"],
+            vec!["--device"],
+            vec!["--device", "host", "--lines"],
+            vec!["--device", "host", "--lines", "0"],
+            vec!["--device", "host", "--lines", "10001"],
+            vec!["--device", "host", "--nonsense"],
+            vec!["host"],
+        ] {
+            assert!(
+                parse(&rejected).is_err(),
+                "{rejected:?} should not be accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn names_from_other_mobile_toolchains_reach_the_command_they_mean() {
+        // Somebody who has shipped for Android should not have to learn a new
+        // word for the same idea before they can read a log.
+        assert_eq!(canonical("logcat"), "logs");
+        assert_eq!(canonical("install"), "deploy");
+        assert_eq!(canonical("wait-for-device"), "wait");
+        assert_eq!(canonical("sim"), "dev");
+        assert_eq!(canonical("init"), "new");
+        // A canonical name is left exactly as it is, and so is a name nobody
+        // knows, so an unknown command still reports itself rather than an
+        // alias it was silently turned into.
+        assert_eq!(canonical("logs"), "logs");
+        assert_eq!(canonical("nonsense"), "nonsense");
+        for (alias, name) in ALIASES {
+            assert_ne!(alias, name, "an alias for itself is dead weight");
+            assert_eq!(canonical(name), *name, "aliases must not chain");
+        }
+        assert!(is_device_flag("--device"));
+        assert!(is_device_flag("-s"));
+        assert!(!is_device_flag("--devices"));
+    }
 
     #[test]
     fn a_touch_probe_window_is_bounded_and_the_host_waits_longer_than_the_device() {

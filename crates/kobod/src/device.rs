@@ -96,6 +96,16 @@ const IDLE_LIMIT: Duration = Duration::from_secs(60 * 60);
 /// The longest the loop waits between passes even when nothing is happening,
 /// which bounds how stale the recovery watchdog's heartbeat can get.
 const BEAT_INTERVAL: Duration = Duration::from_secs(10);
+/// How long an application that asked for first refusal on Back is given to
+/// answer it with a screen.
+///
+/// The reader owns the way out, and this is the whole of what an application
+/// is allowed to do with it: draw something new, quickly, or be left behind.
+/// An application that is wedged, or that claimed [`Screen::owns_back`] on a
+/// screen it has nowhere to go back from, costs the reader this much and then
+/// the launcher appears anyway. Two seconds is longer than a screen takes to
+/// build and shorter than a reader waits before tapping again.
+const BACK_GRACE: Duration = Duration::from_secs(2);
 /// How often the stop watcher looks at the flag a signal handler sets.
 ///
 /// Bounds how long the owner holds a device that has been asked to stop and
@@ -512,6 +522,11 @@ fn host_applications(
         let mut visited: Vec<String> = Vec::new();
         let ceiling = Instant::now() + limits.ceiling;
         let mut last_activity = Instant::now();
+        // Set when Back has been handed to an application that asked for it,
+        // and cleared by the next screen that application draws. The reader's
+        // way out is never left waiting on an application: if this is still
+        // set when its grace expires, the launcher is shown regardless.
+        let mut back_offered: Option<(u64, Instant)> = None;
 
         loop {
             let now = Instant::now();
@@ -537,12 +552,39 @@ fn host_applications(
                     ),
                 ));
             }
+            // An application that was offered Back and drew nothing has had
+            // its turn. This is what keeps the guarantee: the way out belongs
+            // to the reader whatever the application does or fails to do.
+            if let Some((id, offered_at)) = back_offered {
+                if now.saturating_duration_since(offered_at) >= BACK_GRACE {
+                    back_offered = None;
+                    if id == front {
+                        trace("the application did not answer back, leaving anyway");
+                        let Some(home_id) = id_of_path(&apps, &home) else {
+                            return Ok(finish(&apps, &visited, "the launcher is gone"));
+                        };
+                        front = switch_to(
+                            &mut apps,
+                            front,
+                            home_id,
+                            display,
+                            whole_screen,
+                            &mut surface,
+                            &mut panel,
+                            &home,
+                        )?;
+                    }
+                }
+            }
             // Whichever comes first, and never longer than one heartbeat, so a
             // session nobody is touching still proves it is alive.
             let wait = ceiling
                 .saturating_duration_since(now)
                 .min(idle_at.saturating_duration_since(now))
-                .min(BEAT_INTERVAL);
+                .min(BEAT_INTERVAL)
+                .min(back_offered.map_or(BEAT_INTERVAL, |(_, offered_at)| {
+                    (offered_at + BACK_GRACE).saturating_duration_since(now)
+                }));
             match events.recv_timeout(wait) {
                 Ok(Event::Stopping(number)) => {
                     return Ok(finish(
@@ -596,23 +638,28 @@ fn host_applications(
                     };
                     let chrome = Chrome::with_back(apps[index].path != home);
                     let screen = apps[index].screen.clone();
-                    if deliver_touch(&mut apps[index].stream, event, screen.as_ref(), chrome)? {
-                        // Going back leaves the application running. It is put
-                        // behind the launcher rather than ended, so coming back
-                        // to it is a repaint rather than a restart.
-                        let Some(home_id) = id_of_path(&apps, &home) else {
-                            return Ok(finish(&apps, &visited, "the launcher is gone"));
-                        };
-                        front = switch_to(
-                            &mut apps,
-                            front,
-                            home_id,
-                            display,
-                            whole_screen,
-                            &mut surface,
-                            &mut panel,
-                            &home,
-                        )?;
+                    match deliver_touch(&mut apps[index].stream, event, screen.as_ref(), chrome)? {
+                        Tap::Handled => {}
+                        Tap::OfferedBack => back_offered = Some((front, Instant::now())),
+                        Tap::Leave => {
+                            // Going back leaves the application running. It is
+                            // put behind the launcher rather than ended, so
+                            // coming back to it is a repaint, not a restart.
+                            back_offered = None;
+                            let Some(home_id) = id_of_path(&apps, &home) else {
+                                return Ok(finish(&apps, &visited, "the launcher is gone"));
+                            };
+                            front = switch_to(
+                                &mut apps,
+                                front,
+                                home_id,
+                                display,
+                                whole_screen,
+                                &mut surface,
+                                &mut panel,
+                                &home,
+                            )?;
+                        }
                     }
                 }
                 Ok(Event::App(id, frame)) => {
@@ -627,6 +674,14 @@ fn host_applications(
                             let is_front = id == front;
                             if is_front {
                                 last_activity = Instant::now();
+                            }
+                            // The answer to a Back that was handed over, if
+                            // one was outstanding. Cleared on any screen from
+                            // that application rather than a designated one:
+                            // the application has drawn, which is all the
+                            // runtime asked of it.
+                            if back_offered.is_some_and(|(waiting, _)| waiting == id) {
+                                back_offered = None;
                             }
                             let chrome = Chrome::with_back(apps[index].path != home);
                             let screen = ensure_way_back(screen, chrome, &apps[index].name);
@@ -1253,22 +1308,41 @@ impl Drop for KeepBeating {
     }
 }
 
-/// Routes one tap. Reports whether the reader asked to leave the application.
+/// What a tap turned out to mean, once the runtime has had its say.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Tap {
+    /// Nothing the runtime has to act on. Either it hit nothing, or it was an
+    /// ordinary action already on its way to the application.
+    Handled,
+    /// The reader asked to leave the application.
+    Leave,
+    /// The reader asked to go back and the application asked for first refusal
+    /// on that, so the action was delivered instead. The runtime now waits for
+    /// a screen, and leaves anyway if none arrives.
+    OfferedBack,
+}
+
+/// Routes one tap. Reports what the runtime has to do about it.
 ///
-/// Going back is the runtime's affordance, not the application's. An
-/// application cannot draw it, cannot remove it and never sees the tap, which
-/// is what makes it reliable enough to be the way out of anything.
+/// Going back is the runtime's affordance, not the application's: an
+/// application cannot draw it and cannot remove it, which is what makes it
+/// reliable enough to be the way out of anything. A screen may ask for first
+/// refusal on it — see [`Screen::owns_back`] — so that a screen reached from
+/// inside an application goes back to where it was reached from rather than
+/// out of the application. That is a delivery, not a transfer of ownership:
+/// the caller still leaves if no new screen follows.
 fn deliver_touch(
     stream: &mut std::os::unix::net::UnixStream,
     event: TouchEvent,
     current: Option<&Screen>,
     chrome: Chrome,
-) -> Result<bool, String> {
+) -> Result<Tap, String> {
     let Some(action) = action_for(event, current, chrome) else {
-        return Ok(false);
+        return Ok(Tap::Handled);
     };
-    if action == ActionId::BACK {
-        return Ok(true);
+    let offered = action == ActionId::BACK;
+    if offered && !current.is_some_and(|screen| screen.owns_back) {
+        return Ok(Tap::Leave);
     }
     kobo_protocol::write_to(
         stream,
@@ -1278,7 +1352,11 @@ fn deliver_touch(
         },
     )
     .map_err(|error| format!("deliver a tap: {error}"))?;
-    Ok(false)
+    Ok(if offered {
+        Tap::OfferedBack
+    } else {
+        Tap::Handled
+    })
 }
 
 /// One short word for a task outcome, for the session log.
@@ -1580,6 +1658,49 @@ mod tests {
             ),
             Some(ActionId::BACK)
         );
+    }
+
+    #[test]
+    fn a_screen_that_asked_for_back_is_given_it_and_one_that_did_not_is_left() {
+        // The defect this covers: the runtime swallowed Back entirely, so an
+        // application with screens of its own could not return to the one the
+        // reader came from. Tapping out of a book dropped them at the launcher
+        // and reopening the application showed the book again, because its
+        // retained screen had never changed.
+        let chrome = Chrome::with_back(true);
+        let screen = hello();
+        let back = screen
+            .layout_with(&display_metrics_from_env(), chrome)
+            .nodes
+            .iter()
+            .find(|node| node.kind == kobo_ui::LayoutKind::Back)
+            .map(|node| node.rect)
+            .expect("a back affordance");
+        let tap = TouchEvent::Up {
+            x: u32::try_from(back.x + back.width / 2).expect("inside the panel"),
+            y: u32::try_from(back.y + back.height / 2).expect("inside the panel"),
+        };
+
+        let (mut runtime, mut app) =
+            std::os::unix::net::UnixStream::pair().expect("a pair of sockets");
+        assert_eq!(
+            deliver_touch(&mut runtime, tap, Some(&screen), chrome).expect("route the tap"),
+            Tap::Leave,
+            "a screen that did not ask keeps the old behaviour"
+        );
+
+        let owning = screen.clone().with_own_back(true);
+        assert_eq!(
+            deliver_touch(&mut runtime, tap, Some(&owning), chrome).expect("route the tap"),
+            Tap::OfferedBack
+        );
+        let frame = kobo_protocol::read_from(&mut app).expect("the application is told");
+        assert!(matches!(
+            frame.message,
+            Message::Action {
+                action: ActionId::BACK
+            }
+        ));
     }
 
     fn catalogue() -> PathBuf {
