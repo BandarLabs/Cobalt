@@ -32,7 +32,7 @@ Verified on the physical Clara BW unless stated otherwise.
 | Storage | Per-application keyed state under its own directory |
 | Navigation | A runtime-owned Back the application may answer first (see below) |
 | Tooling | `devices`, `doctor`, `package`, `deploy`, `inspect`, `verify`, `session`, `wait`, `logs`, `touch-probe`, and a Clara BW simulator in the browser |
-| Applications | `launcher`, `hn`, `gutenshelf`, `chat`, `todo`, `terminal`, `tictactoe`, `gallery`, `brief` |
+| Applications | `launcher`, `hn`, `rss`, `gutenshelf`, `chat`, `todo`, `terminal`, `tictactoe`, `gallery`, `brief` |
 
 **Not here yet, stated plainly**
 
@@ -99,7 +99,7 @@ crates/    kobo-sdk       what an application imports
            kobo-handoff   stopping and restarting the stock reader
            kobo-guard     screen capture and restore around a session
 examples/  launcher, terminal, todo, brief, chat, gutenshelf, gallery,
-           tictactoe, hn
+           tictactoe, hn, rss
 ```
 
 Outside dependencies are quarantined in exactly four crates, each behind one
@@ -116,7 +116,15 @@ device.
 cargo test --workspace --all-features
 cargo run -p kobo-cli -- dev --builtin      # browser simulator
 cargo run -p kobo-cli -- run --sim          # the real runtime, host socket
+cargo run -p kobo-cli -- run --sim --app rss   # ... pointed at one application
 ```
+
+`run --sim` starts the real `kobod`, runs one application against it over a
+host socket and saves what it drew to `target/kobo-sim-last.raw`: 1072 × 1448
+bytes of eight-bit grey, one per pixel, which `P5` PGM will open directly.
+`--app` takes any shipped application by the name the launcher uses or the name
+cargo uses. It is the shortest way to see what a screen really looks like
+without a reader in front of you.
 
 The simulator binds only to `127.0.0.1` and currently targets the measured Kobo
 Clara BW 391 profile: 1072 × 1448 at 300 PPI, including its rotated raw touch
@@ -788,7 +796,25 @@ runtime is the only thing that can start, bound, or stop a program.
 | `gallery` | Every UI primitive at once, for checking by eye on real hardware |
 | `tictactoe` | Two players, one panel, and partial repaints of single cells |
 | `hn` | Hacker News, with whole threads laid out by reply depth |
+| `rss` | Any site's feed, found by typing its address, read without a browser |
 
 Leaving an application does not end it. It is put behind the launcher rather
 than stopped, so a download or a build that was running keeps running and
 coming back is a repaint rather than a restart.
+
+### Feeds and Feedsearch
+
+`rss` finds feeds with [Feedsearch](https://feedsearch.dev), which takes a site
+address and answers with the feeds it has: you type `arstechnica.com` rather
+than hunting for a link with `rss` in it. Their terms ask for an attribution
+visible to the reader on the search and results screens, so both carry one and
+a test asserts it on both. That is not decoration — it has been lost once
+already, silently, to a full page of results pushing it off the bottom of the
+panel, which is why it now lives in the results screen's top bar where the
+layout cannot discard it.
+
+Feeds arrive as RSS 2.0, Atom or JSON Feed and are read into one shape. An
+answer that stops at the fetch budget is reported as too large rather than as
+not a feed: a cut XML feed keeps every item that arrived whole, but half a JSON
+document is not a document at all and yields nothing, and sending somebody to
+look for a different address does not help when the address was right.
