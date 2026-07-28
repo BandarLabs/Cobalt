@@ -1094,6 +1094,32 @@ impl ScreenBuilder {
         self
     }
 
+    /// A mark, a name and a sentence, centred in the room that is left.
+    ///
+    /// For the moment between asking for something and it arriving: opening an
+    /// application, or a screen that exists only to say what is being waited
+    /// on. Everything else on this platform is set ranged left from the top,
+    /// which is right for reading and wrong for four words -- they land in the
+    /// corner and read as a page that failed.
+    ///
+    /// Takes the rest of the content area, so put it last.
+    #[must_use]
+    pub fn splash(
+        mut self,
+        glyph: Option<Glyph>,
+        title: impl Into<String>,
+        summary: impl Into<String>,
+    ) -> Self {
+        let id = self.next_id();
+        self.nodes.push(Node::Splash {
+            id,
+            glyph,
+            title: title.into(),
+            summary: summary.into(),
+        });
+        self
+    }
+
     /// States that work is in flight, for example a network request.
     ///
     /// The replacement for a spinner. Pass `None` for progress unless a real

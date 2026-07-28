@@ -1153,6 +1153,7 @@ impl Screen {
                 margin,
                 cursor,
                 metrics.width - 2 * margin,
+                content_bottom,
                 0,
                 metrics,
                 prose,
@@ -1234,6 +1235,9 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
             padding,
             cursor,
             inner,
+            // A popover is measured by its contents, so there is no band to
+            // fill and a splash inside one would have nothing to centre in.
+            metrics.height,
             0,
             metrics,
             prose,
@@ -1850,6 +1854,23 @@ pub enum Node {
         level: BannerLevel,
         text: String,
     },
+    /// A mark, a name and a sentence, centred in whatever room is left.
+    ///
+    /// The one node that centres, and the one node that takes the rest of the
+    /// screen, because that is the whole shape it exists to draw: the moment
+    /// between asking for something and it arriving. Everything else in this
+    /// system flows from the top and is set ranged left, which is correct for
+    /// reading and wrong for a screen with four words on it -- those land in
+    /// the top corner and read as a page that failed to load.
+    ///
+    /// It is last in the flow by construction: it eats the remaining band, so
+    /// anything after it has nowhere to go.
+    Splash {
+        id: NodeId,
+        glyph: Option<Glyph>,
+        title: String,
+        summary: String,
+    },
     /// A placeholder occupying the exact space real content will occupy.
     ///
     /// Static by construction. There is no spinner and no animation anywhere in
@@ -2234,6 +2255,7 @@ impl Node {
             | Self::Divider { id }
             | Self::Spacer { id, .. }
             | Self::Progress { id, .. }
+            | Self::Splash { id, .. }
             | Self::PagedList { id, .. }
             | Self::Grid { id, .. }
             | Self::Rows { id, .. }
@@ -2356,6 +2378,12 @@ pub enum LayoutKind {
     BarAction(ActionId),
     /// The same, drawn as a picture rather than as a word.
     BarGlyph(ActionId, Glyph),
+    /// The mark on a splash: large, centred, and not a control.
+    SplashGlyph(Glyph),
+    /// A splash's name, set centred rather than ranged left.
+    SplashTitle,
+    /// A splash's sentence, set centred under its name.
+    SplashText,
     NavBar,
     NavDestination(ActionId),
     NavDestinationSelected(ActionId),
@@ -2846,6 +2874,10 @@ fn layout_node(
     x: i32,
     y: i32,
     width: i32,
+    // Where the content area ends. Only a splash reads it: everything else
+    // measures itself and lets the caller stop when the cursor runs past the
+    // bottom, which is what keeps layout a downward pass.
+    bottom: i32,
     depth: usize,
     metrics: &DisplayMetrics,
     prose: Face,
@@ -3037,6 +3069,7 @@ fn layout_node(
                     x.saturating_add(padding),
                     cursor,
                     width.saturating_sub(2 * padding),
+                    bottom,
                     depth + 1,
                     metrics,
                     prose,
@@ -3498,6 +3531,87 @@ fn layout_node(
                 text_lines: lines,
             });
             y.saturating_add(height)
+        }
+        Node::Splash {
+            id,
+            glyph,
+            title,
+            summary,
+        } => {
+            let gap = metrics.space(Space::Medium);
+            let mark = if glyph.is_some() {
+                metrics.tenth_mm(140)
+            } else {
+                0
+            };
+            // Narrower than the page. A sentence set to the full width of a
+            // panel and centred gives ragged ends on both sides and reads as
+            // damage; three quarters keeps it to two or three short lines.
+            let text_width = max(1, width * 3 / 4);
+            let title_lines = wrap_text(title, text_width, FontSize::Title);
+            let title_height = title_lines.len() as i32 * FontSize::Title.line_height();
+            let summary_lines = if summary.is_empty() {
+                Vec::new()
+            } else {
+                wrap_text(summary, text_width, FontSize::Body)
+            };
+            let summary_height = summary_lines.len() as i32 * FontSize::Body.line_height();
+            let mut stack = title_height;
+            if mark > 0 {
+                stack = stack.saturating_add(mark).saturating_add(gap);
+            }
+            if summary_height > 0 {
+                stack = stack.saturating_add(summary_height).saturating_add(gap);
+            }
+            // The band it was handed, or its own height if that band turned
+            // out to be smaller -- a splash that centred itself inside a
+            // negative remainder would be drawn above the bar it was pushed
+            // under.
+            let band = max(stack, bottom.saturating_sub(y));
+            let mut cursor = y.saturating_add((band - stack) / 2);
+            let text_x = x.saturating_add((width - text_width) / 2);
+            if let Some(glyph) = glyph {
+                layout.nodes.push(LayoutNode {
+                    id: *id,
+                    rect: Rect {
+                        x: x.saturating_add((width - mark) / 2),
+                        y: cursor,
+                        width: mark,
+                        height: mark,
+                    },
+                    kind: LayoutKind::SplashGlyph(*glyph),
+                    text_lines: Vec::new(),
+                });
+                cursor = cursor.saturating_add(mark).saturating_add(gap);
+            }
+            layout.nodes.push(LayoutNode {
+                id: *id,
+                rect: Rect {
+                    x: text_x,
+                    y: cursor,
+                    width: text_width,
+                    height: title_height,
+                },
+                kind: LayoutKind::SplashTitle,
+                text_lines: title_lines,
+            });
+            cursor = cursor.saturating_add(title_height);
+            if summary_height > 0 {
+                cursor = cursor.saturating_add(gap);
+                layout.nodes.push(LayoutNode {
+                    id: *id,
+                    rect: Rect {
+                        x: text_x,
+                        y: cursor,
+                        width: text_width,
+                        height: summary_height,
+                    },
+                    kind: LayoutKind::SplashText,
+                    text_lines: summary_lines,
+                });
+                cursor = cursor.saturating_add(summary_height);
+            }
+            max(cursor, y.saturating_add(band))
         }
         Node::Skeleton { id, lines } => {
             let count = i32::from((*lines).clamp(1, 12));
@@ -5130,6 +5244,10 @@ fn validate_node(
         | Node::Quote { text, .. }
         | Node::Banner { text, .. } => check_text_coverage(id, text, Face::Text, issues),
         Node::Button { label, .. } => check_text_coverage(id, label, Face::Text, issues),
+        Node::Splash { title, summary, .. } => {
+            check_text_coverage(id, title, Face::Text, issues);
+            check_text_coverage(id, summary, Face::Text, issues);
+        }
         Node::Card { .. }
         | Node::Divider { .. }
         | Node::Spacer { .. }
@@ -6092,6 +6210,27 @@ pub fn render_all(
             // A picture in the bar, drawn from the same geometry as every other
             // icon so it cannot arrive as a low-contrast bitmap that vanishes
             // on a grey panel.
+            LayoutKind::SplashGlyph(glyph) => {
+                draw_vector(surface, &vector::shapes(glyph), node.rect, clip);
+            }
+            LayoutKind::SplashTitle => draw_centered(
+                surface,
+                &node.text_lines,
+                node.rect,
+                FontSize::Title,
+                tone::INK,
+                clip,
+            ),
+            // Muted, so the name is the thing read first. On a panel with no
+            // colour, weight is the only hierarchy there is.
+            LayoutKind::SplashText => draw_centered(
+                surface,
+                &node.text_lines,
+                node.rect,
+                FontSize::Body,
+                tone::MUTED,
+                clip,
+            ),
             LayoutKind::BarGlyph(_, glyph) => {
                 let side = min(node.rect.width, node.rect.height) * 3 / 5;
                 draw_vector(

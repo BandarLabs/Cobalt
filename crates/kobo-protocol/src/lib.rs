@@ -1713,6 +1713,20 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
             length
         }
         Node::Skeleton { .. } => 6,
+        Node::Splash {
+            glyph,
+            title,
+            summary,
+            ..
+        } => {
+            let mut length = 6;
+            if glyph.is_some() {
+                add_encoded_len(&mut length, 1)?;
+            }
+            add_encoded_len(&mut length, encoded_string_len(title)?)?;
+            add_encoded_len(&mut length, encoded_string_len(summary)?)?;
+            length
+        }
         Node::Activity {
             label,
             progress,
@@ -2572,6 +2586,24 @@ fn encode_node(
             push_u32(output, id.0);
             output.push(*lines);
         }
+        Node::Splash {
+            id,
+            glyph,
+            title,
+            summary,
+        } => {
+            output.push(20);
+            push_u32(output, id.0);
+            match glyph {
+                None => output.push(0),
+                Some(glyph) => {
+                    output.push(1);
+                    output.push(encode_glyph(*glyph));
+                }
+            }
+            push_string(output, title)?;
+            push_string(output, summary)?;
+        }
         Node::Activity {
             id,
             label,
@@ -3162,6 +3194,22 @@ fn decode_node(
             id,
             lines: reader.u8()?,
         }),
+        20 => {
+            let glyph = match reader.u8()? {
+                0 => None,
+                1 => Some(
+                    decode_glyph(reader.u8()?)
+                        .ok_or(ProtocolError::InvalidValue("splash glyph"))?,
+                ),
+                _ => return Err(ProtocolError::InvalidValue("splash glyph flag")),
+            };
+            Ok(Node::Splash {
+                id,
+                glyph,
+                title: reader.string()?,
+                summary: reader.string()?,
+            })
+        }
         13 => {
             let label = reader.string()?;
             let progress = match reader.u8()? {
@@ -3756,6 +3804,20 @@ mod node_coverage_tests {
                     Tile::new(ActionId(2), "Reader", Glyph::Reader),
                     Tile::new(ActionId(3), "Notes", Glyph::Note),
                 ],
+            },
+            Node::Splash {
+                id: NodeId(21),
+                glyph: Some(Glyph::Book),
+                title: "Gutenbird".into(),
+                summary: "Sixty thousand free books.".into(),
+            },
+            // No mark, and nothing to say. Both halves are optional in
+            // practice and the empty ones are what a length mismatch hides in.
+            Node::Splash {
+                id: NodeId(22),
+                glyph: None,
+                title: "Starting".into(),
+                summary: String::new(),
             },
             Node::Rows {
                 id: NodeId(20),
