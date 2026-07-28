@@ -16,13 +16,15 @@
 /// through somebody else's idea of what to show.
 pub const MAX_STORIES: usize = 30;
 
-/// The most comments kept from one thread.
+/// The most comments held for one thread.
 ///
-/// A thread with more than this is one nobody reads to the end of on a panel
-/// that turns a page a second. The cap is what stops a popular story becoming
-/// several megabytes of `String` on a device with 512 MB of memory, and it is
-/// stated on screen when it bites rather than being a silent cut.
-pub const MAX_COMMENTS: usize = 400;
+/// This is a memory guard and nothing else. It is set past the largest thread
+/// the site has ever carried, so a reader never meets it and the application
+/// never has to explain itself: whatever news.ycombinator.com is showing for a
+/// story, this shows too. Comments are fetched as the reader pages into them,
+/// so the memory a thread costs tracks how far it has actually been read
+/// rather than how popular the story is.
+pub const MAX_COMMENTS: usize = 5000;
 
 /// How many levels of reply are drawn as indentation.
 ///

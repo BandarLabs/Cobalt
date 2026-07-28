@@ -778,15 +778,6 @@ impl Hn {
                             comment: None,
                         })
                         .collect();
-                    if usize::try_from(item.descendants).unwrap_or(usize::MAX) > model::MAX_COMMENTS
-                    {
-                        self.note = Some(format!(
-                            "This thread has {} comments. The first {} are shown in the site's \
-                             own order; the rest are more than this device will hold at once.",
-                            item.descendants,
-                            model::MAX_COMMENTS
-                        ));
-                    }
                 } else {
                     self.place(&item);
                 }
@@ -1849,7 +1840,7 @@ mod tests {
     }
 
     #[test]
-    fn a_thread_larger_than_the_device_will_hold_says_so_rather_than_stopping_quietly() {
+    fn a_thread_larger_than_the_old_ceiling_says_nothing_about_it() {
         let mut runner = loaded();
         let index = runner
             .app()
@@ -1864,10 +1855,15 @@ mod tests {
                  "descendants": 40000, "kids": [1, 2, 3]}}"#
         );
         runner.task_outcome(task, TaskOutcome::Completed(huge.into_bytes()));
-        let note = runner.app().note.as_deref().expect("nothing was admitted");
         assert!(
-            note.contains("40000") && note.contains(&model::MAX_COMMENTS.to_string()),
-            "the thread did not say what it was leaving out: {note}"
+            runner.app().note.is_none(),
+            "a popular story was explained away instead of being shown: {:?}",
+            runner.app().note
+        );
+        assert_eq!(
+            runner.app().slots.len(),
+            3,
+            "the site named three replies, so three is what there is to read"
         );
     }
 
