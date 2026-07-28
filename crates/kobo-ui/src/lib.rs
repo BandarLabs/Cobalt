@@ -1219,12 +1219,29 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
     // Measured first, placed second. Where a popover goes depends on how tall
     // it turned out, so it is laid out into a scratch list at the origin and
     // then moved.
+    // A modal is not dismissed by a tap that misses it, on purpose: it is the
+    // shape used when an answer is actually required. That makes a way out
+    // part of the frame rather than something each application has to
+    // remember to put in a row, because the one that forgets has drawn a
+    // screen with no way off it. A popover needs none -- a miss puts it away,
+    // and a second cross beside the control that opened it is noise.
+    let closes = matches!(overlay.kind, OverlayKind::Modal);
+    let close = if closes {
+        metrics.touch_target_default()
+    } else {
+        0
+    };
     let mut scratch = Layout::default();
     let mut cursor = padding;
     let mut title_height = 0;
     if !overlay.title.is_empty() {
         title_height = FontSize::Title.line_height();
-        cursor = cursor.saturating_add(title_height).saturating_add(gap);
+    }
+    // The cross and the title share one band, so a modal with no title still
+    // has room for the cross and one with a short title does not overlap it.
+    let header = max(title_height, close);
+    if header > 0 {
+        cursor = cursor.saturating_add(header).saturating_add(gap);
     }
     for node in &overlay.nodes {
         if scratch.nodes.len() >= MAX_LAYOUT_NODES {
@@ -1363,19 +1380,35 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
         });
     }
     if !overlay.title.is_empty() {
+        // Narrowed by whatever the cross took, so a long title is cut short
+        // rather than set underneath it.
+        let title_width = max(1, inner - close);
         layout.nodes.push(LayoutNode {
             id: overlay.id,
             rect: Rect {
                 x: x + padding,
-                y: y + padding,
-                width: inner,
+                y: y + padding + (header - title_height) / 2,
+                width: title_width,
                 height: title_height,
             },
             kind: LayoutKind::OverlayTitle,
-            text_lines: wrap_text_in(&overlay.title, inner, FontSize::Title, prose)
+            text_lines: wrap_text_in(&overlay.title, title_width, FontSize::Title, prose)
                 .into_iter()
                 .take(1)
                 .collect(),
+        });
+    }
+    if closes {
+        layout.nodes.push(LayoutNode {
+            id: overlay.id,
+            rect: Rect {
+                x: x + width - padding - close,
+                y: y + padding,
+                width: close,
+                height: close,
+            },
+            kind: LayoutKind::OverlayClose,
+            text_lines: Vec::new(),
         });
     }
     // Moved into place wholesale. Anything that fell past the bottom is left
@@ -2240,6 +2273,9 @@ pub enum Glyph {
     /// A disc with rays: the front light, drawn as brightness is drawn
     /// everywhere, including on the reader this replaces.
     Light,
+    /// Two crossed strokes: shut this. Drawn by the frame on every modal, and
+    /// available to an application that wants one of its own.
+    Close,
 }
 
 impl Node {
@@ -2336,6 +2372,10 @@ pub enum LayoutKind {
     Overlay,
     /// The title inside an overlay.
     OverlayTitle,
+    /// The cross that shuts a modal. Answers with [`ActionId::BACK`], which is
+    /// what a miss on a popover already answers with, so an application that
+    /// handles one handles both.
+    OverlayClose,
     /// The triangle joining a popover to the control that opened it. The value
     /// is which way it points, which is decided by whether the popover ended
     /// up below its anchor or above it.
@@ -2419,11 +2459,20 @@ pub enum LayoutKind {
 impl LayoutKind {
     /// The action this kind carries, for finding a control by name once it has
     /// been laid out.
+    ///
+    /// The one place a laid-out thing is mapped to the action it names.
+    /// [`Layout::hit_control`] is written in terms of this rather than
+    /// repeating the list, because it was repeated once and the copies drifted:
+    /// a bar glyph was added to the hit test and not to here, so the front
+    /// light popover could not find the control it hung from, quietly became a
+    /// centred modal, and its scrim then ate the second tap that should have
+    /// put it away.
     #[must_use]
     pub const fn acts_on(&self) -> Option<ActionId> {
         match *self {
             Self::Button(action, _, _)
             | Self::BarAction(action)
+            | Self::BarGlyph(action, _)
             | Self::NavDestination(action)
             | Self::NavDestinationSelected(action)
             | Self::Tile(action)
@@ -2432,7 +2481,7 @@ impl LayoutKind {
             | Self::ChoiceOption(action, _)
             | Self::ChoiceFreeform(action)
             | Self::QuoteFold(action, _) => Some(action),
-            Self::Back => Some(ActionId::BACK),
+            Self::Back | Self::OverlayClose => Some(ActionId::BACK),
             _ => None,
         }
     }
@@ -2677,18 +2726,9 @@ impl Layout {
                 continue;
             }
             let action = match node.kind {
-                LayoutKind::Button(action, ControlState::Enabled, _)
-                | LayoutKind::BarAction(action)
-                | LayoutKind::BarGlyph(action, _)
-                | LayoutKind::NavDestination(action)
-                | LayoutKind::NavDestinationSelected(action)
-                | LayoutKind::Tile(action)
-                | LayoutKind::Row(action)
-                | LayoutKind::Cell(action)
-                | LayoutKind::ChoiceOption(action, _)
-                | LayoutKind::ChoiceFreeform(action)
-                | LayoutKind::QuoteFold(action, _) => action,
-                LayoutKind::Back => ActionId::BACK,
+                // A control that is drawn as unavailable is not one, whatever
+                // action it still names.
+                LayoutKind::Button(_, ControlState::Disabled, _) => continue,
                 // The scrim ends the search. Everything past it is underneath
                 // an overlay, and a control the reader cannot see is a control
                 // they cannot have meant to press. A popover treats the miss
@@ -2697,7 +2737,10 @@ impl Layout {
                 LayoutKind::Scrim { dismisses } => {
                     return dismisses.then_some(ActionId::BACK);
                 }
-                _ => continue,
+                kind => match kind.acts_on() {
+                    Some(action) => action,
+                    None => continue,
+                },
             };
             return Some(action);
         }
@@ -6210,6 +6253,22 @@ pub fn render_all(
             // A picture in the bar, drawn from the same geometry as every other
             // icon so it cannot arrive as a low-contrast bitmap that vanishes
             // on a grey panel.
+            // Small, and drawn at half weight of a control, because it is the
+            // way out of the panel rather than the thing the panel is for.
+            LayoutKind::OverlayClose => {
+                let side = min(node.rect.width, node.rect.height) / 2;
+                draw_vector(
+                    surface,
+                    &vector::shapes(Glyph::Close),
+                    Rect {
+                        x: node.rect.x + (node.rect.width - side) / 2,
+                        y: node.rect.y + (node.rect.height - side) / 2,
+                        width: side,
+                        height: side,
+                    },
+                    clip,
+                );
+            }
             LayoutKind::SplashGlyph(glyph) => {
                 draw_vector(surface, &vector::shapes(glyph), node.rect, clip);
             }
@@ -10397,6 +10456,151 @@ mod prose_tests {
         ));
         let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
         assert_eq!(layout.hit_page_turn(4, CLARA_BW_METRICS.height / 2), None);
+    }
+
+    /// A modal is deliberately not dismissed by a tap that misses it, so
+    /// without a cross it is a screen with no way off it unless the
+    /// application remembered to put one in a row. The frame draws it, so the
+    /// application cannot forget.
+    #[test]
+    fn a_modal_always_carries_a_way_out() {
+        for (name, metrics) in PANELS {
+            for title in ["", "Delete this book?"] {
+                let screen = Screen::new(1, Vec::new()).with_overlay(Overlay {
+                    kind: OverlayKind::Modal,
+                    id: NodeId(2),
+                    title: title.into(),
+                    nodes: vec![Node::Text {
+                        id: NodeId(3),
+                        text: "This cannot be undone.".into(),
+                    }],
+                });
+                let layout = screen.layout_with(&metrics, &Chrome::with_back(false));
+                let cross = layout
+                    .nodes
+                    .iter()
+                    .find(|node| node.kind == LayoutKind::OverlayClose)
+                    .unwrap_or_else(|| panic!("{name}: a modal with no way out"));
+                assert_eq!(
+                    layout.hit_control(
+                        cross.rect.x + cross.rect.width / 2,
+                        cross.rect.y + cross.rect.height / 2
+                    ),
+                    Some(ActionId::BACK),
+                    "{name}: the cross does not answer"
+                );
+                let target = metrics.touch_target_default();
+                assert!(
+                    cross.rect.width >= target && cross.rect.height >= target,
+                    "{name}: the cross is smaller than a finger"
+                );
+                // Under the cross rather than beside it is how a title ends up
+                // unreadable, so the two never share pixels.
+                if let Some(heading) = layout
+                    .nodes
+                    .iter()
+                    .find(|node| node.kind == LayoutKind::OverlayTitle)
+                {
+                    assert!(
+                        heading.rect.x + heading.rect.width <= cross.rect.x,
+                        "{name}: the title runs under the cross"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A popover needs no cross: a tap anywhere off it puts it away, and a
+    /// second way out beside the control that opened it is noise.
+    #[test]
+    fn a_popover_carries_no_cross() {
+        let screen = Screen::new(1, Vec::new())
+            .with_top_bar(TopBar::new(NodeId(1), "Title").action(ActionId(9), "Aa"))
+            .with_overlay(Overlay {
+                kind: OverlayKind::Popover {
+                    anchor: ActionId(9),
+                },
+                id: NodeId(2),
+                title: "Type size".into(),
+                nodes: vec![Node::Text {
+                    id: NodeId(3),
+                    text: "Standard".into(),
+                }],
+            });
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(false));
+        assert!(
+            !layout
+                .nodes
+                .iter()
+                .any(|node| node.kind == LayoutKind::OverlayClose),
+            "a popover drew a cross it does not need"
+        );
+    }
+
+    /// A popover hung off a picture control has to find that control, and the
+    /// control has to stay pressable so a second tap puts the panel away.
+    ///
+    /// Both failed together and neither was visible in the screen: a bar glyph
+    /// was added to the hit test and to the renderer but not to
+    /// `LayoutKind::acts_on`, so the anchor lookup came back empty, the
+    /// popover quietly fell back to a centred modal, and the modal's scrim sat
+    /// over the control that opened it. On the panel that read as a front
+    /// light menu in the middle of the page that could not be dismissed, while
+    /// the type menu beside it -- a word, not a picture -- worked.
+    #[test]
+    fn a_popover_hung_off_a_picture_control_finds_it_and_leaves_it_pressable() {
+        let glyph = ActionId(31);
+        let screen = Screen::new(1, Vec::new())
+            .with_top_bar(
+                TopBar::new(NodeId(1), "3 of 40")
+                    .with_action(BarAction::new(glyph, "Front light").with_glyph(Glyph::Light)),
+            )
+            .with_overlay(Overlay {
+                kind: OverlayKind::Popover { anchor: glyph },
+                id: NodeId(2),
+                title: "Front light 20%".into(),
+                nodes: vec![Node::Button {
+                    id: NodeId(3),
+                    action: ActionId(32),
+                    label: "Brighter".into(),
+                    state: ControlState::Enabled,
+                    emphasis: Emphasis::Normal,
+                }],
+            });
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(false));
+        let anchor = layout
+            .rect_of_action(glyph)
+            .expect("the control the panel hangs off");
+        let box_rect = layout
+            .nodes
+            .iter()
+            .find(|node| node.kind == LayoutKind::Overlay)
+            .map(|node| node.rect)
+            .expect("the panel");
+        // Under the control it belongs to, not adrift in the middle of the
+        // page, which is what a silent fall back to a modal looks like.
+        assert!(
+            box_rect.y >= anchor.y + anchor.height,
+            "the panel did not hang off its control: anchor {anchor:?}, panel {box_rect:?}"
+        );
+        assert!(
+            layout
+                .nodes
+                .iter()
+                .any(|node| matches!(node.kind, LayoutKind::OverlayCaret(_))),
+            "a panel that hangs off a control draws the mark that says so"
+        );
+        // A tap on the control that opened it lands on the scrim, and a
+        // popover's scrim answers a miss with Back, which is what puts it
+        // away. That is the whole mechanism, and it is the half the fall back
+        // to a modal silently disabled -- a modal is deliberately *not*
+        // dismissed by a miss, so the panel became something that could only
+        // be left by tapping one of its own rows.
+        assert_eq!(
+            layout.hit_control(anchor.x + anchor.width / 2, anchor.y + anchor.height / 2),
+            Some(ActionId::BACK),
+            "a tap on the control that opened the panel does not put it away"
+        );
     }
 
     #[test]

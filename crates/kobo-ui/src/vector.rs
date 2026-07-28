@@ -649,6 +649,13 @@ pub fn shapes(glyph: Glyph) -> Vec<Shape> {
         // gaps between them close up and it becomes a blob with a bite out of
         // it. Four square and four diagonal, because seven or nine of them
         // cannot be spaced evenly on a pixel grid this coarse.
+        // Two strokes through the middle, kept well inside the box: a cross
+        // that reaches the corners reads as a large X on the panel rather than
+        // as a small control.
+        Glyph::Close => vec![
+            stroke(Path::line(250, 250, 750, 750)),
+            stroke(Path::line(750, 250, 250, 750)),
+        ],
         Glyph::Light => {
             let mut shapes = vec![Shape::Fill(Path::circle(500, 500, 210))];
             for (from, to) in [

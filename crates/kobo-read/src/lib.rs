@@ -673,23 +673,22 @@ impl Reader {
                     Outcome::Repaint
                 }
             }
-            action::CONTROLS => {
-                // A second tap on the control that opened it puts it away,
-                // which is the only thing a reader tries when a panel is in
-                // the way and they have not spotted the scrim.
-                let next = if self.chrome == Chrome::Controls {
-                    Chrome::Hidden
+            // Both panels behave identically and are written once, so a third
+            // one cannot arrive with a subtly different idea of what a second
+            // tap means.
+            action::CONTROLS | action::LIGHT => {
+                let wanted = if name == action::LIGHT {
+                    Chrome::Light
                 } else {
                     Chrome::Controls
                 };
-                self.set_chrome(next, panel);
-                Outcome::Repaint
-            }
-            action::LIGHT => {
-                let next = if self.chrome == Chrome::Light {
+                // A second tap on the control that opened it puts it away,
+                // which is the only thing a reader tries when a panel is in
+                // the way and they have not spotted the scrim.
+                let next = if self.chrome == wanted {
                     Chrome::Hidden
                 } else {
-                    Chrome::Light
+                    wanted
                 };
                 self.set_chrome(next, panel);
                 Outcome::Repaint
