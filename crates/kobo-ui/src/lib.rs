@@ -899,21 +899,39 @@ pub struct Screen {
     pub overlay: Option<Box<Overlay>>,
 }
 
-/// The actions a tap on the left or right of the content area sends.
+/// The actions a tap on the content area sends.
 ///
 /// Some Kobo models also have physical page buttons. When those are wired up
-/// they will send the same two actions, which is the reason this is a pair of
-/// intents rather than a pair of touch zones.
+/// they will send the same two actions, which is the reason this is a set of
+/// intents rather than a set of touch zones.
+///
+/// `menu` is what a screen with no controls on it is reached by. A reading
+/// screen deliberately carries nothing at the foot, and without a zone that
+/// asks for them, every setting behind that bar is unreachable: type size,
+/// front light, bookmarks and marked passages were all built, shipped, and
+/// impossible to get at with a finger.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PageTurns {
     pub previous: ActionId,
     pub next: ActionId,
+    pub menu: Option<ActionId>,
 }
 
 impl PageTurns {
     #[must_use]
     pub const fn new(previous: ActionId, next: ActionId) -> Self {
-        Self { previous, next }
+        Self {
+            previous,
+            next,
+            menu: None,
+        }
+    }
+
+    /// The same, with a middle column that asks for the reading controls.
+    #[must_use]
+    pub const fn with_menu(mut self, menu: ActionId) -> Self {
+        self.menu = Some(menu);
+        self
     }
 }
 
@@ -923,6 +941,15 @@ impl PageTurns {
 /// gets the larger share and the thumb that is already resting on the right
 /// edge of the panel.
 const BACK_ZONE: i32 = 3;
+
+/// How many columns the content is divided into when there is a menu zone.
+///
+/// Three, the arrangement every other reader on this hardware uses: back on
+/// the left, forward on the right, and the controls in the middle where
+/// neither thumb rests. Turning a page keeps two thirds of the panel, which is
+/// what it needs, and the third that is left is the only part of a reading
+/// screen a reader has no other reason to touch.
+const MENU_COLUMNS: i32 = 3;
 
 impl Screen {
     #[must_use]
@@ -2481,8 +2508,18 @@ impl Layout {
         if !self.content.contains(x, y) {
             return None;
         }
-        if x < self.content.x + self.content.width / BACK_ZONE {
+        let Some(menu) = turns.menu else {
+            return if x < self.content.x + self.content.width / BACK_ZONE {
+                Some(turns.previous)
+            } else {
+                Some(turns.next)
+            };
+        };
+        let column = self.content.width / MENU_COLUMNS;
+        if x < self.content.x + column {
             Some(turns.previous)
+        } else if x < self.content.x + 2 * column {
+            Some(menu)
         } else {
             Some(turns.next)
         }

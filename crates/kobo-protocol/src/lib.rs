@@ -1521,10 +1521,13 @@ fn encoded_screen_len(
         }
     }
     // One flag byte, plus two action identifiers when the screen asked for
-    // tap-to-turn.
+    // tap-to-turn and a third when it also asked for a middle column.
     add_encoded_len(&mut length, 1)?;
-    if screen.page_turns.is_some() {
+    if let Some(turns) = &screen.page_turns {
         add_encoded_len(&mut length, 8)?;
+        if turns.menu.is_some() {
+            add_encoded_len(&mut length, 4)?;
+        }
     }
     // One flag byte for first refusal on the runtime's Back control, one for a
     // text size this screen asks for in place of the reader's own, and one for
@@ -2225,9 +2228,17 @@ fn encode_screen(
     match &screen.page_turns {
         None => output.push(0),
         Some(turns) => {
-            output.push(1);
+            // Two shapes rather than an action identifier of zero for "no
+            // menu": zero is a legitimate hash, and a screen whose middle
+            // column silently did nothing would be indistinguishable from one
+            // whose middle column asked for a control the application forgot
+            // to answer.
+            output.push(if turns.menu.is_some() { 2 } else { 1 });
             push_u32(output, turns.previous.0);
             push_u32(output, turns.next.0);
+            if let Some(menu) = turns.menu {
+                push_u32(output, menu.0);
+            }
         }
     }
     output.push(u8::from(screen.owns_back));
@@ -2802,6 +2813,10 @@ fn decode_screen(
             ActionId(reader.u32()?),
             ActionId(reader.u32()?),
         )),
+        2 => Some(
+            PageTurns::new(ActionId(reader.u32()?), ActionId(reader.u32()?))
+                .with_menu(ActionId(reader.u32()?)),
+        ),
         _ => return Err(ProtocolError::InvalidValue("page turn flag")),
     };
     let owns_back = match reader.u8()? {
@@ -3420,6 +3435,33 @@ mod tests {
         let encoded = encode(&frame).expect("valid screen");
         assert_eq!(encoded, encode(&frame).expect("stable encoding"));
         assert_eq!(decode(&encoded), Ok(frame));
+    }
+
+    #[test]
+    fn a_reading_screens_middle_column_survives_the_wire() {
+        // The length calculation is separate from the encoder, so a field
+        // added to one and not the other produces a frame that encodes and
+        // then refuses to decode. Both shapes are round-tripped for that
+        // reason rather than only the new one.
+        let plain = Screen::new(1, Vec::new()).with_page_turns(ActionId(11), ActionId(12));
+        let with_menu = {
+            let mut screen = plain.clone();
+            screen.page_turns = screen.page_turns.map(|turns| turns.with_menu(ActionId(13)));
+            screen
+        };
+        for screen in [plain, with_menu] {
+            let expected = screen.page_turns;
+            let frame = Frame {
+                request_id: 4,
+                message: Message::SetScreen(screen),
+            };
+            let bytes = encode(&frame).expect("encodes");
+            let back = decode(&bytes).expect("decodes");
+            let Message::SetScreen(out) = back.message else {
+                panic!("wrong message");
+            };
+            assert_eq!(out.page_turns, expected);
+        }
     }
 
     #[test]

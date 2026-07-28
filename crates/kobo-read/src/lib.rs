@@ -754,11 +754,30 @@ impl Reader {
         }
     }
 
+    /// The book's name, and where in it this page is.
+    ///
+    /// The place belongs in the bar rather than at the foot: the foot of a
+    /// reading screen is empty on purpose, and a reader who wants to know how
+    /// far through they are is asking a question the title bar is already
+    /// there to answer. Both, because a number with no book beside it is a
+    /// number about nothing.
+    fn bar_title(&self, title: &str) -> String {
+        let pages = self.page_count();
+        if pages <= 1 {
+            return title.to_owned();
+        }
+        format!("{title} \u{b7} {} of {pages}", self.page_number())
+    }
+
     fn book_screen(&self, title: &str) -> Screen {
         let mut screen = ScreenBuilder::new("reader")
             .reading(true)
             .text_scale(self.memory.scale)
-            .top_bar(title);
+            .top_bar(self.bar_title(title))
+            // A visible way in, as well as the middle column. A gesture nobody
+            // is told about is a feature nobody has: every setting behind this
+            // was built and shipped and could not be reached with a finger.
+            .top_bar_action(action::CONTROLS, "Aa");
         for piece in self.page() {
             screen = match piece.kind {
                 Kind::Heading(_) => screen.heading(piece.text.clone()),
@@ -784,7 +803,11 @@ impl Reader {
         // The gesture is what gets used; the bar is how anyone learns the
         // gesture is there. Tapping the side of the panel turns the page on
         // every Kobo ever made, and a reader holding one already knows that.
-        screen = screen.page_turns(action::BACK, action::FORWARD);
+        // The middle column is the way to the controls, which is the only
+        // thing on this screen a reader cannot otherwise get at.
+        screen = screen
+            .page_turns(action::BACK, action::FORWARD)
+            .reading_menu(action::CONTROLS);
         if self.chrome == Chrome::Hidden {
             // Nothing at the foot at all. This is the point of the reading
             // screen: a book, and the reader's own hands.
@@ -1082,6 +1105,88 @@ mod tests {
 
     fn reader(paragraphs: usize) -> Reader {
         Reader::open(book(paragraphs), Memory::default(), &panel())
+    }
+
+    /// Everything behind the reading bar (type size, front light, bookmarks,
+    /// marked passages) was written, tested and shipped while being
+    /// unreachable: the reading screen carries nothing at the foot, and the
+    /// whole content area answered a tap with a page turn. This is the way in.
+    #[test]
+    fn a_tap_in_the_middle_of_the_page_asks_for_the_controls() {
+        let reader = reader(40);
+        let panel = panel();
+        let screen = reader.screen("Pride and Prejudice");
+        let layout = screen.layout_with(&panel, &kobo_ui::Chrome::with_back(true));
+        let content = layout.content;
+        let middle = content.x + content.width / 2;
+        let row = content.y + content.height / 2;
+
+        let controls = kobo_sdk::action_id(action::CONTROLS);
+        let forward = kobo_sdk::action_id(action::FORWARD);
+        let back = kobo_sdk::action_id(action::BACK);
+
+        assert_eq!(
+            layout.hit_test(middle, row),
+            Some(controls),
+            "the middle column"
+        );
+        assert_eq!(
+            layout.hit_test(content.x + content.width / 6, row),
+            Some(back),
+            "the left column still turns back"
+        );
+        assert_eq!(
+            layout.hit_test(content.x + content.width * 5 / 6, row),
+            Some(forward),
+            "the right column still turns forward"
+        );
+    }
+
+    /// The gesture is invisible, so there is also a control that is not.
+    #[test]
+    fn the_reading_bar_is_also_reachable_without_knowing_the_gesture() {
+        let reader = reader(40);
+        let screen = reader.screen("Pride and Prejudice");
+        let layout = screen.layout_with(&panel(), &kobo_ui::Chrome::with_back(true));
+        let controls = kobo_sdk::action_id(action::CONTROLS);
+        let found = layout
+            .nodes
+            .iter()
+            .find(|node| node.kind == kobo_ui::LayoutKind::BarAction(controls))
+            .expect("a visible way to the reading controls");
+        assert_eq!(
+            layout.hit_test(
+                found.rect.x + found.rect.width / 2,
+                found.rect.y + found.rect.height / 2
+            ),
+            Some(controls)
+        );
+    }
+
+    /// A reader wants to know how far through they are, and the foot of the
+    /// page is deliberately empty.
+    #[test]
+    fn the_bar_says_where_in_the_book_this_page_is() {
+        let mut reader = reader(40);
+        let pages = reader.page_count();
+        assert!(reader.forward());
+        let title = reader.bar_title("Pride and Prejudice");
+        assert!(
+            title.contains("Pride and Prejudice") && title.contains(&format!("2 of {pages}")),
+            "the bar did not say the place: {title}"
+        );
+        // A book of one page has no place worth stating.
+        let short = Reader::open(
+            Document {
+                title: None,
+                author: None,
+                blocks: vec![Block::Paragraph("Short.".into())],
+                truncated: false,
+            },
+            Memory::default(),
+            &panel(),
+        );
+        assert_eq!(short.bar_title("Short"), "Short");
     }
 
     #[test]

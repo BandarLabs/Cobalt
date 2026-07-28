@@ -697,6 +697,23 @@ impl ScreenBuilder {
         self
     }
 
+    /// Adds a middle column that asks for this screen's own controls.
+    ///
+    /// For a screen that carries nothing at the foot, which is every reading
+    /// screen: without this there is no way to reach a setting with a finger,
+    /// because the whole content area is spoken for by page turns. Left third
+    /// back, middle third the controls, right third forward, which is what
+    /// every other reader on this hardware does.
+    ///
+    /// Has no effect unless [`Self::page_turns`] was asked for as well, since
+    /// the zones are one arrangement rather than three separate ones.
+    #[must_use]
+    pub fn reading_menu(mut self, menu: impl AsRef<str>) -> Self {
+        let menu = self.register(menu.as_ref());
+        self.page_turns = self.page_turns.map(|turns| turns.with_menu(menu));
+        self
+    }
+
     /// Adds the fixed bar at the bottom of the screen.
     ///
     /// `selected` takes an index or `None`. `None` is for a bar whose entries
