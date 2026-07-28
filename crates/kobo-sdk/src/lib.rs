@@ -2177,7 +2177,7 @@ impl Context {
         placed: &Screen,
     ) -> Vec<Vec<usize>> {
         let used = placed
-            .layout_with(&self.metrics, &Chrome::with_back(true))
+            .layout_with(&self.metrics, &Chrome::measuring(true))
             .content_used();
         let mut area = self.paged_area(nav_bar);
         area.height = area

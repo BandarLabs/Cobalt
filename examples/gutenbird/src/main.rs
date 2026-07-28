@@ -37,7 +37,7 @@ use kobo_sdk::{
     PictureHandle, RowLead, ScreenBuilder, ShelfDownload, ShelfProgress, ShelfUpload, StoreResult,
     Task, TaskId, TaskOutcome, Tile, TilePicture, TileShape, TileState, MAX_STORE_VALUE,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::process::ExitCode;
 
 /// The catalogue. Gutendex is a read-only JSON front end to Gutenberg's own
@@ -716,22 +716,49 @@ impl Gutenbird {
     ) -> Vec<Vec<DetailBlock>> {
         let mut pages: Vec<Vec<DetailBlock>> = Vec::new();
         let mut current: Vec<DetailBlock> = Vec::new();
-        for block in blocks {
+        let mut queue: VecDeque<DetailBlock> = blocks.iter().cloned().collect();
+        while let Some(block) = queue.pop_front() {
             let mut candidate = current.clone();
             candidate.push(block.clone());
-            if self.detail_fits(context, book, pages.is_empty(), &candidate) || current.is_empty() {
+            if self.detail_fits(context, book, pages.is_empty(), &candidate) {
                 current = candidate;
-            } else {
-                pages.push(std::mem::take(&mut current));
-                current.push(block.clone());
+                continue;
             }
+            // A summary is as long as whoever wrote it made it, and Gutendex
+            // has written ones longer than this panel. Every other block is
+            // atomic, so a summary is the one that can be divided rather than
+            // moved whole, and dividing it is what lets a page end where the
+            // panel ends instead of a line or two past it.
+            if let DetailBlock::Text(text) = &block {
+                if let Some((head, tail)) =
+                    self.split_summary(context, book, pages.is_empty(), &current, text)
+                {
+                    current.push(DetailBlock::Text(head));
+                    pages.push(std::mem::take(&mut current));
+                    queue.push_front(DetailBlock::Text(tail));
+                    continue;
+                }
+            }
+            if current.is_empty() {
+                // Nothing to move it off and nothing to divide. Drawing it
+                // clipped is worse than any alternative except losing it.
+                current = candidate;
+                continue;
+            }
+            pages.push(std::mem::take(&mut current));
+            queue.push_front(block);
         }
         pages.push(current);
         // A section heading orphaned at the foot of a page is worse than a
         // short page, and it happens whenever the block after it is the one
-        // that did not fit.
+        // that did not fit. Never off a page it is alone on: that page then
+        // empties, `retain` drops it, and the page behind it inherits the
+        // cover and the Read button it was never measured against. That is
+        // how the summary came to be drawn through the "1 of 2" under it.
         for index in 0..pages.len().saturating_sub(1) {
-            if matches!(pages[index].last(), Some(DetailBlock::Section(_))) {
+            if pages[index].len() > 1
+                && matches!(pages[index].last(), Some(DetailBlock::Section(_)))
+            {
                 let orphan = pages[index].pop().expect("just matched");
                 pages[index + 1].insert(0, orphan);
             }
@@ -741,6 +768,49 @@ impl Gutenbird {
             pages.push(Vec::new());
         }
         pages
+    }
+
+    /// Divides a summary so that as much of it as the page has room for stays
+    /// on the page, and the rest starts the next one.
+    ///
+    /// Searched rather than estimated, for the reason the pagination itself
+    /// is: how many words reach the bottom of the panel depends on the
+    /// typeface, the text scale and whether a cover is above them. Returns
+    /// `None` when not even one word fits, which is the caller's signal that
+    /// there is nothing useful left to try.
+    fn split_summary(
+        &self,
+        context: &Context,
+        book: &Book,
+        first_page: bool,
+        current: &[DetailBlock],
+        text: &str,
+    ) -> Option<(String, String)> {
+        let words: Vec<&str> = text.split_whitespace().collect();
+        if words.len() < 2 {
+            return None;
+        }
+        let fits = |count: usize| {
+            let mut blocks = current.to_vec();
+            blocks.push(DetailBlock::Text(words[..count].join(" ")));
+            self.detail_fits(context, book, first_page, &blocks)
+        };
+        if !fits(1) {
+            return None;
+        }
+        // Binary search: a summary of four hundred words costs nine layouts
+        // this way and four hundred the other way, on a device where a layout
+        // is the expensive thing.
+        let (mut low, mut high) = (1usize, words.len() - 1);
+        while low < high {
+            let middle = low + (high - low).div_ceil(2);
+            if fits(middle) {
+                low = middle;
+            } else {
+                high = middle - 1;
+            }
+        }
+        Some((words[..low].join(" "), words[low..].join(" ")))
     }
 
     /// Whether the head of the book screen plus these blocks fits the panel.
@@ -755,9 +825,18 @@ impl Gutenbird {
         for block in blocks {
             screen = block.add(screen);
         }
+        // Measured with the page turns and the position that will be drawn
+        // under this page, and against the status band the runtime puts above
+        // it. Without either, the summary was measured into a panel taller
+        // than the one it landed on: the About text ran off the bottom and the
+        // "1 of 2" beneath it was printed through the last line. The position
+        // reserves the same band whatever it says, so any two pages will do to
+        // measure with.
         screen
+            .page_turns("about-back", "about-next")
+            .page_position(1, 2)
             .build()
-            .diagnostics(&context.metrics(), &Chrome::with_back(true))
+            .diagnostics(&context.metrics(), &Chrome::measuring(true))
             .issues
             .iter()
             .all(|issue| issue.severity != DiagnosticSeverity::Error)
@@ -2244,8 +2323,8 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        books_from, encode_query, plain_text_url, readable, Awaiting, Book, Gutenbird, Memory,
-        Reader, View, COVER_TRIES,
+        books_from, encode_query, plain_text_url, readable, Awaiting, Book, DetailBlock, Gutenbird,
+        Memory, Reader, View, COVER_TRIES,
     };
     use kobo_sdk::DiagnosticSeverity;
     use kobo_sdk::{action_id, AppRunner, Command, StoreRequest, StoreResult};
@@ -3214,15 +3293,100 @@ Please read this before you distribute or use this work.\n";
             pages.len() > 1,
             "a summary this long should have cost a page turn"
         );
-        // Every block reaches the panel: nothing is lost to the paging.
-        let placed: usize = pages.iter().map(Vec::len).sum();
-        assert_eq!(placed, blocks.len(), "paging dropped part of the book");
+        // Every word reaches the panel: nothing is lost to the paging. Words
+        // rather than blocks, because a summary too long for one page is
+        // divided into two, so the count of blocks legitimately grows.
+        assert_eq!(
+            summary_words(pages.iter().flatten()),
+            summary_words(blocks.iter()),
+            "paging dropped part of the book"
+        );
 
         for page in 0..pages.len() {
             runner.app_mut().detail_page = page;
             let screen = runner.app().details(&context);
             let errors: Vec<_> = screen
                 .diagnostics(&context.metrics(), &Chrome::with_back(true))
+                .issues
+                .into_iter()
+                .filter(|issue| issue.severity == DiagnosticSeverity::Error)
+                .collect();
+            assert!(errors.is_empty(), "page {page} does not fit: {errors:?}");
+        }
+    }
+
+    /// Every word of prose in these blocks, in order.
+    fn summary_words<'a>(blocks: impl IntoIterator<Item = &'a DetailBlock>) -> Vec<String> {
+        blocks
+            .into_iter()
+            .filter_map(|block| match block {
+                DetailBlock::Text(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .flat_map(str::split_whitespace)
+            .map(str::to_owned)
+            .collect()
+    }
+
+    #[test]
+    fn a_summary_under_a_cover_is_divided_rather_than_drawn_off_the_panel() {
+        // From the device. The book screen sets a cover, a title, an author
+        // and a Read button above the summary, and the runtime sets a status
+        // band above all of it, so the room left for prose is roughly half the
+        // panel. The pagination measured the summary against a bare page, put
+        // it with the "About" heading, and then the orphan rule moved that
+        // heading forward off a page it was alone on. That page emptied,
+        // `retain` dropped it, and the page behind it inherited a cover it had
+        // never been measured against: the summary ran off the bottom of the
+        // panel and through the "1 of 2" beneath it.
+        let long = "This is the summary of a book, written by whoever catalogued it, at \
+                    whatever length they felt the book deserved. "
+            .repeat(12);
+        let book = Book {
+            title: "Moby Dick; Or, The Whale".to_owned(),
+            author: "Melville, Herman".to_owned(),
+            text: Some("https://example.invalid/text".to_owned()),
+            id: Some(2701),
+            summaries: vec![long],
+            picture: Some(kobo_ui::TilePicture::new(
+                kobo_ui::PictureHandle(0),
+                306,
+                484,
+            )),
+            ..Book::default()
+        };
+        let mut runner = AppRunner::new(Gutenbird {
+            view: View::Details,
+            books: vec![book],
+            open: Some(0),
+            complete: true,
+            ..Gutenbird::default()
+        });
+        let context = kobo_sdk::Context::default();
+        let blocks = Gutenbird::detail_blocks(&runner.app().books[0]);
+        let pages = {
+            let application = runner.app();
+            application.detail_pagination(&context, &application.books[0], &blocks)
+        };
+        assert!(pages.len() > 1, "a summary this long should have paged");
+        assert!(
+            !pages[0].is_empty(),
+            "the first page emptied, so the second inherited the cover"
+        );
+        assert_eq!(
+            summary_words(pages.iter().flatten()),
+            summary_words(blocks.iter()),
+            "dividing the summary lost words"
+        );
+        // Against the chrome the runtime actually draws. With `with_back` the
+        // content starts a status band higher and every page fits either way,
+        // which is how this shipped.
+        for page in 0..pages.len() {
+            runner.app_mut().detail_page = page;
+            let errors: Vec<_> = runner
+                .app()
+                .details(&context)
+                .diagnostics(&context.metrics(), &Chrome::measuring(true))
                 .issues
                 .into_iter()
                 .filter(|issue| issue.severity == DiagnosticSeverity::Error)

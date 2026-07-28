@@ -568,6 +568,31 @@ impl Chrome {
         self.status = Some(status);
         self
     }
+
+    /// The chrome to measure against when the real one is not known.
+    ///
+    /// An application is never told the clock, the signal or the battery, so
+    /// a screen it measures for itself gets measured without them -- and the
+    /// status band is laid out above everything else, so measuring without it
+    /// hands the page a band of room that will not be there when it is drawn.
+    /// Every application that paginates for itself made this mistake, and the
+    /// symptom is always the same: a page that fits in the measurement and
+    /// runs off the panel on the device.
+    ///
+    /// The values are representative rather than real. Only the height of the
+    /// band matters, and that does not depend on what it says.
+    #[must_use]
+    pub fn measuring(back: bool) -> Self {
+        Self {
+            back,
+            status: Some(Status {
+                clock: "00:00".to_owned(),
+                signal: Signal::Strong,
+                battery: Some(Percent::new(50)),
+                charging: false,
+            }),
+        }
+    }
 }
 
 /// How much radio there is.

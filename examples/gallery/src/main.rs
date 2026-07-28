@@ -143,7 +143,11 @@ impl Tab {
             // One state per page, because a standard state is a splash and a
             // splash centres itself in the whole of what is left. Two of them
             // on one panel is two half-pages, which is neither.
-            Self::Work => &[("page-transfer", "Transfer"), ("page-splash", "Waiting")],
+            Self::Work => &[
+                ("page-transfer", "Transfer"),
+                ("page-request", "Requests"),
+                ("page-splash", "Waiting"),
+            ],
         }
     }
 }
@@ -280,6 +284,7 @@ impl Gallery {
             (Tab::States, 2) => Self::denied_page(screen),
             (Tab::States, _) => Self::trouble_page(screen),
             (Tab::Work, 0) => self.transfer_page(screen),
+            (Tab::Work, 1) => self.request_page(screen),
             (Tab::Work, _) => Self::splash_page(screen),
         };
 
@@ -377,9 +382,13 @@ impl Gallery {
                     ),
                 ],
             )
+            // Two rows, not three. A third fitted the panel this test used to
+            // measure against and was drawn through the navigation bar on the
+            // device, and the count in the section header has to be the count
+            // of what is under it.
             .section_rows(
                 "A section with its own rows",
-                Some("3 items".to_owned()),
+                Some("2 items".to_owned()),
                 [
                     (
                         "grp-one",
@@ -392,12 +401,6 @@ impl Gallery {
                         "Second",
                         "and another",
                         RowLead::from(Glyph::Note),
-                    ),
-                    (
-                        "grp-three",
-                        "Third",
-                        "and a third",
-                        RowLead::from(Glyph::Folder),
                     ),
                 ],
             )
@@ -668,10 +671,17 @@ impl Gallery {
                 .cancellable("xfer-cancel", "Cancel")
                 .button("xfer-fail", "Pretend it fails")
         };
-        let screen =
-            screen
-                .section("Size not sent by the server")
-                .transfer("The Waves", 412_000, None);
+        screen
+            .section("Size not sent by the server")
+            .transfer("The Waves", 412_000, None)
+    }
+
+    /// Work with no byte count, which is the other half of what a transfer is.
+    ///
+    /// Its own page rather than the foot of the transfer page: with both on
+    /// one panel the last button was drawn through the navigation bar on the
+    /// device, and a conformance screen that overflows teaches the overflow.
+    fn request_page(&self, screen: ScreenBuilder) -> ScreenBuilder {
         let screen = screen.section("Work with no bytes at all");
         if self.loading {
             screen
@@ -1022,14 +1032,20 @@ mod tests {
     /// error the same mistake is waiting in every app that copies from here.
     ///
     /// Errors only. Warnings are advice and several of them are deliberately
-    /// provoked on these pages -- the tone page uses more inks than a reading
+    /// provoked on these pages: the tone page uses more inks than a reading
     /// screen should, because showing them is the point.
+    ///
+    /// Measured against the status band the runtime draws above every screen.
+    /// With a bare chrome the content starts sixty pixels higher than it does
+    /// on the device, and that slack is enough to hide a page that overflows:
+    /// the groups page passed this test while drawing the last row's subtitle
+    /// through the navigation bar on the panel.
     #[test]
     fn every_page_lays_out_without_an_error() {
         let mut failures = Vec::new();
         for (name, screen) in every_page() {
             let errors = screen
-                .diagnostics(&CLARA_BW_METRICS, &kobo_sdk::Chrome::default())
+                .diagnostics(&CLARA_BW_METRICS, &kobo_sdk::Chrome::measuring(false))
                 .issues
                 .into_iter()
                 .filter(|issue| issue.severity == DiagnosticSeverity::Error)
