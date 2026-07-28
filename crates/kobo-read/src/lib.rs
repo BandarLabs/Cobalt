@@ -67,6 +67,15 @@ const MIN_KEEP_LINES: usize = 2;
 /// device with 256 MB for everything.
 const MAX_PAGES: usize = 16_384;
 
+/// How near the foot of the downloaded text a chunk-in-flight is worth saying.
+///
+/// The reader is told when the next chunk was asked for; this is how close to
+/// running out of book it has to be before that fact reaches the foot. It
+/// mirrors the caller's own top-up window so the message appears exactly where
+/// a page turn would otherwise stall in silence, and nowhere it would just be
+/// noise over a book the reader is nowhere near the end of.
+const NEAR_END_PAGES: usize = 2;
+
 /// How much the front light moves per tap, out of a hundred.
 ///
 /// Fine enough to find a comfortable level in a few taps, coarse enough that
@@ -286,6 +295,14 @@ pub struct Reader {
     /// ceiling, both end in exactly the same way: a page, and then nothing.
     /// Silence there reads as "the end", which is the one thing it is not.
     cut: bool,
+    /// Whether the next chunk of the book has been asked for and not arrived.
+    ///
+    /// A reading app that pauses at a page turn feels broken. When the reader
+    /// is near the foot of what has downloaded and the rest is still in the
+    /// air, the foot says so rather than letting the last page look like the
+    /// end of the book -- which is the exact confusion the `cut` banner exists
+    /// to prevent, and would cause itself if it fired while more was coming.
+    pending: bool,
 }
 
 impl Reader {
@@ -304,6 +321,7 @@ impl Reader {
             chrome: Chrome::Hidden,
             problem: None,
             cut: false,
+            pending: false,
         };
         reader.repaginate(panel);
         reader
@@ -415,6 +433,26 @@ impl Reader {
     #[must_use]
     pub fn page_count(&self) -> usize {
         self.pages.len()
+    }
+
+    /// Records whether the next chunk of the book is on its way.
+    ///
+    /// The reader itself never fetches; it is told. Set true when a top-up has
+    /// been asked for, false when that request failed, so the foot can say
+    /// "still coming" without ever promising a chunk that is no longer on its
+    /// way. A fresh copy repaginates through `open`, which clears this, so a
+    /// chunk that lands cannot leave the flag stuck on.
+    pub fn expect_more(&mut self, waiting: bool) {
+        self.pending = waiting;
+    }
+
+    /// Whether the reader is near the foot of what has downloaded.
+    ///
+    /// Mirrors the caller's own top-up trigger: the message about a chunk in
+    /// flight is only worth showing where a page turn is about to run out of
+    /// book, not thirty pages earlier where it would just be clutter.
+    fn near_downloaded_end(&self) -> bool {
+        self.page_count().saturating_sub(self.page_number()) <= NEAR_END_PAGES
     }
 
     /// One step larger, if there is one. Returns whether anything changed.
@@ -807,27 +845,31 @@ impl Reader {
         }
     }
 
-    /// Where in the book this page is.
+    /// The line at the foot that says where in the book this page is.
     ///
-    /// Not the book's name. A reader holding an open book knows which book it
-    /// is -- it is the thing they are reading -- and the name took the width
-    /// two controls needed, so it was ellipsised into "Alice's Adventures in
-    /// W..." to make room for nothing anyone was asking for. The place belongs
-    /// in the bar rather than at the foot, because the foot of a reading
-    /// screen is empty on purpose.
-    fn bar_title(&self, title: &str) -> String {
+    /// It lives at the foot now, not in the bar: the foot is where every Kobo
+    /// has always shown the place, and a reader glances there for it without
+    /// thinking. One page has no place worth stating, so it says nothing rather
+    /// than "1 of 1". The book's name is not repeated anywhere -- whoever is
+    /// reading it knows what it is.
+    fn foot_position(&self) -> Option<(u16, u16)> {
         let pages = self.page_count();
         if pages <= 1 {
-            return title.to_owned();
+            return None;
         }
-        format!("{} of {pages}", self.page_number())
+        let page = u16::try_from(self.page_number()).unwrap_or(u16::MAX);
+        let total = u16::try_from(pages).unwrap_or(u16::MAX);
+        Some((page, total))
     }
 
     fn book_screen(&self, title: &str) -> Screen {
         let mut screen = ScreenBuilder::new("reader")
             .reading(true)
             .text_scale(self.memory.scale)
-            .top_bar(self.bar_title(title))
+            // The book's name, ellipsised if it must be. The place it used to
+            // hold moved to the foot, where a Kobo reader looks for it, which
+            // freed the bar for the one thing a top bar is for.
+            .top_bar(title.to_owned())
             // A visible way in, as well as the middle column. A gesture nobody
             // is told about is a feature nobody has: every setting behind this
             // was built and shipped and could not be reached with a finger.
@@ -850,6 +892,16 @@ impl Reader {
         }
         if let Some(problem) = &self.problem {
             screen = screen.banner(BannerLevel::Attention, problem.clone());
+        } else if self.pending && self.near_downloaded_end() {
+            // The next chunk was asked for and has not landed yet. Said here,
+            // at the foot, so a page turn that runs out of downloaded book
+            // reads as "still arriving" rather than as a stall -- or, worse,
+            // as the end of the book, which is what the `cut` banner below
+            // would wrongly claim if it fired while more was on its way.
+            screen = screen.banner(
+                BannerLevel::Info,
+                "The next part of the book is still downloading.",
+            );
         } else if self.cut && !self.can_go_forward() {
             // Said on the last page, where somebody is deciding whether they
             // have finished the book. Anywhere earlier it is noise; here it is
@@ -867,6 +919,14 @@ impl Reader {
         screen = screen
             .page_turns(action::BACK, action::FORWARD)
             .reading_menu(action::CONTROLS);
+        // The place, at the foot, muted, one caption line. It is what tells a
+        // page turn from a tap that landed on nothing, and it is where a Kobo
+        // reader's eye goes for it. Drawn under every chrome state, reading
+        // included, because the place is a fact about the book and not a
+        // control the reader has to summon.
+        if let Some((page, total)) = self.foot_position() {
+            screen = screen.page_position(page, total);
+        }
         // Holding a finger on the page asks to mark something on it, which is
         // what a hold does in every reader anyone has used. It opens the list
         // of this page's paragraphs rather than dropping a caret into the
@@ -877,8 +937,9 @@ impl Reader {
             screen = screen.hold(action::MARKING);
         }
         if self.chrome == Chrome::Hidden {
-            // Nothing at the foot at all. This is the point of the reading
-            // screen: a book, and the reader's own hands.
+            // No panel and no bar over the page: a book, the reader's own
+            // hands, and the muted place at the foot. This is the point of the
+            // reading screen.
             return screen.build();
         }
         // A panel over the page rather than a bar under it. A bar takes its
@@ -996,7 +1057,7 @@ impl Reader {
             // the person about to make another.
             bar.push((action::MARKING, "Mark a paragraph"));
         }
-        screen.nav_bar(None, bar).build()
+        screen.action_bar(bar).build()
     }
 
     /// The paragraphs on this page, each a tap away from being marked.
@@ -1020,13 +1081,10 @@ impl Reader {
             screen = screen.button(format!("{}{block}", action::MARK), label);
         }
         screen
-            .nav_bar(
-                None,
-                [
-                    (action::CONTROLS, "Back to the book"),
-                    (action::HIGHLIGHTS, "Notes"),
-                ],
-            )
+            .action_bar([
+                (action::CONTROLS, "Back to the book"),
+                (action::HIGHLIGHTS, "Notes"),
+            ])
             .build()
     }
 }
@@ -1282,16 +1340,27 @@ mod tests {
         );
     }
 
-    /// A reader wants to know how far through they are, and the foot of the
-    /// page is deliberately empty. The book's name is not repeated: whoever is
-    /// reading it knows what it is, and the room it took is now two controls.
+    /// A reader wants to know how far through they are. The place moved from
+    /// the bar to the foot, where every Kobo has always shown it and where a
+    /// reader's eye goes for it, and it rides on the page turns as one muted
+    /// caption line. The book's name is not repeated in it: whoever is reading
+    /// it knows what it is.
     #[test]
-    fn the_bar_says_where_in_the_book_this_page_is() {
+    fn the_foot_says_where_in_the_book_this_page_is() {
         let mut reader = reader(40);
-        let pages = reader.page_count();
+        let pages = u16::try_from(reader.page_count()).unwrap();
         assert!(reader.forward());
-        let title = reader.bar_title("Pride and Prejudice");
-        assert_eq!(title, format!("2 of {pages}"));
+        let screen = reader.screen("Pride and Prejudice");
+        assert_eq!(
+            screen.page_turns.and_then(|turns| turns.position),
+            Some((2, pages)),
+            "the foot carries the place, not the bar"
+        );
+        // The book's name is what the bar holds now.
+        assert_eq!(
+            screen.top_bar.map(|bar| bar.title),
+            Some("Pride and Prejudice".to_owned())
+        );
         // A book of one page has no place worth stating.
         let short = Reader::open(
             Document {
@@ -1303,7 +1372,13 @@ mod tests {
             Memory::default(),
             &panel(),
         );
-        assert_eq!(short.bar_title("Short"), "Short");
+        assert_eq!(
+            short
+                .screen("Short")
+                .page_turns
+                .and_then(|turns| turns.position),
+            None
+        );
     }
 
     /// The front light is judged against the page, so it has a control of its
@@ -1618,9 +1693,11 @@ mod tests {
     }
 
     #[test]
-    fn the_reading_screen_carries_nothing_at_the_foot() {
-        // A book and the reader's hands. The controls are a deliberate step
-        // away from that, not the resting state.
+    fn the_reading_screen_carries_no_bar_or_panel_at_the_foot() {
+        // A book, the reader's hands, and the muted place. No bar and no
+        // panel: the controls are a deliberate step away from that, not the
+        // resting state, and the place rides on the page turns rather than in
+        // a bar of its own.
         let mut reader = reader(20);
         let bare = reader.screen("Pride and Prejudice");
         assert!(bare.nav_bar.is_none(), "the plain reading page had a bar");
@@ -1643,6 +1720,47 @@ mod tests {
         while reader.forward() {}
         assert_eq!(reader.act(action::FORWARD, &panel()), Outcome::Repaint);
         assert!(reader.problem.is_some());
+    }
+
+    #[test]
+    fn a_chunk_still_on_its_way_is_said_at_the_foot_rather_than_stalling() {
+        // A truncated copy ends in a page and then nothing, which reads as the
+        // end of the book. When the rest is still downloading, the foot says
+        // so, rather than letting the last page look like the ending or the
+        // page turn stall in silence.
+        let mut reader = Reader::open(
+            Document {
+                title: None,
+                author: None,
+                blocks: (0..40)
+                    .map(|index| Block::Paragraph(format!("Paragraph {index}.")))
+                    .collect(),
+                truncated: true,
+            },
+            Memory::default(),
+            &panel(),
+        );
+        while reader.forward() {}
+        reader.expect_more(true);
+        let waiting = texts(&reader.screen("A Book"));
+        assert!(
+            waiting
+                .iter()
+                .any(|text| text.contains("still downloading")),
+            "the foot did not say the next part was coming: {waiting:?}"
+        );
+        assert!(
+            !waiting.iter().any(|text| text.contains("stops here")),
+            "the last-page banner claimed the end while more was on its way"
+        );
+        // Once nothing more is expected, the truncation is the honest thing to
+        // say on the last page.
+        reader.expect_more(false);
+        let stalled = texts(&reader.screen("A Book"));
+        assert!(
+            stalled.iter().any(|text| text.contains("stops here")),
+            "a genuinely cut copy did not say so: {stalled:?}"
+        );
     }
 
     #[test]

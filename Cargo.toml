@@ -19,6 +19,7 @@ members = [
     "crates/kobo-shell",
     "crates/kobo-sim",
     "crates/kobo-smoke",
+    "crates/kobo-tap",
     "crates/kobo-ui",
     "crates/kobo-guard",
     "crates/kobo-handoff",

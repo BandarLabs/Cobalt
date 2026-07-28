@@ -163,6 +163,46 @@ failing rectangles. Run with `KOBO_TEXT_SCALE=large` or
 `KOBO_TEXT_SCALE=extra-large` to verify the 120% and 140% accessibility settings
 with the same metrics used for pagination.
 
+### Driving it, and photographing the result
+
+A layout assertion proves a button was placed. It does not prove the screen
+reads as a product, and it does not prove the button is reachable. Closing that
+loop — for a person, or for something automating on their behalf — means
+driving the application the way a finger does and then looking at the result.
+
+```sh
+cargo run -p kobo-cli -- dev 127.0.0.1:8787          # in one terminal
+cargo run -p kobo-cli -- drive --script tour.kobo --shots target/shots
+cargo run -p kobo-cli -- drive --step "tap Search" --step "expect Results"
+```
+
+A script is one step per line: `tap LABEL`, `tap-at X,Y`, `type TEXT`,
+`expect TEXT`, `expect-missing TEXT`, `wait-for TEXT`, `clean`, `shot NAME`,
+`dump`, `scenario NAME`, `lifecycle background`, `wait MS`. A failing step
+reports the line and the reason and screenshots the panel first. Add `--ideal`
+to take screenshots without the panel's e-ink residue, which is what you want
+when a person or a model is going to read them.
+
+`tap` resolves the label against the layout the renderer produced and then taps
+the coordinate, through the panel's own touch transform and the renderer's own
+hit-testing. Dispatching the action directly would have been simpler and
+worthless: it passes on a screen whose only button has been laid out below the
+bottom edge, which is the fault worth catching.
+
+For the real panel:
+
+```sh
+cargo run -p kobo-cli -- shot --device <address> --out screen.png
+cargo run -p kobo-cli --features device-write -- tap --device <address> 536,900
+```
+
+`shot --device` is read-only — it opens the framebuffer for reading and never
+grabs, refreshes or writes, so it is safe against a device with the stock
+reader in the foreground. `tap --device` writes real evdev records to the real
+touch node, so the digitiser, the transform, the multitouch decoder and the
+hit-testing all run as they do under a finger; it is behind `device-write` and
+an unlock phrase, and it always lifts.
+
 Create and run a new application:
 
 ```sh

@@ -12,7 +12,7 @@
 //! reader with it.
 
 use image::imageops::FilterType;
-use image::{DynamicImage, ImageDecoder, ImageReader};
+use image::{DynamicImage, ImageDecoder, ImageEncoder, ImageReader};
 use std::fmt;
 use std::io::Cursor;
 
@@ -42,6 +42,39 @@ pub const MAX_ENLARGEMENT: u32 = 3;
 /// that makes dithering worth doing: at 256 the reduction is invisible, and at
 /// two everything becomes a woodcut.
 pub const PANEL_GREYS: u8 = 16;
+
+/// Wraps grey panel bytes up as a PNG.
+///
+/// The other direction from everything else here, and it exists for one
+/// reason: a frame off the panel is 1072 by 1448 bytes of raw grey, which is
+/// not a thing a person can look at or an agent can read. A screenshot that
+/// has to be converted before it can be opened is a screenshot nobody takes.
+///
+/// Greyscale, eight bit, no palette -- the same shape the surface already
+/// holds, so this is an encode and not a conversion.
+///
+/// # Errors
+///
+/// Returns [`ImageError::Undecodable`] when `grey` is not exactly
+/// `width * height` bytes, and [`ImageError::TooManyPixels`] past
+/// [`MAX_PIXELS`].
+pub fn encode_png_grey(width: u32, height: u32, grey: &[u8]) -> Result<Vec<u8>, ImageError> {
+    let pixels = u64::from(width) * u64::from(height);
+    if pixels > MAX_PIXELS {
+        return Err(ImageError::TooManyPixels { pixels });
+    }
+    if grey.len() as u64 != pixels {
+        return Err(ImageError::Undecodable(format!(
+            "{} bytes for a {width} by {height} frame, which needs {pixels}",
+            grey.len()
+        )));
+    }
+    let mut png = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut png)
+        .write_image(grey, width, height, image::ExtendedColorType::L8)
+        .map_err(|error| ImageError::Undecodable(error.to_string()))?;
+    Ok(png)
+}
 
 /// How a picture should occupy the rectangle a component assigned to it.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]

@@ -21,6 +21,51 @@ const MAX_LAYOUT_DEPTH: usize = 16;
 /// which is what [`Node::PagedList`] is for.
 pub const MAX_CHOICE_OPTIONS: usize = 6;
 
+/// The shortest hairline a [`Node::Section`] will draw, in tenths of a
+/// millimetre.
+///
+/// A rule two millimetres long between a long title and its count does not
+/// read as a rule, it reads as a typographic accident, so the title is clamped
+/// until the line has room to be one. Five millimetres is about a thumbnail's
+/// width and is the point at which it stops looking like a stray mark.
+pub const MIN_SECTION_RULE_TENTH_MM: i32 = 50;
+
+/// The most slots one [`Node::Band`] will place beside each other.
+///
+/// Three, and the cap is the point of the node. A general horizontal box with
+/// no limit is a flexbox, and a flexbox is how a layout becomes something an
+/// application can get wrong: four columns on a 122 millimetre panel is four
+/// columns of two words. Everything this platform actually needs beside
+/// something else -- a cover and its metadata, a label and its value, a title
+/// and its count -- is two things, occasionally three.
+pub const MAX_BAND_SLOTS: usize = 3;
+
+/// The most label and value pairs one [`Node::Facts`] will set.
+///
+/// Twelve. Past that a definition list has stopped being the facts about a
+/// thing and become a database dump, and the reader scrolling a thirteenth
+/// line is no longer reading, they are searching -- which is a list with a
+/// filter, not a block of metadata.
+pub const MAX_FACTS: usize = 12;
+
+/// The most of a panel a facts label column may take, in eighths.
+///
+/// Three eighths. The label column is measured from the longest label, and one
+/// long label would otherwise squeeze every value on the screen into a
+/// two-word gutter: the column is there to serve the values, so it is capped
+/// against them.
+const FACTS_LABEL_LIMIT_EIGHTHS: i32 = 3;
+
+/// The narrowest a band slot may be before the band gives up and stacks, in
+/// tenths of a millimetre.
+///
+/// Twelve millimetres holds roughly one short word at caption size. Below that
+/// a column is not narrow, it is broken: every line wraps after a syllable and
+/// the reader gets a vertical ladder of fragments. Stacking is always the
+/// better answer, which is why it is automatic rather than something the
+/// application is asked to arrange.
+pub const MIN_BAND_SLOT_TENTH_MM: i32 = 120;
+
 /// What a paragraph of a threaded discussion is for.
 ///
 /// A comment is two different things printed one above the other: a line
@@ -390,13 +435,24 @@ impl DisplayMetrics {
 /// A bar with fewer destinations than this is not navigation.
 pub const MIN_NAV_DESTINATIONS: usize = 2;
 
+/// How many of the five inks one screen may spend.
+///
+/// Four, not five. The tones are separated by less contrast on electrophoretic
+/// paper than they appear to have on the LCD they are designed on, so a screen
+/// that reaches for all five is a screen where two of them are the same grey
+/// and the distinction the fifth was carrying is invisible.
+pub const MAX_TONES_PER_SCREEN: usize = 4;
+
+/// The most verbs an action bar will draw. See [`BarStyle::Actions`].
+pub const MAX_ACTION_BAR_ACTIONS: usize = 3;
+
+pub mod vector;
+
 /// Grayscale values used by the built-in monochrome design system.
 ///
 /// A GC16 refresh resolves sixteen levels and the middle ones ghost, so the
 /// palette is deliberately tiny. Paper is pure white because that is the
 /// panel's rest state.
-pub mod vector;
-
 pub mod tone {
     pub const PAPER: u8 = 255;
     pub const SURFACE: u8 = 232;
@@ -822,6 +878,26 @@ impl Overlay {
     }
 }
 
+/// What a bottom bar is for.
+///
+/// Android draws the same distinction and for the same reason: `NavigationBar`
+/// carries destinations and marks the one you are looking at, `BottomAppBar`
+/// carries verbs belonging to the screen and marks nothing. Sharing one type
+/// here is deliberate -- the band, its hairline and its touch targets are
+/// identical, and duplicating all of that to change one underline is how a
+/// vocabulary doubles in size without saying anything new.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum BarStyle {
+    /// Places in the application. Exactly one of them is where you are, and
+    /// the bar says which.
+    #[default]
+    Navigation,
+    /// Verbs belonging to this screen. Nothing is marked, because none of them
+    /// is a place you can be. Free to change from screen to screen, which
+    /// destinations are not.
+    Actions,
+}
+
 /// The fixed bar at the bottom of a screen, equivalent to the reader's own.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NavBar {
@@ -838,6 +914,9 @@ pub struct NavBar {
     /// to the last destination, so both screens shipped with the wrong entry
     /// underlined on the panel.
     pub selected: Option<usize>,
+    /// Whether these are places or verbs. An action bar never marks a
+    /// selection, whatever `selected` happens to say.
+    pub style: BarStyle,
 }
 
 impl NavBar {
@@ -847,6 +926,18 @@ impl NavBar {
             id,
             destinations,
             selected,
+            style: BarStyle::Navigation,
+        }
+    }
+
+    /// A bar of verbs rather than places.
+    #[must_use]
+    pub fn actions(id: NodeId, actions: Vec<BarAction>) -> Self {
+        Self {
+            id,
+            destinations: actions,
+            selected: None,
+            style: BarStyle::Actions,
         }
     }
 
@@ -857,7 +948,13 @@ impl NavBar {
     /// panel can physically carry rather than honoured blindly.
     #[must_use]
     pub fn visible(&self, metrics: &DisplayMetrics) -> &[BarAction] {
-        let limit = min(self.destinations.len(), metrics.max_nav_destinations());
+        let mut limit = min(self.destinations.len(), metrics.max_nav_destinations());
+        if self.style == BarStyle::Actions {
+            // Three verbs is the point at which a bar stops being read and
+            // starts being searched. Beyond that the screen wants an overflow
+            // menu, which the popover already provides.
+            limit = min(limit, MAX_ACTION_BAR_ACTIONS);
+        }
         &self.destinations[..limit]
     }
 }
@@ -967,6 +1064,14 @@ pub struct PageTurns {
     pub previous: ActionId,
     pub next: ActionId,
     pub menu: Option<ActionId>,
+    /// Which page of how many, drawn centred beneath the content.
+    ///
+    /// Unlike the turn zones, which are free because they are the content area
+    /// itself, this reserves one caption line at the foot of the panel. That
+    /// is the honest cost and it is worth paying: the catalogue paginates up
+    /// to fifty-four shelves and never told the reader which one they were on,
+    /// so turning the page was indistinguishable from the list not moving.
+    pub position: Option<(u16, u16)>,
 }
 
 impl PageTurns {
@@ -976,6 +1081,26 @@ impl PageTurns {
             previous,
             next,
             menu: None,
+            position: None,
+        }
+    }
+
+    /// The same, saying which page of how many this is.
+    ///
+    /// `page` is one-based. A total of zero, or a page past the total, draws
+    /// nothing rather than "0 of 0": a count nobody can compute yet is better
+    /// left unsaid than said wrongly.
+    #[must_use]
+    pub const fn with_position(mut self, page: u16, of: u16) -> Self {
+        self.position = Some((page, of));
+        self
+    }
+
+    /// The position to draw, once nonsense has been discarded.
+    const fn drawable_position(self) -> Option<(u16, u16)> {
+        match self.position {
+            Some((page, of)) if of > 0 && page >= 1 && page <= of => Some((page, of)),
+            _ => None,
         }
     }
 
@@ -1143,17 +1268,49 @@ impl Screen {
         } else {
             metrics.height
         };
+        // Reserved before any content is placed, for the same reason the bottom
+        // bar is: a strip taken out from under a page that has already been set
+        // is a strip that eats the last line of it.
+        let position_band = if self
+            .page_turns
+            .is_some_and(|turns| turns.drawable_position().is_some())
+            && self.overlay.is_none()
+        {
+            metrics.page_position_band()
+        } else {
+            0
+        };
+        let content_bottom = content_bottom - position_band;
 
-        for node in &self.nodes {
+        for (position, node) in self.nodes.iter().enumerate() {
             if layout.nodes.len() >= MAX_LAYOUT_NODES || cursor >= content_bottom {
                 break;
             }
+            // A splash centres itself in the band it is handed, and the band
+            // it is handed is everything that is left. That is right when it
+            // is the last thing on the screen and wrong the moment a recovery
+            // button follows it, which is the usual shape: the button is
+            // pushed off the bottom. So the band stops short of whatever
+            // comes after.
+            let bottom = if matches!(node, Node::Splash { .. }) {
+                content_bottom.saturating_sub(trailing_height(
+                    &self.nodes[position + 1..],
+                    margin,
+                    metrics.width - 2 * margin,
+                    content_bottom,
+                    metrics,
+                    prose,
+                    gap,
+                ))
+            } else {
+                content_bottom
+            };
             cursor = layout_node(
                 node,
                 margin,
                 cursor,
                 metrics.width - 2 * margin,
-                content_bottom,
+                bottom,
                 0,
                 metrics,
                 prose,
@@ -1174,6 +1331,23 @@ impl Screen {
         // without thinking, and a mistimed page turn there would be maddening.
         layout.page_turns = self.page_turns;
         layout.hold = self.hold;
+        if let Some((page, of)) = self
+            .page_turns
+            .filter(|_| position_band > 0)
+            .and_then(PageTurns::drawable_position)
+        {
+            layout.nodes.push(LayoutNode {
+                id: NodeId(0),
+                rect: Rect {
+                    x: margin,
+                    y: content_bottom,
+                    width: metrics.width - 2 * margin,
+                    height: position_band,
+                },
+                kind: LayoutKind::PagePosition,
+                text_lines: vec![format!("{page} of {of}")],
+            });
+        }
         layout.content = Rect {
             x: 0,
             y: content_top,
@@ -1744,7 +1918,7 @@ fn layout_nav_bar(nav_bar: &NavBar, metrics: &DisplayMetrics, layout: &mut Layou
                 width,
                 height,
             },
-            kind: if nav_bar.selected == Some(index) {
+            kind: if nav_bar.style == BarStyle::Navigation && nav_bar.selected == Some(index) {
                 LayoutKind::NavDestinationSelected(destination.action)
             } else {
                 LayoutKind::NavDestination(destination.action)
@@ -1779,6 +1953,32 @@ pub enum Node {
         id: NodeId,
         text: String,
     },
+    /// A labelled break in the flow: the name of the group that follows it.
+    ///
+    /// Every application was hand-building this out of a divider, a spacer and
+    /// a line of prose, and getting a slightly different answer each time: the
+    /// component gallery alone stacked twelve spacers, which is what a missing
+    /// primitive looks like from the outside. Using [`Self::Heading`] instead
+    /// is worse, because a heading is display type belonging to the *screen*,
+    /// so a screen with four of them has four titles and no hierarchy at all.
+    ///
+    /// The title is set at caption weight in the muted tone with a hairline
+    /// running to the right margin, which is quiet enough that the screen's own
+    /// heading still wins. Nothing here transforms the words: setting a section
+    /// in capitals is a house style that breaks on scripts with no case and
+    /// turns a Turkish dotted i into the wrong letter, so the application
+    /// supplies the capitals it wants.
+    ///
+    /// A section is bound to whatever follows it during pagination. A header
+    /// stranded at the foot of a page with its content overleaf is the single
+    /// most common way a paginated layout reads as broken.
+    Section {
+        id: NodeId,
+        title: String,
+        /// A count or a total, set against the right margin. The hairline is
+        /// measured to stop short of it rather than run underneath it.
+        value: Option<String>,
+    },
     /// A paragraph set in from the left, with a rule marking what it answers.
     ///
     /// Threaded discussion is not a niche: replies, quoted mail, nested
@@ -1811,6 +2011,91 @@ pub enum Node {
     Card {
         id: NodeId,
         children: Vec<Node>,
+    },
+    /// A bordered line showing what has been typed into it.
+    ///
+    /// Tapping it yields the action and the application routes to its own
+    /// keyboard screen; the field does not summon a keyboard itself, because
+    /// the runtime does not own one. What it does own is the ability to show
+    /// the current contents, which is the part no existing node could do: a
+    /// search entry point had to be a full-width button or a nav-bar slot, and
+    /// neither can display the query it would be editing.
+    Field {
+        id: NodeId,
+        action: ActionId,
+        /// What has been typed. Empty falls back to `placeholder`, muted.
+        value: String,
+        placeholder: String,
+        /// The cross that empties it. Absent when there is nothing to empty.
+        clear: Option<ActionId>,
+    },
+    /// A wrapping run of short tappable labels: facets, subjects, filters.
+    ///
+    /// Distinct from [`Self::Choice`], which is capped at
+    /// [`MAX_CHOICE_OPTIONS`] and is a full-width vertical question. A subject
+    /// cloud is neither vertical nor a question, and zero or many of it may be
+    /// on at once. The renderer owns the wrapping and the truncation; the
+    /// application supplies no geometry.
+    Chips {
+        id: NodeId,
+        /// Entries past [`MAX_CHIPS`] are dropped and reported.
+        chips: Vec<Chip>,
+    },
+    /// Up to [`MAX_TABS`] peer views of one destination.
+    ///
+    /// A nav bar is pinned to the bottom and models *destinations*. Discover,
+    /// Popular and Subjects are filters on one destination rather than three
+    /// destinations, and until this existed there was no way to say so — so
+    /// applications said it with a nav bar and the reader was told they had
+    /// left the screen they were on.
+    Tabs {
+        id: NodeId,
+        tabs: Vec<Chip>,
+        /// Exactly one is always current. Out of range is clamped to the first
+        /// rather than refused, for the reason [`NavBar`] gives.
+        selected: usize,
+    },
+    /// A set of facts about the thing on the screen: labels and their values.
+    ///
+    /// The shape every detail screen needs and none could express. Given only
+    /// [`Self::Secondary`], an application with a dozen facts to show stacks a
+    /// dozen grey paragraphs, which is why the catalogue's book page held the
+    /// whole of a Gutendex record in memory and displayed none of it.
+    ///
+    /// Not a [`Self::Band`] per row, because the labels share one column width
+    /// measured across every row at once, and separate bands would each
+    /// measure their own and step raggedly down the panel. That shared
+    /// measurement is the entire difference between a definition list and two
+    /// columns of text.
+    Facts {
+        id: NodeId,
+        /// Label and value. Entries past [`MAX_FACTS`] are dropped rather than
+        /// set, and reported by [`Screen::validate`].
+        entries: Vec<(String, String)>,
+    },
+    /// Two or three blocks placed beside each other rather than stacked.
+    ///
+    /// The layout engine is otherwise a pure downward flow: every node takes
+    /// the full width and the next one starts underneath it. That is right for
+    /// reading and wrong for the handful of things that are only legible side
+    /// by side -- a cover beside its title and author, a label beside its
+    /// value, a name beside its count. Without this each of those had to
+    /// become a bespoke node with its own hand-written "measure the right hand
+    /// thing, then clamp the left against what is left" arithmetic, and that
+    /// arithmetic was being written a fourth time before this existed.
+    ///
+    /// Deliberately not a flexbox. Slots are capped at [`MAX_BAND_SLOTS`],
+    /// widths are a token rather than a number, alignment is a token rather
+    /// than a number, and there is no nesting budget beyond the one the layout
+    /// engine already enforces. An application still cannot express a bad
+    /// arrangement: when the slots cannot each keep
+    /// [`MIN_BAND_SLOT_TENTH_MM`], the band stacks itself and says nothing
+    /// about it, because a stacked column is always readable and a four
+    /// character column never is.
+    Band {
+        id: NodeId,
+        align: BandAlign,
+        slots: Vec<BandSlot>,
     },
     Divider {
         id: NodeId,
@@ -1955,6 +2240,21 @@ pub enum Node {
         /// percent.
         progress: Option<Percent>,
         cancel: Option<BarAction>,
+        /// Bytes received, and the total when the server admitted one.
+        ///
+        /// Formatted here rather than by the application, which is the whole
+        /// point of putting it on the node: six of the nine example apps
+        /// hand-rolled a byte formatter and no two agreed on whether a
+        /// kilobyte was 1000 or 1024. A total of `None` means the length was
+        /// never announced, so the bar stays indeterminate and the reader is
+        /// told what has arrived rather than a percentage nobody can compute.
+        transferred: Option<(u64, Option<u64>)>,
+        /// Why it stopped, and whether asking again is worth anything.
+        ///
+        /// A failed activity keeps whatever is around it on screen. Replacing
+        /// the screen with an error is how the catalogue lost the book you
+        /// were looking at because its cover failed to decode.
+        failure: Option<TransferFailure>,
     },
     /// A grid of characters, drawn in the fixed-pitch face.
     ///
@@ -1993,6 +2293,72 @@ impl Caret {
     #[must_use]
     pub const fn new(row: u16, column: u16) -> Self {
         Self { row, column }
+    }
+}
+
+/// How a band's slots line up against each other across their shared height.
+///
+/// A token rather than a number, and only three of them, because the cases
+/// worth naming are: metadata that starts level with the top of the picture it
+/// describes, a value centred against a taller label, and a caption that sits
+/// on the foot of what it captions.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum BandAlign {
+    #[default]
+    Top,
+    Middle,
+    Bottom,
+}
+
+/// How much of a band a slot asks for.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SlotWidth {
+    /// As wide as the content measures, and no wider. A count, a label, a
+    /// short verb.
+    Natural,
+    /// Whatever is left once the natural and fixed slots have been served.
+    /// Two fills share the remainder evenly.
+    #[default]
+    Fill,
+    /// A physical width in tenths of a millimetre, so a cover is the same size
+    /// on every panel rather than the same number of pixels.
+    Fixed(u16),
+}
+
+/// One column of a [`Node::Band`].
+///
+/// A column rather than a single node, because the thing beside a cover is
+/// never one node: it is a title, an author and two facts, stacked. Inside a
+/// slot the ordinary downward flow resumes, so a slot is the point at which
+/// the engine goes back to being the engine.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BandSlot {
+    pub width: SlotWidth,
+    pub nodes: Vec<Node>,
+}
+
+impl BandSlot {
+    #[must_use]
+    pub fn new(width: SlotWidth, nodes: Vec<Node>) -> Self {
+        Self { width, nodes }
+    }
+
+    /// A slot that takes what the content measures.
+    #[must_use]
+    pub fn natural(nodes: Vec<Node>) -> Self {
+        Self::new(SlotWidth::Natural, nodes)
+    }
+
+    /// A slot that takes what is left.
+    #[must_use]
+    pub fn fill(nodes: Vec<Node>) -> Self {
+        Self::new(SlotWidth::Fill, nodes)
+    }
+
+    /// A slot at a physical width, in tenths of a millimetre.
+    #[must_use]
+    pub fn fixed(tenths_mm: u16, nodes: Vec<Node>) -> Self {
+        Self::new(SlotWidth::Fixed(tenths_mm), nodes)
     }
 }
 
@@ -2076,7 +2442,65 @@ pub struct Tile {
     /// stays because a cover that has not arrived yet, or that failed to
     /// decode, must still leave a usable tile rather than a hole.
     pub picture: Option<TilePicture>,
+    /// What has happened to the thing the tile stands for.
+    pub state: TileState,
+    /// A count, or a word of at most [`TILE_BADGE_LIMIT`] characters, set in
+    /// the tile's leading corner. Empty means no badge.
+    pub badge: String,
+    /// A second line under the name: an author, an owner, a size. Empty means
+    /// no second line, and a grid in which no tile has one is set at the same
+    /// height it was before.
+    pub subtitle: String,
 }
+
+/// What has become of the thing a tile stands for.
+///
+/// This exists because applications kept writing it into the label instead.
+/// Gutenbird set `format!("{title} (kept)")`, which is a sentence in a name's
+/// place: it lengthens the label until it ellipsises, it cannot be translated,
+/// it cannot be drawn differently, and it means the tile's own text is no
+/// longer the thing's own text. A state is a fact about the tile, so the tile
+/// carries it and the renderer decides how it looks.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TileState {
+    /// Nothing to say. The tile is its mark and its name.
+    #[default]
+    Normal,
+    /// The device already has it. A tick in the trailing corner.
+    Held,
+    /// Known, listed, and not obtainable at the moment. Marked with a cross
+    /// and, unlike the other three, not tappable: a destination that cannot be
+    /// reached must not answer a tap, or the application is obliged to explain
+    /// the refusal on a screen the reader did not ask for.
+    Unavailable,
+    /// Something is happening to it right now. A clock in the trailing corner.
+    /// Still tappable, because a tap during a download is how a reader asks
+    /// what the download is doing.
+    Busy,
+}
+
+impl TileState {
+    /// The mark drawn in the tile's trailing corner, if any.
+    #[must_use]
+    pub const fn glyph(self) -> Option<Glyph> {
+        match self {
+            Self::Normal => None,
+            Self::Held => Some(Glyph::Check),
+            Self::Unavailable => Some(Glyph::Close),
+            Self::Busy => Some(Glyph::Clock),
+        }
+    }
+
+    /// Whether a tile in this state answers a tap.
+    #[must_use]
+    pub const fn is_tappable(self) -> bool {
+        !matches!(self, Self::Unavailable)
+    }
+}
+
+/// The most characters a tile badge is allowed. Past this it is a label, and a
+/// label belongs on the label line where it can be wrapped and measured.
+pub const TILE_BADGE_LIMIT: usize = 4;
 
 impl Tile {
     #[must_use]
@@ -2086,12 +2510,33 @@ impl Tile {
             label: label.into(),
             glyph,
             picture: None,
+            state: TileState::Normal,
+            badge: String::new(),
+            subtitle: String::new(),
         }
     }
 
     #[must_use]
     pub fn with_picture(mut self, picture: TilePicture) -> Self {
         self.picture = Some(picture);
+        self
+    }
+
+    #[must_use]
+    pub fn with_state(mut self, state: TileState) -> Self {
+        self.state = state;
+        self
+    }
+
+    #[must_use]
+    pub fn with_badge(mut self, badge: impl Into<String>) -> Self {
+        self.badge = badge.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_subtitle(mut self, subtitle: impl Into<String>) -> Self {
+        self.subtitle = subtitle.into();
         self
     }
 }
@@ -2113,6 +2558,43 @@ impl Cell {
     }
 }
 
+/// One tappable label in a [`Node::Chips`] run or a [`Node::Tabs`] strip.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Chip {
+    pub action: ActionId,
+    pub label: String,
+    /// Drawn inverted. Meaningless for a tab, which takes its selection from
+    /// [`Node::Tabs::selected`] so that exactly one can ever be current.
+    pub selected: bool,
+}
+
+impl Chip {
+    #[must_use]
+    pub fn new(action: ActionId, label: impl Into<String>) -> Self {
+        Self {
+            action,
+            label: label.into(),
+            selected: false,
+        }
+    }
+
+    #[must_use]
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self
+    }
+}
+
+/// The most chips one run will lay out. Past this it is a list, and a list is
+/// [`Node::Rows`].
+pub const MAX_CHIPS: usize = 16;
+
+/// The most tabs one strip will lay out.
+///
+/// Four, because they share the panel's width equally and a fifth on the Clara
+/// leaves each one narrower than the two-word label most of them carry.
+pub const MAX_TABS: usize = 4;
+
 /// The most cells one grid will lay out.
 pub const MAX_CELLS: usize = 64;
 /// The most columns a grid may ask for.
@@ -2130,6 +2612,14 @@ pub struct Row {
     pub summary: String,
     pub lead: RowLead,
     pub state: RowState,
+    /// A short value against the right edge: a score, a size, a date, a count.
+    ///
+    /// Carried rather than written into the title, for the reason every other
+    /// state on this type is: a title that ends in its own score cannot be
+    /// clamped without eating the score, and cannot be right aligned at all.
+    /// The value is measured first and the title is clamped against what is
+    /// left, never the other way round.
+    pub trailing: Option<String>,
 }
 
 impl Row {
@@ -2146,7 +2636,15 @@ impl Row {
             summary: summary.into(),
             lead: lead.into(),
             state: RowState::Open,
+            trailing: None,
         }
+    }
+
+    /// The same, with a short value set against the right edge.
+    #[must_use]
+    pub fn with_trailing(mut self, value: impl Into<String>) -> Self {
+        self.trailing = Some(value.into());
+        self
     }
 
     /// The same row, marked as finished.
@@ -2175,6 +2673,14 @@ pub enum RowLead {
     Icon(Glyph),
     /// The row's position in an ordered list, drawn as digits.
     Number(u16),
+    /// A cover, letterboxed into the lead square, with a glyph for when the
+    /// handle has not arrived or has been evicted from the cache.
+    ///
+    /// Without this a list of books is either a grid with no room for
+    /// metadata, or a list with the same generic book icon on every row --
+    /// which SDK.md itself calls out as a whole touch target's width saying
+    /// nothing.
+    Picture(TilePicture, Glyph),
 }
 
 impl From<Glyph> for RowLead {
@@ -2187,6 +2693,17 @@ impl From<u16> for RowLead {
     fn from(number: u16) -> Self {
         Self::Number(number)
     }
+}
+
+/// Why a transfer stopped.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TransferFailure {
+    /// What went wrong, in the reader's terms rather than the protocol's.
+    pub reason: String,
+    /// Whether the same request would be worth making again. A retry offered
+    /// for something that can never succeed is a control that teaches readers
+    /// the controls do not work.
+    pub resumable: bool,
 }
 
 /// Whether what a row names is still outstanding.
@@ -2276,6 +2793,66 @@ pub enum Glyph {
     /// Two crossed strokes: shut this. Drawn by the frame on every modal, and
     /// available to an application that wants one of its own.
     Close,
+    /// An arrow into a tray: fetch this, or the transfer that is fetching it.
+    Download,
+    /// A ribbon with a notch cut from its foot: kept, saved, come back to.
+    Bookmark,
+    /// A funnel: narrow what is listed. Distinct from [`Self::Search`], which
+    /// finds something not yet on screen; a filter subtracts from what is.
+    Filter,
+    /// A head and shoulders: an author, a submitter, an account.
+    Person,
+    /// A label with a hole punched in it: a subject, a category, a topic.
+    Tag,
+    /// A sphere with a meridian and a parallel: a language, a source, a domain.
+    Globe,
+    /// Two arrows chasing each other: fetch it again. Three applications drew
+    /// this as the word "Reload" in a button before it existed.
+    Refresh,
+    /// Three dots in a row: whatever else this bar would have offered if it
+    /// had more than [`MAX_BAR_ACTIONS`] places to offer it in.
+    More,
+}
+
+impl Glyph {
+    /// Every glyph in the set, in wire order.
+    ///
+    /// Exhaustive by construction and asserted to stay that way, because the
+    /// hand-written list this replaces had drifted to nineteen entries while
+    /// the set was twenty-one: `Light` and `Close` were authored, shipped, and
+    /// covered by none of the tests that walk every glyph. A glyph nobody
+    /// rasterises in a test is a blank space beside a label on the panel.
+    pub const ALL: [Self; 29] = [
+        Self::App,
+        Self::Book,
+        Self::Note,
+        Self::Clock,
+        Self::Settings,
+        Self::Folder,
+        Self::Chart,
+        Self::Search,
+        Self::Wifi,
+        Self::Battery,
+        Self::Reader,
+        Self::Power,
+        Self::Grid,
+        Self::Circle,
+        Self::Check,
+        Self::Terminal,
+        Self::Chat,
+        Self::News,
+        Self::Rss,
+        Self::Light,
+        Self::Close,
+        Self::Download,
+        Self::Bookmark,
+        Self::Filter,
+        Self::Person,
+        Self::Tag,
+        Self::Globe,
+        Self::Refresh,
+        Self::More,
+    ];
 }
 
 impl Node {
@@ -2285,9 +2862,15 @@ impl Node {
             Self::Heading { id, .. }
             | Self::Text { id, .. }
             | Self::Secondary { id, .. }
+            | Self::Section { id, .. }
             | Self::Quote { id, .. }
             | Self::Button { id, .. }
             | Self::Card { id, .. }
+            | Self::Field { id, .. }
+            | Self::Chips { id, .. }
+            | Self::Tabs { id, .. }
+            | Self::Band { id, .. }
+            | Self::Facts { id, .. }
             | Self::Divider { id }
             | Self::Spacer { id, .. }
             | Self::Progress { id, .. }
@@ -2348,6 +2931,42 @@ impl Rect {
     }
 }
 
+/// A byte count in the units a reader uses.
+///
+/// Powers of two with the customary single-letter suffixes, and one decimal
+/// place below ten so that a 4.2 MB book does not round to "4 MB" and sit
+/// there looking stuck while a megabyte of it arrives. Formatted here because
+/// six example applications each wrote their own and no two agreed.
+#[must_use]
+pub fn byte_size(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    // Integer throughout. A float here would have been shorter and would have
+    // rendered a 16 GB card as "16.000000000000004 GB" on some rounding modes,
+    // which is exactly the sort of detail an e-reader has no way to hide.
+    let mut scale = 1u64;
+    let mut unit = 0;
+    while bytes / scale >= 1024 && unit + 1 < UNITS.len() {
+        scale *= 1024;
+        unit += 1;
+    }
+    if unit == 0 {
+        return format!("{bytes} B");
+    }
+    let whole = bytes / scale;
+    if whole < 10 {
+        // Round to one decimal place, half-up.
+        let tenths = (bytes % scale * 10 + scale / 2) / scale;
+        let (whole, tenths) = if tenths >= 10 {
+            (whole + 1, 0)
+        } else {
+            (whole, tenths)
+        };
+        format!("{whole}.{tenths} {}", UNITS[unit])
+    } else {
+        format!("{} {}", (bytes + scale / 2) / scale, UNITS[unit])
+    }
+}
+
 const fn max_i32(a: i32, b: i32) -> i32 {
     if a > b {
         a
@@ -2401,12 +3020,45 @@ pub enum LayoutKind {
     Text,
     /// A line of metadata: smaller than the body, and in the muted tone.
     Secondary,
+    /// The name of a group, with a hairline to the right margin and an
+    /// optional count against it. The value is carried in `text_lines` as the
+    /// title followed by the count, so the drawing pass needs no tree.
+    Section,
     /// An indented paragraph. The values are the clamped depth and what the
     /// paragraph is for, so the renderer can draw the gutter rules and pick a
     /// size without consulting the tree.
     Quote(u8, QuoteRole),
     Button(ActionId, ControlState, Emphasis),
     Card,
+    /// The extent of a horizontal group. Draws nothing itself: it exists so a
+    /// repaint can dirty the whole group rather than each column.
+    Band,
+    /// A row's right-aligned value. Muted, and never part of the title.
+    RowTrailing,
+    /// A text field's border and its tap target.
+    Field(ActionId),
+    /// What is in the field, or its placeholder when it is empty. The bool is
+    /// which, because the two are drawn in different tones and the drawing
+    /// pass must not have to consult the tree to find out.
+    FieldValue(bool),
+    /// The cross that empties a field.
+    FieldClear(ActionId),
+    /// One chip. `selected` chips are drawn inverted, which on a panel with
+    /// two usable tones is the only unambiguous way to say "on".
+    Chip(ActionId, bool),
+    /// One tab. `selected` takes ink and a doubled rule beneath it; the rest
+    /// are muted with no rule.
+    Tab(ActionId, bool),
+    /// The hairline the whole tab strip sits on, so an unselected tab still
+    /// reads as attached to the content below it.
+    TabRule,
+    /// "4 of 12", centred under the content. Muted: it answers a question the
+    /// reader only asks occasionally and must not compete with the page.
+    PagePosition,
+    /// What a fact is called. Muted, and set in the shared left column.
+    FactLabel,
+    /// What the fact is. Ink, and wrapped in whatever the label column leaves.
+    FactValue,
     Divider,
     Spacer,
     Progress,
@@ -2435,8 +3087,21 @@ pub enum LayoutKind {
     RowTitleDone,
     RowSummary,
     RowLead(RowLead),
-    Tile(ActionId),
+    /// A tile's tap target: the whole cell, mark and name together. Carries a
+    /// [`ControlState`] for the same reason a button does — an unavailable
+    /// tile is still drawn, still occupies its place in the grid, and still
+    /// must not answer a tap.
+    Tile(ActionId, ControlState),
     TileLabel,
+    /// A tile's second line. Muted, one line, and only emitted when at least
+    /// one tile in the grid asked for one.
+    TileSubtitle,
+    /// The mark for a tile's state, set in a chip in the trailing corner. The
+    /// chip is filled with paper first, because the corner it sits in may be a
+    /// cover, and a tick drawn straight onto a dark cover is not there.
+    TileState(TileState),
+    /// A count or a word in the tile's leading corner, in the same chip.
+    TileBadge,
     TileGlyph(Glyph),
     /// A picture, already placed. `rect` is where it goes; the renderer scales
     /// it to fit only if the application handed over something larger.
@@ -2448,6 +3113,12 @@ pub enum LayoutKind {
     Skeleton,
     ActivityLabel,
     ActivityProgress,
+    /// What has arrived, and of how much when that is known. Muted caption.
+    ActivityBytes,
+    /// Why the transfer stopped. Muted rather than inverted: a failure that
+    /// shouts is a failure that has taken the screen away from whatever the
+    /// reader was actually doing.
+    ActivityFailure,
     /// A grid of characters. `text_lines` holds one entry per row, already
     /// clipped to the grid.
     TerminalGrid,
@@ -2475,7 +3146,11 @@ impl LayoutKind {
             | Self::BarGlyph(action, _)
             | Self::NavDestination(action)
             | Self::NavDestinationSelected(action)
-            | Self::Tile(action)
+            | Self::Tile(action, ControlState::Enabled)
+            | Self::Field(action)
+            | Self::FieldClear(action)
+            | Self::Chip(action, _)
+            | Self::Tab(action, _)
             | Self::Row(action)
             | Self::Cell(action)
             | Self::ChoiceOption(action, _)
@@ -2544,6 +3219,54 @@ pub enum LayoutIssueKind {
     },
     EmptyChoice,
     InvalidPictureSource,
+    /// A bar of destinations with nothing marked as current.
+    ///
+    /// A warning rather than an error, and deliberately so. `selected: None`
+    /// is a real answer for a bar whose entries are verbs -- that is what
+    /// [`BarStyle::Actions`] is for -- so this fires only when the bar claims
+    /// to be navigation. It says: either mark where the reader is, or say
+    /// plainly that these are actions.
+    NavBarWithoutSelection,
+    /// A title that carries its own state in the words.
+    ///
+    /// Fires on a trailing `(word)` or `[word]` in a label that has a state
+    /// field available. Gutenbird's shelf drew `format!("{title} (kept)")` for
+    /// a year: on a narrow tile the parenthesis is the first thing the
+    /// ellipsis eats, so the state vanished exactly when the title was long
+    /// enough to need it. State is a field.
+    StateInLabel,
+    /// More than one control on this screen means going back.
+    ///
+    /// The runtime already draws Back, so a screen that also offers "Back to
+    /// the results" has two controls with one meaning and no way for a reader
+    /// to tell which is which -- the book detail screen had three.
+    AmbiguousBack,
+    /// More than one primary action.
+    ///
+    /// Primary means *the thing the reader came here to do*, so a second one
+    /// is not emphasis, it is the absence of a decision. If two actions are
+    /// equally important then neither is primary.
+    MultiplePrimaryActions,
+    /// A section header at the fold with its rows on the next page.
+    ///
+    /// The most common way a paginated layout reads as broken, and on a panel
+    /// that takes a second to turn the reader has a whole second to look at
+    /// it. [`paginate_rows_in_sections`] exists to prevent it.
+    OrphanedSection,
+    /// An indeterminate wait that knows its own denominator.
+    ///
+    /// A spinner says "this will take an unknown time"; a bar says "this much
+    /// of that much". An application that has counted the work and still shows
+    /// a spinner is withholding what it knows.
+    IndeterminateWithKnownTotal,
+    /// More than four of the five inks on one screen.
+    ///
+    /// The tones are separated by less contrast than they appear to be on an
+    /// LCD. Using all five means two of them are indistinguishable on the
+    /// panel, so the distinction the fifth was carrying is simply not visible.
+    ToneBudget {
+        used: usize,
+    },
 }
 
 /// One actionable screen diagnostic, optionally tied to a drawn rectangle.
@@ -2604,6 +3327,35 @@ impl std::fmt::Display for LayoutIssue {
             LayoutIssueKind::InvalidPictureSource => {
                 write!(formatter, "{node}: picture source has no area")
             }
+            LayoutIssueKind::NavBarWithoutSelection => write!(
+                formatter,
+                "{node}: a bar of destinations marks none of them as current; \
+                 use an action bar if these are verbs rather than places"
+            ),
+            LayoutIssueKind::StateInLabel => write!(
+                formatter,
+                "{node}: state is written into the label;                  use the node's own state field so the renderer decides how it looks"
+            ),
+            LayoutIssueKind::AmbiguousBack => write!(
+                formatter,
+                "{node}: more than one control on this screen means going back"
+            ),
+            LayoutIssueKind::MultiplePrimaryActions => write!(
+                formatter,
+                "{node}: more than one primary action;                  if two are equally important then neither is primary"
+            ),
+            LayoutIssueKind::OrphanedSection => write!(
+                formatter,
+                "{node}: a section header falls at the fold with its content on the next page"
+            ),
+            LayoutIssueKind::IndeterminateWithKnownTotal => write!(
+                formatter,
+                "{node}: an indeterminate wait that already knows its own total"
+            ),
+            LayoutIssueKind::ToneBudget { used } => write!(
+                formatter,
+                "{node}: {used} of the five inks on one screen;                  the panel does not resolve that many"
+            ),
         }
     }
 }
@@ -2651,7 +3403,11 @@ impl Layout {
                         | LayoutKind::NavDestinationSelected(_)
                         | LayoutKind::Row(_)
                         | LayoutKind::Cell(_)
-                        | LayoutKind::Tile(_)
+                        | LayoutKind::Tile(_, ControlState::Enabled)
+                        | LayoutKind::Field(_)
+                        | LayoutKind::FieldClear(_)
+                        | LayoutKind::Chip(_, _)
+                        | LayoutKind::Tab(_, _)
                         | LayoutKind::ChoiceOption(_, _)
                         | LayoutKind::ChoiceFreeform(_)
                 )
@@ -2660,6 +3416,27 @@ impl Layout {
                 i64::from(node.rect.width.max(0)) * i64::from(node.rect.height.max(0))
             })
             .map(|node| node.rect)
+    }
+
+    /// How much of the band between the bars is already spoken for.
+    ///
+    /// Measured off the placed nodes rather than added up by the caller,
+    /// because the only number that matters is the one the layout engine
+    /// actually arrived at. An application that adds up what it thinks its
+    /// rows cost is guessing at line heights, and being a few pixels short
+    /// here is not a visible bug: the engine drops what does not fit in
+    /// silence.
+    #[must_use]
+    pub fn content_used(&self) -> i32 {
+        self.nodes
+            .iter()
+            .filter(|node| {
+                node.rect.y >= self.content.y
+                    && node.rect.y < self.content.y.saturating_add(self.content.height)
+            })
+            .map(|node| node.rect.y.saturating_add(node.rect.height))
+            .max()
+            .map_or(0, |bottom| bottom.saturating_sub(self.content.y).max(0))
     }
 
     #[must_use]
@@ -2803,7 +3580,11 @@ impl Layout {
                 | LayoutKind::BarGlyph(candidate, _)
                 | LayoutKind::NavDestination(candidate)
                 | LayoutKind::NavDestinationSelected(candidate)
-                | LayoutKind::Tile(candidate)
+                | LayoutKind::Tile(candidate, ControlState::Enabled)
+                | LayoutKind::Field(candidate)
+                | LayoutKind::FieldClear(candidate)
+                | LayoutKind::Chip(candidate, _)
+                | LayoutKind::Tab(candidate, _)
                 | LayoutKind::ChoiceOption(candidate, _)
                 | LayoutKind::Cell(candidate)
                 | LayoutKind::ChoiceFreeform(candidate) => candidate == action,
@@ -2911,6 +3692,40 @@ pub fn clamp_lines(text: &str, width: i32, size: FontSize, lines: usize) -> Stri
     format!("{}\u{2026}", kept.trim_end())
 }
 
+/// How wide a node wants to be when nothing is forcing it wider.
+///
+/// Only the nodes that have an honest answer give one. Everything else says
+/// "all of it", which makes [`SlotWidth::Natural`] on a complicated node behave
+/// exactly like [`SlotWidth::Fill`] rather than guessing a number and being
+/// quietly wrong about it.
+fn intrinsic_width(node: &Node, available: i32, metrics: &DisplayMetrics, prose: Face) -> i32 {
+    match node {
+        Node::Heading { text, .. } => measure_text(text, FontSize::Heading).0,
+        Node::Text { text, .. } => measure_text_in(text, FontSize::Body, prose).0,
+        Node::Secondary { text, .. } => measure_text(text, FontSize::Caption).0,
+        Node::Button { label, .. } => measure_text(label, FontSize::Body)
+            .0
+            .saturating_add(2 * metrics.space(Space::Small)),
+        Node::Picture {
+            source,
+            max_height_tenths_mm,
+            ..
+        } => {
+            let height = metrics.tenth_mm(i32::from(*max_height_tenths_mm));
+            let (source_width, source_height) = *source;
+            if source_height == 0 {
+                available
+            } else {
+                // Its own shape at the tallest it is allowed to be, which is
+                // the width it will actually be drawn at.
+                i32::try_from(u64::from(source_width) * height as u64 / u64::from(source_height))
+                    .unwrap_or(available)
+            }
+        }
+        _ => available,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn layout_node(
     node: &Node,
@@ -2985,6 +3800,48 @@ fn layout_node(
                 text_lines: lines,
             });
             y.saturating_add(height)
+        }
+        Node::Section { id, title, value } => {
+            let lead = metrics.space(Space::Small);
+            let trail = metrics.space(Space::Tight);
+            let line = FontSize::Caption.line_height();
+            let gap = metrics.space(Space::Tight);
+            // The value is measured first and the title clamped against what
+            // is left, so a long name gives up its own hairline rather than
+            // pushing a total off the right margin.
+            let value = value
+                .as_ref()
+                .map(|value| one_line(value, width, FontSize::Caption));
+            let value_width = value
+                .as_ref()
+                .map_or(0, |value| measure_text(value, FontSize::Caption).0);
+            let reserved = value_width
+                .saturating_add(if value_width > 0 { gap } else { 0 })
+                .saturating_add(gap)
+                .saturating_add(metrics.tenth_mm(MIN_SECTION_RULE_TENTH_MM));
+            let title = one_line(
+                title,
+                max(0, width.saturating_sub(reserved)),
+                FontSize::Caption,
+            );
+            let mut text_lines = vec![title];
+            if let Some(value) = value {
+                text_lines.push(value);
+            }
+            layout.nodes.push(LayoutNode {
+                id: *id,
+                rect: Rect {
+                    x,
+                    y: y.saturating_add(lead),
+                    width,
+                    height: line,
+                },
+                kind: LayoutKind::Section,
+                text_lines,
+            });
+            y.saturating_add(lead)
+                .saturating_add(line)
+                .saturating_add(trail)
         }
         Node::Quote {
             id,
@@ -3087,6 +3944,174 @@ fn layout_node(
             });
             y.saturating_add(height)
         }
+        Node::Field {
+            id,
+            action,
+            value,
+            placeholder,
+            clear,
+        } => {
+            let height = max(
+                metrics.touch_target_minimum(),
+                metrics.touch_target_default(),
+            );
+            let inset = metrics.space(Space::Small);
+            layout.nodes.push(LayoutNode {
+                id: *id,
+                rect: Rect {
+                    x,
+                    y,
+                    width,
+                    height,
+                },
+                kind: LayoutKind::Field(*action),
+                text_lines: Vec::new(),
+            });
+            // The cross is a control in its own right and must clear a finger,
+            // so it takes a square the height of the field rather than the
+            // caption-sized chip a tile badge gets away with.
+            let clear_width = if clear.is_some() { height } else { 0 };
+            let text_width = max_i32(1, width - inset * 2 - clear_width);
+            let empty = value.is_empty();
+            let shown = if empty { placeholder } else { value };
+            let line = FontSize::Body.line_height();
+            layout.nodes.push(LayoutNode {
+                id: *id,
+                rect: Rect {
+                    x: x + inset,
+                    y: y + (height - line) / 2,
+                    width: text_width,
+                    height: line,
+                },
+                kind: LayoutKind::FieldValue(empty),
+                text_lines: vec![one_line(shown, text_width, FontSize::Body)],
+            });
+            if let Some(clear) = clear {
+                layout.nodes.push(LayoutNode {
+                    id: *id,
+                    rect: Rect {
+                        x: x + width - height,
+                        y,
+                        width: height,
+                        height,
+                    },
+                    kind: LayoutKind::FieldClear(*clear),
+                    text_lines: Vec::new(),
+                });
+            }
+            y.saturating_add(height)
+        }
+        Node::Chips { id, chips } => {
+            let gap = metrics.space(Space::Tight);
+            // A chip is a control, so it is never shorter than a finger. That
+            // is also why a run of them is capped: sixteen at this height is
+            // already four rows on the Clara.
+            let height = max(
+                metrics.touch_target_minimum(),
+                metrics.touch_target_default(),
+            );
+            let pad = metrics.space(Space::Small);
+            let index = layout.nodes.len();
+            layout.nodes.push(LayoutNode {
+                id: *id,
+                rect: Rect {
+                    x,
+                    y,
+                    width,
+                    height: 0,
+                },
+                kind: LayoutKind::Spacer,
+                text_lines: Vec::new(),
+            });
+            let mut cursor_x = x;
+            let mut cursor_y = y;
+            let mut rows = 1;
+            for chip in chips.iter().take(MAX_CHIPS) {
+                if layout.nodes.len() >= MAX_LAYOUT_NODES {
+                    break;
+                }
+                let label = one_line(&chip.label, max_i32(1, width - pad * 2), FontSize::Caption);
+                let chip_width = (measure_text(&label, FontSize::Caption).0 + pad * 2).min(width);
+                // Wrapped by the renderer, which is the whole point: an
+                // application that had to place these itself would be choosing
+                // coordinates, and a subject cloud is exactly the content whose
+                // width nobody can predict.
+                if cursor_x > x && cursor_x + chip_width > x + width {
+                    cursor_x = x;
+                    cursor_y = cursor_y.saturating_add(height + gap);
+                    rows += 1;
+                }
+                layout.nodes.push(LayoutNode {
+                    id: *id,
+                    rect: Rect {
+                        x: cursor_x,
+                        y: cursor_y,
+                        width: chip_width,
+                        height,
+                    },
+                    kind: LayoutKind::Chip(chip.action, chip.selected),
+                    text_lines: vec![label],
+                });
+                cursor_x = cursor_x.saturating_add(chip_width + gap);
+            }
+            let total = rows * height + (rows - 1) * gap;
+            layout.nodes[index].rect.height = total;
+            y.saturating_add(total)
+        }
+        Node::Tabs { id, tabs, selected } => {
+            let shown = tabs.len().min(MAX_TABS);
+            if shown == 0 {
+                return y;
+            }
+            let height = max(
+                metrics.touch_target_minimum(),
+                metrics.touch_target_default(),
+            );
+            let rule = metrics.rule_thickness();
+            let current = if *selected < shown { *selected } else { 0 };
+            let each = width / shown as i32;
+            for (position, tab) in tabs.iter().take(shown).enumerate() {
+                if layout.nodes.len() >= MAX_LAYOUT_NODES {
+                    break;
+                }
+                // The last tab takes the rounding remainder so the strip always
+                // sums to the panel width, exactly as a band's last fill slot
+                // does.
+                let tab_x = x + each * position as i32;
+                let tab_width = if position + 1 == shown {
+                    x + width - tab_x
+                } else {
+                    each
+                };
+                layout.nodes.push(LayoutNode {
+                    id: *id,
+                    rect: Rect {
+                        x: tab_x,
+                        y,
+                        width: tab_width,
+                        height,
+                    },
+                    kind: LayoutKind::Tab(tab.action, position == current),
+                    text_lines: vec![one_line(
+                        &tab.label,
+                        max_i32(1, tab_width - metrics.space(Space::Tight) * 2),
+                        FontSize::Caption,
+                    )],
+                });
+            }
+            layout.nodes.push(LayoutNode {
+                id: *id,
+                rect: Rect {
+                    x,
+                    y: y.saturating_add(height),
+                    width,
+                    height: rule,
+                },
+                kind: LayoutKind::TabRule,
+                text_lines: Vec::new(),
+            });
+            y.saturating_add(height + rule)
+        }
         Node::Card { id, children } => {
             let index = layout.nodes.len();
             layout.nodes.push(LayoutNode {
@@ -3126,6 +4151,221 @@ fn layout_node(
             );
             layout.nodes[index].rect.height = height;
             y.saturating_add(height)
+        }
+        Node::Band { id, align, slots } => {
+            let slots = &slots[..min(slots.len(), MAX_BAND_SLOTS)];
+            if slots.is_empty() {
+                return y;
+            }
+            let index = layout.nodes.len();
+            layout.nodes.push(LayoutNode {
+                id: *id,
+                rect: Rect {
+                    x,
+                    y,
+                    width,
+                    height: 0,
+                },
+                kind: LayoutKind::Band,
+                text_lines: Vec::new(),
+            });
+            let gap = metrics.space(Space::Small);
+            let count = slots.len() as i32;
+            let available = max(0, width.saturating_sub(gap.saturating_mul(count - 1)));
+
+            // Natural and fixed slots are served first and the fills divide
+            // what survives. That order is the whole reason this node exists:
+            // it is what lets a title give way to its own count rather than
+            // pushing the count off the margin.
+            let mut widths = vec![0; slots.len()];
+            let mut fills = Vec::new();
+            let mut taken: i32 = 0;
+            for (slot_index, slot) in slots.iter().enumerate() {
+                let measured = match slot.width {
+                    SlotWidth::Fixed(tenths) => min(available, metrics.tenth_mm(i32::from(tenths))),
+                    SlotWidth::Natural => {
+                        // The widest line in the column, since a column is only
+                        // as narrow as its longest unbreakable member.
+                        let widest = slot
+                            .nodes
+                            .iter()
+                            .map(|node| intrinsic_width(node, available, metrics, prose))
+                            .max()
+                            .unwrap_or(0);
+                        min(available, widest)
+                    }
+                    SlotWidth::Fill => {
+                        fills.push(slot_index);
+                        continue;
+                    }
+                };
+                widths[slot_index] = measured;
+                taken = taken.saturating_add(measured);
+            }
+            let remainder = max(0, available.saturating_sub(taken));
+            if !fills.is_empty() {
+                let share = remainder / fills.len() as i32;
+                let mut handed = 0;
+                for (nth, &slot_index) in fills.iter().enumerate() {
+                    // The last fill takes the rounding, so two columns always
+                    // add up to the panel rather than leaving a stray pixel.
+                    widths[slot_index] = if nth + 1 == fills.len() {
+                        remainder.saturating_sub(handed)
+                    } else {
+                        share
+                    };
+                    handed = handed.saturating_add(share);
+                }
+            }
+
+            // The floor guards the fills and only the fills. A natural slot
+            // holding the word "32" is two characters wide because that is
+            // what it asked for, and stacking the band around it would be the
+            // node second-guessing a measurement it was given. A fill is where
+            // prose ends up, and prose below twelve millimetres is a ladder of
+            // fragments.
+            let minimum = metrics.tenth_mm(MIN_BAND_SLOT_TENTH_MM);
+            let stacked =
+                taken > available || fills.iter().any(|&slot_index| widths[slot_index] < minimum);
+            let mut cursor = y;
+            if stacked {
+                for slot in slots {
+                    for node in &slot.nodes {
+                        if layout.nodes.len() >= MAX_LAYOUT_NODES {
+                            break;
+                        }
+                        cursor = layout_node(
+                            node,
+                            x,
+                            cursor,
+                            width,
+                            bottom,
+                            depth + 1,
+                            metrics,
+                            prose,
+                            layout,
+                        );
+                    }
+                }
+            } else {
+                let mut slot_x = x;
+                let mut placed = Vec::with_capacity(slots.len());
+                for (slot_index, slot) in slots.iter().enumerate() {
+                    if layout.nodes.len() >= MAX_LAYOUT_NODES {
+                        break;
+                    }
+                    let first = layout.nodes.len();
+                    let mut end = y;
+                    for node in &slot.nodes {
+                        if layout.nodes.len() >= MAX_LAYOUT_NODES {
+                            break;
+                        }
+                        end = layout_node(
+                            node,
+                            slot_x,
+                            end,
+                            widths[slot_index],
+                            bottom,
+                            depth + 1,
+                            metrics,
+                            prose,
+                            layout,
+                        );
+                    }
+                    placed.push((first, layout.nodes.len(), end.saturating_sub(y)));
+                    cursor = max(cursor, end);
+                    slot_x = slot_x
+                        .saturating_add(widths[slot_index])
+                        .saturating_add(gap);
+                }
+                // Cross-axis alignment is applied afterwards by shifting the
+                // nodes each slot produced. Measuring twice to find the tallest
+                // first would mean laying every slot out twice, and layout runs
+                // on every repaint.
+                let tallest = placed
+                    .iter()
+                    .map(|(_, _, height)| *height)
+                    .max()
+                    .unwrap_or(0);
+                if *align != BandAlign::Top {
+                    for (first, last, height) in placed {
+                        let slack = tallest.saturating_sub(height);
+                        let offset = match align {
+                            BandAlign::Top => 0,
+                            BandAlign::Middle => slack / 2,
+                            BandAlign::Bottom => slack,
+                        };
+                        if offset == 0 {
+                            continue;
+                        }
+                        for node in &mut layout.nodes[first..last] {
+                            node.rect.y = node.rect.y.saturating_add(offset);
+                        }
+                    }
+                }
+            }
+            let height = cursor.saturating_sub(y);
+            layout.nodes[index].rect.height = height;
+            y.saturating_add(height)
+        }
+        Node::Facts { id, entries } => {
+            let entries = &entries[..min(entries.len(), MAX_FACTS)];
+            if entries.is_empty() {
+                return y;
+            }
+            let gap = metrics.space(Space::Small);
+            let label_size = FontSize::Caption;
+            let value_size = FontSize::Body;
+            // One measurement for the whole block. Measuring per row is what
+            // makes a definition list step raggedly down the panel instead of
+            // reading as two columns.
+            let widest = entries
+                .iter()
+                .map(|(label, _)| measure_text(label, label_size).0)
+                .max()
+                .unwrap_or(0);
+            let column = min(widest, width * FACTS_LABEL_LIMIT_EIGHTHS / 8);
+            let value_x = x.saturating_add(column).saturating_add(gap);
+            let value_width = max(0, width.saturating_sub(column).saturating_sub(gap));
+            // The label rides down to sit on the first line of its value, so a
+            // caption beside body text shares a baseline rather than floating
+            // above it.
+            let baseline = max(0, value_size.line_height() - label_size.line_height());
+            let mut cursor = y;
+            for (label, value) in entries {
+                if layout.nodes.len() + 2 > MAX_LAYOUT_NODES {
+                    break;
+                }
+                let lines = wrap_text(value, value_width, value_size);
+                let height = max(
+                    value_size.line_height(),
+                    lines.len() as i32 * value_size.line_height(),
+                );
+                layout.nodes.push(LayoutNode {
+                    id: *id,
+                    rect: Rect {
+                        x,
+                        y: cursor.saturating_add(baseline),
+                        width: column,
+                        height: label_size.line_height(),
+                    },
+                    kind: LayoutKind::FactLabel,
+                    text_lines: vec![one_line(label, column, label_size)],
+                });
+                layout.nodes.push(LayoutNode {
+                    id: *id,
+                    rect: Rect {
+                        x: value_x,
+                        y: cursor,
+                        width: value_width,
+                        height,
+                    },
+                    kind: LayoutKind::FactValue,
+                    text_lines: lines,
+                });
+                cursor = cursor.saturating_add(height).saturating_add(gap / 2);
+            }
+            cursor
         }
         Node::Divider { id } => {
             let thickness = metrics.rule_thickness();
@@ -3294,6 +4534,20 @@ fn layout_node(
                     });
                     cursor = cursor.saturating_add(gap);
                 }
+                // Measured before the title is wrapped, so the value keeps its
+                // room and the title gives up its own instead.
+                let trailing =
+                    row.trailing
+                        .as_ref()
+                        .filter(|value| !value.is_empty())
+                        .map(|value| {
+                            let value = one_line(value, text_width, FontSize::Caption);
+                            let measured = measure_text(&value, FontSize::Caption).0;
+                            (value, measured)
+                        });
+                let text_width = trailing.as_ref().map_or(text_width, |(_, measured)| {
+                    max(1, text_width - measured - padding)
+                });
                 let title_lines = wrap_text(&row.title, text_width, FontSize::Body);
                 let summary_lines = if row.summary.is_empty() {
                     Vec::new()
@@ -3358,6 +4612,23 @@ fn layout_node(
                         text_lines: summary_lines,
                     });
                 }
+                if let Some((value, measured)) = trailing {
+                    layout.nodes.push(LayoutNode {
+                        id: *id,
+                        rect: Rect {
+                            // Against the same right margin the row itself
+                            // ends at, not the text column's.
+                            x: x.saturating_add(width)
+                                .saturating_sub(padding)
+                                .saturating_sub(measured),
+                            y: text_y,
+                            width: measured,
+                            height: FontSize::Caption.line_height(),
+                        },
+                        kind: LayoutKind::RowTrailing,
+                        text_lines: vec![value],
+                    });
+                }
                 cursor = cursor.saturating_add(height).saturating_add(gap);
             }
             cursor.saturating_sub(gap)
@@ -3399,7 +4670,34 @@ fn layout_node(
             // The body, plus a band beneath for the label. A tile shorter than
             // it is wide reads as a button, not a destination.
             let body = cell * shape.eighths() / 8;
-            let label_band = FontSize::Caption.line_height() + metrics.space(Space::Tight);
+            // Measured across the whole grid, not per tile. Cells in a grid are
+            // the same height by definition, so one tile with a second line
+            // gives every tile the room for one. The alternative is a ragged
+            // bottom edge, which stops reading as a grid at all.
+            let subtitled = tiles.iter().any(|tile| !tile.subtitle.is_empty());
+            let caption = FontSize::Caption.line_height();
+            // How many lines the longest title needs, up to two. One line
+            // ellipsises real titles mid-phrase -- "Crime and..." names no
+            // book -- and two is where the returns stop: a third line on a
+            // six inch panel costs a whole row of the shelf.
+            //
+            // Measured across the whole grid for the same reason the subtitle
+            // is: cells in a grid are the same height by definition, so one
+            // tile needing a second line gives every tile the room for one,
+            // and the alternative is a ragged bottom edge.
+            let label_inset = metrics.space(Space::Tight);
+            let title_width = max_i32(
+                1,
+                (width - gutter * (columns - 1)) / columns - label_inset * 2,
+            );
+            let title_lines = tiles
+                .iter()
+                .map(|tile| wrap_text(&tile.label, title_width, FontSize::Caption).len())
+                .max()
+                .unwrap_or(1)
+                .clamp(1, 2) as i32;
+            let label_band =
+                caption * (title_lines + i32::from(subtitled)) + metrics.space(Space::Tight);
             let cell_height = body.saturating_add(label_band);
             let index = layout.nodes.len();
             layout.nodes.push(LayoutNode {
@@ -3415,7 +4713,7 @@ fn layout_node(
             });
             let mut rows = 0;
             for (position, tile) in tiles.iter().enumerate() {
-                if layout.nodes.len() + 3 > MAX_LAYOUT_NODES {
+                if layout.nodes.len() + 6 > MAX_LAYOUT_NODES {
                     break;
                 }
                 let column = position as i32 % columns;
@@ -3431,7 +4729,14 @@ fn layout_node(
                         width: cell,
                         height: cell_height,
                     },
-                    kind: LayoutKind::Tile(tile.action),
+                    kind: LayoutKind::Tile(
+                        tile.action,
+                        if tile.state.is_tappable() {
+                            ControlState::Enabled
+                        } else {
+                            ControlState::Disabled
+                        },
+                    ),
                     text_lines: Vec::new(),
                 });
                 // Fitted inside the body and centred, so a cover that is not
@@ -3445,7 +4750,6 @@ fn layout_node(
                     (LayoutKind::TileGlyph(tile.glyph), size, size)
                 };
                 let inset = metrics.space(Space::Tight);
-                let caption = FontSize::Caption.line_height();
                 // Mark and name are one object, centred together, rather than
                 // a mark centred in the body with the name pinned to the cell's
                 // bottom edge. Those are the same thing only when the mark
@@ -3453,9 +4757,10 @@ fn layout_node(
                 // ended up stranded a finger's width below its own icon and
                 // hard against the tile's rule. Every phone home screen sets an
                 // icon and its label as a pair for the same reason.
+                let names = caption * (title_lines + i32::from(subtitled));
                 let group = mark_height
                     .saturating_add(inset)
-                    .saturating_add(caption)
+                    .saturating_add(names)
                     .min(cell_height);
                 let group_y = cell_y.saturating_add((cell_height - group) / 2);
                 layout.nodes.push(LayoutNode {
@@ -3473,18 +4778,79 @@ fn layout_node(
                 // so a name that fills its tile is ellipsised with a margin
                 // rather than run flush into the cell border.
                 let label_width = max_i32(1, cell - inset * 2);
-                let label = one_line(&tile.label, label_width, FontSize::Caption);
+                let label = wrap_text(
+                    &clamp_lines(
+                        &tile.label,
+                        label_width,
+                        FontSize::Caption,
+                        title_lines as usize,
+                    ),
+                    label_width,
+                    FontSize::Caption,
+                );
                 layout.nodes.push(LayoutNode {
                     id: *id,
                     rect: Rect {
                         x: cell_x + inset,
                         y: group_y.saturating_add(mark_height).saturating_add(inset),
                         width: label_width,
-                        height: caption,
+                        height: caption * title_lines,
                     },
                     kind: LayoutKind::TileLabel,
-                    text_lines: vec![label],
+                    text_lines: label,
                 });
+                if subtitled {
+                    layout.nodes.push(LayoutNode {
+                        id: *id,
+                        rect: Rect {
+                            x: cell_x + inset,
+                            y: group_y
+                                .saturating_add(mark_height)
+                                .saturating_add(inset)
+                                .saturating_add(caption * title_lines),
+                            width: label_width,
+                            height: caption,
+                        },
+                        kind: LayoutKind::TileSubtitle,
+                        text_lines: vec![one_line(&tile.subtitle, label_width, FontSize::Caption)],
+                    });
+                }
+                // Both corner chips are square and the same size, so a tile
+                // that carries a badge and a state reads as one pair rather
+                // than two unrelated stickers. They are placed against the
+                // body's corners, not the cell's, because the label band below
+                // is the one part of the tile that is certainly text.
+                let chip = caption.saturating_add(inset);
+                let chip_inset = metrics.rule_thickness().saturating_mul(2);
+                if tile.state.glyph().is_some() {
+                    layout.nodes.push(LayoutNode {
+                        id: *id,
+                        rect: Rect {
+                            x: cell_x + cell - chip - chip_inset,
+                            y: cell_y + chip_inset,
+                            width: chip,
+                            height: chip,
+                        },
+                        kind: LayoutKind::TileState(tile.state),
+                        text_lines: Vec::new(),
+                    });
+                }
+                if !tile.badge.is_empty() {
+                    let badge: String = tile.badge.chars().take(TILE_BADGE_LIMIT).collect();
+                    let width =
+                        max_i32(chip, measure_text(&badge, FontSize::Caption).0 + inset * 2);
+                    layout.nodes.push(LayoutNode {
+                        id: *id,
+                        rect: Rect {
+                            x: cell_x + chip_inset,
+                            y: cell_y + chip_inset,
+                            width,
+                            height: chip,
+                        },
+                        kind: LayoutKind::TileBadge,
+                        text_lines: vec![badge],
+                    });
+                }
             }
             let height = if rows == 0 {
                 0
@@ -3677,6 +5043,8 @@ fn layout_node(
             label,
             progress,
             cancel,
+            transferred,
+            failure,
         } => {
             let gap = metrics.space(Space::Small);
             let mut cursor = y;
@@ -3706,6 +5074,44 @@ fn layout_node(
                     },
                     kind: LayoutKind::ActivityProgress,
                     text_lines: vec![progress.coarse().to_string()],
+                });
+                cursor = cursor.saturating_add(height).saturating_add(gap);
+            }
+            // Under the bar, because it is the bar's caption. Set even when
+            // there is no bar: "4.2 MB" alone is a truthful report of an
+            // unknown-length download, and a fabricated percentage is not.
+            if let Some((received, total)) = transferred {
+                let text = match total {
+                    Some(total) => format!("{} of {}", byte_size(*received), byte_size(*total)),
+                    None => byte_size(*received),
+                };
+                let height = FontSize::Caption.line_height();
+                layout.nodes.push(LayoutNode {
+                    id: *id,
+                    rect: Rect {
+                        x,
+                        y: cursor,
+                        width,
+                        height,
+                    },
+                    kind: LayoutKind::ActivityBytes,
+                    text_lines: vec![text],
+                });
+                cursor = cursor.saturating_add(height).saturating_add(gap);
+            }
+            if let Some(failure) = failure {
+                let lines = wrap_text(&failure.reason, width, FontSize::Caption);
+                let height = lines.len() as i32 * FontSize::Caption.line_height();
+                layout.nodes.push(LayoutNode {
+                    id: *id,
+                    rect: Rect {
+                        x,
+                        y: cursor,
+                        width,
+                        height,
+                    },
+                    kind: LayoutKind::ActivityFailure,
+                    text_lines: lines,
                 });
                 cursor = cursor.saturating_add(height).saturating_add(gap);
             }
@@ -4246,6 +5652,17 @@ impl DisplayMetrics {
         }
     }
 
+    /// The strip a page position takes out of the bottom of the content.
+    ///
+    /// Reserved by the layout engine before any content is placed, so anything
+    /// measuring what will fit has to subtract it too. Pagination that does
+    /// not comes back one row too many, and the row it added is drawn under
+    /// the position and clipped by the bar.
+    #[must_use]
+    pub fn page_position_band(&self) -> i32 {
+        FontSize::Caption.line_height() + self.space(Space::Tight)
+    }
+
     /// The same area, to be set in a named face.
     ///
     /// A serif sets the same words wider and on more generous lines, so a page
@@ -4515,6 +5932,195 @@ pub fn row_text_width(metrics: &DisplayMetrics, area: ProseArea) -> i32 {
     max(1, area.width - icon - padding * 2)
 }
 
+/// Sets a cover out of type when there is no artwork to show.
+///
+/// Lives here rather than in `kobo-image` on purpose: a typographic cover is
+/// type, and the only thing on this device that can set type is the renderer.
+/// Putting it beside the JPEG decoder would have meant giving the decoder a
+/// font.
+///
+/// The result is grey bytes in the panel's own layout, ready for
+/// `Context::put_picture`.
+///
+/// # Why this exists
+///
+/// A catalogue draws whatever the server sent. When the server sent nothing,
+/// or sent something that failed to decode, the shelf was left painting an
+/// undecoded rectangle: on the panel that is a near-black block, which is
+/// worse than an empty space because it reads as a cover of a very dark book.
+/// Two of the ten books on Gutenbird's first shelf looked like that. A framed
+/// title on the surface tone reads as a book without a cover, which is what it
+/// is.
+#[must_use]
+pub fn typographic_cover(title: &str, author: Option<&str>, width: u32, height: u32) -> Vec<u8> {
+    let (Ok(pixel_width), Ok(pixel_height)) = (usize::try_from(width), usize::try_from(height))
+    else {
+        return Vec::new();
+    };
+    let mut surface = Surface::new(pixel_width, pixel_height);
+    let bounds = Rect {
+        x: 0,
+        y: 0,
+        width: i32::try_from(width).unwrap_or(i32::MAX),
+        height: i32::try_from(height).unwrap_or(i32::MAX),
+    };
+    surface.clear(tone::SURFACE);
+    // A frame, so the cover has an edge of its own against the paper. Without
+    // it a pale cover and the page it sits on are the same thing.
+    let rule = max(1, bounds.width / 100);
+    for edge in [
+        Rect {
+            width: bounds.width,
+            height: rule,
+            ..bounds
+        },
+        Rect {
+            y: bounds.height - rule,
+            height: rule,
+            ..bounds
+        },
+        Rect {
+            width: rule,
+            ..bounds
+        },
+        Rect {
+            x: bounds.width - rule,
+            width: rule,
+            ..bounds
+        },
+    ] {
+        surface.fill_rect(edge, tone::RULE);
+    }
+    let inset = max(rule * 3, bounds.width / 10);
+    let measure = bounds.width - inset * 2;
+    if measure <= 0 {
+        return surface.pixels;
+    }
+    let mut lines = wrap_text_in(title, measure, FontSize::Body, Face::Reading);
+    // Truncated rather than allowed to run off the bottom edge, and truncated
+    // with an ellipsis so it is plainly a shortened title rather than a book
+    // whose name happens to stop mid-word.
+    let room = ((bounds.height - inset * 2) / FontSize::Body.line_height_in(Face::Reading)).max(1);
+    let room = usize::try_from(room).unwrap_or(1);
+    let author_line = author.map(|author| one_line(author, measure, FontSize::Caption));
+    let room = room
+        .saturating_sub(usize::from(author_line.is_some()))
+        .max(1);
+    if lines.len() > room {
+        lines.truncate(room);
+        if let Some(last) = lines.last_mut() {
+            *last = one_line(&format!("{last}…"), measure, FontSize::Body);
+        }
+    }
+    let text_height = lines.len() as i32 * FontSize::Body.line_height_in(Face::Reading);
+    let block = text_height
+        + author_line
+            .as_ref()
+            .map_or(0, |_| FontSize::Caption.line_height());
+    let mut y = (bounds.height - block) / 2;
+    draw_lines_in(
+        &mut surface,
+        &lines,
+        inset,
+        y,
+        FontSize::Body,
+        Face::Reading,
+        tone::INK,
+        bounds,
+    );
+    y = y.saturating_add(text_height);
+    if let Some(author) = author_line {
+        draw_lines(
+            &mut surface,
+            std::slice::from_ref(&author),
+            inset,
+            y,
+            FontSize::Caption,
+            tone::MUTED,
+            bounds,
+        );
+    }
+    surface.pixels
+}
+
+/// The height a [`Node::Section`] header occupies, lead and trail included.
+///
+/// Public because pagination happens in the application, one layer above the
+/// engine that knows this number.
+#[must_use]
+pub fn section_height(metrics: &DisplayMetrics) -> i32 {
+    metrics
+        .space(Space::Small)
+        .saturating_add(FontSize::Caption.line_height())
+        .saturating_add(metrics.space(Space::Tight))
+}
+
+/// Breaks a list into pages, keeping every section header with its first row.
+///
+/// `rows` carries an optional section title against each row; the title is
+/// understood to be drawn immediately above that row. A page break is never
+/// taken between the two, because a header alone at the foot of a page with
+/// its contents overleaf is the single most common way a paginated layout
+/// reads as broken -- and on a panel that takes a second to turn, the reader
+/// has a whole second to look at it.
+///
+/// Returns row indices per page, the same as [`paginate_rows`]. Re-emit the
+/// section title before any row on a page that carries one.
+#[must_use]
+pub fn paginate_rows_in_sections(
+    rows: &[(Option<&str>, &str, &str)],
+    metrics: &DisplayMetrics,
+    area: ProseArea,
+) -> Vec<Vec<usize>> {
+    let separator = metrics.rule_thickness() + area.gap;
+    let header = section_height(metrics);
+    let mut pages: Vec<Vec<usize>> = Vec::new();
+    let mut page: Vec<usize> = Vec::new();
+    let mut used = 0;
+
+    for (index, (section, title, summary)) in rows.iter().enumerate() {
+        // The header and the row it introduces are measured as one block, so
+        // the break can only ever fall before the header or after the row.
+        let height = measured_row_height(metrics, area, title, summary, "")
+            + if section.is_some() { header } else { 0 };
+        let spacing = if page.is_empty() { 0 } else { separator };
+        if !page.is_empty() && used + spacing + height > area.height {
+            pages.push(std::mem::take(&mut page));
+            used = 0;
+        }
+        let spacing = if page.is_empty() { 0 } else { separator };
+        used += spacing + height;
+        page.push(index);
+        if used > area.height && page.len() == 1 {
+            pages.push(std::mem::take(&mut page));
+            used = 0;
+        }
+    }
+    if !page.is_empty() {
+        pages.push(page);
+    }
+    pages
+}
+
+/// How wide a row's title really is when a value sits at its trailing edge.
+///
+/// The value is measured first and keeps its column; the title wraps inside
+/// what is left. Anything that measures such a row -- paginating it, clamping
+/// its title -- has to use this, or it measures a width the row will never
+/// have and comes back one line short.
+#[must_use]
+pub fn row_title_width(metrics: &DisplayMetrics, area: ProseArea, trailing: &str) -> i32 {
+    let width = row_text_width(metrics, area);
+    if trailing.is_empty() {
+        return width;
+    }
+    let value = one_line(trailing, width, FontSize::Caption);
+    max(
+        1,
+        width - measure_text(&value, FontSize::Caption).0 - metrics.space(Space::Small),
+    )
+}
+
 /// Breaks a list of rows into pages that fit, returning the row indices on each.
 ///
 /// There is no scrolling anywhere in this UI and there should not be: a panel
@@ -4528,31 +6134,128 @@ pub fn row_text_width(metrics: &DisplayMetrics, area: ProseArea) -> i32 {
 /// same wrapping and spacing the layout engine uses, so a page that fits here
 /// is a page that will be drawn whole.
 #[must_use]
+/// How much room the nodes after a splash need, so the splash can leave it.
+///
+/// Measured by laying them out into a layout that is thrown away, which is the
+/// only measurement that cannot drift from the one that gets drawn.
+#[allow(clippy::too_many_arguments)]
+fn trailing_height(
+    nodes: &[Node],
+    margin: i32,
+    width: i32,
+    bottom: i32,
+    metrics: &DisplayMetrics,
+    prose: Face,
+    gap: i32,
+) -> i32 {
+    if nodes.is_empty() {
+        return 0;
+    }
+    let mut scratch = Layout::default();
+    let mut cursor = 0;
+    for node in nodes {
+        if scratch.nodes.len() >= MAX_LAYOUT_NODES {
+            break;
+        }
+        cursor = layout_node(
+            node,
+            margin,
+            cursor,
+            width,
+            bottom,
+            0,
+            metrics,
+            prose,
+            &mut scratch,
+        );
+        cursor = cursor.saturating_add(gap);
+    }
+    cursor
+}
+
+/// How tall one row comes out, measured the way the layout engine measures it.
+///
+/// Including the column a trailing value keeps for itself. Pagination that
+/// ignores the trailing value wraps the title and the summary at a width the
+/// row will never have, comes back one row short per page, and the extra row
+/// is drawn under the bottom bar where it is clipped away.
+fn measured_row_height(
+    metrics: &DisplayMetrics,
+    area: ProseArea,
+    title: &str,
+    summary: &str,
+    trailing: &str,
+) -> i32 {
+    let padding = metrics.space(Space::Small);
+    let text_width = row_title_width(metrics, area, trailing);
+    let title_height =
+        wrap_text(title, text_width, FontSize::Body).len() as i32 * FontSize::Body.line_height();
+    let summary_height = if summary.is_empty() {
+        0
+    } else {
+        wrap_text(summary, text_width, FontSize::Caption).len() as i32
+            * FontSize::Caption.line_height()
+    };
+    // Never shorter than a finger, however terse the entry is: the same
+    // floor the layout engine applies.
+    max(
+        metrics.touch_target_default(),
+        title_height + summary_height + padding * 2,
+    )
+}
+
+/// The same, for rows that carry a value at their trailing edge.
+///
+/// A separate entry point rather than a fourth argument to [`paginate_rows`],
+/// because it mirrors the builder: a screen either sets rows or sets rows with
+/// trailing values, and it should paginate with the one it draws with.
+#[must_use]
+pub fn paginate_rows_with_trailing(
+    rows: &[(&str, &str, &str)],
+    metrics: &DisplayMetrics,
+    area: ProseArea,
+) -> Vec<Vec<usize>> {
+    let separator = metrics.rule_thickness() + area.gap;
+    let mut pages: Vec<Vec<usize>> = Vec::new();
+    let mut page: Vec<usize> = Vec::new();
+    let mut used = 0;
+    for (index, (title, summary, trailing)) in rows.iter().enumerate() {
+        let height = measured_row_height(metrics, area, title, summary, trailing);
+        let spacing = if page.is_empty() { 0 } else { separator };
+        if !page.is_empty() && used + spacing + height > area.height {
+            pages.push(std::mem::take(&mut page));
+            used = 0;
+        }
+        let spacing = if page.is_empty() { 0 } else { separator };
+        used += spacing + height;
+        page.push(index);
+        if used > area.height && page.len() == 1 {
+            pages.push(std::mem::take(&mut page));
+            used = 0;
+        }
+    }
+    if !page.is_empty() {
+        pages.push(page);
+    }
+    if pages.is_empty() {
+        pages.push(Vec::new());
+    }
+    pages
+}
+
+#[must_use]
 pub fn paginate_rows(
     rows: &[(&str, &str)],
     metrics: &DisplayMetrics,
     area: ProseArea,
 ) -> Vec<Vec<usize>> {
-    let padding = metrics.space(Space::Small);
-    let icon = metrics.touch_target_default();
-    let text_width = row_text_width(metrics, area);
     let separator = metrics.rule_thickness() + area.gap;
     let mut pages: Vec<Vec<usize>> = Vec::new();
     let mut page: Vec<usize> = Vec::new();
     let mut used = 0;
 
     for (index, (title, summary)) in rows.iter().enumerate() {
-        let title_height = wrap_text(title, text_width, FontSize::Body).len() as i32
-            * FontSize::Body.line_height();
-        let summary_height = if summary.is_empty() {
-            0
-        } else {
-            wrap_text(summary, text_width, FontSize::Caption).len() as i32
-                * FontSize::Caption.line_height()
-        };
-        // Never shorter than a finger, however terse the entry is: the same
-        // floor the layout engine applies.
-        let height = max(icon, title_height + summary_height + padding * 2);
+        let height = measured_row_height(metrics, area, title, summary, "");
         let spacing = if page.is_empty() { 0 } else { separator };
         if !page.is_empty() && used + spacing + height > area.height {
             pages.push(std::mem::take(&mut page));
@@ -5199,6 +6902,14 @@ fn diagnose_screen(
                 nav.visible(metrics).len(),
             ));
         }
+        if nav.style == BarStyle::Navigation && nav.selected.is_none() {
+            issues.push(LayoutIssue {
+                severity: DiagnosticSeverity::Warning,
+                node: Some(nav.id),
+                kind: LayoutIssueKind::NavBarWithoutSelection,
+                rect: None,
+            });
+        }
         for destination in &nav.destinations {
             check_text_coverage(nav.id, &destination.label, Face::Text, &mut issues);
         }
@@ -5214,7 +6925,205 @@ fn diagnose_screen(
 
     validate_content_bounds(&nodes, &layout, metrics, &mut issues);
     validate_layout_nodes(&layout, metrics, &mut issues);
+    validate_composition(screen, &nodes, &layout, &mut issues);
     LayoutDiagnostics { layout, issues }
+}
+
+/// The rules that are about the shape of a screen rather than its arithmetic.
+///
+/// These are the ones that used to live in a design review nobody re-read. A
+/// diagnostic is a poorer teacher than a reviewer but it is present at the
+/// moment the mistake is made, which the reviewer is not.
+fn validate_composition(
+    screen: &Screen,
+    nodes: &[&Node],
+    layout: &Layout,
+    issues: &mut Vec<LayoutIssue>,
+) {
+    let mut primaries = Vec::new();
+    for node in nodes {
+        match node {
+            Node::Button {
+                id,
+                emphasis: Emphasis::Primary,
+                ..
+            } => primaries.push(*id),
+            Node::Activity {
+                id,
+                progress: None,
+                transferred: Some((_, Some(_))),
+                ..
+            } => issues.push(LayoutIssue {
+                severity: DiagnosticSeverity::Warning,
+                node: Some(*id),
+                kind: LayoutIssueKind::IndeterminateWithKnownTotal,
+                rect: None,
+            }),
+            _ => {}
+        }
+        if let Some((id, label)) = stateful_label(node) {
+            if state_written_into(label) {
+                issues.push(LayoutIssue {
+                    severity: DiagnosticSeverity::Warning,
+                    node: Some(id),
+                    kind: LayoutIssueKind::StateInLabel,
+                    rect: None,
+                });
+            }
+        }
+    }
+    if primaries.len() > 1 {
+        for id in primaries.iter().skip(1) {
+            issues.push(LayoutIssue {
+                severity: DiagnosticSeverity::Warning,
+                node: Some(*id),
+                kind: LayoutIssueKind::MultiplePrimaryActions,
+                rect: None,
+            });
+        }
+    }
+
+    // The runtime's own Back is not in the node list, so it is counted here
+    // rather than found: a screen that lends Back and then draws its own way
+    // out has two, whatever the nodes say.
+    let mut backs = usize::from(screen.owns_back);
+    for node in nodes {
+        if let Some(label) = going_back(node) {
+            let _ = label;
+            backs += 1;
+        }
+    }
+    if backs > 1 {
+        issues.push(LayoutIssue {
+            severity: DiagnosticSeverity::Warning,
+            node: None,
+            kind: LayoutIssueKind::AmbiguousBack,
+            rect: None,
+        });
+    }
+
+    if let Some(id) = orphaned_section(layout) {
+        issues.push(LayoutIssue {
+            severity: DiagnosticSeverity::Warning,
+            node: Some(id),
+            kind: LayoutIssueKind::OrphanedSection,
+            rect: None,
+        });
+    }
+
+    let used = tones_used(layout);
+    if used > MAX_TONES_PER_SCREEN {
+        issues.push(LayoutIssue {
+            severity: DiagnosticSeverity::Warning,
+            node: None,
+            kind: LayoutIssueKind::ToneBudget { used },
+            rect: None,
+        });
+    }
+}
+
+/// A label belonging to a node that has somewhere better to put its state.
+fn stateful_label(node: &Node) -> Option<(NodeId, &str)> {
+    match node {
+        Node::TileGrid { id, tiles, .. } => tiles
+            .iter()
+            .find(|tile| state_written_into(&tile.label))
+            .map(|tile| (*id, tile.label.as_str())),
+        Node::Rows { id, rows, .. } => rows
+            .iter()
+            .find(|row| state_written_into(&row.title))
+            .map(|row| (*id, row.title.as_str())),
+        _ => None,
+    }
+}
+
+/// Whether a label ends in a parenthesised or bracketed word.
+///
+/// Deliberately a heuristic and deliberately narrow: it fires on `(kept)` and
+/// `[done]` at the end of a label, which is how every instance of this in this
+/// workspace was actually written, and not on a title that merely contains a
+/// parenthesis.
+fn state_written_into(label: &str) -> bool {
+    let trimmed = label.trim_end();
+    let Some(rest) = trimmed
+        .strip_suffix(')')
+        .or_else(|| trimmed.strip_suffix(']'))
+    else {
+        return false;
+    };
+    let Some(open) = rest.rfind(['(', '[']) else {
+        return false;
+    };
+    // Only the last word, and only when there is a real title in front of it,
+    // so "(1996)" standing alone is not a state and "Moby-Dick (annotated
+    // edition)" is not either.
+    let inside = &rest[open + 1..];
+    !inside.is_empty()
+        && !inside.contains(' ')
+        && !inside.chars().all(|character| character.is_ascii_digit())
+        && !rest[..open].trim().is_empty()
+}
+
+/// A control whose words mean "go back".
+fn going_back(node: &Node) -> Option<&str> {
+    let label = match node {
+        Node::Button { label, .. } => label.as_str(),
+        _ => return None,
+    };
+    let lowered = label.to_lowercase();
+    (lowered.starts_with("back") || lowered.starts_with("return to")).then_some(label)
+}
+
+/// A section header drawn with nothing of its own below it.
+fn orphaned_section(layout: &Layout) -> Option<NodeId> {
+    let mut nodes = layout.nodes.iter().peekable();
+    while let Some(node) = nodes.next() {
+        if !matches!(node.kind, LayoutKind::Section) {
+            continue;
+        }
+        match nodes.peek() {
+            // Nothing after it at all, or another section immediately after
+            // it: either way the header is standing on its own.
+            None => return Some(node.id),
+            Some(next) if matches!(next.kind, LayoutKind::Section) => return Some(node.id),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// How many of the five inks this screen actually puts on the panel.
+fn tones_used(layout: &Layout) -> usize {
+    let mut inverted = false;
+    let mut muted = false;
+    let mut surface = false;
+    let mut hairline = false;
+    let mut ink = false;
+    for node in &layout.nodes {
+        match node.kind {
+            LayoutKind::Divider | LayoutKind::TabRule | LayoutKind::Section => hairline = true,
+            LayoutKind::Secondary
+            | LayoutKind::TileSubtitle
+            | LayoutKind::RowSummary
+            | LayoutKind::FactLabel
+            | LayoutKind::PagePosition
+            | LayoutKind::ActivityBytes
+            | LayoutKind::ActivityFailure => muted = true,
+            LayoutKind::Card | LayoutKind::Tile(..) | LayoutKind::Overlay => surface = true,
+            LayoutKind::Banner(BannerLevel::Attention)
+            | LayoutKind::NavDestinationSelected(..)
+            | LayoutKind::Chip(_, true)
+            | LayoutKind::Button(_, ControlState::Enabled, Emphasis::Primary) => inverted = true,
+            // Spacers and the scrim draw nothing at all, so they spend no ink.
+            LayoutKind::Spacer | LayoutKind::Scrim { .. } | LayoutKind::Band => {}
+            _ => ink = true,
+        }
+    }
+    usize::from(inverted)
+        + usize::from(muted)
+        + usize::from(surface)
+        + usize::from(hairline)
+        + usize::from(ink)
 }
 
 fn collect_nodes<'a>(
@@ -5236,8 +7145,19 @@ fn collect_nodes<'a>(
     }
     for node in nodes {
         collected.push(node);
-        if let Node::Card { children, .. } = node {
-            collect_nodes(children, depth + 1, collected, issues);
+        match node {
+            Node::Card { children, .. } => {
+                collect_nodes(children, depth + 1, collected, issues);
+            }
+            // A slot's contents are a node like any other and must be checked
+            // like one. Walking only cards would let an undrawable glyph or a
+            // missing picture ride into a band unexamined.
+            Node::Band { slots, .. } => {
+                for slot in slots.iter().take(MAX_BAND_SLOTS) {
+                    collect_nodes(&slot.nodes, depth + 1, collected, issues);
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -5286,12 +7206,50 @@ fn validate_node(
         | Node::Secondary { text, .. }
         | Node::Quote { text, .. }
         | Node::Banner { text, .. } => check_text_coverage(id, text, Face::Text, issues),
+        Node::Section { title, value, .. } => {
+            check_text_coverage(id, title, Face::Text, issues);
+            if let Some(value) = value {
+                check_text_coverage(id, value, Face::Text, issues);
+            }
+        }
         Node::Button { label, .. } => check_text_coverage(id, label, Face::Text, issues),
+        Node::Field {
+            value, placeholder, ..
+        } => {
+            check_text_coverage(id, value, Face::Text, issues);
+            check_text_coverage(id, placeholder, Face::Text, issues);
+        }
+        Node::Chips { chips, .. } => {
+            if chips.len() > MAX_CHIPS {
+                issues.push(limit_issue(id, "chips", chips.len(), MAX_CHIPS));
+            }
+            for chip in chips.iter().take(MAX_CHIPS) {
+                check_text_coverage(id, &chip.label, Face::Text, issues);
+            }
+        }
+        Node::Tabs { tabs, .. } => {
+            if tabs.len() > MAX_TABS {
+                issues.push(limit_issue(id, "tabs", tabs.len(), MAX_TABS));
+            }
+            for tab in tabs.iter().take(MAX_TABS) {
+                check_text_coverage(id, &tab.label, Face::Text, issues);
+            }
+        }
         Node::Splash { title, summary, .. } => {
             check_text_coverage(id, title, Face::Text, issues);
             check_text_coverage(id, summary, Face::Text, issues);
         }
+        Node::Facts { entries, .. } => {
+            if entries.len() > MAX_FACTS {
+                issues.push(limit_issue(id, "facts", entries.len(), MAX_FACTS));
+            }
+            for (label, value) in entries.iter().take(MAX_FACTS) {
+                check_text_coverage(id, label, Face::Text, issues);
+                check_text_coverage(id, value, Face::Text, issues);
+            }
+        }
         Node::Card { .. }
+        | Node::Band { .. }
         | Node::Divider { .. }
         | Node::Spacer { .. }
         | Node::Progress { .. }
@@ -5366,10 +7324,18 @@ fn validate_node(
             }),
             None => {}
         },
-        Node::Activity { label, cancel, .. } => {
+        Node::Activity {
+            label,
+            cancel,
+            failure,
+            ..
+        } => {
             check_text_coverage(id, label, Face::Text, issues);
             if let Some(cancel) = cancel {
                 check_text_coverage(id, &cancel.label, Face::Text, issues);
+            }
+            if let Some(failure) = failure {
+                check_text_coverage(id, &failure.reason, Face::Text, issues);
             }
         }
         Node::Terminal { rows, .. } => {
@@ -5514,10 +7480,16 @@ fn validate_layout_nodes(layout: &Layout, metrics: &DisplayMetrics, issues: &mut
             .text_lines
             .iter()
             .any(|line| measure_text_in(line, size, face).0 > node.rect.width);
-        let too_tall = i32::try_from(node.text_lines.len())
-            .unwrap_or(i32::MAX)
-            .saturating_mul(size.line_height_in(face))
-            > node.rect.height;
+        // A section keeps its title and its value in `text_lines`, but draws
+        // them beside each other on one line with the hairline between. Counting
+        // them as two lines reported every `section_with_value` on every screen
+        // as text overflowing a rect it fits inside perfectly well.
+        let rows = if matches!(node.kind, LayoutKind::Section) {
+            1
+        } else {
+            i32::try_from(node.text_lines.len()).unwrap_or(i32::MAX)
+        };
+        let too_tall = rows.saturating_mul(size.line_height_in(face)) > node.rect.height;
         if too_wide || too_tall {
             issues.push(LayoutIssue {
                 severity: DiagnosticSeverity::Error,
@@ -5540,7 +7512,11 @@ const fn is_tappable(kind: LayoutKind) -> bool {
             | LayoutKind::NavDestinationSelected(_)
             | LayoutKind::Row(_)
             | LayoutKind::Cell(_)
-            | LayoutKind::Tile(_)
+            | LayoutKind::Tile(..)
+            | LayoutKind::Field(_)
+            | LayoutKind::FieldClear(_)
+            | LayoutKind::Chip(_, _)
+            | LayoutKind::Tab(_, _)
             | LayoutKind::ChoiceOption(_, _)
             | LayoutKind::ChoiceFreeform(_)
     )
@@ -5560,11 +7536,23 @@ fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
         LayoutKind::TopBarTitle => BAR_TITLE,
         LayoutKind::OverlayTitle => FontSize::Title,
         LayoutKind::Secondary
+        | LayoutKind::Section
+        | LayoutKind::FactLabel
+        | LayoutKind::RowTrailing
         | LayoutKind::RowSummary
         | LayoutKind::TileLabel
+        | LayoutKind::TileSubtitle
+        | LayoutKind::TileBadge
+        | LayoutKind::Chip(_, _)
+        | LayoutKind::Tab(_, _)
+        | LayoutKind::PagePosition
+        | LayoutKind::ActivityBytes
+        | LayoutKind::ActivityFailure
         | LayoutKind::NavDestination(_)
         | LayoutKind::NavDestinationSelected(_) => FontSize::Caption,
         LayoutKind::Text
+        | LayoutKind::FieldValue(_)
+        | LayoutKind::FactValue
         | LayoutKind::Quote(..)
         | LayoutKind::Button(..)
         | LayoutKind::PagedList
@@ -5926,6 +7914,139 @@ pub fn render_all(
             // this panel, shading the whole screen costs a full refresh in and
             // a full refresh out.
             LayoutKind::Scrim { .. } => {}
+            // Nothing either. A band is the extent of its columns, not a
+            // surface: giving it a fill or a border would put a box around
+            // every cover-and-metadata pair on the panel.
+            LayoutKind::Band => {}
+            // The border is the whole control: a field with only a baseline
+            // under it reads as an underlined word, and one with a fill reads
+            // as a button that has already been pressed.
+            LayoutKind::Field(_) => stroke_clipped(
+                surface,
+                node.rect,
+                tone::RULE,
+                metrics.rule_thickness(),
+                clip,
+            ),
+            LayoutKind::FieldValue(empty) => draw_lines(
+                surface,
+                &node.text_lines,
+                node.rect.x,
+                node.rect.y,
+                FontSize::Body,
+                if empty { tone::MUTED } else { tone::INK },
+                clip,
+            ),
+            LayoutKind::FieldClear(_) => {
+                let inset = node.rect.width / 3;
+                draw_vector(
+                    &mut *surface,
+                    &vector::shapes(Glyph::Close),
+                    Rect {
+                        x: node.rect.x + inset,
+                        y: node.rect.y + inset,
+                        width: max_i32(1, node.rect.width - inset * 2),
+                        height: max_i32(1, node.rect.height - inset * 2),
+                    },
+                    clip,
+                );
+            }
+            // Inverted when on. With two usable tones there is no third state
+            // available, and an outline-versus-heavier-outline distinction is
+            // not one anybody reads at arm's length on a reflective panel.
+            LayoutKind::Chip(_, selected) => {
+                if selected {
+                    fill_clipped(surface, node.rect, tone::INK, clip);
+                } else {
+                    stroke_clipped(
+                        surface,
+                        node.rect,
+                        tone::RULE,
+                        metrics.rule_thickness(),
+                        clip,
+                    );
+                }
+                draw_centered(
+                    surface,
+                    &node.text_lines,
+                    node.rect,
+                    FontSize::Caption,
+                    if selected { tone::PAPER } else { tone::INK },
+                    clip,
+                );
+            }
+            // Underlined rather than inverted. A tab strip sits directly above
+            // the content it filters, and a filled tab there reads as a heading
+            // band across the top of the page.
+            LayoutKind::Tab(_, selected) => {
+                draw_centered(
+                    surface,
+                    &node.text_lines,
+                    node.rect,
+                    FontSize::Caption,
+                    if selected { tone::INK } else { tone::MUTED },
+                    clip,
+                );
+                if selected {
+                    let thickness = metrics.rule_thickness() * 2;
+                    fill_clipped(
+                        surface,
+                        Rect {
+                            x: node.rect.x,
+                            y: node.rect.y + node.rect.height - thickness,
+                            width: node.rect.width,
+                            height: thickness,
+                        },
+                        tone::INK,
+                        clip,
+                    );
+                }
+            }
+            LayoutKind::TabRule => fill_clipped(surface, node.rect, tone::RULE, clip),
+            LayoutKind::ActivityBytes | LayoutKind::ActivityFailure => draw_lines(
+                surface,
+                &node.text_lines,
+                node.rect.x,
+                node.rect.y,
+                FontSize::Caption,
+                tone::MUTED,
+                clip,
+            ),
+            LayoutKind::PagePosition => draw_centered(
+                surface,
+                &node.text_lines,
+                node.rect,
+                FontSize::Caption,
+                tone::MUTED,
+                clip,
+            ),
+            LayoutKind::RowTrailing => draw_lines(
+                surface,
+                &node.text_lines,
+                node.rect.x,
+                node.rect.y,
+                FontSize::Caption,
+                tone::MUTED,
+                clip,
+            ),
+            LayoutKind::FactLabel => draw_lines(
+                surface,
+                &node.text_lines,
+                node.rect.x,
+                node.rect.y,
+                FontSize::Caption,
+                tone::MUTED,
+                clip,
+            ),
+            LayoutKind::FactValue => draw_lines(
+                surface,
+                &node.text_lines,
+                node.rect.x,
+                node.rect.y,
+                FontSize::Body,
+                tone::INK,
+                clip,
+            ),
             // Paper, not surface, and a heavy border. An overlay has to look
             // like a separate sheet laid on the page, and the only two things
             // available to say so without shading everything else are the
@@ -6081,12 +8202,22 @@ pub fn render_all(
                 clip,
             ),
             LayoutKind::CellLabel => {
-                // Short labels are marks, not words: an X, an O or a letter is
-                // the content of the cell and should fill it.
-                let size = if node
-                    .text_lines
-                    .first()
-                    .is_some_and(|label| label.chars().count() <= 2)
+                // A short label in a tall cell is a mark rather than a word:
+                // an X, an O or a letter key is the content of the cell and
+                // should fill it. A short label in a *wide* cell is one word
+                // among several, and setting it larger than its neighbours is
+                // how a row of `esc tab ctrl up down left right` came out with
+                // one enormous `up` in the middle of it.
+                //
+                // The cell's own shape is the signal, and the layout has
+                // already decided it: square for a board, a touch target for
+                // a key. Nothing else needs to be threaded through.
+                let mark = node.rect.height >= node.rect.width;
+                let size = if mark
+                    && node
+                        .text_lines
+                        .first()
+                        .is_some_and(|label| label.chars().count() <= 2)
                 {
                     FontSize::Heading
                 } else {
@@ -6200,6 +8331,63 @@ pub fn render_all(
                 tone::MUTED,
                 clip,
             ),
+            // Title, hairline, count: one node, because the three are one
+            // thing and splitting them would let a repaint move the rule
+            // without the words it belongs to.
+            LayoutKind::Section => {
+                let size = FontSize::Caption;
+                let thickness = metrics.rule_thickness();
+                let gap = metrics.space(Space::Tight);
+                let title = node.text_lines.first().map_or("", String::as_str);
+                let title_width = min(measure_text(title, size).0, node.rect.width);
+                draw_text(
+                    surface,
+                    title,
+                    node.rect.x,
+                    node.rect.y,
+                    size,
+                    tone::MUTED,
+                    clip,
+                );
+                let right = node.rect.x.saturating_add(node.rect.width);
+                let rule_end = match node.text_lines.get(1) {
+                    Some(value) => {
+                        let value_width = min(measure_text(value, size).0, node.rect.width);
+                        draw_text(
+                            surface,
+                            value,
+                            right.saturating_sub(value_width),
+                            node.rect.y,
+                            size,
+                            tone::MUTED,
+                            clip,
+                        );
+                        right.saturating_sub(value_width).saturating_sub(gap)
+                    }
+                    None => right,
+                };
+                // Along the middle of the letters, which is where a rule beside
+                // type belongs. Sitting it on the baseline turns the title into
+                // something underlined.
+                let rule_start = node.rect.x.saturating_add(title_width).saturating_add(gap);
+                if rule_end > rule_start {
+                    fill_clipped(
+                        surface,
+                        Rect {
+                            x: rule_start,
+                            y: node
+                                .rect
+                                .y
+                                .saturating_add(size.line_height() / 2)
+                                .saturating_sub(thickness / 2),
+                            width: rule_end.saturating_sub(rule_start),
+                            height: thickness,
+                        },
+                        tone::RULE,
+                        clip,
+                    );
+                }
+            }
             LayoutKind::Text | LayoutKind::PagedList => draw_lines_in(
                 surface,
                 &node.text_lines,
@@ -6318,7 +8506,7 @@ pub fn render_all(
             LayoutKind::NavDestinationSelected(_) => {
                 draw_nav_label(surface, &node.text_lines, node.rect, metrics, true, clip);
             }
-            LayoutKind::Tile(_) => stroke_clipped(
+            LayoutKind::Tile(..) => stroke_clipped(
                 surface,
                 node.rect,
                 tone::RULE,
@@ -6355,7 +8543,7 @@ pub fn render_all(
                 tone::MUTED,
                 clip,
             ),
-            LayoutKind::RowLead(lead) => draw_row_lead(surface, lead, node.rect, clip),
+            LayoutKind::RowLead(lead) => draw_row_lead(surface, lead, node.rect, pictures, clip),
             LayoutKind::TileGlyph(glyph) => draw_glyph_icon(surface, glyph, node.rect, clip),
             // Outlined, because a cover with pale edges on white paper has no
             // boundary at all and reads as text floating in space.
@@ -6379,6 +8567,59 @@ pub fn render_all(
                 tone::INK,
                 clip,
             ),
+            LayoutKind::TileSubtitle => draw_centered(
+                surface,
+                &node.text_lines,
+                node.rect,
+                FontSize::Caption,
+                tone::MUTED,
+                clip,
+            ),
+            // Paper first, then the border, then the mark. The corner a chip
+            // sits in is very often a cover, and a tick drawn straight onto a
+            // dark cover is a tick nobody can see.
+            LayoutKind::TileState(state) => {
+                if let Some(glyph) = state.glyph() {
+                    fill_clipped(surface, node.rect, tone::PAPER, clip);
+                    stroke_clipped(
+                        surface,
+                        node.rect,
+                        tone::RULE,
+                        metrics.rule_thickness(),
+                        clip,
+                    );
+                    let inset = metrics.rule_thickness() * 2;
+                    draw_glyph_icon(
+                        surface,
+                        glyph,
+                        Rect {
+                            x: node.rect.x + inset,
+                            y: node.rect.y + inset,
+                            width: max_i32(1, node.rect.width - inset * 2),
+                            height: max_i32(1, node.rect.height - inset * 2),
+                        },
+                        clip,
+                    );
+                }
+            }
+            LayoutKind::TileBadge => {
+                fill_clipped(surface, node.rect, tone::PAPER, clip);
+                stroke_clipped(
+                    surface,
+                    node.rect,
+                    tone::RULE,
+                    metrics.rule_thickness(),
+                    clip,
+                );
+                draw_centered(
+                    surface,
+                    &node.text_lines,
+                    node.rect,
+                    FontSize::Caption,
+                    tone::INK,
+                    clip,
+                );
+            }
             LayoutKind::ChoicePrompt => draw_lines(
                 surface,
                 &node.text_lines,
@@ -6660,9 +8901,32 @@ fn draw_back_arrow(surface: &mut Surface, rect: Rect, clip: Rect) {
 /// the row and not part of it, and centred in the same square the icon would
 /// have occupied so that a list which numbers some rows and illustrates others
 /// still lines up down its left edge.
-fn draw_row_lead(surface: &mut Surface, lead: RowLead, rect: Rect, clip: Rect) {
+fn draw_row_lead(
+    surface: &mut Surface,
+    lead: RowLead,
+    rect: Rect,
+    pictures: &dyn Pictures,
+    clip: Rect,
+) {
     match lead {
         RowLead::Icon(glyph) => draw_glyph_icon(surface, glyph, rect, clip),
+        // The glyph is not a decoration to fall back to, it is the row still
+        // working while the covers are arriving. A shelf that draws nothing
+        // until every thumbnail has decoded is a shelf of empty squares.
+        RowLead::Picture(picture, glyph) => match pictures.get(picture.handle) {
+            Some(pixels) => {
+                let (width, height) = fit_within(picture.source, rect.width, rect.height);
+                let fitted = Rect {
+                    x: rect.x + (rect.width - width) / 2,
+                    y: rect.y + (rect.height - height) / 2,
+                    width,
+                    height,
+                };
+                draw_picture(surface, fitted, pixels, clip);
+                stroke_clipped(surface, fitted, tone::RULE, 1, clip);
+            }
+            None => draw_glyph_icon(surface, glyph, rect, clip),
+        },
         RowLead::Number(number) => {
             let text = number.to_string();
             let size = FontSize::Caption;
@@ -8203,7 +10467,7 @@ mod tile_tests {
             let tops = layout
                 .nodes
                 .iter()
-                .filter(|node| matches!(node.kind, LayoutKind::Tile(_)))
+                .filter(|node| matches!(node.kind, LayoutKind::Tile(..)))
                 .map(|node| node.rect.y)
                 .collect::<Vec<_>>();
             let first_row = tops.iter().filter(|top| **top == tops[0]).count();
@@ -8228,7 +10492,7 @@ mod tile_tests {
             let mut tops = layout
                 .nodes
                 .iter()
-                .filter(|node| matches!(node.kind, LayoutKind::Tile(_)))
+                .filter(|node| matches!(node.kind, LayoutKind::Tile(..)))
                 .map(|node| (node.rect.y, node.rect.height))
                 .collect::<Vec<_>>();
             tops.sort_unstable();
@@ -8258,7 +10522,7 @@ mod tile_tests {
         for (name, metrics) in PANELS {
             let layout = grid(6).layout_for(&metrics);
             for node in &layout.nodes {
-                if matches!(node.kind, LayoutKind::Tile(_)) {
+                if matches!(node.kind, LayoutKind::Tile(..)) {
                     assert!(
                         node.rect.width >= metrics.touch_target_minimum()
                             && node.rect.height >= metrics.touch_target_minimum(),
@@ -8278,7 +10542,7 @@ mod tile_tests {
             let rects = layout
                 .nodes
                 .iter()
-                .filter(|node| matches!(node.kind, LayoutKind::Tile(_)))
+                .filter(|node| matches!(node.kind, LayoutKind::Tile(..)))
                 .map(|node| node.rect)
                 .collect::<Vec<_>>();
             for (index, rect) in rects.iter().enumerate() {
@@ -8297,7 +10561,7 @@ mod tile_tests {
         let screen = grid(4);
         let layout = screen.layout();
         for node in &layout.nodes {
-            if let LayoutKind::Tile(action) = node.kind {
+            if let LayoutKind::Tile(action, _) = node.kind {
                 assert_eq!(
                     layout.hit_test(node.rect.x + 2, node.rect.y + 2),
                     Some(action)
@@ -8311,7 +10575,7 @@ mod tile_tests {
         for (name, metrics) in PANELS {
             let layout = grid(5).layout_for(&metrics);
             for node in &layout.nodes {
-                if matches!(node.kind, LayoutKind::Tile(_)) {
+                if matches!(node.kind, LayoutKind::Tile(..)) {
                     assert!(
                         node.rect.x >= metrics.screen_margin()
                             && node.rect.x + node.rect.width
@@ -8329,7 +10593,7 @@ mod tile_tests {
         assert!(!layout
             .nodes
             .iter()
-            .any(|node| matches!(node.kind, LayoutKind::Tile(_))));
+            .any(|node| matches!(node.kind, LayoutKind::Tile(..))));
     }
 }
 
@@ -8593,6 +10857,8 @@ mod loading_tests {
                 label: "Fetching".into(),
                 progress: Some(Percent::new(30)),
                 cancel: Some(BarAction::new(ActionId(1), "Cancel")),
+                transferred: None,
+                failure: None,
             }],
         );
         for (name, metrics) in PANELS {
@@ -8624,6 +10890,8 @@ mod loading_tests {
                 label: "Connecting".into(),
                 progress: None,
                 cancel: None,
+                transferred: None,
+                failure: None,
             }],
         )
         .layout();
@@ -8712,6 +10980,8 @@ mod loading_tests {
                 label: "Working".into(),
                 progress: Some(Percent::new(50)),
                 cancel: Some(BarAction::new(ActionId(18), "Stop")),
+                transferred: None,
+                failure: None,
             },
         ]
     }
@@ -8783,7 +11053,7 @@ mod loading_tests {
                 LayoutKind::Button(action, ControlState::Enabled, _)
                 | LayoutKind::BarAction(action)
                 | LayoutKind::BarGlyph(action, _)
-                | LayoutKind::Tile(action)
+                | LayoutKind::Tile(action, _)
                 | LayoutKind::Row(action)
                 | LayoutKind::Cell(action)
                 | LayoutKind::ChoiceOption(action, _)
@@ -9891,7 +12161,7 @@ mod prose_tests {
             layout
                 .nodes
                 .iter()
-                .find(|node| matches!(node.kind, LayoutKind::Tile(_)))
+                .find(|node| matches!(node.kind, LayoutKind::Tile(..)))
                 .expect("a tile")
                 .rect
                 .height
@@ -10719,6 +12989,908 @@ mod prose_tests {
             None
         );
     }
+
+    #[test]
+    fn a_row_cover_falls_back_to_its_glyph_until_the_picture_arrives() {
+        let screen = Screen::new(
+            1,
+            vec![Node::Rows {
+                id: NodeId(1),
+                rows: vec![Row::new(
+                    ActionId(1),
+                    "Bleak House",
+                    "Charles Dickens",
+                    RowLead::Picture(TilePicture::new(PictureHandle(7), 190, 300), Glyph::Book),
+                )],
+            }],
+        );
+        let lead = screen
+            .layout()
+            .nodes
+            .into_iter()
+            .find(|node| matches!(node.kind, LayoutKind::RowLead(_)))
+            .expect("a row lead");
+        let stride = usize::try_from(CLARA_BW_METRICS.width).expect("a positive width");
+        let height = usize::try_from(CLARA_BW_METRICS.height).expect("a positive height");
+        let inked = |cache: &PictureCache| {
+            let mut surface = Surface::new(stride, height);
+            surface.clear(tone::PAPER);
+            render_all(
+                &screen,
+                &CLARA_BW_METRICS,
+                &Chrome::with_back(false),
+                cache,
+                &mut surface,
+                None,
+            );
+            (lead.rect.y..lead.rect.y + lead.rect.height)
+                .flat_map(|row| {
+                    (lead.rect.x..lead.rect.x + lead.rect.width).map(move |column| (column, row))
+                })
+                .filter(|&(column, row)| {
+                    let (Ok(row), Ok(column)) = (usize::try_from(row), usize::try_from(column))
+                    else {
+                        return false;
+                    };
+                    surface.pixels[row * stride + column] != tone::PAPER
+                })
+                .count()
+        };
+        // Nothing in the cache: the glyph still draws, so the row is usable
+        // while the covers are on their way.
+        let empty = PictureCache::default();
+        assert!(inked(&empty) > 0, "a row with no cover yet drew nothing");
+        let mut cache = PictureCache::default();
+        assert!(cache.put(PictureHandle(7), 19, 30, vec![0; 19 * 30]));
+        assert!(
+            inked(&cache) > inked(&empty),
+            "the cover was not drawn once it had arrived"
+        );
+    }
+
+    #[test]
+    fn a_page_position_is_drawn_and_takes_its_room_from_the_content() {
+        let build = |position: Option<(u16, u16)>| {
+            let mut screen = Screen::new(
+                1,
+                vec![Node::Text {
+                    id: NodeId(1),
+                    text: "A page of prose.".into(),
+                }],
+            )
+            .with_page_turns(ActionId(1), ActionId(2));
+            if let Some((page, of)) = position {
+                screen.page_turns = screen.page_turns.map(|turns| turns.with_position(page, of));
+            }
+            screen.layout()
+        };
+        let without = build(None);
+        let with = build(Some((4, 12)));
+        let shown = with
+            .nodes
+            .iter()
+            .find(|node| node.kind == LayoutKind::PagePosition)
+            .expect("a page position");
+        assert_eq!(shown.text_lines[0], "4 of 12");
+        assert!(
+            !without
+                .nodes
+                .iter()
+                .any(|node| node.kind == LayoutKind::PagePosition),
+            "a screen that asked for no position got one anyway"
+        );
+        assert!(
+            with.content.height < without.content.height,
+            "the position band was drawn over the content instead of reserved"
+        );
+        assert!(
+            shown.rect.y >= with.content.y + with.content.height,
+            "the position was drawn inside the page-turn zone it describes"
+        );
+    }
+
+    #[test]
+    fn a_page_position_nobody_can_compute_is_left_unsaid() {
+        for position in [(0, 0), (1, 0), (13, 12)] {
+            let mut screen = Screen::new(1, Vec::new()).with_page_turns(ActionId(1), ActionId(2));
+            screen.page_turns = screen
+                .page_turns
+                .map(|turns| turns.with_position(position.0, position.1));
+            assert!(
+                !screen
+                    .layout()
+                    .nodes
+                    .iter()
+                    .any(|node| node.kind == LayoutKind::PagePosition),
+                "{position:?} was drawn rather than left unsaid"
+            );
+        }
+    }
+
+    #[test]
+    fn an_empty_field_shows_its_placeholder_muted_and_a_filled_one_shows_ink() {
+        let laid_out = |value: &str| {
+            Screen::new(
+                1,
+                vec![Node::Field {
+                    id: NodeId(1),
+                    action: ActionId(1),
+                    value: value.into(),
+                    placeholder: "Search the library".into(),
+                    clear: None,
+                }],
+            )
+            .layout()
+        };
+        let empty = laid_out("");
+        let filled = laid_out("dickens");
+        let value = |layout: &Layout| {
+            layout
+                .nodes
+                .iter()
+                .find_map(|node| match node.kind {
+                    LayoutKind::FieldValue(empty) => Some((empty, node.text_lines[0].clone())),
+                    _ => None,
+                })
+                .expect("a field value")
+        };
+        assert_eq!(value(&empty), (true, "Search the library".to_owned()));
+        assert_eq!(value(&filled), (false, "dickens".to_owned()));
+    }
+
+    #[test]
+    fn a_field_cross_never_overlaps_the_text_it_would_clear() {
+        let layout = Screen::new(
+            1,
+            vec![Node::Field {
+                id: NodeId(1),
+                action: ActionId(1),
+                value: "a query long enough to run the whole width of the panel".into(),
+                placeholder: String::new(),
+                clear: Some(ActionId(2)),
+            }],
+        )
+        .layout();
+        let find = |wanted: fn(LayoutKind) -> bool| {
+            layout
+                .nodes
+                .iter()
+                .find(|node| wanted(node.kind))
+                .expect("a field part")
+                .rect
+        };
+        let value = find(|kind| matches!(kind, LayoutKind::FieldValue(_)));
+        let clear = find(|kind| matches!(kind, LayoutKind::FieldClear(_)));
+        assert!(
+            value.x + value.width <= clear.x,
+            "the query ran underneath the cross that clears it"
+        );
+        assert_eq!(
+            layout.hit_test(clear.x + clear.width / 2, clear.y + clear.height / 2),
+            Some(ActionId(2)),
+            "the cross did not answer a tap"
+        );
+    }
+
+    #[test]
+    fn chips_wrap_onto_another_row_rather_than_off_the_panel() {
+        let chips: Vec<Chip> = (0..MAX_CHIPS)
+            .map(|index| {
+                Chip::new(
+                    ActionId(index as u32 + 1),
+                    format!("Subject number {index}"),
+                )
+            })
+            .collect();
+        let screen = Screen::new(
+            1,
+            vec![Node::Chips {
+                id: NodeId(1),
+                chips,
+            }],
+        );
+        let layout = screen.layout();
+        let placed: Vec<_> = layout
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, LayoutKind::Chip(..)))
+            .map(|node| node.rect)
+            .collect();
+        assert_eq!(placed.len(), MAX_CHIPS, "chips went missing");
+        for chip in &placed {
+            assert!(
+                chip.x >= layout.content.x
+                    && chip.x + chip.width <= layout.content.x + layout.content.width,
+                "a chip ran off the side of the panel"
+            );
+        }
+        let rows = placed
+            .iter()
+            .map(|rect| rect.y)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert!(rows.len() > 1, "sixteen chips were crammed onto one row");
+    }
+
+    #[test]
+    fn chips_past_the_cap_are_reported_rather_than_quietly_clipped() {
+        let chips: Vec<Chip> = (0..=MAX_CHIPS)
+            .map(|index| Chip::new(ActionId(index as u32 + 1), "Subject"))
+            .collect();
+        let screen = Screen::new(
+            1,
+            vec![Node::Chips {
+                id: NodeId(1),
+                chips,
+            }],
+        );
+        assert!(
+            screen
+                .validate(&CLARA_BW_METRICS)
+                .iter()
+                .any(|issue| matches!(issue.kind, LayoutIssueKind::CollectionTruncated { .. })),
+            "a chip run past its cap was silently truncated"
+        );
+    }
+
+    #[test]
+    fn a_tab_strip_fills_the_panel_exactly_and_marks_one_tab() {
+        let screen = Screen::new(
+            1,
+            vec![Node::Tabs {
+                id: NodeId(1),
+                tabs: vec![
+                    Chip::new(ActionId(1), "Discover"),
+                    Chip::new(ActionId(2), "Popular"),
+                    Chip::new(ActionId(3), "Subjects"),
+                ],
+                selected: 2,
+            }],
+        );
+        let layout = screen.layout();
+        let tabs: Vec<_> = layout
+            .nodes
+            .iter()
+            .filter_map(|node| match node.kind {
+                LayoutKind::Tab(action, selected) => Some((action, selected, node.rect)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(tabs.len(), 3);
+        // Measured against a full-width node on the same panel rather than
+        // against the content rect, because the strip is placed inside the
+        // screen margin and the content rect is outside it.
+        let rule = layout
+            .nodes
+            .iter()
+            .find(|node| node.kind == LayoutKind::TabRule)
+            .expect("a strip rule")
+            .rect;
+        let first = tabs[0].2;
+        let last = tabs[2].2;
+        assert_eq!(first.x, rule.x, "the strip did not start at the margin");
+        assert_eq!(
+            last.x + last.width,
+            rule.x + rule.width,
+            "the rounding remainder left a gap at the end of the strip"
+        );
+        assert_eq!(
+            tabs[1].2.x,
+            first.x + first.width,
+            "the tabs were not laid edge to edge"
+        );
+        let marked: Vec<_> = tabs.iter().filter(|(_, selected, _)| *selected).collect();
+        assert_eq!(marked.len(), 1, "exactly one tab must ever be current");
+        assert_eq!(marked[0].0, ActionId(3));
+    }
+
+    #[test]
+    fn a_tab_selection_nobody_named_falls_back_to_the_first() {
+        let screen = Screen::new(
+            1,
+            vec![Node::Tabs {
+                id: NodeId(1),
+                tabs: vec![Chip::new(ActionId(1), "One"), Chip::new(ActionId(2), "Two")],
+                selected: 99,
+            }],
+        );
+        let marked = screen
+            .layout()
+            .nodes
+            .into_iter()
+            .find_map(|node| match node.kind {
+                LayoutKind::Tab(action, true) => Some(action),
+                _ => None,
+            })
+            .expect("a current tab");
+        assert_eq!(
+            marked,
+            ActionId(1),
+            "an out-of-range selection left the strip with no current tab"
+        );
+    }
+
+    #[test]
+    fn an_unavailable_tile_keeps_its_place_and_stops_answering_taps() {
+        let screen = Screen::new(
+            1,
+            vec![Node::TileGrid {
+                id: NodeId(1),
+                shape: TileShape::Square,
+                tiles: vec![
+                    Tile::new(ActionId(1), "Here", Glyph::Book),
+                    Tile::new(ActionId(2), "Gone", Glyph::Book).with_state(TileState::Unavailable),
+                ],
+            }],
+        );
+        let layout = screen.layout();
+        let cells: Vec<_> = layout
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, LayoutKind::Tile(..)))
+            .collect();
+        assert_eq!(cells.len(), 2, "an unavailable tile lost its place");
+        let gone = cells[1].rect;
+        assert_eq!(
+            layout.hit_test(gone.x + gone.width / 2, gone.y + gone.height / 2),
+            None,
+            "an unavailable tile answered a tap"
+        );
+        let here = cells[0].rect;
+        assert_eq!(
+            layout.hit_test(here.x + here.width / 2, here.y + here.height / 2),
+            Some(ActionId(1)),
+            "an available tile beside it stopped answering too"
+        );
+    }
+
+    #[test]
+    fn one_subtitle_gives_every_tile_in_the_grid_the_same_extra_room() {
+        let heights = |subtitled: bool| {
+            let mut second = Tile::new(ActionId(2), "Second", Glyph::Book);
+            if subtitled {
+                second = second.with_subtitle("Charles Dickens");
+            }
+            let screen = Screen::new(
+                1,
+                vec![Node::TileGrid {
+                    id: NodeId(1),
+                    shape: TileShape::Square,
+                    tiles: vec![Tile::new(ActionId(1), "First", Glyph::Book), second],
+                }],
+            );
+            let layout = screen.layout();
+            layout
+                .nodes
+                .iter()
+                .filter(|node| matches!(node.kind, LayoutKind::Tile(..)))
+                .map(|node| node.rect.height)
+                .collect::<Vec<_>>()
+        };
+        let plain = heights(false);
+        let tall = heights(true);
+        assert_eq!(plain[0], plain[1], "a plain grid was already ragged");
+        assert_eq!(
+            tall[0], tall[1],
+            "one subtitle made the grid ragged: cells in a grid are the same height"
+        );
+        assert!(
+            tall[0] > plain[0],
+            "a subtitle was given no room to be drawn in"
+        );
+    }
+
+    #[test]
+    fn a_state_and_a_badge_take_opposite_corners_of_their_own_tile() {
+        let screen = Screen::new(
+            1,
+            vec![Node::TileGrid {
+                id: NodeId(1),
+                shape: TileShape::Square,
+                tiles: vec![Tile::new(ActionId(1), "Bleak House", Glyph::Book)
+                    .with_state(TileState::Held)
+                    .with_badge("12")],
+            }],
+        );
+        let layout = screen.layout();
+        let find = |wanted: fn(LayoutKind) -> bool| {
+            layout
+                .nodes
+                .iter()
+                .find(|node| wanted(node.kind))
+                .expect("a corner chip")
+                .rect
+        };
+        let cell = find(|kind| matches!(kind, LayoutKind::Tile(..)));
+        let state = find(|kind| matches!(kind, LayoutKind::TileState(_)));
+        let badge = find(|kind| kind == LayoutKind::TileBadge);
+        assert!(
+            badge.x < state.x,
+            "the badge and the state marker piled into the same corner"
+        );
+        for chip in [state, badge] {
+            assert!(
+                chip.x >= cell.x
+                    && chip.y >= cell.y
+                    && chip.x + chip.width <= cell.x + cell.width
+                    && chip.y + chip.height <= cell.y + cell.height,
+                "a corner chip hung outside its own tile"
+            );
+        }
+    }
+
+    #[test]
+    fn a_badge_is_clamped_rather_than_allowed_to_become_a_label() {
+        let screen = Screen::new(
+            1,
+            vec![Node::TileGrid {
+                id: NodeId(1),
+                shape: TileShape::Square,
+                tiles: vec![Tile::new(ActionId(1), "Shelf", Glyph::Book)
+                    .with_badge("far too many characters")],
+            }],
+        );
+        let badge = screen
+            .layout()
+            .nodes
+            .into_iter()
+            .find(|node| node.kind == LayoutKind::TileBadge)
+            .expect("a badge");
+        assert_eq!(
+            badge.text_lines[0].chars().count(),
+            TILE_BADGE_LIMIT,
+            "a badge was allowed to grow into a label"
+        );
+    }
+
+    #[test]
+    fn a_tile_with_nothing_extra_to_say_emits_no_chips_at_all() {
+        let screen = Screen::new(
+            1,
+            vec![Node::TileGrid {
+                id: NodeId(1),
+                shape: TileShape::Square,
+                tiles: vec![Tile::new(ActionId(1), "Plain", Glyph::Book)],
+            }],
+        );
+        assert!(
+            !screen.layout().nodes.iter().any(|node| matches!(
+                node.kind,
+                LayoutKind::TileState(_) | LayoutKind::TileBadge | LayoutKind::TileSubtitle
+            )),
+            "an unadorned tile still paid for decoration it did not ask for"
+        );
+    }
+
+    #[test]
+    fn pagination_leaves_room_for_a_trailing_value_it_will_have_to_draw() {
+        let metrics = CLARA_BW_METRICS;
+        let area = ProseArea {
+            width: 900,
+            height: 900,
+            gap: metrics.space(Space::Small),
+            face: Face::Text,
+        };
+        let title = "A long headline about a small program that reads the news slowly";
+        let summary = "example.com, 4 hours ago, 12 comments";
+        let plain = vec![(title, summary); 12];
+        let scored = vec![(title, summary, "1,284 points"); 12];
+        let without = paginate_rows(&plain, &metrics, area);
+        let with = paginate_rows_with_trailing(&scored, &metrics, area);
+        assert!(
+            with[0].len() < without[0].len(),
+            "the score took no room from the page: {} rows either way",
+            with[0].len()
+        );
+        // What the row will really be: the same measurement the layout engine
+        // makes, which is the thing the old pagination disagreed with.
+        assert!(
+            measured_row_height(&metrics, area, title, summary, "1,284 points")
+                > measured_row_height(&metrics, area, title, summary, ""),
+            "a row with a value at its trailing edge measured no taller"
+        );
+    }
+
+    #[test]
+    fn a_rows_trailing_value_keeps_its_room_and_the_title_gives_up_its_own() {
+        let laid_out = |title: &str, trailing: Option<&str>| {
+            let mut row = Row::new(ActionId(1), title, "Charles Dickens", Glyph::Book);
+            if let Some(value) = trailing {
+                row = row.with_trailing(value);
+            }
+            let screen = Screen::new(
+                1,
+                vec![Node::Rows {
+                    id: NodeId(1),
+                    rows: vec![row],
+                }],
+            );
+            screen.layout()
+        };
+        let long = "A title long enough that it would happily take the whole row";
+        let without = laid_out(long, None);
+        let with = laid_out(long, Some("18,204"));
+        let title_width = |layout: &Layout| {
+            layout
+                .nodes
+                .iter()
+                .find(|node| node.kind == LayoutKind::RowTitle)
+                .expect("a title")
+                .rect
+                .width
+        };
+        assert!(
+            title_width(&with) < title_width(&without),
+            "a trailing value did not take any room from the title"
+        );
+        let value = with
+            .nodes
+            .iter()
+            .find(|node| node.kind == LayoutKind::RowTrailing)
+            .expect("a trailing value");
+        assert_eq!(
+            value.text_lines.first().map(String::as_str),
+            Some("18,204"),
+            "the trailing value was clamped away"
+        );
+        let title = with
+            .nodes
+            .iter()
+            .find(|node| node.kind == LayoutKind::RowTitle)
+            .expect("a title");
+        assert!(
+            title.rect.x + title.rect.width <= value.rect.x,
+            "the title ran underneath its own trailing value"
+        );
+    }
+
+    #[test]
+    fn an_empty_trailing_value_draws_nothing_at_all() {
+        let screen = Screen::new(
+            1,
+            vec![Node::Rows {
+                id: NodeId(1),
+                rows: vec![Row::new(ActionId(1), "Counter", "", Glyph::Note).with_trailing("")],
+            }],
+        );
+        assert!(
+            !screen
+                .layout()
+                .nodes
+                .iter()
+                .any(|node| node.kind == LayoutKind::RowTrailing),
+            "an empty trailing value still reserved a column"
+        );
+    }
+
+    #[test]
+    fn every_fact_value_starts_in_the_same_column() {
+        let screen = Screen::new(
+            1,
+            vec![Node::Facts {
+                id: NodeId(1),
+                entries: vec![
+                    ("Downloads".to_owned(), "94,206".to_owned()),
+                    ("A much longer label".to_owned(), "2701".to_owned()),
+                    ("ID".to_owned(), "Public domain in the USA".to_owned()),
+                ],
+            }],
+        );
+        let layout = screen.layout();
+        let values = layout
+            .nodes
+            .iter()
+            .filter(|node| node.kind == LayoutKind::FactValue)
+            .map(|node| node.rect.x)
+            .collect::<Vec<_>>();
+        assert_eq!(values.len(), 3, "a fact was dropped");
+        assert!(
+            values.iter().all(|x| *x == values[0]),
+            "fact values did not share one column: {values:?}"
+        );
+    }
+
+    #[test]
+    fn one_long_label_cannot_squeeze_every_value_into_a_gutter() {
+        let screen = Screen::new(
+            1,
+            vec![Node::Facts {
+                id: NodeId(1),
+                entries: vec![(
+                    "A label so long that it would take the whole panel if it were allowed to"
+                        .to_owned(),
+                    "94,206".to_owned(),
+                )],
+            }],
+        );
+        let layout = screen.layout();
+        let value = layout
+            .nodes
+            .iter()
+            .find(|node| node.kind == LayoutKind::FactValue)
+            .expect("laid out");
+        assert!(
+            value.rect.width * 2 > layout.content.width,
+            "the label column took more than half the panel from its value"
+        );
+    }
+
+    #[test]
+    fn facts_past_the_cap_are_reported_rather_than_quietly_clipped() {
+        let entries = (0..MAX_FACTS + 4)
+            .map(|index| (format!("Label {index}"), format!("{index}")))
+            .collect();
+        let screen = Screen::new(
+            1,
+            vec![Node::Facts {
+                id: NodeId(1),
+                entries,
+            }],
+        );
+        let issues = screen.validate(&CLARA_BW_METRICS);
+        assert!(
+            issues.iter().any(|issue| matches!(
+                issue.kind,
+                LayoutIssueKind::CollectionTruncated {
+                    collection: "facts",
+                    ..
+                }
+            )),
+            "a facts block over the cap reported nothing: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn a_band_puts_its_slots_beside_each_other() {
+        let screen = Screen::new(
+            1,
+            vec![Node::Band {
+                id: NodeId(1),
+                align: BandAlign::Top,
+                slots: vec![
+                    BandSlot::fill(vec![Node::Text {
+                        id: NodeId(2),
+                        text: "Left".to_owned(),
+                    }]),
+                    BandSlot::fill(vec![Node::Text {
+                        id: NodeId(3),
+                        text: "Right".to_owned(),
+                    }]),
+                ],
+            }],
+        );
+        let layout = screen.layout();
+        let rect = |id: u32| {
+            layout
+                .nodes
+                .iter()
+                .find(|node| node.id == NodeId(id))
+                .expect("laid out")
+                .rect
+        };
+        assert_eq!(rect(2).y, rect(3).y, "slots did not share a top edge");
+        assert!(
+            rect(3).x > rect(2).x + rect(2).width,
+            "the second slot overlapped the first instead of sitting beside it"
+        );
+    }
+
+    #[test]
+    fn a_band_too_narrow_for_its_slots_stacks_itself() {
+        let narrow = DisplayMetrics {
+            width: metrics_width_for_one_column(),
+            ..CLARA_BW_METRICS
+        };
+        let screen = Screen::new(
+            1,
+            vec![Node::Band {
+                id: NodeId(1),
+                align: BandAlign::Top,
+                slots: vec![
+                    BandSlot::fill(vec![Node::Text {
+                        id: NodeId(2),
+                        text: "Left".to_owned(),
+                    }]),
+                    BandSlot::fill(vec![Node::Text {
+                        id: NodeId(3),
+                        text: "Right".to_owned(),
+                    }]),
+                ],
+            }],
+        );
+        let layout = screen.layout_with(&narrow, &Chrome::default());
+        let rect = |id: u32| {
+            layout
+                .nodes
+                .iter()
+                .find(|node| node.id == NodeId(id))
+                .expect("laid out")
+                .rect
+        };
+        assert_eq!(
+            rect(2).x,
+            rect(3).x,
+            "a band that could not fit its columns did not fall back to stacking"
+        );
+        assert!(
+            rect(3).y > rect(2).y,
+            "a stacked band left its slots on top of each other"
+        );
+    }
+
+    #[test]
+    fn a_band_slot_can_be_centred_against_a_taller_neighbour() {
+        let band = |align: BandAlign| {
+            let screen = Screen::new(
+                1,
+                vec![Node::Band {
+                    id: NodeId(1),
+                    align,
+                    slots: vec![
+                        BandSlot::fill(vec![
+                            Node::Heading {
+                                id: NodeId(2),
+                                text: "Tall".to_owned(),
+                            },
+                            Node::Heading {
+                                id: NodeId(4),
+                                text: "Still tall".to_owned(),
+                            },
+                        ]),
+                        BandSlot::fill(vec![Node::Secondary {
+                            id: NodeId(3),
+                            text: "Short".to_owned(),
+                        }]),
+                    ],
+                }],
+            );
+            screen
+                .layout()
+                .nodes
+                .iter()
+                .find(|node| node.id == NodeId(3))
+                .expect("laid out")
+                .rect
+                .y
+        };
+        assert!(
+            band(BandAlign::Middle) > band(BandAlign::Top),
+            "a centred slot was not moved down against its taller neighbour"
+        );
+        assert!(
+            band(BandAlign::Bottom) > band(BandAlign::Middle),
+            "a bottom aligned slot was not moved below a centred one"
+        );
+    }
+
+    #[test]
+    fn a_natural_slot_takes_only_what_it_measures() {
+        let screen = Screen::new(
+            1,
+            vec![Node::Band {
+                id: NodeId(1),
+                align: BandAlign::Top,
+                slots: vec![
+                    BandSlot::fill(vec![Node::Text {
+                        id: NodeId(2),
+                        text: "A title that wants the whole line to itself".to_owned(),
+                    }]),
+                    BandSlot::natural(vec![Node::Secondary {
+                        id: NodeId(3),
+                        text: "32".to_owned(),
+                    }]),
+                ],
+            }],
+        );
+        let layout = screen.layout();
+        let rect = |id: u32| {
+            layout
+                .nodes
+                .iter()
+                .find(|node| node.id == NodeId(id))
+                .expect("laid out")
+                .rect
+        };
+        assert!(
+            rect(3).width < rect(2).width,
+            "a natural slot took as much room as the fill beside it"
+        );
+        assert!(
+            rect(3).width >= measure_text("32", FontSize::Caption).0,
+            "a natural slot was clamped below what its content measures"
+        );
+    }
+
+    /// A panel narrow enough that two columns cannot both stay readable.
+    fn metrics_width_for_one_column() -> i32 {
+        CLARA_BW_METRICS.tenth_mm(MIN_BAND_SLOT_TENTH_MM) * 2
+    }
+
+    #[test]
+    fn a_section_is_quieter_than_the_heading_it_sits_under() {
+        let screen = Screen::new(
+            1,
+            vec![
+                Node::Heading {
+                    id: NodeId(1),
+                    text: "Moby Dick".to_owned(),
+                },
+                Node::Section {
+                    id: NodeId(2),
+                    title: "Details".to_owned(),
+                    value: None,
+                },
+            ],
+        );
+        let layout = screen.layout();
+        let node = |id: u32| {
+            layout
+                .nodes
+                .iter()
+                .find(|node| node.id == NodeId(id))
+                .expect("laid out")
+        };
+        assert!(
+            node(2).rect.height < node(1).rect.height,
+            "a section was not set smaller than the screen's own heading"
+        );
+        assert_eq!(node(2).kind, LayoutKind::Section);
+    }
+
+    #[test]
+    fn a_section_draws_a_rule_in_the_room_its_title_leaves() {
+        let paint_section = |title: &str| {
+            let screen = Screen::new(
+                1,
+                vec![Node::Section {
+                    id: NodeId(1),
+                    title: title.to_owned(),
+                    value: None,
+                }],
+            );
+            let rect = screen
+                .layout()
+                .nodes
+                .iter()
+                .find(|node| node.id == NodeId(1))
+                .expect("laid out")
+                .rect;
+            let (surface, stride) = paint(&screen);
+            tone_count(&surface, rect, tone::RULE, stride)
+        };
+        assert!(paint_section("About") > 0, "a section drew no hairline");
+        assert!(
+            paint_section("About") > paint_section("A rather longer section name"),
+            "a longer title did not give up any of its own hairline"
+        );
+    }
+
+    #[test]
+    fn a_sections_value_is_measured_before_its_title_is_clamped() {
+        let screen = Screen::new(
+            1,
+            vec![Node::Section {
+                id: NodeId(1),
+                title: "A section title long enough to want the whole line".to_owned(),
+                value: Some("32".to_owned()),
+            }],
+        );
+        let node = screen
+            .layout()
+            .nodes
+            .iter()
+            .find(|node| node.id == NodeId(1))
+            .expect("laid out")
+            .clone();
+        let title = node.text_lines.first().expect("a title");
+        let value = node.text_lines.get(1).expect("a value");
+        assert_eq!(value, "32", "the value was clamped away");
+        let together =
+            measure_text(title, FontSize::Caption).0 + measure_text(value, FontSize::Caption).0;
+        assert!(
+            together <= node.rect.width,
+            "a title and its value together ran past the right margin"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -10817,5 +13989,444 @@ mod press_feedback_tests {
             height: 10,
         });
         assert_eq!(surface.pixels, before);
+    }
+
+    #[test]
+    fn a_section_header_never_ends_a_page_without_its_first_row() {
+        let area = CLARA_BW_METRICS.prose_area(true, true);
+        // Enough rows to overflow, with a section opening partway down, placed
+        // by binary search at every position so no single lucky offset is
+        // being asserted.
+        let plain: Vec<(&str, &str)> = (0..40)
+            .map(|_| ("A row with an ordinary length of title", "and a summary"))
+            .collect();
+        for opener in 1..plain.len() {
+            let rows: Vec<(Option<&str>, &str, &str)> = plain
+                .iter()
+                .enumerate()
+                .map(|(index, (title, summary))| {
+                    (
+                        (index == opener).then_some("Everything else"),
+                        *title,
+                        *summary,
+                    )
+                })
+                .collect();
+            let pages = paginate_rows_in_sections(&rows, &CLARA_BW_METRICS, area);
+            let page = pages
+                .iter()
+                .find(|page| page.contains(&opener))
+                .expect("every row lands on a page");
+            let heights: i32 = page
+                .iter()
+                .map(|index| {
+                    let (section, title, summary) = rows[*index];
+                    let text_width = row_text_width(&CLARA_BW_METRICS, area);
+                    let body = wrap_text(title, text_width, FontSize::Body).len() as i32
+                        * FontSize::Body.line_height()
+                        + wrap_text(summary, text_width, FontSize::Caption).len() as i32
+                            * FontSize::Caption.line_height()
+                        + CLARA_BW_METRICS.space(Space::Small) * 2;
+                    max(CLARA_BW_METRICS.touch_target_default(), body)
+                        + if section.is_some() {
+                            section_height(&CLARA_BW_METRICS)
+                        } else {
+                            0
+                        }
+                })
+                .sum();
+            let separators =
+                (page.len() as i32 - 1) * (CLARA_BW_METRICS.rule_thickness() + area.gap);
+            assert!(
+                heights + separators <= area.height || page.len() == 1,
+                "a page carrying a section header and its row overflowed"
+            );
+        }
+    }
+
+    #[test]
+    fn an_action_bar_marks_nothing_and_a_nav_bar_is_asked_to() {
+        let actions = Screen::new(1, Vec::new()).with_nav_bar(NavBar::actions(
+            NodeId(9),
+            vec![
+                BarAction::new(ActionId(1), "Back"),
+                BarAction::new(ActionId(2), "Next"),
+            ],
+        ));
+        let layout = actions.layout_for(&CLARA_BW_METRICS);
+        assert!(
+            !layout
+                .nodes
+                .iter()
+                .any(|node| matches!(node.kind, LayoutKind::NavDestinationSelected(_))),
+            "none of these is a place the reader could be standing"
+        );
+        assert!(
+            !actions
+                .validate(&CLARA_BW_METRICS)
+                .iter()
+                .any(|issue| issue.kind == LayoutIssueKind::NavBarWithoutSelection),
+            "a bar of verbs has nothing to mark and must not be nagged about it"
+        );
+
+        let unmarked = Screen::new(1, Vec::new()).with_nav_bar(NavBar::new(
+            NodeId(9),
+            vec![
+                BarAction::new(ActionId(1), "Stories"),
+                BarAction::new(ActionId(2), "Saved"),
+            ],
+            None,
+        ));
+        assert!(
+            unmarked
+                .validate(&CLARA_BW_METRICS)
+                .iter()
+                .any(|issue| issue.kind == LayoutIssueKind::NavBarWithoutSelection),
+            "a bar of places that marks none of them is a bar that lies"
+        );
+    }
+
+    /// Every composition lint, each with a screen that fires it and one that
+    /// does not. The pairs matter more than the cases: a lint that fires on
+    /// everything is noise, and noise is turned off.
+    #[test]
+    fn state_written_into_a_label_is_caught_where_a_state_field_exists() {
+        let fires = Screen::new(
+            1,
+            vec![Node::TileGrid {
+                id: NodeId(1),
+                tiles: vec![Tile::new(ActionId(1), "Moby-Dick (kept)", Glyph::Book)],
+                shape: TileShape::Portrait,
+            }],
+        );
+        assert!(
+            fires
+                .validate(&CLARA_BW_METRICS)
+                .iter()
+                .any(|issue| issue.kind == LayoutIssueKind::StateInLabel),
+            "this is the exact string the shelf drew for a year"
+        );
+
+        let quiet = Screen::new(
+            1,
+            vec![Node::TileGrid {
+                id: NodeId(1),
+                tiles: vec![
+                    Tile::new(ActionId(1), "Moby-Dick", Glyph::Book).with_state(TileState::Held),
+                    Tile::new(ActionId(2), "Ulysses (1922)", Glyph::Book),
+                    Tile::new(ActionId(3), "Emma (annotated edition)", Glyph::Book),
+                ],
+                shape: TileShape::Portrait,
+            }],
+        );
+        assert!(
+            !quiet
+                .validate(&CLARA_BW_METRICS)
+                .iter()
+                .any(|issue| issue.kind == LayoutIssueKind::StateInLabel),
+            "a year, an edition and a real state field are all legitimate"
+        );
+    }
+
+    #[test]
+    fn a_second_way_back_is_caught() {
+        let back = |owns: bool, extra: Vec<Node>| {
+            Screen::new(1, extra)
+                .with_own_back(owns)
+                .validate(&CLARA_BW_METRICS)
+                .iter()
+                .any(|issue| issue.kind == LayoutIssueKind::AmbiguousBack)
+        };
+        let button = |label: &str| {
+            vec![Node::Button {
+                id: NodeId(1),
+                action: ActionId(1),
+                label: label.to_owned(),
+                state: ControlState::Enabled,
+                emphasis: Emphasis::Normal,
+            }]
+        };
+        assert!(
+            back(true, button("Back to the results")),
+            "the runtime already drew Back; this is the second one"
+        );
+        assert!(
+            !back(true, button("Read")),
+            "a verb that is not a retreat is not a second way out"
+        );
+        assert!(
+            !back(false, button("Back to the results")),
+            "a screen that did not take Back may certainly draw its own"
+        );
+    }
+
+    #[test]
+    fn a_second_primary_action_is_caught() {
+        let primary = |emphasis: Emphasis| Node::Button {
+            id: NodeId(2),
+            action: ActionId(2),
+            label: "Delete".to_owned(),
+            state: ControlState::Enabled,
+            emphasis,
+        };
+        let first = Node::Button {
+            id: NodeId(1),
+            action: ActionId(1),
+            label: "Read".to_owned(),
+            state: ControlState::Enabled,
+            emphasis: Emphasis::Primary,
+        };
+        let fired = |emphasis: Emphasis| {
+            Screen::new(1, vec![first.clone(), primary(emphasis)])
+                .validate(&CLARA_BW_METRICS)
+                .iter()
+                .any(|issue| issue.kind == LayoutIssueKind::MultiplePrimaryActions)
+        };
+        assert!(fired(Emphasis::Primary), "two primaries is no decision");
+        assert!(!fired(Emphasis::Normal), "one primary is the whole point");
+    }
+
+    #[test]
+    fn a_section_header_with_nothing_under_it_is_caught() {
+        let section = |id: u32, title: &str| Node::Section {
+            id: NodeId(id),
+            title: title.to_owned(),
+            value: None,
+        };
+        let orphan = Screen::new(1, vec![section(1, "Details")]);
+        assert!(
+            orphan
+                .validate(&CLARA_BW_METRICS)
+                .iter()
+                .any(|issue| issue.kind == LayoutIssueKind::OrphanedSection),
+            "a header with its content overleaf is the classic broken page"
+        );
+
+        let filled = Screen::new(
+            1,
+            vec![
+                section(1, "Details"),
+                Node::Text {
+                    id: NodeId(2),
+                    text: "Published in 1851.".to_owned(),
+                },
+            ],
+        );
+        assert!(
+            !filled
+                .validate(&CLARA_BW_METRICS)
+                .iter()
+                .any(|issue| issue.kind == LayoutIssueKind::OrphanedSection),
+            "a header that keeps its first line is exactly right"
+        );
+    }
+
+    #[test]
+    fn a_spinner_that_knows_its_own_total_is_caught() {
+        let activity = |transferred: Option<(u64, Option<u64>)>| Node::Activity {
+            id: NodeId(1),
+            label: "Downloading".to_owned(),
+            progress: None,
+            cancel: None,
+            transferred,
+            failure: None,
+        };
+        let fired = |transferred| {
+            Screen::new(1, vec![activity(transferred)])
+                .validate(&CLARA_BW_METRICS)
+                .iter()
+                .any(|issue| issue.kind == LayoutIssueKind::IndeterminateWithKnownTotal)
+        };
+        assert!(
+            fired(Some((1024, Some(8192)))),
+            "it has counted the work and is still refusing to say"
+        );
+        assert!(
+            !fired(Some((1024, None))),
+            "a server that admitted no total leaves nothing to draw a bar from"
+        );
+        assert!(!fired(None), "a plain wait is a plain wait");
+    }
+
+    #[test]
+    fn a_screen_that_spends_every_ink_is_caught() {
+        let over_budget = Screen::new(
+            1,
+            vec![
+                Node::Heading {
+                    id: NodeId(1),
+                    text: "Shelf".to_owned(),
+                },
+                Node::Secondary {
+                    id: NodeId(2),
+                    text: "Nine books".to_owned(),
+                },
+                Node::Divider { id: NodeId(3) },
+                Node::Card {
+                    id: NodeId(4),
+                    children: vec![Node::Text {
+                        id: NodeId(5),
+                        text: "A card is the surface tone.".to_owned(),
+                    }],
+                },
+                Node::Button {
+                    id: NodeId(6),
+                    action: ActionId(1),
+                    label: "Read".to_owned(),
+                    state: ControlState::Enabled,
+                    emphasis: Emphasis::Primary,
+                },
+            ],
+        );
+        let issue = over_budget
+            .validate(&CLARA_BW_METRICS)
+            .into_iter()
+            .find(|issue| matches!(issue.kind, LayoutIssueKind::ToneBudget { .. }));
+        assert_eq!(
+            issue.map(|issue| issue.kind),
+            Some(LayoutIssueKind::ToneBudget { used: 5 }),
+            "ink, muted, hairline, surface and inverted is all five"
+        );
+
+        let within_budget = Screen::new(
+            1,
+            vec![
+                Node::Heading {
+                    id: NodeId(1),
+                    text: "Shelf".to_owned(),
+                },
+                Node::Secondary {
+                    id: NodeId(2),
+                    text: "Nine books".to_owned(),
+                },
+                Node::Divider { id: NodeId(3) },
+                Node::Button {
+                    id: NodeId(4),
+                    action: ActionId(1),
+                    label: "Read".to_owned(),
+                    state: ControlState::Enabled,
+                    emphasis: Emphasis::Primary,
+                },
+            ],
+        );
+        assert!(
+            !within_budget
+                .validate(&CLARA_BW_METRICS)
+                .iter()
+                .any(|issue| matches!(issue.kind, LayoutIssueKind::ToneBudget { .. })),
+            "four inks is the budget, not a warning"
+        );
+    }
+
+    #[test]
+    fn an_action_bar_stops_at_three_verbs() {
+        let bar = NavBar::actions(
+            NodeId(1),
+            (1..=5)
+                .map(|index| BarAction::new(ActionId(index), format!("Do {index}")))
+                .collect(),
+        );
+        assert_eq!(bar.visible(&CLARA_BW_METRICS).len(), MAX_ACTION_BAR_ACTIONS);
+    }
+
+    #[test]
+    fn byte_counts_read_the_way_a_person_says_them() {
+        assert_eq!(byte_size(0), "0 B");
+        assert_eq!(byte_size(512), "512 B");
+        assert_eq!(byte_size(1024), "1.0 KB");
+        assert_eq!(byte_size(4_404_019), "4.2 MB");
+        assert_eq!(byte_size(11_534_336), "11 MB");
+    }
+
+    #[test]
+    fn a_transfer_without_a_total_reports_bytes_and_draws_no_bar() {
+        let screen = Screen::new(
+            1,
+            vec![Node::Activity {
+                id: NodeId(1),
+                label: "Downloading".into(),
+                progress: None,
+                cancel: None,
+                transferred: Some((4_404_019, None)),
+                failure: None,
+            }],
+        );
+        let layout = screen.layout_for(&CLARA_BW_METRICS);
+        assert!(
+            !layout
+                .nodes
+                .iter()
+                .any(|node| node.kind == LayoutKind::ActivityProgress),
+            "a bar with no denominator invents its own position"
+        );
+        let bytes = layout
+            .nodes
+            .iter()
+            .find(|node| node.kind == LayoutKind::ActivityBytes)
+            .expect("the count is the whole report when there is no bar");
+        assert_eq!(bytes.text_lines, vec!["4.2 MB".to_string()]);
+    }
+
+    #[test]
+    fn a_transfer_with_a_total_says_how_far_through_it_is() {
+        let layout = Screen::new(
+            1,
+            vec![Node::Activity {
+                id: NodeId(1),
+                label: "Downloading".into(),
+                progress: Some(Percent::new(38)),
+                cancel: None,
+                transferred: Some((4_404_019, Some(11_534_336))),
+                failure: None,
+            }],
+        )
+        .layout_for(&CLARA_BW_METRICS);
+        let bytes = layout
+            .nodes
+            .iter()
+            .find(|node| node.kind == LayoutKind::ActivityBytes)
+            .expect("a byte caption");
+        assert_eq!(bytes.text_lines, vec!["4.2 MB of 11 MB".to_string()]);
+    }
+
+    #[test]
+    fn a_failed_transfer_keeps_what_was_around_it() {
+        let layout = Screen::new(
+            1,
+            vec![
+                Node::Heading {
+                    id: NodeId(1),
+                    text: "Moby Dick".into(),
+                },
+                Node::Activity {
+                    id: NodeId(2),
+                    label: "Downloading".into(),
+                    progress: None,
+                    cancel: None,
+                    transferred: Some((512, None)),
+                    failure: Some(TransferFailure {
+                        reason: "The connection was reset".into(),
+                        resumable: true,
+                    }),
+                },
+            ],
+        )
+        .layout_for(&CLARA_BW_METRICS);
+        assert!(
+            layout
+                .nodes
+                .iter()
+                .any(|node| node.text_lines.iter().any(|line| line == "Moby Dick")),
+            "a failure must not take the screen away from the reader"
+        );
+        let failure = layout
+            .nodes
+            .iter()
+            .find(|node| node.kind == LayoutKind::ActivityFailure)
+            .expect("the reason");
+        assert_eq!(
+            failure.text_lines,
+            vec!["The connection was reset".to_string()]
+        );
     }
 }

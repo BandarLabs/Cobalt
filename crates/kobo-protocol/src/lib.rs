@@ -6,10 +6,10 @@ use std::fmt;
 use std::io::{self, Read, Write};
 
 use kobo_ui::{
-    ActionId, BannerLevel, BarAction, BottomAction, Caret, Cell, ControlState, Freeform, Glyph,
-    NavBar, Node, NodeId, PageTurns, Percent, PictureHandle, Row, RowLead, RowState, Screen, Space,
-    TextScale, Tile, TilePicture, TileShape, TopBar, MAX_BAR_ACTIONS, MAX_TERMINAL_COLUMNS,
-    MAX_TERMINAL_ROWS, MIN_NAV_DESTINATIONS,
+    ActionId, BannerLevel, BarAction, BarStyle, BottomAction, Caret, Cell, ControlState, Freeform,
+    Glyph, NavBar, Node, NodeId, PageTurns, Percent, PictureHandle, Row, RowLead, RowState, Screen,
+    Space, TextScale, Tile, TilePicture, TileShape, TileState, TopBar, TransferFailure,
+    MAX_BAR_ACTIONS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS, MIN_NAV_DESTINATIONS,
 };
 use std::cmp::min;
 
@@ -1536,6 +1536,11 @@ fn encoded_screen_len(
         if turns.menu.is_some() {
             add_encoded_len(&mut length, 4)?;
         }
+        // A flag, plus the page and the total when there is one.
+        add_encoded_len(&mut length, 1)?;
+        if turns.position.is_some() {
+            add_encoded_len(&mut length, 4)?;
+        }
     }
     // One flag byte, plus an action identifier when the screen asked to hear
     // about a finger held still on it.
@@ -1606,6 +1611,15 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
             add_encoded_len(&mut length, encoded_string_len(text)?)?;
             length
         }
+        Node::Section { title, value, .. } => {
+            // id, then the title, then a byte saying whether a value follows.
+            let mut length = 6;
+            add_encoded_len(&mut length, encoded_string_len(title)?)?;
+            if let Some(value) = value {
+                add_encoded_len(&mut length, encoded_string_len(value)?)?;
+            }
+            length
+        }
         Node::Quote { text, fold, .. } => {
             // id, depth, role, whether it folds, then the text. A fold costs
             // seven more: the action, whether it is shut, and the count.
@@ -1626,6 +1640,65 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
             let mut length = 7;
             for child in children {
                 add_encoded_len(&mut length, encoded_node_len(child, depth + 1, count)?)?;
+            }
+            length
+        }
+        Node::Field {
+            value,
+            placeholder,
+            clear,
+            ..
+        } => {
+            // id, the action, the clear flag, then the two strings. A clear
+            // action costs four more.
+            let mut length = 10;
+            add_encoded_len(&mut length, encoded_string_len(value)?)?;
+            add_encoded_len(&mut length, encoded_string_len(placeholder)?)?;
+            if clear.is_some() {
+                add_encoded_len(&mut length, 4)?;
+            }
+            length
+        }
+        Node::Chips { chips, .. } => {
+            // id, the count, then an action, a selected flag and a label each.
+            let mut length = 6;
+            for chip in chips.iter().take(kobo_ui::MAX_CHIPS) {
+                add_encoded_len(&mut length, 5)?;
+                add_encoded_len(&mut length, encoded_string_len(&chip.label)?)?;
+            }
+            length
+        }
+        Node::Tabs { tabs, .. } => {
+            // id, the count, the selection, then an action and a label each.
+            let mut length = 7;
+            for tab in tabs.iter().take(kobo_ui::MAX_TABS) {
+                add_encoded_len(&mut length, 4)?;
+                add_encoded_len(&mut length, encoded_string_len(&tab.label)?)?;
+            }
+            length
+        }
+        Node::Facts { entries, .. } => {
+            // id, the count, then a label and a value for each pair.
+            let mut length = 7;
+            for (label, value) in entries.iter().take(kobo_ui::MAX_FACTS) {
+                add_encoded_len(&mut length, encoded_string_len(label)?)?;
+                add_encoded_len(&mut length, encoded_string_len(value)?)?;
+            }
+            length
+        }
+        Node::Band { slots, .. } => {
+            // id, the alignment, the slot count, then each slot's width token
+            // and the node inside it. A fixed width costs two more bytes.
+            let mut length = 7;
+            for slot in slots.iter().take(kobo_ui::MAX_BAND_SLOTS) {
+                add_encoded_len(&mut length, 1)?;
+                if matches!(slot.width, kobo_ui::SlotWidth::Fixed(_)) {
+                    add_encoded_len(&mut length, 2)?;
+                }
+                add_encoded_len(&mut length, 2)?;
+                for node in &slot.nodes {
+                    add_encoded_len(&mut length, encoded_node_len(node, depth + 1, count)?)?;
+                }
             }
             length
         }
@@ -1663,11 +1736,15 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
             }
             let mut length = 6;
             for row in rows {
-                // Four bytes of action, three of lead and one of state, then
-                // both strings.
-                add_encoded_len(&mut length, 8)?;
+                // Four bytes of action, the fixed-width lead, one of state
+                // and one saying whether a trailing value follows, then the
+                // strings.
+                add_encoded_len(&mut length, 6 + ROW_LEAD_LEN)?;
                 add_encoded_len(&mut length, encoded_string_len(&row.title)?)?;
                 add_encoded_len(&mut length, encoded_string_len(&row.summary)?)?;
+                if let Some(trailing) = &row.trailing {
+                    add_encoded_len(&mut length, encoded_string_len(trailing)?)?;
+                }
             }
             length
         }
@@ -1677,8 +1754,10 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
             }
             let mut length = 7;
             for tile in tiles {
-                add_encoded_len(&mut length, 6)?;
+                add_encoded_len(&mut length, 7)?;
                 add_encoded_len(&mut length, encoded_string_len(&tile.label)?)?;
+                add_encoded_len(&mut length, encoded_string_len(&tile.badge)?)?;
+                add_encoded_len(&mut length, encoded_string_len(&tile.subtitle)?)?;
                 if tile.picture.is_some() {
                     add_encoded_len(&mut length, 12)?;
                 }
@@ -1731,12 +1810,27 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
             label,
             progress,
             cancel,
+            transferred,
+            failure,
             ..
         } => {
             let mut length = 7;
             add_encoded_len(&mut length, encoded_string_len(label)?)?;
             if progress.is_some() {
                 add_encoded_len(&mut length, 1)?;
+            }
+            // A flag, plus the received count and a flagged total.
+            add_encoded_len(&mut length, 1)?;
+            if let Some((_, total)) = transferred {
+                add_encoded_len(&mut length, 9)?;
+                if total.is_some() {
+                    add_encoded_len(&mut length, 8)?;
+                }
+            }
+            add_encoded_len(&mut length, 1)?;
+            if let Some(failure) = failure {
+                add_encoded_len(&mut length, 1)?;
+                add_encoded_len(&mut length, encoded_string_len(&failure.reason)?)?;
             }
             if let Some(cancel) = cancel {
                 add_encoded_len(&mut length, 4)?;
@@ -2235,7 +2329,12 @@ fn encode_screen(
             if nav_bar.destinations.len() < MIN_NAV_DESTINATIONS {
                 return Err(ProtocolError::InvalidValue("nav bar destinations"));
             }
-            output.push(1);
+            // The presence flag doubles as the style, rather than costing a
+            // byte of its own: 1 is a bar of destinations, 2 a bar of verbs.
+            output.push(match nav_bar.style {
+                BarStyle::Navigation => 1,
+                BarStyle::Actions => 2,
+            });
             push_u32(output, nav_bar.id.0);
             let len = u8::try_from(nav_bar.destinations.len())
                 .map_err(|_| ProtocolError::TooManyNodes)?;
@@ -2282,6 +2381,14 @@ fn encode_screen(
             push_u32(output, turns.next.0);
             if let Some(menu) = turns.menu {
                 push_u32(output, menu.0);
+            }
+            match turns.position {
+                Some((page, of)) => {
+                    output.push(1);
+                    push_u16(output, page);
+                    push_u16(output, of);
+                }
+                None => output.push(0),
             }
         }
     }
@@ -2386,6 +2493,15 @@ fn encode_node(
             push_u32(output, id.0);
             push_string(output, text)?;
         }
+        Node::Section { id, title, value } => {
+            output.push(21);
+            push_u32(output, id.0);
+            push_string(output, title)?;
+            output.push(u8::from(value.is_some()));
+            if let Some(value) = value {
+                push_string(output, value)?;
+            }
+        }
         Node::Quote {
             id,
             depth,
@@ -2441,6 +2557,92 @@ fn encode_node(
             );
             for child in children {
                 encode_node(output, child, depth + 1, count)?;
+            }
+        }
+        Node::Field {
+            id,
+            action,
+            value,
+            placeholder,
+            clear,
+        } => {
+            output.push(24);
+            push_u32(output, id.0);
+            push_u32(output, action.0);
+            push_string(output, value)?;
+            push_string(output, placeholder)?;
+            match clear {
+                Some(clear) => {
+                    output.push(1);
+                    push_u32(output, clear.0);
+                }
+                None => output.push(0),
+            }
+        }
+        Node::Chips { id, chips } => {
+            let chips = &chips[..chips.len().min(kobo_ui::MAX_CHIPS)];
+            output.push(25);
+            push_u32(output, id.0);
+            output.push(u8::try_from(chips.len()).map_err(|_| ProtocolError::TooManyNodes)?);
+            for chip in chips {
+                push_u32(output, chip.action.0);
+                output.push(u8::from(chip.selected));
+                push_string(output, &chip.label)?;
+            }
+        }
+        Node::Tabs { id, tabs, selected } => {
+            let tabs = &tabs[..tabs.len().min(kobo_ui::MAX_TABS)];
+            output.push(26);
+            push_u32(output, id.0);
+            output.push(u8::try_from(tabs.len()).map_err(|_| ProtocolError::TooManyNodes)?);
+            // Clamped rather than refused, for the reason the choice marker
+            // gives: a selection nobody named is a caller mistake, and losing
+            // the whole screen over it is worse than showing the first tab.
+            output.push(u8::try_from(*selected).unwrap_or(0));
+            for tab in tabs {
+                push_u32(output, tab.action.0);
+                push_string(output, &tab.label)?;
+            }
+        }
+        Node::Facts { id, entries } => {
+            let entries = &entries[..entries.len().min(kobo_ui::MAX_FACTS)];
+            output.push(23);
+            push_u32(output, id.0);
+            push_u16(
+                output,
+                u16::try_from(entries.len()).map_err(|_| ProtocolError::TooManyNodes)?,
+            );
+            for (label, value) in entries {
+                push_string(output, label)?;
+                push_string(output, value)?;
+            }
+        }
+        Node::Band { id, align, slots } => {
+            let slots = &slots[..slots.len().min(kobo_ui::MAX_BAND_SLOTS)];
+            output.push(22);
+            push_u32(output, id.0);
+            output.push(match align {
+                kobo_ui::BandAlign::Top => 0,
+                kobo_ui::BandAlign::Middle => 1,
+                kobo_ui::BandAlign::Bottom => 2,
+            });
+            output.push(u8::try_from(slots.len()).map_err(|_| ProtocolError::TooManyNodes)?);
+            for slot in slots {
+                match slot.width {
+                    kobo_ui::SlotWidth::Natural => output.push(0),
+                    kobo_ui::SlotWidth::Fill => output.push(1),
+                    kobo_ui::SlotWidth::Fixed(tenths) => {
+                        output.push(2);
+                        push_u16(output, tenths);
+                    }
+                }
+                push_u16(
+                    output,
+                    u16::try_from(slot.nodes.len()).map_err(|_| ProtocolError::TooManyNodes)?,
+                );
+                for node in &slot.nodes {
+                    encode_node(output, node, depth + 1, count)?;
+                }
             }
         }
         Node::Divider { id } => {
@@ -2505,6 +2707,10 @@ fn encode_node(
                 push_string(output, &row.summary)?;
                 push_row_lead(output, row.lead);
                 output.push(encode_row_state(row.state));
+                output.push(u8::from(row.trailing.is_some()));
+                if let Some(trailing) = &row.trailing {
+                    push_string(output, trailing)?;
+                }
             }
         }
         Node::TileGrid { id, tiles, shape } => {
@@ -2519,6 +2725,14 @@ fn encode_node(
                 push_u32(output, tile.action.0);
                 push_string(output, &tile.label)?;
                 output.push(encode_glyph(tile.glyph));
+                output.push(match tile.state {
+                    TileState::Normal => 0,
+                    TileState::Held => 1,
+                    TileState::Unavailable => 2,
+                    TileState::Busy => 3,
+                });
+                push_string(output, &tile.badge)?;
+                push_string(output, &tile.subtitle)?;
                 match tile.picture {
                     Some(picture) => {
                         output.push(1);
@@ -2609,6 +2823,8 @@ fn encode_node(
             label,
             progress,
             cancel,
+            transferred,
+            failure,
         } => {
             output.push(13);
             push_u32(output, id.0);
@@ -2625,6 +2841,28 @@ fn encode_node(
                 Some(cancel) => {
                     output.push(1);
                     encode_bar_action(output, cancel)?;
+                }
+            }
+            match transferred {
+                None => output.push(0),
+                Some((received, total)) => {
+                    output.push(1);
+                    push_u64(output, *received);
+                    match total {
+                        None => output.push(0),
+                        Some(total) => {
+                            output.push(1);
+                            push_u64(output, *total);
+                        }
+                    }
+                }
+            }
+            match failure {
+                None => output.push(0),
+                Some(failure) => {
+                    output.push(1);
+                    output.push(u8::from(failure.resumable));
+                    push_string(output, &failure.reason)?;
                 }
             }
         }
@@ -2788,6 +3026,14 @@ const fn encode_glyph(glyph: Glyph) -> u8 {
         Glyph::Rss => 18,
         Glyph::Light => 19,
         Glyph::Close => 20,
+        Glyph::Download => 21,
+        Glyph::Bookmark => 22,
+        Glyph::Filter => 23,
+        Glyph::Person => 24,
+        Glyph::Tag => 25,
+        Glyph::Globe => 26,
+        Glyph::Refresh => 27,
+        Glyph::More => 28,
     }
 }
 
@@ -2814,6 +3060,15 @@ const fn decode_glyph(tag: u8) -> Option<Glyph> {
         18 => Glyph::Rss,
         19 => Glyph::Light,
         20 => Glyph::Close,
+        21 => Glyph::Download,
+        22 => Glyph::Bookmark,
+        23 => Glyph::Filter,
+        24 => Glyph::Person,
+        25 => Glyph::Tag,
+        26 => Glyph::Globe,
+        27 => Glyph::Refresh,
+        28 => Glyph::More,
+
         _ => return None,
     })
 }
@@ -2857,7 +3112,12 @@ fn decode_screen(
     };
     let nav_bar = match reader.u8()? {
         0 => None,
-        1 => {
+        style @ (1 | 2) => {
+            let style = if style == 1 {
+                BarStyle::Navigation
+            } else {
+                BarStyle::Actions
+            };
             let bar_id = NodeId(reader.u32()?);
             let len = usize::from(reader.u8()?);
             let selected = usize::from(reader.u8()?);
@@ -2881,6 +3141,7 @@ fn decode_screen(
                     Some(min(selected, destinations.len() - 1))
                 },
                 destinations,
+                style,
             })
         }
         _ => return Err(ProtocolError::InvalidValue("nav bar flag")),
@@ -2904,6 +3165,14 @@ fn decode_screen(
                 .with_menu(ActionId(reader.u32()?)),
         ),
         _ => return Err(ProtocolError::InvalidValue("page turn flag")),
+    };
+    let page_turns = match page_turns {
+        None => None,
+        Some(turns) => Some(match reader.u8()? {
+            0 => turns,
+            1 => turns.with_position(reader.u16()?, reader.u16()?),
+            _ => return Err(ProtocolError::InvalidValue("page position flag")),
+        }),
     };
     let hold = match reader.u8()? {
         0 => None,
@@ -3061,6 +3330,15 @@ fn decode_node(
             id,
             text: reader.string()?,
         }),
+        21 => {
+            let title = reader.string()?;
+            let value = if reader.u8()? == 0 {
+                None
+            } else {
+                Some(reader.string()?)
+            };
+            Ok(Node::Section { id, title, value })
+        }
         4 => {
             let child_count = usize::from(reader.u16()?);
             if child_count > MAX_NODES {
@@ -3071,6 +3349,117 @@ fn decode_node(
                 children.push(decode_node(reader, depth + 1, count)?);
             }
             Ok(Node::Card { id, children })
+        }
+        24 => {
+            let action = ActionId(reader.u32()?);
+            if action.is_reserved() {
+                return Err(ProtocolError::InvalidValue("reserved action id"));
+            }
+            let value = reader.string()?;
+            let placeholder = reader.string()?;
+            let clear = match reader.u8()? {
+                0 => None,
+                1 => {
+                    let clear = ActionId(reader.u32()?);
+                    if clear.is_reserved() {
+                        return Err(ProtocolError::InvalidValue("reserved action id"));
+                    }
+                    Some(clear)
+                }
+                _ => return Err(ProtocolError::InvalidValue("field clear flag")),
+            };
+            Ok(Node::Field {
+                id,
+                action,
+                value,
+                placeholder,
+                clear,
+            })
+        }
+        25 => {
+            let count_of_chips = usize::from(reader.u8()?);
+            if count_of_chips > kobo_ui::MAX_CHIPS {
+                return Err(ProtocolError::TooManyNodes);
+            }
+            let mut chips = Vec::with_capacity(count_of_chips);
+            for _ in 0..count_of_chips {
+                let action = ActionId(reader.u32()?);
+                if action.is_reserved() {
+                    return Err(ProtocolError::InvalidValue("reserved action id"));
+                }
+                let selected = match reader.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(ProtocolError::InvalidValue("chip selected flag")),
+                };
+                chips.push(kobo_ui::Chip {
+                    action,
+                    label: reader.string()?,
+                    selected,
+                });
+            }
+            Ok(Node::Chips { id, chips })
+        }
+        26 => {
+            let count_of_tabs = usize::from(reader.u8()?);
+            if count_of_tabs > kobo_ui::MAX_TABS {
+                return Err(ProtocolError::TooManyNodes);
+            }
+            let selected = usize::from(reader.u8()?);
+            let mut tabs = Vec::with_capacity(count_of_tabs);
+            for _ in 0..count_of_tabs {
+                let action = ActionId(reader.u32()?);
+                if action.is_reserved() {
+                    return Err(ProtocolError::InvalidValue("reserved action id"));
+                }
+                tabs.push(kobo_ui::Chip {
+                    action,
+                    label: reader.string()?,
+                    selected: false,
+                });
+            }
+            let selected = if selected < tabs.len() { selected } else { 0 };
+            Ok(Node::Tabs { id, tabs, selected })
+        }
+        23 => {
+            let count_of_entries = usize::from(reader.u16()?);
+            if count_of_entries > kobo_ui::MAX_FACTS {
+                return Err(ProtocolError::TooManyNodes);
+            }
+            let mut entries = Vec::with_capacity(count_of_entries);
+            for _ in 0..count_of_entries {
+                entries.push((reader.string()?, reader.string()?));
+            }
+            Ok(Node::Facts { id, entries })
+        }
+        22 => {
+            let align = match reader.u8()? {
+                1 => kobo_ui::BandAlign::Middle,
+                2 => kobo_ui::BandAlign::Bottom,
+                _ => kobo_ui::BandAlign::Top,
+            };
+            let count_of_slots = usize::from(reader.u8()?);
+            if count_of_slots > kobo_ui::MAX_BAND_SLOTS {
+                return Err(ProtocolError::TooManyNodes);
+            }
+            let mut slots = Vec::with_capacity(count_of_slots);
+            for _ in 0..count_of_slots {
+                let width = match reader.u8()? {
+                    0 => kobo_ui::SlotWidth::Natural,
+                    2 => kobo_ui::SlotWidth::Fixed(reader.u16()?),
+                    _ => kobo_ui::SlotWidth::Fill,
+                };
+                let inside = usize::from(reader.u16()?);
+                if inside > MAX_NODES {
+                    return Err(ProtocolError::TooManyNodes);
+                }
+                let mut nodes = Vec::with_capacity(inside);
+                for _ in 0..inside {
+                    nodes.push(decode_node(reader, depth + 1, count)?);
+                }
+                slots.push(kobo_ui::BandSlot::new(width, nodes));
+            }
+            Ok(Node::Band { id, align, slots })
         }
         5 => Ok(Node::Divider { id }),
         6 => Ok(Node::Spacer {
@@ -3117,6 +3506,15 @@ fn decode_node(
                 let label = reader.string()?;
                 let glyph =
                     decode_glyph(reader.u8()?).ok_or(ProtocolError::InvalidValue("tile glyph"))?;
+                let state = match reader.u8()? {
+                    0 => TileState::Normal,
+                    1 => TileState::Held,
+                    2 => TileState::Unavailable,
+                    3 => TileState::Busy,
+                    _ => return Err(ProtocolError::InvalidValue("tile state")),
+                };
+                let badge = reader.string()?;
+                let subtitle = reader.string()?;
                 let picture = match reader.u8()? {
                     0 => None,
                     1 => Some(TilePicture {
@@ -3130,6 +3528,9 @@ fn decode_node(
                     label,
                     glyph,
                     picture,
+                    state,
+                    badge,
+                    subtitle,
                 });
             }
             Ok(Node::TileGrid { id, tiles, shape })
@@ -3224,11 +3625,41 @@ fn decode_node(
                 1 => Some(decode_bar_action(reader)?),
                 _ => return Err(ProtocolError::InvalidValue("activity cancel flag")),
             };
+            let transferred = match reader.u8()? {
+                0 => None,
+                1 => {
+                    let received = reader.u64()?;
+                    let total = match reader.u8()? {
+                        0 => None,
+                        1 => Some(reader.u64()?),
+                        _ => return Err(ProtocolError::InvalidValue("activity total flag")),
+                    };
+                    Some((received, total))
+                }
+                _ => return Err(ProtocolError::InvalidValue("activity transfer flag")),
+            };
+            let failure = match reader.u8()? {
+                0 => None,
+                1 => {
+                    let resumable = match reader.u8()? {
+                        0 => false,
+                        1 => true,
+                        _ => return Err(ProtocolError::InvalidValue("activity resumable flag")),
+                    };
+                    Some(TransferFailure {
+                        resumable,
+                        reason: reader.string()?,
+                    })
+                }
+                _ => return Err(ProtocolError::InvalidValue("activity failure flag")),
+            };
             Ok(Node::Activity {
                 id,
                 label,
                 progress,
                 cancel,
+                transferred,
+                failure,
             })
         }
         16 => {
@@ -3293,12 +3724,18 @@ fn decode_node(
                 let lead = read_row_lead(reader)?;
                 let state = decode_row_state(reader.u8()?)
                     .ok_or(ProtocolError::InvalidValue("row state"))?;
+                let trailing = if reader.u8()? == 0 {
+                    None
+                } else {
+                    Some(reader.string()?)
+                };
                 rows.push(Row {
                     action,
                     title,
                     summary,
                     lead,
                     state,
+                    trailing,
                 });
             }
             Ok(Node::Rows { id, rows })
@@ -3307,13 +3744,17 @@ fn decode_node(
     }
 }
 
-/// A row's lead is always three bytes: a tag and a sixteen-bit value.
+/// A row's lead is always [`ROW_LEAD_LEN`] bytes: a tag, a sixteen-bit value,
+/// and a picture payload that is written as zeroes when the lead is not one.
 ///
 /// Fixed width rather than variable, because `encoded_screen_len` has to
 /// predict the size of every screen before a byte is written, and a length
 /// that depends on which variant a row happens to carry is exactly the kind of
 /// arithmetic that has already produced one `debug_assert` panic in this file.
+/// Thirteen wasted bytes per row is the price of keeping that prediction a
+/// constant, and it is a price worth paying twice.
 fn push_row_lead(output: &mut Vec<u8>, lead: RowLead) {
+    let before = output.len();
     match lead {
         RowLead::Icon(glyph) => {
             output.push(0);
@@ -3323,23 +3764,47 @@ fn push_row_lead(output: &mut Vec<u8>, lead: RowLead) {
             output.push(1);
             push_u16(output, number);
         }
+        RowLead::Picture(picture, glyph) => {
+            output.push(2);
+            push_u16(output, u16::from(encode_glyph(glyph)));
+            push_u32(output, picture.handle.0);
+            push_u32(output, picture.source.0);
+            push_u32(output, picture.source.1);
+        }
     }
+    output.resize(before + ROW_LEAD_LEN, 0);
+    debug_assert_eq!(output.len(), before + ROW_LEAD_LEN);
 }
+
+/// The fixed width of an encoded row lead.
+const ROW_LEAD_LEN: usize = 15;
 
 fn read_row_lead(reader: &mut Reader<'_>) -> Result<RowLead, ProtocolError> {
     let tag = reader.u8()?;
     let value = reader.u16()?;
-    match tag {
-        0 => {
-            let glyph = u8::try_from(value)
-                .ok()
-                .and_then(decode_glyph)
-                .ok_or(ProtocolError::InvalidValue("row glyph"))?;
-            Ok(RowLead::Icon(glyph))
+    let glyph = || {
+        u8::try_from(value)
+            .ok()
+            .and_then(decode_glyph)
+            .ok_or(ProtocolError::InvalidValue("row glyph"))
+    };
+    let lead = match tag {
+        0 => RowLead::Icon(glyph()?),
+        1 => RowLead::Number(value),
+        2 => {
+            let handle = PictureHandle(reader.u32()?);
+            let source = (reader.u32()?, reader.u32()?);
+            RowLead::Picture(TilePicture { handle, source }, glyph()?)
         }
-        1 => Ok(RowLead::Number(value)),
-        _ => Err(ProtocolError::InvalidValue("row lead")),
+        _ => return Err(ProtocolError::InvalidValue("row lead")),
+    };
+    // The padding the encoder wrote, so every lead costs the same however it
+    // was built.
+    let written = if tag == 2 { 15 } else { 3 };
+    for _ in written..ROW_LEAD_LEN {
+        reader.u8()?;
     }
+    Ok(lead)
 }
 
 fn push_string(output: &mut Vec<u8>, text: &str) -> Result<(), ProtocolError> {
@@ -3359,6 +3824,10 @@ fn push_u16(output: &mut Vec<u8>, value: u16) {
 }
 
 fn push_u32(output: &mut Vec<u8>, value: u32) {
+    output.extend_from_slice(&value.to_be_bytes());
+}
+
+fn push_u64(output: &mut Vec<u8>, value: u64) {
     output.extend_from_slice(&value.to_be_bytes());
 }
 
@@ -3399,6 +3868,13 @@ impl<'a> Reader<'a> {
         Ok(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
     }
 
+    fn u64(&mut self) -> Result<u64, ProtocolError> {
+        let bytes = self.take(8)?;
+        let mut octets = [0u8; 8];
+        octets.copy_from_slice(bytes);
+        Ok(u64::from_be_bytes(octets))
+    }
+
     fn string(&mut self) -> Result<String, ProtocolError> {
         let length = usize::from(self.u16()?);
         if length > MAX_STRING_LEN {
@@ -3422,6 +3898,32 @@ impl<'a> Reader<'a> {
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    #[test]
+    fn every_glyph_has_a_wire_tag_and_gets_it_back() {
+        // A glyph added to the enum without a tag here encodes as whatever the
+        // match arm above it chose, so a book would arrive as a battery. The
+        // encoder is exhaustive so that half is caught by the compiler; the
+        // decoder is a numeric table and is not, which is the half this covers.
+        for glyph in Glyph::ALL {
+            let tag = encode_glyph(glyph);
+            assert_eq!(
+                decode_glyph(tag),
+                Some(glyph),
+                "{glyph:?} encoded as {tag} and came back as something else"
+            );
+        }
+        let tags: Vec<u8> = Glyph::ALL.iter().copied().map(encode_glyph).collect();
+        let mut unique = tags.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), tags.len(), "two glyphs share one wire tag");
+        assert_eq!(
+            decode_glyph(u8::try_from(Glyph::ALL.len()).expect("small set")),
+            None,
+            "a tag one past the end decoded as a glyph"
+        );
+    }
 
     #[test]
     fn every_device_request_round_trips() {
@@ -3554,7 +4056,9 @@ mod tests {
         let plain = Screen::new(1, Vec::new()).with_page_turns(ActionId(11), ActionId(12));
         let with_menu = {
             let mut screen = plain.clone();
-            screen.page_turns = screen.page_turns.map(|turns| turns.with_menu(ActionId(13)));
+            screen.page_turns = screen
+                .page_turns
+                .map(|turns| turns.with_menu(ActionId(13)).with_position(4, 12));
             screen
         };
         for screen in [plain, with_menu] {
@@ -3744,6 +4248,7 @@ mod tests {
 #[cfg(test)]
 mod node_coverage_tests {
     use super::*;
+    use kobo_ui::{BandAlign, BandSlot, Chip};
 
     /// Every node kind, so the precomputed frame layout is checked against the
     /// real encoder for all of them.
@@ -3786,6 +4291,114 @@ mod node_coverage_tests {
                 }],
             },
             Node::Divider { id: NodeId(6) },
+            Node::Rows {
+                id: NodeId(45),
+                rows: vec![Row::new(
+                    ActionId(67),
+                    "Bleak House",
+                    "Charles Dickens",
+                    RowLead::Picture(
+                        TilePicture {
+                            handle: PictureHandle(9),
+                            source: (190, 300),
+                        },
+                        Glyph::Book,
+                    ),
+                )],
+            },
+            Node::Field {
+                id: NodeId(40),
+                action: ActionId(60),
+                value: "dickens".into(),
+                placeholder: "Search the library".into(),
+                clear: Some(ActionId(61)),
+            },
+            // Empty and with nothing to clear: both optional halves absent is
+            // where a length mismatch hides.
+            Node::Field {
+                id: NodeId(41),
+                action: ActionId(62),
+                value: String::new(),
+                placeholder: String::new(),
+                clear: None,
+            },
+            Node::Chips {
+                id: NodeId(42),
+                chips: vec![
+                    Chip::new(ActionId(63), "Fiction").selected(true),
+                    Chip::new(ActionId(64), "History"),
+                ],
+            },
+            Node::Chips {
+                id: NodeId(43),
+                chips: Vec::new(),
+            },
+            Node::Tabs {
+                id: NodeId(44),
+                tabs: vec![
+                    Chip::new(ActionId(65), "Discover"),
+                    Chip::new(ActionId(66), "Popular"),
+                ],
+                selected: 1,
+            },
+            Node::Facts {
+                id: NodeId(31),
+                entries: vec![
+                    ("Downloads".into(), "94,206".into()),
+                    ("Rights".into(), "Public domain in the USA".into()),
+                    // An empty value is legal and must survive the wire.
+                    ("Series".into(), String::new()),
+                ],
+            },
+            // Every slot shape, because the width token is the part that
+            // changes length on the wire and a fixed width is the only one
+            // carrying a number after it.
+            Node::Band {
+                id: NodeId(25),
+                align: BandAlign::Middle,
+                slots: vec![
+                    BandSlot::fixed(
+                        300,
+                        vec![Node::Text {
+                            id: NodeId(26),
+                            text: "Cover".into(),
+                        }],
+                    ),
+                    BandSlot::fill(vec![
+                        Node::Heading {
+                            id: NodeId(27),
+                            text: "Moby Dick".into(),
+                        },
+                        Node::Secondary {
+                            id: NodeId(28),
+                            text: "Herman Melville".into(),
+                        },
+                    ]),
+                    BandSlot::natural(vec![Node::Secondary {
+                        id: NodeId(29),
+                        text: "32".into(),
+                    }]),
+                ],
+            },
+            // A slot holding nothing at all: the empty collection is where a
+            // length mismatch hides.
+            Node::Band {
+                id: NodeId(30),
+                align: BandAlign::Bottom,
+                slots: vec![BandSlot::fill(Vec::new())],
+            },
+            // Both shapes of section: the value is the optional half, and an
+            // optional half is exactly what a length mismatch hides in.
+            Node::Section {
+                id: NodeId(23),
+                title: "Details".into(),
+                value: None,
+            },
+            Node::Section {
+                id: NodeId(24),
+                title: "Popular".into(),
+                value: Some("32".into()),
+            },
             Node::Spacer {
                 id: NodeId(7),
                 space: Space::Medium,
@@ -3805,6 +4418,12 @@ mod node_coverage_tests {
                 tiles: vec![
                     Tile::new(ActionId(2), "Reader", Glyph::Reader),
                     Tile::new(ActionId(3), "Notes", Glyph::Note),
+                    // A tile wearing every optional part at once, because the
+                    // empty ones are exactly where a length mismatch hides.
+                    Tile::new(ActionId(4), "Bleak House", Glyph::Book)
+                        .with_state(TileState::Held)
+                        .with_badge("12")
+                        .with_subtitle("Charles Dickens"),
                 ],
             },
             Node::Splash {
@@ -3832,6 +4451,10 @@ mod node_coverage_tests {
                     ),
                     // An empty summary is legal and must survive the wire.
                     Row::new(ActionId(8), "Counter", "", Glyph::Note),
+                    // A trailing value is the optional half of a row, and an
+                    // optional half is where a length mismatch hides.
+                    Row::new(ActionId(9), "Great Expectations", "Dickens", Glyph::Book)
+                        .with_trailing("18,204"),
                 ],
             },
             Node::Choice {
@@ -3858,12 +4481,30 @@ mod node_coverage_tests {
                 label: "Fetching articles".into(),
                 progress: Some(Percent::new(45)),
                 cancel: Some(BarAction::new(ActionId(7), "Cancel")),
+                transferred: Some((4_404_019, Some(11_534_336))),
+                failure: Some(TransferFailure {
+                    reason: "The connection was reset".into(),
+                    resumable: true,
+                }),
             },
             Node::Activity {
                 id: NodeId(15),
                 label: "Connecting".into(),
                 progress: None,
                 cancel: None,
+                transferred: None,
+                failure: None,
+            },
+            Node::Activity {
+                id: NodeId(56),
+                label: "Downloading".into(),
+                progress: None,
+                cancel: None,
+                transferred: Some((512, None)),
+                failure: Some(TransferFailure {
+                    reason: "This edition is no longer published".into(),
+                    resumable: false,
+                }),
             },
             Node::Terminal {
                 id: NodeId(16),

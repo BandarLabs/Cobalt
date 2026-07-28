@@ -672,6 +672,124 @@ pub fn shapes(glyph: Glyph) -> Vec<Shape> {
             }
             shapes
         }
+        // An arrow down into a tray. The tray is open at the top rather than a
+        // closed box, so the arrow reads as going into something rather than
+        // as sitting on top of a rectangle.
+        Glyph::Download => vec![
+            stroke(Path::line(500, 130, 500, 590)),
+            stroke(
+                Path::new()
+                    .move_to(300, 410)
+                    .line_to(500, 610)
+                    .line_to(700, 410),
+            ),
+            stroke(
+                Path::new()
+                    .move_to(180, 640)
+                    .line_to(180, 850)
+                    .line_to(820, 850)
+                    .line_to(820, 640),
+            ),
+        ],
+        // A ribbon with a notch cut from its foot. Drawn as an outline rather
+        // than filled: a solid bookmark at this weight is the heaviest mark in
+        // the set and pulls the eye off the title it belongs to.
+        Glyph::Bookmark => vec![stroke(
+            Path::new()
+                .move_to(250, 130)
+                .line_to(750, 130)
+                .line_to(750, 870)
+                .line_to(500, 640)
+                .line_to(250, 870)
+                .close(),
+        )],
+        // A funnel. The stem is short and centred, because a long stem at this
+        // size reads as a wine glass.
+        Glyph::Filter => vec![stroke(
+            Path::new()
+                .move_to(150, 200)
+                .line_to(850, 200)
+                .line_to(580, 520)
+                .line_to(580, 830)
+                .line_to(420, 750)
+                .line_to(420, 520)
+                .close(),
+        )],
+        // A head and shoulders. The shoulders are an arc that stops at the box
+        // edge rather than a closed shape, so the mark does not turn into a
+        // filled semicircle when the stroke is rasterised small.
+        Glyph::Person => vec![
+            stroke(Path::circle(500, 330, 175)),
+            stroke(
+                Path::new()
+                    .move_to(180, 870)
+                    .quad_to(180, 600, 500, 600)
+                    .quad_to(820, 600, 820, 870),
+            ),
+        ],
+        // A label with a punched hole, leaning the way a luggage tag hangs.
+        Glyph::Tag => vec![
+            stroke(
+                Path::new()
+                    .move_to(520, 130)
+                    .line_to(870, 480)
+                    .line_to(480, 870)
+                    .line_to(130, 520)
+                    .line_to(130, 130)
+                    .close(),
+            ),
+            Shape::Fill(Path::circle(310, 310, 75)),
+        ],
+        // A sphere with one meridian and one parallel. Two lines rather than a
+        // graticule: at 24 pixels a third line closes the gaps and the mark
+        // fills in solid.
+        Glyph::Globe => vec![
+            stroke(Path::circle(500, 500, 370)),
+            stroke(Path::line(130, 500, 870, 500)),
+            stroke(
+                Path::new()
+                    .move_to(500, 130)
+                    .quad_to(280, 500, 500, 870)
+                    .quad_to(720, 500, 500, 130),
+            ),
+        ],
+        // Two arrows chasing each other round a circle. Each arm is three
+        // quarters of a turn with a head on it, and the two gaps sit opposite
+        // so the mark reads as rotation rather than as a broken ring.
+        Glyph::Refresh => vec![
+            stroke(
+                Path::new()
+                    .move_to(820, 500)
+                    .quad_to(820, 180, 500, 180)
+                    .quad_to(250, 180, 200, 380),
+            ),
+            stroke(
+                Path::new()
+                    .move_to(180, 130)
+                    .line_to(200, 400)
+                    .line_to(460, 350),
+            ),
+            stroke(
+                Path::new()
+                    .move_to(180, 500)
+                    .quad_to(180, 820, 500, 820)
+                    .quad_to(750, 820, 800, 620),
+            ),
+            stroke(
+                Path::new()
+                    .move_to(820, 870)
+                    .line_to(800, 600)
+                    .line_to(540, 650),
+            ),
+        ],
+        // Three dots. Filled rather than stroked rings, because a ring this
+        // small rasterises to a grey smudge and three grey smudges are not a
+        // control anybody will press.
+        Glyph::More => vec![
+            Shape::Fill(Path::circle(210, 500, 95)),
+            Shape::Fill(Path::circle(500, 500, 95)),
+            Shape::Fill(Path::circle(790, 500, 95)),
+        ],
         Glyph::Rss => vec![
             Shape::Fill(Path::circle(280, 700, 95)),
             stroke(
@@ -804,27 +922,7 @@ mod tests {
     use super::{back_arrow, render, shapes, Path, Shape, UNITS};
     use crate::Glyph;
 
-    const EVERY: [Glyph; 19] = [
-        Glyph::App,
-        Glyph::Book,
-        Glyph::Note,
-        Glyph::Clock,
-        Glyph::Settings,
-        Glyph::Folder,
-        Glyph::Chart,
-        Glyph::Search,
-        Glyph::Wifi,
-        Glyph::Battery,
-        Glyph::Reader,
-        Glyph::Power,
-        Glyph::Grid,
-        Glyph::Circle,
-        Glyph::Check,
-        Glyph::Terminal,
-        Glyph::Chat,
-        Glyph::News,
-        Glyph::Rss,
-    ];
+    const EVERY: [Glyph; Glyph::ALL.len()] = Glyph::ALL;
 
     fn inked(glyph: Glyph, size: i32) -> usize {
         render(&shapes(glyph), size)

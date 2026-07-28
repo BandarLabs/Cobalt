@@ -259,8 +259,13 @@ impl Feeds {
             return screen.activity("Opening your feeds", None).build();
         }
         if self.subscriptions.is_empty() {
+            // Centred under a mark rather than ranged left at the top: this
+            // is the first screen anybody sees, and a lone paragraph in the
+            // corner of a 1448-pixel panel reads as a page that failed.
             return screen
-                .text(
+                .splash(
+                    Some(Glyph::Rss),
+                    "No feeds yet",
                     "Follow a site and its new articles arrive here, \
                      ready to read without a browser.",
                 )
@@ -290,12 +295,13 @@ impl Feeds {
         if pages.len() <= 1 {
             return screen.bottom_action("add", "Add a feed").build();
         }
+        // Adding a feed is the verb; the page turns are the sides of the panel,
+        // not two more buttons beside it. They rode in an action bar together
+        // before, which read as three things to do when one of them was a place
+        // to do it and the other two were only how to reach the rest of it.
         screen
             .page_turns("list-back", "list-next")
-            .nav_bar(
-                None,
-                [("list-back", "Back"), ("add", "Add"), ("list-next", "More")],
-            )
+            .bottom_action("add", "Add a feed")
             .build()
     }
 
@@ -364,14 +370,11 @@ impl Feeds {
         }
         screen
             .page_turns("list-back", "list-next")
-            .nav_bar(
-                None,
-                [
-                    ("list-back", "Back"),
-                    ("add", "Search"),
-                    ("list-next", "More"),
-                ],
-            )
+            .action_bar([
+                ("list-back", "Back"),
+                ("add", "Search"),
+                ("list-next", "More"),
+            ])
             .build()
     }
 
@@ -382,7 +385,13 @@ impl Feeds {
             .map_or_else(|| "Feed".to_owned(), |feed| feed.title.clone());
         let mut screen = ScreenBuilder::new("rss-items")
             .top_bar(context.one_line_row(&title, false))
-            .top_bar_action("remove", "Unfollow");
+            .top_bar_action("remove", "Unfollow")
+            // Fetching again is the one thing done here often enough to earn a
+            // glyph rather than a word: the feed is read on demand, so a reader
+            // catching up taps this on every feed they open. The two arrows say
+            // it in the width a caption of "Refresh" wanted, which is what left
+            // room for it to sit beside Unfollow inside the bar's two places.
+            .top_bar_glyph("refresh", "Refresh", Glyph::Refresh);
         if let Some(problem) = &self.problem {
             screen = screen.banner(BannerLevel::Attention, problem.clone());
         }
@@ -424,19 +433,14 @@ impl Feeds {
             )
         }));
         if pages.len() <= 1 {
-            return screen.bottom_action("refresh", "Refresh").build();
+            return screen.build();
         }
-        screen
-            .page_turns("list-back", "list-next")
-            .nav_bar(
-                None,
-                [
-                    ("list-back", "Back"),
-                    ("refresh", "Refresh"),
-                    ("list-next", "More"),
-                ],
-            )
-            .build()
+        // Paging is the sides of the panel, not a row of buttons: the refresh
+        // verb moved to the top bar, and Back and More were only ever the page
+        // turns wearing an action bar's clothes -- which is the confusion this
+        // application was asked to stop making, a bar of verbs is not a bar of
+        // somewhere-to-go.
+        screen.page_turns("list-back", "list-next").build()
     }
 
     fn reading(&self) -> Screen {
@@ -452,17 +456,7 @@ impl Feeds {
         for paragraph in &self.pages[page] {
             screen = screen.text(paragraph.clone());
         }
-        screen
-            .page_turns("page-back", "page-next")
-            .nav_bar(
-                None,
-                [
-                    ("page-back", "Back"),
-                    ("articles", "Articles"),
-                    ("page-next", "Next"),
-                ],
-            )
-            .build()
+        screen.page_turns("page-back", "page-next").build()
     }
 }
 
@@ -684,13 +678,6 @@ impl KoboApp for Feeds {
             return;
         }
 
-        if action == action_id("articles") {
-            self.view = View::Items;
-            self.article = None;
-            self.show(context);
-            return;
-        }
-
         if action == action_id("refresh") {
             self.list_page = 0;
             self.ask_feed(context);
@@ -852,7 +839,7 @@ mod tests {
         View, FEED_BYTES, MAX_FEEDS, SEARCH_BYTES,
     };
     use kobo_sdk::{action_id, AppRunner, Command, TaskId, TaskOutcome};
-    use kobo_ui::CLARA_BW_METRICS;
+    use kobo_ui::{Chrome, Glyph, LayoutKind, CLARA_BW_METRICS};
 
     const ATOM: &str = "<feed><title>A Journal</title>\
         <entry><title>First post</title><link href=\"https://example.com/1\"/>\
@@ -954,6 +941,44 @@ mod tests {
         assert_eq!(application.items.len(), 1);
         assert_eq!(application.items[0].title, "First post");
         assert_eq!(application.subscriptions[0].title, "A Journal");
+    }
+
+    #[test]
+    fn refreshing_a_feed_is_a_glyph_in_the_bar_not_a_word_in_a_button() {
+        // The verb used to be a caption, "Refresh", spelled into a bottom
+        // button that shared its bar with the two page turns -- three controls
+        // that read as three things to do when two of them were only how to
+        // reach the rest of the list. It is a glyph in the top bar now, so the
+        // bottom of the panel is the page turns and nothing else.
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            view: View::Items,
+            open: Some(0),
+            subscriptions: following(),
+            task: Some((TaskId(1), Awaiting::Feed)),
+            ..Feeds::default()
+        });
+        let commands =
+            runner.task_outcome(TaskId(1), TaskOutcome::Completed(ATOM.as_bytes().to_vec()));
+        let layout = screen_of(&commands).layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        let refresh = layout.nodes.iter().find_map(|node| match node.kind {
+            LayoutKind::BarGlyph(id, Glyph::Refresh) => Some(id),
+            _ => None,
+        });
+        assert_eq!(
+            refresh,
+            Some(action_id("refresh")),
+            "the feed's refresh verb was not drawn as its glyph"
+        );
+        assert!(
+            layout
+                .nodes
+                .iter()
+                .filter(|node| matches!(node.kind, LayoutKind::BarAction(_)))
+                .count()
+                == 1,
+            "refresh should be the glyph, leaving only Unfollow spelled out"
+        );
     }
 
     #[test]
@@ -1318,11 +1343,20 @@ mod tests {
             ..Feeds::default()
         });
         let commands = runner.action(kobo_sdk::ActionId::BACK);
-        fits_the_panel(&screen_of(&commands), "a full shelf");
-        // And every later page of it.
+        let mut screen = screen_of(&commands);
+        fits_the_panel(&screen, "a full shelf");
+        // And every later page of it. A page that turns back onto itself
+        // sends nothing at all, because the runner drops a screen identical to
+        // the one already showing, so the last screen stands.
         for page in 1..8 {
             let commands = runner.action(action_id("list-next"));
-            fits_the_panel(&screen_of(&commands), &format!("shelf page {page}"));
+            if let Some(next) = commands.iter().rev().find_map(|command| match command {
+                Command::SetScreen(screen) => Some(screen.clone()),
+                _ => None,
+            }) {
+                screen = next;
+            }
+            fits_the_panel(&screen, &format!("shelf page {page}"));
         }
     }
 

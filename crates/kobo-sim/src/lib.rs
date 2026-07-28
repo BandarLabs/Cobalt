@@ -369,6 +369,15 @@ impl Server {
                     body.as_bytes(),
                 )
             }
+            ("GET", "/layout") => {
+                let body = layout_json(self.simulator.screen(), 0);
+                write_response(
+                    &mut stream,
+                    200,
+                    "application/json; charset=utf-8",
+                    body.as_bytes(),
+                )
+            }
             ("GET", "/diagnostics") => {
                 let body =
                     diagnostics_json(self.simulator.screen(), &kobo_ui::PictureCache::default());
@@ -553,7 +562,7 @@ impl AppServer {
         // to requests, and terminal output arriving on its own. Frames are
         // length-prefixed, so two of them written at once do not make two
         // frames, they make one unreadable stream.
-        let writer = Arc::new(Mutex::new(stream.try_clone()?));
+        let writer = AppWriter::spawn(stream.try_clone()?);
         let reader_writer = Arc::clone(&writer);
         thread::spawn(move || {
             // A malformed frame ends the session rather than being skipped,
@@ -744,6 +753,14 @@ fn is_picture_message(message: &Message) -> bool {
 #[derive(Debug)]
 struct AppState {
     screen: Screen,
+    /// How many screens the application has painted since it started.
+    ///
+    /// A driver posts a tap to this process and the application answers it in
+    /// another, so a driver that read the layout straight back read the screen
+    /// it had just tapped and concluded the tap did nothing. Counting paints
+    /// gives it something to wait on. Not the screen's own id, which is the
+    /// application's name and never changes.
+    paints: u64,
     logs: Vec<String>,
     /// The same bounded cache the device runtime uses, so a preview that shows
     /// a cover and a panel that does not would be a real difference rather than
@@ -763,6 +780,7 @@ impl Default for AppState {
     fn default() -> Self {
         Self {
             screen: Screen::new(0, Vec::new()),
+            paints: 0,
             logs: Vec::new(),
             pictures: kobo_ui::PictureCache::default(),
             pressure_pictures: kobo_ui::PictureCache::new(256 * 1024),
@@ -796,7 +814,7 @@ impl AppState {
 #[derive(Clone, Debug)]
 pub struct AppSession {
     state: Arc<Mutex<AppState>>,
-    writer: Arc<Mutex<UnixStream>>,
+    writer: Arc<AppWriter>,
 }
 
 impl AppSession {
@@ -816,12 +834,8 @@ impl AppSession {
     ///
     /// Returns an error if the SDK connection is closed or its writer is poisoned.
     pub fn send_action(&self, action: ActionId) -> io::Result<()> {
-        let mut writer = self
-            .writer
-            .lock()
-            .map_err(|_| io::Error::other("SDK writer lock poisoned"))?;
-        write_protocol_frame(
-            &mut writer,
+        write_shared(
+            &self.writer,
             &Frame {
                 request_id: 0,
                 message: Message::Action { action },
@@ -927,6 +941,21 @@ impl AppSession {
                         state.lifecycle,
                         state.last_touch,
                     )
+                };
+                write_response(
+                    &mut stream,
+                    200,
+                    "application/json; charset=utf-8",
+                    body.as_bytes(),
+                )
+            }
+            ("GET", "/layout") => {
+                let body = {
+                    let state = self
+                        .state
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    layout_json(&state.screen, state.paints)
                 };
                 write_response(
                     &mut stream,
@@ -1119,6 +1148,59 @@ fn parse_lifecycle(bytes: &[u8]) -> Option<Lifecycle> {
     }
 }
 
+/// Everything on the panel, named, measured and addressable.
+///
+/// The endpoint that makes the simulator drivable by something that is not a
+/// pair of eyes. A test, a script or an agent can ask what is on screen, find
+/// the control called "Search" by its label, and tap the middle of it -- and
+/// the tap then goes through `POST /touch` like any other, so it is put
+/// through the panel's own coordinate transform and the renderer's own
+/// hit-testing rather than shortcutting to an action.
+///
+/// That last point is the whole design. An automation surface that dispatched
+/// actions directly would pass happily on a screen whose button had been laid
+/// out three millimetres off the bottom of the panel, which is exactly the
+/// class of fault worth catching.
+fn layout_json(screen: &Screen, paints: u64) -> String {
+    let metrics = profile_metrics();
+    let layout = screen.layout_with(&metrics, &kobo_ui::Chrome::default());
+    let mut json = format!("{{\"paints\":{paints},\"nodes\":[");
+    for (index, node) in layout.nodes.iter().enumerate() {
+        if index > 0 {
+            json.push(',');
+        }
+        let lines = node
+            .text_lines
+            .iter()
+            .map(|line| json_string(line))
+            .collect::<Vec<_>>()
+            .join(",");
+        let centre = (
+            node.rect.x + node.rect.width / 2,
+            node.rect.y + node.rect.height / 2,
+        );
+        let action = layout
+            .hit_test(centre.0, centre.1)
+            .map_or_else(|| "null".to_owned(), |action| action.0.to_string());
+        let _ = std::fmt::Write::write_fmt(
+            &mut json,
+            format_args!(
+                "{{\"kind\":{},\"x\":{},\"y\":{},\"width\":{},\"height\":{},\
+                 \"centre\":{{\"x\":{},\"y\":{}}},\"action\":{action},\"lines\":[{lines}]}}",
+                json_string(&format!("{:?}", node.kind)),
+                node.rect.x,
+                node.rect.y,
+                node.rect.width,
+                node.rect.height,
+                centre.0,
+                centre.1,
+            ),
+        );
+    }
+    json.push_str("]}");
+    json
+}
+
 fn json_string(value: &str) -> String {
     let mut encoded = String::with_capacity(value.len() + 2);
     encoded.push('"');
@@ -1155,7 +1237,7 @@ fn note(state: &Arc<Mutex<AppState>>, line: &str) -> io::Result<()> {
 }
 
 fn answer_store(
-    writer: &Arc<Mutex<UnixStream>>,
+    writer: &Arc<AppWriter>,
     request_id: u32,
     store: &Store,
     request: &kobo_protocol::StoreRequest,
@@ -1172,17 +1254,103 @@ fn answer_store(
     )
 }
 
-/// Writes one frame while holding the shared write lock.
+/// The one thing allowed to write to the application's socket.
 ///
-/// Two threads write to this socket: the message loop, and the terminal drain
-/// that has to deliver output nobody asked for. A frame is length-prefixed, so
-/// two interleaved writes do not produce two frames, they produce one
-/// unreadable stream.
-fn write_shared(writer: &Arc<Mutex<UnixStream>>, frame: &Frame) -> io::Result<()> {
-    let mut stream = writer
+/// Four threads have something to say to the application: the message loop
+/// answering requests, the browser thread delivering taps, the task drain, and
+/// the terminal drain. A frame is length-prefixed, so two of them written at
+/// once do not make two frames, they make one unreadable stream, and the
+/// obvious answer is a mutex around the socket.
+///
+/// The obvious answer deadlocks. A socket write blocks once the kernel buffer
+/// is full, and it is full exactly when the application is busy -- which, for
+/// an application waiting on a synchronous store request, is until it gets its
+/// answer, which is a frame nobody can write because the task drain is holding
+/// the lock waiting for the buffer to drain. The whole simulator stopped
+/// answering, including the screen, so it looked precisely like the
+/// application had hung.
+///
+/// So the queue is the lock. Everyone hands a frame to this and returns
+/// immediately; one thread does the blocking write, and when it blocks it
+/// blocks alone.
+#[cfg(test)]
+mod writer_tests {
+    use super::{write_shared, AppWriter};
+    use kobo_protocol::{Frame, Message};
+
+    /// The deadlock this file used to have, reproduced in the small.
+    ///
+    /// With a mutex around the socket, the fortieth or so of these blocked
+    /// forever, because nothing is reading the other end and the kernel buffer
+    /// is finite. Everything else that wanted to write to the application then
+    /// queued behind it, including the answer the application was waiting for,
+    /// and the simulator stopped answering its own HTTP port.
+    #[test]
+    fn writing_to_an_application_that_is_not_reading_does_not_block_the_writer() {
+        let (ours, theirs) = std::os::unix::net::UnixStream::pair().expect("socket pair");
+        // Deliberately never read from.
+        let _theirs = theirs;
+        let writer = AppWriter::spawn(ours);
+        let frame = Frame {
+            request_id: 0,
+            message: Message::Log {
+                level: kobo_protocol::LogLevel::Info,
+                message: "x".repeat(4096),
+            },
+        };
+        let (done, waiting) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            for _ in 0..512 {
+                if write_shared(&writer, &frame).is_err() {
+                    break;
+                }
+            }
+            let _ = done.send(());
+        });
+        waiting
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("512 frames queued without blocking on the socket");
+    }
+}
+
+impl std::fmt::Debug for AppWriter {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("AppWriter")
+    }
+}
+
+struct AppWriter {
+    /// `Sender` is `Send` but not `Sync`, and this is held by four threads.
+    /// The lock is only ever held across a queue push, which cannot block on
+    /// anything, which is the entire point.
+    sender: Mutex<std::sync::mpsc::Sender<Frame>>,
+}
+
+impl AppWriter {
+    /// Takes the socket, and returns the only handle anything else may use.
+    fn spawn(mut stream: UnixStream) -> Arc<Self> {
+        let (sender, receiver) = std::sync::mpsc::channel::<Frame>();
+        std::thread::spawn(move || {
+            for frame in receiver {
+                if write_protocol_frame(&mut stream, &frame).is_err() {
+                    break;
+                }
+            }
+        });
+        Arc::new(Self {
+            sender: Mutex::new(sender),
+        })
+    }
+}
+
+/// Queues one frame for the application. Never blocks on the socket.
+fn write_shared(writer: &Arc<AppWriter>, frame: &Frame) -> io::Result<()> {
+    writer
+        .sender
         .lock()
-        .map_err(|_| io::Error::other("simulator write lock poisoned"))?;
-    write_protocol_frame(&mut stream, frame)
+        .map_err(|_| io::Error::other("simulator write lock poisoned"))?
+        .send(frame.clone())
+        .map_err(|_| io::Error::other("the application is no longer listening"))
 }
 
 /// Delivers terminal output as it arrives, rather than when the next message
@@ -1191,10 +1359,7 @@ fn write_shared(writer: &Arc<Mutex<UnixStream>>, frame: &Frame) -> io::Result<()
 /// Without this the simulator would only show what a program printed after the
 /// developer pressed another key, so anything that prints on its own would look
 /// like it had hung.
-fn drain_shell(
-    shells: &Arc<Mutex<kobo_shell::Shells>>,
-    writer: &Arc<Mutex<UnixStream>>,
-) -> io::Result<()> {
+fn drain_shell(shells: &Arc<Mutex<kobo_shell::Shells>>, writer: &Arc<AppWriter>) -> io::Result<()> {
     loop {
         let events = {
             let Ok(mut shells) = shells.lock() else {
@@ -1220,7 +1385,7 @@ fn drain_shell(
 /// A refusal is always written back, because an application that asked for a
 /// shell and heard nothing cannot tell a denial from a slow start.
 fn answer_shell(
-    writer: &Arc<Mutex<UnixStream>>,
+    writer: &Arc<AppWriter>,
     request_id: u32,
     shells: &Arc<Mutex<kobo_shell::Shells>>,
     request: kobo_protocol::ShellRequest,
@@ -1246,7 +1411,7 @@ fn answer_shell(
 /// The point of the simulator is that an application behaves the same here as
 /// on the panel, and an application that could not open a terminal in
 /// development would have to be tested on the device to be tested at all.
-fn simulated_shells(writer: &Arc<Mutex<UnixStream>>) -> Arc<Mutex<kobo_shell::Shells>> {
+fn simulated_shells(writer: &Arc<AppWriter>) -> Arc<Mutex<kobo_shell::Shells>> {
     let shells = Arc::new(Mutex::new(kobo_shell::Shells::new(&[
         kobo_policy::Capability::Shell,
     ])));
@@ -1298,7 +1463,7 @@ fn scenario_task_error(
 )]
 fn read_app_messages(
     mut stream: UnixStream,
-    writer: &Arc<Mutex<UnixStream>>,
+    writer: &Arc<AppWriter>,
     state: &Arc<Mutex<AppState>>,
 ) -> io::Result<()> {
     // The simulator owns no hardware, so it answers state queries from a
@@ -1332,6 +1497,7 @@ fn read_app_messages(
                     .lock()
                     .map_err(|_| io::Error::other("app state lock poisoned"))?;
                 state.screen = screen;
+                state.paints = state.paints.saturating_add(1);
             }
             // The simulator hosts exactly one application, so a launch is
             // reported rather than performed. Pretending it worked would hide
@@ -1463,7 +1629,7 @@ fn read_app_messages(
 /// screen when the developer next tapped something.
 fn drain_tasks(
     tasks: &Arc<Mutex<TaskRunner>>,
-    writer: &Arc<Mutex<UnixStream>>,
+    writer: &Arc<AppWriter>,
     state: &Arc<Mutex<AppState>>,
 ) -> io::Result<()> {
     loop {
@@ -1475,7 +1641,7 @@ fn drain_tasks(
 /// Reports every task that finished, to the log and to the application.
 fn deliver_task_outcomes(
     tasks: &Arc<Mutex<TaskRunner>>,
-    writer: &Arc<Mutex<UnixStream>>,
+    writer: &Arc<AppWriter>,
     state: &Arc<Mutex<AppState>>,
 ) -> io::Result<()> {
     let finished = tasks
@@ -1888,7 +2054,7 @@ mod tests {
         // tapped something. Refusals arrived instantly, which is why nothing
         // noticed: the only tasks the simulator completed were refused ones.
         let (client, server) = UnixStream::pair().expect("a socket pair");
-        let writer = Arc::new(Mutex::new(server));
+        let writer = AppWriter::spawn(server);
         let state = Arc::new(Mutex::new(AppState::default()));
         let tasks = Arc::new(Mutex::new(
             TaskRunner::simulated(private_temp_dir())
@@ -2105,7 +2271,7 @@ mod tests {
         let (mut client, server) = UnixStream::pair().expect("socket pair");
         let session = AppSession {
             state: Arc::new(Mutex::new(AppState::default())),
-            writer: Arc::new(Mutex::new(server)),
+            writer: AppWriter::spawn(server),
         };
 
         session

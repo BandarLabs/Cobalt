@@ -15,7 +15,10 @@
 //! on the screen also makes it the most exercised path in the system, which is
 //! exactly where the reliability is wanted.
 
-use kobo_sdk::{action_id, ActionId, Context, Glyph, KoboApp, ScreenBuilder, TileShape};
+use kobo_sdk::{
+    action_id, ActionId, Context, Glyph, KoboApp, PictureHandle, RowLead, ScreenBuilder, Tile,
+    TilePicture, TileShape, TileState,
+};
 use std::process::ExitCode;
 
 /// One entry in the launcher.
@@ -135,6 +138,11 @@ fn opening(name: &str) -> String {
     format!("open-{name}")
 }
 
+/// The way back into the book, as opposed to the utilitarian control that also
+/// returns to the reader. Kept apart from that control's action so the picture
+/// row and the pinned bar cannot be mistaken for each other by a rename.
+const CONTINUE: &str = "continue";
+
 #[derive(Default)]
 struct Launcher {
     view: View,
@@ -143,6 +151,14 @@ struct Launcher {
     /// Held rather than derived, because the catalogue is longer than one
     /// panel and nothing here scrolls: the list is turned like a page.
     page: usize,
+    /// The last entry handed the panel, if any.
+    ///
+    /// Leaving an application no longer stops it -- the brief keeps fetching
+    /// and the terminal keeps its shell -- so the one the owner most recently
+    /// opened is, as far as this launcher can honestly say, still running
+    /// behind it. Marked on its tile rather than claimed in words, because the
+    /// launcher has no telemetry to say more than "you left this open".
+    working: Option<usize>,
 }
 
 impl Launcher {
@@ -161,12 +177,39 @@ impl Launcher {
     /// a Sage, and an application that picked a number would be wrong on every
     /// panel but one.
     fn pages(context: &Context) -> Vec<Vec<usize>> {
-        let pages = context.paginate_tiles(ENTRIES.len(), TileShape::Square, true);
+        // Measured under the "Continue reading" band rather than guessed at.
+        // The band is one finger-high row and a cell is a square several times
+        // taller, so the obvious guess -- surrender a whole grid row -- threw
+        // away three applications and left a hand's breadth of blank panel
+        // under the grid.
+        let pages =
+            context.paginate_tiles_under(ENTRIES.len(), TileShape::Square, true, &Self::band());
         if pages.is_empty() {
             vec![Vec::new()]
         } else {
             pages
         }
+    }
+
+    /// The way back into the book, on its own, so it can be measured.
+    fn band() -> kobo_sdk::Screen {
+        ScreenBuilder::new("launcher")
+            .rows([Self::continue_row()])
+            .build()
+    }
+
+    /// A cover would belong here, but the launcher is not the reader and has
+    /// no cover to show, so the lead falls back to a book mark -- honest about
+    /// not knowing the title rather than inventing one. It hands the panel
+    /// back to the reader, which is the only thing on this device that knows
+    /// where the owner stopped.
+    fn continue_row() -> (&'static str, &'static str, &'static str, RowLead) {
+        (
+            CONTINUE,
+            "Continue reading",
+            "Pick up where you left off in the Kobo reader.",
+            RowLead::Picture(TilePicture::new(PictureHandle(0), 1, 1), Glyph::Book),
+        )
     }
 
     /// The home screen: a grid of icons and names, and nothing else.
@@ -195,12 +238,29 @@ impl Launcher {
         } else {
             "Cobalt".to_owned()
         };
-        let screen = ScreenBuilder::new("launcher").top_bar(title).tiles(
-            showing
-                .iter()
-                .map(|&index| &ENTRIES[index])
-                .map(|entry| (opening(entry.name), entry.label, entry.glyph)),
-        );
+        let screen = ScreenBuilder::new("launcher")
+            .top_bar(title)
+            // The way back into the book, above the catalogue rather than in it.
+            .rows([Self::continue_row()])
+            .tile_grid(
+                TileShape::Square,
+                showing.iter().map(|&index| {
+                    let entry = &ENTRIES[index];
+                    let busy = self.working == Some(index);
+                    (
+                        opening(entry.name),
+                        entry.label,
+                        entry.glyph,
+                        move |tile: Tile| {
+                            if busy {
+                                tile.with_state(TileState::Busy)
+                            } else {
+                                tile
+                            }
+                        },
+                    )
+                }),
+            );
         // The way out is pinned to the panel rather than placed after the
         // list. Layout reserves the bar before any content, so however many
         // entries there are, the button that gives the device back is on the
@@ -208,14 +268,11 @@ impl Launcher {
         // long catalogue pushed off the bottom.
         if pages.len() > 1 {
             screen
-                .nav_bar(
-                    None,
-                    [
-                        ("previous", "Previous"),
-                        ("reader", "Return to Kobo reader"),
-                        ("next", "More apps"),
-                    ],
-                )
+                .action_bar([
+                    ("previous", "Previous"),
+                    ("reader", "Return to Kobo reader"),
+                    ("next", "More apps"),
+                ])
                 .build()
         } else {
             // One page, so there is nothing to turn and a bar would be two
@@ -286,6 +343,12 @@ impl KoboApp for Launcher {
     /// transient has to be cleared by the only party that knows it was a
     /// transient.
     fn on_foreground(&mut self, context: &mut Context) {
+        if let View::Starting(index) = self.view {
+            // Control came back while an entry was starting, which on this
+            // platform means it is now running behind the launcher rather than
+            // gone. Remember which, so its tile can say so.
+            self.working = Some(index);
+        }
         if !matches!(self.view, View::Home) {
             self.view = View::Home;
         }
@@ -306,7 +369,7 @@ impl KoboApp for Launcher {
             self.show(context);
             return;
         }
-        if action == action_id("reader") {
+        if action == action_id("reader") || action == action_id(CONTINUE) {
             self.view = View::Leaving;
             // The screen is painted before leaving so the panel explains the
             // wait. E Ink holds the last image at zero power, so this costs one
@@ -346,9 +409,11 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{opening, Launcher, View, ENTRIES};
+    use super::{opening, Launcher, View, CONTINUE, ENTRIES};
     use kobo_sdk::{action_id, AppRunner, Command, Lifecycle};
-    use kobo_ui::{Chrome, DisplayMetrics, LayoutKind, Node, TextScale, CLARA_BW_METRICS};
+    use kobo_ui::{
+        Chrome, DisplayMetrics, LayoutKind, Node, TextScale, TileState, CLARA_BW_METRICS,
+    };
 
     const PANELS: [(&str, DisplayMetrics); 3] = [
         ("clara-bw", CLARA_BW_METRICS),
@@ -373,13 +438,20 @@ mod tests {
     ];
 
     fn painted(commands: Vec<Command>) -> kobo_sdk::Screen {
-        commands
-            .into_iter()
-            .find_map(|command| match command {
-                Command::SetScreen(screen) => Some(screen),
-                _ => None,
-            })
-            .expect("a screen was painted")
+        repainted(commands).expect("a screen was painted")
+    }
+
+    /// The screen these commands would put on the panel, if any.
+    ///
+    /// `None` is a real answer: the runner drops a screen identical to the one
+    /// already showing, so a "next" that wraps a single-page catalogue back
+    /// onto itself sends nothing at all. A test that insists on a screen there
+    /// is asserting a repaint nobody wanted.
+    fn repainted(commands: Vec<Command>) -> Option<kobo_sdk::Screen> {
+        commands.into_iter().find_map(|command| match command {
+            Command::SetScreen(screen) => Some(screen),
+            _ => None,
+        })
     }
 
     #[test]
@@ -428,7 +500,7 @@ mod tests {
             loop {
                 let layout = screen.layout_with(&metrics, &Chrome::with_back(false));
                 for node in &layout.nodes {
-                    if let LayoutKind::Tile(action) = node.kind {
+                    if let LayoutKind::Tile(action, _) = node.kind {
                         found.push(action);
                     }
                 }
@@ -436,7 +508,9 @@ mod tests {
                 if runs > ENTRIES.len() {
                     break;
                 }
-                screen = painted(runner.action(action_id("next")));
+                if let Some(next) = repainted(runner.action(action_id("next"))) {
+                    screen = next;
+                }
                 let first = ENTRIES
                     .first()
                     .map(|entry| action_id(&opening(entry.name)))
@@ -466,7 +540,7 @@ mod tests {
             let rows = layout
                 .nodes
                 .iter()
-                .filter(|node| matches!(node.kind, LayoutKind::Tile(_)))
+                .filter(|node| matches!(node.kind, LayoutKind::Tile(..)))
                 .collect::<Vec<_>>();
             assert!(!rows.is_empty(), "{name}: the first page drew no entries");
             let floor = metrics.height - metrics.nav_bar_height();
@@ -630,6 +704,52 @@ mod tests {
     /// drawn from y=1335 to y=1453 on a panel 1448 pixels tall, so its bottom
     /// five pixels (and any descender in the label) were clipped by the edge
     /// of the screen. Nothing failed; the renderer simply stops at the panel.
+    /// The way back into the book sits above the catalogue and, like the
+    /// pinned control, hands the panel to the reader -- the only thing on the
+    /// device that remembers the page. It is a separate action from that
+    /// control so a rename of one cannot silently repoint the other.
+    #[test]
+    fn continue_reading_returns_to_the_reader() {
+        let mut runner = AppRunner::new(Launcher::default());
+        runner.start();
+        let commands = runner.action(action_id(CONTINUE));
+        assert!(
+            matches!(runner.app().view, View::Leaving),
+            "continue reading did not begin leaving for the reader"
+        );
+        assert!(
+            commands
+                .iter()
+                .any(|command| matches!(command, Command::Exit)),
+            "continue reading did not hand the session back"
+        );
+    }
+
+    /// An application the owner opened keeps running behind the launcher on
+    /// this platform, so the one they most recently left is marked on its tile
+    /// rather than drawn as if it were idle. The mark is a fact about the tile,
+    /// carried by the tile, so the label stays the application's own name.
+    #[test]
+    fn the_app_you_last_opened_is_marked_running() {
+        let mut runner = AppRunner::new(Launcher::default());
+        runner.start();
+        runner.action(action_id(&opening(ENTRIES[0].name)));
+        runner.lifecycle(Lifecycle::Background);
+        let commands = runner.lifecycle(Lifecycle::Foreground);
+        let screen = commands
+            .into_iter()
+            .find_map(|command| match command {
+                Command::SetScreen(screen) => Some(screen),
+                _ => None,
+            })
+            .expect("coming back repaints the list");
+        let busy = screen.nodes.iter().any(|node| match node {
+            Node::TileGrid { tiles, .. } => tiles.iter().any(|tile| tile.state == TileState::Busy),
+            _ => false,
+        });
+        assert!(busy, "the application left running was drawn as if idle");
+    }
+
     #[test]
     fn nothing_is_drawn_past_the_edge_of_the_panel() {
         for (name, metrics) in PANELS {

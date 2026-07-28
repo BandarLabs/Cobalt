@@ -101,6 +101,16 @@ const TITLE_LINES: usize = 2;
 /// How many placeholder rows stand in for a list while it is arriving.
 const SKELETON_ROWS: u8 = 6;
 
+/// The tag on the paragraphs that stand in for the story's facts.
+///
+/// The thread is measured as prose so the runtime's own wrapping decides where
+/// each page ends, but the facts at the top of the first page are a labelled
+/// block, not prose. So a paragraph is set aside for each fact -- measured, and
+/// so counted against the page -- and swapped for the real [`facts`] block when
+/// the page is drawn. `u32::MAX` is the tag because comment tags are one-based
+/// indices into a list capped far below it, so this can never be one of them.
+const FACT_TAG: u32 = u32::MAX;
+
 /// The bottom bar on a thread. Identical while the comments are arriving and
 /// after they have, so nothing under the reader's finger moves.
 const THREAD_BAR: [(&str, &str); 3] = [
@@ -327,14 +337,31 @@ impl Hn {
                 // stories, and the rank says where you are in the tab and how
                 // far down the page turns have carried you.
                 u16::try_from(index + 1).unwrap_or(u16::MAX),
+                // The score, in a column of its own at the trailing edge. It
+                // was the fourth run-on clause of the summary line, which is
+                // the last place an eye scanning for the popular story would
+                // find it.
+                model::score(story),
             ))
         });
         // Tapping the side of the panel turns the page, which is how every
         // Kobo has always worked. The bottom bar is spent on the tabs (those
         // are places, and places outrank controls for that bar) so the visible
         // page control is the one action the top bar allows.
-        self.with_tabs(screen.rows(rows).page_turns("list-back", "list-next"))
-            .build()
+        let mut turning = screen
+            .rows_with_trailing(rows)
+            .page_turns("list-back", "list-next");
+        if self.pages.len() > 1 {
+            // Which page of how many, so a turn that lands on a page the same
+            // length as the last one still says it moved. Withheld on a single
+            // page, where "1 of 1" is a caption answering a question nobody
+            // turning nothing could ask.
+            turning = turning.page_position(
+                u16::try_from(self.page + 1).unwrap_or(u16::MAX),
+                u16::try_from(self.pages.len()).unwrap_or(u16::MAX),
+            );
+        }
+        self.with_tabs(turning).build()
     }
 
     fn list_title(&self) -> String {
@@ -376,7 +403,7 @@ impl Hn {
             return screen
                 .activity("Fetching the comments", None)
                 .skeleton(SKELETON_ROWS)
-                .nav_bar(None, THREAD_BAR)
+                .action_bar(THREAD_BAR)
                 .build();
         }
         // A byline is only made foldable once, on the page where its comment
@@ -384,32 +411,36 @@ impl Hn {
         // reminder of who is speaking, and hanging a control off it would put
         // two plus signs for the same comment in front of the reader.
         let mut folded_here: Option<u32> = None;
+        let mut facts_drawn = false;
         for (tag, depth, role, paragraph) in self
             .thread_pages
             .get(self.thread_page)
             .into_iter()
             .flatten()
         {
+            if *tag == FACT_TAG {
+                // The labelled block, drawn once where its first reserved
+                // paragraph fell; the rest of the run is the room it stands in.
+                if !facts_drawn {
+                    facts_drawn = true;
+                    screen = screen.facts(story_facts(story, self.now));
+                }
+                continue;
+            }
             let index = (*tag as usize).checked_sub(1);
             match (*role, index) {
                 (QuoteRole::Byline, Some(index)) if folded_here != Some(*tag) => {
                     folded_here = Some(*tag);
                     let collapsed = self.collapsed.contains(&index);
                     let replies = self.replies_to(index);
-                    if replies == 0 && !collapsed {
-                        // Nothing to fold away. A control that does nothing is
-                        // worse than no control: the reader taps it and the
-                        // page redraws identically.
-                        screen = screen.quote_as(*depth, *role, paragraph.clone());
-                    } else {
-                        screen = screen.folding_byline(
-                            *depth,
-                            paragraph.clone(),
-                            format!("fold-{index}"),
-                            collapsed,
-                            u16::try_from(replies).unwrap_or(u16::MAX),
-                        );
-                    }
+                    screen = folding_text(
+                        screen,
+                        *depth,
+                        paragraph.clone(),
+                        &format!("fold-{index}"),
+                        collapsed,
+                        u16::try_from(replies).unwrap_or(u16::MAX),
+                    );
                 }
                 _ => screen = screen.quote_as(*depth, *role, paragraph.clone()),
             }
@@ -422,7 +453,7 @@ impl Hn {
         // way off the page.
         screen
             .page_turns("thread-back", "thread-next")
-            .nav_bar(None, THREAD_BAR)
+            .action_bar(THREAD_BAR)
             .build()
     }
 
@@ -440,14 +471,16 @@ impl Hn {
         let Some(story) = self.open.and_then(|index| self.stories.get(index)) else {
             return Vec::new();
         };
-        let mut paragraphs = vec![
-            (0, 0, QuoteRole::Body, story.title.clone()),
-            // Domain, points, comment count and age are metadata about the
-            // story in exactly the way a comment's byline is metadata about
-            // the comment, and they were being set as though they were the
-            // story's opening sentence.
-            (0, 0, QuoteRole::Byline, model::summary(story, self.now)),
-        ];
+        let mut paragraphs = vec![(0, 0, QuoteRole::Body, story.title.clone())];
+        // One paragraph per fact, tagged so the draw pass swaps the run for a
+        // real facts block. They are here, in the measured flow, rather than
+        // hung off the top of the screen as chrome, because chrome the
+        // paginator never sees is chrome that pushes the last line of the page
+        // off the panel. A byline of the value is a hair taller than the fact
+        // row that replaces it, so the block always fits the room reserved.
+        for (_, value) in story_facts(story, self.now) {
+            paragraphs.push((FACT_TAG, 0, QuoteRole::Byline, value));
+        }
         if let Some(note) = &self.note {
             // Inside the flow, not in a banner. A banner is chrome the
             // paginator never measured, so it would push the last paragraph of
@@ -794,20 +827,28 @@ impl Hn {
         self.titles = self
             .stories
             .iter()
-            .map(|story| context.clamped_row(&story.title, TITLE_LINES, true))
+            .map(|story| {
+                context.clamped_row_beside(&story.title, &model::score(story), TITLE_LINES, true)
+            })
             .collect();
         let summaries = self
             .stories
             .iter()
             .map(|story| model::summary(story, self.now))
             .collect::<Vec<_>>();
+        // Measured with the score, because the score keeps a column at the
+        // trailing edge and the title and summary wrap inside what is left.
+        // Paginated as though the rows were full width, the last one on every
+        // page was drawn under the tab bar and clipped away.
+        let scores = self.stories.iter().map(model::score).collect::<Vec<_>>();
         let rows = self
             .titles
             .iter()
             .zip(&summaries)
-            .map(|(title, summary)| (title.as_str(), summary.as_str()))
+            .zip(&scores)
+            .map(|((title, summary), score)| (title.as_str(), summary.as_str(), score.as_str()))
             .collect::<Vec<_>>();
-        self.pages = context.paginate_rows(&rows, true);
+        self.pages = context.paginate_rows_with_trailing(&rows, true);
         self.page = self.page.min(self.pages.len().saturating_sub(1));
     }
 
@@ -1085,6 +1126,47 @@ fn unix_now() -> i64 {
         .unwrap_or_default()
 }
 
+/// What Hacker News says about a story that is not its title.
+///
+/// The domain, score, comment count and age, as a labelled block. They used to
+/// share one byline, four clauses run together with middots, which reads as a
+/// single long word and buries the score a reader is scanning for. The domain
+/// is dropped for a self-post, which has none: a fact with an empty value is a
+/// label pointing at a gap.
+fn story_facts(story: &Story, now: i64) -> Vec<(&'static str, String)> {
+    let mut facts = Vec::new();
+    if let Some(site) = &story.site {
+        facts.push(("Domain", site.clone()));
+    }
+    facts.push(("Score", model::score(story)));
+    facts.push(("Comments", story.comments.to_string()));
+    facts.push(("Age", model::age(now, story.created)));
+    facts
+}
+
+/// A line that folds what is under it, or a plain one where nothing is.
+///
+/// [`ScreenBuilder::folding_byline`] always draws the little control, so a line
+/// with nothing beneath it gets a plus sign that, tapped, redraws the identical
+/// page -- the thread grew one on every childless comment before this decision
+/// was made once, here, rather than slightly differently everywhere a fold is
+/// wanted. Written against a text rather than a byline so that a grouped list or
+/// a chat log can reach for the same rule.
+fn folding_text(
+    screen: ScreenBuilder,
+    depth: u8,
+    text: String,
+    name: &str,
+    collapsed: bool,
+    hidden: u16,
+) -> ScreenBuilder {
+    if hidden == 0 && !collapsed {
+        screen.quote_as(depth, QuoteRole::Byline, text)
+    } else {
+        screen.folding_byline(depth, text, name, collapsed, hidden)
+    }
+}
+
 fn main() -> ExitCode {
     match kobo_sdk::run("hn", Hn::default()) {
         Ok(()) => ExitCode::SUCCESS,
@@ -1097,7 +1179,7 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{model, Awaiting, Hn, Slot, Tab, View, CHUNK, LANES, TABS, TITLE_LINES};
+    use super::{model, Awaiting, Hn, Slot, Tab, View, CHUNK, FACT_TAG, LANES, TABS, TITLE_LINES};
     use kobo_sdk::{action_id, AppRunner, Command, Task, TaskError, TaskId, TaskOutcome};
     use kobo_ui::{Chrome, LayoutKind, Rect, CLARA_BW_METRICS};
     use std::collections::BTreeMap;
@@ -1588,10 +1670,14 @@ mod tests {
             let layout = showing
                 .thread()
                 .layout_with(&CLARA_BW_METRICS, &Chrome::default());
+            // A paragraph is drawn either as a quote or, where it stood in for
+            // one of the story's facts, as a value in the facts block; one
+            // value per reserved fact line, so the two together still have to
+            // account for every paragraph the page was measured to hold.
             let drawn = layout
                 .nodes
                 .iter()
-                .filter(|node| matches!(node.kind, LayoutKind::Quote(..)))
+                .filter(|node| matches!(node.kind, LayoutKind::Quote(..) | LayoutKind::FactValue))
                 .count();
             assert_eq!(
                 drawn,
@@ -2050,6 +2136,11 @@ mod tests {
         let application = a_thread_of(&[0, 1, 0]);
         let paragraphs = application.thread_paragraphs();
         for (tag, _, _, text) in &paragraphs {
+            if *tag == FACT_TAG {
+                // A reserved fact line, which belongs to the story rather than
+                // to any comment, so its tag leads nowhere and is meant to.
+                continue;
+            }
             if let Some(index) = (*tag as usize).checked_sub(1) {
                 let author = &application.comments[index].author;
                 assert!(

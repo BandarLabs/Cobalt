@@ -508,6 +508,7 @@ dependencies = [
 name = "kobo-cli"
 version = "0.1.0"
 dependencies = [
+ "kobo-image",
  "kobo-sim",
 ]
 
@@ -685,6 +686,15 @@ dependencies = [
 
 [[package]]
 name = "kobo-smoke"
+version = "0.1.0"
+dependencies = [
+ "kobo-abi",
+ "kobo-hal",
+ "kobo-profile",
+]
+
+[[package]]
+name = "kobo-tap"
 version = "0.1.0"
 dependencies = [
  "kobo-abi",

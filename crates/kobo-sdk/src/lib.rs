@@ -15,12 +15,14 @@ pub use kobo_protocol::{
 };
 pub use kobo_ui::QuoteRole;
 pub use kobo_ui::{
-    terminal_grid, terminal_grid_for, ActionId, BannerLevel, BarAction, BottomAction, Caret, Cell,
-    Chrome, ControlState, DiagnosticSeverity, DisplayMetrics, Emphasis, Fold, Freeform, Glyph,
-    LayoutIssue, LayoutIssueKind, NavBar, Node, NodeId, Overlay, OverlayKind, Percent,
-    PictureHandle, ProseArea, Row, RowLead, Screen, Space, Tile, TilePicture, TileShape, TopBar,
-    MAX_CELLS, MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_QUOTE_DEPTH, MAX_ROWS, MAX_TERMINAL_COLUMNS,
-    MAX_TERMINAL_ROWS,
+    terminal_grid, terminal_grid_for, typographic_cover, ActionId, BandAlign, BandSlot,
+    BannerLevel, BarAction, BarStyle, BottomAction, Caret, Cell, Chip, Chrome, ControlState,
+    DiagnosticSeverity, DisplayMetrics, Emphasis, Fold, Freeform, Glyph, LayoutIssue,
+    LayoutIssueKind, NavBar, Node, NodeId, Overlay, OverlayKind, Percent, PictureHandle, ProseArea,
+    Row, RowLead, RowState, Screen, SlotWidth, Space, Tile, TilePicture, TileShape, TileState,
+    TopBar, TransferFailure, CLARA_BW_METRICS, MAX_BAND_SLOTS, MAX_CELLS, MAX_CHIPS,
+    MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_QUOTE_DEPTH, MAX_ROWS, MAX_TABS, MAX_TERMINAL_COLUMNS,
+    MAX_TERMINAL_ROWS, TILE_BADGE_LIMIT,
 };
 use std::collections::VecDeque;
 use std::fmt;
@@ -197,6 +199,20 @@ impl StandardState {
         }
     }
 
+    /// The mark drawn above the title.
+    ///
+    /// A state screen has four words on it and a thousand pixels of nothing
+    /// under them; the mark is what makes it read as a considered page rather
+    /// than a page that failed to load.
+    const fn glyph(self) -> Glyph {
+        match self {
+            Self::Empty => Glyph::Circle,
+            Self::Offline => Glyph::Wifi,
+            Self::PermissionDenied => Glyph::Person,
+            Self::Error => Glyph::Close,
+        }
+    }
+
     const fn banner(self) -> Option<&'static str> {
         match self {
             Self::Empty => None,
@@ -315,11 +331,271 @@ impl ScreenBuilder {
         self
     }
 
+    /// Names the group of blocks that follows it.
+    ///
+    /// The organising primitive. [`Self::heading`] is display type belonging to
+    /// the *screen*, so using it for a group gives a screen four titles and no
+    /// hierarchy; a section is quieter than the heading on purpose and never
+    /// competes with it. Every application was building this out of a spacer, a
+    /// divider and a line of prose, and getting a slightly different answer.
+    ///
+    /// The words are used as they are given. Setting a section in capitals is a
+    /// house style that breaks on scripts with no case at all, so if capitals
+    /// are wanted, supply them.
+    #[must_use]
+    pub fn section(mut self, title: impl Into<String>) -> Self {
+        let id = self.next_id();
+        self.nodes.push(Node::Section {
+            id,
+            title: title.into(),
+            value: None,
+        });
+        self
+    }
+
+    /// The same, with a count or a total against the right margin.
+    ///
+    /// The value is measured first and the title clamped against what is left,
+    /// so a long name gives up its own hairline rather than pushing the total
+    /// off the panel.
+    #[must_use]
+    pub fn section_with_value(
+        mut self,
+        title: impl Into<String>,
+        value: impl Into<String>,
+    ) -> Self {
+        let id = self.next_id();
+        self.nodes.push(Node::Section {
+            id,
+            title: title.into(),
+            value: Some(value.into()),
+        });
+        self
+    }
+
+    /// Sets a block of labelled facts about the thing on the screen.
+    ///
+    /// The answer to a detail screen with a dozen things to say and only
+    /// [`Self::secondary`] to say them with, which stacks a dozen grey
+    /// paragraphs and reads as a page that failed to finish loading.
+    ///
+    /// Labels share one column measured across every entry at once, so the
+    /// values line up; the column is capped so one long label cannot squeeze
+    /// every value into a gutter. Entries past [`MAX_FACTS`] are dropped and
+    /// reported by [`Screen::validate`], rather than silently set and clipped.
+    #[must_use]
+    pub fn facts<I, K, V>(mut self, entries: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
+        let id = self.next_id();
+        let entries = entries
+            .into_iter()
+            .map(|(label, value)| (label.into(), value.into()))
+            .collect::<Vec<_>>();
+        if !entries.is_empty() {
+            self.nodes.push(Node::Facts { id, entries });
+        }
+        self
+    }
+
+    /// Places two or three columns beside each other.
+    ///
+    /// The one escape from the downward flow, and deliberately a small one.
+    /// Each slot is built with the same builder the screen uses, so ids and
+    /// action names carry straight on: a control inside a band is named and
+    /// read exactly like a control anywhere else.
+    ///
+    /// Slots past [`MAX_BAND_SLOTS`] are dropped. When the panel cannot give
+    /// every slot a readable width the band stacks itself, so this is always
+    /// safe to reach for -- there is no narrow device on which it produces a
+    /// column four characters wide.
+    ///
+    /// ```ignore
+    /// screen.band(BandAlign::Top, [
+    ///     (SlotWidth::Fixed(300), |slot| slot.picture(cover, 30)),
+    ///     (SlotWidth::Fill, |slot| {
+    ///         slot.heading(&book.title).secondary(&book.author)
+    ///     }),
+    /// ])
+    /// ```
+    #[must_use]
+    pub fn band<I, F>(mut self, align: BandAlign, slots: I) -> Self
+    where
+        I: IntoIterator<Item = (SlotWidth, F)>,
+        F: FnOnce(Self) -> Self,
+    {
+        let id = self.next_id();
+        let outer = std::mem::take(&mut self.nodes);
+        let mut built = Vec::new();
+        let mut done = self;
+        for (width, build) in slots.into_iter().take(MAX_BAND_SLOTS) {
+            done = build(done);
+            let nodes = std::mem::take(&mut done.nodes);
+            built.push(BandSlot::new(width, nodes));
+        }
+        done.nodes = outer;
+        if !built.is_empty() {
+            done.nodes.push(Node::Band {
+                id,
+                align,
+                slots: built,
+            });
+        }
+        done
+    }
+
+    /// Runs a reusable piece of screen without breaking the builder chain.
+    ///
+    /// Composites are already expressible as plain `fn(ScreenBuilder) ->
+    /// ScreenBuilder` functions, and several applications write them, but
+    /// calling one meant stopping mid-chain and naming a temporary. This is
+    /// the same thing the overlay and band closures do, exposed so anything
+    /// can be factored out and reused rather than copied.
+    #[must_use]
+    pub fn compose(self, build: impl FnOnce(Self) -> Self) -> Self {
+        build(self)
+    }
+
+    /// Puts a picture beside what it is a picture of.
+    ///
+    /// The masthead of a details page: a cover on the leading edge, and title,
+    /// author and a few facts stacked beside it. There is deliberately no
+    /// `Node::Hero` behind this. A hero is a picture next to a column, which
+    /// is exactly what [`Self::band`] already is, and neither `SwiftUI` nor
+    /// Compose ships a hero primitive either -- both compose one out of a
+    /// stack. Adding a node would have meant a layout arm, a draw arm, a
+    /// validate arm, three protocol arms and a roundtrip fixture for a screen
+    /// that can already be written.
+    ///
+    /// The picture slot is a physical width, so the cover is the same size on
+    /// a Clara as on a Sage. When the panel is too narrow to keep both slots
+    /// readable the band stacks them on its own, which is why `width_mm` is
+    /// the only measurement here and there is no breakpoint to get wrong.
+    ///
+    /// `picture` may be `None` -- a catalogue is full of books whose cover has
+    /// not arrived, or has arrived and failed to decode -- in which case the
+    /// metadata simply takes the whole width rather than sitting beside a
+    /// grey rectangle apologising for itself.
+    #[must_use]
+    pub fn hero<I, K, V>(
+        self,
+        picture: Option<TilePicture>,
+        width_mm: u16,
+        title: impl Into<String>,
+        subtitle: Option<String>,
+        facts: I,
+    ) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
+        let title = title.into();
+        let facts = facts
+            .into_iter()
+            .map(|(label, value)| (label.into(), value.into()))
+            .collect::<Vec<_>>();
+        let metadata = move |builder: Self| {
+            let builder = builder.heading(title);
+            let builder = match subtitle {
+                Some(subtitle) => builder.secondary(subtitle),
+                None => builder,
+            };
+            builder.facts(facts)
+        };
+        let Some(picture) = picture else {
+            return self.compose(metadata);
+        };
+        self.band(
+            BandAlign::Top,
+            vec![
+                (
+                    SlotWidth::Fixed(width_mm.saturating_mul(10)),
+                    // Twice the slot width as a height ceiling, so the fixed
+                    // width is what actually decides the size of an ordinary
+                    // portrait cover while a freak panorama is still stopped
+                    // from taking the whole panel.
+                    Box::new(move |builder: Self| {
+                        builder.picture(picture, width_mm.saturating_mul(2))
+                    }) as Box<dyn FnOnce(Self) -> Self>,
+                ),
+                (SlotWidth::Fill, Box::new(metadata)),
+            ],
+        )
+    }
+
+    /// Asks a question that has to be answered before anything else happens.
+    ///
+    /// A modal rather than a popover, deliberately: an outside tap does not
+    /// close this one, because "did you mean to delete it" answered by
+    /// accidentally brushing the panel is not an answer. The affirmative is
+    /// the filled control and comes first, the way out is plain and second.
+    ///
+    /// Every application that deletes, unfollows or overwrites something was
+    /// about to build this by hand out of `modal` plus two buttons, and they
+    /// would have disagreed about which one was filled.
+    #[must_use]
+    pub fn confirm(
+        self,
+        title: impl Into<String>,
+        question: impl Into<String>,
+        confirm: (impl AsRef<str>, impl Into<String>),
+        cancel: (impl AsRef<str>, impl Into<String>),
+    ) -> Self {
+        let question = question.into();
+        let (confirm_name, confirm_label) = (confirm.0.as_ref().to_owned(), confirm.1.into());
+        let (cancel_name, cancel_label) = (cancel.0.as_ref().to_owned(), cancel.1.into());
+        self.modal(title, move |builder| {
+            builder
+                .text(question)
+                .primary_button(confirm_name, confirm_label)
+                .button(cancel_name, cancel_label)
+        })
+    }
+
+    /// A labelled group of rows, kept together on the page.
+    ///
+    /// The commonest shape in the whole example set and the one nine
+    /// applications each wrote out longhand: a heading that names what follows,
+    /// optionally a count beside it, and then the rows. Written as one call so
+    /// the header and its rows are always the same distance apart, and so the
+    /// paginator is given them as one thing to place rather than two it may
+    /// separate.
+    #[must_use]
+    pub fn section_rows<I, N, T, S, L>(
+        self,
+        title: impl Into<String>,
+        value: Option<String>,
+        rows: I,
+    ) -> Self
+    where
+        I: IntoIterator<Item = (N, T, S, L)>,
+        N: AsRef<str>,
+        T: Into<String>,
+        S: Into<String>,
+        L: Into<RowLead>,
+    {
+        let builder = match value {
+            Some(value) => self.section_with_value(title, value),
+            None => self.section(title),
+        };
+        builder.rows(rows)
+    }
+
     /// Adds a consistent empty, offline, denied, or error presentation.
     ///
     /// Chain [`Self::button`] when the condition has a recovery action. The
     /// state itself owns no action so an empty collection is never forced to
     /// pretend it can be fixed.
+    ///
+    /// Set as a splash rather than a heading and a paragraph, because a
+    /// heading and a paragraph flow from the top and leave a thousand pixels
+    /// of white beneath them: correct for reading, wrong for a page with six
+    /// words on it. The splash centres itself in the room that is left after
+    /// whatever is chained on, so a recovery button still lands under it.
     #[must_use]
     pub fn standard_state(self, state: StandardState, message: impl Into<String>) -> Self {
         let builder = if let Some(banner) = state.banner() {
@@ -327,7 +603,7 @@ impl ScreenBuilder {
         } else {
             self
         };
-        builder.heading(state.title()).text(message)
+        builder.splash(Some(state.glyph()), state.title(), message)
     }
 
     #[must_use]
@@ -695,6 +971,52 @@ impl ScreenBuilder {
         self
     }
 
+    /// Puts the rest of this screen's verbs under three dots in the top bar.
+    ///
+    /// The answer to a top bar with more than [`kobo_ui::MAX_BAR_ACTIONS`]
+    /// things to offer: the bar does not grow, the third verb goes under the
+    /// dots. Nine applications were each about to rebuild this out of
+    /// `top_bar_glyph` plus `popover` plus a column of buttons, and they would
+    /// not have agreed on the glyph, the order or the dismissal.
+    ///
+    /// `open` is the application's, the way `expanded` is the application's in
+    /// Compose's `DropdownMenu`: whether the menu is showing is a fact about
+    /// the screen, and a screen is drawn from state here rather than mutated.
+    /// The dots are drawn either way, so the bar does not jump when the menu
+    /// opens.
+    ///
+    /// Closing it is not the application's. The popover draws a caret pointing
+    /// at the control it came out of, and a tap anywhere outside it arrives as
+    /// `ActionId::BACK`, because the scrim a popover puts down reports a miss.
+    /// All the application does with that is set `open` back to false.
+    ///
+    /// A no-op with no items, rather than three dots that open onto nothing.
+    #[must_use]
+    pub fn top_bar_overflow<I, N, L>(self, name: impl AsRef<str>, open: bool, items: I) -> Self
+    where
+        I: IntoIterator<Item = (N, L)>,
+        N: AsRef<str>,
+        L: Into<String>,
+    {
+        let items = items
+            .into_iter()
+            .map(|(name, label)| (name.as_ref().to_owned(), label.into()))
+            .collect::<Vec<_>>();
+        if items.is_empty() {
+            return self;
+        }
+        let name = name.as_ref().to_owned();
+        let screen = self.top_bar_glyph(&name, "More", kobo_ui::Glyph::More);
+        if !open {
+            return screen;
+        }
+        screen.popover(&name, move |builder| {
+            items.into_iter().fold(builder, |builder, (name, label)| {
+                builder.button(name, label)
+            })
+        })
+    }
+
     /// Adds the fixed bottom bar.
     ///
     /// Note there is no back destination to add: back belongs to the runtime's
@@ -715,6 +1037,21 @@ impl ScreenBuilder {
         let previous = self.register(previous.as_ref());
         let next = self.register(next.as_ref());
         self.page_turns = Some(kobo_ui::PageTurns::new(previous, next));
+        self
+    }
+
+    /// Says which page of how many the turns are moving through.
+    ///
+    /// `page` is one-based. Drawn centred at the foot of the content, muted,
+    /// costing one caption line. Without it a paginated list gives the reader
+    /// no way to tell a page turn from a list that did not move -- the
+    /// catalogue cut its shelf into as many as fifty-four pages and said
+    /// nothing about which one was showing.
+    ///
+    /// Has no effect unless [`Self::page_turns`] was asked for as well.
+    #[must_use]
+    pub fn page_position(mut self, page: u16, of: u16) -> Self {
+        self.page_turns = self.page_turns.map(|turns| turns.with_position(page, of));
         self
     }
 
@@ -766,7 +1103,47 @@ impl ScreenBuilder {
             .into_iter()
             .map(|(name, label)| BarAction::new(self.register(name.as_ref()), label))
             .collect::<Vec<_>>();
+        self.warn_second_bottom_bar(id);
         self.nav_bar = Some(NavBar::new(id, destinations, selected.into()));
+        self.bottom_action = None;
+        self
+    }
+
+    /// Pins the verbs belonging to this screen to the bottom band.
+    ///
+    /// The other half of [`Self::nav_bar`], and the reason that one should now
+    /// always be given a selection. A nav bar names places, is the same on
+    /// every screen of an application, and marks the one you are on. An action
+    /// bar names things to do here, is free to change from screen to screen,
+    /// and marks nothing -- because none of its entries is a place you could
+    /// be standing.
+    ///
+    /// Android draws exactly this line between `NavigationBar` and
+    /// `BottomAppBar`; iOS between a tab bar and a toolbar. Before this, three
+    /// screens in the example set passed `None` to `nav_bar` to get a bar of
+    /// verbs, which worked but meant nothing could tell a bar that had
+    /// forgotten to say where the reader was from one that had nowhere to say.
+    ///
+    /// Two or three actions. A third is dropped on a panel too narrow to give
+    /// all of them a finger's width, and anything past three belongs in an
+    /// overflow menu.
+    ///
+    /// Mutually exclusive with [`Self::nav_bar`] and [`Self::bottom_action`]:
+    /// they are all the same band.
+    #[must_use]
+    pub fn action_bar<I, N, L>(mut self, actions: I) -> Self
+    where
+        I: IntoIterator<Item = (N, L)>,
+        N: AsRef<str>,
+        L: Into<String>,
+    {
+        let id = self.next_id();
+        let actions = actions
+            .into_iter()
+            .map(|(name, label)| BarAction::new(self.register(name.as_ref()), label))
+            .collect::<Vec<_>>();
+        self.warn_second_bottom_bar(id);
+        self.nav_bar = Some(NavBar::actions(id, actions));
         self.bottom_action = None;
         self
     }
@@ -786,6 +1163,7 @@ impl ScreenBuilder {
     pub fn bottom_action(mut self, name: impl AsRef<str>, label: impl Into<String>) -> Self {
         let id = self.next_id();
         let action = BarAction::new(self.register(name.as_ref()), label);
+        self.warn_second_bottom_bar(id);
         self.bottom_action = Some(BottomAction::new(id, action));
         self.nav_bar = None;
         self
@@ -810,6 +1188,133 @@ impl ScreenBuilder {
             tiles,
             shape: TileShape::Square,
         });
+        self
+    }
+
+    /// Adds a text field showing what is currently in it.
+    ///
+    /// Tapping yields `name`; route that to your own keyboard screen. The
+    /// field does not summon a keyboard, because the runtime does not own one.
+    /// What it does is show the query, which is the part a button could not do
+    /// and the reason a search entry point used to be an unlabelled ellipsis
+    /// in the top bar.
+    #[must_use]
+    pub fn field(
+        mut self,
+        name: impl AsRef<str>,
+        value: impl Into<String>,
+        placeholder: impl Into<String>,
+    ) -> Self {
+        let id = self.next_id();
+        let action = self.register(name.as_ref());
+        self.nodes.push(Node::Field {
+            id,
+            action,
+            value: value.into(),
+            placeholder: placeholder.into(),
+            clear: None,
+        });
+        self
+    }
+
+    /// Puts a cross in the field just added, to empty it.
+    ///
+    /// Does nothing if the last node is not a field, and nothing if that field
+    /// is already empty: a cross beside an empty box is a control that cannot
+    /// do anything, and one of those on every search screen teaches readers
+    /// that controls on this platform are decorative.
+    #[must_use]
+    pub fn field_clear(mut self, name: impl AsRef<str>) -> Self {
+        let action = self.register(name.as_ref());
+        if let Some(Node::Field { value, clear, .. }) = self.nodes.last_mut() {
+            if !value.is_empty() {
+                *clear = Some(action);
+            }
+        }
+        self
+    }
+
+    /// Adds a wrapping run of short tappable labels.
+    ///
+    /// Subjects, facets, languages, recent searches. The renderer wraps them;
+    /// you supply no geometry. Entries past [`MAX_CHIPS`] are dropped and
+    /// reported by `validate`.
+    #[must_use]
+    pub fn chips<I, N, L>(mut self, chips: I) -> Self
+    where
+        I: IntoIterator<Item = (N, L, bool)>,
+        N: AsRef<str>,
+        L: Into<String>,
+    {
+        let id = self.next_id();
+        let chips = chips
+            .into_iter()
+            .map(|(name, label, selected)| {
+                Chip::new(self.register(name.as_ref()), label).selected(selected)
+            })
+            .collect();
+        self.nodes.push(Node::Chips { id, chips });
+        self
+    }
+
+    /// Adds up to [`MAX_TABS`] peer views of the current screen.
+    ///
+    /// For filters on one destination. Destinations go in [`Self::nav_bar`],
+    /// which is pinned to the bottom and says "you have gone somewhere else";
+    /// a tab says "you are still here, looking at it differently".
+    #[must_use]
+    pub fn tabs<I, N, L>(mut self, selected: usize, tabs: I) -> Self
+    where
+        I: IntoIterator<Item = (N, L)>,
+        N: AsRef<str>,
+        L: Into<String>,
+    {
+        let id = self.next_id();
+        let tabs = tabs
+            .into_iter()
+            .map(|(name, label)| Chip::new(self.register(name.as_ref()), label))
+            .collect();
+        self.nodes.push(Node::Tabs { id, tabs, selected });
+        self
+    }
+
+    /// Adds a grid of tiles, each one configured by a closure.
+    ///
+    /// This is the general form, and the reason there will not be a fifth
+    /// `*_tiles` method. [`Self::tiles`] and [`Self::picture_tiles`] each fixed
+    /// one combination of a tile's optional parts into a tuple, so every part
+    /// added afterwards would have needed a new method and a new arity. Here
+    /// the tile arrives already registered and the closure says what else is
+    /// true of it, exactly as a Compose slot or a `SwiftUI` modifier chain does:
+    ///
+    /// ```ignore
+    /// screen.tile_grid(TileShape::Portrait, [
+    ///     ("bleak-house", "Bleak House", Glyph::Book, |tile: Tile| {
+    ///         tile.with_subtitle("Charles Dickens")
+    ///             .with_state(TileState::Held)
+    ///     }),
+    /// ])
+    /// ```
+    ///
+    /// A tile marked [`TileState::Unavailable`] keeps its place in the grid and
+    /// stops answering taps, which is the whole point: a shelf with a gap in it
+    /// is a shelf that has lost its alignment.
+    #[must_use]
+    pub fn tile_grid<I, N, L, F>(mut self, shape: TileShape, tiles: I) -> Self
+    where
+        I: IntoIterator<Item = (N, L, Glyph, F)>,
+        N: AsRef<str>,
+        L: Into<String>,
+        F: FnOnce(Tile) -> Tile,
+    {
+        let id = self.next_id();
+        let tiles = tiles
+            .into_iter()
+            .map(|(name, label, glyph, configure)| {
+                configure(Tile::new(self.register(name.as_ref()), label, glyph))
+            })
+            .collect();
+        self.nodes.push(Node::TileGrid { id, tiles, shape });
         self
     }
 
@@ -899,6 +1404,45 @@ impl ScreenBuilder {
         let mut rows = Vec::new();
         for (name, title, summary, lead) in source.by_ref().take(MAX_ROWS) {
             rows.push(Row::new(self.register(name.as_ref()), title, summary, lead));
+        }
+        if source.next().is_some() {
+            self.warn_limit(id, "rows", MAX_ROWS);
+        }
+        self.nodes.push(Node::Rows { id, rows });
+        self
+    }
+
+    /// The same, with a short value against the right edge of each row.
+    ///
+    /// A score, a size, a date, a count. A separate method rather than a fifth
+    /// element on [`Self::rows`] because most lists have no such value, and a
+    /// tuple whose last member is almost always empty is a tuple every caller
+    /// has to read twice.
+    ///
+    /// An empty value means no value, exactly as an empty summary does. The
+    /// value is measured before the title is wrapped, so a long title gives up
+    /// its own room rather than pushing the value off the panel.
+    #[must_use]
+    pub fn rows_with_trailing<I, N, T, S, L, V>(mut self, rows: I) -> Self
+    where
+        I: IntoIterator<Item = (N, T, S, L, V)>,
+        N: AsRef<str>,
+        T: Into<String>,
+        S: Into<String>,
+        L: Into<RowLead>,
+        V: Into<String>,
+    {
+        let id = self.next_id();
+        let mut source = rows.into_iter();
+        let mut rows = Vec::new();
+        for (name, title, summary, lead, trailing) in source.by_ref().take(MAX_ROWS) {
+            let row = Row::new(self.register(name.as_ref()), title, summary, lead);
+            let trailing = trailing.into();
+            rows.push(if trailing.is_empty() {
+                row
+            } else {
+                row.with_trailing(trailing)
+            });
         }
         if source.next().is_some() {
             self.warn_limit(id, "rows", MAX_ROWS);
@@ -1133,8 +1677,82 @@ impl ScreenBuilder {
             label: label.into(),
             progress: progress.map(Percent::new),
             cancel: None,
+            transferred: None,
+            failure: None,
         });
         self
+    }
+
+    /// States that bytes are arriving.
+    ///
+    /// `total` is the length the server announced, and `None` when it
+    /// announced none. The distinction is the entire reason this exists: with
+    /// a total you get a bar and "4.2 MB of 11 MB"; without one you get the
+    /// count alone and no bar, because a progress bar that has invented its
+    /// own denominator lies to the reader for as long as the download lasts.
+    /// Byte counts are formatted by the renderer, so every application says
+    /// "4.2 MB" the same way.
+    ///
+    /// Both numbers are **bytes**. Counting anything else with this -- stories
+    /// fetched, messages sent -- captions the bar "3 B of 6 B". Use
+    /// [`Self::activity`] with a percentage and say the count in the label.
+    #[must_use]
+    pub fn transfer(mut self, label: impl Into<String>, received: u64, total: Option<u64>) -> Self {
+        let id = self.next_id();
+        let progress = total.and_then(|total| {
+            (total > 0).then(|| {
+                let percent = received.saturating_mul(100) / total;
+                Percent::new(u8::try_from(percent.min(100)).unwrap_or(100))
+            })
+        });
+        self.nodes.push(Node::Activity {
+            id,
+            label: label.into(),
+            progress,
+            cancel: None,
+            transferred: Some((received, total)),
+            failure: None,
+        });
+        self
+    }
+
+    /// Says why the transfer just declared stopped.
+    ///
+    /// Attaches to the activity rather than replacing the screen, so whatever
+    /// the reader was looking at is still there when it fails.
+    #[must_use]
+    pub fn transfer_failed(mut self, reason: impl Into<String>, resumable: bool) -> Self {
+        if let Some(Node::Activity { failure, .. }) = self.nodes.last_mut() {
+            *failure = Some(TransferFailure {
+                reason: reason.into(),
+                resumable,
+            });
+        }
+        self
+    }
+
+    /// Offers to try again, but only if trying again could work.
+    ///
+    /// A no-op when the failure was not resumable. Offering a retry for
+    /// something that can never succeed teaches readers that the controls on
+    /// this device do nothing.
+    #[must_use]
+    pub fn transfer_retry(self, name: impl AsRef<str>, label: impl Into<String>) -> Self {
+        let resumable = matches!(
+            self.nodes.last(),
+            Some(Node::Activity {
+                failure: Some(TransferFailure {
+                    resumable: true,
+                    ..
+                }),
+                ..
+            })
+        );
+        if resumable {
+            self.button(name, label)
+        } else {
+            self
+        }
     }
 
     /// Lets the reader abandon the activity just declared.
@@ -1201,6 +1819,29 @@ impl ScreenBuilder {
         let id = NodeId(self.next_node);
         self.next_node = self.next_node.saturating_add(1);
         id
+    }
+
+    /// Warns when a second bottom bar replaces the first.
+    ///
+    /// The panel has one bottom band and the last caller wins, silently. An
+    /// application that called `action_bar` and then `nav_bar` -- which is
+    /// what happens the moment a shared screen helper appends navigation --
+    /// drew a screen with its verbs simply missing, and nothing anywhere said
+    /// so.
+    fn warn_second_bottom_bar(&mut self, id: NodeId) {
+        if self.nav_bar.is_none() && self.bottom_action.is_none() {
+            return;
+        }
+        self.warnings.push(LayoutIssue {
+            severity: DiagnosticSeverity::Warning,
+            node: Some(id),
+            kind: LayoutIssueKind::CollectionTruncated {
+                collection: "bottom bar",
+                provided: 2,
+                visible: 1,
+            },
+            rect: None,
+        });
     }
 
     fn warn_limit(&mut self, id: NodeId, collection: &'static str, visible: usize) {
@@ -1420,6 +2061,28 @@ impl Context {
         )
     }
 
+    /// The same, for a row that carries `trailing` at its trailing edge.
+    ///
+    /// The value keeps its column and the title gives up its own, so a title
+    /// clamped at the full row width spills onto a third line beside a score.
+    /// Measured against the width the title will really have.
+    #[must_use]
+    pub fn clamped_row_beside(
+        &self,
+        text: &str,
+        trailing: &str,
+        lines: usize,
+        nav_bar: bool,
+    ) -> String {
+        let area = self.metrics.prose_area(true, nav_bar);
+        kobo_ui::clamp_lines(
+            text,
+            kobo_ui::row_title_width(&self.metrics, area, trailing),
+            kobo_ui::FontSize::Body,
+            lines,
+        )
+    }
+
     /// Breaks a list of rows into pages that fit this panel.
     ///
     /// Returns the row indices belonging to each page. Nothing in this UI
@@ -1429,7 +2092,54 @@ impl Context {
     /// fold is, and the layout engine simply stops drawing at the bottom.
     #[must_use]
     pub fn paginate_rows(&self, rows: &[(&str, &str)], nav_bar: bool) -> Vec<Vec<usize>> {
-        kobo_ui::paginate_rows(rows, &self.metrics, self.metrics.prose_area(true, nav_bar))
+        kobo_ui::paginate_rows(rows, &self.metrics, self.paged_area(nav_bar))
+    }
+
+    /// The content area a screen that pages actually gets.
+    ///
+    /// Less the strip the page position takes, which the layout engine
+    /// reserves before it places anything. Reserved here whether or not the
+    /// caller ends up drawing a position, because everything that paginates
+    /// turns pages, and the two mistakes are not equal: reserving a strip that
+    /// is not used costs one line of white at the foot of the page, and not
+    /// reserving one that is used costs the last row, drawn underneath the
+    /// position and clipped by the bar.
+    fn paged_area(&self, nav_bar: bool) -> ProseArea {
+        let mut area = self.metrics.prose_area(true, nav_bar);
+        area.height = area
+            .height
+            .saturating_sub(self.metrics.page_position_band())
+            .max(1);
+        area
+    }
+
+    /// The same, for rows that carry a value at their trailing edge.
+    ///
+    /// Paired with [`ScreenBuilder::rows_with_trailing`]: the value keeps its
+    /// column and the title gives up its own, so a list paginated as though
+    /// the rows were full width comes back one row too many and the last one
+    /// is drawn under the bottom bar.
+    #[must_use]
+    pub fn paginate_rows_with_trailing(
+        &self,
+        rows: &[(&str, &str, &str)],
+        nav_bar: bool,
+    ) -> Vec<Vec<usize>> {
+        kobo_ui::paginate_rows_with_trailing(rows, &self.metrics, self.paged_area(nav_bar))
+    }
+
+    /// The same, where some rows open a new section.
+    ///
+    /// A section header is never left at the foot of a page with its first row
+    /// overleaf. Pass `Some(title)` against the row a section begins at, and
+    /// re-emit that title before the row when you draw the page.
+    #[must_use]
+    pub fn paginate_rows_in_sections(
+        &self,
+        rows: &[(Option<&str>, &str, &str)],
+        nav_bar: bool,
+    ) -> Vec<Vec<usize>> {
+        kobo_ui::paginate_rows_in_sections(rows, &self.metrics, self.paged_area(nav_bar))
     }
 
     /// Breaks a grid of tiles into pages that fit this panel.
@@ -1440,12 +2150,33 @@ impl Context {
     /// lose its last entries on every panel but the one it was written on.
     #[must_use]
     pub fn paginate_tiles(&self, count: usize, shape: TileShape, nav_bar: bool) -> Vec<Vec<usize>> {
-        kobo_ui::paginate_tiles(
-            count,
-            &self.metrics,
-            shape,
-            self.metrics.prose_area(true, nav_bar),
-        )
+        kobo_ui::paginate_tiles(count, &self.metrics, shape, self.paged_area(nav_bar))
+    }
+
+    /// Breaks a grid of tiles into pages that fit *under* what is already there.
+    ///
+    /// `placed` is the screen built with everything that precedes the grid --
+    /// a band, a heading, a row. Its height is measured with the same engine
+    /// that will draw it rather than estimated, because a grid that overruns
+    /// loses its last tiles without a word, and the alternative in practice is
+    /// to surrender a whole row of applications to be safe.
+    #[must_use]
+    pub fn paginate_tiles_under(
+        &self,
+        count: usize,
+        shape: TileShape,
+        nav_bar: bool,
+        placed: &Screen,
+    ) -> Vec<Vec<usize>> {
+        let used = placed
+            .layout_with(&self.metrics, &Chrome::with_back(true))
+            .content_used();
+        let mut area = self.paged_area(nav_bar);
+        area.height = area
+            .height
+            .saturating_sub(used.saturating_add(area.gap))
+            .max(1);
+        kobo_ui::paginate_tiles(count, &self.metrics, shape, area)
     }
 
     /// Asks the runtime to hand the panel to another application.
@@ -2190,6 +2921,17 @@ pub struct AppRunner<A> {
     next_task: u32,
     in_flight: usize,
     settled: bool,
+    /// The screen the runtime is believed to be showing.
+    ///
+    /// A screen identical to the one already on the panel is dropped here
+    /// rather than sent. Gutenbird rebuilt and re-sent its whole reading
+    /// screen on every 256 KB chunk of a download; the frame planner then
+    /// found no changed pixel and did nothing, but the screen had already been
+    /// laid out, encoded, written and decoded to discover that. Forgotten
+    /// whenever the panel could have gone elsewhere -- a launch, or being sent
+    /// to the background -- because after that the runtime is showing somebody
+    /// else's screen and skipping the resend would leave it there.
+    displayed: Option<Screen>,
 }
 
 impl<A: KoboApp> AppRunner<A> {
@@ -2211,6 +2953,7 @@ impl<A: KoboApp> AppRunner<A> {
             next_task: 0,
             in_flight: 0,
             settled: false,
+            displayed: None,
         }
     }
 
@@ -2306,8 +3049,22 @@ impl<A: KoboApp> AppRunner<A> {
     pub fn lifecycle(&mut self, state: Lifecycle) -> Vec<Command> {
         match state {
             Lifecycle::Foreground => self.dispatch(KoboApp::on_foreground),
-            Lifecycle::Background => self.dispatch(KoboApp::on_background),
+            Lifecycle::Background => {
+                // Somebody else has the panel now, so the next screen this
+                // application builds must be sent even if it is the same one
+                // it was showing when it lost it.
+                self.displayed = None;
+                self.dispatch(KoboApp::on_background)
+            }
         }
+    }
+
+    /// Forgets what the panel is believed to be showing.
+    ///
+    /// For a host that repaints from somewhere other than this application, so
+    /// the next identical screen is sent rather than skipped.
+    pub fn forget_displayed(&mut self) {
+        self.displayed = None;
     }
 
     /// Delivers one store answer.
@@ -2358,6 +3115,22 @@ impl<A: KoboApp> AppRunner<A> {
         self.next_task = context.next_task;
         self.in_flight = context.in_flight;
         let mut commands = context.take_commands();
+        commands.retain(|command| match command {
+            Command::SetScreen(screen) => {
+                if self.displayed.as_ref() == Some(screen) {
+                    return false;
+                }
+                self.displayed = Some(screen.clone());
+                true
+            }
+            // Anything that can hand the panel to somebody else invalidates
+            // what we believe is on it.
+            Command::Launch(_) | Command::Exit => {
+                self.displayed = None;
+                true
+            }
+            _ => true,
+        });
         for command in &commands {
             match command {
                 Command::Device(request) => self.pending.push_back(*request),
@@ -2599,6 +3372,157 @@ impl Client {
 mod tests {
     use super::*;
     use std::thread;
+
+    #[test]
+    fn a_screen_identical_to_the_one_showing_is_not_sent_again() {
+        #[derive(Default)]
+        struct Counter {
+            received: u64,
+        }
+        impl KoboApp for Counter {
+            fn on_start(&mut self, context: &mut Context) {
+                self.paint(context);
+            }
+            fn on_action(&mut self, context: &mut Context, _action: ActionId) {
+                self.paint(context);
+            }
+        }
+        impl Counter {
+            fn paint(&self, context: &mut Context) {
+                context.set_screen(
+                    ScreenBuilder::new("counter")
+                        .transfer("Downloading", self.received, Some(11_534_336))
+                        .build(),
+                );
+            }
+        }
+
+        let mut runner = AppRunner::new(Counter::default());
+        let sent = |commands: &[Command]| {
+            commands
+                .iter()
+                .filter(|command| matches!(command, Command::SetScreen(_)))
+                .count()
+        };
+        assert_eq!(sent(&runner.start()), 1, "the first screen always goes");
+        assert_eq!(
+            sent(&runner.action(ActionId(1))),
+            0,
+            "an unchanged screen costs the wire, the renderer and the panel nothing"
+        );
+        runner.app_mut().received = 4_404_019;
+        assert_eq!(
+            sent(&runner.action(ActionId(1))),
+            1,
+            "a transfer that has moved must still repaint"
+        );
+    }
+
+    #[test]
+    fn a_hero_puts_the_cover_beside_the_metadata_and_adds_no_node_kind() {
+        let screen = ScreenBuilder::new("book")
+            .hero(
+                Some(TilePicture::new(PictureHandle(1), 300, 450)),
+                40,
+                "Moby Dick",
+                Some("Herman Melville".to_owned()),
+                [("Language", "English"), ("Downloads", "12,043")],
+            )
+            .build();
+        assert!(
+            matches!(screen.nodes.as_slice(), [Node::Band { slots, .. }] if slots.len() == 2),
+            "a hero is a band, not a node of its own: {:?}",
+            screen.nodes
+        );
+    }
+
+    #[test]
+    fn a_hero_without_a_cover_gives_the_metadata_the_whole_width() {
+        let screen = ScreenBuilder::new("book")
+            .hero(None, 40, "Moby Dick", None, [("Language", "English")])
+            .build();
+        assert!(
+            !screen
+                .nodes
+                .iter()
+                .any(|node| matches!(node, Node::Band { .. })),
+            "nothing should sit beside a cover that never arrived: {:?}",
+            screen.nodes
+        );
+    }
+
+    #[test]
+    fn three_dots_open_a_menu_that_a_tap_anywhere_else_closes() {
+        let screen = ScreenBuilder::new("story")
+            .top_bar("Moby Dick")
+            .top_bar_overflow("more", true, [("save", "Save"), ("share", "Copy the link")])
+            .build();
+        let bar = screen.top_bar.expect("a top bar");
+        assert_eq!(bar.actions.len(), 1, "the bar does not grow, the menu does");
+        assert_eq!(bar.actions[0].glyph, Some(kobo_ui::Glyph::More));
+        let overlay = screen.overlay.expect("a popover");
+        assert!(
+            matches!(overlay.kind, kobo_ui::OverlayKind::Popover { anchor } if anchor == bar.actions[0].action),
+            "the menu must hang off the dots it came out of"
+        );
+        assert!(
+            overlay.dismissed_by_a_miss(),
+            "a menu that has to be told to close is a menu that gets left open"
+        );
+        assert_eq!(overlay.nodes.len(), 2);
+    }
+
+    /// The dots are drawn whether or not the menu is showing.
+    ///
+    /// Otherwise the bar has two items on one screen and three on the next,
+    /// and every verb in it moves sideways the moment a menu opens.
+    #[test]
+    fn a_closed_menu_still_leaves_its_dots_in_the_bar() {
+        let screen = ScreenBuilder::new("story")
+            .top_bar("Moby Dick")
+            .top_bar_overflow("more", false, [("save", "Save")])
+            .build();
+        let bar = screen.top_bar.expect("a top bar");
+        assert_eq!(bar.actions.len(), 1);
+        assert_eq!(bar.actions[0].glyph, Some(kobo_ui::Glyph::More));
+        assert!(screen.overlay.is_none(), "a closed menu was drawn open");
+    }
+
+    #[test]
+    fn three_dots_with_nothing_under_them_are_not_drawn() {
+        let screen = ScreenBuilder::new("story")
+            .top_bar("Moby Dick")
+            .top_bar_overflow("more", true, Vec::<(String, String)>::new())
+            .build();
+        assert!(screen.top_bar.expect("a top bar").actions.is_empty());
+        assert!(screen.overlay.is_none());
+    }
+
+    /// The panel has one bottom band, and losing a bar to it should say so.
+    ///
+    /// The failure this catches: a screen builds an action bar, a shared
+    /// helper then appends the application's navigation, and the verbs vanish
+    /// with nothing anywhere reporting it.
+    #[test]
+    fn a_second_bottom_bar_is_reported_rather_than_swallowed() {
+        let quiet = ScreenBuilder::new("one").action_bar([("save", "Save")]);
+        assert!(quiet.warnings().is_empty(), "one bar warned about nothing");
+
+        let two = ScreenBuilder::new("two")
+            .action_bar([("save", "Save")])
+            .nav_bar(0, [("a", "A"), ("b", "B")]);
+        assert!(
+            two.warnings().iter().any(|issue| matches!(
+                issue.kind,
+                LayoutIssueKind::CollectionTruncated {
+                    collection: "bottom bar",
+                    ..
+                }
+            )),
+            "the action bar was replaced in silence: {:?}",
+            two.warnings()
+        );
+    }
 
     /// A bare context, for exercising the request builders directly.
     fn context() -> Context {
@@ -2939,10 +3863,13 @@ mod tests {
             .button("retry", "Try again")
             .build();
         assert!(matches!(state.nodes.first(), Some(Node::Banner { .. })));
+        // A splash rather than a heading: the title is centred in the room
+        // that is left, and the button chained after it still lands under it.
         assert!(state
             .nodes
             .iter()
-            .any(|node| matches!(node, Node::Heading { text, .. } if text == "You're offline")));
+            .any(|node| matches!(node, Node::Splash { title, .. } if title == "You're offline")));
+        assert!(matches!(state.nodes.last(), Some(Node::Button { .. })));
 
         let confirmation = ScreenBuilder::new("delete")
             .confirmation(

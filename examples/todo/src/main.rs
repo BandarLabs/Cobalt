@@ -26,7 +26,8 @@
 
 use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
-    action_id, ActionId, Context, KoboApp, LogLevel, Screen, ScreenBuilder, Space, StoreResult,
+    action_id, ActionId, Context, Glyph, KoboApp, LogLevel, Screen, ScreenBuilder, Space,
+    StoreResult,
 };
 use std::process::ExitCode;
 
@@ -109,6 +110,13 @@ struct Todo {
     /// different statements and only one of them is reassuring.
     loaded: bool,
     page: usize,
+    /// The tag the list is narrowed to, if any.
+    ///
+    /// A hashtag the owner wrote into an item, never a category this
+    /// application invented: the only tags that exist are the ones already in
+    /// the text, so nothing here can claim the list is organised in a way the
+    /// owner did not organise it.
+    filter: Option<String>,
     entry: TextEntry,
 }
 
@@ -118,9 +126,32 @@ impl Default for Todo {
             items: Vec::new(),
             loaded: false,
             page: 0,
+            filter: None,
             entry: TextEntry::new().opened_by(ADD),
         }
     }
+}
+
+/// The tag a word carries, if it is one.
+///
+/// A leading `#` and at least one character after it. Trailing punctuation is
+/// dropped so that "#milk." and "#milk" are the one tag rather than two, which
+/// is the difference between a filter that groups the list and a filter that
+/// splinters it.
+fn tag_of(word: &str) -> Option<&str> {
+    let tag = word
+        .strip_prefix('#')?
+        .trim_end_matches(|character: char| !character.is_alphanumeric());
+    (!tag.is_empty()).then_some(tag)
+}
+
+/// Every tag written into one item, in the order they appear.
+fn tags_of(text: &str) -> impl Iterator<Item = &str> {
+    text.split_whitespace().filter_map(tag_of)
+}
+
+fn tag_action(tag: &str) -> String {
+    format!("tag.{tag}")
 }
 
 impl Todo {
@@ -144,32 +175,51 @@ impl Todo {
             return screen.skeleton(4).build();
         }
         if self.items.is_empty() {
-            screen = screen
-                .heading("Nothing to do")
-                .text("Tap Add to put something on the list.");
-        } else {
-            let start = self.page * PER_PAGE;
-            screen = screen.checklist(
-                self.items
-                    .iter()
-                    .enumerate()
-                    .skip(start)
-                    .take(PER_PAGE)
-                    .map(|(index, item)| {
-                        (
-                            item_name(index),
-                            item.text.clone(),
-                            if item.done {
-                                "Done. Tap to reopen.".to_string()
-                            } else {
-                                String::new()
-                            },
-                            item.done,
-                        )
-                    }),
+            // A splash rather than a heading and a paragraph: six words set
+            // ranged left at the top of a 1448-pixel panel read as a page
+            // that failed to load. The splash centres them in the room that
+            // is left, and the Add button below still lands under them.
+            screen = screen.splash(
+                Some(Glyph::Check),
+                "Nothing to do",
+                "Tap Add to put something on the list.",
             );
-            if self.pages() > 1 {
-                screen = screen.page_turns(PREVIOUS, NEXT);
+        } else {
+            let tags = self.all_tags();
+            if !tags.is_empty() {
+                screen = screen.chips(tags.iter().map(|tag| {
+                    (
+                        tag_action(tag),
+                        format!("#{tag}"),
+                        self.filter.as_deref() == Some(tag.as_str()),
+                    )
+                }));
+            }
+            let order = self.ordered();
+            if order.is_empty() {
+                screen = screen.text("Nothing on the list carries that tag.");
+            } else {
+                let start = self.page * PER_PAGE;
+                let page: Vec<usize> = order.into_iter().skip(start).take(PER_PAGE).collect();
+                let (todo, done): (Vec<usize>, Vec<usize>) =
+                    page.iter().partition(|&&index| !self.items[index].done);
+                // Two labelled groups rather than one list, so "finished" is
+                // said in a heading and not left to a line through the middle
+                // of the text -- which a struck word alone leaves the reader to
+                // squint at.
+                if !todo.is_empty() {
+                    screen = screen
+                        .section("To do")
+                        .checklist(todo.iter().map(|&index| self.row(index)));
+                }
+                if !done.is_empty() {
+                    screen = screen
+                        .section("Done")
+                        .checklist(done.iter().map(|&index| self.row(index)));
+                }
+                if self.pages() > 1 {
+                    screen = screen.page_turns(PREVIOUS, NEXT);
+                }
             }
         }
         screen = screen.spacer(Space::Medium).button(ADD, "Add");
@@ -177,6 +227,59 @@ impl Todo {
             screen = screen.button(CLEAR_DONE, "Clear finished");
         }
         screen.build()
+    }
+
+    /// One checklist row: its action name, its text, what it says when done,
+    /// and whether it is done.
+    fn row(&self, index: usize) -> (String, String, String, bool) {
+        let item = &self.items[index];
+        let summary = if item.done {
+            "Done. Tap to reopen.".to_string()
+        } else {
+            String::new()
+        };
+        (item_name(index), item.text.clone(), summary, item.done)
+    }
+
+    /// Every distinct tag written into the list, in first-appearance order.
+    ///
+    /// First-appearance rather than alphabetical, because the owner sees the
+    /// tags they typed in the order they typed them, and a list that quietly
+    /// re-sorts what it was handed reads as if it knows better.
+    fn all_tags(&self) -> Vec<String> {
+        let mut tags: Vec<String> = Vec::new();
+        for item in &self.items {
+            for tag in tags_of(&item.text) {
+                if !tags.iter().any(|existing| existing.as_str() == tag) {
+                    tags.push(tag.to_string());
+                }
+            }
+        }
+        tags
+    }
+
+    /// The indices to draw, filtered to the active tag and grouped so the
+    /// unfinished come before the finished.
+    ///
+    /// A stable sort, so within each group the items keep the order they were
+    /// added; the reader's list is not reshuffled every time one is ticked off.
+    fn ordered(&self) -> Vec<usize> {
+        let mut order: Vec<usize> = self
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| self.shown(item))
+            .map(|(index, _)| index)
+            .collect();
+        order.sort_by_key(|&index| self.items[index].done);
+        order
+    }
+
+    fn shown(&self, item: &Item) -> bool {
+        match &self.filter {
+            None => true,
+            Some(tag) => tags_of(&item.text).any(|candidate| candidate == tag),
+        }
     }
 
     fn title(&self) -> String {
@@ -193,7 +296,7 @@ impl Todo {
     }
 
     fn pages(&self) -> usize {
-        self.items.len().div_ceil(PER_PAGE).max(1)
+        self.ordered().len().div_ceil(PER_PAGE).max(1)
     }
 
     /// Writes the list back. Called after every change, never batched.
@@ -202,8 +305,18 @@ impl Todo {
         context.store().save(ITEMS, bytes);
     }
 
-    /// Keeps the page in range after items are removed.
+    /// Keeps the page in range after items are removed, and drops a filter for
+    /// a tag that no longer exists.
+    ///
+    /// Clearing finished items can take the last item carrying a tag with it.
+    /// Left set, that filter would show an empty list with no chip to switch it
+    /// off -- a dead end the reader did not ask for.
     fn clamp_page(&mut self) {
+        if let Some(tag) = &self.filter {
+            if !self.all_tags().iter().any(|existing| existing == tag) {
+                self.filter = None;
+            }
+        }
         self.page = self.page.min(self.pages() - 1);
     }
 
@@ -213,6 +326,13 @@ impl Todo {
         };
         item.done = !item.done;
         true
+    }
+
+    /// The tag whose chip carries this action, if any.
+    fn tapped_tag(&self, action: ActionId) -> Option<String> {
+        self.all_tags()
+            .into_iter()
+            .find(|tag| action_id(&tag_action(tag)) == action)
     }
 }
 
@@ -267,12 +387,26 @@ impl KoboApp for Todo {
             if let Typing::Submitted(text) = event {
                 if self.items.len() < MAX_ITEMS {
                     self.items.push(Item { text, done: false });
-                    // Land on the page the new item is on, or it looks as if
-                    // nothing happened.
-                    self.page = (self.items.len() - 1) / PER_PAGE;
+                    // A new item is unfinished, so it may sort above the page
+                    // the reader was on. Clear any filter and land on wherever
+                    // it actually landed, or it looks as if nothing happened.
+                    self.filter = None;
+                    let added = self.items.len() - 1;
+                    let position = self.ordered().iter().position(|&index| index == added);
+                    self.page = position.unwrap_or(0) / PER_PAGE;
                     self.save(context);
                 }
             }
+            self.show(context);
+            return;
+        }
+        if let Some(tag) = self.tapped_tag(action) {
+            self.filter = if self.filter.as_deref() == Some(tag.as_str()) {
+                None
+            } else {
+                Some(tag)
+            };
+            self.page = 0;
             self.show(context);
             return;
         }
@@ -315,7 +449,9 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode, encode, item_name, Item, Todo, ADD, CLEAR_DONE, ITEMS, PER_PAGE};
+    use super::{
+        decode, encode, item_name, tag_action, Item, Todo, ADD, CLEAR_DONE, ITEMS, PER_PAGE,
+    };
     use kobo_sdk::{action_id, Command, Context, KoboApp, StoreRequest, StoreResult};
     use kobo_ui::LayoutKind;
 
@@ -484,5 +620,18 @@ mod tests {
                 .any(|command| matches!(command, Command::Log { .. })),
             "a failed save said nothing"
         );
+    }
+
+    #[test]
+    fn a_tag_chip_narrows_the_list_to_the_tag_the_owner_wrote() {
+        let mut todo = started(&[("milk #shop", false), ("bank #errand", false)]);
+        assert_eq!(todo.all_tags(), vec!["shop", "errand"]);
+        let mut context = Context::default();
+        todo.on_action(&mut context, action_id(&tag_action("shop")));
+        assert_eq!(todo.filter.as_deref(), Some("shop"));
+        assert_eq!(todo.ordered(), vec![0], "the filter kept the wrong items");
+        // Tapping the same chip again lets the whole list back.
+        todo.on_action(&mut context, action_id(&tag_action("shop")));
+        assert!(todo.filter.is_none());
     }
 }

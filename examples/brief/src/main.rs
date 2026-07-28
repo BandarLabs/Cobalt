@@ -31,8 +31,8 @@
 
 use kobo_json::Value;
 use kobo_sdk::{
-    action_id, ActionId, Context, KoboApp, LogLevel, Screen, ScreenBuilder, Space, StoreResult,
-    Task, TaskError, TaskId, TaskOutcome,
+    action_id, ActionId, Context, Glyph, KoboApp, LogLevel, Screen, ScreenBuilder, Space,
+    StoreResult, Task, TaskError, TaskId, TaskOutcome,
 };
 use std::process::ExitCode;
 
@@ -172,35 +172,75 @@ impl Brief {
             screen = screen.text(note.clone());
         }
         if self.stories.is_empty() && self.fetching == Fetching::Nothing {
-            screen = screen
-                .heading("Nothing yet")
-                .text("Tap Refresh while the device has Wi-Fi.");
+            // Centred in what is left rather than stacked at the top, so a
+            // brief that has not been fetched yet reads as a page waiting for
+            // a tap instead of a page that failed to load.
+            screen = screen.splash(
+                Some(Glyph::News),
+                "Nothing yet",
+                "Tap Refresh once the device is online.",
+            );
         } else if !self.stories.is_empty() {
+            // Two honest counts, both read off the brief in hand: how many
+            // headlines, and how many places they came from. A brief drawn
+            // from one site is a different thing from one drawn from six, and
+            // that was invisible when the sites were only a line under each
+            // title.
+            let sources = self.sources();
+            screen = screen.facts([
+                ("Stories", self.stories.len().to_string()),
+                ("Sources", sources.to_string()),
+            ]);
             // Numbered rather than illustrated: the same note icon beside
             // every headline is decoration, and a briefing is ordered, so the
             // position is the one thing the well can usefully say.
-            screen = screen.rows(self.stories.iter().enumerate().map(|(index, story)| {
-                (
-                    "story",
-                    story.title.clone(),
-                    story.site.clone(),
-                    u16::try_from(index + 1).unwrap_or(u16::MAX),
-                )
-            }));
+            screen = screen
+                .section("Top stories")
+                .rows(self.stories.iter().enumerate().map(|(index, story)| {
+                    (
+                        "story",
+                        story.title.clone(),
+                        story.site.clone(),
+                        u16::try_from(index + 1).unwrap_or(u16::MAX),
+                    )
+                }));
         }
         if self.fetching == Fetching::Nothing {
             screen = screen.spacer(Space::Medium).button(REFRESH, "Refresh");
         } else {
-            // A count rather than a spinner. Every frame of an animation is a
-            // panel refresh, so movement is the most expensive thing this
-            // screen could possibly do.
-            let done = self.building.iter().filter(|slot| slot.is_some()).count();
+            // A bar against a known total, not a spinner: the count of stories
+            // is fixed, so an indeterminate animation would be claiming the end
+            // is unknowable when it is six. Every frame of movement is a panel
+            // refresh besides, so the bar is redrawn only as each story lands.
+            let done = u64::try_from(self.building.iter().filter(|slot| slot.is_some()).count())
+                .unwrap_or(0);
+            // A count, not a byte count: `transfer` captions itself in bytes
+            // and would print "3 B of 6 B" for three stories out of six.
+            let percent = u8::try_from(done.saturating_mul(100) / STORIES as u64).unwrap_or(100);
             screen = screen
                 .spacer(Space::Medium)
-                .activity(format!("Collecting {done} of {STORIES}"), None)
+                .activity(
+                    format!("Collecting stories, {done} of {STORIES}"),
+                    Some(percent),
+                )
                 .text("You can leave this open. It keeps going.");
         }
         screen.build()
+    }
+
+    /// How many distinct sites the brief drew from.
+    ///
+    /// Counted off the stories on hand rather than tracked as the fetch runs,
+    /// so it can never disagree with the sites actually printed under the
+    /// titles.
+    fn sources(&self) -> usize {
+        let mut seen: Vec<&str> = Vec::new();
+        for story in &self.stories {
+            if !seen.contains(&story.site.as_str()) {
+                seen.push(&story.site);
+            }
+        }
+        seen.len()
     }
 
     fn start_refresh(&mut self, context: &mut Context) {

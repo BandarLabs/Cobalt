@@ -213,8 +213,12 @@ one cannot.
 | `top_bar(title)` | The fixed bar at the top. Back is added by the runtime. |
 | `top_bar_action(name, label)` | One trailing control in the top bar. |
 | `owns_back(bool)` | Ask for Back as an action before it leaves the app. |
-| `nav_bar(selected, [(name, label), …])` | The pinned bottom bar. At least two destinations. |
+| `nav_bar(selected, [(name, label), …])` | The pinned bottom bar of *destinations*. At least two. |
+| `action_bar(name, [(name, label), …])` | The same slot, carrying *verbs* instead. At most three. |
+| `top_bar_overflow(name, open, [(name, label), …])` | Three dots that open a menu when `open`, and close on a tap anywhere else. |
 | `page_turns(previous, next)` | Tap the left of the page to go back, the rest to go on. |
+| `page_position(page, total)` | A footer line saying where in the list this is. |
+| `tabs(selected, [(name, label), …])` | A row of tabs over one region of the screen. |
 
 ### Content
 
@@ -246,11 +250,23 @@ one cannot.
 | `text_entry(&entry, prompt, submit)` | A prompt, what has been typed, and the keys. |
 | `terminal(rows, cursor)` | A character grid with a block caret. |
 | `terminal_keys(&keys)` | Keys that send a byte the moment they are tapped. |
+| `splash(glyph, title, summary)` | A mark, a title and a sentence, centred in the room that is left. |
 | `empty_state(message)` | A standard empty result with a useful default title. |
 | `offline_state(message)` | A standard offline presentation; chain a retry button when useful. |
 | `permission_denied_state(message)` | A standard denied-capability presentation. |
 | `error_state(message)` | A standard recoverable-error presentation. |
 | `confirmation(title, message, primary, secondary)` | A whole-screen confirmation with two `DialogAction`s. |
+| `section(title)` | A labelled group. The rows after it belong to it. |
+| `section_with_value(title, value)` | The same, with a count or a total set to the right. |
+| `section_rows(title, rows)` | A section and its rows in one call. |
+| `facts([(label, value), …])` | A set of labelled values, the label column measured across all of them. |
+| `band([slot, …])` | Up to three things side by side, which stack when they cannot stay readable. |
+| `hero(picture, mm, title, …)` | A picture beside a column of metadata. A `band`, named. |
+| `field(name, label, value)` | What has been typed, visible outside the keyboard screen. |
+| `chips(name, [chip, …])` | Short tappable words: tags, filters, recent searches. |
+| `tile_grid(shape, \|tile\| …)` | Tiles built by a closure, so a tile's slots are configuration and not new methods. |
+| `transfer(label, received, total)` | A transfer, determinate as soon as a total is known. |
+| `transfer_failed(…)` / `transfer_retry(…)` | A transfer that stopped, and the way back into it. |
 
 There is no free-form drawing, no colour, no font choice and no pixel
 positioning. Every size comes from the panel's *physical* dimensions, so a
@@ -268,15 +284,99 @@ and device rendering use the same metrics.
 
 ### Icons
 
-`Glyph` is a closed set: `App`, `Book`, `Note`, `Clock`, `Settings`, `Folder`,
-`Chart`, `Search`, `Wifi`, `Battery`, `Reader`, `Power`, `Grid`, `Circle`,
-`Check`, `Terminal`, `Chat`, `News`.
+`Glyph` is a closed set. `Glyph::ALL` is the whole of it and is what the
+gallery and the vector tests enumerate, so a glyph that is added without being
+drawn fails a test rather than shipping as an empty box.
 
 They are geometry, not bitmaps: authored in a 1000 unit box and rasterised
 with coverage antialiasing at whatever size the layout asks for, so they are
 crisp at every density. Applications cannot supply their own paths: arbitrary
 path data is untrusted input to a rasteriser, and an application must not be
 able to draw something indistinguishable from a system control.
+
+### How a screen is composed
+
+The vocabulary above is deliberately small, and a small vocabulary only reads
+as a product if it is spent the same way every time. These are the rules the
+nine shipped applications follow. Some of them the renderer now enforces as
+diagnostics; the rest are here because a screen that breaks them looks wrong
+without anybody being able to say why.
+
+**One screen has one heading.** A second heading is a second screen that has
+not been separated yet. Below it, at most one `primary_button` — the thing the
+reader came here to do — and at most one region of supporting detail. If two
+actions are equally important, neither is primary and both are ordinary
+buttons.
+
+**Chrome belongs to the runtime.** The top bar carries the title, Back and at
+most two trailing controls; anything further goes behind
+`top_bar_overflow`. The bottom slot carries **destinations or verbs, never
+both**: `nav_bar` answers "where am I", `action_bar` answers "what can I do
+here", and a bar that mixes them leaves a reader unable to predict what a tap
+costs. That conflation is why `nav_bar(None, …)` used to be written; it is a
+warning now, and `action_bar` is the answer.
+
+**A screen has exactly one bottom band.** `nav_bar`, `action_bar` and
+`bottom_action` all claim it, and the last one called silently wins. A screen
+that both navigates and acts is a screen that wants to be two: put the verbs
+on the pushed screen, which has `owns_back(true)` and no destinations to
+carry. Calling two of them is reported as a layout warning rather than
+swallowed.
+
+**A state screen is a splash, not a heading.** `empty_state`, `offline_state`,
+`permission_denied_state` and `error_state` all set a mark, a title and a
+sentence centred in the content area, because six words ranged left at the top
+of a 1448-pixel panel read as a page that failed to load. The splash stops
+short of whatever is chained after it, so a recovery `button` still lands
+underneath. Reach for `splash` directly when the default title is not the
+sentence you want.
+
+**Three type levels per screen.** Display, body, caption. A fourth is
+invariably a heading being used for emphasis, which is what a section is for.
+
+**No screen uses more than four of the five inks.** The tones are ink, muted,
+surface, hairline and inverted. Using all five on one panel means two of them
+are separated by less contrast than E Ink resolves, and the distinction the
+fifth was carrying is simply not visible.
+
+**Group before you separate.** A `section` is almost always the right answer
+where a `spacer` and a `divider` were reached for; a run of spacers is the
+clearest possible evidence that a labelled group was missing.
+
+**Never break a section header from its first row.** `paginate_rows_in_sections`
+exists for this. A header alone at the foot of a page with its contents
+overleaf is the most common way a paginated layout reads as broken — and on a
+panel that takes a second to turn, the reader has a whole second to look at it.
+
+**One way out.** The runtime's Back plus `owns_back` is already the way back.
+A screen that additionally offers "Back to the results" has three controls
+meaning one thing and no way for the reader to tell which is which.
+
+### The words
+
+The type is set for you. The words are not, and they are most of what a screen
+communicates.
+
+**Buttons take verbs.** "Read", "Download", "Retry". A button labelled with a
+noun is a label with a border around it.
+
+**Never two controls with the same word on one screen.** The shelf used to
+carry "Back" in the page-turn band meaning *previous page* and "Back" in the
+nav bar meaning *leave the shelf*.
+
+**A refusal names the cause and the remedy.** "No network" is a symptom;
+"Wi-Fi is off — turn it on from the top bar" is an answer. `offline_state`,
+`permission_denied_state` and `error_state` exist so the shape is consistent;
+the sentence inside is still yours.
+
+**Never invent a number.** If the source does not supply a total, the transfer
+shows bytes received and no percentage. If it does not supply a date, there is
+no date. A fabricated fact is the one failure a reader cannot detect and the
+one this SDK will not help you with — see *Refusing rather than inventing*.
+
+**State is a field, not a suffix.** `TileState::Held`, not `format!("{title}
+(kept)")`. See the next section, which is the same argument at the renderer's
+level.
 
 ### State is carried, never drawn into a label
 
@@ -399,6 +499,14 @@ yourself. For text written elsewhere (a headline, a subject line, a filename)
 use two: one line ellipsises most real headlines mid-sentence, and
 `paginate_rows` measures every row separately, so rows of different heights
 cost nothing but the ragged edge.
+
+Measure with the call that matches the row you draw. A row built with
+`rows_with_trailing` gives up text width to the value at its trailing edge, so
+the full-width helpers measure it at a width it will never have: `clamped_row`
+lets a two-line title spill onto a third, and `paginate_rows` packs one row too
+many and the last one is drawn under the bottom bar. The trailing-aware pair is
+`clamped_row_beside(text, trailing, lines, nav_bar)` and
+`paginate_rows_with_trailing(&[(title, summary, trailing), …], nav_bar)`.
 
 ### What stands at the head of a row
 
@@ -781,6 +889,105 @@ book partition and run from there.
 `package` remains the path for somebody else's device, and the one to use if
 this will not connect. **Cobalt does not install an SSH server and does not
 need one to run.** SSH is only how a developer's machine reaches a device.
+
+### Driving it, and photographing the result
+
+Everything above tells you how to *run* an application. This is how to check
+what it actually looks like, without a person watching it.
+
+The gap this closes is specific. A layout assertion proves a button was placed;
+it does not prove the screen reads as a product, and it does not prove the
+button is reachable. The only thing that answers either question is to drive
+the application the way a finger does and then look at the result — which is
+also exactly the loop something automating on your behalf needs, and it was the
+one loop this SDK had no way to close.
+
+```sh
+# One terminal: the app, in the simulator.
+cd examples/gutenbird && cargo run -p kobo-cli -- dev 127.0.0.1:8787
+
+# Another: drive it, and bring pictures back.
+cargo run -p kobo-cli -- drive --script tour.kobo --shots target/shots
+cargo run -p kobo-cli -- drive --step "tap Search" --step "shot search"
+```
+
+A script is one step per line; `#` is a comment.
+
+| step | what it does |
+| --- | --- |
+| `tap LABEL` | finds the node whose text carries `LABEL` and taps its centre |
+| `tap-at X,Y` | taps a point, for a control with no words |
+| `type TEXT` | taps the on-screen key for each character in turn |
+| `expect TEXT` | fails unless something on the screen says it |
+| `expect-missing TEXT` | fails if something does |
+| `wait-for TEXT` | the same as `expect`, but allows for work in flight |
+| `clean` | fails if the renderer raised any error about this screen |
+| `shot NAME` | writes `NAME.png` into the shots folder |
+| `dump` | prints every node and its text, for writing the next step |
+| `scenario NAME` | switches to a deterministic failure scenario |
+| `lifecycle background` / `foreground` | delivers a real lifecycle message |
+| `wait MS` | waits |
+
+A failing step reports the line, the step and the reason, and takes a
+screenshot first — because the question that immediately follows "tap Search
+failed" is "what was on the screen".
+
+**Pass `--ideal` when you are reading the screenshots rather than the
+refreshes.** A screenshot is taken from the simulated panel, and the simulated
+panel keeps the e-ink residue of what it drew last, exactly as the device
+does. That is what you want when the question is whether a screen refreshes
+cleanly, and exactly what you do not want when the question is whether it
+*reads* well: two screens overlaid are hard for a person to judge and worse
+for a model. `--ideal` takes the frame without the residue. `kobo shot`
+accepts it too.
+
+**`tap` resolves a label to a coordinate and then taps the coordinate.** It
+would have been simpler to dispatch the action directly and it would have been
+worthless: that passes happily on a screen whose only button has been laid out
+four millimetres below the bottom edge of the panel, which is precisely the
+fault worth catching. The tap goes through the panel's own touch transform and
+the renderer's own hit-testing, so if the control is not reachable, the tap
+misses and the script fails.
+
+`type` is the same argument. This device has no hardware keyboard, so text
+injected into the application would be exercising a path no reader can take.
+Each character is a key that has to be on the screen; if it is not, that is a
+finding.
+
+For the real panel:
+
+```sh
+# A PNG of whatever is on the e-ink display right now.
+cargo run -p kobo-cli -- shot --device <address> --out screen.png
+
+# A real tap on the real glass.
+cargo run -p kobo-cli --features device-write -- tap --device <address> 536,900
+```
+
+`shot --device` is read-only: it opens the framebuffer for reading, copies it,
+and closes it. Nothing is grabbed, nothing is refreshed and no pixel is
+written, so it is safe to point at a device with the stock reader in the
+foreground — which matters, because the screen worth photographing is usually
+the one that has just gone wrong and must not be disturbed to be seen. The
+panel comes back as base64 grey with its measured width, height and length, so
+a transfer cut short is refused rather than saved as half a picture.
+
+`tap --device` writes real evdev records to the real touch node, so the
+digitiser's coordinate space, the profile's `display_to_touch` transform, the
+multitouch decoder and the hit-testing all run exactly as they do under a
+finger. It is behind `device-write` and behind an unlock phrase, because a
+program that can tap anything can tap the stock reader's factory reset. It taps
+once, at one point, which must be on the screen, and it always lifts: a tap
+that failed halfway would leave the digitiser reporting a finger that is not
+there.
+
+The division is deliberate. **`drive` is the simulator; `shot` and `tap` are
+the device.** Resolving a label to a coordinate needs the layout, and the
+layout lives in the process doing the rendering — on the host that is the
+simulator, which runs the identical renderer, layout engine, hit-testing and
+refresh planner. On the device it is inside the running application, and
+opening a control channel into it in order to test it would be testing
+something other than the shipped path.
 
 ---
 

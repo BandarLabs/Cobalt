@@ -1,0 +1,24 @@
+[package]
+name = "kobo-tap"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+autobins = false
+
+[features]
+default = []
+device-write = []
+
+[[bin]]
+name = "kobo-tap"
+path = "src/main.rs"
+required-features = ["device-write"]
+
+[dependencies]
+kobo-abi = { path = "../kobo-abi" }
+kobo-hal = { path = "../kobo-hal", default-features = false }
+kobo-profile = { path = "../kobo-profile" }
+
+[lints]
+workspace = true

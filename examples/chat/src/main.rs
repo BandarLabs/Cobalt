@@ -27,8 +27,8 @@ mod conversation;
 use conversation::{Conversation, Provider, Reply, Role, Turn, PROVIDERS};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, KoboApp, LogLevel, Screen, ScreenBuilder, Space,
-    StoreResult, Task, TaskError, TaskId, TaskOutcome,
+    action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, LogLevel, Screen, ScreenBuilder,
+    Space, StoreResult, Task, TaskError, TaskId, TaskOutcome,
 };
 use std::process::ExitCode;
 
@@ -144,9 +144,14 @@ impl Chat {
         let turns = self.conversation.turns();
         let visible = visible_turns(turns, TRANSCRIPT_LINES);
         if turns.is_empty() {
-            screen = screen.text(
-                "Nothing said yet. Tap Type to start. Answers you can tap will appear as \
-                 buttons, so most turns need no typing at all.",
+            // Centred under a mark rather than ranged left at the top: this
+            // is the first thing anybody sees, and a lone paragraph in the
+            // corner of a 1448-pixel panel reads as a page that failed.
+            screen = screen.splash(
+                Some(Glyph::Chat),
+                "Nothing said yet",
+                "Tap Type to start. Answers you can tap appear as buttons, so most \
+                 turns need no typing at all.",
             );
         } else if visible.len() < turns.len() {
             // Said plainly rather than hidden, because a transcript that
@@ -158,25 +163,33 @@ impl Chat {
             if position > 0 {
                 screen = screen.spacer(Space::Small);
             }
-            screen = draw_turn(screen, turn);
+            screen = draw_turn(screen, turn, self.provider.label());
         }
 
         let offered = self.offered();
         match self.view {
             View::Waiting => {
+                // A labelled state of the conversation, not a paragraph
+                // trailing the last turn, so a reply that is on its way is not
+                // mistaken for one that has arrived. An indeterminate activity
+                // rather than a transfer: the model announces no length to
+                // count towards, and a transfer captions itself in bytes,
+                // which would print "0 B" for something that is not bytes.
                 screen = screen
-                    .spacer(Space::Small)
-                    .activity("Waiting for a reply", None)
+                    .section("Reply")
+                    .activity("Reaching the model", None)
                     .cancellable(CANCEL, "Cancel");
             }
             _ if !offered.is_empty() => {
                 // The whole point of the application: an answer that can be
                 // tapped, with typing still one tap away for anything the
-                // model did not think of.
+                // model did not think of. The choice's prompt is promoted to a
+                // section so the answers read as a group under a rule rather
+                // than a heading floating a hair above the first button.
                 screen = screen
-                    .spacer(Space::Small)
+                    .section("Tap an answer")
                     .choose(
-                        "Tap an answer",
+                        "",
                         offered
                             .iter()
                             .enumerate()
@@ -184,7 +197,19 @@ impl Chat {
                     )
                     .or_type(TYPE, "Type something else...");
             }
-            _ => {}
+            _ => {
+                // A draft left in the keyboard is kept in sight here rather
+                // than only on the keyboard screen. Before this, a message
+                // half-typed and then navigated away from was gone, with
+                // nothing on the panel to say it had ever been started; the
+                // reader came back to a blank composer and retyped it.
+                let draft = self.keyboard.text();
+                if !draft.trim().is_empty() {
+                    screen = screen
+                        .section("Draft")
+                        .field(TYPE, draft, "Tap to keep typing.");
+                }
+            }
         }
 
         if self.view != View::Waiting && self.can_retry() {
@@ -214,9 +239,9 @@ impl Chat {
                  application. Choosing a service chooses which stored key it \
                  uses and which address the request goes to.",
             )
-            .spacer(Space::Small)
+            .section("Talk to")
             .choose(
-                "Talk to",
+                "",
                 PROVIDERS
                     .iter()
                     .enumerate()
@@ -313,20 +338,26 @@ impl Chat {
     }
 }
 
-/// Draws one turn, prefixing the reader's own words so the two sides of the
-/// conversation can be told apart without colour, weight or indentation, none
-/// of which this panel spends well.
-fn draw_turn(screen: ScreenBuilder, turn: &Turn) -> ScreenBuilder {
+/// Draws one turn as a byline over its body, so the two sides of the
+/// conversation are told apart by who is named above each block and by a small
+/// indent on the reply, rather than by a "You:" glued to the front of a
+/// sentence. The reader's own words sat at depth 0 under "You"; the reply sits
+/// one level in under the service that wrote it, which is the only place the
+/// panel says which key answered.
+fn draw_turn(screen: ScreenBuilder, turn: &Turn, assistant: &str) -> ScreenBuilder {
     match turn.role {
-        Role::You => screen.text(format!("You: {}", turn.text)),
+        Role::You => screen.byline(0, "You").quote(0, turn.text.clone()),
         Role::Assistant => {
             let reply = Reply::read(&turn.text);
+            let screen = screen.byline(1, assistant.to_owned());
             if reply.paragraphs.is_empty() {
                 // A reply that was nothing but an options line still has to
                 // occupy its place, or the transcript appears to skip a turn.
-                return screen.text("(an answer to tap, below)");
+                return screen.quote(1, "(an answer to tap, below)");
             }
-            reply.paragraphs.iter().fold(screen, ScreenBuilder::text)
+            reply.paragraphs.iter().fold(screen, |screen, paragraph| {
+                screen.quote(1, paragraph.as_str())
+            })
         }
     }
 }
@@ -352,16 +383,21 @@ fn visible_turns(turns: &[Turn], budget: usize) -> &[Turn] {
 }
 
 /// About how many lines a turn will occupy once the renderer has wrapped it.
+///
+/// Counts the byline as a line of its own, because a turn now carries one and a
+/// budget that ignored it would keep one turn too many and push the newest off
+/// the bottom -- the one failure this whole trim exists to prevent.
 fn turn_lines(turn: &Turn) -> usize {
     let paragraphs = match turn.role {
         Role::You => vec![turn.text.clone()],
         Role::Assistant => Reply::read(&turn.text).paragraphs,
     };
-    paragraphs
+    let body = paragraphs
         .iter()
         .map(|paragraph| paragraph.chars().count().div_ceil(COLUMNS).max(1))
         .sum::<usize>()
-        .max(1)
+        .max(1);
+    body + 1
 }
 
 /// Shortens an option so it stays one line on a choice row.
@@ -540,7 +576,7 @@ mod tests {
         action_id, Command, Context, KoboApp, Screen, StoreRequest, StoreResult, Task, TaskId,
         TaskOutcome,
     };
-    use kobo_ui::{Chrome, LayoutKind, CLARA_BW_METRICS};
+    use kobo_ui::{Chrome, LayoutKind, QuoteRole, CLARA_BW_METRICS};
 
     /// Runs one callback and hands back what the application asked for.
     fn act(chat: &mut Chat, action: &str) -> Vec<Command> {
@@ -627,6 +663,32 @@ mod tests {
         // key, and nothing key-shaped is anywhere near the body.
         assert!(!body.contains("sk-"), "{body}");
         assert!(!body.contains("Authorization"), "{body}");
+    }
+
+    #[test]
+    fn a_draft_stays_in_sight_after_leaving_the_keyboard() {
+        // The defect: a message half-typed and then navigated away from was
+        // gone, with nothing on the panel to say it had ever been started, so
+        // the reader came back to a blank composer and typed it a second time.
+        let (mut chat, _) = started();
+        act(&mut chat, TYPE);
+        chat.keyboard = Keyboard::with_text("half a thought");
+        act(&mut chat, TALK);
+        assert_eq!(chat.view, View::Talking);
+        let screen = chat.screen();
+        assert!(
+            screen
+                .layout_with(&CLARA_BW_METRICS, &Chrome::default())
+                .rect_of_action(action_id(TYPE))
+                .is_some(),
+            "the draft was not left tappable to keep typing"
+        );
+        assert!(
+            shown(&screen)
+                .iter()
+                .any(|line| line.contains("half a thought")),
+            "the draft vanished when the keyboard closed"
+        );
     }
 
     #[test]
@@ -779,10 +841,10 @@ mod tests {
 
     #[test]
     fn a_reply_of_several_paragraphs_becomes_several_nodes() {
-        // The renderer wraps words but treats a text node as one paragraph,
-        // so a blank line in the model's answer would vanish and two
-        // paragraphs would run together into a wall of text. Splitting them
-        // here is what keeps a long answer readable on this panel.
+        // The renderer wraps words but treats a quote as one paragraph, so a
+        // blank line in the model's answer would vanish and two paragraphs
+        // would run together into a wall of text. Splitting them here is what
+        // keeps a long answer readable on this panel.
         let mut chat = Chat::default();
         chat.conversation
             .push(Role::Assistant, "First paragraph.\n\nSecond paragraph.");
@@ -791,7 +853,7 @@ mod tests {
             .layout_with(&CLARA_BW_METRICS, &Chrome::default())
             .nodes
             .iter()
-            .filter(|node| node.kind == LayoutKind::Text)
+            .filter(|node| matches!(node.kind, LayoutKind::Quote(_, QuoteRole::Body)))
             .filter(|node| {
                 node.text_lines
                     .iter()

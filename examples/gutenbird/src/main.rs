@@ -33,9 +33,9 @@
 use kobo_read::{Memory, Outcome, Reader};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, PictureHandle, ScreenBuilder,
-    ShelfDownload, ShelfProgress, ShelfUpload, StoreResult, Task, TaskId, TaskOutcome, TilePicture,
-    TileShape, MAX_STORE_VALUE,
+    action_id, ActionId, BannerLevel, Chrome, Context, DiagnosticSeverity, Glyph, KoboApp,
+    PictureHandle, RowLead, ScreenBuilder, ShelfDownload, ShelfProgress, ShelfUpload, StoreResult,
+    Task, TaskId, TaskOutcome, Tile, TilePicture, TileShape, TileState, MAX_STORE_VALUE,
 };
 use std::collections::BTreeMap;
 use std::process::ExitCode;
@@ -103,12 +103,15 @@ const COVER_BYTES: u32 = 512 * 1024;
 ///
 /// One below the runtime's ceiling of four on purpose, so a shelf filling in
 /// can never leave a search or a download with nowhere to go.
-/// How tall the cover on a book's page is drawn.
+/// How wide the cover in a book's hero is drawn.
 ///
-/// A third of the panel: large enough to be the picture of the book rather
-/// than a thumbnail of it, and small enough that the title, the author and the
-/// Read button are all still on screen under it without scrolling.
-const DETAILS_COVER_MM: u16 = 40;
+/// A physical width rather than a height, because the hero sets the cover
+/// beside the title and author, and the band measures the picture by the
+/// width it is given. Thirty rather than the forty a lone picture once took:
+/// the cover now shares the masthead with the metadata, and there are an
+/// About, a Subjects and a Details section under it that the old page, half
+/// empty below a large picture, had nowhere to put.
+const DETAILS_COVER_MM: u16 = 30;
 
 const COVER_LANES: usize = 3;
 
@@ -126,7 +129,36 @@ const SHELF_PAGE: usize = 6;
 /// the next piece is requested.
 const TOP_UP_PAGES: usize = 2;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// How many recent searches the search screen keeps.
+///
+/// A short memory on purpose. The chips are a shortcut back to a search just
+/// made, not a history to scroll: past half a dozen they stop being glanceable
+/// and start pushing the keyboard off the foot of the panel, which is the one
+/// thing the search screen cannot afford to lose.
+const MAX_RECENT: usize = 6;
+
+/// The languages a search can be narrowed to, and their `?languages=` codes.
+///
+/// A short, deliberate list rather than every code Gutenberg holds: these are
+/// the collections large enough that a reader is likely to want only one of
+/// them, and a run of chips longer than this stops being a scope and becomes a
+/// second search of its own. The empty code is "everything", which is the
+/// state a fresh search starts in. The names are display labels for the codes,
+/// not facts about the books -- a book in Latin still shows "la", because
+/// inventing "Latin" for a code this list does not carry would be dressing a
+/// gap as knowledge.
+const LANGUAGES: &[(&str, &str)] = &[
+    ("", "All languages"),
+    ("en", "English"),
+    ("fr", "French"),
+    ("de", "German"),
+    ("es", "Spanish"),
+    ("it", "Italian"),
+    ("fi", "Finnish"),
+    ("nl", "Dutch"),
+];
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct Book {
     title: String,
     author: String,
@@ -136,6 +168,30 @@ struct Book {
     cover: Option<String>,
     /// The cover once it has been decoded and handed to the runtime.
     picture: Option<TilePicture>,
+    /// The Gutendex language codes for this edition, most significant first.
+    ///
+    /// Kept as the raw codes rather than resolved to names on the way in,
+    /// because the same field is both what a result row says and what a
+    /// `?languages=` filter carries: turning "en" into "English" here would
+    /// mean turning it back to make the request.
+    languages: Vec<String>,
+    /// Gutendex's `download_count`. Shown as a plain number and never dressed
+    /// up as a rate or a rank: it is a count, and this application refuses to
+    /// invent a timeframe Gutendex does not state for it.
+    downloads: Option<u32>,
+    /// Gutenberg's own number for the book. The one durable identifier in the
+    /// record, so it is what the details page states rather than a URL.
+    id: Option<u32>,
+    /// Gutendex's `copyright`: `Some(false)` public domain, `Some(true)` in
+    /// copyright, `None` when the record does not say. Never collapsed to a
+    /// yes/no, because "unknown" is a third thing the reader has to be told
+    /// apart from "free".
+    copyright: Option<bool>,
+    /// The sentence or two Gutenberg keeps about the book, when it keeps any.
+    summaries: Vec<String>,
+    /// The subject headings, each of which is a search this application can
+    /// run: a way out of one book and into the shelf of its kind.
+    subjects: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -160,6 +216,35 @@ enum Awaiting {
     Text,
 }
 
+/// One piece of a book's trailing description, so pages can be packed from it.
+///
+/// A block rather than a node, because what is being packed is "a paragraph",
+/// "the subjects", "the facts" -- things that must not be split across a page
+/// turn, and which the builder cannot be asked about once they are inside it.
+#[derive(Clone, Debug)]
+enum DetailBlock {
+    Section(&'static str),
+    Text(String),
+    Subjects(Vec<String>),
+    Facts(Vec<(String, String)>),
+}
+
+impl DetailBlock {
+    fn add(&self, screen: ScreenBuilder) -> ScreenBuilder {
+        match self {
+            Self::Section(title) => screen.section(*title),
+            Self::Text(text) => screen.text(text.clone()),
+            Self::Subjects(subjects) => screen.chips(
+                subjects
+                    .iter()
+                    .enumerate()
+                    .map(|(index, subject)| (format!("topic-{index}"), subject.clone(), false)),
+            ),
+            Self::Facts(facts) => screen.facts(facts.clone()),
+        }
+    }
+}
+
 struct Gutenbird {
     view: View,
     keyboard: Keyboard,
@@ -182,6 +267,8 @@ struct Gutenbird {
     complete: bool,
     /// Which page of the shelf is showing.
     shelf: usize,
+    /// Which page of a book's own description is showing.
+    detail_page: usize,
     /// Books whose covers are still to be fetched, most recent first.
     ///
     /// Only the covers for the shelf page being looked at are ever queued. A
@@ -231,6 +318,34 @@ struct Gutenbird {
     /// sort or the search that produced this shelf is carried forward without
     /// this application having to rebuild the query.
     next: Option<String>,
+    /// How many books the current query holds in all, as Gutendex counts them.
+    ///
+    /// The shape of the answer, which the page of results cannot show on its
+    /// own: thirty-two rows look the same whether they are all there are or the
+    /// first of three hundred.
+    count: Option<u32>,
+    /// Searches already run this session, most recent first.
+    ///
+    /// A search on this panel is a screenful of typing on a keyboard with no
+    /// word completion, so the second time somebody wants the same author is a
+    /// tap rather than a minute. Bounded, because a list of recent searches
+    /// that grows without limit is a keyboard's worth of chips above the
+    /// keyboard.
+    recent: Vec<String>,
+    /// The `?languages=` code a search is narrowed to, or `None` for all.
+    ///
+    /// A scope rather than a search: it changes what the next query returns
+    /// without being a query itself, which is why it is a chip that stays
+    /// selected rather than a word that gets typed.
+    scope: Option<String>,
+    /// Why the open book's download stopped, when it did.
+    ///
+    /// Kept apart from [`Self::problem`], which is the catalogue's failures on
+    /// the shelf: a download that fails is a failure of *this book*, and it is
+    /// said on the book's own page under its cover with a way to try again,
+    /// rather than as a banner that throws the reader back to the list they
+    /// came from with nothing to retry.
+    failed: Option<String>,
 }
 
 impl Default for Gutenbird {
@@ -246,6 +361,7 @@ impl Default for Gutenbird {
             fetched: 0,
             complete: false,
             shelf: 0,
+            detail_page: 0,
             wanted: Vec::new(),
             covers: Vec::new(),
             task: None,
@@ -256,6 +372,10 @@ impl Default for Gutenbird {
             place: None,
             looking: Vec::new(),
             next: None,
+            count: None,
+            recent: Vec::new(),
+            scope: None,
+            failed: None,
         }
     }
 }
@@ -281,8 +401,8 @@ impl Gutenbird {
         let screen = match self.view {
             View::Results => self.results(),
             View::Search => self.search(),
-            View::Details => self.details(),
-            View::Reading => self.reading(),
+            View::Details => self.details(context),
+            View::Reading => self.reading(context),
         };
         // Every view except the shelf was reached from another one, so Back
         // unwinds the application first and leaves it only from the shelf.
@@ -293,10 +413,17 @@ impl Gutenbird {
     }
 
     fn results(&self) -> kobo_sdk::Screen {
-        let mut screen = ScreenBuilder::new("gutenbird").top_bar(match &self.query {
-            None => "Gutenbird".to_owned(),
-            Some(query) => format!("\u{201c}{query}\u{201d}"),
-        });
+        let mut screen = ScreenBuilder::new("gutenbird")
+            .top_bar(match &self.query {
+                None => "Gutenbird".to_owned(),
+                Some(query) => format!("\u{201c}{query}\u{201d}"),
+            })
+            // Search is a mark in the bar now, not a row of the panel. It was a
+            // full-width button, and then a third of a nav bar, standing above
+            // a shelf whose whole reason to exist is to show covers: a search
+            // entry does not need a book's worth of the panel to say what a
+            // magnifying glass says.
+            .top_bar_glyph("search", "Search", Glyph::Search);
         if let Some(problem) = &self.problem {
             screen = screen.banner(BannerLevel::Attention, problem.clone());
         }
@@ -330,7 +457,20 @@ impl Gutenbird {
                 .primary_button("search", "Search the library")
                 .build();
         }
-        let pages = self.shelf_pages();
+        // Covers when nothing was asked for, words when something was. A cover
+        // is how a reader recognises a book they already half know; a title,
+        // an author and a count are how they tell apart thirty they have never
+        // seen. A grid of thirty covers is neither, so a search is a list.
+        let screen = if self.query.is_none() {
+            self.shelf_grid(screen)
+        } else {
+            self.result_rows(screen)
+        };
+        self.paginated(screen)
+    }
+
+    /// The popular shelf: portrait covers, six to a page.
+    fn shelf_grid(&self, screen: ScreenBuilder) -> ScreenBuilder {
         let first = self.shelf * SHELF_PAGE;
         let shown = self
             .books
@@ -343,37 +483,94 @@ impl Gutenbird {
                 // and a title with no room for a sentence, and the one thing
                 // worth knowing before tapping is whether opening it costs a
                 // download.
-                // Said in words rather than with a tick. The reading face has
-                // no check mark in it, and the platform refuses a screen
-                // carrying a character it cannot draw -- which is the right
-                // answer, because the alternative is a blank box on a shelf.
-                let title = if self.is_kept(book) {
-                    format!("{} (kept)", book.title)
+                //
+                // This used to read `format!("{title} (kept)")`, because the
+                // shelf had no way to say anything about a tile except through
+                // its name. That put a sentence in a title's place: it pushed
+                // real titles into an ellipsis, it could not be translated, and
+                // it made the book's own text no longer the book's own text.
+                // The objection at the time was that the reading face has no
+                // check mark in it -- true, and beside the point, because
+                // Glyph::Check is drawn from vector shapes rather than set from
+                // the font, so there is no missing character to refuse.
+                let state = if self.is_kept(book) {
+                    TileState::Held
                 } else {
-                    book.title.clone()
+                    TileState::Normal
                 };
-                (format!("book-{index}"), title, Glyph::Book, book.picture)
+                let picture = book.picture;
+                let author = book.author.clone();
+                (
+                    format!("book-{index}"),
+                    book.title.clone(),
+                    Glyph::Book,
+                    move |tile: Tile| {
+                        let tile = tile.with_state(state).with_subtitle(author);
+                        match picture {
+                            Some(picture) => tile.with_picture(picture),
+                            None => tile,
+                        }
+                    },
+                )
             });
-        screen = screen.picture_tiles(TileShape::Portrait, shown);
+        screen.tile_grid(TileShape::Portrait, shown)
+    }
+
+    /// Search results: a row apiece, because they are told apart by their
+    /// words rather than recognised by their covers.
+    fn result_rows(&self, screen: ScreenBuilder) -> ScreenBuilder {
+        let first = self.shelf * SHELF_PAGE;
+        let rows = self
+            .books
+            .iter()
+            .enumerate()
+            .skip(first)
+            .take(SHELF_PAGE)
+            .map(|(index, book)| {
+                let lead = match book.picture {
+                    Some(picture) => RowLead::Picture(picture, Glyph::Book),
+                    None => RowLead::Icon(Glyph::Book),
+                };
+                // The held mark is a value against the right edge, not a word
+                // in the title. A trailing value is measured on its own and the
+                // title clamped against what is left, so "Kept" never eats the
+                // end of a long title the way the old `(kept)` did.
+                let trailing = if self.is_kept(book) { "Kept" } else { "" };
+                (
+                    format!("book-{index}"),
+                    book.title.clone(),
+                    row_summary(book),
+                    lead,
+                    trailing.to_owned(),
+                )
+            });
+        // The count of the whole answer, so thirty rows do not read the same
+        // whether they are all there is or the first page of three hundred.
+        let screen = match self.count.map(count_books) {
+            Some(label) => screen.section_with_value("Results", label),
+            None => screen.section("Results"),
+        };
+        screen.rows_with_trailing(rows)
+    }
+
+    /// Puts the page turns and their position at the foot, when there is more
+    /// than one page or more to fetch.
+    ///
+    /// The shelf is turned the way a book is: tapping the side of the panel,
+    /// which is how every Kobo has always turned a page. The position is what
+    /// tells a page turn from a list that did not move -- the catalogue cuts
+    /// its answer into as many as fifty-four shelves, and without it turning
+    /// one is indistinguishable from tapping a wall.
+    fn paginated(&self, screen: ScreenBuilder) -> kobo_sdk::Screen {
+        let pages = self.shelf_pages();
         if pages <= 1 && !self.more_to_take() {
-            // Still reachable, just not at the cost of a whole row of covers.
-            // Search used to be a full-width button above the shelf, which on
-            // this panel was a third of the artwork the shelf exists to show.
-            return screen.bottom_action("search", "Search").build();
+            return screen.build();
         }
-        // The same page controls the reader already uses inside a book, so a
-        // shelf is turned the way a page is. Tapping the side of the panel
-        // works here too, which is how every Kobo has always turned a page.
+        let page = u16::try_from(self.shelf + 1).unwrap_or(u16::MAX);
+        let total = u16::try_from(pages).unwrap_or(u16::MAX);
         screen
             .page_turns("shelf-back", "shelf-next")
-            .nav_bar(
-                None,
-                [
-                    ("shelf-back", "Back"),
-                    ("search", "Search"),
-                    ("shelf-next", "More"),
-                ],
-            )
+            .page_position(page, total)
             .build()
     }
 
@@ -383,72 +580,265 @@ impl Gutenbird {
     }
 
     fn search(&self) -> kobo_sdk::Screen {
-        ScreenBuilder::new("gutenbird-search")
+        // The typed query, the recent searches and the language scope, all
+        // above the keyboard. The keyboard used to be the whole screen: a
+        // reader could see what they were typing on the line above the keys
+        // and nothing else, so the same author searched twice was two full
+        // screenfuls of typing, and there was no way to say "English only"
+        // short of adding it to every query by hand.
+        let mut screen = ScreenBuilder::new("gutenbird-search")
             .top_bar("Search")
-            .typed(&self.keyboard, "An author or a title")
-            .keyboard(&self.keyboard, "Search")
-            .build()
+            .field("query", self.keyboard.text(), "An author or a title")
+            .field_clear("query-clear");
+        if !self.recent.is_empty() {
+            screen = screen.section("Recent searches").chips(
+                self.recent
+                    .iter()
+                    .enumerate()
+                    .map(|(index, term)| (format!("recent-{index}"), term.clone(), false)),
+            );
+        }
+        let selected = self.scope.as_deref().unwrap_or("");
+        screen = screen.section("Language").chips(
+            LANGUAGES
+                .iter()
+                .map(|(code, name)| (lang_action(code), (*name).to_owned(), *code == selected)),
+        );
+        screen.keyboard(&self.keyboard, "Search").build()
     }
 
-    fn details(&self) -> kobo_sdk::Screen {
+    fn details(&self, context: &Context) -> kobo_sdk::Screen {
         let Some(book) = self.open.and_then(|index| self.books.get(index)) else {
             return self.results();
         };
-        let mut screen = ScreenBuilder::new("gutenbird-book")
+        // The cover, the title and the author beside it, rather than a heading
+        // stacked over a picture with half the panel left blank beneath them.
+        // The cover is a width in millimetres, so it is the same size on every
+        // device; `None` gives the metadata the whole width rather than a grey
+        // rectangle to apologise beside. A book that would not open, or the
+        // runtime turning a request away, is said above the cover and kept
+        // apart from a download that stopped, which speaks for itself further
+        // down with a way to retry.
+        let bare = ScreenBuilder::new("gutenbird-book")
             .top_bar(book.title.clone())
-            .heading(book.title.clone())
-            .secondary(book.author.clone());
-        // The same cover the shelf already fetched, at a fixed height so every
-        // book's page has the same shape whatever its artwork happens to be.
-        // Given in millimetres rather than pixels, so it is a third of the
-        // panel on any device rather than a third of one particular one.
-        if let Some(picture) = book.picture {
-            screen = screen.picture(picture, DETAILS_COVER_MM);
-        }
-        if let Some(problem) = &self.problem {
-            screen = screen.banner(BannerLevel::Attention, problem.clone());
+            .hero(
+                book.picture,
+                DETAILS_COVER_MM,
+                book.title.clone(),
+                Some(book.author.clone()),
+                Vec::<(String, String)>::new(),
+            );
+        let bare = match &self.problem {
+            Some(problem) => bare.banner(BannerLevel::Attention, problem.clone()),
+            None => bare,
+        };
+        // The download runs here, under the cover, rather than on a bare
+        // "Downloading" screen: the book the reader chose stays in front of
+        // them while its bytes arrive, and a failure is said on the same page
+        // with a way to try again rather than thrown back to the list.
+        if let Some(reason) = &self.failed {
+            return bare
+                .transfer("Download stopped", u64::from(self.fetched), None)
+                .transfer_failed(reason.clone(), true)
+                .transfer_retry("read", "Try again")
+                .build();
         }
         if self.awaiting_text() || self.loading.is_some() {
-            return screen.activity("Downloading", None).build();
+            // No total, so no bar. The runtime hands over bytes with no
+            // announced length, and a percentage built from a denominator this
+            // application does not have would be invented: received bytes, and
+            // nothing more, is the honest amount that is known.
+            return bare
+                .transfer("Downloading", u64::from(self.fetched), None)
+                .build();
         }
-        if self.is_kept(book) {
-            // Worth saying plainly: it is the difference between opening now
-            // and waiting on a megabyte over a radio, and it is the only way
-            // to tell that this book costs nothing to open again.
-            screen = screen.secondary("Already on this device.");
+        // Everything else Gutendex sent, which used to sit unread in memory
+        // while the page showed a cover and two buttons over an empty half:
+        // what the book is about, the subjects it belongs to (each a search of
+        // its own), and the flat facts that need no sentence.
+        //
+        // Paged, because a summary is as long as whoever wrote it made it. Set
+        // in one column this ran a page and a half past the bottom of the
+        // panel, and the layout engine drops what does not fit without saying
+        // so: the subjects and every fact about the book were simply not on
+        // the device. Which blocks go on which page is measured here rather
+        // than guessed, so a long summary costs a page turn instead of the
+        // rest of the screen.
+        let blocks = Self::detail_blocks(book);
+        let pages = self.detail_pagination(context, book, &blocks);
+        let page = self.detail_page.min(pages.len().saturating_sub(1));
+        let showing = pages.get(page).map_or(&[][..], Vec::as_slice);
+        let mut screen = self.detail_head(book, page == 0);
+        for block in showing {
+            screen = block.add(screen);
         }
-        screen = if book.text.is_some() {
-            // The one thing this page is for, so it is the one control filled.
-            screen.primary_button("read", "Read")
-        } else {
-            // Said plainly rather than by disabling a button. A button that
-            // does nothing when tapped reads as a broken panel.
-            screen.secondary("Gutenberg has no plain text edition of this book.")
-        };
-        screen.button("results", "Back to the results").build()
+        if pages.len() <= 1 {
+            return screen.build();
+        }
+        screen
+            .page_turns("about-back", "about-next")
+            .page_position(
+                u16::try_from(page + 1).unwrap_or(u16::MAX),
+                u16::try_from(pages.len()).unwrap_or(u16::MAX),
+            )
+            .build()
     }
 
-    fn reading(&self) -> kobo_sdk::Screen {
+    /// The book's trailing material, in the order it should be read.
+    fn detail_blocks(book: &Book) -> Vec<DetailBlock> {
+        let mut blocks = Vec::new();
+        if !book.summaries.is_empty() {
+            blocks.push(DetailBlock::Section("About"));
+            for summary in &book.summaries {
+                blocks.push(DetailBlock::Text(summary.clone()));
+            }
+        }
+        if !book.subjects.is_empty() {
+            blocks.push(DetailBlock::Section("Subjects"));
+            blocks.push(DetailBlock::Subjects(book.subjects.clone()));
+        }
+        blocks.push(DetailBlock::Section("Details"));
+        blocks.push(DetailBlock::Facts(detail_facts(book)));
+        blocks
+    }
+
+    /// Packs the blocks into pages that the renderer accepts.
+    ///
+    /// Each candidate is laid out by the engine that will draw it rather than
+    /// estimated: the alternative is a line-height guess that is right for one
+    /// typeface at one text scale, and wrong -- silently, by dropping the end
+    /// of the book -- for a reader who has made the type larger.
+    fn detail_pagination(
+        &self,
+        context: &Context,
+        book: &Book,
+        blocks: &[DetailBlock],
+    ) -> Vec<Vec<DetailBlock>> {
+        let mut pages: Vec<Vec<DetailBlock>> = Vec::new();
+        let mut current: Vec<DetailBlock> = Vec::new();
+        for block in blocks {
+            let mut candidate = current.clone();
+            candidate.push(block.clone());
+            if self.detail_fits(context, book, pages.is_empty(), &candidate) || current.is_empty() {
+                current = candidate;
+            } else {
+                pages.push(std::mem::take(&mut current));
+                current.push(block.clone());
+            }
+        }
+        pages.push(current);
+        // A section heading orphaned at the foot of a page is worse than a
+        // short page, and it happens whenever the block after it is the one
+        // that did not fit.
+        for index in 0..pages.len().saturating_sub(1) {
+            if matches!(pages[index].last(), Some(DetailBlock::Section(_))) {
+                let orphan = pages[index].pop().expect("just matched");
+                pages[index + 1].insert(0, orphan);
+            }
+        }
+        pages.retain(|page| !page.is_empty());
+        if pages.is_empty() {
+            pages.push(Vec::new());
+        }
+        pages
+    }
+
+    /// Whether the head of the book screen plus these blocks fits the panel.
+    fn detail_fits(
+        &self,
+        context: &Context,
+        book: &Book,
+        first_page: bool,
+        blocks: &[DetailBlock],
+    ) -> bool {
+        let mut screen = self.detail_head(book, first_page);
+        for block in blocks {
+            screen = block.add(screen);
+        }
+        screen
+            .build()
+            .diagnostics(&context.metrics(), &Chrome::with_back(true))
+            .issues
+            .iter()
+            .all(|issue| issue.severity != DiagnosticSeverity::Error)
+    }
+
+    /// Everything above the trailing material, which only page one carries.
+    fn detail_head(&self, book: &Book, first_page: bool) -> ScreenBuilder {
+        let screen = ScreenBuilder::new("gutenbird-book").top_bar(book.title.clone());
+        if !first_page {
+            return screen;
+        }
+        let screen = screen.hero(
+            book.picture,
+            DETAILS_COVER_MM,
+            book.title.clone(),
+            Some(book.author.clone()),
+            Vec::<(String, String)>::new(),
+        );
+        let screen = match &self.problem {
+            Some(problem) => screen.banner(BannerLevel::Attention, problem.clone()),
+            None => screen,
+        };
+        let screen = if self.is_kept(book) {
+            screen.secondary("Already on this device.")
+        } else {
+            screen
+        };
+        if book.text.is_some() {
+            screen.primary_button("read", "Read")
+        } else {
+            screen.secondary("Gutenberg has no plain text edition of this book.")
+        }
+    }
+
+    fn reading(&self, context: &Context) -> kobo_sdk::Screen {
         let title = self
             .open
             .and_then(|index| self.books.get(index))
             .map_or_else(|| "Reading".to_owned(), |book| book.title.clone());
         let Some(reader) = &self.reader else {
-            return ScreenBuilder::new("gutenbird-reading")
-                .reading(true)
-                .top_bar(title)
-                .activity("Downloading", None)
-                .build();
+            // No book built yet means the download is still on its way, and the
+            // download is shown on the book's own page under its cover rather
+            // than on a bare reading shell: fall back there so the bytes, and a
+            // failure, are said in one place.
+            return self.details(context);
         };
         reader.screen(&title)
     }
 
     fn ask_catalogue(&mut self, context: &mut Context, query: Option<&str>) {
-        let url = match query {
-            None => format!("{CATALOGUE}?sort=popular"),
-            Some(query) => format!("{CATALOGUE}?search={}", encode_query(query)),
+        let tail = match query {
+            None => "sort=popular".to_owned(),
+            Some(query) => format!("search={}", encode_query(query)),
         };
-        // A new search starts a new catalogue. Keeping the old `next` would
+        self.browse(context, &tail);
+    }
+
+    /// Searches for other books on one of a book's subjects.
+    ///
+    /// The way out of a book and into its kind, which the subjects were doing
+    /// nothing else in memory to earn. The heading is a value chosen by
+    /// Gutendex rather than typed here, so it is encoded on its way into the
+    /// URL exactly as a reader's own words are.
+    fn ask_topic(&mut self, context: &mut Context, subject: &str) {
+        self.query = Some(subject.to_owned());
+        self.browse(context, &format!("topic={}", encode_query(subject)));
+    }
+
+    /// Asks Gutendex for a fresh catalogue, narrowed to the current language.
+    ///
+    /// The scope is a `?languages=` code the reader chose on the search screen
+    /// and it rides on every query until they change it: a book found under
+    /// "English only" and its subject search are the same kind of thing, so
+    /// the second should not silently widen back to every language.
+    fn browse(&mut self, context: &mut Context, tail: &str) {
+        let mut url = format!("{CATALOGUE}?{tail}");
+        if let Some(scope) = self.scope.as_deref().filter(|scope| !scope.is_empty()) {
+            url.push_str("&languages=");
+            url.push_str(scope);
+        }
+        // A new query starts a new catalogue. Keeping the old `next` would
         // append the second page of "popular" to the results for "dickens".
         self.next = None;
         self.spawn_catalogue(context, url, Awaiting::Catalogue);
@@ -481,6 +871,77 @@ impl Gutenbird {
         }
     }
 
+    /// Records a search at the top of the recent list.
+    ///
+    /// The same term searched twice moves to the top rather than stacking a
+    /// second identical chip, and the list is capped: recent searches are a
+    /// shortcut, and a shortcut that grows without bound is a scroll.
+    fn push_recent(&mut self, term: &str) {
+        self.recent.retain(|held| held != term);
+        self.recent.insert(0, term.to_owned());
+        self.recent.truncate(MAX_RECENT);
+    }
+
+    /// The subject a `topic-N` chip stands for, on the open book.
+    ///
+    /// Resolved against the open book's own subjects rather than a stored
+    /// string, so a chip tapped after the book behind it has changed cannot
+    /// launch a search for a subject that book never had.
+    fn subject_for(&self, action: ActionId) -> Option<String> {
+        let book = self.open.and_then(|index| self.books.get(index))?;
+        book.subjects
+            .iter()
+            .enumerate()
+            .find(|(index, _)| action == action_id(&format!("topic-{index}")))
+            .map(|(_, subject)| subject.clone())
+    }
+
+    /// The chips that move between searches: clearing the line, a recent term,
+    /// a language scope, or one of the open book's subjects.
+    ///
+    /// Kept apart from the fixed controls in `on_action` because they are all
+    /// resolved against live state -- the recent list, the language table, the
+    /// open book -- rather than a fixed id, and folding them inline pushed that
+    /// one method past the length the linter allows. Returns whether it took
+    /// the action.
+    fn browse_action(&mut self, context: &mut Context, action: ActionId) -> bool {
+        if action == action_id("query-clear") {
+            // Empties the line without leaving the keyboard. The old way to
+            // start a query over was to close the search and open it again,
+            // which lost the language scope with it.
+            self.keyboard.clear();
+            self.show(context);
+            return true;
+        }
+        for index in 0..self.recent.len() {
+            if action == action_id(&format!("recent-{index}")) {
+                let term = self.recent[index].clone();
+                self.push_recent(&term);
+                self.query = Some(term.clone());
+                self.ask_catalogue(context, Some(&term));
+                self.view = View::Results;
+                self.show(context);
+                return true;
+            }
+        }
+        for (code, _) in LANGUAGES {
+            if action == action_id(&lang_action(code)) {
+                // The empty code is "everything", the one scope that carries no
+                // `?languages=` on the next query.
+                self.scope = (!code.is_empty()).then(|| (*code).to_owned());
+                self.show(context);
+                return true;
+            }
+        }
+        if let Some(subject) = self.subject_for(action) {
+            self.ask_topic(context, &subject);
+            self.view = View::Results;
+            self.show(context);
+            return true;
+        }
+        false
+    }
+
     /// Whether there is more catalogue to ask for.
     fn more_to_take(&self) -> bool {
         self.next.is_some() && self.books.len() < MAX_BOOKS
@@ -499,6 +960,26 @@ impl Gutenbird {
     fn want_covers(&mut self, context: &mut Context) {
         let first = self.shelf * SHELF_PAGE;
         self.wanted.clear();
+        // Gutenberg published no artwork for a good number of these. Set the
+        // title instead, now, rather than leaving a hole in the shelf that
+        // will never be filled by a request that is never going to be made.
+        let (cell_width, cell_height) = context.metrics().tile_body(TileShape::Portrait);
+        if let (Ok(cell_width), Ok(cell_height)) =
+            (u32::try_from(cell_width), u32::try_from(cell_height))
+        {
+            let coverless = self
+                .books
+                .iter()
+                .enumerate()
+                .skip(first)
+                .take(SHELF_PAGE)
+                .filter(|(_, book)| book.picture.is_none() && book.cover.is_none())
+                .map(|(index, _)| index)
+                .collect::<Vec<_>>();
+            for index in coverless {
+                self.set_a_cover(context, index, cell_width, cell_height);
+            }
+        }
         self.looking = self
             .books
             .iter()
@@ -622,8 +1103,15 @@ impl Gutenbird {
             return false;
         };
         let Ok(picture) = kobo_image::decode(bytes) else {
-            // A cover that will not decode is not worth telling the reader
-            // about: the tile keeps its glyph and the book is still readable.
+            // Set from type instead. Before this the tile kept its glyph, but
+            // the book's page drew the undecoded bytes as a near-black
+            // rectangle, and two of the ten books on the first shelf looked
+            // like books with very dark covers rather than books with none.
+            // Still false. The answer this returns is "were those bytes a
+            // cover", and it decides whether a cached blob that is not a
+            // picture is thrown away -- a typographic stand-in must not
+            // persuade the cache that rubbish was worth keeping.
+            self.set_a_cover(context, index, cell_width, cell_height);
             return false;
         };
         // Enlarging rather than merely shrinking: Gutenberg publishes covers at
@@ -640,6 +1128,40 @@ impl Gutenbird {
         let (width, height) = (picture.width(), picture.height());
         let Some(reference) = context.put_picture(handle, width, height, picture.into_grey())
         else {
+            return false;
+        };
+        if let Some(book) = self.books.get_mut(index) {
+            book.picture = Some(reference);
+        }
+        true
+    }
+
+    /// Sets a cover out of the book's own title, for a book that has none.
+    ///
+    /// Not a placeholder: it is what the book is called, framed, which is
+    /// nearer a real cover than any grey rectangle. The shelf then has one
+    /// shape rather than a grid with holes in it.
+    fn set_a_cover(
+        &mut self,
+        context: &mut Context,
+        index: usize,
+        width: u32,
+        height: u32,
+    ) -> bool {
+        let Some(book) = self.books.get(index) else {
+            return false;
+        };
+        let grey = kobo_sdk::typographic_cover(
+            &book.title,
+            (!book.author.is_empty()).then_some(book.author.as_str()),
+            width,
+            height,
+        );
+        if grey.is_empty() {
+            return false;
+        }
+        let handle = PictureHandle(u32::try_from(index).unwrap_or(0));
+        let Some(reference) = context.put_picture(handle, width, height, grey) else {
             return false;
         };
         if let Some(book) = self.books.get_mut(index) {
@@ -701,6 +1223,7 @@ impl Gutenbird {
                 download.start(context);
                 self.loading = Some(download);
                 self.problem = None;
+                self.failed = None;
                 return;
             }
         }
@@ -717,6 +1240,7 @@ impl Gutenbird {
             return;
         };
         self.problem = None;
+        self.failed = None;
         match context.spawn(Task::Fetch {
             url,
             offset: self.fetched,
@@ -740,11 +1264,20 @@ impl Gutenbird {
         });
         if left <= TOP_UP_PAGES {
             self.ask_text(context);
+            // Tell the open book the next piece is on its way, so its foot can
+            // say so rather than a page turn stalling in silence at the end of
+            // what has arrived.
+            if self.awaiting_text() {
+                if let Some(reader) = &mut self.reader {
+                    reader.expect_more(true);
+                }
+            }
         }
     }
 
     fn open_book(&mut self, context: &mut Context, index: usize) {
         self.open = Some(index);
+        self.detail_page = 0;
         self.view = View::Details;
         // A different book, so nothing about the last one survives.
         self.text.clear();
@@ -754,6 +1287,7 @@ impl Gutenbird {
         self.fetched = 0;
         self.complete = false;
         self.problem = None;
+        self.failed = None;
         if let Some((_, place)) = self.open_names() {
             // Asked now rather than when Read is tapped, so the position is
             // already here by the time the first page is.
@@ -884,6 +1418,7 @@ impl Gutenbird {
             None => self.problem = Some("Gutenberg's answer could not be read.".to_owned()),
             Some(value) => {
                 self.next = next_page(&value);
+                self.count = total_count(&value);
                 let taken = books_from(&value);
                 if more {
                     let room = MAX_BOOKS.saturating_sub(self.books.len());
@@ -1088,6 +1623,7 @@ impl KoboApp for Gutenbird {
                     if query.is_empty() {
                         self.view = View::Results;
                     } else {
+                        self.push_recent(&query);
                         self.query = Some(query.clone());
                         self.ask_catalogue(context, Some(&query));
                         self.view = View::Results;
@@ -1114,12 +1650,30 @@ impl KoboApp for Gutenbird {
             return;
         }
         if action == action_id("read") {
-            self.view = View::Reading;
+            // Stays on the book's own page rather than switching to a bare
+            // reading shell, so the cover and title keep the reader company
+            // while the bytes arrive. The switch to reading happens only once
+            // there is a book to show, when the text lands.
             self.get_text(context);
             self.show(context);
             return;
         }
+        if self.browse_action(context, action) {
+            return;
+        }
         if self.view == View::Reading && self.read_action(context, action) {
+            return;
+        }
+
+        if action == action_id("about-next") || action == action_id("about-back") {
+            if action == action_id("about-next") {
+                // Clamped when the screen is built, against a page count only
+                // the measurement knows, so this can count freely.
+                self.detail_page = self.detail_page.saturating_add(1);
+            } else {
+                self.detail_page = self.detail_page.saturating_sub(1);
+            }
+            self.show(context);
             return;
         }
 
@@ -1193,17 +1747,29 @@ impl KoboApp for Gutenbird {
                 }
                 Awaiting::Text => self.took_text(context, &bytes),
             },
-            TaskOutcome::Failed(error) => {
-                // Named rather than summarised. "Not found" and "the network
-                // could not be reached" call for completely different things
-                // from the reader.
-                self.problem = Some(format!("That did not work: {error}."));
-                // A book that failed to download must not be shown as if it
-                // had, and an empty reading screen is a dead end.
-                if awaiting == Awaiting::Text && self.text.is_empty() {
-                    self.view = View::Details;
+            TaskOutcome::Failed(error) => match awaiting {
+                Awaiting::Text => {
+                    // A download that stopped is said on the book's own page,
+                    // under the cover, with a way to try again -- not thrown
+                    // back to the list behind an Attention banner. The book the
+                    // reader chose stays in front of them the whole time.
+                    if self.text.is_empty() {
+                        self.failed = Some(format!("The download stopped: {error}."));
+                        self.view = View::Details;
+                    } else if let Some(reader) = &mut self.reader {
+                        // A top-up mid-book that failed is no longer on its
+                        // way, so the foot must stop promising it. The next
+                        // page turn asks again.
+                        reader.expect_more(false);
+                    }
                 }
-            }
+                Awaiting::Catalogue | Awaiting::MoreBooks => {
+                    // Named rather than summarised. "Not found" and "the
+                    // network could not be reached" call for completely
+                    // different things from the reader.
+                    self.problem = Some(format!("That did not work: {error}."));
+                }
+            },
             TaskOutcome::Cancelled => {
                 self.problem = Some("Cancelled.".to_owned());
             }
@@ -1436,9 +2002,59 @@ fn books_from(value: &kobo_json::Value) -> Vec<Book> {
                 text: plain_text_url(entry),
                 cover: cover_url(entry),
                 picture: None,
+                languages: string_array(entry, "languages"),
+                downloads: whole_number(entry, "download_count"),
+                id: whole_number(entry, "id"),
+                // `and_then` over `get` on purpose: an absent field and a JSON
+                // `null` both have to become `None`, because Gutendex writes
+                // `null` for a book whose rights it has not established and
+                // that is not the same as public domain.
+                copyright: entry.get("copyright").and_then(kobo_json::Value::as_bool),
+                summaries: string_array(entry, "summaries"),
+                subjects: string_array(entry, "subjects"),
             })
         })
         .collect()
+}
+
+/// The total Gutendex says the whole query holds, not just this page.
+///
+/// The reason a result screen can say "312 books" while showing thirty-two:
+/// the reader asked a question and this is the size of its answer, which is
+/// the one number the shelf itself cannot tell them.
+fn total_count(value: &kobo_json::Value) -> Option<u32> {
+    whole_number(value, "count")
+}
+
+/// Reads a non-negative whole number from a field, or nothing.
+///
+/// Gutendex numbers are counts and identifiers, never fractions, so a value
+/// that does not fit an unsigned integer is a malformed record rather than a
+/// number to round: it is dropped rather than truncated into a wrong count.
+fn whole_number(value: &kobo_json::Value, key: &str) -> Option<u32> {
+    value
+        .get(key)
+        .and_then(kobo_json::Value::as_i64)
+        .and_then(|number| u32::try_from(number).ok())
+}
+
+/// Collects a field that is an array of strings, in order.
+///
+/// Anything in the array that is not a string is skipped rather than made to
+/// stop the whole list: one odd entry in a book's subjects is not a reason to
+/// leave the reader with none of them.
+fn string_array(entry: &kobo_json::Value, key: &str) -> Vec<String> {
+    entry
+        .get(key)
+        .and_then(kobo_json::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(kobo_json::Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn authors_of(entry: &kobo_json::Value) -> String {
@@ -1504,6 +2120,117 @@ fn cover_url(entry: &kobo_json::Value) -> Option<String> {
         .map(|url| (*url).to_owned())
 }
 
+/// Groups a number into threes with commas.
+///
+/// Gutenberg's download counts run into the hundreds of thousands, and
+/// "307234" read off a panel is a wall of digits a reader has to count with a
+/// finger. The grouping is built a byte at a time from the decimal string
+/// rather than with floating point, because a count is an exact integer and
+/// dividing it through an `f64` to place the separators would be rounding a
+/// number that must never round.
+fn grouped(number: u32) -> String {
+    let digits = number.to_string();
+    let bytes = digits.as_bytes();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (index, byte) in bytes.iter().enumerate() {
+        if index > 0 && (bytes.len() - index) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(char::from(*byte));
+    }
+    out
+}
+
+/// Says how many books the whole answer holds, singular when it holds one.
+///
+/// "1 books" is the tell of a count glued to a fixed plural, and on a reading
+/// device that small wrongness reads as carelessness about the words. This is
+/// the only place the plural is decided, so it is decided once.
+fn count_books(count: u32) -> String {
+    if count == 1 {
+        "1 book".to_owned()
+    } else {
+        format!("{} books", grouped(count))
+    }
+}
+
+/// Turns a Gutendex language code into the label this application shows for it.
+///
+/// Only the codes in `LANGUAGES` have a name; everything else is shown as its
+/// raw code rather than guessed at. A book in Latin reads "la", not "Latin",
+/// because a name this list does not carry would be invented, and an invented
+/// fact on a details page is worse than a terse one.
+fn language_name(code: &str) -> String {
+    LANGUAGES
+        .iter()
+        .find(|(known, _)| *known == code)
+        .map_or_else(|| code.to_owned(), |(_, name)| (*name).to_owned())
+}
+
+/// The action id for a language chip, kept apart from the empty code.
+///
+/// The "everything" scope has no code, and `"lang-"` with nothing after it is
+/// the kind of empty-suffixed id that reads as a bug the first time it appears
+/// in a log. It gets a name of its own instead.
+fn lang_action(code: &str) -> String {
+    if code.is_empty() {
+        "lang-all".to_owned()
+    } else {
+        format!("lang-{code}")
+    }
+}
+
+/// The one-line summary under a search result's title.
+///
+/// A result is told apart by its words, not its cover, so the line carries the
+/// author and then only what Gutendex actually states: the primary language
+/// and the download count. Nothing here is a rate or a rank -- the count is a
+/// bare total, because a timeframe Gutendex does not supply would be a fact
+/// this application made up.
+fn row_summary(book: &Book) -> String {
+    let mut parts = vec![book.author.clone()];
+    if let Some(code) = book.languages.first() {
+        parts.push(language_name(code));
+    }
+    if let Some(count) = book.downloads {
+        parts.push(format!("{} downloads", grouped(count)));
+    }
+    parts.join(" · ")
+}
+
+/// The copyright field said in full, in the words it actually means.
+///
+/// Gutendex's `copyright` is about the USA and nowhere else, so it is never
+/// shortened to "Free": a book public domain in the USA can still be in
+/// copyright where the reader is standing. `None` is its own answer -- "the
+/// record does not say" is a third state, kept apart from a definite yes or no.
+fn rights_label(copyright: Option<bool>) -> &'static str {
+    match copyright {
+        Some(false) => "Public domain in the USA",
+        Some(true) => "Copyrighted in the USA",
+        None => "Rights status unavailable",
+    }
+}
+
+/// The flat facts for the details page, each of which needs no sentence.
+///
+/// Only the fields Gutendex actually sent: a download count when there is one,
+/// Gutenberg's own number, and the rights status, which is always said even
+/// when the record is silent because "unavailable" is itself the fact. No file
+/// size, no year, no reading time -- none of which Gutendex supplies, all of
+/// which would be invented to fill the row.
+fn detail_facts(book: &Book) -> Vec<(String, String)> {
+    let mut facts = Vec::new();
+    if let Some(count) = book.downloads {
+        facts.push(("Downloads".to_owned(), grouped(count)));
+    }
+    if let Some(id) = book.id {
+        facts.push(("Gutenberg ID".to_owned(), id.to_string()));
+    }
+    facts.push(("Rights".to_owned(), rights_label(book.copyright).to_owned()));
+    facts
+}
+
 fn main() -> ExitCode {
     match kobo_sdk::run("gutenbird", Gutenbird::default()) {
         Ok(()) => ExitCode::SUCCESS,
@@ -1517,9 +2244,10 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        books_from, encode_query, plain_text_url, readable, Awaiting, Gutenbird, Memory, Reader,
-        View, COVER_TRIES,
+        books_from, encode_query, plain_text_url, readable, Awaiting, Book, Gutenbird, Memory,
+        Reader, View, COVER_TRIES,
     };
+    use kobo_sdk::DiagnosticSeverity;
     use kobo_sdk::{action_id, AppRunner, Command, StoreRequest, StoreResult};
     use kobo_ui::{Chrome, LayoutKind, CLARA_BW_METRICS};
 
@@ -1617,6 +2345,12 @@ Please read this before you distribute or use this work.\n";
             {
                 "title": "Pride and Prejudice",
                 "authors": [{"name": "Austen, Jane"}],
+                "languages": ["en"],
+                "download_count": 74123,
+                "id": 1342,
+                "copyright": false,
+                "summaries": ["A classic of English literature."],
+                "subjects": ["England -- Fiction", "Courtship -- Fiction"],
                 "formats": {
                     "image/jpeg": "https://www.gutenberg.org/cache/epub/1342/pg1342.cover.medium.jpg",
                     "text/html": "https://www.gutenberg.org/ebooks/1342.html",
@@ -1885,7 +2619,7 @@ Please read this before you distribute or use this work.\n";
                 (reader.page_number(), reader.page().len())
             };
             let layout = application
-                .reading()
+                .reading(&kobo_sdk::Context::default())
                 .layout_with(&metrics, &Chrome::with_back(true));
             let drawn = layout
                 .nodes
@@ -1920,9 +2654,7 @@ Please read this before you distribute or use this work.\n";
                 .map(|index| super::Book {
                     title: format!("Book {index}"),
                     author: "Somebody".to_owned(),
-                    text: None,
-                    cover: None,
-                    picture: None,
+                    ..super::Book::default()
                 })
                 .collect(),
             ..Gutenbird::default()
@@ -1933,7 +2665,7 @@ Please read this before you distribute or use this work.\n";
         let tiles = layout
             .nodes
             .iter()
-            .filter(|node| matches!(node.kind, LayoutKind::Tile(_)))
+            .filter(|node| matches!(node.kind, LayoutKind::Tile(..)))
             .collect::<Vec<_>>();
         assert_eq!(
             tiles.len(),
@@ -1978,7 +2710,7 @@ Please read this before you distribute or use this work.\n";
             ..Gutenbird::default()
         };
         let layout = application
-            .reading()
+            .reading(&kobo_sdk::Context::default())
             .layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
         let controls = layout
             .nodes
@@ -2015,7 +2747,7 @@ Please read this before you distribute or use this work.\n";
             complete: true,
             ..Gutenbird::default()
         };
-        let screen = application.reading();
+        let screen = application.reading(&kobo_sdk::Context::default());
         let bar = screen.top_bar.as_ref().expect("a top bar");
         assert!(
             bar.actions
@@ -2036,8 +2768,10 @@ Please read this before you distribute or use this work.\n";
     }
 
     #[test]
-    fn a_failed_download_goes_back_to_the_book_rather_than_to_a_blank_page() {
-        // An empty reading screen has no text and no way to retry, which on a
+    fn a_failed_download_stays_on_the_book_with_a_way_to_try_again() {
+        // A download that stopped is said on the book's own page, under its
+        // cover, with a way to retry -- not thrown back to the list behind an
+        // Attention banner, and not onto an empty reading screen that on a
         // device whose only other control is "leave" is a dead end.
         let mut runner = AppRunner::new(Gutenbird {
             view: View::Reading,
@@ -2051,7 +2785,10 @@ Please read this before you distribute or use this work.\n";
             kobo_sdk::TaskOutcome::Failed(kobo_sdk::TaskError::Unreachable),
         );
         assert_eq!(runner.app_mut().view, View::Details);
-        assert!(runner.app_mut().problem.is_some());
+        assert!(runner.app_mut().failed.is_some());
+        // The failure is its own thing, kept apart from the "could not be
+        // read" problem banner above the cover.
+        assert!(runner.app_mut().problem.is_none());
     }
 
     #[test]
@@ -2309,5 +3046,188 @@ Please read this before you distribute or use this work.\n";
                 .any(|command| matches!(command, Command::Spawn { .. })),
             "something was fetched anyway"
         );
+    }
+
+    #[test]
+    fn a_count_is_grouped_and_pluralised_by_hand() {
+        // "1 books" and a wall of ungrouped digits are both the tell of a
+        // number glued to a format string, and on a reading device that small
+        // wrongness reads as carelessness.
+        assert_eq!(super::count_books(1), "1 book");
+        assert_eq!(super::count_books(24), "24 books");
+        assert_eq!(super::count_books(1_234), "1,234 books");
+        assert_eq!(super::grouped(74_123), "74,123");
+        assert_eq!(super::grouped(1_000_000), "1,000,000");
+    }
+
+    #[test]
+    fn the_rights_field_is_said_in_full_and_never_shortened_to_free() {
+        // The field is about the USA and nowhere else, and "unknown" is a
+        // third state a reader must be able to tell from a definite yes or no.
+        assert_eq!(super::rights_label(Some(false)), "Public domain in the USA");
+        assert_eq!(super::rights_label(Some(true)), "Copyrighted in the USA");
+        assert_eq!(super::rights_label(None), "Rights status unavailable");
+    }
+
+    #[test]
+    fn every_field_gutendex_sends_is_kept_for_the_details_page() {
+        // The whole Gutendex object used to sit unread in memory while the
+        // page showed a cover and two buttons over an empty half.
+        let book = &books_from(&parsed())[0];
+        assert_eq!(book.languages, vec!["en".to_owned()]);
+        assert_eq!(book.downloads, Some(74_123));
+        assert_eq!(book.id, Some(1342));
+        assert_eq!(book.copyright, Some(false));
+        assert_eq!(book.subjects.len(), 2);
+        assert!(!book.summaries.is_empty());
+        // A record with none of these still becomes a book, on the fields it
+        // does carry.
+        let bare = &books_from(&parsed())[1];
+        assert!(bare.downloads.is_none() && bare.id.is_none());
+        assert_eq!(
+            bare.copyright, None,
+            "an absent copyright is not a false one"
+        );
+    }
+
+    #[test]
+    fn a_result_count_is_surfaced_so_the_shape_of_the_answer_is_known() {
+        // Thirty rows read the same whether they are all there is or the first
+        // page of three hundred; the count is the one number the shelf cannot
+        // tell the reader itself.
+        let mut runner = AppRunner::new(Gutenbird::default());
+        answered(&mut runner, ANSWER, Awaiting::Catalogue);
+        assert_eq!(runner.app().count, Some(2));
+    }
+
+    #[test]
+    fn a_language_scope_rides_on_every_search_until_it_is_changed() {
+        // A book found under "English only" and the search that follows it are
+        // the same kind of thing, so the scope must not silently widen back.
+        let mut runner = AppRunner::new(Gutenbird::default());
+        runner.action(action_id("search"));
+        runner.action(action_id("lang-fr"));
+        for key in ["kb.r0c9", "kb.r1c0", "kb.r0c1"] {
+            runner.action(action_id(key));
+        }
+        let commands = runner.action(action_id("kb.enter"));
+        let asked = commands.iter().find_map(|command| match command {
+            Command::Spawn { work, .. } => Some(work.clone()),
+            _ => None,
+        });
+        let Some(kobo_sdk::Task::Fetch { url, .. }) = asked else {
+            panic!("no request was made");
+        };
+        assert!(url.contains("search=paw"), "asked for {url}");
+        assert!(
+            url.contains("&languages=fr"),
+            "the scope did not ride along: {url}"
+        );
+    }
+
+    #[test]
+    fn a_search_is_remembered_so_it_need_not_be_typed_twice() {
+        // The keyboard used to be the whole screen, and the same author
+        // searched twice was two full screenfuls of typing.
+        let mut runner = AppRunner::new(Gutenbird::default());
+        runner.action(action_id("search"));
+        for key in ["kb.r0c9", "kb.r1c0", "kb.r0c1"] {
+            runner.action(action_id(key));
+        }
+        runner.action(action_id("kb.enter"));
+        assert_eq!(runner.app().recent, vec!["paw".to_owned()]);
+    }
+
+    #[test]
+    fn a_download_runs_on_the_books_own_page_not_a_bare_screen() {
+        // The book the reader chose stays in front of them while its bytes
+        // arrive, rather than being replaced by a "Downloading" shell.
+        let mut runner = AppRunner::new(Gutenbird {
+            books: books_from(&parsed()),
+            ..Gutenbird::default()
+        });
+        runner.action(action_id("book-0"));
+        runner.action(action_id("read"));
+        assert_eq!(
+            runner.app().view,
+            View::Details,
+            "reading left the book page before there was a book to show"
+        );
+        assert!(runner.app().awaiting_text(), "the download was not started");
+    }
+
+    /// A summary is as long as whoever wrote it made it.
+    ///
+    /// The book page used to set the whole of it in one column with the
+    /// subjects and the facts below, which ran a page and a half past the
+    /// bottom of a Clara. The layout engine drops what does not fit without
+    /// saying anything, so nothing looked wrong: the subjects and every fact
+    /// about the book were simply not on the device.
+    ///
+    /// Built through a runner because the measurement is the test. Without one
+    /// the metrics come from the fallback bitmap face, whose lines are about
+    /// two thirds the height of the real ones, and a page that overflows the
+    /// panel measures as though it fits.
+    #[test]
+    fn a_book_with_a_long_summary_is_paged_rather_than_cut_off() {
+        let long = "\"Pride and Prejudice\" by Jane Austen is a novel published in 1813. \
+             It follows Elizabeth Bennet, who must learn to see past first impressions \
+             and hasty judgments. With five daughters and an estate that can only pass \
+             to male heirs, the Bennet family faces financial pressure to marry well. \
+             When wealthy Mr. Darcy arrives in their countryside neighborhood, his pride \
+             and Elizabeth's prejudice set the stage for misunderstandings, hidden \
+             truths, and unexpected revelations about character and love. (This is an \
+             automatically generated summary.)";
+        let book = Book {
+            title: "Pride and Prejudice".to_owned(),
+            author: "Austen, Jane".to_owned(),
+            text: Some("https://example.invalid/text".to_owned()),
+            downloads: Some(136_926),
+            id: Some(1342),
+            copyright: Some(false),
+            summaries: vec![long.to_owned()],
+            subjects: vec![
+                "Courtship -- Fiction".to_owned(),
+                "Domestic fiction".to_owned(),
+                "England -- Fiction".to_owned(),
+                "Love stories".to_owned(),
+                "Sisters -- Fiction".to_owned(),
+                "Social classes -- Fiction".to_owned(),
+                "Young women -- Fiction".to_owned(),
+            ],
+            ..Book::default()
+        };
+        let mut runner = AppRunner::new(Gutenbird {
+            view: View::Details,
+            books: vec![book],
+            open: Some(0),
+            complete: true,
+            ..Gutenbird::default()
+        });
+        let context = kobo_sdk::Context::default();
+        let blocks = Gutenbird::detail_blocks(&runner.app().books[0]);
+        let pages = {
+            let application = runner.app();
+            application.detail_pagination(&context, &application.books[0], &blocks)
+        };
+        assert!(
+            pages.len() > 1,
+            "a summary this long should have cost a page turn"
+        );
+        // Every block reaches the panel: nothing is lost to the paging.
+        let placed: usize = pages.iter().map(Vec::len).sum();
+        assert_eq!(placed, blocks.len(), "paging dropped part of the book");
+
+        for page in 0..pages.len() {
+            runner.app_mut().detail_page = page;
+            let screen = runner.app().details(&context);
+            let errors: Vec<_> = screen
+                .diagnostics(&context.metrics(), &Chrome::with_back(true))
+                .issues
+                .into_iter()
+                .filter(|issue| issue.severity == DiagnosticSeverity::Error)
+                .collect();
+            assert!(errors.is_empty(), "page {page} does not fit: {errors:?}");
+        }
     }
 }

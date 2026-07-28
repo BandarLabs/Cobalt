@@ -407,6 +407,43 @@ mod tests {
         assert!(Status::Ended(0).finished());
     }
 
+    /// A build that ran long enough to fill the panel still leaves the battery
+    /// on the screen.
+    ///
+    /// The device band -- clock, radio, battery -- is the runtime's, drawn
+    /// above the top bar, and it is withheld only from a reading screen. A
+    /// terminal is not a reading screen, so however much a build prints and
+    /// however long its title grows, the one reading the owner needs before
+    /// they walk away from a slow build must not be the thing that vanishes.
+    /// This lays the screen out with the band the daemon supplies and asserts
+    /// the battery is still there, rather than trusting that it is.
+    #[test]
+    fn a_long_build_cannot_hide_the_battery() {
+        let (mut runner, _commands) = started();
+        let _running = runner.shell_event(ShellEvent::Opened);
+        let commands = runner.shell_event(ShellEvent::Output(
+            b"compiling one crate after another for what feels like an age\r\n".repeat(64),
+        ));
+        let screen = screens(&commands)
+            .pop()
+            .expect("a build that prints redraws");
+        let status = kobo_ui::Status {
+            clock: "07:20".to_string(),
+            signal: kobo_ui::Signal::Fair,
+            battery: Some(kobo_ui::Percent::new(41)),
+            charging: false,
+        };
+        let chrome = Chrome::with_back(true).with_status(status);
+        let drawn = screen.layout_with(&CLARA_BW_METRICS, &chrome);
+        assert!(
+            drawn
+                .nodes
+                .iter()
+                .any(|node| matches!(node.kind, LayoutKind::StatusBattery(Some(_), _))),
+            "a long build took the battery reading off the panel"
+        );
+    }
+
     #[test]
     fn typed_bytes_are_what_a_terminal_expects() {
         // Guards the two encodings a shell notices immediately: return is a

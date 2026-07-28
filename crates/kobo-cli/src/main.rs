@@ -10,6 +10,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod connect;
 mod devsession;
+mod drive;
 mod menu;
 mod package;
 mod setup;
@@ -273,6 +274,10 @@ fn run(arguments: &[String]) -> Result<(), String> {
     match canonical(command) {
         "new" => create_app(arguments.get(1).ok_or("usage: kobo new <name>")?),
         "dev" => dev(&arguments[1..]),
+        "drive" => drive_command(&arguments[1..]),
+        "shot" => shot_command(&arguments[1..]),
+        #[cfg(feature = "device-write")]
+        "tap" => tap_command(&arguments[1..]),
         "build" => build_device(arguments.iter().any(|argument| is_device_flag(argument))),
         "doctor" => doctor(&arguments[1..]),
         "devices" => list_devices(&arguments[1..]),
@@ -1384,6 +1389,14 @@ enum RemoteProgram {
     /// The same read-only doctor binary, additionally watching touch for the
     /// given number of seconds.
     TouchProbe(u64),
+    /// The same read-only doctor binary, additionally copying the panel out.
+    Capture,
+    /// One synthetic tap at a point on the panel.
+    #[cfg(feature = "device-write")]
+    Tap {
+        x: u32,
+        y: u32,
+    },
     #[cfg(feature = "device-write")]
     Smoke(SmokeStage),
     #[cfg(feature = "device-write")]
@@ -1408,9 +1421,11 @@ impl RemoteArtifact {
             RemoteProgram::TouchProbe(seconds) => {
                 Duration::from_secs(seconds) + TOUCH_PROBE_OVERHEAD
             }
-            RemoteProgram::Doctor => REMOTE_COMMAND_TIMEOUT,
+            RemoteProgram::Doctor | RemoteProgram::Capture => REMOTE_COMMAND_TIMEOUT,
             #[cfg(feature = "device-write")]
-            RemoteProgram::Smoke(_) | RemoteProgram::Guard => REMOTE_COMMAND_TIMEOUT,
+            RemoteProgram::Smoke(_) | RemoteProgram::Guard | RemoteProgram::Tap { .. } => {
+                REMOTE_COMMAND_TIMEOUT
+            }
         }
     }
 }
@@ -1428,11 +1443,32 @@ impl RemoteArtifact {
         }
     }
 
+    fn capture() -> Self {
+        Self {
+            program: RemoteProgram::Capture,
+            label: "read-only screen capture",
+            ..Self::doctor()
+        }
+    }
+
     fn touch_probe(seconds: u64) -> Self {
         Self {
             program: RemoteProgram::TouchProbe(seconds),
             label: "read-only touch probe",
             ..Self::doctor()
+        }
+    }
+
+    #[cfg(feature = "device-write")]
+    fn tap(x: u32, y: u32) -> Self {
+        Self {
+            label: "synthetic tap",
+            directory_label: "kobo-tap",
+            binary_name: "kobo-tap",
+            local_binary: workspace_device_binary("kobo-tap"),
+            package: "kobo-tap",
+            features: Some("device-write"),
+            program: RemoteProgram::Tap { x, y },
         }
     }
 
@@ -1470,7 +1506,19 @@ struct RemoteArtifactSession {
     owner_token: String,
 }
 
+/// Runs a fixed artifact on the device and prints what it said.
 fn run_remote_fixed_artifact(host: &str, artifact: &RemoteArtifact) -> Result<(), String> {
+    let transcript = capture_remote_fixed_artifact(host, artifact)?;
+    print!("{transcript}");
+    Ok(())
+}
+
+/// The same, but handing the transcript back instead of printing it.
+///
+/// Split out for the screenshot, which arrives as two megabytes of base64 in
+/// the middle of the doctor's ordinary report. Printing that to a terminal
+/// would be a practical joke.
+fn capture_remote_fixed_artifact(host: &str, artifact: &RemoteArtifact) -> Result<String, String> {
     // Always rebuild from the pinned workspace. Uploading a binary that does not
     // match the source in front of the reviewer is exactly how a device ends up
     // running something nobody checked.
@@ -1506,8 +1554,7 @@ fn run_remote_fixed_artifact(host: &str, artifact: &RemoteArtifact) -> Result<()
     );
     match run_remote_shell(&remote, &script, artifact.timeout()) {
         Ok(output) if output.status.success() => {
-            print!("{}", String::from_utf8_lossy(&output.stdout));
-            Ok(())
+            Ok(String::from_utf8_lossy(&output.stdout).into_owned())
         }
         Ok(output) => {
             let cleanup = cleanup_remote_fixed_artifact(&remote, &session);
@@ -1602,6 +1649,10 @@ fn remote_fixed_artifact_script(
 ) -> String {
     let execution = match program {
         RemoteProgram::Doctor => "\"$bin\"".to_owned(),
+        // Read-only, like the doctor it is: it opens the framebuffer for
+        // reading and never grabs, refreshes or writes, so it is safe to point
+        // at a device with the stock reader in the foreground.
+        RemoteProgram::Capture => "KOBO_DOCTOR_CAPTURE=1 \"$bin\"".to_owned(),
         // Bounded twice: the observation window is enforced in the binary and
         // again by timeout, so a stuck read cannot hold the device.
         RemoteProgram::TouchProbe(seconds) => format!(
@@ -1624,6 +1675,16 @@ fn remote_fixed_artifact_script(
             stage.device_unlock()
         ),
         #[cfg(feature = "device-write")]
+        RemoteProgram::Tap { x, y } => format!(
+            "if [ -x /usr/bin/timeout ]; then\n\
+             \x20 KOBO_TAP_UNLOCK='OWNER_ATTENDED_SYNTHETIC_TOUCH' KOBO_TAP_POINT='{x},{y}' \
+             /usr/bin/timeout 20 \"$bin\"\n\
+             else\n\
+             \x20 echo 'BusyBox timeout is unavailable; refusing synthetic tap' >&2\n\
+             \x20 exit 1\n\
+             fi"
+        ),
+        #[cfg(feature = "device-write")]
         RemoteProgram::Guard => format!(
             "if [ -x /usr/bin/timeout ]; then\n\
              \x20 KOBO_GUARD_UNLOCK='OWNER_ATTENDED_GUARDED_SESSION' \
@@ -1637,13 +1698,15 @@ fn remote_fixed_artifact_script(
         ),
     };
     let checksum_error = match program {
-        RemoteProgram::Doctor | RemoteProgram::TouchProbe(_) => {
+        RemoteProgram::Doctor | RemoteProgram::TouchProbe(_) | RemoteProgram::Capture => {
             "uploaded doctor checksum does not match"
         }
         #[cfg(feature = "device-write")]
         RemoteProgram::Smoke(_) => "uploaded smoke checksum does not match",
         #[cfg(feature = "device-write")]
         RemoteProgram::Guard => "uploaded guard checksum does not match",
+        #[cfg(feature = "device-write")]
+        RemoteProgram::Tap { .. } => "uploaded tap checksum does not match",
     };
     format!(
         "set -eu\n\
@@ -3033,6 +3096,163 @@ where
     }
 }
 
+/// Drives a running simulator from a script, and brings the panel back as PNG.
+fn drive_command(arguments: &[String]) -> Result<(), String> {
+    let mut address = "127.0.0.1:8787".to_owned();
+    let mut shots = PathBuf::from("target/kobo-shots");
+    let mut script: Option<String> = None;
+    let mut steps: Vec<String> = Vec::new();
+    let mut ideal = false;
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--address" => {
+                address.clone_from(
+                    arguments
+                        .get(index + 1)
+                        .ok_or("--address needs host:port")?,
+                );
+                index += 1;
+            }
+            "--shots" => {
+                shots = PathBuf::from(arguments.get(index + 1).ok_or("--shots needs a folder")?);
+                index += 1;
+            }
+            "--script" => {
+                let path = arguments.get(index + 1).ok_or("--script needs a path")?;
+                script = Some(
+                    fs::read_to_string(path).map_err(|error| format!("read {path}: {error}"))?,
+                );
+                index += 1;
+            }
+            "--step" => {
+                steps.push(
+                    arguments
+                        .get(index + 1)
+                        .ok_or("--step needs a step")?
+                        .clone(),
+                );
+                index += 1;
+            }
+            "--ideal" => ideal = true,
+            other => return Err(format!("unknown option '{other}'\n{DRIVE_USAGE}")),
+        }
+        index += 1;
+    }
+    if script.is_none() && steps.is_empty() {
+        return Err(DRIVE_USAGE.to_owned());
+    }
+    let mut driver = drive::Driver::new(&address, &shots).ideal(ideal);
+    if let Some(script) = script {
+        driver.run_script(&script)?;
+    }
+    driver.run_script(&steps.join("\n"))?;
+    println!(
+        "drive: every step passed; screenshots in {}",
+        shots.display()
+    );
+    Ok(())
+}
+
+/// Taps the real glass at a point, so the whole input path is exercised.
+#[cfg(feature = "device-write")]
+fn tap_command(arguments: &[String]) -> Result<(), String> {
+    let mut host: Option<String> = None;
+    let mut point: Option<(u32, u32)> = None;
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--device" => {
+                let value = arguments.get(index + 1).ok_or("--device needs a host")?;
+                if !valid_device_host(value) {
+                    return Err(format!("'{value}' is not a usable device host"));
+                }
+                host = Some(value.clone());
+                index += 1;
+            }
+            other => {
+                let (x, y) = other
+                    .split_once(',')
+                    .ok_or_else(|| format!("expected 'x,y', got '{other}'\n{TAP_USAGE}"))?;
+                let x = x.trim().parse().map_err(|_| TAP_USAGE.to_owned())?;
+                let y = y.trim().parse().map_err(|_| TAP_USAGE.to_owned())?;
+                point = Some((x, y));
+            }
+        }
+        index += 1;
+    }
+    let host = host.ok_or_else(|| TAP_USAGE.to_owned())?;
+    let (x, y) = point.ok_or_else(|| TAP_USAGE.to_owned())?;
+    run_remote_fixed_artifact(&host, &RemoteArtifact::tap(x, y))
+}
+
+#[cfg(feature = "device-write")]
+const TAP_USAGE: &str = "usage: kobo tap --device HOST X,Y";
+
+/// Brings back a picture of whatever is on the panel right now.
+///
+/// Two sources, one command, because the question is the same either way:
+/// what does this actually look like. `--device` photographs the real e-ink
+/// panel over SSH; with no `--device` it takes the frame from a running
+/// simulator, which paints with the same renderer and the same refresh
+/// planner.
+fn shot_command(arguments: &[String]) -> Result<(), String> {
+    let mut host: Option<String> = None;
+    let mut address = "127.0.0.1:8787".to_owned();
+    let mut output = PathBuf::from("kobo-shot.png");
+    let mut ideal = false;
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--device" => {
+                let value = arguments.get(index + 1).ok_or("--device needs a host")?;
+                if !valid_device_host(value) {
+                    return Err(format!("'{value}' is not a usable device host"));
+                }
+                host = Some(value.clone());
+                index += 1;
+            }
+            "--address" => {
+                address.clone_from(
+                    arguments
+                        .get(index + 1)
+                        .ok_or("--address needs host:port")?,
+                );
+                index += 1;
+            }
+            "--out" => {
+                output = PathBuf::from(arguments.get(index + 1).ok_or("--out needs a path")?);
+                index += 1;
+            }
+            "--ideal" => ideal = true,
+            other => return Err(format!("unknown option '{other}'\n{SHOT_USAGE}")),
+        }
+        index += 1;
+    }
+    let (width, height, grey) = if let Some(host) = host {
+        let transcript = capture_remote_fixed_artifact(&host, &RemoteArtifact::capture())?;
+        drive::decode_capture(&transcript)?
+    } else {
+        let driver = drive::Driver::new(&address, Path::new(".")).ideal(ideal);
+        let (width, height) = drive::SIMULATED_PANEL;
+        (width, height, driver.frame()?)
+    };
+    let png = kobo_image::encode_png_grey(width, height, &grey)
+        .map_err(|error| format!("encode the panel: {error}"))?;
+    fs::write(&output, png).map_err(|error| format!("write {}: {error}", output.display()))?;
+    println!("shot {} ({width}x{height})", output.display());
+    Ok(())
+}
+
+const SHOT_USAGE: &str =
+    "usage: kobo shot [--device HOST | --address host:port] [--out PATH] [--ideal]";
+
+const DRIVE_USAGE: &str = "usage: kobo drive [--address host:port] [--shots DIR] [--ideal] \
+                           (--script PATH | --step 'tap Search' ...)\n\
+                           steps: tap LABEL | tap-at X,Y | type TEXT | shot NAME | expect TEXT\n\
+                           \u{20}       expect-missing TEXT | wait-for TEXT | clean | dump\n\
+                           \u{20}       lifecycle foreground|background | scenario NAME | wait MS";
+
 fn print_help() {
     println!(
         "Kobo application SDK\n\n\
@@ -3040,6 +3260,8 @@ fn print_help() {
          Commands:\n\
            new <name>             Create a Rust application\n\
            dev [--builtin] [address]  Run this SDK app in the browser simulator\n\
+           drive --script PATH    Drive a running simulator and save PNG screenshots\n\
+           shot [--device HOST]   Save a PNG of the panel (device or simulator)\n\
            build [--device]       Build host workspace or ARM safe doctor, disabled kobod, and sample app\n\
            doctor [--device IP]   Run read-only device diagnostics\n\
            devices [--subnet A.B.C]  Find every reader on the local network\n\

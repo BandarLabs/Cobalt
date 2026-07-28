@@ -305,7 +305,12 @@ pub fn age(now: i64, then: i64) -> String {
     }
 }
 
-/// The second line of a story row: score, author, replies, age.
+/// The second line of a story row: who, replies, age.
+///
+/// The score is not on this line any more. Four facts run together read as one
+/// long word, and the score, the thing a reader actually scans a list for, was
+/// the hardest of the four to find in the middle of it; it sits in its own
+/// column now (see [`score`]) where the eye can run straight down it.
 #[must_use]
 pub fn summary(story: &Story, now: i64) -> String {
     // The author is dropped for a link story and kept for a self-post. On a
@@ -314,11 +319,20 @@ pub fn summary(story: &Story, now: i64) -> String {
     // is the person being asked, so they are the whole point.
     let who = story.site.clone().unwrap_or_else(|| story.author.clone());
     format!(
-        "{who} \u{b7} {} \u{b7} {} \u{b7} {}",
-        plural(story.points, "point"),
+        "{who} \u{b7} {} \u{b7} {}",
         plural(story.comments, "comment"),
         age(now, story.created)
     )
+}
+
+/// The score, said the way the site says it, for the column at the row's edge.
+///
+/// A bare number would line up too, but a reader scanning down the margin has
+/// nothing to tell a score of 8 from a rank of 8 two columns over; the word is
+/// what says which number this is.
+#[must_use]
+pub fn score(story: &Story) -> String {
+    plural(story.points, "point")
 }
 
 /// `n thing`, or `n things`.
@@ -337,7 +351,7 @@ fn plural(count: u32, noun: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{age, host_of, item_from, summary, Item, MAX_COMMENTS, MAX_INDENT};
+    use super::{age, host_of, item_from, score, summary, Item, MAX_COMMENTS, MAX_INDENT};
 
     const STORY: &str = include_str!("../tests/item_story.json");
     const ASK: &str = include_str!("../tests/item_ask.json");
@@ -528,7 +542,7 @@ mod tests {
         );
         assert_eq!(
             summary(&item.story().expect("a row"), 0),
-            "a \u{b7} 1 point \u{b7} 1 comment \u{b7} just now"
+            "a \u{b7} 1 comment \u{b7} just now"
         );
     }
 
@@ -539,8 +553,22 @@ mod tests {
         let item = read(r#"{"id": 13, "type": "story", "title": "T"}"#);
         assert_eq!(
             summary(&item.story().expect("a row"), 0),
-            "[deleted] \u{b7} 0 points \u{b7} 0 comments \u{b7} just now"
+            "[deleted] \u{b7} 0 comments \u{b7} just now"
         );
+    }
+
+    #[test]
+    fn a_score_carries_its_own_word_so_the_column_is_not_bare_numbers() {
+        let one = read(
+            r#"{"id": 12, "type": "story", "title": "T", "by": "a",
+                            "score": 1, "descendants": 1, "time": 0}"#,
+        );
+        assert_eq!(score(&one.story().expect("a row")), "1 point");
+        let many = read(
+            r#"{"id": 12, "type": "story", "title": "T", "by": "a",
+                            "score": 342, "descendants": 1, "time": 0}"#,
+        );
+        assert_eq!(score(&many.story().expect("a row")), "342 points");
     }
 
     #[test]
