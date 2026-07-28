@@ -1352,6 +1352,16 @@ fn layout_status_band(status: &Status, metrics: &DisplayMetrics, layout: &mut La
     height
 }
 
+/// The size a screen's own title is set at, in the bar at the top.
+///
+/// Body, not [`FontSize::Title`]. The bar names the screen you are already
+/// looking at; it is a label, not a headline, and at title size it was the
+/// loudest thing on every page — louder than the first heading of the content
+/// beneath it. Kobo's own reader sets its bar at about the size of its body
+/// text for the same reason. An overlay's title keeps the larger size, because
+/// an overlay has no content above it to compete with.
+const BAR_TITLE: FontSize = FontSize::Body;
+
 fn layout_top_bar(
     top_bar: &TopBar,
     chrome: &Chrome,
@@ -1424,9 +1434,9 @@ fn layout_top_bar(
         id: top_bar.id,
         rect: Rect {
             x: title_x,
-            y: top + (height - FontSize::Title.line_height()) / 2,
+            y: top + (height - BAR_TITLE.line_height()) / 2,
             width: max(0, title_width),
-            height: FontSize::Title.line_height(),
+            height: BAR_TITLE.line_height(),
         },
         kind: LayoutKind::TopBarTitle,
         // One line only. A title that wraps is a title that is too long, and
@@ -1437,7 +1447,7 @@ fn layout_top_bar(
         // News thread titled "US citizen charged after GrapheneOS phone wipes
         // during airport search" appeared on the panel as "US citizen charged
         // after", which is a different and much worse sentence.
-        text_lines: vec![one_line(&top_bar.title, title_width, FontSize::Title)],
+        text_lines: vec![one_line(&top_bar.title, title_width, BAR_TITLE)],
     });
 
     layout.nodes.push(LayoutNode {
@@ -1451,7 +1461,15 @@ fn layout_top_bar(
         kind: LayoutKind::Divider,
         text_lines: Vec::new(),
     });
-    height.saturating_add(metrics.rule_thickness())
+    // Where the bar ends, not how tall it is. Returning the height was right
+    // only while nothing was ever placed above the bar: the caller assigns
+    // this to its cursor, so with a status band drawn the bar moved down by
+    // the band and the content did not, and the first row of a grid was laid
+    // out underneath the title. It never showed in simulation, because the
+    // simulator drew no band and a band of zero makes the two the same
+    // number.
+    top.saturating_add(height)
+        .saturating_add(metrics.rule_thickness())
 }
 
 /// Draws one control in the band a bottom bar would have occupied.
@@ -3137,6 +3155,15 @@ fn layout_node(
         Node::TileGrid { id, tiles, shape } => {
             let columns = metrics.grid_columns(*shape) as i32;
             let gutter = metrics.space(Space::Small);
+            // Rows are set tighter than columns, and deliberately so. A cell is
+            // taller than its mark — the glyph and its name are centred as a
+            // pair and the rest of the cell is air — so an equal gap on both
+            // axes reads as twice the space between rows that it does between
+            // columns. On the panel the grid sat a tight step below the top
+            // bar's rule and then twice that between its own rows, which made
+            // the second and third rows look detached from the first. This is
+            // the same step the grid itself begins after.
+            let row_gap = metrics.space(Space::Tight);
             let cell = (width - gutter * (columns - 1)) / columns;
             // The body, plus a band beneath for the label. A tile shorter than
             // it is wide reads as a button, not a destination.
@@ -3164,7 +3191,7 @@ fn layout_node(
                 let row = position as i32 / columns;
                 rows = row + 1;
                 let cell_x = x.saturating_add(column * (cell + gutter));
-                let cell_y = y.saturating_add(row * (cell_height + gutter));
+                let cell_y = y.saturating_add(row * (cell_height + row_gap));
                 layout.nodes.push(LayoutNode {
                     id: *id,
                     rect: Rect {
@@ -3231,7 +3258,7 @@ fn layout_node(
             let height = if rows == 0 {
                 0
             } else {
-                rows * cell_height + (rows - 1) * gutter
+                rows * cell_height + (rows - 1) * row_gap
             };
             layout.nodes[index].rect.height = height;
             y.saturating_add(height)
@@ -5213,7 +5240,8 @@ fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
         {
             FontSize::Heading
         }
-        LayoutKind::TopBarTitle | LayoutKind::OverlayTitle => FontSize::Title,
+        LayoutKind::TopBarTitle => BAR_TITLE,
+        LayoutKind::OverlayTitle => FontSize::Title,
         LayoutKind::Secondary
         | LayoutKind::RowSummary
         | LayoutKind::TileLabel
@@ -7371,6 +7399,24 @@ mod chrome_tests {
     }
 
     #[test]
+    fn the_bar_names_the_screen_without_shouting_over_it() {
+        // The bar says which screen you are on. It is a label, not a headline,
+        // and at title size it was the loudest thing on every page — larger
+        // than the first heading of the content underneath it, which inverts
+        // the hierarchy Kobo's own reader uses.
+        assert!(
+            layout_text_style(&LayoutNode {
+                id: NodeId(1),
+                rect: Rect::default(),
+                kind: LayoutKind::TopBarTitle,
+                text_lines: vec!["Cobalt".to_owned()],
+            })
+            .is_some_and(|(size, _)| size.tenth_mm() < FontSize::Title.tenth_mm()),
+            "the bar title is still set at title size"
+        );
+    }
+
+    #[test]
     fn back_is_absent_until_the_runtime_supplies_it() {
         let screen = Screen::new(1, Vec::new()).with_top_bar(TopBar::new(NodeId(1), "Settings"));
 
@@ -7445,8 +7491,11 @@ mod chrome_tests {
     #[test]
     fn a_title_that_would_wrap_is_truncated_rather_than_growing_the_bar() {
         // A bar that grows to fit its title moves every screen's content, so
-        // the title yields instead.
-        let long = "An extremely long screen title that could never fit across one line";
+        // the title yields instead. Long enough to overrun the widest panel at
+        // the bar's own size, which is body size and not title size: the first
+        // version of this title fitted once the bar stopped shouting.
+        let long = "An extremely long screen title that could never fit across one line of \
+                    any panel this system has ever been built for, however wide";
         let screen = Screen::new(1, Vec::new()).with_top_bar(TopBar::new(NodeId(1), long));
         for (name, metrics) in PANELS {
             let layout = screen.layout_for(&metrics);
@@ -7789,6 +7838,44 @@ mod tile_tests {
                 "{name}: {first_row} tiles on a row, budget is {}",
                 metrics.grid_columns(TileShape::Square)
             );
+        }
+    }
+
+    #[test]
+    fn tile_rows_sit_no_further_apart_than_the_grid_sits_below_the_bar() {
+        // A cell is much taller than the mark inside it, so a gap that is
+        // right between two columns reads as roughly twice as much air between
+        // two rows. On the panel the grid began one tight step under the top
+        // bar's rule and then left two of them between its own rows, and the
+        // second and third rows looked like a separate screen.
+        for (name, metrics) in PANELS {
+            let screen = grid(9).with_top_bar(TopBar::new(NodeId(9), "Cobalt"));
+            let layout = screen.layout_for(&metrics);
+            let mut tops = layout
+                .nodes
+                .iter()
+                .filter(|node| matches!(node.kind, LayoutKind::Tile(_)))
+                .map(|node| (node.rect.y, node.rect.height))
+                .collect::<Vec<_>>();
+            tops.sort_unstable();
+            tops.dedup();
+            let rule = layout
+                .nodes
+                .iter()
+                .find(|node| node.kind == LayoutKind::Divider)
+                .map(|node| node.rect.y + node.rect.height)
+                .expect("a rule under the bar");
+            let above = tops[0].0 - rule;
+            for pair in tops.windows(2) {
+                let [(top, height), (next, _)] = pair else {
+                    continue;
+                };
+                let between = next - (top + height);
+                assert!(
+                    between <= above,
+                    "{name}: {between}px between rows but only {above}px above the first"
+                );
+            }
         }
     }
 
@@ -8748,6 +8835,53 @@ mod prose_tests {
             after.y - before.y,
             band.height,
             "the title did not move with its bar"
+        );
+    }
+
+    #[test]
+    fn content_starts_below_the_band_rather_than_under_the_title() {
+        // The fault this rules out reached real hardware: the top bar moved
+        // down by the band and the content did not, so the launcher's first
+        // row of tiles was laid out underneath its own title. It could not be
+        // seen in simulation, because the simulator drew no band and a band of
+        // zero height makes the wrong arithmetic right.
+        let screen = Screen::new(
+            1,
+            vec![Node::Text {
+                id: NodeId(1),
+                text: "A paragraph the reader is meant to be able to read.".to_owned(),
+            }],
+        )
+        .with_top_bar(TopBar::new(NodeId(0), "Feeds"));
+        let banded = screen.layout_with(
+            &CLARA_BW_METRICS,
+            &Chrome::with_back(true).with_status(a_status()),
+        );
+        let find = |layout: &Layout, kind: LayoutKind| {
+            layout
+                .nodes
+                .iter()
+                .find(|node| node.kind == kind)
+                .map(|node| node.rect)
+        };
+        let bar = find(&banded, LayoutKind::TopBar).expect("the bar was laid out");
+        let rule = find(&banded, LayoutKind::Divider).expect("the rule under the bar");
+        let text = find(&banded, LayoutKind::Text).expect("the paragraph was laid out");
+        assert!(
+            text.y >= bar.y + bar.height,
+            "content at y={} was drawn inside a bar ending at y={}",
+            text.y,
+            bar.y + bar.height
+        );
+        assert!(
+            text.y >= rule.y + rule.height,
+            "content was drawn over the rule under the bar"
+        );
+        // And the whole content area, not just the first node in it: the page
+        // turn zones and every measurement of what fits are taken from this.
+        assert!(
+            banded.content.y >= bar.y + bar.height,
+            "the content area began inside the top bar"
         );
     }
 

@@ -264,7 +264,6 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
         return Err("first application message must be Hello".into());
     };
     println!("application connected: {name}");
-    let chrome = simulated_chrome(&name);
     kobo_protocol::write_to(
         &mut stream,
         &Frame {
@@ -277,7 +276,7 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
             },
         },
     )?;
-    serve_application(&mut stream, frame_path, &chrome, &name)
+    serve_application(&mut stream, frame_path, &name)
 }
 
 #[allow(
@@ -287,7 +286,6 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
 fn serve_application(
     stream: &mut UnixStream,
     frame_path: &Path,
-    chrome: &kobo_ui::Chrome,
     name: &str,
 ) -> Result<(), Box<dyn Error>> {
     // In simulation the daemon owns no hardware, so every hardware-touching
@@ -322,7 +320,10 @@ fn serve_application(
         let frame = kobo_protocol::read_from(stream)?;
         match frame.message {
             Message::SetScreen(screen) => {
-                write_screen(frame_path, screen, chrome, name, &pictures)?;
+                // Per screen, as the device does it: a book is drawn
+                // without a band and everything else with one.
+                let chrome = simulated_chrome(name, &screen);
+                write_screen(frame_path, screen, &chrome, name, &pictures)?;
             }
             Message::PutPicture {
                 handle,
@@ -505,8 +506,34 @@ fn deliver_outcomes(
 /// which a simulation running one application from a target directory has no
 /// equivalent of, so it goes by the name the application introduced itself
 /// with — the same name the launcher uses.
-fn simulated_chrome(name: &str) -> kobo_ui::Chrome {
-    kobo_ui::Chrome::with_back(name != HOME_APPLICATION)
+///
+/// The band is here for the same reason the way back is: the device draws one
+/// on every screen that is not a book, so a simulation without one is a
+/// simulation of a screen that does not exist. It was missing, and it hid a
+/// layout fault that put the first row of the launcher's grid underneath the
+/// title on real hardware while every frame rendered here looked right.
+fn simulated_chrome(name: &str, screen: &Screen) -> kobo_ui::Chrome {
+    let chrome = kobo_ui::Chrome::with_back(name != HOME_APPLICATION);
+    if screen.reading {
+        return chrome;
+    }
+    chrome.with_status(simulated_status())
+}
+
+/// Everything the band shows, invented and fixed.
+///
+/// Fixed rather than read from the host, because a frame that changes with the
+/// clock is a frame nobody can compare against the last one — and the point of
+/// the band being here is that it occupies the room it occupies, not that it
+/// says anything true. Deliberately not round numbers, so nobody mistakes a
+/// simulated reading for a real one.
+fn simulated_status() -> kobo_ui::Status {
+    kobo_ui::Status {
+        clock: "09:41".to_owned(),
+        signal: kobo_ui::Signal::Strong,
+        battery: Some(kobo_ui::Percent::new(72)),
+        charging: false,
+    }
 }
 
 /// The application that is home, and so has no way back to draw.
@@ -598,22 +625,50 @@ impl Drop for SocketGuard {
 #[cfg(test)]
 mod tests {
 
+    fn plain() -> kobo_ui::Screen {
+        kobo_ui::Screen::new(1, Vec::new())
+    }
+
+    fn book() -> kobo_ui::Screen {
+        let mut screen = plain();
+        screen.reading = true;
+        screen
+    }
+
     #[test]
     fn everything_but_the_home_screen_is_given_a_way_back() {
         // Without this the simulation drew every screen with no way back,
         // which is the one defect that leaves somebody stuck on a reader and
         // was the only part of a screen that could not be checked without one.
-        assert!(!super::simulated_chrome("launcher").back);
-        for name in ["rss", "hn", "gutenshelf", "todo", "terminal"] {
-            assert!(super::simulated_chrome(name).back, "{name} had no way back");
+        assert!(!super::simulated_chrome("launcher", &plain()).back);
+        for name in ["rss", "hn", "gutenbird", "todo", "terminal"] {
+            assert!(
+                super::simulated_chrome(name, &plain()).back,
+                "{name} had no way back"
+            );
         }
+    }
+
+    #[test]
+    fn simulation_draws_the_band_the_device_draws() {
+        // The simulator drew no band at all, so every frame checked here was a
+        // frame of a screen the device never shows -- and a band of zero
+        // height made a layout fault that only exists with one invisible. The
+        // launcher's first row of tiles was drawn underneath its own title on
+        // real hardware while this looked perfect.
+        assert!(super::simulated_chrome("rss", &plain()).status.is_some());
+        // Except over a book, which is where the device withholds it too.
+        assert!(super::simulated_chrome("gutenbird", &book())
+            .status
+            .is_none());
     }
 
     #[test]
     fn an_application_with_no_bar_of_its_own_is_given_one_to_go_back_from() {
         let bare = kobo_ui::Screen::new(1, Vec::new());
         assert!(bare.top_bar.is_none());
-        let fixed = kobo_ui::ensure_way_back(bare, &super::simulated_chrome("rss"), "Feeds");
+        let chrome = super::simulated_chrome("rss", &bare);
+        let fixed = kobo_ui::ensure_way_back(bare, &chrome, "Feeds");
         assert_eq!(
             fixed.top_bar.expect("a bar to hold the way back").title,
             "Feeds"
@@ -623,7 +678,8 @@ mod tests {
     #[test]
     fn the_home_screen_is_not_given_a_bar_it_did_not_ask_for() {
         let bare = kobo_ui::Screen::new(1, Vec::new());
-        let left = kobo_ui::ensure_way_back(bare, &super::simulated_chrome("launcher"), "Cobalt");
+        let chrome = super::simulated_chrome("launcher", &bare);
+        let left = kobo_ui::ensure_way_back(bare, &chrome, "Cobalt");
         assert!(left.top_bar.is_none());
     }
     use super::validate_simulation_paths;
