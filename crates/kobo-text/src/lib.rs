@@ -581,6 +581,82 @@ mod tests {
     use kobo_ui::TextScale;
 
     #[test]
+    fn a_shelf_of_tiles_never_reaches_the_page_position_under_it() {
+        // The same failure as the row test below, in the other node that
+        // draws more than one thing per line. A shelf of six portrait covers
+        // was measured against the panel before a page position took a band
+        // out from under it; the grid then drew its second row of captions
+        // through the "1 of 6" beneath them, on the device, with every test
+        // passing. Measured with the real face for the same reason.
+        let _ = install(kobo_ui::CLARA_BW_METRICS);
+        let books = [
+            ("Moby Dick; Or, The Whale", "Melville, Herman"),
+            ("Pride and Prejudice", "Austen, Jane"),
+            ("Romeo and Juliet", "Shakespeare, William"),
+            ("A Room with a View", "Forster, E. M."),
+            ("Crime and Punishment", "Dostoyevsky, Fyodor"),
+            ("Alice's Adventures in Wonderland", "Carroll, Lewis"),
+        ];
+        let tiles = books
+            .iter()
+            .enumerate()
+            .map(|(index, (title, author))| {
+                kobo_ui::Tile::new(
+                    kobo_ui::ActionId(index as u32 + 1),
+                    *title,
+                    kobo_ui::Glyph::Book,
+                )
+                .with_subtitle(*author)
+            })
+            .collect::<Vec<_>>();
+        let screen = kobo_ui::Screen::new(
+            1,
+            vec![kobo_ui::Node::TileGrid {
+                id: kobo_ui::NodeId(1),
+                tiles,
+                shape: kobo_ui::TileShape::Portrait,
+            }],
+        )
+        .with_top_bar(kobo_ui::TopBar::new(kobo_ui::NodeId(0), "Gutenbird"))
+        .with_page_turns(kobo_ui::ActionId(90), kobo_ui::ActionId(91));
+        let screen = kobo_ui::Screen {
+            page_turns: screen.page_turns.map(|turns| turns.with_position(1, 6)),
+            ..screen
+        };
+        // With the status bar the device actually draws. Without it the
+        // content starts high enough that the shelf fits and the test agrees
+        // with the bug, which is how this shipped.
+        let chrome = kobo_ui::Chrome::default().with_status(kobo_ui::Status {
+            clock: "20:36".to_string(),
+            signal: kobo_ui::Signal::Strong,
+            battery: Some(kobo_ui::Percent::new(74)),
+            charging: false,
+        });
+        let layout = screen.layout_with(&kobo_ui::CLARA_BW_METRICS, &chrome);
+        let position = layout
+            .nodes
+            .iter()
+            .find(|node| node.kind == kobo_ui::LayoutKind::PagePosition)
+            .expect("a page position");
+        let mut tiles_drawn = 0;
+        for node in &layout.nodes {
+            if matches!(node.kind, kobo_ui::LayoutKind::Tile(..)) {
+                tiles_drawn += 1;
+                assert!(
+                    node.rect.y + node.rect.height <= position.rect.y,
+                    "a tile ran to {}, under the page position at {}",
+                    node.rect.y + node.rect.height,
+                    position.rect.y
+                );
+            }
+        }
+        // Fitting by dropping the second row would also satisfy the assertion
+        // above and would be a worse shelf than the one that collided. The
+        // cell shrinks; the books stay.
+        assert_eq!(tiles_drawn, books.len(), "the shelf lost a book to fit");
+    }
+
+    #[test]
     fn a_paginated_page_of_rows_never_reaches_the_page_position_under_it() {
         // Measured with the real face, because the built-in bitmap
         // fallback wraps nothing like it and the page fits either way

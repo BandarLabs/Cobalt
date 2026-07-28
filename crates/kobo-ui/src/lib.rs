@@ -4705,6 +4705,32 @@ fn layout_node(
                 .clamp(1, 2) as i32;
             let label_band =
                 caption * (title_lines + i32::from(subtitled)) + metrics.space(Space::Tight);
+            // A cell's width is derived from the width the grid is given. Its
+            // height was derived from that width alone, which was right until
+            // something took a band out from under the content: a page
+            // position under a shelf of six covers left the grid 28 pixels
+            // short, and the grid drew the rows anyway, so the last row of
+            // captions and the "1 of 6" beneath it were printed through each
+            // other. A grid is a fixed set of cells on a panel that does not
+            // scroll, so the room it has vertically is as much a constraint on
+            // a cell as the room it has across.
+            //
+            // The label band is text and does not shrink; only the body does,
+            // and only as far as a mark that is still a target. Past that the
+            // rows that cannot fit are dropped, which is what every other node
+            // does when it runs out of panel.
+            let across = max_i32(1, columns);
+            let rows_needed = max_i32(1, (tiles.len() as i32 + across - 1) / across);
+            let room = bottom.saturating_sub(y);
+            let body = if rows_needed > 0 {
+                let per_cell = (room - row_gap * (rows_needed - 1)) / rows_needed;
+                body.min(max_i32(
+                    metrics.touch_target_minimum(),
+                    per_cell - label_band,
+                ))
+            } else {
+                body
+            };
             let cell_height = body.saturating_add(label_band);
             let index = layout.nodes.len();
             layout.nodes.push(LayoutNode {
@@ -4725,9 +4751,15 @@ fn layout_node(
                 }
                 let column = position as i32 % columns;
                 let row = position as i32 / columns;
-                rows = row + 1;
                 let cell_x = x.saturating_add(column * (cell + gutter));
                 let cell_y = y.saturating_add(row * (cell_height + row_gap));
+                // The clamp above fits the rows whenever a readable cell can
+                // fit them. When it cannot, the grid stops rather than drawing
+                // over whatever the band was reserved for.
+                if cell_y.saturating_add(cell_height) > bottom {
+                    break;
+                }
+                rows = row + 1;
                 layout.nodes.push(LayoutNode {
                     id: *id,
                     rect: Rect {
