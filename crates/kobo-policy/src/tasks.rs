@@ -780,7 +780,7 @@ mod tests {
 
     fn secret_dir(name: &str) -> PathBuf {
         let path = temp_root(&format!("secrets-{name}"));
-        let _ = std::fs::write(path.join("openai"), "sk-test-value\n");
+        let _ = std::fs::write(path.join("openai"), "not-a-real-key\n");
         path
     }
 
@@ -807,7 +807,7 @@ mod tests {
         }
         assert_eq!(
             secret(Some(&directory), "openai").as_deref(),
-            Some("sk-test-value")
+            Some("not-a-real-key")
         );
     }
 
@@ -868,7 +868,7 @@ mod tests {
             .with_capabilities([Capability::Network])
             .with_secrets(directory)
             .with_post(Arc::new(|_, _, _, credential, _, _| {
-                assert_eq!(credential, Some(("Authorization", "Bearer sk-test-value")));
+                assert_eq!(credential, Some(("Authorization", "Bearer not-a-real-key")));
                 Ok(b"{\"ok\":true}".to_vec())
             }));
         runner
@@ -890,7 +890,7 @@ mod tests {
         };
         let answer = String::from_utf8_lossy(bytes);
         assert_eq!(answer, "{\"ok\":true}");
-        assert!(!answer.contains("sk-test-value"));
+        assert!(!answer.contains("not-a-real-key"));
     }
 
     #[test]

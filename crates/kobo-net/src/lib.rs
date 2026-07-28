@@ -843,12 +843,12 @@ mod tests {
             &Method::Post {
                 body: b"{}",
                 content_type: "application/json",
-                credential: Some(("x-api-key", "sk-ant-secret")),
+                credential: Some(("x-api-key", "not-a-real-key")),
                 headers: &[("anthropic-version", "2023-06-01")],
             },
             1024,
         );
-        assert!(head.contains("x-api-key: sk-ant-secret\r\n"), "{head}");
+        assert!(head.contains("x-api-key: not-a-real-key\r\n"), "{head}");
         assert!(head.contains("anthropic-version: 2023-06-01\r\n"), "{head}");
         assert!(!head.contains('*'), "{head}");
         assert!(head.contains("Content-Length: 2\r\n"), "{head}");
