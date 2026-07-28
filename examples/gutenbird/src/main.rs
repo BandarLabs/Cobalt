@@ -24,8 +24,8 @@
 //! ## Why the book arrives in pieces
 //!
 //! The transport carries half a megabyte at most, and a Victorian novel is
-//! several times that. Rather than refusing long books — which is most of the
-//! interesting ones — this asks for the part it is about to need, using the
+//! several times that. Rather than refusing long books (which is most of the
+//! interesting ones) this asks for the part it is about to need, using the
 //! byte offset `Task::Fetch` carries. The first page therefore appears in
 //! about a second, and the next piece is fetched while there are still pages
 //! left to read.
@@ -266,7 +266,7 @@ impl Gutenbird {
     /// Covers deliberately do not count. They arrive one at a time and the
     /// slowest of them decided how long the loading screen stayed up, so a
     /// shelf whose books had already arrived sat behind "Fetching the most
-    /// popular books" until the last piece of artwork on the page resolved —
+    /// popular books" until the last piece of artwork on the page resolved,
     /// and a cover that fails is silent, so it looked like nothing was
     /// happening at all.
     fn awaiting_catalogue(&self) -> bool {
@@ -491,7 +491,7 @@ impl Gutenbird {
     ///
     /// Several at once, not one after another. The earlier version chained
     /// them to spend exactly one full refresh on the finished page, which is
-    /// the right instinct on a panel that flashes when it repaints — but six
+    /// the right instinct on a panel that flashes when it repaints, but six
     /// covers fetched end to end meant six round trips over a slow radio, and
     /// the shelf sat empty for the whole of it. Fetching in parallel and still
     /// painting only when a batch lands keeps the refresh count to two while
@@ -1218,8 +1218,8 @@ fn readable(raw: &str) -> String {
     for line in body.lines() {
         // Underscores are Gutenberg's italics and are not punctuation anybody
         // writes in a sentence, so they come out wherever they are. They are
-        // frequently misplaced against the spaces around them — `for_ Pride
-        // and Prejudice _unhesitatingly` — which is why matching them in pairs
+        // frequently misplaced against the spaces around them (`for_ Pride and
+        // Prejudice _unhesitatingly`) which is why matching them in pairs
         // would leave as many behind as it removed.
         let line = line.replace('_', "");
         // A run of spaces is a title page pretending to be a table. On a panel
@@ -1284,7 +1284,7 @@ fn marker_line(text: &str, marker: &str) -> Option<usize> {
 ///
 /// Bracket counted rather than matched line by line, because the caption
 /// regularly runs over several lines and can carry brackets of its own. An
-/// unclosed bracket — a truncated download, most likely — puts the text back
+/// unclosed bracket (a truncated download, most likely) puts the text back
 /// exactly as it was rather than swallowing the rest of the book.
 fn strip_illustrations(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -1425,10 +1425,10 @@ fn authors_of(entry: &kobo_json::Value) -> String {
 
 /// Picks the plain text edition, if there is one.
 ///
-/// Gutenberg spells the format several ways — with a UTF-8 charset, with an
-/// ASCII one, and with none — and also publishes zipped copies under names
-/// that begin the same way. Matching on the prefix and then rejecting archives
-/// is what covers all of it without listing every spelling.
+/// Gutenberg spells the format several ways (with a UTF-8 charset, with an
+/// ASCII one, and with none) and also publishes zipped copies under names that
+/// begin the same way. Matching on the prefix and then rejecting archives is
+/// what covers all of it without listing every spelling.
 fn plain_text_url(entry: &kobo_json::Value) -> Option<String> {
     let kobo_json::Value::Object(formats) = entry.get("formats")? else {
         return None;
@@ -1445,8 +1445,8 @@ fn plain_text_url(entry: &kobo_json::Value) -> Option<String> {
 
 /// Picks the cover artwork, if Gutenberg published one.
 ///
-/// Gutendex lists two sizes under the same `image/jpeg` type — a small
-/// thumbnail and a medium cover — so the URL is what distinguishes them. The
+/// Gutendex lists two sizes under the same `image/jpeg` type (a small
+/// thumbnail and a medium cover) so the URL is what distinguishes them. The
 /// medium one is around 190 by 300, which is a little over half a tile on this
 /// panel and the one worth enlarging; the small one is too coarse for it.
 fn cover_url(entry: &kobo_json::Value) -> Option<String> {

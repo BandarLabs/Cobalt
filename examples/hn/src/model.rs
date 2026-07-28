@@ -307,9 +307,9 @@ pub fn age(now: i64, then: i64) -> String {
 #[must_use]
 pub fn summary(story: &Story, now: i64) -> String {
     // The author is dropped for a link story and kept for a self-post. On a
-    // link the submitter is the least interesting fact on the line — the host
-    // is what tells a reader whether to bother — and on an Ask HN the
-    // submitter is the person being asked, so they are the whole point.
+    // link the submitter is the least interesting fact on the line (the host
+    // is what tells a reader whether to bother) and on an Ask HN the submitter
+    // is the person being asked, so they are the whole point.
     let who = story.site.clone().unwrap_or_else(|| story.author.clone());
     format!(
         "{who} \u{b7} {} \u{b7} {} \u{b7} {}",

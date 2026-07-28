@@ -24,7 +24,7 @@
 //! # Why the monospace face is embedded instead
 //!
 //! The same argument does not survive contact with the device. Of the 40-odd
-//! faces the firmware ships, **not one is monospaced** — checked, not assumed.
+//! faces the firmware ships, **not one is monospaced**, checked, not assumed.
 //! A character grid cannot be faked from a proportional face: forcing a common
 //! advance leaves `i` swimming in space and `m` touching its neighbours, and a
 //! terminal is precisely where column alignment carries meaning.
@@ -66,11 +66,11 @@ pub const DEVICE_FONT_CANDIDATES: &[&str] = &[
 /// `fonts/LICENSE-AtkinsonHyperlegible.txt`, which travels with it.
 ///
 /// It exists because the simulator used to fall back to whatever the developer
-/// happened to have installed — Verdana on a Mac, DejaVu on a Linux box — so
-/// two people previewing the same screen saw different line breaks, and
-/// neither saw the device's. A compiled-in face makes the preview identical
-/// everywhere and close to the panel. The device's own copy still wins when it
-/// is present, because that one is exact by definition.
+/// happened to have installed (Verdana on a Mac, DejaVu on a Linux box) so two
+/// people previewing the same screen saw different line breaks, and neither
+/// saw the device's. A compiled-in face makes the preview identical everywhere
+/// and close to the panel. The device's own copy still wins when it is
+/// present, because that one is exact by definition.
 pub const TEXT_FONT: &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Regular.ttf");
 
 /// Faces to look for for prose, best first.
@@ -81,11 +81,11 @@ pub const TEXT_FONT: &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Regul
 /// these is a serif drawn for continuous reading, and all of them are already
 /// on the device.
 ///
-/// KoboNickel leads because it is the face the reader's own software sets books
-/// in, so a book here looks like a book there. Bitter follows: a slab serif
-/// drawn specifically for screens, whose sturdy stems survive a panel that
-/// resolves few tones. Vollkorn is a classic book face and the last serif
-/// resort. Nothing is guessed — every path was listed off the device.
+/// KoboNickel leads because it is the face the reader's own software sets
+/// books in, so a book here looks like a book there. Bitter follows: a slab
+/// serif drawn specifically for screens, whose sturdy stems survive a panel
+/// that resolves few tones. Vollkorn is a classic book face and the last serif
+/// resort. Nothing is guessed, every path was listed off the device.
 ///
 /// If none is present the interface face is used, which is legible and merely
 /// not bookish.

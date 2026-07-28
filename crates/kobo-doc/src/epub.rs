@@ -6,7 +6,7 @@
 //! which files they are and what order to read them in:
 //!
 //! 1. `META-INF/container.xml`, at a fixed path, naming the package document.
-//! 2. The package document — the OPF — holding the metadata, a *manifest* of
+//! 2. The package document (the OPF) holding the metadata, a *manifest* of
 //!    every file with an identifier, and a *spine* of identifiers in reading
 //!    order.
 //!
@@ -112,7 +112,7 @@ pub fn parse(bytes: &[u8]) -> Result<Document, Fault> {
         let part = crate::html::parse(&text_of(&bytes));
         truncated |= part.truncated;
         if part.blocks.is_empty() {
-            // An empty file — a cover page holding only an image — should not
+            // An empty file (a cover page holding only an image) should not
             // leave a chapter break behind it with nothing on either side.
             continue;
         }
@@ -136,8 +136,8 @@ pub fn parse(bytes: &[u8]) -> Result<Document, Fault> {
 /// Finds the package document.
 ///
 /// The container names it. When the container is missing or says nothing
-/// usable — which happens, because it is the one file every tool assumes
-/// somebody else wrote — the archive is searched for the one file that ends in
+/// usable (which happens, because it is the one file every tool assumes
+/// somebody else wrote) the archive is searched for the one file that ends in
 /// `.opf`, which is what a person would do.
 // `Path::extension` is what the lint suggests, and it is wrong here: these are
 // zip member names, not paths on this machine, and on Windows `Path` would take
@@ -187,8 +187,8 @@ struct Package {
 impl Package {
     /// The identifiers to read, in order.
     ///
-    /// Entries marked `linear="no"` are outside the reading flow — a cover
-    /// page, a set of endnotes reached by a link — and are left out. But a
+    /// Entries marked `linear="no"` are outside the reading flow (a cover
+    /// page, a set of endnotes reached by a link) and are left out. But a
     /// book whose *every* entry is marked that way is a book somebody's tool
     /// mislabelled, and honouring the marking there yields nothing at all, so
     /// in that case the marking is ignored and the whole spine is read.
@@ -209,8 +209,8 @@ fn read_package(xml: &str) -> Package {
         manifest: BTreeMap::new(),
         spine: Vec::new(),
     };
-    // The same element names appear in more than one place — `<title>` is in
-    // the metadata and also in a `<guide>` reference — so the section matters.
+    // The same element names appear in more than one place (`<title>` is in
+    // the metadata and also in a `<guide>` reference) so the section matters.
     let mut in_metadata = false;
     for_each_element(xml, |name, inside, closing, before| {
         // A namespace prefix is chosen by whoever wrote the file. `dc:title`
@@ -290,7 +290,7 @@ fn for_each_element(xml: &str, mut visit: impl FnMut(&str, &str, bool, &str)) {
         };
         let inside = &tail[1..end];
         rest = &tail[end + 1..];
-        // A processing instruction — `<?xml … ?>` — is not an element.
+        // A processing instruction (`<?xml … ?>`) is not an element.
         if inside.starts_with('?') || inside.starts_with('!') {
             continue;
         }
@@ -368,8 +368,8 @@ fn unescape(path: &str) -> String {
 /// Reads a member's bytes as text.
 ///
 /// EPUB allows UTF-8 and UTF-16. UTF-16 is vanishingly rare and completely
-/// unreadable if guessed wrong — every character of the book comes out as a
-/// pair of wrong ones — so the byte-order mark is honoured where there is one.
+/// unreadable if guessed wrong (every character of the book comes out as a
+/// pair of wrong ones) so the byte-order mark is honoured where there is one.
 fn text_of(bytes: &[u8]) -> String {
     if let Some(body) = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]) {
         return String::from_utf8_lossy(body).into_owned();

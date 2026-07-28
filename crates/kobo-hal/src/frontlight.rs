@@ -21,8 +21,8 @@
 //!   reads 0 and stays 0.
 //!
 //! Picking by name would be picking for one device. Instead the aggregate is
-//! preferred where it exists and anything else is a fallback, and every path is
-//! checked for the files it needs before it is used — a Kobo that names its
+//! preferred where it exists and anything else is a fallback, and every path
+//! is checked for the files it needs before it is used, a Kobo that names its
 //! light something else still works, and one that publishes no light at all
 //! reports [`None`] so the caller can refuse the capability rather than
 //! pretending a write succeeded.

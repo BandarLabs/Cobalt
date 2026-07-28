@@ -78,8 +78,8 @@ pub type Poster = dyn Fn(&str, &[u8], &str, Option<(&str, &str)>, &[(&str, &str)
 ///
 /// `Authorization` is here even though a credential may legitimately go there:
 /// the runtime puts it on from a named secret, so an application setting it
-/// directly is either supplying its own key — which defeats the whole point of
-/// never letting an application hold one — or overwriting the runtime's.
+/// directly is either supplying its own key (which defeats the whole point of
+/// never letting an application hold one) or overwriting the runtime's.
 const RESERVED_HEADERS: &[&str] = &[
     "authorization",
     "host",
@@ -106,8 +106,8 @@ pub type Wake = dyn Fn() + Send + Sync;
 /// The longest a stored secret may be.
 ///
 /// Every credential these applications use is far shorter. A ceiling means a
-/// file that is not a secret at all — a log somebody dropped in the directory,
-/// a truncated download — is refused rather than sent to a server.
+/// file that is not a secret at all (a log somebody dropped in the directory,
+/// a truncated download) is refused rather than sent to a server.
 pub const MAX_SECRET_BYTES: usize = 4096;
 
 /// Runs application tasks under policy.

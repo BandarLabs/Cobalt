@@ -7,7 +7,7 @@
 //! Decoding is the one place in this project where bytes from a stranger are
 //! parsed by code nobody here wrote, so the caps below are not decoration. A
 //! JPEG header is a few bytes and can claim any size it likes; without a
-//! ceiling on the decoded pixel count a hostile — or merely enormous — image
+//! ceiling on the decoded pixel count a hostile (or merely enormous) image
 //! takes the reader's memory and, on a device with no swap and no fan, the
 //! reader with it.
 
@@ -24,8 +24,8 @@ pub const MAX_SOURCE_BYTES: usize = 4 * 1024 * 1024;
 
 /// The most pixels a picture may decode to, whatever its header claims.
 ///
-/// Four times the panel, so a source larger than the screen is still allowed —
-/// downscaling a big photograph is exactly what this is for — while a header
+/// Four times the panel, so a source larger than the screen is still allowed
+/// (downscaling a big photograph is exactly what this is for) while a header
 /// claiming forty thousand square is refused before a buffer is allocated.
 pub const MAX_PIXELS: u64 = 4 * 1072 * 1448;
 
@@ -411,8 +411,8 @@ pub fn decode(bytes: &[u8]) -> Result<Picture, ImageError> {
     // the panel has no colour left to show.
     //
     // Reduced to luminance before compositing rather than after, which is the
-    // same number — luminance is an affine combination whose weights sum to
-    // one, so compositing commutes with it — at half the peak memory. A source
+    // same number (luminance is an affine combination whose weights sum to
+    // one, so compositing commutes with it) at half the peak memory. A source
     // at `MAX_PIXELS` is twenty-five megabytes as RGBA and twelve as grey with
     // alpha, on a device with no swap.
     let luma = image.to_luma_alpha8();

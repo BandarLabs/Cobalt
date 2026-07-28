@@ -73,9 +73,9 @@ struct State {
     text: String,
     /// How many block quotations deep the events are.
     ///
-    /// A count rather than a flag because quotations nest, and a paragraph
-    /// two deep is still somebody else's words — the panel has one inset, so
-    /// the depth changes nothing about the drawing, but coming back out of the
+    /// A count rather than a flag because quotations nest, and a paragraph two
+    /// deep is still somebody else's words, the panel has one inset, so the
+    /// depth changes nothing about the drawing, but coming back out of the
     /// inner one must not end the outer.
     quoted: usize,
     /// Whether each open list is numbered, innermost last.

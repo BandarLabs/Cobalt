@@ -19,7 +19,7 @@
 //! The renderer picks its waveform from the pixels themselves, so an icon with
 //! grey edges is driven by the same sixteen-level update that draws the
 //! sentence beside it. What ghosts on E Ink is a *two-level* waveform crushing
-//! antialiased edges — that is a waveform choice, not an antialiasing one.
+//! antialiased edges, that is a waveform choice, not an antialiasing one.
 //!
 //! # Why applications cannot supply paths
 //!

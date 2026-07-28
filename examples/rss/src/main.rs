@@ -8,7 +8,7 @@
 //! Almost nobody knows the address of a site's feed. They know the address of
 //! the site. Turning one into the other means fetching the page, parsing its
 //! HTML, reading `<link rel="alternate">`, then trying `/feed`, `/rss.xml`,
-//! `/atom.xml` and a dozen more — several round trips over a radio that costs
+//! `/atom.xml` and a dozen more: several round trips over a radio that costs
 //! battery, and an HTML parser aimed at whole pages rather than fragments.
 //!
 //! [Feedsearch](https://feedsearch.dev) does that work once, server-side, and
@@ -24,8 +24,8 @@
 //! Because the feed is the readable copy. Most publishers put the whole post
 //! in `content:encoded`, and the ones that do not put a summary there. Either
 //! way it is prose with a little markup, which is exactly what an E Ink panel
-//! wants. Following the link instead would mean fetching a modern web page —
-//! a megabyte of layout, script and advertising wrapped around the same words
+//! wants. Following the link instead would mean fetching a modern web page, a
+//! megabyte of layout, script and advertising wrapped around the same words
 //! this application already has.
 //!
 //! ## Why subscriptions are stored and articles are not
@@ -48,7 +48,7 @@ use std::process::ExitCode;
 
 /// The most feeds one reader may follow.
 ///
-/// Not a storage limit — the whole list is one value of a few kilobytes. It is
+/// Not a storage limit, the whole list is one value of a few kilobytes. It is
 /// a limit on how long a list can get before finding anything in it means
 /// turning pages, at which point the application needs folders, and folders
 /// are a different application.
@@ -70,12 +70,12 @@ const SEARCH_BYTES: u32 = 128 * 1024;
 /// [`kobo_sdk::MAX_TASK_BYTES`].
 ///
 /// Past this the answer is truncated rather than refused, and what that costs
-/// depends on the format. A cut XML feed keeps every item that arrived whole —
-/// which is the recent ones, because feeds are written newest first — and that
+/// depends on the format. A cut XML feed keeps every item that arrived whole
+/// (which is the recent ones, because feeds are written newest first) and that
 /// is measured, not assumed. A cut JSON feed yields nothing at all: half a
 /// JSON document is not a JSON document, and there is no prefix of one to
-/// recover. So a feed that will not parse at exactly this length is reported as
-/// too large rather than as not a feed.
+/// recover. So a feed that will not parse at exactly this length is reported
+/// as too large rather than as not a feed.
 const FEED_BYTES: u32 = 512 * 1024;
 
 /// Whether an answer arrived at its budget, and so was probably cut short.
@@ -315,7 +315,7 @@ impl Feeds {
         // The attribution lives in the top bar rather than under the list.
         // Feedsearch's terms ask for it to be visible wherever their results
         // are shown, and anything in the flow below a full page of rows is the
-        // first thing the panel drops — silently, so the one element that is
+        // first thing the panel drops, silently, so the one element that is
         // not optional would be the one element missing. The bar is drawn
         // before the content and cannot be pushed off it.
         let mut screen = ScreenBuilder::new("rss-found").top_bar("Feeds via feedsearch.dev");
@@ -1118,8 +1118,8 @@ mod tests {
     ///
     /// Asserted against the layout rather than against the numbers that
     /// produced it. Rows are cut into pages by the runtime's own measurement,
-    /// but the things placed around them — the attribution the search service
-    /// requires, a keyboard, a nav bar — are placed by this application, and
+    /// but the things placed around them (the attribution the search service
+    /// requires, a keyboard, a nav bar) are placed by this application, and
     /// nothing but the layout makes the two agree. A screen that overflows
     /// loses its last element silently, and on hardware that reads as a
     /// missing button rather than as a bug.

@@ -34,9 +34,9 @@ pub struct Found {
 /// The address to fetch for a typed search.
 ///
 /// The favicon is declined explicitly. It is off by default today, but it
-/// arrives as a base64 data URI inside the JSON — tens of kilobytes per result
-/// for an image this application has nowhere to draw — and a default is a
-/// thing that can change.
+/// arrives as a base64 data URI inside the JSON (tens of kilobytes per result
+/// for an image this application has nowhere to draw) and a default is a thing
+/// that can change.
 #[must_use]
 pub fn request(typed: &str) -> String {
     format!("{ENDPOINT}?url={}&favicon=false", encode(typed.trim()))

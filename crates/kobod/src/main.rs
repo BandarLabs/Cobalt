@@ -303,7 +303,7 @@ fn serve_application(
     ));
     // Outcomes are delivered from their own thread. This loop blocks on the
     // application's socket, so draining after a message meant a request that
-    // took two seconds arrived only when the developer next tapped something —
+    // took two seconds arrived only when the developer next tapped something,
     // and an application that taps nothing while it waits, which is every
     // application that opens with a request, waited forever. Refusals were
     // instant, which is exactly why nothing noticed.
@@ -505,7 +505,7 @@ fn deliver_outcomes(
 /// opened from it and does. The panel runtime decides this by comparing paths,
 /// which a simulation running one application from a target directory has no
 /// equivalent of, so it goes by the name the application introduced itself
-/// with — the same name the launcher uses.
+/// with, the same name the launcher uses.
 ///
 /// The band is here for the same reason the way back is: the device draws one
 /// on every screen that is not a book, so a simulation without one is a
@@ -523,7 +523,7 @@ fn simulated_chrome(name: &str, screen: &Screen) -> kobo_ui::Chrome {
 /// Everything the band shows, invented and fixed.
 ///
 /// Fixed rather than read from the host, because a frame that changes with the
-/// clock is a frame nobody can compare against the last one — and the point of
+/// clock is a frame nobody can compare against the last one, and the point of
 /// the band being here is that it occupies the room it occupies, not that it
 /// says anything true. Deliberately not round numbers, so nobody mistakes a
 /// simulated reading for a real one.
@@ -554,7 +554,7 @@ fn write_screen(
     // preview drawn with different chrome is a preview of a screen that will
     // never exist. Rendering with &Chrome::default() here meant the way back
     // was the one part of every screen that could not be looked at without a
-    // reader — and it is the part that traps somebody when it is missing.
+    // reader, and it is the part that traps somebody when it is missing.
     let screen = kobo_ui::ensure_way_back(screen, chrome, name);
     let mut metrics = kobo_ui::display_metrics_from_env();
     if let Some(scale) = screen.text_scale {

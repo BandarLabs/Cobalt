@@ -83,7 +83,7 @@ const STATE_ROOT: &str = "/mnt/onboard/.adds/cobalt/state";
 const DATA_ROOT: &str = "/mnt/onboard/.adds/cobalt/data";
 /// The panel metrics a screen is drawn and hit-tested with.
 ///
-/// A screen may ask for a text size other than the reader's own — a reader
+/// A screen may ask for a text size other than the reader's own, a reader
 /// adjusting the size of a book is the case this exists for. Every place that
 /// lays this screen out has to agree, because layout is what decides where the
 /// controls are: rendering at one size and hit-testing at another moves every
@@ -446,11 +446,11 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     trace("session finished, handing the panel back");
     println!("session finished, handing the panel back");
 
-    // Teardown takes minutes in the worst case — the reader is given
-    // forty-five seconds to come back, the network thirty, and the freeze
-    // watchdog ninety more — and none of that runs the loop that normally
-    // reports progress. Without this the recovery watchdog would conclude the
-    // runtime had died and restart a reader that is already starting.
+    // Teardown takes minutes in the worst case (the reader is given forty-five
+    // seconds to come back, the network thirty, and the freeze watchdog ninety
+    // more) and none of that runs the loop that normally reports progress.
+    // Without this the recovery watchdog would conclude the runtime had died
+    // and restart a reader that is already starting.
     let teardown = KeepBeating::start(&watchdog);
     // Reverse order, on every path.
     let restored = restore_screen(&display, &backup, whole_screen);
@@ -677,8 +677,8 @@ fn host_applications(
         }
     }
     // A guard rather than a line at the end of the loop, because the loop has
-    // several exits — the session clock, an idle reader, a failed write to an
-    // application — and a front light left bright by whichever path was taken
+    // several exits (the session clock, an idle reader, a failed write to an
+    // application) and a front light left bright by whichever path was taken
     // is exactly the kind of change a reboot should not have to fix.
     let _restore_light = FrontlightGuard(frontlight.clone());
     // Deliberately already stale, so the first read an application makes is a
@@ -840,15 +840,15 @@ fn host_applications(
                         || Chrome::with_back(!at_home),
                         |screen| chrome_for(screen, at_home, &mut status),
                     );
-                    // A control shows that it has been touched, before anything
-                    // it does can be seen. Without this the panel is simply
-                    // still for as long as the application takes to answer —
-                    // which for anything that reaches the network is seconds —
-                    // and the reader, given no evidence their finger landed,
-                    // reasonably concludes it did not and taps again. Drawn by
-                    // inverting the finished surface, so the planner sees a
-                    // change of pure black and white in one small rectangle and
-                    // picks the fast waveform for it.
+                    // A control shows that it has been touched, before
+                    // anything it does can be seen. Without this the panel is
+                    // simply still for as long as the application takes to
+                    // answer (which for anything that reaches the network is
+                    // seconds) and the reader, given no evidence their finger
+                    // landed, reasonably concludes it did not and taps again.
+                    // Drawn by inverting the finished surface, so the planner
+                    // sees a change of pure black and white in one small
+                    // rectangle and picks the fast waveform for it.
                     if let Some(current) = screen.as_ref() {
                         match event {
                             TouchEvent::Down { x, y } => {
@@ -1612,7 +1612,7 @@ enum Tap {
 /// Going back is the runtime's affordance, not the application's: an
 /// application cannot draw it and cannot remove it, which is what makes it
 /// reliable enough to be the way out of anything. A screen may ask for first
-/// refusal on it — see [`Screen::owns_back`] — so that a screen reached from
+/// refusal on it (see [`Screen::owns_back`]) so that a screen reached from
 /// inside an application goes back to where it was reached from rather than
 /// out of the application. That is a delivery, not a transfer of ownership:
 /// the caller still leaves if no new screen follows.
@@ -1782,8 +1782,8 @@ fn pump_touch(touch: &mut TouchSession, sink: &TouchSink) {
 /// records a number; this thread is what carries it into the loop. Polling is
 /// the right shape here despite the comment on [`Event`] about staying asleep:
 /// a tenth of a second of an idle thread costs nothing measurable next to the
-/// panel, and the alternative — a self pipe — buys latency that a session
-/// giving four pieces of hardware back cannot use.
+/// panel, and the alternative (a self pipe) buys latency that a session giving
+/// four pieces of hardware back cannot use.
 ///
 /// The thread ends when it has delivered, and otherwise when the process does,
 /// which is immediately after the one session this process ever runs.

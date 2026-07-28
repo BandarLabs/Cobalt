@@ -96,9 +96,9 @@ pub struct Suspended {
 /// Sixty-eight seconds after the reader was stopped, and then ten more, which
 /// is precisely the `QProcess::waitForFinished(10000)` in `SickelService::
 /// reboot`. So the timer was running again despite the suspension. Something
-/// restarts it — the likeliest candidate is the reader itself calling `Resume`
+/// restarts it (the likeliest candidate is the reader itself calling `Resume`
 /// on its way out, since `Suspend` is not reference counted and the reader has
-/// no idea somebody else suspended it — and no amount of reading the
+/// no idea somebody else suspended it) and no amount of reading the
 /// disassembly makes a one-shot call safe against that.
 ///
 /// The reader solves the same problem by pinging every five seconds rather than
@@ -340,8 +340,8 @@ fn call(session_bus: &str, method: &str) -> Result<(), String> {
         .arg("--session")
         // Without this `dbus-send` marks the message as expecting no reply and
         // exits zero the moment it has been written to the socket. Every way
-        // the call can actually be refused — wrong service, wrong path, wrong
-        // interface, a policy denial — then looks exactly like success, which
+        // the call can actually be refused (wrong service, wrong path, wrong
+        // interface, a policy denial) then looks exactly like success, which
         // is how a watchdog everybody believed was suspended went on rebooting
         // the device. A method that returns nothing still returns a reply.
         .arg("--print-reply")

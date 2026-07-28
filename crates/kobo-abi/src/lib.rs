@@ -16,7 +16,7 @@ use std::path::Path;
 /// # Why anything needs to ask
 ///
 /// Cobalt's own data shares a partition with `KoboReader.sqlite`, which is the
-/// stock reader's entire library — every book, every bookmark, every position.
+/// stock reader's entire library, every book, every bookmark, every position.
 /// A database that cannot write is a library that comes back empty, and the
 /// reader has no way to know that the thing which filled the card was us. So
 /// anything that writes something large asks first and leaves a margin.
@@ -206,9 +206,9 @@ pub mod process {
 /// to two minutes. That is indistinguishable from a brick to the person holding
 /// it, which is the one impression this project exists to avoid.
 ///
-/// The handler does exactly one async-signal-safe thing — a relaxed atomic
-/// store — and everything else happens on the session loop, which already
-/// wakes on a timer.
+/// The handler does exactly one async-signal-safe thing (a relaxed atomic
+/// store) and everything else happens on the session loop, which already wakes
+/// on a timer.
 pub mod stop {
     use super::{c_int, io};
     use std::sync::atomic::{AtomicI32, Ordering};

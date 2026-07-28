@@ -1,6 +1,6 @@
 //! Hacker News, on a panel with no scrollbar and no keyboard.
 //!
-//! Four tabs along the bottom — Top, New, Ask, Show — and a comment thread
+//! Four tabs along the bottom (Top, New, Ask, Show) and a comment thread
 //! behind every story. Nothing animates, nothing scrolls, and nothing moves
 //! under a finger that is already reaching for it.
 //!
@@ -15,15 +15,15 @@
 //!
 //! ## What happens to a thread that does not fit
 //!
-//! The transport carries half a megabyte — `MAX_TASK_BYTES_U32` in
-//! `kobo-protocol`, well under the 1 MiB `MAX_FRAME_LEN` that carries it — and
+//! The transport carries half a megabyte (`MAX_TASK_BYTES_U32` in
+//! `kobo-protocol`, well under the 1 MiB `MAX_FRAME_LEN` that carries it) and
 //! a busy thread is comfortably more. A real one measured while writing this
 //! was 734 KB for 925 comments. Algolia ignores `Range`, so the trick that
 //! lets Gutenbird read a novel in pieces does not work here: asking for the
 //! second half returns the whole document again and the ceiling rejects it.
 //!
 //! So the request comes back [`TaskError::TooLarge`], and rather than showing
-//! a dead end this asks a different question — `search_by_date` over that
+//! a dead end this asks a different question, `search_by_date` over that
 //! story's comments, thirty at a time, which is bounded by construction. The
 //! nesting is gone in that answer, so the screen *says* the nesting is gone.
 //! What never happens is a thread that silently stops halfway, or one that
@@ -159,8 +159,8 @@ impl Tab {
     /// Hacker News' own list for this tab: item numbers, in the site's order.
     ///
     /// This is the whole reason the application talks to two services. These
-    /// four endpoints are the pages themselves — `topstories` *is* the front
-    /// page, `askstories` *is* Ask HN — so there is no ranking to approximate
+    /// four endpoints are the pages themselves (`topstories` *is* the front
+    /// page, `askstories` *is* Ask HN) so there is no ranking to approximate
     /// and no recency window to guess at. The previous version asked Algolia's
     /// ranked search instead, and Algolia ranks over all of Hacker News
     /// forever, so Ask HN opened on a question from 2013.
@@ -330,9 +330,9 @@ impl Hn {
             ))
         });
         // Tapping the side of the panel turns the page, which is how every
-        // Kobo has always worked. The bottom bar is spent on the tabs — those
-        // are places, and places outrank controls for that bar — so the
-        // visible page control is the one action the top bar allows.
+        // Kobo has always worked. The bottom bar is spent on the tabs (those
+        // are places, and places outrank controls for that bar) so the visible
+        // page control is the one action the top bar allows.
         self.with_tabs(screen.rows(rows).page_turns("list-back", "list-next"))
             .build()
     }
@@ -430,8 +430,8 @@ impl Hn {
     ///
     /// Built as prose rather than as nodes so that the runtime's own wrapping
     /// and line height decide where the folds are. Anything drawn outside this
-    /// — a banner, say — is not measured, and on this panel what is not
-    /// measured is what silently falls off the bottom.
+    /// (a banner, say) is not measured, and on this panel what is not measured
+    /// is what silently falls off the bottom.
     ///
     /// Depth travels with each paragraph because an indented paragraph has a
     /// narrower measure: a thread paginated flat and then drawn indented would

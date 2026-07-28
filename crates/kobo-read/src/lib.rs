@@ -8,8 +8,8 @@
 //! made has had to learn this, and the ones that got it wrong are the ones
 //! that lose your place when you change the font.
 //!
-//! So everything remembered here — where you are, what you marked, what you
-//! bookmarked — is a [`Locator`], which is an index into the parsed document.
+//! So everything remembered here (where you are, what you marked, what you
+//! bookmarked) is a [`Locator`], which is an index into the parsed document.
 //! Pages are derived from the document and the current type size, and are
 //! thrown away and rebuilt whenever either changes. Changing the type size
 //! repaginates and then goes back to the block that was at the top of the
@@ -21,7 +21,7 @@
 //! string and a string has no structure. A book does: a chapter heading is
 //! larger, a list item is indented, and each of those is a different height.
 //! Measuring them all as body text puts the last lines of a page below the
-//! bottom of the panel — the layout engine drops whatever does not fit,
+//! bottom of the panel: the layout engine drops whatever does not fit,
 //! silently, and the reader sees a page that stops mid-sentence.
 //!
 //! # Why a highlight is drawn as a quote
@@ -30,8 +30,8 @@
 //! a phrase needs a cursor a finger cannot place on a display that takes most
 //! of a second to repaint. So the unit of highlighting is the paragraph, which
 //! is what a tap can address, and a highlighted paragraph is set as a
-//! depth-one quote — indented, with a rule down the left. That is what a
-//! marked passage looks like in a printed book, it needs nothing new from the
+//! depth-one quote, indented, with a rule down the left. That is what a marked
+//! passage looks like in a printed book, it needs nothing new from the
 //! renderer, and because the paragraph is *paginated* at that depth as well,
 //! marking one never pushes the foot of the page off the bottom.
 
@@ -50,7 +50,7 @@ use kobo_ui::{quote_offsets, wrap_text_in, DisplayMetrics, Face, FontSize, Prose
 pub type Locator = u32;
 
 /// The depth a highlight's rule is set in. One, because a highlight is not a
-/// reply to anything — it just needs a margin to put the mark in.
+/// reply to anything, it just needs a margin to put the mark in.
 const HIGHLIGHT_DEPTH: u8 = 1;
 
 /// The fewest lines of a paragraph worth leaving by itself at a page edge.
@@ -164,7 +164,7 @@ impl Memory {
     /// A line per field, not a struct dump. It is readable over the shell when
     /// somebody reports having lost their place, it survives a field being
     /// added, and a line that cannot be understood costs one field rather than
-    /// the whole record — which matters, because the alternative to a partly
+    /// the whole record, which matters, because the alternative to a partly
     /// understood record is a book that reopens at page one.
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
@@ -325,8 +325,8 @@ impl Reader {
     /// The page a block lands on.
     ///
     /// Never a panic and never page one for want of an answer: both lose a
-    /// reader's place in a way they cannot undo. A block past the end — a
-    /// re-download of a shorter edition, say — falls back to the nearest
+    /// reader's place in a way they cannot undo. A block past the end (a
+    /// re-download of a shorter edition, say) falls back to the nearest
     /// earlier one.
     fn page_holding(&self, block: Locator) -> usize {
         self.pages

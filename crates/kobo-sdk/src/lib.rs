@@ -459,9 +459,9 @@ impl ScreenBuilder {
     /// Adds the one control the screen exists for, drawn filled.
     ///
     /// At most one per screen. A fill is the loudest mark this panel can make
-    /// and the slowest to clear, so spending it on every control — which is
-    /// what the platform used to do — leaves the reader with nothing to aim
-    /// at and the panel with a slab to erase.
+    /// and the slowest to clear, so spending it on every control (which is
+    /// what the platform used to do) leaves the reader with nothing to aim at
+    /// and the panel with a slab to erase.
     #[must_use]
     pub fn primary_button(mut self, name: impl AsRef<str>, label: impl Into<String>) -> Self {
         let action = self.register(name.as_ref());
@@ -590,8 +590,8 @@ impl ScreenBuilder {
 
     /// Says this screen's text is a book rather than an interface.
     ///
-    /// Sets prose in a serif drawn for continuous reading — the device's own
-    /// reading face where it has one — and opens the lines to the measure books
+    /// Sets prose in a serif drawn for continuous reading (the device's own
+    /// reading face where it has one) and opens the lines to the measure books
     /// have always used. For the pages of a reader and nothing else: the
     /// interface face is chosen so a label glanced at once cannot be misread,
     /// which is a different problem with a different answer.
@@ -700,7 +700,7 @@ impl ScreenBuilder {
     /// Adds the fixed bar at the bottom of the screen.
     ///
     /// `selected` takes an index or `None`. `None` is for a bar whose entries
-    /// are actions rather than places — page back, page forward, the way out —
+    /// are actions rather than places (page back, page forward, the way out)
     /// where marking any of them as current would tell the reader they are
     /// somewhere they are not.
     #[must_use]
@@ -731,7 +731,7 @@ impl ScreenBuilder {
     /// nothing, and the launcher shipped with its way back to the Kobo reader
     /// hanging over the bottom edge of the screen because of it.
     ///
-    /// Mutually exclusive with [`Self::nav_bar`] — they are the same band.
+    /// Mutually exclusive with [`Self::nav_bar`], they are the same band.
     #[must_use]
     pub fn bottom_action(mut self, name: impl AsRef<str>, label: impl Into<String>) -> Self {
         let id = self.next_id();
@@ -1328,8 +1328,8 @@ impl Context {
 
     /// `text` cut to at most `lines` lines of a list row.
     ///
-    /// Two is the useful setting for anything written elsewhere — a headline,
-    /// a subject line, a filename — because one line ellipsises most of them
+    /// Two is the useful setting for anything written elsewhere (a headline, a
+    /// subject line, a filename) because one line ellipsises most of them
     /// mid-sentence. Rows then differ in height, which [`Self::paginate_rows`]
     /// already accounts for.
     #[must_use]

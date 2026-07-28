@@ -1,10 +1,10 @@
 //! Finding a device on the network, and installing onto it over Wi-Fi.
 //!
-//! A Kobo is an awkward thing to reach. It powers Wi-Fi down when it sleeps, it
-//! takes a new address from DHCP every time it comes back, and it never says
-//! any of that out loud — the symptom is always the same connection timeout.
-//! Most of the time lost to this project has been lost to guessing which of
-//! those is happening.
+//! A Kobo is an awkward thing to reach. It powers Wi-Fi down when it sleeps,
+//! it takes a new address from DHCP every time it comes back, and it never
+//! says any of that out loud, the symptom is always the same connection
+//! timeout. Most of the time lost to this project has been lost to guessing
+//! which of those is happening.
 //!
 //! So the two commands built on this module are deliberately unglamorous.
 //! `kobo devices` sweeps the local network and names what it finds, which
@@ -245,7 +245,7 @@ impl Identity {
 /// The archive is written to `/tmp`, checked against the checksum of the bytes
 /// this machine sent, checked again by gzip, and only then extracted. Every
 /// path it contains is listed first and the extraction is refused outright if
-/// any of them fall outside [`INSTALL_DIRECTORY`] — the same rule the packager
+/// any of them fall outside [`INSTALL_DIRECTORY`], the same rule the packager
 /// applies when building, applied again on the device, because this one runs
 /// as root.
 ///

@@ -4,15 +4,15 @@
 //! comment body is HTML written by a stranger; an RSS item's description is
 //! HTML written by a stranger and then passed through a publishing system that
 //! may have escaped it once, twice, or not at all. Hacker News documents the
-//! small set of tags it allows — `<p>`, `<i>`, `<a>`, `<pre><code>` — but that
+//! small set of tags it allows (`<p>`, `<i>`, `<a>`, `<pre><code>`) but that
 //! is a statement about what a site *intends* to send, not a guarantee about
 //! what turns up on the wire. This module is written for the other case.
 //!
 //! Three properties, each of which has a test:
 //!
-//! * It never panics. Every malformed shape a byte stream can take — a `<`
+//! * It never panics. Every malformed shape a byte stream can take (a `<`
 //!   with no `>`, a `&` with no `;`, tags inside tags, an entity that names a
-//!   codepoint that does not exist — has a defined, boring outcome.
+//!   codepoint that does not exist) has a defined, boring outcome.
 //! * It never grows. The output is bounded by [`MAX_TEXT`] and, below that
 //!   ceiling, is never longer than the input: every construction it recognises
 //!   is at least as long as what it produces. There is no input that makes it
@@ -41,8 +41,8 @@ const MAX_ENTITY: usize = 12;
 ///
 /// Neither source is supposed to send these. If one arrives, the text inside
 /// it was written to be executed rather than read, and rendering `alert(1)` as
-/// prose is not useful to anybody. Nothing here could run it — the output of
-/// this module is characters on an E Ink panel — but it is still noise, and
+/// prose is not useful to anybody. Nothing here could run it (the output of
+/// this module is characters on an E Ink panel) but it is still noise, and
 /// noise that says something went wrong upstream.
 const OPAQUE: [&str; 2] = ["script", "style"];
 
@@ -54,8 +54,8 @@ const OPAQUE: [&str; 2] = ["script", "style"];
 /// displayed rather than lost.
 ///
 /// Matching is case-insensitive, which HTML's own table is not. That is a
-/// simplification, and the cost of it is that a pair differing only in case —
-/// `dagger` and `Dagger`, `prime` and `Prime` — cannot both live here. Only
+/// simplification, and the cost of it is that a pair differing only in case
+/// (`dagger` and `Dagger`, `prime` and `Prime`) cannot both live here. Only
 /// names with no such twin are listed.
 const NAMED: [(&str, &str); 34] = [
     ("amp", "&"),
@@ -149,8 +149,8 @@ pub fn to_text(html: &str) -> String {
 /// Decodes every entity in a run of text, leaving everything else alone.
 ///
 /// Separated out because the structural parsers in `kobo-doc` do their own tag
-/// scanning — they need the shape of a book, which [`to_text`] deliberately
-/// throws away — but entity decoding is the same job wherever it happens, and
+/// scanning (they need the shape of a book, which [`to_text`] deliberately
+/// throws away) but entity decoding is the same job wherever it happens, and
 /// two tables would drift.
 #[must_use]
 pub fn decode_entities(text: &str) -> String {
@@ -228,8 +228,8 @@ fn take_tag<'a>(out: &mut String, tail: &'a str) -> &'a str {
 ///
 /// Bracketed, and on its own, because it is not the author's prose and reading
 /// it as though it were is worse than not showing it. An empty `alt` is the
-/// spelling for an image that carries no meaning — a spacer or a tracking
-/// pixel — and is honoured by writing nothing at all.
+/// spelling for an image that carries no meaning (a spacer or a tracking
+/// pixel) and is honoured by writing nothing at all.
 fn push_alternative(out: &mut String, value: &str) {
     let mut decoded = String::with_capacity(value.len());
     let mut rest = value;
@@ -296,8 +296,8 @@ fn quoted(value: &str) -> &str {
 /// The lower-case element name inside a tag body, without its attributes.
 ///
 /// `/p` and `a href="…"` both reduce to something this can compare, and a tag
-/// body containing another `<` — which is not a tag, but is a thing a stranger
-/// can send — reduces to a name that matches nothing.
+/// body containing another `<` (which is not a tag, but is a thing a stranger
+/// can send) reduces to a name that matches nothing.
 #[must_use]
 pub fn element_name(inside: &str) -> String {
     inside
@@ -335,7 +335,7 @@ fn push_break(out: &mut String) {
 ///
 /// Searches for the close tag as literal characters rather than walking the
 /// tags in between, because the content is not markup. A `<` inside a listing
-/// or a script — `if (a < b)` — is a less-than sign, and a scanner that treats
+/// or a script (`if (a < b)`) is a less-than sign, and a scanner that treats
 /// it as the start of a tag finds the `>` of the real close tag first, decides
 /// that was not the one it wanted, and carries on past it. The whole rest of
 /// the document is then inside an element that already ended.

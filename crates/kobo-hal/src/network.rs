@@ -209,7 +209,7 @@ const WIRELESS: &str = "/proc/net/wireless";
 /// Read-only, like everything else in this module that reports rather than
 /// changes: a text file the kernel publishes, no socket, no ioctl and no
 /// `unsafe`. Returns `None` when the interface is not wireless, is not
-/// associated, or the device has no wireless stack at all — all of which are
+/// associated, or the device has no wireless stack at all, all of which are
 /// legitimately "no signal to report" rather than "a signal of zero".
 #[must_use]
 pub fn signal_dbm(link: &str) -> Option<i32> {

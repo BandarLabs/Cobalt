@@ -1,10 +1,10 @@
 //! A trace that survives an unclean reset.
 //!
-//! The panel session prints its progress to standard output, and on this device
-//! that is worthless the moment something resets the `SoC`: the log lives on a
-//! tmpfs that a reboot empties, and the copy on `/mnt/onboard` is VFAT with
-//! buffered writes, so the last several seconds — exactly the seconds that
-//! matter — are never on the card.
+//! The panel session prints its progress to standard output, and on this
+//! device that is worthless the moment something resets the `SoC`: the log
+//! lives on a tmpfs that a reboot empties, and the copy on `/mnt/onboard` is
+//! VFAT with buffered writes, so the last several seconds (exactly the seconds
+//! that matter) are never on the card.
 //!
 //! So the black box writes to the book partition and calls `fsync` after every
 //! single line. That is deliberately expensive. It is the only way to learn
@@ -104,9 +104,10 @@ static TRACE: OnceLock<BlackBox> = OnceLock::new();
 /// Records one line in the session trace.
 ///
 /// Free rather than a method because the interesting events happen deep inside
-/// the session — a tap resolving to nothing, a screen being painted, the reader
-/// being stopped — and threading a recorder through every one of those
-/// signatures would make the diagnostic harder to leave in place than to remove.
+/// the session (a tap resolving to nothing, a screen being painted, the reader
+/// being stopped) and threading a recorder through every one of those
+/// signatures would make the diagnostic harder to leave in place than to
+/// remove.
 pub fn trace(event: &str) {
     TRACE.get_or_init(BlackBox::open).record(event);
 }

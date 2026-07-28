@@ -12,8 +12,26 @@ refuse, and a refusal is a value rather than a crash.
 is the running account of what was built, what broke, and what the device
 taught us.
 
-The hardware target is the Kobo Clara BW N365, device code 391. Unknown
-hardware is rejected rather than mapped to a similar model.
+## Read this before you run it on a reader
+
+**Tested on one device: the Kobo Clara BW (N365, device code 391).** Nothing
+here has been run on any other model. Every device write is gated on an exact
+match of framebuffer identity, geometry, device code, serial model prefix,
+firmware version and kernel release, so a different reader is refused rather
+than guessed at. That refusal is the safety mechanism, not a limitation to
+work around.
+
+**You run this at your own risk.** It is MIT licensed, which means it comes
+with no warranty of any kind. The design rule is that nothing survives a
+reboot, and it is followed carefully (see below), but nobody here can promise
+your reader will be fine. If you brick a device, that is your device and your
+decision. Do not run this on a reader you cannot afford to lose.
+
+**Other devices: pull requests welcome.** Support for another Kobo means a new
+profile with its own geometry, waveforms, touch transform and identity gate.
+If you have a Libra, a Sage, a Clara 2E or anything else and you are willing to
+test on it, that contribution would be genuinely valuable. Open an issue first
+so the profile shape can be agreed before you write it.
 
 ## What is here, and what is not
 
@@ -48,9 +66,10 @@ Verified on the physical Clara BW unless stated otherwise.
 - **No install without SSH.** Deploying over Wi-Fi needs an SSH server the
   platform does not ship. The USB route (`kobo package`, copy to
   `.kobo/KoboRoot.tgz`) always works and needs nothing.
-- **The simulator does not draw the runtime chrome.** It lays screens out with
-  no back bar, so Back and the grace period that backs it can only be exercised
-  on hardware or in `kobod`'s tests.
+- **The simulator draws the chrome but not the reader's hands.** It attaches
+  the same status band and back bar the runtime does, which is how the band
+  overlapping the top bar was found. It still cannot exercise the grace period
+  behind Back, or a finger arriving mid-refresh.
 - **Nothing is signed or verified at rest.** `kobo deploy` checksums what it
   uploads end to end, but a package already on the drive is trusted.
 - **No power budget.** Nothing measures or bounds what a session costs the
@@ -166,8 +185,8 @@ fresh checkout builds device binaries with no system packages.
 ## Connecting a device
 
 The reader has to be on the same wireless network as the machine you work from.
-Join it on the device the ordinary way — the top bar, the Wi-Fi icon, then the
-network — and know that the radio goes down every time the reader sleeps.
+Join it on the device the ordinary way (the top bar, the Wi-Fi icon, then the
+network) and know that the radio goes down every time the reader sleeps.
 Nothing on a stock Kobo keeps Wi-Fi up through a suspend, so this is not a
 setting somebody forgot to turn on.
 
@@ -206,7 +225,7 @@ kobo session --device <address> --keep-awake on
 `--wifi-always-on` writes the reader's own developer setting, which is read at
 startup, so it applies from the next reader restart. `--keep-awake` takes a
 kernel wake lock that lives in RAM. Both clear on a reboot, and neither is
-sufficient on its own on this firmware — *Keeping a device reachable while
+sufficient on its own on this firmware. *Keeping a device reachable while
 developing*, below, explains what actually stops the suspend and how it was
 measured.
 
@@ -234,8 +253,8 @@ kobo deploy --device <address> --package target/KoboRoot.tgz
 
 There is no reboot because there is nothing to reboot for. `/mnt/onboard` is
 mounted without `noexec`, so an install is a folder of files arriving on the
-book partition, and the vendor installer — the part that needs a reboot and a
-charged battery — is not involved. `deploy` builds the same archive `package`
+book partition, and the vendor installer, the part that needs a reboot and a
+charged battery, is not involved. `deploy` builds the same archive `package`
 builds, sends it through the stdin-only shell channel as base64, and the device
 compares the SHA-256 of what arrived against the SHA-256 of what was sent
 before it extracts anything.
@@ -268,16 +287,16 @@ sets `DeveloperSettings/ForceWifiOn` so the radio stays up between deploys and
 `PowerOptions/AutoSleepMinutes=90` so the reader is still reachable when you
 come back to it, adds a **Cobalt** entry to the reader's own menu, and ejects.
 
-Then it waits. The restart is the one step that has to happen on the reader —
+Then it waits. The restart is the one step that has to happen on the reader,
 its SSH server only starts at boot, and nothing on this side can press the
-power button — so the command asks for it and then watches the network for the
+power button, so the command asks for it and then watches the network for the
 reader to come back, printing its address and the exact `kobo deploy` line when
 it does. It identifies the reader by two things it can learn without writing a
 byte, because on a first setup there is no key installed and the firmware's
 first login forces a password change, so a probe that authenticated would hang.
 It identifies the reader by *change*: it records which addresses answer on port
 22 before the wait, and only ones that were not answering and now are can be
-the reader — which rules out the machine it is running on, the router and a
+the reader, which rules out the machine it is running on, the router and a
 NAS, since none of them just joined.
 
 Change alone was not enough. A laptop waking from sleep mid-wait was reported
@@ -292,7 +311,7 @@ than written off, because a booting reader does exactly that.
 
 `--no-wait` skips the wait and `--no-menu` skips the menu entry.
 `kobo setup --undo` puts every part of the setup back,
-and `kobo setup --dry-run` prints what it would do without touching anything —
+and `kobo setup --dry-run` prints what it would do without touching anything.
 including for `--undo`, which is what `--undo --dry-run` means.
 
 Both settings are the reader's own, applied by the reader's own code, so
@@ -334,9 +353,9 @@ under `.adds/cobalt`.
 There is exactly one exception, and it is the menu entry. A way into Cobalt from
 the reader's own home screen means running code inside `nickel`, and nothing on
 the book partition can do that. `kobo setup` therefore stages
-[NickelMenu](https://pgaskin.net/NickelMenu) — pinned to one release, downloaded
+[NickelMenu](https://pgaskin.net/NickelMenu), pinned to one release, downloaded
 over HTTPS and checked against a recorded SHA-256, so the transport does not have
-to be trusted — and writes a single entry beside it:
+to be trusted, and writes a single entry beside it:
 
 ```
 menu_item :main :Cobalt :cmd_spawn :quiet:/mnt/onboard/.adds/cobalt/start.sh
@@ -355,7 +374,7 @@ frightening in the first place.
 
 The second is ours. The firmware extracts the archive as root without looking
 inside it, so `kobo setup` looks: it lists the members and **refuses to write
-any archive** that is not exactly NickelMenu's two paths —
+any archive** that is not exactly NickelMenu's two paths,
 `./usr/local/Kobo/imageformats/libnm.so` and `./mnt/onboard/.adds/nm/doc`. An
 archive naming `./etc/init.d/rcS` is the one that ends a device, and it is
 refused by name. It also refuses to overwrite an archive some other mod has
@@ -363,13 +382,13 @@ already staged, since `.kobo/KoboRoot.tgz` is a single shared slot.
 
 `kobo setup --undo` takes the entry away. If the reader has not restarted yet it
 simply takes the staged archive back, and nothing was ever installed. If it has,
-it writes NickelMenu's own uninstall flag — unless another mod still has a
+it writes NickelMenu's own uninstall flag, unless another mod still has a
 configuration file beside ours, in which case the plugin stays and only the
 Cobalt entry goes, because it is shared.
 
 The entry starts Cobalt **on demand**, and deliberately not at boot. `kobod` has
 one mode and it is to stop `nickel` and take the panel, so starting it at boot
-would leave a device with no stock reader on it — and would spend the safety net
+would leave a device with no stock reader on it, and would spend the safety net
 every risky thing in this project leans on, which is that restarting always
 comes back to stock.
 
@@ -427,14 +446,14 @@ It used to be able to, by restarting the supplicant and DHCP client it had
 recorded. Those daemons attach to `wlan0`; the restarted reader drives the same
 radio from inside libnickel and cannot be told what we started behind it; and
 two owners of one radio leaves the reader's own network panel unable to scan at
-all — not merely disconnected, but unable to see a network it has known for
+all: not merely disconnected, but unable to see a network it has known for
 months.
 
 That was known and the restore was kept anyway, behind an environment variable,
 as a convenience for working on a device over Wi-Fi where losing the link costs
 a reboot. It was removed after it erased a device. The reader came up owning a
 radio it had not configured, never reached its first watchdog ping, and the
-freeze watchdog was armed against it regardless — which is an SoC reset every
+freeze watchdog was armed against it regardless, which is an SoC reset every
 ten seconds with nothing synced, until one landed inside a write to the library
 database and the device came up asking for a language.
 
@@ -457,8 +476,8 @@ already know work:
 | `kobo sim`, `kobo simulator` | `kobo dev` |
 | `kobo init`, `kobo create` | `kobo new` |
 
-`kobo logs` takes `adb logcat`'s flags too — `-f` follow, `-d` dump, `-t N`
-lines, `-c` clear — and every command that takes `--device` also takes `-s`.
+`kobo logs` takes `adb logcat`'s flags too (`-f` follow, `-d` dump, `-t N`
+lines, `-c` clear) and every command that takes `--device` also takes `-s`.
 These are aliases onto one implementation rather than second commands, so there
 is nothing extra to keep in step.
 
@@ -493,8 +512,8 @@ The archive is incapable of writing anywhere else. Members are checked before
 they are written and then read back out of the finished bytes, so `kobo inspect`
 reports what the package can do rather than what it was asked to do; absolute
 paths, `..`, symbolic links, device nodes and anything outside the install root
-are refused. Output is byte-for-byte reproducible — `gzip -n -9`, mtime 0,
-uid/gid 0 — so the printed SHA-256 is worth comparing.
+are refused. Output is byte-for-byte reproducible (`gzip -n -9`, mtime 0,
+uid/gid 0) so the printed SHA-256 is worth comparing.
 
 Two things are worth knowing before blaming the package. The reader's installer
 is gated on battery level and fails silently, so an install that appears to do
@@ -686,14 +705,14 @@ finished, a chosen answer is chosen, a reply has a depth; the renderer decides
 what each looks like. That is what makes a badly proportioned screen
 unexpressible rather than merely discouraged, and it is also what stops an
 application marking its own state with a character the installed face has no
-glyph for — in debug builds `set_screen` refuses a screen carrying one, so an
+glyph for. In debug builds `set_screen` refuses a screen carrying one, so an
 application's own tests fail instead of the panel showing an empty box.
 
 ### Back belongs to the reader, and can be lent
 
 The Back control in the top bar is drawn by the runtime, on top of whatever the
-application asked for. It cannot be removed, cannot be forged — `ActionId::BACK`
-is refused if an application tries to bind it — and always ends at the launcher.
+application asked for. It cannot be removed, cannot be forged (`ActionId::BACK`
+is refused if an application tries to bind it) and always ends at the launcher.
 That is what makes it the reliable way out of anything.
 
 It used to end there *immediately*, which was wrong in a way only the device
@@ -705,11 +724,11 @@ A screen may now ask for first refusal with `owns_back(true)`. The runtime
 delivers `ActionId::BACK` as an ordinary action instead of leaving, and starts a
 two second clock. If a screen arrives, the application went back inside itself.
 If none does, the launcher appears anyway. So an application can have history,
-and still cannot trap a reader — the guarantee is a deadline rather than a
+and still cannot trap a reader: the guarantee is a deadline rather than a
 promise, which is the only kind an application cannot break.
 
 Pictures are decoded by `kobo-image`, halftoned to the sixteen greys this panel
-resolves, and scaled to the cell they will occupy — including *up*, bounded, so
+resolves, and scaled to the cell they will occupy, including *up*, bounded, so
 a book cover published at 190 by 300 fills a tile on a 300 pixel-per-inch panel
 instead of sitting in the middle of it like a stamp.
 
@@ -873,7 +892,7 @@ coming back is a repaint rather than a restart.
 address and answers with the feeds it has: you type `arstechnica.com` rather
 than hunting for a link with `rss` in it. Their terms ask for an attribution
 visible to the reader on the search and results screens, so both carry one and
-a test asserts it on both. That is not decoration — it has been lost once
+a test asserts it on both. That is not decoration: it has been lost once
 already, silently, to a full page of results pushing it off the bottom of the
 panel, which is why it now lives in the results screen's top bar where the
 layout cannot discard it.
@@ -883,3 +902,31 @@ answer that stops at the fetch budget is reported as too large rather than as
 not a feed: a cut XML feed keeps every item that arrived whole, but half a JSON
 document is not a document at all and yields nothing, and sending somebody to
 look for a different address does not help when the address was right.
+
+## Contributing
+
+The most valuable contribution is a second device. Everything here is measured
+against one panel, and there is no evidence any of it holds elsewhere. Adding a
+reader means a profile with its own geometry, waveform table, touch transform
+and identity gate, and somebody willing to run it on hardware they own. Open an
+issue before writing one so the profile shape can be agreed.
+
+Beyond that:
+
+- Every change is expected to keep `cargo test --workspace`,
+  `cargo clippy --workspace --all-targets`,
+  `cargo clippy -p kobod --features device-write --all-targets` and
+  `cargo fmt --all --check` clean.
+- `unsafe` is forbidden outside `kobo-abi`, which is where the kernel structs
+  live.
+- Anything that touches the device has to keep the governing rule: nothing a
+  reboot cannot undo.
+- A test that asserts intention rather than a measured result is not worth
+  much here. Most of the defects in `BUILD_IN_PUBLIC.md` were found by
+  rendering something and looking at it, against real captured data, and the
+  tests that survived are the ones written that way.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE). What ships inside the binary, and what its authors
+ask for in return, is in [THIRD-PARTY.md](THIRD-PARTY.md).

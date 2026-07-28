@@ -163,7 +163,7 @@ impl Header {
     ///
     /// Names are checked against the token characters HTTP allows and values
     /// against visible ASCII, because a newline in either would let an
-    /// application append headers of its own — including the credential header
+    /// application append headers of its own, including the credential header
     /// it is not allowed to see.
     #[must_use]
     pub fn is_well_formed(&self) -> bool {
@@ -264,7 +264,7 @@ pub enum Task {
         max_bytes: u32,
     },
     /// Sends a body to a URL. The application supplies the body and, when the
-    /// request needs a credential, the *name* of one — never its value. The
+    /// request needs a credential, the *name* of one, never its value. The
     /// runtime looks the named secret up and attaches it, so an API key is
     /// never in an application's memory, its logs or its crash dump.
     Post {
@@ -526,7 +526,7 @@ pub enum StoreRequest {
     /// disconnection must land in the same place, and a cursor the two sides
     /// disagree about is a file with a hole or a repeat in the middle of it.
     /// `last` finishes the blob, which is when it becomes readable under its
-    /// name — until then a half-written book is not something that can be
+    /// name, until then a half-written book is not something that can be
     /// opened and found wanting.
     ShelfWrite {
         name: String,
@@ -1255,7 +1255,7 @@ fn encoded_task_len(work: &Task) -> Result<usize, ProtocolError> {
     // Four bytes of task identifier and one tag byte. This was six, which made
     // every spawned task claim one byte more than it encodes to, and the debug
     // assertion at the end of `encode` turned that into a panic the moment an
-    // application asked for a download — so no application that fetches
+    // application asked for a download, so no application that fetches
     // anything could be opened in the simulator at all.
     let mut length = 5;
     match work {
@@ -2180,7 +2180,7 @@ fn encode_screen(
         Some(nav_bar) => {
             // Refused here as well as on the way in. A bar of one destination
             // is a bar that says nothing about where else the reader could go,
-            // and the decoder has always rejected it — so an application that
+            // and the decoder has always rejected it, so an application that
             // built one encoded happily, killed the runtime's reader thread on
             // arrival, and then sat waiting forever for an event from a
             // connection nobody was reading any more. Failing at the encoder
@@ -2194,8 +2194,8 @@ fn encode_screen(
                 .map_err(|_| ProtocolError::TooManyNodes)?;
             output.push(len);
             // 255 is the "no destination is current" sentinel. A bar can never
-            // have that many destinations — the length above is a byte and the
-            // panel clamps to a handful — so the value is safely out of band,
+            // have that many destinations (the length above is a byte and the
+            // panel clamps to a handful) so the value is safely out of band,
             // and it has to be expressible: without it a bar of actions is
             // forced to claim one of them is where the reader is.
             output.push(match nav_bar.selected {
@@ -3885,7 +3885,7 @@ mod node_coverage_tests {
     /// The launcher and the library both meant "none of these is where you
     /// are" and both said `usize::MAX`. The byte saturated to 255 and the
     /// decoder clamped it onto the last destination, so both shipped with the
-    /// rightmost entry underlined on the panel — "More apps" on a launcher
+    /// rightmost entry underlined on the panel, "More apps" on a launcher
     /// showing page one, "Next" on a library showing the first page.
     #[test]
     fn no_destination_being_current_survives_the_wire() {
@@ -4061,7 +4061,7 @@ mod store_tests {
     fn every_task_message_encodes_to_exactly_the_length_it_claims() {
         // `encode` predicts the payload length before it writes anything, and
         // a wrong prediction used to be a debug assertion that only fired when
-        // an application actually spawned something — which meant every task
+        // an application actually spawned something, which meant every task
         // message crashed the simulator and no test noticed, because none of
         // them encoded one.
         for message in [

@@ -121,8 +121,8 @@ struct Gallery {
     /// The two pictures, once the runtime has been given them.
     ///
     /// `None` until then, and a screen drawn while they are `None` is a
-    /// perfectly good screen — a missing picture is a normal condition in
-    /// this system, not an error, which is why every tile keeps its glyph.
+    /// perfectly good screen, a missing picture is a normal condition in this
+    /// system, not an error, which is why every tile keeps its glyph.
     card: Option<TilePicture>,
     swatch: Option<TilePicture>,
     entry: TextEntry,

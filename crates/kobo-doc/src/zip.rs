@@ -4,7 +4,7 @@
 //!
 //! Every zip crate on the registry is built around `Read + Seek`, because
 //! every zip crate expects a file. An application on this platform cannot open
-//! a file — an EPUB arrives as a `Vec<u8>` from a download or from the store —
+//! a file (an EPUB arrives as a `Vec<u8>` from a download or from the store)
 //! and a whole archive already in memory does not need seeking. What is left
 //! once the file handling is gone is the central directory format, which is a
 //! table with fixed offsets.
@@ -87,7 +87,7 @@ struct Entry {
 pub struct Archive<'a> {
     bytes: &'a [u8],
     /// Sorted, so that looking for a member by a path that differs only in
-    /// case — which EPUBs written on Windows do — has somewhere to start.
+    /// case (which EPUBs written on Windows do) has somewhere to start.
     entries: BTreeMap<String, Entry>,
 }
 

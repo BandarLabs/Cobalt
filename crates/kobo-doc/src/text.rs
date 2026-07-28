@@ -10,7 +10,7 @@
 //!
 //! So this is not "split on blank lines". It recognises the handful of things
 //! a text file uses to mean something, and each one is recognised by a rule
-//! that would rather miss than guess wrong — a false heading in the middle of
+//! that would rather miss than guess wrong. A false heading in the middle of
 //! a novel is far more jarring than a missed one.
 
 use crate::{normalise_breaks, Block, Builder, Document, GUTENBERG_START};
@@ -18,7 +18,7 @@ use crate::{normalise_breaks, Block, Builder, Document, GUTENBERG_START};
 /// A line no longer than this, alone between blank lines, may be a heading.
 ///
 /// Headings in a text file are short. The ceiling is what stops an ordinary
-/// one-sentence paragraph — which is also alone between blank lines — from
+/// one-sentence paragraph (which is also alone between blank lines) from
 /// being promoted, and it is generous enough for "CHAPTER XVII. THE PIT AND
 /// THE PENDULUM".
 const HEADING_WIDTH: usize = 60;
@@ -97,8 +97,8 @@ fn paragraphs(body: &str) -> Vec<Vec<&str>> {
 ///
 /// Project Gutenberg writes an illustration as `[Illustration: caption]`, and
 /// the caption is often several centred lines with blank lines between them.
-/// Read as ordinary groups that is four blocks — one of them the bare word
-/// `[Illustration:`, another a lone `]` — scattered through the front matter
+/// Read as ordinary groups that is four blocks (one of them the bare word
+/// `[Illustration:`, another a lone `]`) scattered through the front matter
 /// and, worse, through the chapter headings, where the stray bracket ends up
 /// in the table of contents.
 ///
@@ -154,11 +154,11 @@ fn balanced(group: &[&str]) -> bool {
 /// Removes the underscores Project Gutenberg italicises with.
 ///
 /// A plain text file has no italics, so Gutenberg writes `_thus_`, and left
-/// alone they are drawn as underscores in the middle of the prose — the
-/// running heads come out as `_Reading Jane\u{2019}s Letters._ _Chap 34._`.
+/// alone they are drawn as underscores in the middle of the prose, the running
+/// heads come out as `_Reading Jane\u{2019}s Letters._ _Chap 34._`.
 ///
-/// An underscore between two alphanumeric characters is part of a word — an
-/// identifier, a filename — and is kept. One at either edge of a word is a
+/// An underscore between two alphanumeric characters is part of a word (an
+/// identifier, a filename) and is kept. One at either edge of a word is a
 /// marker and goes. That rule needs no matching pairs, so an unclosed marker
 /// costs nothing, which matters because plenty of them are unclosed.
 fn unmark(text: &str) -> String {
@@ -221,8 +221,8 @@ fn is_a_rule(group: &[&str]) -> Option<Block> {
         return None;
     };
     let line = line.trim();
-    // Three characters at least, so an ellipsis on a line of its own — which
-    // is dialogue — is not mistaken for a divider.
+    // Three characters at least, so an ellipsis on a line of its own (which is
+    // dialogue) is not mistaken for a divider.
     if line.len() >= 3
         && line
             .chars()
@@ -241,10 +241,10 @@ fn is_a_rule(group: &[&str]) -> Option<Block> {
 /// * One line, short, and in capitals. This is how a text file writes a
 ///   chapter title and there is very little else it could be.
 /// * One line, short, ending in no sentence punctuation, and beginning with a
-///   word that names a division — "Chapter", "Book", "Part", "Canto".
+///   word that names a division: "Chapter", "Book", "Part", "Canto".
 ///
 /// A short line that is neither is left as a paragraph. A one-line paragraph
-/// is common — a line of dialogue, an exclamation — and turning those into
+/// is common (a line of dialogue, an exclamation) and turning those into
 /// headings would scatter chapter breaks through the middle of every scene.
 fn is_a_heading(group: &[&str]) -> Option<Block> {
     let [line] = group else {
@@ -303,7 +303,7 @@ fn is_a_heading(group: &[&str]) -> Option<Block> {
 ///
 /// Its line breaks were the caption being centred, so they go. But Gutenberg
 /// draws the opening of a chapter as an illustration whose *last* line is the
-/// chapter title — `[Illustration: ·PRIDE AND PREJUDICE· … Chapter I.]` — and
+/// chapter title (`[Illustration: ·PRIDE AND PREJUDICE· … Chapter I.]`) and
 /// folding that whole thing into one paragraph loses the boundary of the first
 /// chapter of the book. So a title found on the last line is lifted back out
 /// and the bracket is closed around what is left.

@@ -6,7 +6,7 @@
 //! where it closed, and every operation there moves a whole value at once.
 //! That is the right shape for a reading position and the wrong shape for the
 //! book: a frame is capped at a megabyte, and a book is several. Raising the
-//! cap would not help, because the ceiling is not arbitrary — it is what keeps
+//! cap would not help, because the ceiling is not arbitrary, it is what keeps
 //! either end from being made to allocate an unbounded buffer by a peer that
 //! merely said it was going to send one.
 //!
@@ -17,15 +17,15 @@
 //!
 //! A half-downloaded book that can be opened is worse than no book. It opens,
 //! it reads correctly for a while, and then it stops in the middle of a
-//! sentence with nothing to say why — and the application cannot tell that
-//! from a book that was always like that. So pieces land in a file whose name
+//! sentence with nothing to say why, and the application cannot tell that from
+//! a book that was always like that. So pieces land in a file whose name
 //! cannot be spelled as a blob name, and only the rename at the end publishes
 //! it. Anything interrupted leaves a partial that no read can reach.
 //!
 //! # Why the card's free space is anybody's business here
 //!
 //! Cobalt's data sits on the same partition as `KoboReader.sqlite`, which is
-//! the stock reader's entire library — every book, shelf, bookmark and
+//! the stock reader's entire library: every book, shelf, bookmark and
 //! position. Fill that partition and the reader's own database cannot write.
 //! Nothing about that failure points back at us, and the person holding the
 //! device has no way to know that the thing which broke their library was an
@@ -340,7 +340,7 @@ fn read_at(path: &Path, offset: u64, into: &mut [u8]) -> std::io::Result<()> {
 /// A size as it goes on the wire.
 ///
 /// Saturating rather than wrapping: a blob larger than four gigabytes cannot
-/// exist here — [`MAX_SHELF_BYTES`] is a quarter of that — but a size that
+/// exist here ([`MAX_SHELF_BYTES`] is a quarter of that) but a size that
 /// wrapped would report a huge file as a tiny one, and a caller would stop
 /// reading it at the wrong place and believe it had the whole thing.
 fn clamp_size(size: u64) -> u32 {

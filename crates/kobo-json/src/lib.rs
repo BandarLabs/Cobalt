@@ -30,8 +30,8 @@
 //!   the whole reason request bodies are built from a [`Value`] rather than
 //!   from `format!`.
 //! * Serialisation uses an explicit stack rather than recursion, so a value an
-//!   application built by hand — which never passed through the parser's depth
-//!   ceiling — cannot overflow the stack on the way out. Dropping such a value
+//!   application built by hand, which never passed through the parser's depth
+//!   ceiling, cannot overflow the stack on the way out. Dropping such a value
 //!   still runs `Vec`'s recursive drop glue, which is outside this crate's
 //!   reach and one more reason to keep values inside the parser's ceiling.
 //!
@@ -65,16 +65,16 @@ use std::fmt;
 /// application are ordinary 2 MiB threads on a device with 512 MiB of RAM and
 /// no swap: a stack overflow is an immediate `SIGSEGV` that takes the whole
 /// application with it, not an error anyone can report. Sixty-four is far
-/// deeper than any catalogue or chat response observed — Gutendex nests four
-/// levels, `OpenAI` five — and shallow enough that the worst case costs a few
+/// deeper than any catalogue or chat response observed (Gutendex nests four
+/// levels, `OpenAI` five) and shallow enough that the worst case costs a few
 /// kilobytes of stack.
 pub const MAX_DEPTH: usize = 64;
 
 /// A parsed JSON value.
 ///
 /// Objects are a `Vec` of pairs rather than a map. That keeps the crate free
-/// of any ordering or hashing choice, preserves the order the server sent —
-/// which matters when a body is re-serialised and compared — and is faster
+/// of any ordering or hashing choice, preserves the order the server sent
+/// (which matters when a body is re-serialised and compared) and is faster
 /// than a hash map at the handful of keys these APIs actually return.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
@@ -341,7 +341,7 @@ impl ObjectBuilder {
 /// who did not, and that is the same bug this crate exists to make impossible.
 ///
 /// Every character JSON requires to be escaped is escaped: the quote, the
-/// backslash, and every control character below `0x20` — the common five by
+/// backslash, and every control character below `0x20`, the common five by
 /// their short forms and the rest as `\u00XX`. Everything else, including all
 /// non-ASCII text, is written through as UTF-8, which is what both APIs here
 /// accept and what keeps a Cyrillic or Japanese title readable in a log.
@@ -687,8 +687,8 @@ impl Parser<'_> {
     /// Decodes `\uXXXX`, joining a surrogate pair into the one character it
     /// stands for.
     ///
-    /// Anything outside the basic plane — an emoji in a chat reply, most
-    /// obviously — arrives from these APIs as a pair, so a parser that treated
+    /// Anything outside the basic plane (an emoji in a chat reply, most
+    /// obviously) arrives from these APIs as a pair, so a parser that treated
     /// `\uD83D` as a character would produce a `String` that is not valid text
     /// and would fail somewhere far away from here.
     fn unicode_escape(&mut self, start: usize, out: &mut String) -> Result<(), ParseError> {
@@ -1156,9 +1156,9 @@ mod tests {
         }
     }
 
-    /// A response that arrives cut short — a dropped connection mid-body is
-    /// the normal case on a device whose Wi-Fi is being power managed — must
-    /// come back as an error at every possible cut, never as a panic.
+    /// A response that arrives cut short (a dropped connection mid-body is the
+    /// normal case on a device whose Wi-Fi is being power managed) must come
+    /// back as an error at every possible cut, never as a panic.
     #[test]
     fn truncating_a_document_at_every_offset_returns_an_error_and_never_panics() {
         for end in 0..CATALOGUE.len() {

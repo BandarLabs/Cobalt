@@ -8,7 +8,7 @@
 //!
 //! # What this is allowed to touch
 //!
-//! Only the book partition — the FAT volume that appears when the cable is
+//! Only the book partition, the FAT volume that appears when the cable is
 //! plugged in. Nothing here writes to the system partition, and nothing here
 //! is extracted as root.
 //!
@@ -19,7 +19,7 @@
 //! device that can leave it unbootable: a bad path in that archive overwrites
 //! part of the running system, and there is no recovery short of a firmware
 //! reflash. Cobalt's archive is confined to `.adds/cobalt` and would be
-//! harmless, but the mechanism does not check that — the archive does.
+//! harmless, but the mechanism does not check that, the archive does.
 //!
 //! So this does not use it. [`write_payload`] copies the same files straight
 //! into `.adds/cobalt` on the mounted volume, which is a plain folder copy the
@@ -67,7 +67,7 @@ pub const SETTINGS: &str = ".kobo/Kobo/Kobo eReader.conf";
 /// a device once already.
 ///
 /// `ForceWifiOn` keeps the radio up once the reader is awake. On its own that
-/// is not enough, because the reader does not merely let the radio idle — it
+/// is not enough, because the reader does not merely let the radio idle, it
 /// suspends the whole device, and a suspended device answers nothing. The
 /// suspend is requested by nickel itself, so no wake lock can prevent it; the
 /// only lever is nickel's own timer. `AutoSleepMinutes` is that timer, and
@@ -164,7 +164,7 @@ pub fn mount_roots() -> Vec<PathBuf> {
 ///
 /// A volume qualifies when it has a readable `.kobo/version` naming a Kobo
 /// serial. That file is the firmware's, not ours, so this recognises a reader
-/// that has never had Cobalt on it — which is the only kind this command is
+/// that has never had Cobalt on it, which is the only kind this command is
 /// for.
 #[must_use]
 pub fn mounted_readers() -> Vec<Mounted> {
@@ -415,9 +415,9 @@ fn edit_settings<'a>(
 /// Copies Cobalt into `.adds/cobalt` on a mounted reader.
 ///
 /// This is a plain folder copy onto the book partition. The member list is
-/// checked before anything is written — the same check the archive builder
-/// applies — so a member naming a path outside the install root writes
-/// nothing at all rather than writing what it can and then failing.
+/// checked before anything is written (the same check the archive builder
+/// applies) so a member naming a path outside the install root writes nothing
+/// at all rather than writing what it can and then failing.
 ///
 /// # Errors
 ///
@@ -440,7 +440,7 @@ pub fn write_payload(members: &[crate::package::Member], volume: &Path) -> Resul
 ///
 /// # Errors
 ///
-/// When a file is missing, short, or different — naming which, because the
+/// When a file is missing, short, or different, naming which, because the
 /// answer determines whether to run setup again or replace the cable.
 pub fn verify_payload(members: &[crate::package::Member], volume: &Path) -> Result<(), String> {
     let prefix = format!("{}/", crate::package::INSTALL_ROOT);
@@ -629,7 +629,7 @@ boot. To undo all of it: 'kobo setup --undo'.
 const NEXT_STEPS_HEAD: &str = "
 Next, on the reader:
 
-  1. Restart it — hold the power button until it powers off, then press it
+  1. Restart it. Hold the power button until it powers off, then press it
      again. The SSH server only starts at boot.
   2. Join it to Wi-Fi if it is not already.
 ";
@@ -687,8 +687,8 @@ pub enum Arrival {
 /// Waits for a reader to start answering on the SSH port that was not
 /// answering when the wait began.
 ///
-/// Two things narrow it down. The first is *change* — it was off the network a
-/// moment ago and is on it now — which alone rules out the machine this is
+/// Two things narrow it down. The first is *change* (it was off the network a
+/// moment ago and is on it now) which alone rules out the machine this is
 /// running on, the router and a NAS, since those were all there at the start.
 /// Change is necessary and is not sufficient: a laptop waking from sleep
 /// mid-wait is also a newcomer, and naming it as the reader sends somebody to
@@ -696,11 +696,11 @@ pub enum Arrival {
 ///
 /// So each newcomer is asked what it is. An earlier attempt guessed from the
 /// SSH banner instead, on the assumption that a Kobo runs Dropbear. The reader
-/// this was written for runs OpenSSH 8.9 — the same server a laptop runs — so
+/// this was written for runs OpenSSH 8.9 (the same server a laptop runs) so
 /// the banner cannot tell them apart, and that check rejected the very device
-/// it was meant to find. Asking costs a login, which a just-booted reader gives
-/// away: its firmware clears root's password at every boot and permits empty
-/// ones.
+/// it was meant to find. Asking costs a login, which a just-booted reader
+/// gives away: its firmware clears root's password at every boot and permits
+/// empty ones.
 ///
 /// `sweep` returns everything answering right now, `probe` asks one address
 /// what it is, and `pause` waits out one interval and returns false when there
@@ -803,8 +803,8 @@ mod tests {
     #[test]
     fn a_machine_already_on_the_network_is_not_mistaken_for_the_reader() {
         // The router, this laptop and a NAS all answer on 22 the whole time.
-        // None of them restarted, so none of them is what was waited for —
-        // even though a banner check would have accepted all three.
+        // None of them restarted, so none of them is what was waited for, even
+        // though a banner check would have accepted all three.
         let arrival = wait_for_reader(sweeps(vec![vec![1, 5, 40]]), all_readers(), rounds(4));
         assert_eq!(arrival, Arrival::TimedOut(Vec::new()));
     }

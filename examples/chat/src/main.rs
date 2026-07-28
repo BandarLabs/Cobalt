@@ -314,8 +314,8 @@ impl Chat {
 }
 
 /// Draws one turn, prefixing the reader's own words so the two sides of the
-/// conversation can be told apart without colour, weight or indentation —
-/// none of which this panel spends well.
+/// conversation can be told apart without colour, weight or indentation, none
+/// of which this panel spends well.
 fn draw_turn(screen: ScreenBuilder, turn: &Turn) -> ScreenBuilder {
     match turn.role {
         Role::You => screen.text(format!("You: {}", turn.text)),

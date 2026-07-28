@@ -330,7 +330,7 @@ impl Method<'_> {
 
 /// Sends `body` to `url` and returns at most `max_bytes` of the answer.
 ///
-/// `credential`, when present, is a header name and its complete value — the
+/// `credential`, when present, is a header name and its complete value, the
 /// caller decides whether that is `Authorization: Bearer …`, `x-api-key: …` or
 /// something else, because the convention differs by service and choosing one
 /// here would mean every other service needs a proxy in front of it.
@@ -832,7 +832,7 @@ mod tests {
 
     #[test]
     fn a_credential_actually_reaches_the_request() {
-        // This existed as `Authorization: ******` — the redaction meant for a
+        // This existed as `Authorization: ******`, the redaction meant for a
         // log, written into the real request. Every authenticated POST was
         // therefore sent with a placeholder where the key should have been,
         // and nothing on this side could see it: the failure appears as a 401

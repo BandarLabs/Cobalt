@@ -43,6 +43,93 @@ fn main() {
 
 ---
 
+## 0. Your own application, end to end
+
+Before anything else: **this has only ever been run on a Kobo Clara BW (N365,
+device code 391).** It is MIT licensed and comes with no warranty. Every device
+write is gated on an exact hardware match, so another reader is refused rather
+than guessed at, but nobody can promise your device will be fine. Do not run it
+on a reader you cannot afford to lose. If you want to add another model, that
+is a pull request this project would genuinely welcome; open an issue first so
+the profile shape can be agreed.
+
+Six steps from nothing to a tile on the reader's launcher.
+
+**1. Make the crate.** Applications live in `examples/`. Copy the smallest one
+as a starting point:
+
+```sh
+cp -r examples/todo examples/myapp
+```
+
+Its `Cargo.toml` is the whole manifest an application needs:
+
+```toml
+[package]
+name = "kobo-myapp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+kobo-sdk = { path = "../../crates/kobo-sdk" }
+
+[lints]
+workspace = true
+```
+
+**2. Join the workspace.** Add `"examples/myapp"` to `members` in the root
+`Cargo.toml`.
+
+**3. Write it.** One `impl KoboApp`, as at the top of this file. The name you
+pass to `kobo_sdk::run` is the application's identity: its store namespace, its
+data directory and the name the launcher starts.
+
+**4. See it.** Nothing here needs a device:
+
+```sh
+cargo run -p kobo-cli -- dev --builtin          # in a browser
+cargo run -p kobo-cli -- run --sim --app myapp  # against the real runtime
+```
+
+The simulator uses the same layout engine, the same typeface and the same
+refresh planner the panel uses. Its diagnostics panel reports content past the
+fold, clipping, undersized targets and text overflow, which is where most
+first-draft screens fail.
+
+**5. Ship it.** Two registrations, both one line:
+
+- `INSTALLED_PACKAGES` in `crates/kobo-cli/src/main.rs`, so `package` builds it.
+- `ENTRIES` in `examples/launcher/src/main.rs`, so it gets a tile. The entry
+  states what starting it costs the device, because a launcher that starts
+  something without saying what it reaches for is asking the owner to find out
+  afterwards.
+
+**6. Put it on the reader.** With SSH already working, no cable and no reboot:
+
+```sh
+cargo run -p kobo-cli -- devices                     # find the address
+cargo run -p kobo-cli -- deploy --device <address>
+```
+
+Without SSH, or for somebody else's device:
+
+```sh
+cargo run -p kobo-cli -- package     # writes target/KoboRoot.tgz
+```
+
+Copy that to `.kobo/KoboRoot.tgz` on the reader over USB and eject. The reader
+installs it at the next boot. Everything lands in `.adds/cobalt` on the book
+partition; uninstalling is deleting that folder.
+
+`rustup target add armv7-unknown-linux-musleabihf` is the entire cross-build
+setup. Section 11 has the rest of the device story, section 12 has the rules
+the SDK will not let you break.
+
+---
+
 ## 1. The shape of an application
 
 An application is a process. It connects to the runtime over a Unix socket,
@@ -185,7 +272,7 @@ and device rendering use the same metrics.
 `Chart`, `Search`, `Wifi`, `Battery`, `Reader`, `Power`, `Grid`, `Circle`,
 `Check`, `Terminal`, `Chat`, `News`.
 
-They are geometry, not bitmaps — authored in a 1000 unit box and rasterised
+They are geometry, not bitmaps: authored in a 1000 unit box and rasterised
 with coverage antialiasing at whatever size the layout asks for, so they are
 crisp at every density. Applications cannot supply their own paths: arbitrary
 path data is untrusted input to a rasteriser, and an application must not be
@@ -196,7 +283,7 @@ able to draw something indistinguishable from a system control.
 A finished row, a chosen answer and a reply's depth are all *state*: the
 application says what is true and the renderer decides what it looks like.
 There is no way to ask for a line through text, a tick beside a label or an
-indent, and that is deliberate — an application that marks its own choice with
+indent, and that is deliberate. An application that marks its own choice with
 a character picks one the installed face may not have, and gets an empty box on
 the panel. In debug builds `set_screen` refuses a screen carrying a character
 the face cannot draw, so an application's own tests fail rather than the panel.
@@ -225,7 +312,7 @@ assert!(nav.back());
 The root can never be popped and `current()` always returns a route.
 
 To make the runtime's Back control drive that stack, ask for first refusal on
-it. Pass `can_go_back()` and the behaviour follows the stack for free — deep
+it. Pass `can_go_back()` and the behaviour follows the stack for free. Deep
 screens pop, the root leaves the application:
 
 ```rust
@@ -255,7 +342,7 @@ no way to hold the reader, which is the whole reason the affordance is
 trustworthy enough to be the way out of anything.
 
 Without this, Back always went straight to the launcher, so a reader who
-tapped out of a book landed at home instead of the shelf — and reopening the
+tapped out of a book landed at home instead of the shelf, and reopening the
 application showed the book again, because its retained screen had never
 changed.
 
@@ -297,7 +384,7 @@ for (depth, paragraph) in &page {
 
 `quote` sets a paragraph in by one step per level, up to `MAX_QUOTE_DEPTH`,
 with a rule down the gutter. Paginate the same shape with
-`context.paginate_quoted(&paragraphs, nav_bar)` — an indented paragraph is
+`context.paginate_quoted(&paragraphs, nav_bar)`. An indented paragraph is
 narrower, wraps to more lines and eats more of the page, so a thread paginated
 flat and drawn indented loses the bottom of nearly every page.
 
@@ -308,7 +395,7 @@ face and ellipsises, so a row is never taller than you allowed for.
 `one_line_row(text, nav_bar)` is the same thing with `lines` of 1.
 
 One line gives a list of uniform rows and is right for labels you wrote
-yourself. For text written elsewhere — a headline, a subject line, a filename —
+yourself. For text written elsewhere (a headline, a subject line, a filename)
 use two: one line ellipsises most real headlines mid-sentence, and
 `paginate_rows` measures every row separately, so rows of different heights
 cost nothing but the ragged edge.
@@ -320,7 +407,7 @@ The fourth element of a `rows` tuple is anything that converts into a
 
 An icon makes a row findable without reading it, which is the point of the
 well. But an icon that is the same on every row has spent a whole touch
-target's width saying nothing — a list of stories does not need a newspaper
+target's width saying nothing. A list of stories does not need a newspaper
 beside each entry to explain that it is a list of stories. Where the entries
 are ordered, pass the position instead:
 
@@ -363,7 +450,7 @@ chasing a moving list is precisely the operation that leaves ghosting behind.
 
 The layout engine stops placing nodes once the cursor passes the bottom of the
 content area. Anything that must stay reachable therefore belongs in the nav
-bar, which is reserved before content is placed — never at the end of the flow,
+bar, which is reserved before content is placed, never at the end of the flow,
 where it is the first thing to be dropped. This failure is observable:
 
 ```rust
@@ -409,8 +496,8 @@ let task = context.spawn(Task::Fetch {
 });
 ```
 
-`spawn` returns immediately with an `Option<TaskId>` — `None` if the runtime
-would not even queue it — and the result arrives at `on_task`:
+`spawn` returns immediately with an `Option<TaskId>`, `None` if the runtime
+would not even queue it, and the result arrives at `on_task`:
 
 ```rust
 fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
@@ -426,12 +513,12 @@ fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome)
 
 The four kinds of work:
 
-- **`Fetch { url, offset, max_bytes }`** — HTTPS only. `offset` reads a long
+- **`Fetch { url, offset, max_bytes }`**. HTTPS only. `offset` reads a long
   document in pieces; a range is sent for every piece including the first.
-- **`Post { url, body, content_type, secret, max_bytes }`** — `secret` is the
+- **`Post { url, body, content_type, secret, max_bytes }`**. `secret` is the
   *name* of a credential the runtime holds. Never its value.
-- **`ReadFile { path }`** — confined to the application's own directory.
-- **`Sleep { seconds }`** — waits without holding a wake lock.
+- **`ReadFile { path }`**. Confined to the application's own directory.
+- **`Sleep { seconds }`**. Waits without holding a wake lock.
 
 Show that something is happening. `activity(label, None)` plus `skeleton(n)`
 puts a placeholder where the content will land, which reads far better on a
@@ -449,10 +536,10 @@ Task::Post { credential: Some(Credential::in_header("anthropic", "x-api-key")), 
 
 The application names a secret; the runtime reads
 `/mnt/onboard/.adds/cobalt/secrets/<name>` and attaches it, either as a bearer
-token or under the header the application named — which is what lets a request
+token or under the header the application named, which is what lets a request
 go straight to Anthropic or Gemini rather than through a proxy.
 The value is never in the application's memory, its logs, or its crash dump,
-and it cannot be sent anywhere the application did not name — the request is
+and it cannot be sent anywhere the application did not name: the request is
 not replayed across a redirect.
 
 ---
@@ -474,7 +561,7 @@ match self.entry.handle(action) {
 }
 ```
 
-Keys are addressed **positionally** — `kb.r1c2` is the third key of the middle
+Keys are addressed **positionally**: `kb.r1c2` is the third key of the middle
 row, whatever it currently says. Shift and the symbol layer change every label
 without moving a single cell, so a finger already resting on a key does not
 have to be lifted and re-aimed.
@@ -528,8 +615,8 @@ either changed.
 
 `terminal_keys` sends a byte the instant a key is tapped rather than collecting
 a word, because `Ctrl-C` has to arrive while the program is still running.
-`Ctrl` is arithmetic rather than a lookup table — it clears the two high bits,
-which is why `Ctrl-C` is 3 and `Ctrl-[` is escape — return sends a carriage
+`Ctrl` is arithmetic rather than a lookup table. It clears the two high bits,
+which is why `Ctrl-C` is 3 and `Ctrl-[` is escape. Return sends a carriage
 return, and the key above it sends delete.
 
 This is the one capability that is different in kind from the rest. Everything
@@ -553,7 +640,7 @@ fn on_background(&mut self, context: &mut Context) {
 
 fn on_foreground(&mut self, context: &mut Context) {
     // The panel still holds the last thing this application drew, so there is
-    // no blank to cover — but anything that changed while away must be drawn.
+    // no blank to cover, but anything that changed while away must be drawn.
     self.show(context);
 }
 ```
@@ -576,9 +663,9 @@ Every one is a request, answered at `on_device_result` with a `DeviceResult`
 that may be `Denied`. There are three distinct refusals and they mean different
 things:
 
-- **`NotDeclared`** — the application did not ask for the capability.
-- **`WithheldForBattery`** — policy will not spend the charge right now.
-- **`Unsupported`** — this build genuinely cannot do it.
+- **`NotDeclared`**. The application did not ask for the capability.
+- **`WithheldForBattery`**. Policy will not spend the charge right now.
+- **`Unsupported`**. This build genuinely cannot do it.
 
 A build performs only what it has a proven backend for. Today that is the
 read-only battery gauge; everything else is honestly refused rather than
@@ -619,7 +706,7 @@ PPI, rotation 3, with display taps converted through the Clara's raw controller
 ranges before SDK hit testing. The runtime and simulator share the exact Rust
 refresh planner, including dirty rectangles, DU/GL16/GC16 selection and an
 eight-partial-update cleaning cadence. The browser's visible residue is an
-explicit approximation—an LCD cannot reproduce electrophoretic physics—and
+explicit approximation (an LCD cannot reproduce electrophoretic physics) and
 the **Show ideal pixels** control makes that boundary inspectable. Keeping this
 authoritative logic in the native simulator avoids adding a second WASM build
 and download to the development loop; a Rust-to-WASM renderer can be added

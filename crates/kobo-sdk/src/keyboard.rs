@@ -2,7 +2,7 @@
 //!
 //! This is a composite, not a primitive. The protocol has no keyboard node,
 //! the layout engine has never heard of one, and the renderer draws it as what
-//! it is: four grids of tappable cells. That was a deliberate decision — a
+//! it is: four grids of tappable cells. That was a deliberate decision, a
 //! keyboard, a calculator, a board and a colour picker are all the same shape,
 //! and adding a node for each would mean adding it to the wire format, the
 //! layout engine, the renderer and the hit test before anybody could use it.

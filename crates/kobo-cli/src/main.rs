@@ -25,10 +25,10 @@ const DEVICE_PACKAGES: &[&str] = &["kobo-doctor", "kobod", "kobo-todo", "kobo-te
 /// of them write to hardware.
 ///
 /// `kobod` needs `device-write` or `--present` is not compiled in at all, and
-/// `start.sh` — the only thing in the package an owner runs — fails with a
-/// usage message. That is exactly what shipped until an installed package was
-/// run on a real device, so `every_packaged_binary_is_built_with_what_it_needs`
-/// and the artifact check in `build_package` both exist to keep it shipped.
+/// `start.sh` (the only thing in the package an owner runs) fails with a usage
+/// message. That is exactly what shipped until an installed package was run on
+/// a real device, so `every_packaged_binary_is_built_with_what_it_needs` and
+/// the artifact check in `build_package` both exist to keep it shipped.
 const INSTALLED_PACKAGES: &[(&str, Option<&str>)] = &[
     ("kobod", Some("device-write")),
     ("kobo-launcher", None),
@@ -1056,8 +1056,8 @@ struct LogRequest<'a> {
 
 /// Prints the runtime's trace from the device, optionally as it is written.
 ///
-/// The trace is the only view into what a session is actually doing — which
-/// taps landed, which screens were drawn, which tasks came back — and without
+/// The trace is the only view into what a session is actually doing (which
+/// taps landed, which screens were drawn, which tasks came back) and without
 /// this it can only be read by opening a shell by hand.
 ///
 /// Spelled for hands that already know `adb logcat`: `-f` follows, `-d` dumps
@@ -1745,8 +1745,8 @@ fn unreachable_device(mut error: String) -> String {
 
 /// The same, for a session that ssh itself gave up on.
 ///
-/// ssh reserves exit status 255 for its own failures — refused, timed out, key
-/// rejected — so anything else came back from a shell that really did run on
+/// ssh reserves exit status 255 for its own failures (refused, timed out, key
+/// rejected) so anything else came back from a shell that really did run on
 /// the device, and the checklist would be misleading there.
 #[must_use]
 fn unreachable_if_ssh_gave_up(error: String, output: &RemoteShellOutput) -> String {
@@ -1799,7 +1799,7 @@ pub fn device_key_path() -> Option<PathBuf> {
 ///
 /// Without `-i` this offered only the default identities, and the reader's key
 /// is deliberately not one of those, so every connection failed on a reader
-/// that was set up correctly — `kobo devices` reported the reader as some other
+/// that was set up correctly, `kobo devices` reported the reader as some other
 /// host on the network. The key is added to the default identities rather than
 /// replacing them, so an agent or an `~/.ssh/config` entry still works.
 fn remote_shell_command(remote: &str) -> Command {
@@ -1862,8 +1862,8 @@ fn run_remote_shell(
         .map_err(|error| format!("read remote stderr: {error}"))?;
     let status = status.map_err(|error| remote_shell_error(error, &stdout, &stderr))?;
     if let Err(error) = writer_result {
-        // A script that decides not to read the rest of its input — because it
-        // refused, or because it ended in `exec` — closes the pipe under this
+        // A script that decides not to read the rest of its input (because it
+        // refused, or because it ended in `exec`) closes the pipe under this
         // writer, and that is not a transport failure. The device answered;
         // its status and its stderr are what the caller has to be told, and
         // reporting a broken pipe instead buries a plain refusal under advice
@@ -2095,7 +2095,7 @@ screen.
 
   1. Plug the cable into the reader and this machine directly, not through a
      hub or a charger-only cable.
-  2. The reader asks whether to connect. Tap 'Connect' — it will not mount
+  2. The reader asks whether to connect. Tap 'Connect'. It will not mount
      until you do.
   3. If it is already mounted somewhere unusual, name it: kobo setup --volume /path";
 
@@ -2258,8 +2258,8 @@ fn setup_device(arguments: &[String]) -> Result<(), String> {
 /// Adds the reader's own way into Cobalt, or explains why it could not.
 ///
 /// Never fails the setup. Everything else this command does works without a
-/// menu entry — `start.sh` over SSH is how the whole project has been run so
-/// far — so a download that cannot happen on an aeroplane should not cost
+/// menu entry (`start.sh` over SSH is how the whole project has been run so
+/// far) so a download that cannot happen on an aeroplane should not cost
 /// somebody the install they came for.
 fn add_menu_entry(volume: &Path) -> Result<menu::Menu, String> {
     if menu::installed(volume) {
@@ -2322,7 +2322,7 @@ fn await_reader(subnet: &str) {
         }
         setup::Arrival::TimedOut(passed_over) => {
             println!(
-                "The reader did not appear. It is set up either way — the files are on it\n\
+                "The reader did not appear. It is set up either way, the files are on it\n\
                  and its SSH server starts at the next boot. 'kobo devices' finds it once\n\
                  it is awake and on Wi-Fi."
             );

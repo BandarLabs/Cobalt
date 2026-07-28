@@ -76,7 +76,7 @@ pub enum Emphasis {
     /// buttons are not the one thing the screen is for.
     #[default]
     Normal,
-    /// Filled. At most one per screen, and the layout does not enforce that —
+    /// Filled. At most one per screen, and the layout does not enforce that,
     /// an author who fills everything is back where this started.
     Primary,
 }
@@ -85,8 +85,8 @@ pub enum Emphasis {
 ///
 /// Measured rather than picked: one indent step is one small space, and this
 /// panel's text column is 91 mm wide. Past three steps a reply has lost a
-/// quarter of its measure, and a discussion that nests forty deep — which real
-/// ones do — would otherwise end up one word per line. Deeper replies keep
+/// quarter of its measure, and a discussion that nests forty deep (which real
+/// ones do) would otherwise end up one word per line. Deeper replies keep
 /// their true depth in their byline and share the deepest indent.
 pub const MAX_QUOTE_DEPTH: u8 = 3;
 
@@ -292,7 +292,7 @@ impl DisplayMetrics {
     /// on a 122 millimetre panel that is nine per cent of everything the
     /// reader has. Eight and a half is a quarter off and still one and a half
     /// millimetres above [`Self::touch_target_minimum`], which matters because
-    /// this bar carries Back — the one control that is guaranteed to work, and
+    /// this bar carries Back, the one control that is guaranteed to work, and
     /// so the one that must never be the size of a guess.
     #[must_use]
     pub const fn top_bar_height(&self) -> i32 {
@@ -309,8 +309,8 @@ impl DisplayMetrics {
     /// Five millimetres: tall enough for caption type with air around it, and
     /// small enough that giving up four per cent of a 122 millimetre panel to
     /// something nobody reads on purpose is defensible. Nothing in it is
-    /// tappable, so it is deliberately below [`Self::touch_target_minimum`] —
-    /// a strip the size of a control invites a finger that has nowhere to go.
+    /// tappable, so it is deliberately below [`Self::touch_target_minimum`], a
+    /// strip the size of a control invites a finger that has nowhere to go.
     #[must_use]
     pub const fn status_band_height(&self) -> i32 {
         self.tenth_mm(50)
@@ -340,7 +340,7 @@ impl DisplayMetrics {
     /// question. That one asks how narrow a column of *text* may be, and 45
     /// millimetres is the honest answer. A tile carries a mark and a one-line
     /// label, so the binding constraint is a finger and a recognisable icon,
-    /// not a line of prose — holding tiles to the text figure gave a Clara two
+    /// not a line of prose, holding tiles to the text figure gave a Clara two
     /// 41 millimetre squares per row, which is a grid of four enormous buttons
     /// where a phone would show nine.
     ///
@@ -518,7 +518,7 @@ impl Chrome {
 ///
 /// Four states rather than a percentage. A number would invite an application
 /// to draw its own bar, and the reader cannot act on the difference between
-/// sixty and sixty-five percent — only on whether a page is going to load.
+/// sixty and sixty-five percent, only on whether a page is going to load.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum Signal {
     /// No radio, or no network. Drawn as a struck-through dot rather than as
@@ -575,8 +575,8 @@ pub struct Status {
 /// rather than trusting every application to remember, titled with the
 /// application's own name so nothing is invented.
 ///
-/// Here rather than in the daemon because the daemon has two renderers — the
-/// panel and the host simulation — and only one of them was doing this. A
+/// Here rather than in the daemon because the daemon has two renderers (the
+/// panel and the host simulation) and only one of them was doing this. A
 /// preview drawn without the way back is a preview of a screen that will never
 /// exist, and it hides the one defect that leaves somebody stuck.
 #[must_use]
@@ -791,7 +791,7 @@ pub struct NavBar {
     /// Which destination the reader is currently looking at, if any.
     ///
     /// `None` is a real answer rather than a missing one. A bar whose entries
-    /// are *actions* — previous page, next page, the way out — has no current
+    /// are *actions* (previous page, next page, the way out) has no current
     /// destination to mark, and marking one anyway tells the reader they are
     /// somewhere they are not. This used to be a plain `usize`, and the two
     /// screens that meant "none" said `usize::MAX`, which survived exactly as
@@ -835,8 +835,8 @@ pub struct Screen {
     pub nav_bar: Option<NavBar>,
     /// A single control pinned to the bottom band, in place of a bar.
     ///
-    /// A screen with one way off it — a launcher's way back to the reader, a
-    /// dialogue's way out — has no navigation to draw, and a bar of one
+    /// A screen with one way off it (a launcher's way back to the reader, a
+    /// dialogue's way out) has no navigation to draw, and a bar of one
     /// destination is refused precisely because it is not navigation. Placed
     /// in the flow instead, that control is the first thing a long page pushes
     /// off the bottom: the launcher shipped with its way back to the Kobo
@@ -1356,7 +1356,7 @@ fn layout_status_band(status: &Status, metrics: &DisplayMetrics, layout: &mut La
 ///
 /// Body, not [`FontSize::Title`]. The bar names the screen you are already
 /// looking at; it is a label, not a headline, and at title size it was the
-/// loudest thing on every page — louder than the first heading of the content
+/// loudest thing on every page, louder than the first heading of the content
 /// beneath it. Kobo's own reader sets its bar at about the size of its body
 /// text for the same reason. An overlay's title keeps the larger size, because
 /// an overlay has no content above it to compete with.
@@ -1386,7 +1386,7 @@ fn layout_top_bar(
 
     // Never taller than the bar it sits in. The comfortable control default is
     // ten millimetres and the bar is eight and a half, so taken literally this
-    // put a control that overhangs its own bar at a negative offset — the back
+    // put a control that overhangs its own bar at a negative offset, the back
     // chevron was drawn larger than the bar, sticking out above it. Clamped
     // here rather than at each control, because every one of them is centred
     // against the same height.
@@ -1615,7 +1615,7 @@ pub enum Node {
     /// weight. The stock reader never does this: metadata is smaller and
     /// lighter than what it describes, which is what lets a list be read by
     /// scanning the titles alone. This is a separate node rather than a role on
-    /// [`Self::Text`] because it is never prose — it is not paginated, not set
+    /// [`Self::Text`] because it is never prose: it is not paginated, not set
     /// in the reading face, and never wraps to more than a line or two.
     Secondary {
         id: NodeId,
@@ -1679,8 +1679,8 @@ pub enum Node {
     /// its area, while a row gives a sentence for the price of one line.
     /// A grid of equally sized, individually tappable cells.
     ///
-    /// This is the general one. A tile grid is opinionated — it picks its own
-    /// column count for readability and expects an icon and a word — and that
+    /// This is the general one. A tile grid is opinionated (it picks its own
+    /// column count for readability and expects an icon and a word) and that
     /// is right for a launcher and wrong for everything else. A board, a
     /// keyboard, a calculator and a colour picker are all the same shape, and
     /// none of them should need a new primitive in the protocol. So the caller
@@ -1741,10 +1741,10 @@ pub enum Node {
     /// allows without changing its shape.
     ///
     /// The pixels are deliberately not here. A screen is re-sent on every
-    /// change — that is what makes the model simple — and a book cover is
-    /// eighty thousand bytes, so carrying them inline would put a cover on the
-    /// wire for every tap. Instead the application hands the picture over once
-    /// and refers to it afterwards by `handle`.
+    /// change (that is what makes the model simple) and a book cover is eighty
+    /// thousand bytes, so carrying them inline would put a cover on the wire
+    /// for every tap. Instead the application hands the picture over once and
+    /// refers to it afterwards by `handle`.
     ///
     /// The natural size travels with the reference so that layout stays a pure
     /// function of the screen. A renderer that had to look the picture up
@@ -1876,7 +1876,7 @@ impl TileShape {
     ///
     /// Portrait was 40 millimetres, which on a six inch panel is two columns,
     /// and two columns of a shape half again as tall as it is wide is a row
-    /// and a half of shelf between the bars — the third row was cut in half by
+    /// and a half of shelf between the bars, the third row was cut in half by
     /// the nav bar, so a shelf of six read as four books and a mistake. Three
     /// columns of 26 millimetres puts two whole rows on the panel. It is a
     /// smaller cover and it is 310 by 465 pixels at 300 pixels per inch, which
@@ -1992,7 +1992,7 @@ impl Row {
 ///
 /// The alternative is not a smaller icon, it is a different fact. Where the
 /// entries are ordered, the position *is* the distinguishing information, so
-/// the well holds a number instead — the same thing Hacker News itself puts
+/// the well holds a number instead, the same thing Hacker News itself puts
 /// there. `From<Glyph>` exists so that the icon case, which is still the right
 /// answer for a menu of unlike things, stays the shortest thing to write.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2658,8 +2658,8 @@ pub fn one_line(text: &str, width: i32, size: FontSize) -> String {
 /// somebody else, the least useful: a Hacker News headline averages well over
 /// a line on this panel, so a one-line list is a column of sentences that all
 /// stop before they have said anything. Two lines carry almost every real
-/// headline whole, at the cost of a list whose rows differ in height — which
-/// is the right trade, because a row's height is not information and its title
+/// headline whole, at the cost of a list whose rows differ in height, which is
+/// the right trade, because a row's height is not information and its title
 /// is.
 ///
 /// Returns a plain string rather than lines, because the layout engine wraps
@@ -3155,9 +3155,9 @@ fn layout_node(
         Node::TileGrid { id, tiles, shape } => {
             let columns = metrics.grid_columns(*shape) as i32;
             let gutter = metrics.space(Space::Small);
-            // Rows are set tighter than columns, and deliberately so. A cell is
-            // taller than its mark — the glyph and its name are centred as a
-            // pair and the rest of the cell is air — so an equal gap on both
+            // Rows are set tighter than columns, and deliberately so. A cell
+            // is taller than its mark (the glyph and its name are centred as a
+            // pair and the rest of the cell is air) so an equal gap on both
             // axes reads as twice the space between rows that it does between
             // columns. On the panel the grid sat a tight step below the top
             // bar's rule and then twice that between its own rows, which made
@@ -3601,12 +3601,12 @@ pub enum Face {
     ///
     /// Distinct from [`Self::Text`] because the two jobs genuinely differ. The
     /// interface face is chosen so that a label glanced at once cannot be
-    /// misread — that is why it is Atkinson Hyperlegible, drawn by the Braille
+    /// misread, that is why it is Atkinson Hyperlegible, drawn by the Braille
     /// Institute to keep similar letterforms apart. Prose is the opposite
-    /// problem: nothing is glanced at, everything is read in sequence, and what
-    /// matters is that the eye is carried along the line without noticing the
-    /// type at all. Every dedicated reader answers that with a serif, and this
-    /// one does too.
+    /// problem: nothing is glanced at, everything is read in sequence, and
+    /// what matters is that the eye is carried along the line without noticing
+    /// the type at all. Every dedicated reader answers that with a serif, and
+    /// this one does too.
     Reading,
 }
 
@@ -4087,10 +4087,10 @@ pub fn paginate_tagged(
             }
             // The paragraph does not fit in what is left. Splitting it at a
             // line boundary is what a book does; moving it whole to the next
-            // page is what this used to do, and on a threaded discussion —
-            // where a single comment is a single paragraph and often a long
-            // one — it left page after page half empty, with the reader
-            // turning twice as often to read the same words.
+            // page is what this used to do, and on a threaded discussion
+            // (where a single comment is a single paragraph and often a long
+            // one) it left page after page half empty, with the reader turning
+            // twice as often to read the same words.
             //
             // The one thing worth protecting is the orphan: a lone line
             // stranded at the foot of a page, or carried alone to the top of
@@ -4126,7 +4126,7 @@ type Page = Vec<(u32, u8, QuoteRole, String)>;
 ///
 /// A comment longer than a page used to continue onto the next one with
 /// nothing above it, so a reader who turned the page was reading words with no
-/// idea whose they were — visible on a real thread, where a page began
+/// idea whose they were, visible on a real thread, where a page began
 /// mid-sentence under a bare indent. The byline is repeated at the top of the
 /// continuation and charged to the new page's height, so repeating it cannot
 /// push the last line off the bottom.
@@ -4267,7 +4267,7 @@ pub fn paginate_rows(
 /// The companion to [`paginate_rows`] for the tile shape. The arithmetic is
 /// the layout engine's own: an application that guessed a tile count would be
 /// right on one panel and wrong on every other, and being wrong here does not
-/// look like a layout bug — the layout engine drops what does not fit in
+/// look like a layout bug, the layout engine drops what does not fit in
 /// silence, so the last few entries simply cease to exist.
 #[must_use]
 pub fn paginate_tiles(
@@ -4807,10 +4807,10 @@ pub struct PicturePixels<'a> {
 
 /// Where the renderer finds the pictures an application handed over.
 ///
-/// Pictures are looked up at paint time rather than travelling with the screen,
-/// so a source that has lost one — evicted, never delivered, or refused — is a
-/// normal condition and answers `None`. Nothing is drawn in that case, which is
-/// why a tile keeps its glyph as well as its picture.
+/// Pictures are looked up at paint time rather than travelling with the
+/// screen, so a source that has lost one (evicted, never delivered, or
+/// refused) is a normal condition and answers `None`. Nothing is drawn in that
+/// case, which is why a tile keeps its glyph as well as its picture.
 pub trait Pictures {
     fn get(&self, handle: PictureHandle) -> Option<PicturePixels<'_>>;
 
@@ -6082,7 +6082,7 @@ pub fn render_all(
                 // to be cleared before anything near it can be redrawn, and
                 // which shouted louder than the content it was warning about.
                 // What separates the two levels now is a heavy bar down the
-                // leading edge — the same mark a printed page uses to flag a
+                // leading edge, the same mark a printed page uses to flag a
                 // paragraph, readable at a glance and cheap to draw.
                 fill_clipped(surface, node.rect, tone::SURFACE, clip);
                 let mut text_x = node.rect.x + padding;
@@ -6320,7 +6320,7 @@ fn draw_glyph_icon(surface: &mut Surface, glyph: Glyph, rect: Rect, clip: Rect) 
 /// band's height a battery comes out about three millimetres across and reads
 /// as a dot. This fits the box to the width instead and centres it vertically.
 /// The rows that fall outside the rect are empty in the art, so nothing is
-/// lost — the geometry is authored to sit in the middle band of the box.
+/// lost, the geometry is authored to sit in the middle band of the box.
 fn draw_wide_vector(surface: &mut Surface, shapes: &[vector::Shape], rect: Rect, clip: Rect) {
     if rect.width <= 0 {
         return;
@@ -7401,7 +7401,7 @@ mod chrome_tests {
     #[test]
     fn the_bar_names_the_screen_without_shouting_over_it() {
         // The bar says which screen you are on. It is a label, not a headline,
-        // and at title size it was the loudest thing on every page — larger
+        // and at title size it was the loudest thing on every page, larger
         // than the first heading of the content underneath it, which inverts
         // the hierarchy Kobo's own reader uses.
         assert!(

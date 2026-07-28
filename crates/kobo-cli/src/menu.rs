@@ -7,7 +7,7 @@
 //!
 //! # Why NickelMenu and not our own
 //!
-//! The reader's home screen is Qt, drawn by `libnickel.so.1.0.0` — a stripped
+//! The reader's home screen is Qt, drawn by `libnickel.so.1.0.0`, a stripped
 //! 24 MB C++ binary. A menu entry means running code inside that process and
 //! calling its own methods to build the item, which means: a shared library
 //! that Qt will load, resolution of mangled C++ symbols out of a proprietary
@@ -96,7 +96,7 @@ pub const UNINSTALL_FLAG: &str = ".adds/nm/uninstall";
 ///
 /// Started on demand, deliberately. `kobod` has one mode and it is to replace
 /// the reader, so starting it at boot would leave a device with no stock
-/// reader on it — and would spend the safety net every other risky thing in
+/// reader on it, and would spend the safety net every other risky thing in
 /// this project has been leaning on, which is that restarting always comes
 /// back to stock.
 #[must_use]
@@ -205,7 +205,7 @@ pub fn installed(volume: &Path) -> bool {
 ///
 /// `archive` is the verified release, and is only consulted when the plugin is
 /// missing. Callers that cannot obtain it may pass `None`, which writes the
-/// entry alone — correct when NickelMenu is already there, and reported as
+/// entry alone, correct when NickelMenu is already there, and reported as
 /// unchanged when it is not.
 ///
 /// # Errors

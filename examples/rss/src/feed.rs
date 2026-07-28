@@ -15,12 +15,12 @@
 //! prefix chosen to collide with a name this module reads. A parser that
 //! models XML faithfully has to have an answer for all of it.
 //!
-//! This one models exactly the shape a feed has — a flat run of elements, of
-//! which about a dozen names mean anything — and treats everything else as
-//! text to be skipped. Every malformed shape has the same defined outcome:
-//! reading stops early, and whatever was understood before that point is what
-//! you get. There is no input that makes it recurse and none that makes it
-//! allocate a multiple of its input.
+//! This one models exactly the shape a feed has (a flat run of elements, of
+//! which about a dozen names mean anything) and treats everything else as text
+//! to be skipped. Every malformed shape has the same defined outcome: reading
+//! stops early, and whatever was understood before that point is what you get.
+//! There is no input that makes it recurse and none that makes it allocate a
+//! multiple of its input.
 //!
 //! # Why namespace prefixes are matched whole
 //!
@@ -145,7 +145,7 @@ pub struct Feed {
 /// Reads a feed from whatever came back over the wire.
 ///
 /// Returns nothing when the bytes are not a feed at all, which is a different
-/// answer from a feed with no items — a publisher between posts is not an
+/// answer from a feed with no items, a publisher between posts is not an
 /// error, and the screen says so differently.
 #[must_use]
 pub fn parse(bytes: &[u8]) -> Option<Feed> {

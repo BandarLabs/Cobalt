@@ -165,7 +165,7 @@ impl TouchDecoder {
             // Deliberately not conditioned on the contact still being down. A
             // release that arrives in the same report as its coordinates still
             // happened somewhere, and requiring `active` here threw those
-            // coordinates away — which is how a quick tap came to register as
+            // coordinates away, which is how a quick tap came to register as
             // nothing at all.
             let point = if slot.has(SLOT_X_FRESH) && slot.has(SLOT_Y_FRESH) {
                 profile.touch_to_display(slot.raw_x, slot.raw_y)
@@ -283,7 +283,7 @@ mod tests {
         // report: the panel reports coordinates and a tracking id, then
         // BTN_TOUCH going low, and only then the SYN. There is no report in
         // between for a Down to be emitted from, and the decoder used to
-        // require one before it would emit an Up — so the whole tap vanished
+        // require one before it would emit an Up, so the whole tap vanished
         // and the control looked broken.
         let mut decoder = TouchDecoder::default();
         let events = feed(

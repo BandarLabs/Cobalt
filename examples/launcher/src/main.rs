@@ -265,12 +265,13 @@ impl Launcher {
     ///
     /// It carries a way back even though it is normally on the panel for under
     /// a second, because every way this screen can fail to be replaced ends
-    /// with the reader looking at it. The runtime deliberately does not end the
-    /// session when a launch cannot be satisfied — that would cost the owner
-    /// the reader, half a minute and every other running application over one
-    /// missing entry — and it has no way to tell the launcher either, so a
-    /// missing binary, an application that exits before it draws, or one that
-    /// is simply slow all leave this screen up. One button answers all of them.
+    /// with the reader looking at it. The runtime deliberately does not end
+    /// the session when a launch cannot be satisfied (that would cost the
+    /// owner the reader, half a minute and every other running application
+    /// over one missing entry) and it has no way to tell the launcher either,
+    /// so a missing binary, an application that exits before it draws, or one
+    /// that is simply slow all leave this screen up. One button answers all of
+    /// them.
     fn starting(index: usize) -> kobo_sdk::Screen {
         let entry = &ENTRIES[index];
         ScreenBuilder::new("launcher-starting")
@@ -301,7 +302,7 @@ impl KoboApp for Launcher {
     ///
     /// Leaving an entry paints "Starting…" so the wait is explained, and the
     /// runtime repaints a returning application from the last screen it drew
-    /// rather than waiting for a new one — which is what makes coming back
+    /// rather than waiting for a new one, which is what makes coming back
     /// instant. Together those two correct decisions meant that tapping back
     /// out of an application landed on a "Starting…" screen for an application
     /// that had already started and already finished, with no way forward. The
@@ -511,8 +512,8 @@ mod tests {
 
     /// A tile describes; only the button starts. A grid of icons is easy to
     /// brush against, and starting an application costs the reader the panel,
-    /// this application's state, and a wait — so a stray touch must not be
-    /// able to buy any of that.
+    /// this application's state, and a wait, so a stray touch must not be able
+    /// to buy any of that.
     #[test]
     fn tapping_a_tile_describes_the_entry_and_starts_nothing() {
         let mut runner = AppRunner::new(Launcher::default());
@@ -564,7 +565,7 @@ mod tests {
     }
 
     /// A launch the runtime cannot satisfy leaves the panel on this screen and
-    /// tells the launcher nothing, by design — ending the session over one
+    /// tells the launcher nothing, by design, ending the session over one
     /// missing entry would cost the owner the reader and every other running
     /// application. So the screen itself has to offer the way out.
     #[test]
@@ -599,8 +600,8 @@ mod tests {
     /// Tapping back out of an application used to land on "Starting Terminal",
     /// for a terminal that had already started and already been left, with no
     /// control on the screen that went anywhere. The runtime repaints a
-    /// returning application from the last screen it drew — that is what makes
-    /// coming back instant — so the transient has to be cleared here.
+    /// returning application from the last screen it drew (that is what makes
+    /// coming back instant) so the transient has to be cleared here.
     #[test]
     fn coming_back_from_an_application_shows_the_list_again() {
         let mut runner = AppRunner::new(Launcher::default());
@@ -633,7 +634,7 @@ mod tests {
 
     /// The defect this test exists for shipped: the way back to the reader was
     /// drawn from y=1335 to y=1453 on a panel 1448 pixels tall, so its bottom
-    /// five pixels — and any descender in the label — were clipped by the edge
+    /// five pixels (and any descender in the label) were clipped by the edge
     /// of the screen. Nothing failed; the renderer simply stops at the panel.
     #[test]
     fn nothing_is_drawn_past_the_edge_of_the_panel() {

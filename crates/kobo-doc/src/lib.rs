@@ -3,7 +3,7 @@
 //! # What this is for
 //!
 //! An application on this platform cannot open a file. Everything it reads
-//! arrives as bytes — from a download, from the store, from a task — and
+//! arrives as bytes (from a download, from the store, from a task) and
 //! everything it draws is nodes. This crate is the middle: bytes of some
 //! format in, a [`Document`] out, and the Reader turns a `Document` into pages
 //! of nodes.
@@ -23,7 +23,7 @@
 //! A document is a flat list of [`Block`]s. Not a tree: the panel draws one
 //! column of blocks one after another, nothing here nests visually except a
 //! quotation, and a tree would be a shape the renderer immediately flattens
-//! again. Structure that matters — where a chapter begins — is a block, not a
+//! again. Structure that matters (where a chapter begins) is a block, not a
 //! level of nesting.
 //!
 //! # Limits
@@ -101,7 +101,7 @@ pub fn sniff(name: &str, bytes: &[u8]) -> Format {
 /// # Errors
 ///
 /// Only an EPUB can fail to be read at all: the other three formats have no
-/// input they cannot interpret as *something*, which is deliberate — a book
+/// input they cannot interpret as *something*, which is deliberate, a book
 /// that renders oddly can still be read, and one that refuses to open cannot.
 pub fn read(name: &str, bytes: &[u8]) -> Result<Document, epub::Fault> {
     match sniff(name, bytes) {
@@ -121,8 +121,8 @@ pub const MAX_BLOCKS: usize = 60_000;
 
 /// The most text one document may hold, in bytes.
 ///
-/// Sixteen megabytes is far more than any book anybody reads on this device —
-/// the largest thing in Project Gutenberg's top hundred is under three — and
+/// Sixteen megabytes is far more than any book anybody reads on this device
+/// (the largest thing in Project Gutenberg's top hundred is under three) and
 /// far below the point at which holding it is a problem.
 pub const MAX_TEXT: usize = 16 * 1024 * 1024;
 
@@ -232,7 +232,7 @@ impl Document {
     #[must_use]
     pub fn part_title(&self, start: usize) -> Option<&str> {
         // A `Break` carries no words, so the name of that part is whatever
-        // heading follows it — but only immediately, and only after a break.
+        // heading follows it, but only immediately, and only after a break.
         // Looking ahead unconditionally would give the unnamed stretch at the
         // front of a book the name of the chapter that follows it, which is
         // the one part that genuinely has no name.
@@ -276,12 +276,12 @@ impl Builder {
         let block = match block {
             Block::Preformatted(text) => {
                 // Not trimmed on the inside, because the spaces are what it is
-                // for. Only the blank lines around it go.
-                // Not trimmed on the inside and not re-wrapped, but control
-                // characters still go: a `\u{7}` has no drawing, and leaving
-                // one in makes every renderer downstream decide what a bell
-                // looks like. Tabs and newlines stay — they are the reason
-                // this block is preformatted.
+                // for. Only the blank lines around it go. Not trimmed on the
+                // inside and not re-wrapped, but control characters still go:
+                // a `\u{7}` has no drawing, and leaving one in makes every
+                // renderer downstream decide what a bell looks like. Tabs and
+                // newlines stay, they are the reason this block is
+                // preformatted.
                 let text: String = text
                     .trim_matches('\n')
                     .chars()
@@ -391,9 +391,9 @@ const GUTENBERG_END: &str = "*** END OF TH";
 /// format. Gutenberg serves the *same book* as EPUB and as HTML, wrapped in
 /// the same thirty lines of header and five hundred of footer, and page one of
 /// every one of those was a paragraph about redistribution in the United
-/// States — identical for every book in the library. Doing it on blocks
-/// instead means it works for every format there is and every format there
-/// will be, because the markers survive into the blocks whatever parsed them.
+/// States, identical for every book in the library. Doing it on blocks instead
+/// means it works for every format there is and every format there will be,
+/// because the markers survive into the blocks whatever parsed them.
 ///
 /// A file with no markers is left exactly as it was. Guessing where somebody
 /// else's front matter ends is not something this can do.
