@@ -547,8 +547,10 @@ dependencies = [
 name = "kobo-gutenshelf"
 version = "0.1.0"
 dependencies = [
+ "kobo-doc",
  "kobo-image",
  "kobo-json",
+ "kobo-read",
  "kobo-sdk",
  "kobo-ui",
 ]

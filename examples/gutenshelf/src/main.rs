@@ -6,12 +6,20 @@
 //! ## Why plain text rather than EPUB
 //!
 //! Gutenberg publishes every book in several formats, and this reads the plain
-//! text one. An EPUB is a zip archive of XHTML that would need an unpacker, an
-//! XML parser and a subset of CSS before a single word reached the panel, and
-//! all three would be new dependencies in a workspace that has none. The plain
-//! text is the same book. What is lost is italics and a table of contents;
-//! what is gained is a reader that is a few hundred lines and cannot be
-//! attacked by a malformed archive.
+//! text one. `kobo-doc` can read an EPUB now, so this is no longer a matter of
+//! what can be parsed: it is that an EPUB is only useful whole, and a
+//! half-downloaded zip is not a half-downloaded book. The plain text can be
+//! read from the first byte, which is what lets the first page appear in about
+//! a second on a radio this slow. What is lost is italics and a table of
+//! contents.
+//!
+//! ## Why the reading screen is not built here
+//!
+//! It was, once: forty lines that turned pages and nothing else. Type size,
+//! front light, bookmarks and marked passages are not gutenshelf's to invent
+//! -- every application that shows a book wants the same ones, and a reader
+//! who learns them in one should find them in the next. They live in
+//! `kobo-read`.
 //!
 //! ## Why the book arrives in pieces
 //!
@@ -22,11 +30,14 @@
 //! about a second, and the next piece is fetched while there are still pages
 //! left to read.
 
+use kobo_read::{Memory, Outcome, Reader};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, PictureHandle, ScreenBuilder, Task,
-    TaskId, TaskOutcome, TilePicture, TileShape,
+    action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, PictureHandle, ScreenBuilder,
+    ShelfDownload, ShelfProgress, ShelfUpload, StoreResult, Task, TaskId, TaskOutcome, TilePicture,
+    TileShape,
 };
+use std::collections::BTreeMap;
 use std::process::ExitCode;
 
 /// The catalogue. Gutendex is a read-only JSON front end to Gutenberg's own
@@ -135,18 +146,17 @@ struct Gutenshelf {
     query: Option<String>,
     /// The book being read, as far as it has been downloaded.
     text: String,
-    /// The downloaded text broken into pages that fit this panel.
+    /// The book, open, as far as it has been downloaded.
     ///
     /// Held rather than derived at draw time: the runtime states the panel
-    /// during the handshake, so this cannot be computed until the application
-    /// is running, and recomputing a whole chunk on every repaint would make
+    /// during the handshake, so this cannot be built until the application is
+    /// running, and repaginating a whole novel on every repaint would make
     /// every page turn slower than the one before it.
-    pages: Vec<Vec<String>>,
+    reader: Option<Reader>,
     /// How many bytes of the book have been asked for so far.
     fetched: u32,
     /// Whether the download reached the end of the book.
     complete: bool,
-    page: usize,
     /// Which page of the shelf is showing.
     shelf: usize,
     /// Books whose covers are still to be fetched, most recent first.
@@ -164,6 +174,25 @@ struct Gutenshelf {
     covers: Vec<(TaskId, usize, u8)>,
     task: Option<(TaskId, Awaiting)>,
     problem: Option<String>,
+    /// Books already on the shelf, by blob name, with their size.
+    ///
+    /// A downloaded book is the expensive thing this application produces: it
+    /// is a megabyte over a slow radio, and before this it was thrown away the
+    /// moment somebody looked at another title. Held so a book can be opened
+    /// again without the radio at all, and so the library can say which ones
+    /// those are.
+    stored: BTreeMap<String, u32>,
+    /// Putting the open book onto the shelf, once it has all arrived.
+    keeping: Option<ShelfUpload>,
+    /// Taking a book back off the shelf, in place of downloading it.
+    loading: Option<ShelfDownload>,
+    /// Where the open book was last left, once the store has answered.
+    ///
+    /// Held rather than applied on arrival because the book and the place come
+    /// from different places at different speeds: the text is on the radio and
+    /// the position is on the card, and whichever lands second is the one that
+    /// has to put them together.
+    place: Option<Memory>,
 }
 
 impl Default for Gutenshelf {
@@ -175,15 +204,18 @@ impl Default for Gutenshelf {
             open: None,
             query: None,
             text: String::new(),
-            pages: Vec::new(),
+            reader: None,
             fetched: 0,
             complete: false,
-            page: 0,
             shelf: 0,
             wanted: Vec::new(),
             covers: Vec::new(),
             task: None,
             problem: None,
+            stored: BTreeMap::new(),
+            keeping: None,
+            loading: None,
+            place: None,
         }
     }
 }
@@ -267,12 +299,20 @@ impl Gutenshelf {
             .skip(first)
             .take(SHELF_PAGE)
             .map(|(index, book)| {
-                (
-                    format!("book-{index}"),
-                    book.title.clone(),
-                    Glyph::Book,
-                    book.picture,
-                )
+                // A tick on a book already on the device. The tile is a cover
+                // and a title with no room for a sentence, and the one thing
+                // worth knowing before tapping is whether opening it costs a
+                // download.
+                // Said in words rather than with a tick. The reading face has
+                // no check mark in it, and the platform refuses a screen
+                // carrying a character it cannot draw -- which is the right
+                // answer, because the alternative is a blank box on a shelf.
+                let title = if self.is_kept(book) {
+                    format!("{} (kept)", book.title)
+                } else {
+                    book.title.clone()
+                };
+                (format!("book-{index}"), title, Glyph::Book, book.picture)
             });
         screen = screen.picture_tiles(TileShape::Portrait, shown);
         if pages <= 1 {
@@ -328,8 +368,14 @@ impl Gutenshelf {
         if let Some(problem) = &self.problem {
             screen = screen.banner(BannerLevel::Attention, problem.clone());
         }
-        if self.awaiting_text() {
+        if self.awaiting_text() || self.loading.is_some() {
             return screen.activity("Downloading", None).build();
+        }
+        if self.is_kept(book) {
+            // Worth saying plainly: it is the difference between opening now
+            // and waiting on a megabyte over a radio, and it is the only way
+            // to tell that this book costs nothing to open again.
+            screen = screen.secondary("Already on this device.");
         }
         screen = if book.text.is_some() {
             // The one thing this page is for, so it is the one control filled.
@@ -343,49 +389,18 @@ impl Gutenshelf {
     }
 
     fn reading(&self) -> kobo_sdk::Screen {
-        let body = self.pages.get(self.page);
         let title = self
             .open
             .and_then(|index| self.books.get(index))
             .map_or_else(|| "Reading".to_owned(), |book| book.title.clone());
-        // The one screen in this application that is a book rather than an
-        // interface, and the only one that asks for the reading face.
-        let mut screen = ScreenBuilder::new("gutenshelf-reading")
-            .reading(true)
-            .top_bar(title);
-        let Some(body) = body else {
-            return screen.activity("Downloading", None).build();
+        let Some(reader) = &self.reader else {
+            return ScreenBuilder::new("gutenshelf-reading")
+                .reading(true)
+                .top_bar(title)
+                .activity("Downloading", None)
+                .build();
         };
-        // One node per paragraph, which is how the page was measured. A single
-        // node would lose every blank line in the book, because wrapping works
-        // on words and cannot see where a paragraph ended.
-        for paragraph in body {
-            screen = screen.text(paragraph.clone());
-        }
-        if let Some(problem) = &self.problem {
-            screen = screen.banner(BannerLevel::Attention, problem.clone());
-        }
-        // The page controls are the pinned bar rather than the last thing in
-        // the flow. Content stops at the bar, so a page that runs long loses
-        // its final words rather than its page turn: the layout engine drops
-        // whatever does not fit, and in the flow the turn is what does not fit.
-        // Nothing is "selected", because these are controls rather than a
-        // location.
-        // The bar stays, because a control you can see is how anyone learns
-        // the gesture exists. The gesture is what gets used afterwards: every
-        // Kobo turns the page when you tap the side of it, and a reader
-        // holding one already knows that without being told.
-        screen
-            .page_turns("page-back", "page-next")
-            .nav_bar(
-                None,
-                [
-                    ("page-back", "Back"),
-                    ("results", "Library"),
-                    ("page-next", "Next"),
-                ],
-            )
-            .build()
+        reader.screen(&title)
     }
 
     fn ask_catalogue(&mut self, context: &mut Context, query: Option<&str>) {
@@ -528,6 +543,24 @@ impl Gutenshelf {
         }
     }
 
+    /// Opens the book, from the device if it is here and the radio if not.
+    fn get_text(&mut self, context: &mut Context) {
+        let kept = self
+            .open
+            .and_then(|index| self.books.get(index))
+            .is_some_and(|book| self.is_kept(book));
+        if kept {
+            if let Some((blob, _)) = self.open_names() {
+                let mut download = ShelfDownload::new(blob);
+                download.start(context);
+                self.loading = Some(download);
+                self.problem = None;
+                return;
+            }
+        }
+        self.ask_text(context);
+    }
+
     fn ask_text(&mut self, context: &mut Context) {
         let Some(url) = self
             .open
@@ -556,7 +589,10 @@ impl Gutenshelf {
         if self.complete || self.task.is_some() {
             return;
         }
-        if self.page + TOP_UP_PAGES >= self.pages.len() {
+        let left = self.reader.as_ref().map_or(0, |reader| {
+            reader.page_count().saturating_sub(reader.page_number())
+        });
+        if left <= TOP_UP_PAGES {
             self.ask_text(context);
         }
     }
@@ -566,12 +602,116 @@ impl Gutenshelf {
         self.view = View::Details;
         // A different book, so nothing about the last one survives.
         self.text.clear();
-        self.pages.clear();
+        self.reader = None;
+        self.place = None;
+        self.loading = None;
         self.fetched = 0;
         self.complete = false;
-        self.page = 0;
         self.problem = None;
+        if let Some((_, place)) = self.open_names() {
+            // Asked now rather than when Read is tapped, so the position is
+            // already here by the time the first page is.
+            context.store().load(place);
+        }
         self.show(context);
+    }
+
+    /// The blob name for a book, and the key its place is kept under.
+    ///
+    /// Derived from the text URL rather than from the title: two editions of
+    /// the same novel are different files with different page breaks, and a
+    /// place kept under a title would drop somebody into the wrong one. The
+    /// URL is the only thing Gutenberg gives that names an edition.
+    fn names(book: &Book) -> Option<(String, String)> {
+        let url = book.text.as_ref()?;
+        let stamp = stamp(url);
+        Some((format!("book-{stamp:08x}"), format!("place-{stamp:08x}")))
+    }
+
+    fn open_names(&self) -> Option<(String, String)> {
+        self.open
+            .and_then(|index| self.books.get(index))
+            .and_then(Self::names)
+    }
+
+    /// Whether this book is already on the device.
+    fn is_kept(&self, book: &Book) -> bool {
+        Self::names(book).is_some_and(|(blob, _)| self.stored.contains_key(&blob))
+    }
+
+    /// Offers an action to the open book, and says whether it was its.
+    ///
+    /// The reader owns every control on its own screen, so this is asked
+    /// before any of the library's: a book is what is on the panel, and
+    /// nothing else can be tapped from there.
+    fn read_action(&mut self, context: &mut Context, action: ActionId) -> bool {
+        let metrics = context.metrics();
+        let Some(reader) = &mut self.reader else {
+            return false;
+        };
+        match reader.act_on(action, &metrics) {
+            Outcome::Elsewhere => return false,
+            Outcome::Close => self.view = View::Details,
+            Outcome::Light(level) => {
+                context.device().set_frontlight(level);
+                self.save_place(context);
+            }
+            Outcome::Save => {
+                self.save_place(context);
+                self.top_up(context);
+            }
+            Outcome::Repaint => {}
+        }
+        self.show(context);
+        true
+    }
+
+    /// Keeps where the reader is, so the book opens there next time.
+    fn save_place(&mut self, context: &mut Context) {
+        let Some((_, place)) = self.open_names() else {
+            return;
+        };
+        let Some(reader) = &self.reader else {
+            return;
+        };
+        let memory = reader.memory().encode();
+        context.store().save(place, memory);
+    }
+
+    /// Puts a finished book on the shelf, so it never has to be fetched again.
+    fn keep_book(&mut self, context: &mut Context) {
+        let Some((blob, _)) = self.open_names() else {
+            return;
+        };
+        if self.stored.contains_key(&blob) || self.text.is_empty() {
+            return;
+        }
+        let mut upload = ShelfUpload::new(blob, self.text.clone().into_bytes());
+        upload.start(context);
+        self.keeping = Some(upload);
+    }
+
+    /// Rebuilds the open book from everything downloaded so far.
+    ///
+    /// The reader's memory carries across rather than being rebuilt with it.
+    /// A position is a block index, and appending to a book does not renumber
+    /// what came before it -- so a chunk landing while somebody is reading
+    /// chapter two leaves them in chapter two, which is the whole reason a
+    /// position is stored that way.
+    fn reopen(&mut self, context: &Context) {
+        let memory = self.reader.as_ref().map_or_else(
+            || self.place.clone().unwrap_or_default(),
+            |reader| reader.memory().clone(),
+        );
+        // Named as text so it is read as text. The bytes are Gutenberg's plain
+        // edition whatever the URL happened to end in.
+        let cleaned = readable(&self.text);
+        match kobo_doc::read("book.txt", cleaned.as_bytes()) {
+            Ok(document) => {
+                self.reader = Some(Reader::open(document, memory, &context.metrics()));
+            }
+            Err(_) => self.problem = Some("This book could not be read.".to_owned()),
+        }
     }
 
     fn took_catalogue(&mut self, bytes: &[u8]) {
@@ -590,7 +730,7 @@ impl Gutenshelf {
         self.view = View::Results;
     }
 
-    fn took_text(&mut self, context: &Context, bytes: &[u8]) {
+    fn took_text(&mut self, context: &mut Context, bytes: &[u8]) {
         // Lossy on purpose. Gutenberg's plain text is usually UTF-8 but not
         // always, and a book that will not open because of one bad byte in
         // chapter forty is worse than a book with one odd character in it.
@@ -616,15 +756,101 @@ impl Gutenshelf {
         // with book leading, which is wider and taller than the interface
         // face, so paginating with the default would run every page past the
         // bottom of the panel and lose its last lines.
-        self.pages = context.paginate_reading(&readable(&self.text), true);
+        self.reopen(context);
+        if self.complete {
+            self.keep_book(context);
+        }
         self.view = View::Reading;
     }
 }
 
 impl KoboApp for Gutenshelf {
     fn on_start(&mut self, context: &mut Context) {
+        // Asked first so the shelf can mark what is already here by the time
+        // the catalogue lands. A book already on the device opens instantly
+        // and without the radio, and that is worth saying before somebody
+        // waits on a download they did not need.
+        context.shelf().list();
         self.ask_catalogue(context, None);
         self.show(context);
+    }
+
+    fn on_store(&mut self, context: &mut Context, result: StoreResult) {
+        if let Some(upload) = &mut self.keeping {
+            match upload.advance(context, &result) {
+                ShelfProgress::Done => {
+                    let name = upload.name().to_owned();
+                    let size = u32::try_from(self.text.len()).unwrap_or(u32::MAX);
+                    self.stored.insert(name, size);
+                    self.keeping = None;
+                    return;
+                }
+                // Quiet on purpose. Keeping a copy is a convenience; failing
+                // at it does not stop anyone reading the book they have, and a
+                // warning about the card being full over an open novel is an
+                // interruption that helps nobody.
+                ShelfProgress::Failed(_) => {
+                    self.keeping = None;
+                    return;
+                }
+                ShelfProgress::Moving { .. } => return,
+                // Not this transfer's answer. Falling through matters: a book
+                // being copied onto the shelf runs alongside the store answer
+                // that says where the reader left it, and swallowing that here
+                // dropped somebody back at page one of a book they were
+                // halfway through.
+                ShelfProgress::Elsewhere => {}
+            }
+        }
+        if let Some(download) = &mut self.loading {
+            match download.advance(context, &result) {
+                ShelfProgress::Done => {
+                    let bytes = self.loading.take().expect("a download in progress").take();
+                    self.text = String::from_utf8_lossy(&bytes).into_owned();
+                    self.fetched = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
+                    self.complete = true;
+                    self.reopen(context);
+                    self.view = View::Reading;
+                    self.show(context);
+                    return;
+                }
+                ShelfProgress::Failed(_) => {
+                    // The copy is gone or unreadable, so it is no longer a
+                    // copy: forget it and fetch, rather than telling somebody
+                    // their own device has lost their book.
+                    if let Some((blob, _)) = self.open_names() {
+                        self.stored.remove(&blob);
+                        context.shelf().remove(blob);
+                    }
+                    self.loading = None;
+                    self.ask_text(context);
+                    self.show(context);
+                    return;
+                }
+                ShelfProgress::Moving { .. } => return,
+                ShelfProgress::Elsewhere => {}
+            }
+        }
+        match result {
+            StoreResult::Shelf(blobs) => {
+                self.stored = blobs.into_iter().collect();
+                self.show(context);
+            }
+            StoreResult::Loaded {
+                value: Some(value), ..
+            } => {
+                // A place arriving for a book that is not open any more is
+                // simply late; the reader it was meant for is gone.
+                let memory = Memory::decode(&value);
+                if let Some(reader) = &mut self.reader {
+                    let metrics = context.metrics();
+                    reader.restore(memory.clone(), &metrics);
+                    self.show(context);
+                }
+                self.place = Some(memory);
+            }
+            _ => {}
+        }
     }
 
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
@@ -633,6 +859,20 @@ impl KoboApp for Gutenshelf {
             // never reached here and Back still leaves the application from
             // there. Reading returns to the book it was opened from; a book
             // and the keyboard both return to the shelf.
+            if self.view == View::Reading {
+                // Back closes whatever is over the book before it closes the
+                // book. Otherwise somebody who opened their notes to look
+                // something up is thrown out of the book for asking to leave
+                // the list.
+                let metrics = context.metrics();
+                if let Some(reader) = &mut self.reader {
+                    if reader.chrome() != kobo_read::Chrome::Hidden {
+                        reader.set_chrome(kobo_read::Chrome::Hidden, &metrics);
+                        self.show(context);
+                        return;
+                    }
+                }
+            }
             self.view = match self.view {
                 View::Reading if self.open.is_some() => View::Details,
                 _ => View::Results,
@@ -676,20 +916,14 @@ impl KoboApp for Gutenshelf {
         }
         if action == action_id("read") {
             self.view = View::Reading;
-            self.ask_text(context);
+            self.get_text(context);
             self.show(context);
             return;
         }
-        if action == action_id("page-next") {
-            if self.page + 1 < self.pages.len() {
-                self.page += 1;
-            } else if self.complete {
-                self.problem = Some("That is the end of the book.".to_owned());
-            }
-            self.top_up(context);
-            self.show(context);
+        if self.view == View::Reading && self.read_action(context, action) {
             return;
         }
+
         if action == action_id("shelf-next") || action == action_id("shelf-back") {
             let pages = self.shelf_pages();
             self.shelf = if action == action_id("shelf-next") {
@@ -703,12 +937,7 @@ impl KoboApp for Gutenshelf {
             self.want_covers(context);
             return;
         }
-        if action == action_id("page-back") {
-            self.page = self.page.saturating_sub(1);
-            self.problem = None;
-            self.show(context);
-            return;
-        }
+
         for index in 0..self.books.len() {
             if action == action_id(&format!("book-{index}")) {
                 self.open_book(context, index);
@@ -782,6 +1011,20 @@ impl KoboApp for Gutenshelf {
 /// actually writes, and each one leaves the text alone when its marker is
 /// missing, so a file that does not follow the convention is passed through
 /// rather than mangled.
+/// A short, stable name for a URL.
+///
+/// Not a security hash and not required to be one: it names a file this
+/// application wrote for itself, and the worst a collision does is offer the
+/// wrong book, which the title on the details page makes obvious.
+fn stamp(url: &str) -> u32 {
+    let mut hash = 0x811c_9dc5_u32;
+    for byte in url.bytes() {
+        hash ^= u32::from(byte);
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    hash
+}
+
 fn readable(raw: &str) -> String {
     let body = between_markers(raw);
     let mut out = String::with_capacity(body.len());
@@ -1038,9 +1281,10 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        books_from, encode_query, plain_text_url, readable, Awaiting, Gutenshelf, View, COVER_TRIES,
+        books_from, encode_query, plain_text_url, readable, Awaiting, Gutenshelf, Memory, Reader,
+        View, COVER_TRIES,
     };
-    use kobo_sdk::{action_id, AppRunner, Command};
+    use kobo_sdk::{action_id, AppRunner, Command, StoreRequest, StoreResult};
     use kobo_ui::{Chrome, LayoutKind, CLARA_BW_METRICS};
 
     /// Verbatim from the Pride and Prejudice file, which is what put twelve
@@ -1250,23 +1494,39 @@ Please read this before you distribute or use this work.\n";
             kobo_sdk::TaskOutcome::Completed(prose.clone().into_bytes()),
         );
         let application = runner.app_mut();
-        assert!(application.pages.len() > 1, "the whole chunk fitted a page");
-        for page in 0..application.pages.len() {
-            application.page = page;
+        assert!(
+            application.reader.is_some(),
+            "the chunk did not open as a book"
+        );
+        assert!(
+            application
+                .reader
+                .as_ref()
+                .is_some_and(|reader| reader.page_count() > 1),
+            "the whole chunk fitted a page"
+        );
+        let metrics = CLARA_BW_METRICS;
+        loop {
+            let (page, expected) = {
+                let reader = application.reader.as_ref().expect("a book");
+                (reader.page_number(), reader.page().len())
+            };
             let layout = application
                 .reading()
-                .layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
+                .layout_with(&metrics, &Chrome::with_back(true));
             let drawn = layout
                 .nodes
                 .iter()
                 .filter(|node| node.kind == LayoutKind::Text)
                 .count();
             assert_eq!(
-                drawn,
-                application.pages[page].len(),
-                "page {page} measured as {} paragraphs but drew {drawn}",
-                application.pages[page].len()
+                drawn, expected,
+                "page {page} measured as {expected} paragraphs but drew {drawn}"
             );
+            let reader = application.reader.as_mut().expect("a book");
+            if !reader.forward() {
+                break;
+            }
         }
     }
 
@@ -1320,13 +1580,24 @@ Please read this before you distribute or use this work.\n";
         assert!(issues.is_empty(), "{issues:?}");
     }
 
+    /// A book, open, at the panel the tests measure against.
+    fn opened(text: &str) -> Reader {
+        Reader::open(
+            kobo_doc::read("book.txt", text.as_bytes()).expect("a readable book"),
+            Memory::default(),
+            &CLARA_BW_METRICS,
+        )
+    }
+
     #[test]
     fn the_page_controls_are_reachable_by_a_tap_at_their_centre() {
         // They are the pinned bar rather than the last thing in the flow, so
         // a long page loses its final words rather than its page turn.
+        let mut reader = opened("A short book.");
+        reader.act(kobo_read::action::CONTROLS, &CLARA_BW_METRICS);
         let application = Gutenshelf {
             view: View::Reading,
-            pages: vec![vec!["A short book.".to_owned()]],
+            reader: Some(reader),
             complete: true,
             ..Gutenshelf::default()
         };
@@ -1341,7 +1612,7 @@ Please read this before you distribute or use this work.\n";
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert_eq!(controls.len(), 3);
+        assert_eq!(controls.len(), 5, "the reading controls are not all there");
         for (action, rect) in controls {
             let hit = layout.hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2);
             assert_eq!(hit, Some(action));
@@ -1390,7 +1661,7 @@ Please read this before you distribute or use this work.\n";
             books: books_from(&parsed()),
             text: "Chapter forty of something else.".to_owned(),
             fetched: 4096,
-            page: 12,
+            reader: Some(opened("Chapter forty of something else.")),
             complete: true,
             ..Gutenshelf::default()
         });
@@ -1398,8 +1669,131 @@ Please read this before you distribute or use this work.\n";
         let application = runner.app_mut();
         assert!(application.text.is_empty());
         assert_eq!(application.fetched, 0);
-        assert_eq!(application.page, 0);
+        assert!(application.reader.is_none(), "the last book is still open");
         assert!(!application.complete);
+    }
+
+    /// The blob name for the first book in the test catalogue.
+    fn first_blob() -> String {
+        let books = books_from(&parsed());
+        Gutenshelf::names(&books[0]).expect("a text edition").0
+    }
+
+    #[test]
+    fn a_book_already_on_the_device_is_read_from_it_rather_than_downloaded() {
+        // The point of keeping a book at all. Before this, opening a novel a
+        // second time fetched the whole megabyte again over the radio, which
+        // on this device is the difference between free and not.
+        let mut runner = AppRunner::new(Gutenshelf {
+            books: books_from(&parsed()),
+            ..Gutenshelf::default()
+        });
+        runner.store_result(StoreResult::Shelf(vec![(first_blob(), 4096)]));
+        runner.action(action_id("book-0"));
+        let commands = runner.action(action_id("read"));
+
+        assert!(
+            !commands
+                .iter()
+                .any(|command| matches!(command, Command::Spawn { .. })),
+            "a book already on the device was fetched again"
+        );
+        assert!(
+            commands.iter().any(|command| matches!(
+                command,
+                Command::Store(StoreRequest::ShelfRead { name, .. }) if *name == first_blob()
+            )),
+            "the copy on the device was not read"
+        );
+    }
+
+    #[test]
+    fn a_book_that_is_not_here_yet_is_still_fetched() {
+        let mut runner = AppRunner::new(Gutenshelf {
+            books: books_from(&parsed()),
+            ..Gutenshelf::default()
+        });
+        runner.action(action_id("book-0"));
+        let commands = runner.action(action_id("read"));
+        assert!(
+            commands
+                .iter()
+                .any(|command| matches!(command, Command::Spawn { .. })),
+            "a book that is not here was not fetched"
+        );
+    }
+
+    #[test]
+    fn a_finished_book_is_put_on_the_shelf() {
+        let mut runner = AppRunner::new(Gutenshelf {
+            view: View::Reading,
+            open: Some(0),
+            books: books_from(&parsed()),
+            task: Some((kobo_sdk::TaskId(1), Awaiting::Text)),
+            ..Gutenshelf::default()
+        });
+        // Short, so the answer is the end of the book.
+        let commands = runner.task_outcome(
+            kobo_sdk::TaskId(1),
+            kobo_sdk::TaskOutcome::Completed(
+                b"A whole short book.\n\nAnd its second part.".to_vec(),
+            ),
+        );
+        assert!(
+            commands.iter().any(|command| matches!(
+                command,
+                Command::Store(StoreRequest::ShelfWrite { name, last, .. })
+                    if *name == first_blob() && *last
+            )),
+            "a finished book was not kept"
+        );
+    }
+
+    #[test]
+    fn opening_a_book_asks_where_it_was_left() {
+        let mut runner = AppRunner::new(Gutenshelf {
+            books: books_from(&parsed()),
+            ..Gutenshelf::default()
+        });
+        let commands = runner.action(action_id("book-0"));
+        assert!(
+            commands.iter().any(|command| matches!(
+                command,
+                Command::Store(StoreRequest::Load { key }) if key.starts_with("place-")
+            )),
+            "the place this book was left was never asked for"
+        );
+    }
+
+    #[test]
+    fn a_kept_place_is_applied_to_the_book_when_both_have_arrived() {
+        let mut runner = AppRunner::new(Gutenshelf {
+            view: View::Reading,
+            open: Some(0),
+            books: books_from(&parsed()),
+            task: Some((kobo_sdk::TaskId(1), Awaiting::Text)),
+            ..Gutenshelf::default()
+        });
+        let prose = "It is a truth universally acknowledged, that a single man in possession \
+                     of a good fortune, must be in want of a wife.\n\n"
+            .repeat(30);
+        runner.task_outcome(
+            kobo_sdk::TaskId(1),
+            kobo_sdk::TaskOutcome::Completed(prose.into_bytes()),
+        );
+        let place = Memory {
+            at: 20,
+            ..Memory::default()
+        };
+        runner.store_result(StoreResult::Loaded {
+            key: "place-0".to_owned(),
+            value: Some(place.encode()),
+        });
+        let reader = runner.app_mut().reader.as_ref().expect("a book");
+        assert!(
+            reader.page().iter().any(|piece| piece.block == 20),
+            "the reader was not put back where they were left"
+        );
     }
 
     #[test]

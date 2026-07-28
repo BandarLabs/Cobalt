@@ -515,13 +515,22 @@ impl Reader {
     /// Repaginates, because a marked paragraph is set narrower and so runs to
     /// more lines than it did a moment ago.
     pub fn toggle_highlight(&mut self, block: Locator, panel: &DisplayMetrics) -> bool {
-        // The position is left alone; see `set_scale`.
+        // The reader is anchored to the paragraph they just acted on, rather
+        // than left where they were. Marking sets a paragraph narrower, so it
+        // runs to more lines than it did a moment ago and can be pushed onto
+        // the next page by its own mark -- taking with it both the
+        // confirmation that anything happened and the only way to take the
+        // mark off again.
+        let on_screen = self.page().iter().any(|piece| piece.block == block);
         let on = if self.memory.highlights.remove(&block) {
             false
         } else {
             self.memory.highlights.insert(block);
             true
         };
+        if on_screen {
+            self.memory.at = block;
+        }
         self.repaginate(panel);
         on
     }
@@ -595,6 +604,18 @@ impl Reader {
     #[must_use]
     pub const fn memory(&self) -> &Memory {
         &self.memory
+    }
+
+    /// Puts a kept memory back into an open book.
+    ///
+    /// For the case where the book and the place it was left arrive
+    /// separately, which is the ordinary one: the text comes over the radio
+    /// and the position comes out of the store, and neither waits for the
+    /// other. Reopening the whole reader instead would throw away however much
+    /// of the book had already arrived.
+    pub fn restore(&mut self, memory: Memory, panel: &DisplayMetrics) {
+        self.memory = memory;
+        self.repaginate(panel);
     }
 
     #[must_use]
@@ -674,6 +695,46 @@ impl Reader {
         }
     }
 
+    /// The same as [`Self::act`], for an application that is handed a hashed
+    /// identifier rather than a name.
+    ///
+    /// Names are hashed on the way into a screen and the hash is what comes
+    /// back, so there is no way to recover a name from one. The reader is the
+    /// only thing that knows every name it might have put on a screen, so it
+    /// is the only thing in a position to try them -- an application doing it
+    /// would have to keep its own copy of that list in step, and the failure
+    /// when it drifted would be a control that silently did nothing.
+    pub fn act_on(&mut self, action: kobo_ui::ActionId, panel: &DisplayMetrics) -> Outcome {
+        let mut names: Vec<String> = vec![
+            action::FORWARD.into(),
+            action::BACK.into(),
+            action::CONTROLS.into(),
+            action::CLOSE.into(),
+            action::LARGER.into(),
+            action::SMALLER.into(),
+            action::BRIGHTER.into(),
+            action::DIMMER.into(),
+            action::BOOKMARK.into(),
+            action::HIGHLIGHTS.into(),
+            action::MARKING.into(),
+        ];
+        // Only the blocks that are actually on a screen right now, so this
+        // stays a few dozen comparisons rather than one per block in a novel.
+        for (block, _) in self.markable() {
+            names.push(format!("{}{block}", action::MARK));
+        }
+        for block in self.memory.highlights.iter().chain(&self.memory.bookmarks) {
+            names.push(format!("{}{block}", action::GO));
+        }
+        let Some(name) = names
+            .into_iter()
+            .find(|name| kobo_sdk::action_id(name) == action)
+        else {
+            return Outcome::Elsewhere;
+        };
+        self.act(&name, panel)
+    }
+
     fn resized(&mut self, possible: bool, refusal: &str) -> Outcome {
         if possible {
             Outcome::Save
@@ -729,6 +790,13 @@ impl Reader {
             // screen: a book, and the reader's own hands.
             return screen.build();
         }
+        // Five, because five is what the panel physically carries: a bar is
+        // clamped to what a finger can hit across the width of the display,
+        // and the sixth control is not shrunk or wrapped, it is dropped. This
+        // bar had six, and the one that vanished was the way to the marked
+        // passages -- so every note anybody made was unreachable, on the
+        // device and nowhere else. Bookmarking moved in beside them, which is
+        // where the rest of the keeping lives anyway.
         screen
             .nav_bar(
                 None,
@@ -737,14 +805,6 @@ impl Reader {
                     (action::LARGER, "A+"),
                     (action::DIMMER, "Dim"),
                     (action::BRIGHTER, "Light"),
-                    (
-                        action::BOOKMARK,
-                        if self.is_bookmarked() {
-                            "Unmark"
-                        } else {
-                            "Mark"
-                        },
-                    ),
                     (action::HIGHLIGHTS, "Notes"),
                 ],
             )
@@ -776,11 +836,21 @@ impl Reader {
                 screen = screen.button(format!("{}{block}", action::GO), text);
             }
         }
-        let mut bar = vec![(action::CONTROLS, "Back to the book")];
+        let mut bar = vec![
+            (action::CONTROLS, "Back to the book"),
+            (
+                action::BOOKMARK,
+                if self.is_bookmarked() {
+                    "Remove bookmark"
+                } else {
+                    "Bookmark this page"
+                },
+            ),
+        ];
         if !self.markable().is_empty() {
             // The only way in to marking a passage. It lives here rather than
-            // on the reading bar because that bar is already six controls
-            // wide, and because somebody looking for their marks is exactly
+            // on the reading bar, which is already as wide as the panel will
+            // carry, and because somebody looking at their marks is exactly
             // the person about to make another.
             bar.push((action::MARKING, "Mark a paragraph"));
         }
@@ -796,8 +866,12 @@ impl Reader {
             let marked = self.memory.highlights.contains(&block);
             // The state is in the row, because the list is the only place it
             // can be seen: the page underneath is not on screen while this is.
+            // Said in words rather than with a tick: the reading face has no
+            // check mark in it, and a screen carrying a character the face
+            // cannot draw is refused outright -- correctly, because the
+            // alternative is an empty box where the answer should be.
             let label = if marked {
-                format!("\u{2713} {text}")
+                format!("Marked: {text}")
             } else {
                 text
             };
@@ -1360,8 +1434,18 @@ mod tests {
         assert!(
             texts(&ticked)
                 .iter()
-                .any(|line| line.starts_with('\u{2713}')),
+                .any(|line| line.starts_with("Marked:")),
             "the marked paragraph was not shown as marked"
+        );
+
+        // And tapping it again takes the mark off, from the same row.
+        assert_eq!(
+            reader.act(&format!("{}{target}", action::MARK), &panel()),
+            Outcome::Save
+        );
+        assert!(
+            reader.highlights().is_empty(),
+            "the mark could not be undone"
         );
     }
 
@@ -1409,6 +1493,55 @@ mod tests {
         reader.act(action::HIGHLIGHTS, &panel());
         let rows = named_actions(&reader.screen("Nothing"));
         assert!(!rows.iter().any(|name| name == action::MARKING));
+    }
+
+    #[test]
+    fn every_control_the_reader_offers_reaches_the_panel() {
+        // A bar is clamped to what the panel can physically carry and the rest
+        // is dropped without a word, so a control that is declared is not
+        // necessarily a control that exists. This is the check that the two
+        // are the same number on every screen the reader draws.
+        let mut reader = reader(60);
+        reader.forward();
+        let marked = reader.markable().first().unwrap().0;
+        reader.toggle_highlight(marked, &panel());
+        reader.toggle_bookmark();
+
+        for chrome in [
+            Chrome::Hidden,
+            Chrome::Controls,
+            Chrome::Highlights,
+            Chrome::Marking,
+        ] {
+            reader.set_chrome(chrome, &panel());
+            let screen = reader.screen("Pride and Prejudice");
+            let Some(bar) = &screen.nav_bar else {
+                continue;
+            };
+            assert_eq!(
+                bar.visible(&panel()).len(),
+                bar.destinations.len(),
+                "{chrome:?} declared {} controls and the panel shows {}",
+                bar.destinations.len(),
+                bar.visible(&panel()).len()
+            );
+        }
+    }
+
+    #[test]
+    fn the_marked_passages_can_be_reached_from_the_book() {
+        // The defect this covers: the reading bar declared six controls, the
+        // panel carries five, and the one dropped was the way to the notes.
+        let mut reader = reader(60);
+        reader.set_chrome(Chrome::Controls, &panel());
+        let screen = reader.screen("Pride and Prejudice");
+        let bar = screen.nav_bar.as_ref().expect("a bar");
+        assert!(
+            bar.visible(&panel())
+                .iter()
+                .any(|item| item.action == kobo_sdk::action_id(action::HIGHLIGHTS)),
+            "there is no way from the book to the marks"
+        );
     }
 
     #[test]
