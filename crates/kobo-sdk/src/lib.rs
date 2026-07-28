@@ -8,9 +8,10 @@
 pub use kobo_protocol::{
     Credential, DenyReason, DeviceRequest, DeviceResult, Frame, Header, Lifecycle, LogLevel,
     Message, SecretHeader, ShellError, ShellEvent, ShellRequest, StoreError, StoreRequest,
-    StoreResult, StreamError, Task, TaskError, TaskId, TaskOutcome, MAX_HEADERS, MAX_HEADER_NAME,
-    MAX_HEADER_VALUE, MAX_INLINE_PICTURE_BYTES, MAX_PICTURE_BYTES, MAX_PICTURE_CHUNK_BYTES,
-    MAX_SHELF_CHUNK, MAX_SHELL_CHUNK, MAX_STORE_KEYS, MAX_STORE_VALUE, MAX_TASK_BYTES, MAX_URL_LEN,
+    StoreResult, StreamError, Task, TaskError, TaskId, TaskOutcome, CACHE_PREFIX, MAX_CACHE_KEYS,
+    MAX_HEADERS, MAX_HEADER_NAME, MAX_HEADER_VALUE, MAX_INLINE_PICTURE_BYTES, MAX_PICTURE_BYTES,
+    MAX_PICTURE_CHUNK_BYTES, MAX_SHELF_CHUNK, MAX_SHELL_CHUNK, MAX_STORE_KEYS, MAX_STORE_VALUE,
+    MAX_TASK_BYTES, MAX_URL_LEN,
 };
 pub use kobo_ui::QuoteRole;
 pub use kobo_ui::{
@@ -1596,6 +1597,29 @@ impl AppStore<'_> {
         self.request(StoreRequest::Load { key: key.into() });
     }
 
+    /// Writes a value the runtime is free to throw away later.
+    ///
+    /// For anything that came from somewhere else and can come from there
+    /// again: artwork, a rendered thumbnail, a parsed feed. Cache keys are
+    /// counted and capped apart from ordinary ones ([`MAX_CACHE_KEYS`] of
+    /// them), so caching a shelf of covers can never cost somebody their place
+    /// in a book -- and a cache write is never refused, it makes room by
+    /// dropping its own oldest entry instead.
+    ///
+    /// Never for anything that cannot be fetched a second time. It will be
+    /// gone, and there will be no warning that it went.
+    pub fn cache(&mut self, key: impl AsRef<str>, value: impl Into<Vec<u8>>) {
+        self.save(cache_key(key), value);
+    }
+
+    /// Reads back something written with [`Self::cache`].
+    ///
+    /// A miss is [`StoreResult::Loaded`] with no value, exactly as for a key
+    /// that was never written -- because after an eviction that is what it is.
+    pub fn load_cached(&mut self, key: impl AsRef<str>) {
+        self.load(cache_key(key));
+    }
+
     /// Removes a key. Removing one that is not there is a success.
     pub fn forget(&mut self, key: impl Into<String>) {
         self.request(StoreRequest::Forget { key: key.into() });
@@ -1609,6 +1633,15 @@ impl AppStore<'_> {
     fn request(&mut self, request: StoreRequest) {
         self.context.commands.push(Command::Store(request));
     }
+}
+
+/// The key `cache` and `load_cached` actually use.
+///
+/// Public because an answer arrives carrying the key it was asked for, and an
+/// application matching that answer has to be able to spell the same key.
+#[must_use]
+pub fn cache_key(key: impl AsRef<str>) -> String {
+    format!("{CACHE_PREFIX}{}", key.as_ref())
 }
 
 /// An application's large data.

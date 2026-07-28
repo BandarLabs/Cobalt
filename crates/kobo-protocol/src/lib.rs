@@ -70,6 +70,23 @@ pub const MAX_STORE_VALUE: usize = 256 * 1024;
 /// The most keys one application may hold.
 pub const MAX_STORE_KEYS: usize = 256;
 
+/// The prefix that marks a key as one the runtime may throw away.
+///
+/// Spelled in the key rather than carried beside it so that it survives every
+/// path a key takes: the wire, the filename, and a listing. There is no way to
+/// write a cache key and forget it was one.
+pub const CACHE_PREFIX: &str = "cache.";
+
+/// How many cache keys one application may hold.
+///
+/// Counted apart from [`MAX_STORE_KEYS`] and capped apart from it, so that
+/// artwork a shelf is holding can never crowd out a reading position. A shelf
+/// page of covers is six, so this is twenty pages of catalogue.
+pub const MAX_CACHE_KEYS: usize = 64;
+
+/// The most keys one listing may name: every durable key and every cache key.
+pub const MAX_LISTED_KEYS: usize = MAX_STORE_KEYS + MAX_CACHE_KEYS;
+
 /// The most bytes one shelf write or read may carry.
 ///
 /// A book is megabytes and a frame is one, so a blob moves in pieces. This is
@@ -651,6 +668,16 @@ pub fn is_valid_key(key: &str) -> bool {
         && key.bytes().all(|byte| {
             byte.is_ascii_lowercase() || byte.is_ascii_digit() || b".-_".contains(&byte)
         })
+}
+
+/// Whether a key is one the runtime may evict to make room for another.
+///
+/// A cache key holds something that came from somewhere else and can come from
+/// there again. Anything that cannot be fetched a second time -- a place in a
+/// book, a list of subscriptions -- must not be written under one.
+#[must_use]
+pub fn is_cache_key(key: &str) -> bool {
+    key.starts_with(CACHE_PREFIX)
 }
 
 /// Every hardware operation an application can ask for.
@@ -1942,7 +1969,9 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
             },
             3 => {
                 let count = reader.u16()? as usize;
-                if count > MAX_STORE_KEYS {
+                // Both namespaces, because a listing names every key an
+                // application holds and a cache key is one of those.
+                if count > MAX_LISTED_KEYS {
                     return Err(ProtocolError::FrameTooLarge);
                 }
                 let mut keys = Vec::with_capacity(count);

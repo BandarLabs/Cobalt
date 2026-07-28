@@ -21,13 +21,31 @@
 //! directory, flushed, and then renamed over the old one. A rename within a
 //! directory either happened or did not, so a reader either sees the previous
 //! value or the new one and never a splice of the two.
+//!
+//! # Why some keys are allowed to disappear
+//!
+//! Two different things want to be saved and they want opposite guarantees. A
+//! reading position must never be dropped: losing it loses something the
+//! reader cannot get back. A book cover is the opposite -- it came off the
+//! network and can come off the network again, and the only reason to keep it
+//! is that fetching it costs a radio and several seconds of somebody's life.
+//!
+//! Kept in one namespace, the second starves the first. A shelf of covers is
+//! dozens of keys, the cap is [`MAX_STORE_KEYS`], and the failure would be a
+//! reader losing their place in a novel because they scrolled past enough
+//! artwork. So a key under [`kobo_protocol::CACHE_PREFIX`] is a *cache* key: counted
+//! separately, capped separately, and thrown away oldest-first when its own
+//! cap is reached. Durable state can never be refused for want of room a cache
+//! is using, and a cache can never be refused at all.
 
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use kobo_protocol::{
-    is_valid_key, StoreError, StoreRequest, StoreResult, MAX_STORE_KEYS, MAX_STORE_VALUE,
+    is_cache_key, is_valid_key, StoreError, StoreRequest, StoreResult, MAX_CACHE_KEYS,
+    MAX_LISTED_KEYS, MAX_STORE_KEYS, MAX_STORE_VALUE,
 };
 
 /// One application's own small state.
@@ -89,8 +107,16 @@ impl Store {
         // there, so rewriting an existing value can never be refused for want
         // of room. An application that cannot overwrite its own state is an
         // application that cannot recover from being nearly full.
-        if !root.join(key).exists() && Self::count(root) >= MAX_STORE_KEYS {
-            return StoreResult::Denied(StoreError::TooFull);
+        if !root.join(key).exists() {
+            if is_cache_key(key) {
+                // A cache is never refused. It makes room instead, because the
+                // caller's alternative is to go back to the network for
+                // something it is holding in its hand, and because a refusal
+                // here would have to be handled by every caller identically.
+                Self::evict(root, MAX_CACHE_KEYS.saturating_sub(1));
+            } else if Self::count(root) >= MAX_STORE_KEYS {
+                return StoreResult::Denied(StoreError::TooFull);
+            }
         }
         if fs::create_dir_all(root).is_err() {
             return StoreResult::Denied(StoreError::Unwritable);
@@ -133,6 +159,13 @@ impl Store {
     }
 
     fn list(root: &Path) -> StoreResult {
+        let mut keys = Self::names(root);
+        keys.truncate(MAX_LISTED_KEYS);
+        StoreResult::Keys(keys)
+    }
+
+    /// Every key on disk, sorted, cache keys included.
+    fn names(root: &Path) -> Vec<String> {
         let mut keys: Vec<String> = fs::read_dir(root)
             .into_iter()
             .flatten()
@@ -141,16 +174,47 @@ impl Store {
             // A half-finished write is not a key, and neither is anything else
             // that arrived here without going through `save`.
             .filter(|name| is_valid_key(name))
-            .take(MAX_STORE_KEYS)
             .collect();
         keys.sort();
-        StoreResult::Keys(keys)
+        keys
     }
 
+    /// Durable keys only, which is what the cap is about.
     fn count(root: &Path) -> usize {
-        match Self::list(root) {
-            StoreResult::Keys(keys) => keys.len(),
-            _ => 0,
+        Self::names(root)
+            .iter()
+            .filter(|key| !is_cache_key(key))
+            .count()
+    }
+
+    /// Throws cache entries away until at most `keep` remain.
+    ///
+    /// Oldest written first, not least recently read. True recency would mean
+    /// a write on every read, and this is flash in a device somebody expects
+    /// to last years: spending a write to record that a cover was looked at
+    /// costs more than fetching the cover again would. Age of the value is
+    /// also the honest measure for what this holds -- artwork that came off a
+    /// catalogue page nobody has returned to.
+    ///
+    /// A file whose age cannot be read sorts oldest, so a directory the clock
+    /// went backwards on still shrinks rather than growing without limit.
+    fn evict(root: &Path, keep: usize) {
+        let mut cached: Vec<(SystemTime, String)> = Self::names(root)
+            .into_iter()
+            .filter(|key| is_cache_key(key))
+            .map(|key| {
+                let written = fs::metadata(root.join(&key))
+                    .and_then(|data| data.modified())
+                    .unwrap_or(SystemTime::UNIX_EPOCH);
+                (written, key)
+            })
+            .collect();
+        if cached.len() <= keep {
+            return;
+        }
+        cached.sort();
+        for (_, key) in &cached[..cached.len() - keep] {
+            let _ignored = fs::remove_file(root.join(key));
         }
     }
 }
@@ -352,6 +416,121 @@ mod tests {
             store.handle(&StoreRequest::List),
             StoreResult::Keys(vec!["real".into()])
         );
+    }
+
+    /// Backdates a value so eviction order is a fact rather than a race.
+    ///
+    /// Two saves in one test land in the same instant on a filesystem with
+    /// coarse timestamps, and then "oldest" is whatever the sort happened to
+    /// do. Setting the time makes the test about the policy.
+    fn backdate(root: &Path, key: &str, seconds: u64) {
+        let handle = fs::File::options()
+            .write(true)
+            .open(root.join(key))
+            .expect("open");
+        let when = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000 - seconds);
+        handle
+            .set_times(fs::FileTimes::new().set_accessed(when).set_modified(when))
+            .expect("times");
+    }
+
+    fn save(store: &Store, key: &str, value: &[u8]) -> StoreResult {
+        store.handle(&StoreRequest::Save {
+            key: key.into(),
+            value: value.to_vec(),
+        })
+    }
+
+    fn keys(store: &Store) -> Vec<String> {
+        match store.handle(&StoreRequest::List) {
+            StoreResult::Keys(keys) => keys,
+            other => panic!("expected a listing, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_full_cache_makes_room_by_dropping_the_oldest_rather_than_refusing() {
+        let root = temporary_root();
+        let store = Store::new(&root);
+        for index in 0..MAX_CACHE_KEYS {
+            assert!(matches!(
+                save(&store, &format!("cache.cover{index:03}"), b"art"),
+                StoreResult::Saved { .. }
+            ));
+            // Oldest first: entry zero is the one that has been there longest.
+            backdate(
+                &root,
+                &format!("cache.cover{index:03}"),
+                1000 - index as u64,
+            );
+        }
+        assert_eq!(keys(&store).len(), MAX_CACHE_KEYS);
+        assert!(matches!(
+            save(&store, "cache.newest", b"art"),
+            StoreResult::Saved { .. }
+        ));
+        let after = keys(&store);
+        assert_eq!(after.len(), MAX_CACHE_KEYS);
+        assert!(after.contains(&"cache.newest".to_owned()));
+        assert!(!after.contains(&"cache.cover000".to_owned()));
+        assert!(after.contains(&"cache.cover001".to_owned()));
+    }
+
+    #[test]
+    fn a_shelf_of_artwork_cannot_crowd_out_a_reading_position() {
+        let root = temporary_root();
+        let store = Store::new(&root);
+        for index in 0..MAX_CACHE_KEYS {
+            let _ignored = save(&store, &format!("cache.cover{index:03}"), b"art");
+        }
+        // The durable namespace is untouched by a cache at its cap, which is
+        // the whole reason the two are counted apart: the failure this rules
+        // out is somebody losing their place in a novel because they scrolled
+        // past enough covers.
+        assert!(matches!(
+            save(&store, "place-in-the-book", b"page 40"),
+            StoreResult::Saved { .. }
+        ));
+        assert_eq!(
+            store.handle(&StoreRequest::Load {
+                key: "place-in-the-book".into()
+            }),
+            StoreResult::Loaded {
+                key: "place-in-the-book".into(),
+                value: Some(b"page 40".to_vec()),
+            }
+        );
+    }
+
+    #[test]
+    fn eviction_never_takes_a_durable_key() {
+        let root = temporary_root();
+        let store = Store::new(&root);
+        let _ignored = save(&store, "subscriptions", b"one");
+        backdate(&root, "subscriptions", 9_999);
+        for index in 0..=MAX_CACHE_KEYS {
+            let _ignored = save(&store, &format!("cache.c{index:03}"), b"art");
+        }
+        // Older than every cache entry, and still here.
+        assert!(keys(&store).contains(&"subscriptions".to_owned()));
+    }
+
+    #[test]
+    fn a_durable_store_at_its_cap_still_refuses() {
+        let root = temporary_root();
+        let store = Store::new(&root);
+        for index in 0..MAX_STORE_KEYS {
+            let _ignored = save(&store, &format!("k{index:03}"), b"x");
+        }
+        assert_eq!(
+            save(&store, "one-too-many", b"x"),
+            StoreResult::Denied(StoreError::TooFull)
+        );
+        // Rewriting what is already there is still allowed at the cap.
+        assert!(matches!(
+            save(&store, "k000", b"y"),
+            StoreResult::Saved { .. }
+        ));
     }
 
     #[test]
