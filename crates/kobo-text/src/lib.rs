@@ -985,4 +985,62 @@ mod tests {
         assert!(columns >= 50, "only {columns} columns fit");
         assert!(rows >= 30, "only {rows} rows fit");
     }
+
+    /// The bar title is ellipsised to a width measured at one size, so it has
+    /// to be drawn at that same size or the ellipsis is fitted to a sentence
+    /// nobody sees. It was measured at body size and drawn at title size, and
+    /// a Hacker News thread called "Our position on open-weights models" ran
+    /// off the right edge of the panel, cut mid-word, with no mark to say it
+    /// had been cut.
+    ///
+    /// Asserted in ink rather than in font sizes, because the measuring and
+    /// the drawing are set in two different functions and an assertion about
+    /// either one alone is exactly the assertion that missed this. It lives
+    /// here rather than in `kobo-ui` because it needs the real typeface: the
+    /// built-in bitmap fallback has an advance of its own that no measurement
+    /// agrees with.
+    #[test]
+    fn a_long_bar_title_leaves_no_ink_outside_its_own_rect() {
+        let fonts = SystemFonts::discover(CLARA).expect("fonts");
+        let _ = kobo_ui::install_typesetter(Box::new(fonts));
+
+        let title = "Our position on open-weights models, and on much else besides";
+        let screen = kobo_ui::Screen::new(1, Vec::new())
+            .with_top_bar(kobo_ui::TopBar::new(kobo_ui::NodeId(2), title));
+        let chrome = kobo_ui::Chrome::with_back(true);
+        let metrics = CLARA;
+        let layout = screen.layout_with(&metrics, &chrome);
+        let node = layout
+            .nodes
+            .iter()
+            .find(|node| node.kind == kobo_ui::LayoutKind::TopBarTitle)
+            .expect("the bar carries a title")
+            .clone();
+
+        let width = usize::try_from(metrics.width).expect("a positive panel width");
+        let height = usize::try_from(metrics.height).expect("a positive panel height");
+        let mut surface = kobo_ui::Surface::new(width, height);
+        kobo_ui::render_all(&screen, &metrics, &chrome, &(), &mut surface, None);
+
+        let right = node.rect.x.saturating_add(node.rect.width);
+        let top = usize::try_from(node.rect.y.max(0)).expect("a title inside the panel");
+        let bottom = usize::try_from(node.rect.y.saturating_add(node.rect.height).max(0))
+            .expect("a title inside the panel")
+            .min(height);
+        // Two pixels of slack, for the antialiasing on the last glyph the
+        // renderer draws right up against its own boundary. The regression
+        // this guards ran forty pixels past the panel itself.
+        let from = usize::try_from(right.saturating_add(2).max(0))
+            .expect("a right edge inside the panel")
+            .min(width);
+        for y in top..bottom {
+            for x in from..width {
+                assert_eq!(
+                    surface.pixels[y * width + x],
+                    kobo_ui::tone::PAPER,
+                    "the title drew ink at {x},{y}, past its own right edge at {right}"
+                );
+            }
+        }
+    }
 }
