@@ -1529,6 +1529,12 @@ fn encoded_screen_len(
             add_encoded_len(&mut length, 4)?;
         }
     }
+    // One flag byte, plus an action identifier when the screen asked to hear
+    // about a finger held still on it.
+    add_encoded_len(&mut length, 1)?;
+    if screen.hold.is_some() {
+        add_encoded_len(&mut length, 4)?;
+    }
     // One flag byte for first refusal on the runtime's Back control, one for a
     // text size this screen asks for in place of the reader's own, and one for
     // whether its text is a book rather than an interface.
@@ -2241,6 +2247,13 @@ fn encode_screen(
             }
         }
     }
+    match screen.hold {
+        None => output.push(0),
+        Some(hold) => {
+            output.push(1);
+            push_u32(output, hold.0);
+        }
+    }
     output.push(u8::from(screen.owns_back));
     // Zero means inherit, so a screen that says nothing keeps the reader's own
     // setting and the byte costs nothing to leave alone.
@@ -2819,6 +2832,11 @@ fn decode_screen(
         ),
         _ => return Err(ProtocolError::InvalidValue("page turn flag")),
     };
+    let hold = match reader.u8()? {
+        0 => None,
+        1 => Some(ActionId(reader.u32()?)),
+        _ => return Err(ProtocolError::InvalidValue("hold flag")),
+    };
     let owns_back = match reader.u8()? {
         0 => false,
         1 => true,
@@ -2883,6 +2901,7 @@ fn decode_screen(
         screen.bottom_action = bottom_action;
     }
     screen.page_turns = page_turns;
+    screen.hold = hold;
     screen.owns_back = owns_back;
     screen.text_scale = text_scale;
     screen.reading = reading;
@@ -3461,6 +3480,28 @@ mod tests {
                 panic!("wrong message");
             };
             assert_eq!(out.page_turns, expected);
+        }
+    }
+
+    #[test]
+    fn a_held_finger_survives_the_wire() {
+        // Same trap as the middle column: encoded_len is computed apart from
+        // the encoder, so both shapes are round-tripped rather than only the
+        // one carrying the new field.
+        let plain = Screen::new(1, Vec::new());
+        let holding = Screen::new(1, Vec::new()).with_hold(ActionId(21));
+        for screen in [plain, holding] {
+            let expected = screen.hold;
+            let frame = Frame {
+                request_id: 4,
+                message: Message::SetScreen(screen),
+            };
+            let bytes = encode(&frame).expect("encodes");
+            let back = decode(&bytes).expect("decodes");
+            let Message::SetScreen(out) = back.message else {
+                panic!("wrong message");
+            };
+            assert_eq!(out.hold, expected);
         }
     }
 

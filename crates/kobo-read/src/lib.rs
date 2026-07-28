@@ -230,6 +230,8 @@ pub mod action {
     pub const BACK: &str = "reader-back";
     /// Shows the controls, or puts them away again.
     pub const CONTROLS: &str = "reader-controls";
+    /// One per type size, suffixed with its step: 0 standard, 2 largest.
+    pub const SIZE: &str = "reader-size-";
     pub const CLOSE: &str = "reader-close";
     pub const LARGER: &str = "reader-larger";
     pub const SMALLER: &str = "reader-smaller";
@@ -309,7 +311,9 @@ impl Reader {
         // the layout engine drops them without saying anything.
         let mut metrics = *panel;
         metrics.text_scale = self.memory.scale;
-        let area = metrics.prose_area_in(true, self.chrome != Chrome::Hidden, Face::Reading);
+        // No bar is ever reserved: a reading page has nothing at its foot,
+        // and the controls are drawn over it rather than under it.
+        let area = metrics.prose_area_in(true, false, Face::Reading);
         // Measured with the type at the size the screen will ask for. The
         // scale has to be ambient while this runs, because the wrapper and the
         // line height both read it -- and the screen carries the same value,
@@ -580,20 +584,17 @@ impl Reader {
     }
 
     /// Shows or puts away something over the book.
-    ///
-    /// Repaginates when the bar appears or goes, because the bar takes room
-    /// off the page: without this the last lines would be drawn under it and
-    /// silently dropped.
     pub fn set_chrome(&mut self, chrome: Chrome, panel: &DisplayMetrics) {
         if self.chrome == chrome {
             return;
         }
-        // The position is left alone; see `set_scale`.
-        let had_bar = self.chrome != Chrome::Hidden;
+        // No repagination. The controls are a panel drawn over the page and
+        // the other two screens replace it entirely, so nothing the reader can
+        // open changes how much room the book has. This used to reserve a bar,
+        // and opening the controls reflowed the book under the reader's
+        // finger.
+        let _ = panel;
         self.chrome = chrome;
-        if had_bar != (chrome != Chrome::Hidden) {
-            self.repaginate(panel);
-        }
     }
 
     /// Says something went wrong, on the next repaint.
@@ -670,6 +671,20 @@ impl Reader {
                 let changed = self.larger(panel);
                 self.resized(changed, "That is the largest size.")
             }
+            _ if name.starts_with(action::SIZE) => {
+                let Some(scale) = name
+                    .strip_prefix(action::SIZE)
+                    .and_then(|step| step.parse::<u8>().ok())
+                    .and_then(TextScale::from_wire)
+                else {
+                    return Outcome::Elsewhere;
+                };
+                if scale == self.memory.scale {
+                    return Outcome::Repaint;
+                }
+                self.set_scale(scale, panel);
+                Outcome::Save
+            }
             action::SMALLER => {
                 let changed = self.smaller(panel);
                 self.resized(changed, "That is the smallest size.")
@@ -718,6 +733,9 @@ impl Reader {
             action::HIGHLIGHTS.into(),
             action::MARKING.into(),
         ];
+        for step in 0..3 {
+            names.push(format!("{}{step}", action::SIZE));
+        }
         // Only the blocks that are actually on a screen right now, so this
         // stays a few dozen comparisons rather than one per block in a novel.
         for (block, _) in self.markable() {
@@ -808,30 +826,84 @@ impl Reader {
         screen = screen
             .page_turns(action::BACK, action::FORWARD)
             .reading_menu(action::CONTROLS);
+        // Holding a finger on the page asks to mark something on it, which is
+        // what a hold does in every reader anyone has used. It opens the list
+        // of this page's paragraphs rather than dropping a caret into the
+        // text: a selection dragged out by hand on E Ink means chasing a
+        // handle that redraws a third of a second behind the finger, and a
+        // paragraph is the unit this reader marks in anyway.
+        if !self.markable().is_empty() {
+            screen = screen.hold(action::MARKING);
+        }
         if self.chrome == Chrome::Hidden {
             // Nothing at the foot at all. This is the point of the reading
             // screen: a book, and the reader's own hands.
             return screen.build();
         }
-        // Five, because five is what the panel physically carries: a bar is
-        // clamped to what a finger can hit across the width of the display,
-        // and the sixth control is not shrunk or wrapped, it is dropped. This
-        // bar had six, and the one that vanished was the way to the marked
-        // passages -- so every note anybody made was unreachable, on the
-        // device and nowhere else. Bookmarking moved in beside them, which is
-        // where the rest of the keeping lives anyway.
+        // A panel over the page rather than a bar under it. A bar takes its
+        // height out of the content, so opening the controls repaginated the
+        // book and the page appeared to turn under the reader's finger: they
+        // asked for the type size and got a different page. A popover is drawn
+        // on top, so the words stay exactly where they were, which is the only
+        // way to judge a change of size against them.
+        //
+        // It also holds more than five things, which the bar could not: the
+        // bar dropped its sixth control silently.
         screen
-            .nav_bar(
-                None,
-                [
-                    (action::SMALLER, "A-"),
-                    (action::LARGER, "A+"),
-                    (action::DIMMER, "Dim"),
-                    (action::BRIGHTER, "Light"),
-                    (action::HIGHLIGHTS, "Notes"),
-                ],
-            )
+            .popover(action::CONTROLS, |panel| self.controls_panel(panel))
             .build()
+    }
+
+    /// What the "Aa" control opens: everything that is not the book itself.
+    fn controls_panel(&self, panel: ScreenBuilder) -> ScreenBuilder {
+        let sizes = [
+            (TextScale::Default, "Standard"),
+            (TextScale::Large, "Large"),
+            (TextScale::ExtraLarge, "Largest"),
+        ];
+        let chosen = sizes
+            .iter()
+            .position(|(scale, _)| *scale == self.memory.scale)
+            .unwrap_or(0);
+        // The three sizes themselves rather than a plus and a minus. A stepper
+        // hides which size is in force and takes two taps and two full-page
+        // refreshes to cross the range; naming them says where the reader is
+        // and gets anywhere in one.
+        let mut panel = panel
+            .choose(
+                "Type size",
+                sizes
+                    .iter()
+                    .enumerate()
+                    .map(|(step, (_, label))| (format!("{}{step}", action::SIZE), *label)),
+            )
+            .chosen(chosen);
+
+        // The level is drawn as well as stepped, because "dimmer" with no
+        // reading of what it is now tells somebody in a dark room nothing.
+        // None means this book has never set one, and the device keeps
+        // whatever it was already at.
+        let light = self.memory.light.unwrap_or(0);
+        panel = panel
+            .choose(
+                format!("Front light {light}%"),
+                [(action::DIMMER, "Dimmer"), (action::BRIGHTER, "Brighter")],
+            )
+            .progress(light);
+
+        panel = panel.divider();
+        panel = panel.button(
+            action::BOOKMARK,
+            if self.is_bookmarked() {
+                "Remove bookmark"
+            } else {
+                "Bookmark this page"
+            },
+        );
+        if !self.markable().is_empty() {
+            panel = panel.button(action::MARKING, "Mark a paragraph");
+        }
+        panel.button(action::HIGHLIGHTS, "Notes")
     }
 
     fn marks_screen(&self, title: &str) -> Screen {
@@ -1189,6 +1261,94 @@ mod tests {
         assert_eq!(short.bar_title("Short"), "Short");
     }
 
+    /// Opening the controls used to take their height out of the page, so the
+    /// book repaginated and the words moved: a reader who asked for the type
+    /// size got what looked like a page turn. The panel is drawn over the page
+    /// instead, and the page underneath is untouched.
+    #[test]
+    fn opening_the_controls_does_not_move_the_page() {
+        let mut reader = reader(40);
+        assert!(reader.forward());
+        let before = reader.page().to_vec();
+        let place = reader.page_number();
+        reader.act(action::CONTROLS, &panel());
+        assert_eq!(reader.chrome(), Chrome::Controls);
+        assert_eq!(reader.page(), before.as_slice(), "the page reflowed");
+        assert_eq!(reader.page_number(), place);
+    }
+
+    /// The panel is what the controls are, so everything a reader can do to a
+    /// book has to be on it. The bar it replaced carried five things and
+    /// dropped the sixth without saying so.
+    #[test]
+    fn the_controls_panel_carries_every_reading_control() {
+        let mut reader = reader(40);
+        reader.act(action::CONTROLS, &panel());
+        let screen = reader.screen("Pride and Prejudice");
+        let overlay = screen.overlay.as_ref().expect("a panel over the page");
+        let layout = screen.layout_with(&panel(), &kobo_ui::Chrome::with_back(true));
+        for name in [
+            action::DIMMER,
+            action::BRIGHTER,
+            action::BOOKMARK,
+            action::HIGHLIGHTS,
+            action::MARKING,
+        ] {
+            let action = kobo_sdk::action_id(name);
+            assert!(
+                layout.nodes.iter().any(|node| matches!(
+                    node.kind,
+                    kobo_ui::LayoutKind::Button(found, ..)
+                        | kobo_ui::LayoutKind::ChoiceOption(found, _)
+                    if found == action
+                )),
+                "{name} is not on the panel"
+            );
+        }
+        assert!(
+            matches!(overlay.kind, kobo_ui::OverlayKind::Popover { anchor }
+                if anchor == kobo_sdk::action_id(action::CONTROLS)),
+            "the panel is not attached to the control that opens it"
+        );
+        assert!(
+            screen.validate(&panel()).is_empty(),
+            "{:?}",
+            screen.validate(&panel())
+        );
+    }
+
+    /// Naming the sizes rather than stepping through them: one tap to any
+    /// size, and the panel says which one is in force.
+    #[test]
+    fn a_size_can_be_chosen_by_name_and_the_current_one_is_marked() {
+        let mut reader = reader(40);
+        reader.act(action::CONTROLS, &panel());
+        assert_eq!(reader.scale(), TextScale::Default);
+
+        let outcome = reader.act(&format!("{}2", action::SIZE), &panel());
+        assert_eq!(outcome, Outcome::Save);
+        assert_eq!(reader.scale(), TextScale::ExtraLarge);
+
+        let screen = reader.screen("Pride and Prejudice");
+        let overlay = screen.overlay.as_ref().expect("a panel");
+        let marked = overlay.nodes.iter().find_map(|node| match node {
+            kobo_ui::Node::Choice { selected, .. } => *selected,
+            _ => None,
+        });
+        assert_eq!(marked, Some(2), "the panel did not mark the size in force");
+
+        // Asking for the size it is already at is not a change to save, and it
+        // is not somebody else's action either.
+        assert_eq!(
+            reader.act(&format!("{}2", action::SIZE), &panel()),
+            Outcome::Repaint
+        );
+        assert_eq!(
+            reader.act("reader-size-nonsense", &panel()),
+            Outcome::Elsewhere
+        );
+    }
+
     #[test]
     fn a_book_breaks_into_more_than_one_page() {
         let reader = reader(40);
@@ -1268,24 +1428,21 @@ mod tests {
     }
 
     #[test]
-    fn showing_the_controls_repaginates_because_they_take_room() {
-        // Without this the last lines of the page are drawn under the bar and
-        // dropped, with nothing on the panel to say they existed.
+    fn showing_the_controls_takes_no_room_off_the_page() {
+        // The controls used to be a bar under the book, which meant opening
+        // them repaginated it: the words moved, and asking for the type size
+        // looked like turning a page. They are a panel over the book now, so
+        // the page is exactly as it was and a change of size can be judged
+        // against the words that were already there.
         let mut reader = reader(60);
         for _ in 0..4 {
             reader.forward();
         }
-        let before = reader.page().first().unwrap().block;
+        let before = reader.page().to_vec();
         let pages_before = reader.page_count();
         reader.set_chrome(Chrome::Controls, &panel());
-        assert!(
-            reader.page_count() > pages_before,
-            "the control bar took no room off the page"
-        );
-        assert!(
-            reader.page().iter().any(|piece| piece.block == before),
-            "opening the controls moved the reader off their words"
-        );
+        assert_eq!(reader.page_count(), pages_before);
+        assert_eq!(reader.page(), before.as_slice());
     }
 
     #[test]
@@ -1378,8 +1535,14 @@ mod tests {
         let mut reader = reader(20);
         let bare = reader.screen("Pride and Prejudice");
         assert!(bare.nav_bar.is_none(), "the plain reading page had a bar");
+        assert!(bare.overlay.is_none(), "the plain reading page had a panel");
         reader.set_chrome(Chrome::Controls, &panel());
-        assert!(reader.screen("Pride and Prejudice").nav_bar.is_some());
+        let asked = reader.screen("Pride and Prejudice");
+        assert!(
+            asked.nav_bar.is_none(),
+            "the controls took room off the page"
+        );
+        assert!(asked.overlay.is_some(), "the controls did not open");
     }
 
     #[test]
@@ -1634,17 +1797,54 @@ mod tests {
     }
 
     #[test]
+    fn holding_a_finger_on_the_page_asks_to_mark_a_paragraph() {
+        // A hold is what marks a passage in every reader anyone has used, and
+        // this one had no gesture for it at all: the only way in was three
+        // taps through a panel, which is not something a reader does mid
+        // sentence.
+        let mut reader = reader(60);
+        let screen = reader.screen("Pride and Prejudice");
+        assert_eq!(screen.hold, Some(kobo_sdk::action_id(action::MARKING)));
+        assert_eq!(
+            reader.act(action::MARKING, &panel()),
+            Outcome::Repaint,
+            "the hold reached nothing"
+        );
+        assert_eq!(reader.chrome(), Chrome::Marking);
+    }
+
+    #[test]
+    fn a_page_with_nothing_to_mark_asks_for_no_hold() {
+        // A gesture that can only ever answer "there is nothing here" is worse
+        // than no gesture: it teaches the reader the panel ignores them.
+        let reader = Reader::open(
+            Document {
+                title: None,
+                author: None,
+                blocks: vec![Block::Rule],
+                truncated: false,
+            },
+            Memory::default(),
+            &panel(),
+        );
+        assert!(reader.markable().is_empty());
+        assert_eq!(reader.screen("Nothing").hold, None);
+    }
+
+    #[test]
     fn the_marked_passages_can_be_reached_from_the_book() {
         // The defect this covers: the reading bar declared six controls, the
         // panel carries five, and the one dropped was the way to the notes.
         let mut reader = reader(60);
         reader.set_chrome(Chrome::Controls, &panel());
         let screen = reader.screen("Pride and Prejudice");
-        let bar = screen.nav_bar.as_ref().expect("a bar");
+        let overlay = screen.overlay.as_ref().expect("a panel");
         assert!(
-            bar.visible(&panel())
-                .iter()
-                .any(|item| item.action == kobo_sdk::action_id(action::HIGHLIGHTS)),
+            overlay.nodes.iter().any(|node| matches!(
+                node,
+                kobo_ui::Node::Button { action, .. }
+                    if *action == kobo_sdk::action_id(action::HIGHLIGHTS)
+            )),
             "there is no way from the book to the marks"
         );
     }

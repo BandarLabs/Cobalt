@@ -250,6 +250,7 @@ pub struct ScreenBuilder {
     nav_bar: Option<NavBar>,
     bottom_action: Option<BottomAction>,
     page_turns: Option<kobo_ui::PageTurns>,
+    hold: Option<ActionId>,
     owns_back: bool,
     text_scale: Option<kobo_ui::TextScale>,
     overlay: Option<Box<Overlay>>,
@@ -269,6 +270,7 @@ impl ScreenBuilder {
             nav_bar: None,
             bottom_action: None,
             page_turns: None,
+            hold: None,
             owns_back: false,
             text_scale: None,
             overlay: None,
@@ -714,6 +716,18 @@ impl ScreenBuilder {
         self
     }
 
+    /// Sends `action` when a finger is held still on the content area.
+    ///
+    /// A hold is the only gesture left on a page that is nothing but words: a
+    /// tap already turns it, and putting a control over the text to reach the
+    /// same thing would cover what the reader is looking at. Holding a real
+    /// control still presses that control, so this cannot take a button away.
+    #[must_use]
+    pub fn hold(mut self, action: impl AsRef<str>) -> Self {
+        self.hold = Some(self.register(action.as_ref()));
+        self
+    }
+
     /// Adds the fixed bar at the bottom of the screen.
     ///
     /// `selected` takes an index or `None`. `None` is for a bar whose entries
@@ -1097,6 +1111,7 @@ impl ScreenBuilder {
             nav_bar: self.nav_bar,
             bottom_action: self.bottom_action,
             page_turns: self.page_turns,
+            hold: self.hold,
             owns_back: self.owns_back,
             text_scale: self.text_scale,
             overlay: self.overlay,

@@ -891,6 +891,19 @@ pub struct Screen {
     /// page it measured is not the page that gets drawn.
     pub text_scale: Option<TextScale>,
 
+    /// What a finger held still on the content area asks for.
+    ///
+    /// A tap and a hold are different intents on the same pixels, and a reading
+    /// page has nothing but pixels: there is no control to press without
+    /// covering the words. Held, rather than dragged out with two handles,
+    /// because selecting a range by dragging on E Ink means chasing a caret
+    /// that redraws a third of a second behind the finger.
+    ///
+    /// Like the page turns, this is a property of the screen and is whatever is
+    /// left once every real control has been hit-tested, so holding a button
+    /// still presses the button and holding under an overlay does nothing.
+    pub hold: Option<ActionId>,
+
     /// Something drawn over this screen, with the screen kept underneath.
     ///
     /// Outside the node list for the same reason the bars are: a screen cannot
@@ -964,8 +977,16 @@ impl Screen {
             owns_back: false,
             reading: false,
             text_scale: None,
+            hold: None,
             overlay: None,
         }
+    }
+
+    /// Sends `action` when a finger is held still on the content area.
+    #[must_use]
+    pub const fn with_hold(mut self, action: ActionId) -> Self {
+        self.hold = Some(action);
+        self
     }
 
     /// Asks for first refusal on the runtime's Back control.
@@ -1112,6 +1133,7 @@ impl Screen {
         // the navigation are the two things a reader must be able to hit
         // without thinking, and a mistimed page turn there would be maddening.
         layout.page_turns = self.page_turns;
+        layout.hold = self.hold;
         layout.content = Rect {
             x: 0,
             y: content_top,
@@ -1127,6 +1149,7 @@ impl Screen {
             // left of the content area, and "left over" must not include the
             // thing drawn over it.
             layout.page_turns = None;
+            layout.hold = None;
         }
         layout
     }
@@ -2326,6 +2349,8 @@ pub struct Layout {
     pub content: Rect,
     /// Set when the screen asked for tap-to-turn.
     pub page_turns: Option<PageTurns>,
+    /// Set when the screen asked to hear about a held finger.
+    pub hold: Option<ActionId>,
     /// The face this screen's prose was wrapped in, and must be drawn in.
     ///
     /// Kept on the layout rather than on each node because it is a property of
@@ -2499,6 +2524,20 @@ impl Layout {
             return None;
         }
         self.hit_page_turn(x, y)
+    }
+
+    /// What a finger held on empty content means, if any.
+    ///
+    /// A held finger on a real control is that control being pressed, not a
+    /// hold: the alternative is a reader who rests a thumb on Back and gets
+    /// something else entirely.
+    #[must_use]
+    pub fn hit_hold(&self, x: i32, y: i32) -> Option<ActionId> {
+        let hold = self.hold?;
+        if !self.content.contains(x, y) || self.hit_control(x, y).is_some() {
+            return None;
+        }
+        Some(hold)
     }
 
     /// The page turn a tap on empty content means, if any.
@@ -10118,6 +10157,81 @@ mod prose_tests {
         ));
         let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
         assert_eq!(layout.hit_page_turn(4, CLARA_BW_METRICS.height / 2), None);
+    }
+
+    #[test]
+    fn a_hold_is_the_content_area_and_never_a_control() {
+        // A reader resting a thumb on a button must get the button. The whole
+        // point of the gesture is that a page of prose has nowhere else to put
+        // one, which is an argument about empty space, not about controls.
+        let screen = Screen::new(
+            1,
+            vec![
+                Node::Text {
+                    id: NodeId(1),
+                    text: "A page of a book.".to_owned(),
+                },
+                Node::Button {
+                    id: NodeId(2),
+                    action: ActionId(7),
+                    label: "Notes".to_owned(),
+                    state: ControlState::Enabled,
+                    emphasis: Emphasis::Normal,
+                },
+            ],
+        )
+        .with_hold(ActionId(9));
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        let button = layout
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::Button(ActionId(7), _, _)))
+            .expect("the button");
+        assert_eq!(
+            layout.hit_hold(
+                button.rect.x + button.rect.width / 2,
+                button.rect.y + button.rect.height / 2
+            ),
+            None,
+            "holding a control was taken as a hold on the page"
+        );
+        assert_eq!(
+            layout.hit_hold(CLARA_BW_METRICS.width / 2, layout.content.y + 4),
+            Some(ActionId(9))
+        );
+        // Above the content is the top bar's business, not the page's.
+        assert_eq!(
+            layout.hit_hold(CLARA_BW_METRICS.width / 2, layout.content.y - 1),
+            None
+        );
+    }
+
+    #[test]
+    fn an_overlay_takes_the_hold_away() {
+        // Same argument as the page turns: what is left over must not include
+        // what is drawn on top of it, or holding a finger on a panel would
+        // reach through it into the book.
+        let screen = Screen::new(
+            1,
+            vec![Node::Text {
+                id: NodeId(1),
+                text: "A page of a book.".to_owned(),
+            }],
+        )
+        .with_hold(ActionId(9))
+        .with_overlay(Overlay::popover(
+            NodeId(40),
+            ActionId(999),
+            vec![Node::Text {
+                id: NodeId(41),
+                text: "Type size".to_owned(),
+            }],
+        ));
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        assert_eq!(
+            layout.hit_hold(CLARA_BW_METRICS.width / 2, layout.content.y + 4),
+            None
+        );
     }
 }
 

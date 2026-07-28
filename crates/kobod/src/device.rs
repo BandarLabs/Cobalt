@@ -719,6 +719,8 @@ fn host_applications(
         let mut back_offered: Option<(u64, Instant)> = None;
         // The rectangle currently drawn inverted because a finger is on it.
         let mut pressed: Option<kobo_ui::Rect> = None;
+        // When and where the finger landed, for telling a tap from a hold.
+        let mut landed: Option<(Instant, i32, i32)> = None;
 
         loop {
             let now = Instant::now();
@@ -853,6 +855,7 @@ fn host_applications(
                         match event {
                             TouchEvent::Down { x, y } => {
                                 if let (Ok(x), Ok(y)) = (i32::try_from(x), i32::try_from(y)) {
+                                    landed = Some((Instant::now(), x, y));
                                     if let Some(rect) = current
                                         .layout_with(&metrics_for(current), &chrome)
                                         .pressed_control(x, y)
@@ -874,6 +877,19 @@ fn host_applications(
                                 }
                             }
                             TouchEvent::Move { x, y } => {
+                                // A finger that travels is a drag, not a hold.
+                                // Without this, sliding across the page and
+                                // pausing before letting go would mark a
+                                // paragraph the reader never rested on.
+                                if let (Some((_, from_x, from_y)), Ok(x), Ok(y)) =
+                                    (landed, i32::try_from(x), i32::try_from(y))
+                                {
+                                    if (x - from_x).abs() > HOLD_SLIP
+                                        || (y - from_y).abs() > HOLD_SLIP
+                                    {
+                                        landed = None;
+                                    }
+                                }
                                 // Slid off the control. Cancel the press the
                                 // way every other platform does, so the reader
                                 // can see that letting go here will do nothing.
@@ -892,7 +908,23 @@ fn host_applications(
                             }
                         }
                     }
-                    match deliver_touch(&mut apps[index].stream, event, screen.as_ref(), &chrome)? {
+                    // Measured from contact to release, on the release, so a
+                    // hold costs nothing until it has happened: no timer, no
+                    // wake, and no gesture that fires while the finger is
+                    // still down and cannot be taken back.
+                    let held = match event {
+                        TouchEvent::Up { .. } => landed
+                            .take()
+                            .is_some_and(|(at, _, _)| at.elapsed() >= HOLD_TIME),
+                        _ => false,
+                    };
+                    match deliver_touch(
+                        &mut apps[index].stream,
+                        event,
+                        screen.as_ref(),
+                        &chrome,
+                        held,
+                    )? {
                         Tap::Handled => {}
                         Tap::OfferedBack => back_offered = Some((front, Instant::now())),
                         Tap::Leave => {
@@ -1467,6 +1499,20 @@ fn resolve(catalogue: &Path, name: &str) -> Result<PathBuf, String> {
     }
 }
 
+/// How long a finger must stay down for a touch to count as a hold.
+///
+/// Half a second, which is what every touch platform settled on: shorter and
+/// an unhurried tap becomes a gesture nobody asked for, longer and the reader
+/// concludes the panel is ignoring them and lifts off.
+const HOLD_TIME: Duration = Duration::from_millis(500);
+
+/// How far the finger may wander and still be holding, in pixels.
+///
+/// A finger resting on glass is never still, and this panel reports every
+/// tremor. Roughly three millimetres on a Clara, which is under the width of
+/// the contact patch, so a hand that is not moving cannot cross it.
+const HOLD_SLIP: i32 = 40;
+
 /// Ends the application, politely if it has already finished and firmly if not.
 fn stop_application(child: &mut Child) {
     let deadline = Instant::now() + APP_STOP_GRACE;
@@ -1491,7 +1537,12 @@ fn stop_application(child: &mut Child) {
 /// Activation happens on release rather than on contact, so a finger that lands
 /// on the wrong control can be slid away from it without acting. That is what
 /// every touch interface the owner already uses has taught them to expect.
-fn action_for(event: TouchEvent, screen: Option<&Screen>, chrome: &Chrome) -> Option<ActionId> {
+fn action_for(
+    event: TouchEvent,
+    screen: Option<&Screen>,
+    chrome: &Chrome,
+    held: bool,
+) -> Option<ActionId> {
     let TouchEvent::Up { x, y } = event else {
         return None;
     };
@@ -1503,9 +1554,16 @@ fn action_for(event: TouchEvent, screen: Option<&Screen>, chrome: &Chrome) -> Op
     };
     // The same chrome the frame was drawn with. Laying out with a different
     // one would move every control away from where the reader can see it.
-    let hit = screen
-        .layout_with(&metrics_for(screen), chrome)
-        .hit_test(x, y);
+    let layout = screen.layout_with(&metrics_for(screen), chrome);
+    // A hold that the screen asked for wins over the tap the same pixels would
+    // otherwise have been. Falls back rather than swallowing the touch: a
+    // finger resting a moment too long on a page of a book that does not want
+    // holds must still turn the page.
+    let hit = if held {
+        layout.hit_hold(x, y).or_else(|| layout.hit_test(x, y))
+    } else {
+        layout.hit_test(x, y)
+    };
     // Reported so a tap that lands on nothing stays distinguishable from a tap
     // that never arrived at all. Diagnosing the difference without this cost a
     // whole debugging session.
@@ -1621,8 +1679,9 @@ fn deliver_touch(
     event: TouchEvent,
     current: Option<&Screen>,
     chrome: &Chrome,
+    held: bool,
 ) -> Result<Tap, String> {
-    let Some(action) = action_for(event, current, chrome) else {
+    let Some(action) = action_for(event, current, chrome, held) else {
         return Ok(Tap::Handled);
     };
     let offered = action == ActionId::BACK;
@@ -1979,6 +2038,46 @@ mod tests {
     }
 
     #[test]
+    fn a_held_finger_reaches_the_hold_and_a_quick_one_turns_the_page() {
+        // The two intents land on the same pixels, so the only thing telling
+        // them apart is how long the finger stayed down. A reading page is
+        // page turns from edge to edge: without this, marking a paragraph has
+        // nowhere to be asked for, and with it done wrong every page turn
+        // becomes a mark.
+        let screen = Screen::new(
+            1,
+            vec![kobo_ui::Node::Text {
+                id: kobo_ui::NodeId(1),
+                text: "A page of a book.".to_owned(),
+            }],
+        )
+        .with_page_turns(ActionId(11), ActionId(12))
+        .with_hold(ActionId(13));
+        let chrome = Chrome::default();
+        let metrics = metrics_for(&screen);
+        let content = screen.layout_with(&metrics, &chrome).content;
+        let touch = TouchEvent::Up {
+            x: u32::try_from(metrics.width / 2).expect("inside the panel"),
+            y: u32::try_from(content.y + content.height / 2).expect("inside the panel"),
+        };
+        assert_eq!(
+            action_for(touch, Some(&screen), &chrome, true),
+            Some(ActionId(13))
+        );
+        assert_eq!(
+            action_for(touch, Some(&screen), &chrome, false),
+            Some(ActionId(12))
+        );
+        // A screen that asked for no hold must still turn its pages, however
+        // long the finger rested.
+        let no_hold = Screen::new(1, Vec::new()).with_page_turns(ActionId(11), ActionId(12));
+        assert_eq!(
+            action_for(touch, Some(&no_hold), &chrome, true),
+            Some(ActionId(12))
+        );
+    }
+
+    #[test]
     fn back_is_reported_from_the_chrome_the_frame_was_drawn_with() {
         let screen = hello();
         let chrome = Chrome::with_back(true);
@@ -1996,6 +2095,7 @@ mod tests {
             },
             Some(&screen),
             &chrome,
+            false,
         );
         assert_eq!(hit, Some(ActionId::BACK));
         // Laid out without the affordance, the same tap must not invent one.
@@ -2007,6 +2107,7 @@ mod tests {
                 },
                 Some(&screen),
                 &Chrome::default(),
+                false,
             ),
             Some(ActionId::BACK)
         );
@@ -2036,14 +2137,14 @@ mod tests {
         let (mut runtime, mut app) =
             std::os::unix::net::UnixStream::pair().expect("a pair of sockets");
         assert_eq!(
-            deliver_touch(&mut runtime, tap, Some(&screen), &chrome).expect("route the tap"),
+            deliver_touch(&mut runtime, tap, Some(&screen), &chrome, false).expect("route the tap"),
             Tap::Leave,
             "a screen that did not ask keeps the old behaviour"
         );
 
         let owning = screen.clone().with_own_back(true);
         assert_eq!(
-            deliver_touch(&mut runtime, tap, Some(&owning), &chrome).expect("route the tap"),
+            deliver_touch(&mut runtime, tap, Some(&owning), &chrome, false).expect("route the tap"),
             Tap::OfferedBack
         );
         let frame = kobo_protocol::read_from(&mut app).expect("the application is told");

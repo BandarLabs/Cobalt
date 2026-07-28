@@ -1926,8 +1926,11 @@ Please read this before you distribute or use this work.\n";
 
     #[test]
     fn the_page_controls_are_reachable_by_a_tap_at_their_centre() {
-        // They are the pinned bar rather than the last thing in the flow, so
-        // a long page loses its final words rather than its page turn.
+        // A control that is drawn and cannot be hit is worse than one that is
+        // missing: the reader can see it, taps it, and concludes the device is
+        // broken. The controls are a panel over the page rather than a bar
+        // under it, so this also proves the panel is laid out on the panel
+        // and not off the bottom of it.
         let mut reader = opened("A short book.");
         reader.act(kobo_read::action::CONTROLS, &CLARA_BW_METRICS);
         let application = Gutenbird {
@@ -1943,11 +1946,19 @@ Please read this before you distribute or use this work.\n";
             .nodes
             .iter()
             .filter_map(|node| match node.kind {
-                LayoutKind::NavDestination(action) => Some((action, node.rect)),
+                LayoutKind::Button(action, kobo_ui::ControlState::Enabled, _)
+                | LayoutKind::ChoiceOption(action, _) => Some((action, node.rect)),
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert_eq!(controls.len(), 5, "the reading controls are not all there");
+        // Three type sizes, two front light steps, a bookmark and the notes.
+        // "Mark a paragraph" is not counted: a book of one sentence has a
+        // paragraph to mark, but a book of none would not, and the count is
+        // about the controls that are always there.
+        assert!(
+            controls.len() >= 7,
+            "the reading controls are not all there: {controls:?}"
+        );
         for (action, rect) in controls {
             let hit = layout.hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2);
             assert_eq!(hit, Some(action));
