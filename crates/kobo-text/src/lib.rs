@@ -580,6 +580,107 @@ mod tests {
     use super::*;
     use kobo_ui::TextScale;
 
+    #[test]
+    fn a_paginated_page_of_rows_never_reaches_the_page_position_under_it() {
+        // Measured with the real face, because the built-in bitmap
+        // fallback wraps nothing like it and the page fits either way
+        // under the fallback -- which is why the arithmetic tests in
+        // kobo-ui passed while the panel drew a row through its own
+        // page position.
+        let _ = install(kobo_ui::CLARA_BW_METRICS);
+        // The arithmetic version of this test agreed with the bug: it counted
+        // separators the same wrong way the paginator did. So the engine is
+        // the oracle here -- paginate, lay the page out, and ask where the
+        // rows actually landed.
+        let stories: Vec<(&str, &str, &str)> = vec![
+            (
+                "You Could Have Come Up with Kimi Delta Attention",
+                "blog.doubleword.ai \u{b7} 78 comments \u{b7} 2h ago",
+                "218 points",
+            ),
+            (
+                "Steel Bank Common Lisp version 2.6.7",
+                "sbcl.org \u{b7} 12 comments \u{b7} 1h ago",
+                "72 points",
+            ),
+            (
+                "Delayed Gratification \u{2013} Proud to Be 'Last to Breaking News'",
+                "slow-journalism.com \u{b7} 55 comments \u{b7} 3h ago",
+                "121 points",
+            ),
+            (
+                "Kimi K3 Architecture Overview and Notes",
+                "sebastianraschka.com \u{b7} 12 comments \u{b7} 3h ago",
+                "104 points",
+            ),
+            (
+                "Zig's Incremental Compilation Internals",
+                "mluqg.co.uk \u{b7} 54 comments \u{b7} 3h ago",
+                "105 points",
+            ),
+        ];
+        let mut area = kobo_ui::CLARA_BW_METRICS.prose_area(true, true);
+        area.height = area
+            .height
+            .saturating_sub(kobo_ui::CLARA_BW_METRICS.page_position_band())
+            .max(1);
+        let pages =
+            kobo_ui::paginate_rows_with_trailing(&stories, &kobo_ui::CLARA_BW_METRICS, area);
+        let first = &pages[0];
+        let rows = first
+            .iter()
+            .enumerate()
+            .map(|(place, index)| {
+                let (title, summary, trailing) = stories[*index];
+                kobo_ui::Row::new(
+                    kobo_ui::ActionId(*index as u32 + 1),
+                    title,
+                    summary,
+                    kobo_ui::RowLead::Number(place as u16 + 1),
+                )
+                .with_trailing(trailing)
+            })
+            .collect::<Vec<_>>();
+        let screen = kobo_ui::Screen::new(
+            1,
+            vec![kobo_ui::Node::Rows {
+                id: kobo_ui::NodeId(1),
+                rows,
+            }],
+        )
+        .with_top_bar(kobo_ui::TopBar::new(kobo_ui::NodeId(0), "Top"))
+        .with_page_turns(kobo_ui::ActionId(90), kobo_ui::ActionId(91))
+        .with_nav_bar(kobo_ui::NavBar::actions(
+            kobo_ui::NodeId(9),
+            vec![
+                kobo_ui::BarAction::new(kobo_ui::ActionId(80), "Top"),
+                kobo_ui::BarAction::new(kobo_ui::ActionId(81), "New"),
+            ],
+        ));
+        let screen = kobo_ui::Screen {
+            page_turns: screen
+                .page_turns
+                .map(|turns| turns.with_position(1, pages.len() as u16)),
+            ..screen
+        };
+        let layout = screen.layout();
+        let position = layout
+            .nodes
+            .iter()
+            .find(|node| node.kind == kobo_ui::LayoutKind::PagePosition)
+            .expect("a page position");
+        for node in &layout.nodes {
+            if matches!(node.kind, kobo_ui::LayoutKind::Row(_)) {
+                assert!(
+                    node.rect.y + node.rect.height <= position.rect.y,
+                    "a row ran to {}, under the page position at {}",
+                    node.rect.y + node.rect.height,
+                    position.rect.y
+                );
+            }
+        }
+    }
+
     const CLARA: DisplayMetrics = DisplayMetrics {
         width: 1072,
         height: 1448,

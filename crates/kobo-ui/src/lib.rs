@@ -6072,7 +6072,13 @@ pub fn paginate_rows_in_sections(
     metrics: &DisplayMetrics,
     area: ProseArea,
 ) -> Vec<Vec<usize>> {
-    let separator = metrics.rule_thickness() + area.gap;
+    // A gap, the divider drawn inside it, then another gap: the engine
+    // advances by the row's height and a gap, then leaves a second gap after
+    // the rule it draws before the next row. The rule's own thickness is not
+    // part of the stride, and counting it instead of the second gap made
+    // every separator eight pixels short -- enough, over four of them, to
+    // pull a whole extra row onto a page it then overflowed.
+    let separator = area.gap * 2;
     let header = section_height(metrics);
     let mut pages: Vec<Vec<usize>> = Vec::new();
     let mut page: Vec<usize> = Vec::new();
@@ -6215,7 +6221,13 @@ pub fn paginate_rows_with_trailing(
     metrics: &DisplayMetrics,
     area: ProseArea,
 ) -> Vec<Vec<usize>> {
-    let separator = metrics.rule_thickness() + area.gap;
+    // A gap, the divider drawn inside it, then another gap: the engine
+    // advances by the row's height and a gap, then leaves a second gap after
+    // the rule it draws before the next row. The rule's own thickness is not
+    // part of the stride, and counting it instead of the second gap made
+    // every separator eight pixels short -- enough, over four of them, to
+    // pull a whole extra row onto a page it then overflowed.
+    let separator = area.gap * 2;
     let mut pages: Vec<Vec<usize>> = Vec::new();
     let mut page: Vec<usize> = Vec::new();
     let mut used = 0;
@@ -6249,7 +6261,13 @@ pub fn paginate_rows(
     metrics: &DisplayMetrics,
     area: ProseArea,
 ) -> Vec<Vec<usize>> {
-    let separator = metrics.rule_thickness() + area.gap;
+    // A gap, the divider drawn inside it, then another gap: the engine
+    // advances by the row's height and a gap, then leaves a second gap after
+    // the rule it draws before the next row. The rule's own thickness is not
+    // part of the stride, and counting it instead of the second gap made
+    // every separator eight pixels short -- enough, over four of them, to
+    // pull a whole extra row onto a page it then overflowed.
+    let separator = area.gap * 2;
     let mut pages: Vec<Vec<usize>> = Vec::new();
     let mut page: Vec<usize> = Vec::new();
     let mut used = 0;
@@ -14035,8 +14053,7 @@ mod press_feedback_tests {
                         }
                 })
                 .sum();
-            let separators =
-                (page.len() as i32 - 1) * (CLARA_BW_METRICS.rule_thickness() + area.gap);
+            let separators = (page.len() as i32 - 1) * (area.gap * 2);
             assert!(
                 heights + separators <= area.height || page.len() == 1,
                 "a page carrying a section header and its row overflowed"
