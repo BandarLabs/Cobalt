@@ -748,4 +748,4 @@ application imports has any.
 Worked examples, smallest first: `examples/tictactoe`, `examples/todo` (state
 that survives a restart), `examples/gallery` (every primitive on one screen),
 `examples/terminal`, `examples/brief` (work that continues in the background),
-`examples/launcher`, `examples/chat`, `examples/gutenshelf`.
+`examples/launcher`, `examples/chat`, `examples/gutenbird`.

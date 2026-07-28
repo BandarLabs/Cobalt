@@ -359,7 +359,7 @@ keyboard is a grid of keys and adding a `Keyboard` node would have meant
 teaching the layout engine, the renderer, the hit test and the wire format
 about something that is already expressible.
 
-**Gutenshelf** — search and read sixty thousand Project Gutenberg books — did
+**Gutenbird** — search and read sixty thousand Project Gutenberg books — did
 not fit, and finding out why was the most useful thing in this stretch.
 
 It reads plain text rather than EPUB. An EPUB is a zip of XHTML that would need

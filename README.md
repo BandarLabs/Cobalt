@@ -32,7 +32,7 @@ Verified on the physical Clara BW unless stated otherwise.
 | Storage | Per-application keyed state under its own directory |
 | Navigation | A runtime-owned Back the application may answer first (see below) |
 | Tooling | `devices`, `doctor`, `package`, `deploy`, `inspect`, `verify`, `session`, `wait`, `logs`, `touch-probe`, and a Clara BW simulator in the browser |
-| Applications | `launcher`, `hn`, `rss`, `gutenshelf`, `chat`, `todo`, `terminal`, `tictactoe`, `gallery`, `brief` |
+| Applications | `launcher`, `hn`, `rss`, `gutenbird`, `chat`, `todo`, `terminal`, `tictactoe`, `gallery`, `brief` |
 
 **Not here yet, stated plainly**
 
@@ -98,7 +98,7 @@ crates/    kobo-sdk       what an application imports
            kobo-smoke     owner-attended display writes
            kobo-handoff   stopping and restarting the stock reader
            kobo-guard     screen capture and restore around a session
-examples/  launcher, terminal, todo, brief, chat, gutenshelf, gallery,
+examples/  launcher, terminal, todo, brief, chat, gutenbird, gallery,
            tictactoe, hn, rss
 ```
 
@@ -857,7 +857,7 @@ runtime is the only thing that can start, bound, or stop a program.
 | `todo` | State that survives a restart, and a row that can be struck through |
 | `brief` | Background work: stories collected while the reader is elsewhere |
 | `chat` | An answer that can be tapped rather than typed |
-| `gutenshelf` | Sixty thousand free books, downloaded and read on the panel |
+| `gutenbird` | Sixty thousand free books, downloaded and read on the panel |
 | `gallery` | Every UI primitive at once, for checking by eye on real hardware |
 | `tictactoe` | Two players, one panel, and partial repaints of single cells |
 | `hn` | Hacker News, with whole threads laid out by reply depth |

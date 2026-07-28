@@ -11,7 +11,7 @@
 //! # Why a document and not a string
 //!
 //! Plain text was enough while the only thing being read was Project
-//! Gutenberg's plain text, and it is the reason the reader in gutenshelf is a
+//! Gutenberg's plain text, and it is the reason the reader in gutenbird is a
 //! wall of identical paragraphs. A heading is not a paragraph in bold; it is
 //! where a chapter starts, which is what a table of contents is made of, what
 //! "next chapter" moves between, and what a reader looks for when they come

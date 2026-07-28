@@ -46,9 +46,9 @@ struct Entry {
 
 const ENTRIES: &[Entry] = &[
     Entry {
-        name: "gutenshelf",
-        title: "Gutenshelf",
-        label: "Gutenshelf",
+        name: "gutenbird",
+        title: "Gutenbird",
+        label: "Gutenbird",
         summary: "Sixty thousand free books from Project Gutenberg.",
         detail: "Search the catalogue, open a book, and read it a measured page at a time. Downloads arrive in ranged chunks, so a long book starts before it has finished arriving, and covers fill the shelf as they land.",
         needs: "Needs the network while searching and downloading.",

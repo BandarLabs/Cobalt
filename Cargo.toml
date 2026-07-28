@@ -30,7 +30,7 @@ members = [
     "examples/tictactoe",
     "examples/terminal",
     "examples/gallery",
-    "examples/gutenshelf",
+    "examples/gutenbird",
     "examples/hn",
     "examples/launcher",
 ]

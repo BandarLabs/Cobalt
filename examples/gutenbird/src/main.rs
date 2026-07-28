@@ -1,4 +1,4 @@
-//! Gutenshelf: the Project Gutenberg library, on the device.
+//! Gutenbird: the Project Gutenberg library, on the device.
 //!
 //! Search sixty thousand public domain books, and read one without leaving the
 //! application.
@@ -16,7 +16,7 @@
 //! ## Why the reading screen is not built here
 //!
 //! It was, once: forty lines that turned pages and nothing else. Type size,
-//! front light, bookmarks and marked passages are not gutenshelf's to invent
+//! front light, bookmarks and marked passages are not gutenbird's to invent
 //! -- every application that shows a book wants the same ones, and a reader
 //! who learns them in one should find them in the next. They live in
 //! `kobo-read`.
@@ -62,7 +62,28 @@ const CHUNK_BYTES: u32 = 256 * 1024;
 const SKELETON_ROWS: u8 = 6;
 
 /// The most books to keep from one response.
-const MAX_RESULTS: usize = 16;
+///
+/// Gutendex answers thirty-two at a time, and this used to be sixteen: half of
+/// every page was thrown away before it was ever drawn, and since only one
+/// page was ever asked for, "More" dead-ended at sixteen books out of sixty
+/// thousand. The catalogue is now followed page by page, so this only bounds
+/// what one answer can add.
+const MAX_RESULTS: usize = 32;
+
+/// The most books held at once, across every page followed.
+///
+/// A ceiling rather than none at all: each entry carries a title, an author
+/// and two URLs, and a reader who holds "More" down should not be able to make
+/// this application grow until the runtime kills it. Twenty pages of shelf is
+/// far more than anybody scrolls.
+const MAX_BOOKS: usize = 320;
+
+/// Where the catalogue lives, for checking the address it names for its own
+/// next page.
+///
+/// The `next` link is a value from the network that becomes a request this
+/// device makes, so it is followed only when it still points at Gutendex.
+const CATALOGUE_HOST: &str = "https://gutendex.com/";
 
 /// How much of a cover to accept.
 ///
@@ -134,10 +155,12 @@ enum View {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Awaiting {
     Catalogue,
+    /// The next page of the same catalogue, appended rather than replacing.
+    MoreBooks,
     Text,
 }
 
-struct Gutenshelf {
+struct Gutenbird {
     view: View,
     keyboard: Keyboard,
     books: Vec<Book>,
@@ -201,9 +224,16 @@ struct Gutenshelf {
     /// time it is opened, so fetching them again is seconds of somebody's life
     /// and a radio kept awake for something already on the device.
     looking: Vec<(String, usize)>,
+    /// The address Gutendex gave for the page after the one already held.
+    ///
+    /// `None` means either nothing has been asked for yet or the catalogue has
+    /// no more to give. Taken from the answer rather than built here, so the
+    /// sort or the search that produced this shelf is carried forward without
+    /// this application having to rebuild the query.
+    next: Option<String>,
 }
 
-impl Default for Gutenshelf {
+impl Default for Gutenbird {
     fn default() -> Self {
         Self {
             view: View::Results,
@@ -225,11 +255,12 @@ impl Default for Gutenshelf {
             loading: None,
             place: None,
             looking: Vec::new(),
+            next: None,
         }
     }
 }
 
-impl Gutenshelf {
+impl Gutenbird {
     /// Whether the shelf itself is still on its way.
     ///
     /// Covers deliberately do not count. They arrive one at a time and the
@@ -262,8 +293,8 @@ impl Gutenshelf {
     }
 
     fn results(&self) -> kobo_sdk::Screen {
-        let mut screen = ScreenBuilder::new("gutenshelf").top_bar(match &self.query {
-            None => "Gutenshelf".to_owned(),
+        let mut screen = ScreenBuilder::new("gutenbird").top_bar(match &self.query {
+            None => "Gutenbird".to_owned(),
             Some(query) => format!("\u{201c}{query}\u{201d}"),
         });
         if let Some(problem) = &self.problem {
@@ -324,7 +355,7 @@ impl Gutenshelf {
                 (format!("book-{index}"), title, Glyph::Book, book.picture)
             });
         screen = screen.picture_tiles(TileShape::Portrait, shown);
-        if pages <= 1 {
+        if pages <= 1 && !self.more_to_take() {
             // Still reachable, just not at the cost of a whole row of covers.
             // Search used to be a full-width button above the shelf, which on
             // this panel was a third of the artwork the shelf exists to show.
@@ -352,7 +383,7 @@ impl Gutenshelf {
     }
 
     fn search(&self) -> kobo_sdk::Screen {
-        ScreenBuilder::new("gutenshelf-search")
+        ScreenBuilder::new("gutenbird-search")
             .top_bar("Search")
             .typed(&self.keyboard, "An author or a title")
             .keyboard(&self.keyboard, "Search")
@@ -363,7 +394,7 @@ impl Gutenshelf {
         let Some(book) = self.open.and_then(|index| self.books.get(index)) else {
             return self.results();
         };
-        let mut screen = ScreenBuilder::new("gutenshelf-book")
+        let mut screen = ScreenBuilder::new("gutenbird-book")
             .top_bar(book.title.clone())
             .heading(book.title.clone())
             .secondary(book.author.clone());
@@ -403,7 +434,7 @@ impl Gutenshelf {
             .and_then(|index| self.books.get(index))
             .map_or_else(|| "Reading".to_owned(), |book| book.title.clone());
         let Some(reader) = &self.reader else {
-            return ScreenBuilder::new("gutenshelf-reading")
+            return ScreenBuilder::new("gutenbird-reading")
                 .reading(true)
                 .top_bar(title)
                 .activity("Downloading", None)
@@ -417,15 +448,42 @@ impl Gutenshelf {
             None => format!("{CATALOGUE}?sort=popular"),
             Some(query) => format!("{CATALOGUE}?search={}", encode_query(query)),
         };
+        // A new search starts a new catalogue. Keeping the old `next` would
+        // append the second page of "popular" to the results for "dickens".
+        self.next = None;
+        self.spawn_catalogue(context, url, Awaiting::Catalogue);
+    }
+
+    /// Asks Gutendex for the page after the one already on the shelf.
+    ///
+    /// Silent about a catalogue that has run out: the reader turned a page, and
+    /// a banner saying the sixty-thousandth book has been reached is noise
+    /// nobody asked for.
+    fn ask_more_books(&mut self, context: &mut Context) {
+        if self.task.is_some() || self.books.len() >= MAX_BOOKS {
+            return;
+        }
+        let Some(url) = self.next.clone() else {
+            return;
+        };
+        self.spawn_catalogue(context, url, Awaiting::MoreBooks);
+    }
+
+    fn spawn_catalogue(&mut self, context: &mut Context, url: String, awaiting: Awaiting) {
         self.problem = None;
         match context.spawn(Task::Fetch {
             url,
             offset: 0,
             max_bytes: CATALOGUE_BYTES,
         }) {
-            Some(task) => self.task = Some((task, Awaiting::Catalogue)),
+            Some(task) => self.task = Some((task, awaiting)),
             None => self.problem = Some("Too much is already in flight.".to_owned()),
         }
+    }
+
+    /// Whether there is more catalogue to ask for.
+    fn more_to_take(&self) -> bool {
+        self.next.is_some() && self.books.len() < MAX_BOOKS
     }
 
     /// Queues the covers for the shelf page being looked at, then starts as
@@ -802,16 +860,23 @@ impl Gutenshelf {
         }
     }
 
-    fn took_catalogue(&mut self, bytes: &[u8]) {
+    fn took_catalogue(&mut self, bytes: &[u8], more: bool) {
         match std::str::from_utf8(bytes)
             .ok()
             .and_then(|body| kobo_json::parse(body).ok())
         {
             None => self.problem = Some("Gutenberg's answer could not be read.".to_owned()),
             Some(value) => {
-                self.books = books_from(&value);
-                if self.books.is_empty() {
-                    self.problem = Some("Nothing matched that search.".to_owned());
+                self.next = next_page(&value);
+                let taken = books_from(&value);
+                if more {
+                    let room = MAX_BOOKS.saturating_sub(self.books.len());
+                    self.books.extend(taken.into_iter().take(room));
+                } else {
+                    self.books = taken;
+                    if self.books.is_empty() {
+                        self.problem = Some("Nothing matched that search.".to_owned());
+                    }
                 }
             }
         }
@@ -852,7 +917,7 @@ impl Gutenshelf {
     }
 }
 
-impl KoboApp for Gutenshelf {
+impl KoboApp for Gutenbird {
     fn on_start(&mut self, context: &mut Context) {
         // Asked first so the shelf can mark what is already here by the time
         // the catalogue lands. A book already on the device opens instantly
@@ -1022,11 +1087,19 @@ impl KoboApp for Gutenshelf {
 
         if action == action_id("shelf-next") || action == action_id("shelf-back") {
             let pages = self.shelf_pages();
-            self.shelf = if action == action_id("shelf-next") {
-                (self.shelf + 1).min(pages - 1)
+            if action == action_id("shelf-next") {
+                if self.shelf + 1 >= pages {
+                    // The end of what is held, not the end of the catalogue.
+                    // Gutendex names its own next page and this follows it, so
+                    // "More" keeps meaning more until Gutenberg runs out.
+                    self.ask_more_books(context);
+                    self.show(context);
+                    return;
+                }
+                self.shelf += 1;
             } else {
-                self.shelf.saturating_sub(1)
-            };
+                self.shelf = self.shelf.saturating_sub(1);
+            }
             // Painted before the covers are asked for, so turning the shelf is
             // immediate and the artwork arrives into a page that is already up.
             self.show(context);
@@ -1068,7 +1141,16 @@ impl KoboApp for Gutenshelf {
         match outcome {
             TaskOutcome::Completed(bytes) => match awaiting {
                 Awaiting::Catalogue => {
-                    self.took_catalogue(&bytes);
+                    self.took_catalogue(&bytes, false);
+                    self.want_covers(context);
+                }
+                Awaiting::MoreBooks => {
+                    self.took_catalogue(&bytes, true);
+                    // The reader is already sitting on the last page waiting
+                    // for it, so the shelf turns as soon as the books land
+                    // rather than asking them to tap More a second time.
+                    let pages = self.shelf_pages();
+                    self.shelf = (self.shelf + 1).min(pages - 1);
                     self.want_covers(context);
                 }
                 Awaiting::Text => self.took_text(context, &bytes),
@@ -1290,6 +1372,17 @@ fn encode_query(query: &str) -> String {
 }
 
 /// Reads Gutendex's answer into the handful of fields this application shows.
+/// The address Gutendex names for the page after this one.
+///
+/// Refused unless it still points at Gutendex over TLS. `next` is a string
+/// chosen by whoever answered the request, and following it unchecked would
+/// let one redirected catalogue send this device anywhere. Refusing simply
+/// ends the shelf, which is what an exhausted catalogue looks like anyway.
+fn next_page(value: &kobo_json::Value) -> Option<String> {
+    let next = value.get("next").and_then(kobo_json::Value::as_str)?;
+    next.starts_with(CATALOGUE_HOST).then(|| next.to_owned())
+}
+
 fn books_from(value: &kobo_json::Value) -> Vec<Book> {
     let Some(results) = value.get("results").and_then(kobo_json::Value::as_array) else {
         return Vec::new();
@@ -1374,10 +1467,10 @@ fn cover_url(entry: &kobo_json::Value) -> Option<String> {
 }
 
 fn main() -> ExitCode {
-    match kobo_sdk::run("gutenshelf", Gutenshelf::default()) {
+    match kobo_sdk::run("gutenbird", Gutenbird::default()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("gutenshelf: {error}");
+            eprintln!("gutenbird: {error}");
             ExitCode::FAILURE
         }
     }
@@ -1386,7 +1479,7 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        books_from, encode_query, plain_text_url, readable, Awaiting, Gutenshelf, Memory, Reader,
+        books_from, encode_query, plain_text_url, readable, Awaiting, Gutenbird, Memory, Reader,
         View, COVER_TRIES,
     };
     use kobo_sdk::{action_id, AppRunner, Command, StoreRequest, StoreResult};
@@ -1509,7 +1602,7 @@ Please read this before you distribute or use this work.\n";
     fn a_cover_that_did_not_arrive_is_asked_for_again_but_not_forever() {
         // Gutendex serves these from a CDN that intermittently refuses, and
         // the same URL a moment later usually works.
-        let mut app = Gutenshelf::default();
+        let mut app = Gutenbird::default();
         app.retry_cover(4, 0);
         assert_eq!(app.wanted, vec![(4, 1)]);
 
@@ -1521,7 +1614,7 @@ Please read this before you distribute or use this work.\n";
 
         // And it does give up, or a cover that is genuinely gone would keep
         // the radio awake for as long as the shelf is open.
-        let mut app = Gutenshelf::default();
+        let mut app = Gutenbird::default();
         app.retry_cover(4, COVER_TRIES - 1);
         assert!(app.wanted.is_empty());
     }
@@ -1539,10 +1632,10 @@ Please read this before you distribute or use this work.\n";
     ];
 
     /// The shelf, freshly arrived, with its covers still to find.
-    fn shelved() -> AppRunner<Gutenshelf> {
-        let mut runner = AppRunner::new(Gutenshelf {
+    fn shelved() -> AppRunner<Gutenbird> {
+        let mut runner = AppRunner::new(Gutenbird {
             task: Some((kobo_sdk::TaskId(9), Awaiting::Catalogue)),
-            ..Gutenshelf::default()
+            ..Gutenbird::default()
         });
         let _ignored = runner.task_outcome(
             kobo_sdk::TaskId(9),
@@ -1561,9 +1654,9 @@ Please read this before you distribute or use this work.\n";
         // Artwork does not change and a shelf page is the same six pictures
         // every time it is opened. Before this, every one of them was a round
         // trip over a slow radio on every launch.
-        let mut runner = AppRunner::new(Gutenshelf {
+        let mut runner = AppRunner::new(Gutenbird {
             task: Some((kobo_sdk::TaskId(9), Awaiting::Catalogue)),
-            ..Gutenshelf::default()
+            ..Gutenbird::default()
         });
         let commands = runner.task_outcome(
             kobo_sdk::TaskId(9),
@@ -1721,12 +1814,12 @@ Please read this before you distribute or use this work.\n";
         // character count, because layout stops at the bottom of the content
         // area and never draws the rest: a page that measured wrongly loses
         // its last paragraph on the device and nowhere else.
-        let mut runner = AppRunner::new(Gutenshelf {
+        let mut runner = AppRunner::new(Gutenbird {
             view: View::Reading,
             open: Some(0),
             books: books_from(&parsed()),
             task: Some((kobo_sdk::TaskId(1), Awaiting::Text)),
-            ..Gutenshelf::default()
+            ..Gutenbird::default()
         });
         let prose = "It is a truth universally acknowledged, that a single man in possession \
                      of a good fortune, must be in want of a wife.\n\n"
@@ -1784,7 +1877,7 @@ Please read this before you distribute or use this work.\n";
         // produced it, because the two are set in different crates: SHELF_PAGE
         // decides where the shelf is cut and the grid decides how wide a cell
         // is, and nothing else makes them agree.
-        let application = Gutenshelf {
+        let application = Gutenbird {
             books: (0..super::SHELF_PAGE)
                 .map(|index| super::Book {
                     title: format!("Book {index}"),
@@ -1794,7 +1887,7 @@ Please read this before you distribute or use this work.\n";
                     picture: None,
                 })
                 .collect(),
-            ..Gutenshelf::default()
+            ..Gutenbird::default()
         };
         let chrome = Chrome::with_back(true);
         let screen = application.results();
@@ -1837,11 +1930,11 @@ Please read this before you distribute or use this work.\n";
         // a long page loses its final words rather than its page turn.
         let mut reader = opened("A short book.");
         reader.act(kobo_read::action::CONTROLS, &CLARA_BW_METRICS);
-        let application = Gutenshelf {
+        let application = Gutenbird {
             view: View::Reading,
             reader: Some(reader),
             complete: true,
-            ..Gutenshelf::default()
+            ..Gutenbird::default()
         };
         let layout = application
             .reading()
@@ -1865,12 +1958,12 @@ Please read this before you distribute or use this work.\n";
     fn a_failed_download_goes_back_to_the_book_rather_than_to_a_blank_page() {
         // An empty reading screen has no text and no way to retry, which on a
         // device whose only other control is "leave" is a dead end.
-        let mut runner = AppRunner::new(Gutenshelf {
+        let mut runner = AppRunner::new(Gutenbird {
             view: View::Reading,
             open: Some(0),
             books: books_from(&parsed()),
             task: Some((kobo_sdk::TaskId(1), Awaiting::Text)),
-            ..Gutenshelf::default()
+            ..Gutenbird::default()
         });
         runner.task_outcome(
             kobo_sdk::TaskId(1),
@@ -1884,9 +1977,9 @@ Please read this before you distribute or use this work.\n";
     fn a_short_answer_means_the_book_ended() {
         // A ranged request gives no other end-of-book signal, and a reader
         // that kept asking would request past the end of the file forever.
-        let mut runner = AppRunner::new(Gutenshelf {
+        let mut runner = AppRunner::new(Gutenbird {
             task: Some((kobo_sdk::TaskId(1), Awaiting::Text)),
-            ..Gutenshelf::default()
+            ..Gutenbird::default()
         });
         runner.task_outcome(
             kobo_sdk::TaskId(1),
@@ -1899,13 +1992,13 @@ Please read this before you distribute or use this work.\n";
     fn opening_a_different_book_keeps_none_of_the_last_one() {
         // The pages are held as one string, and text left over from the
         // previous book would appear at the top of the new one.
-        let mut runner = AppRunner::new(Gutenshelf {
+        let mut runner = AppRunner::new(Gutenbird {
             books: books_from(&parsed()),
             text: "Chapter forty of something else.".to_owned(),
             fetched: 4096,
             reader: Some(opened("Chapter forty of something else.")),
             complete: true,
-            ..Gutenshelf::default()
+            ..Gutenbird::default()
         });
         runner.action(action_id("book-0"));
         let application = runner.app_mut();
@@ -1918,7 +2011,7 @@ Please read this before you distribute or use this work.\n";
     /// The blob name for the first book in the test catalogue.
     fn first_blob() -> String {
         let books = books_from(&parsed());
-        Gutenshelf::names(&books[0]).expect("a text edition").0
+        Gutenbird::names(&books[0]).expect("a text edition").0
     }
 
     #[test]
@@ -1926,9 +2019,9 @@ Please read this before you distribute or use this work.\n";
         // The point of keeping a book at all. Before this, opening a novel a
         // second time fetched the whole megabyte again over the radio, which
         // on this device is the difference between free and not.
-        let mut runner = AppRunner::new(Gutenshelf {
+        let mut runner = AppRunner::new(Gutenbird {
             books: books_from(&parsed()),
-            ..Gutenshelf::default()
+            ..Gutenbird::default()
         });
         runner.store_result(StoreResult::Shelf(vec![(first_blob(), 4096)]));
         runner.action(action_id("book-0"));
@@ -1951,9 +2044,9 @@ Please read this before you distribute or use this work.\n";
 
     #[test]
     fn a_book_that_is_not_here_yet_is_still_fetched() {
-        let mut runner = AppRunner::new(Gutenshelf {
+        let mut runner = AppRunner::new(Gutenbird {
             books: books_from(&parsed()),
-            ..Gutenshelf::default()
+            ..Gutenbird::default()
         });
         runner.action(action_id("book-0"));
         let commands = runner.action(action_id("read"));
@@ -1967,12 +2060,12 @@ Please read this before you distribute or use this work.\n";
 
     #[test]
     fn a_finished_book_is_put_on_the_shelf() {
-        let mut runner = AppRunner::new(Gutenshelf {
+        let mut runner = AppRunner::new(Gutenbird {
             view: View::Reading,
             open: Some(0),
             books: books_from(&parsed()),
             task: Some((kobo_sdk::TaskId(1), Awaiting::Text)),
-            ..Gutenshelf::default()
+            ..Gutenbird::default()
         });
         // Short, so the answer is the end of the book.
         let commands = runner.task_outcome(
@@ -1993,9 +2086,9 @@ Please read this before you distribute or use this work.\n";
 
     #[test]
     fn opening_a_book_asks_where_it_was_left() {
-        let mut runner = AppRunner::new(Gutenshelf {
+        let mut runner = AppRunner::new(Gutenbird {
             books: books_from(&parsed()),
-            ..Gutenshelf::default()
+            ..Gutenbird::default()
         });
         let commands = runner.action(action_id("book-0"));
         assert!(
@@ -2009,12 +2102,12 @@ Please read this before you distribute or use this work.\n";
 
     #[test]
     fn a_kept_place_is_applied_to_the_book_when_both_have_arrived() {
-        let mut runner = AppRunner::new(Gutenshelf {
+        let mut runner = AppRunner::new(Gutenbird {
             view: View::Reading,
             open: Some(0),
             books: books_from(&parsed()),
             task: Some((kobo_sdk::TaskId(1), Awaiting::Text)),
-            ..Gutenshelf::default()
+            ..Gutenbird::default()
         });
         let prose = "It is a truth universally acknowledged, that a single man in possession \
                      of a good fortune, must be in want of a wife.\n\n"
@@ -2040,7 +2133,7 @@ Please read this before you distribute or use this work.\n";
 
     #[test]
     fn typing_a_search_asks_the_catalogue_for_exactly_what_was_typed() {
-        let mut runner = AppRunner::new(Gutenshelf::default());
+        let mut runner = AppRunner::new(Gutenbird::default());
         runner.action(action_id("search"));
         for key in ["kb.r0c9", "kb.r1c0", "kb.r0c1"] {
             runner.action(action_id(key));
@@ -2054,5 +2147,86 @@ Please read this before you distribute or use this work.\n";
             panic!("no request was made");
         };
         assert!(url.ends_with("?search=paw"), "asked for {url}");
+    }
+
+    /// A catalogue answer that names a second page, as Gutendex really does.
+    const PAGE_ONE: &str = r#"{
+        "count": 70000,
+        "next": "https://gutendex.com/books?page=2&sort=popular",
+        "results": [
+            {"title": "One", "authors": [], "formats": {"text/plain": "https://x/1.txt"}}
+        ]
+    }"#;
+
+    const PAGE_TWO: &str = r#"{
+        "count": 70000,
+        "next": null,
+        "results": [
+            {"title": "Two", "authors": [], "formats": {"text/plain": "https://x/2.txt"}}
+        ]
+    }"#;
+
+    /// A catalogue answer pointing somewhere that is not Gutendex.
+    const PAGE_ELSEWHERE: &str = r#"{
+        "count": 1,
+        "next": "https://example.invalid/books?page=2",
+        "results": [
+            {"title": "One", "authors": [], "formats": {"text/plain": "https://x/1.txt"}}
+        ]
+    }"#;
+
+    fn answered(runner: &mut AppRunner<Gutenbird>, body: &str, awaiting: Awaiting) {
+        runner.app_mut().task = Some((kobo_sdk::TaskId(9), awaiting));
+        let _ignored = runner.task_outcome(
+            kobo_sdk::TaskId(9),
+            kobo_sdk::TaskOutcome::Completed(body.as_bytes().to_vec()),
+        );
+    }
+
+    #[test]
+    fn more_keeps_meaning_more_until_gutenberg_runs_out() {
+        // Sixteen books out of sixty thousand, and then "More" did nothing.
+        // Half of every answer was thrown away before it was drawn and only
+        // one page was ever asked for.
+        let mut runner = AppRunner::new(Gutenbird::default());
+        answered(&mut runner, PAGE_ONE, Awaiting::Catalogue);
+        assert_eq!(runner.app().books.len(), 1);
+
+        let commands = runner.action(action_id("shelf-next"));
+        let asked = commands.iter().find_map(|command| match command {
+            Command::Spawn { work, .. } => Some(work.clone()),
+            _ => None,
+        });
+        let Some(kobo_sdk::Task::Fetch { url, .. }) = asked else {
+            panic!("the end of the shelf did not ask for more");
+        };
+        assert_eq!(url, "https://gutendex.com/books?page=2&sort=popular");
+
+        answered(&mut runner, PAGE_TWO, Awaiting::MoreBooks);
+        let books = &runner.app().books;
+        assert_eq!(books.len(), 2, "the second page replaced the first");
+        assert_eq!(books[0].title, "One");
+        assert_eq!(books[1].title, "Two");
+        assert!(
+            !runner.app().more_to_take(),
+            "a catalogue with no next page still says there is more"
+        );
+    }
+
+    #[test]
+    fn a_catalogue_cannot_send_this_device_somewhere_else() {
+        // `next` is a string chosen by whoever answered, and it becomes a
+        // request this device makes.
+        let mut runner = AppRunner::new(Gutenbird::default());
+        answered(&mut runner, PAGE_ELSEWHERE, Awaiting::Catalogue);
+        assert!(runner.app().next.is_none(), "an off-site next was followed");
+
+        let commands = runner.action(action_id("shelf-next"));
+        assert!(
+            !commands
+                .iter()
+                .any(|command| matches!(command, Command::Spawn { .. })),
+            "something was fetched anyway"
+        );
     }
 }

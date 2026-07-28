@@ -1664,7 +1664,7 @@ mod tests {
     fn an_action_that_is_not_the_readers_is_left_for_the_application() {
         let mut reader = reader(4);
         assert_eq!(
-            reader.act("gutenshelf-library", &panel()),
+            reader.act("gutenbird-library", &panel()),
             Outcome::Elsewhere
         );
         assert_eq!(

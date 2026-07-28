@@ -36,7 +36,7 @@ const INSTALLED_PACKAGES: &[(&str, Option<&str>)] = &[
     ("kobo-todo", None),
     ("kobo-brief", None),
     ("kobo-chat", None),
-    ("kobo-gutenshelf", None),
+    ("kobo-gutenbird", None),
     ("kobo-gallery", None),
     ("kobo-tictactoe", None),
     ("kobo-hn", None),
@@ -3959,8 +3959,8 @@ mod tests {
                 Ok("kobo-rss")
             );
             assert_eq!(
-                simulated_package(&arguments(&["-a", "gutenshelf"])),
-                Ok("kobo-gutenshelf")
+                simulated_package(&arguments(&["-a", "gutenbird"])),
+                Ok("kobo-gutenbird")
             );
         }
 

@@ -6,7 +6,7 @@
 //! at seventy columns, separates paragraphs with a blank line, centres chapter
 //! headings, indents verse, and wraps the whole thing in a licence header and
 //! footer. A reader that treats all of that as one undifferentiated stream of
-//! sentences produces exactly what gutenshelf produces today: a wall.
+//! sentences produces exactly what gutenbird produces today: a wall.
 //!
 //! So this is not "split on blank lines". It recognises the handful of things
 //! a text file uses to mean something, and each one is recognised by a rule
