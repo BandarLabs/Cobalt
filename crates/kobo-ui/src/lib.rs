@@ -592,6 +592,14 @@ pub fn ensure_way_back(mut screen: Screen, chrome: &Chrome, name: &str) -> Scree
 pub struct BarAction {
     pub action: ActionId,
     pub label: String,
+    /// Drawn instead of the label, when the thing it does has a picture
+    /// everyone already knows.
+    ///
+    /// The label is still required and still carried: it is what the control
+    /// is called, it is what a test or a preview reports, and a glyph nobody
+    /// recognises with no word anywhere near it is how a panel becomes a
+    /// puzzle. Only the drawing changes.
+    pub glyph: Option<Glyph>,
 }
 
 /// Whether a control can currently be activated.
@@ -620,22 +628,41 @@ impl BarAction {
         Self {
             action,
             label: label.into(),
+            glyph: None,
         }
+    }
+
+    /// Draws this control as a picture rather than as its label.
+    #[must_use]
+    pub const fn with_glyph(mut self, glyph: Glyph) -> Self {
+        self.glyph = Some(glyph);
+        self
     }
 }
 
 /// The fixed bar at the top of a screen.
 ///
-/// Carries a title and at most one action. The cap is the point: a bar that
-/// accepts a list of actions becomes a toolbar, and a toolbar on a panel this
-/// size produces targets too small to hit. Back is not a field here because it
-/// belongs to the runtime.
+/// Carries a title and at most [`MAX_BAR_ACTIONS`] actions. The cap is the
+/// point: a bar that accepts a list of actions becomes a toolbar, and a
+/// toolbar on a panel this size produces targets too small to hit. Back is not
+/// a field here because it belongs to the runtime.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TopBar {
     pub id: NodeId,
     pub title: String,
-    pub action: Option<BarAction>,
+    /// Right to left, in the order they were added. Capped rather than
+    /// truncated silently at the far end: see [`Self::with_action`].
+    pub actions: Vec<BarAction>,
 }
+
+/// How many controls a top bar may carry beside its title.
+///
+/// Two. One was too few the moment a reading screen wanted the type size and
+/// the front light kept apart -- putting the light inside the type panel meant
+/// a reader adjusting the brightness had the words they were judging it by
+/// covered up. Three is a toolbar, and a toolbar leaves the title of a book
+/// about forty pixels wide on this panel.
+pub const MAX_BAR_ACTIONS: usize = 2;
 
 impl TopBar {
     #[must_use]
@@ -643,13 +670,25 @@ impl TopBar {
         Self {
             id,
             title: title.into(),
-            action: None,
+            actions: Vec::new(),
         }
     }
 
     #[must_use]
-    pub fn action(mut self, action: ActionId, label: impl Into<String>) -> Self {
-        self.action = Some(BarAction::new(action, label));
+    pub fn action(self, action: ActionId, label: impl Into<String>) -> Self {
+        self.with_action(BarAction::new(action, label))
+    }
+
+    /// Adds a control, keeping the first [`MAX_BAR_ACTIONS`] of them.
+    ///
+    /// Dropped rather than refused, because the alternative to a bar missing
+    /// its third control is a screen that does not draw at all, and the two
+    /// that fit are the two the application asked for first.
+    #[must_use]
+    pub fn with_action(mut self, action: BarAction) -> Self {
+        if self.actions.len() < MAX_BAR_ACTIONS {
+            self.actions.push(action);
+        }
         self
     }
 }
@@ -1232,22 +1271,40 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
                     layout,
                 );
             };
-            // Below the anchor if it fits, above it otherwise. A popover that
-            // hangs off the bottom of the panel shows the reader its top edge
-            // and nothing else.
+            // Below the anchor if it fits, above it if that fits instead, and
+            // otherwise on whichever side has more room, cut into the panel.
+            //
+            // The caret is decided from where the box actually ended up rather
+            // than from which branch was taken. A panel too tall for either
+            // side gets clamped into the middle of the screen, and the branch
+            // that placed it there used to still claim a direction: the type
+            // panel on a Clara hung from the top margin, covered its own
+            // anchor, and drew a caret at the far bottom corner pointing down
+            // at the page. A mark pointing at nothing is worse than no mark.
             let below = target.y + target.height + caret;
-            let (y, side) = if below + height <= metrics.height - margin {
-                (below, Side::Up)
+            let room_below = metrics.height - margin - below;
+            let room_above = target.y - caret - margin;
+            let y = if height <= room_below || room_below >= room_above {
+                below
             } else {
-                (max(margin, target.y - caret - height), Side::Down)
+                max(margin, target.y - caret - height)
             };
+            let y = y.clamp(margin, max(margin, metrics.height - margin - height));
+            let side = if y >= target.y + target.height {
+                Some(Side::Up)
+            } else if y + height <= target.y {
+                Some(Side::Down)
+            } else {
+                None
+            };
+            let side = side.map(|side| (side, target));
             // Centred on the anchor, then pulled back inside the margins. The
             // caret stays with the anchor rather than with the box, which is
             // what makes an edge-anchored popover still point at the right
             // control.
             let wanted = target.x + (target.width - width) / 2;
             let x = wanted.clamp(margin, max(margin, metrics.width - margin - width));
-            (x, y, Some((side, target)))
+            (x, y, side)
         }
     };
 
@@ -1459,25 +1516,39 @@ fn layout_top_bar(
         title_x = title_x.saturating_add(taken);
         title_width = title_width.saturating_sub(taken);
     }
-    if let Some(action) = &top_bar.action {
-        let (text_width, _) = measure_text(&action.label, FontSize::Body);
-        let action_width = max(
-            control,
-            text_width.saturating_add(metrics.space(Space::Medium)),
-        );
+    // Right to left, in the order they were added, so adding a control never
+    // moves the one that was already there: a reader who knows where "Aa" is
+    // must still find it there on the next screen that carries it.
+    let mut action_right = metrics.width - margin;
+    for action in top_bar.actions.iter().take(MAX_BAR_ACTIONS) {
+        let action_width = if action.glyph.is_some() {
+            // Square. A picture has no natural width to measure, and a target
+            // narrower than the bar is tall is one a thumb misses.
+            control
+        } else {
+            let (text_width, _) = measure_text(&action.label, FontSize::Body);
+            max(
+                control,
+                text_width.saturating_add(metrics.space(Space::Medium)),
+            )
+        };
         layout.nodes.push(LayoutNode {
             id: top_bar.id,
             rect: Rect {
-                x: metrics.width - margin - action_width,
+                x: action_right - action_width,
                 y: top + (height - control) / 2,
                 width: action_width,
                 height: control,
             },
-            kind: LayoutKind::BarAction(action.action),
+            kind: match action.glyph {
+                Some(glyph) => LayoutKind::BarGlyph(action.action, glyph),
+                None => LayoutKind::BarAction(action.action),
+            },
             text_lines: vec![action.label.clone()],
         });
-        title_width =
-            title_width.saturating_sub(action_width.saturating_add(metrics.space(Space::Small)));
+        let taken = action_width.saturating_add(metrics.space(Space::Small));
+        action_right -= taken;
+        title_width = title_width.saturating_sub(taken);
     }
 
     layout.nodes.push(LayoutNode {
@@ -2145,6 +2216,9 @@ pub enum Glyph {
     /// A dot with two arcs radiating from it: the feed mark, as everyone
     /// already reads it.
     Rss,
+    /// A disc with rays: the front light, drawn as brightness is drawn
+    /// everywhere, including on the reader this replaces.
+    Light,
 }
 
 impl Node {
@@ -2280,6 +2354,8 @@ pub enum LayoutKind {
     /// Emitted only by the runtime, never by an application.
     Back,
     BarAction(ActionId),
+    /// The same, drawn as a picture rather than as a word.
+    BarGlyph(ActionId, Glyph),
     NavBar,
     NavDestination(ActionId),
     NavDestinationSelected(ActionId),
@@ -2493,6 +2569,7 @@ impl Layout {
                     LayoutKind::Button(_, ControlState::Enabled, _)
                         | LayoutKind::Back
                         | LayoutKind::BarAction(_)
+                        | LayoutKind::BarGlyph(..)
                         | LayoutKind::NavDestination(_)
                         | LayoutKind::NavDestinationSelected(_)
                         | LayoutKind::Row(_)
@@ -2574,6 +2651,7 @@ impl Layout {
             let action = match node.kind {
                 LayoutKind::Button(action, ControlState::Enabled, _)
                 | LayoutKind::BarAction(action)
+                | LayoutKind::BarGlyph(action, _)
                 | LayoutKind::NavDestination(action)
                 | LayoutKind::NavDestinationSelected(action)
                 | LayoutKind::Tile(action)
@@ -2651,6 +2729,7 @@ impl Layout {
             .find(|node| match node.kind {
                 LayoutKind::Button(candidate, ControlState::Enabled, _)
                 | LayoutKind::BarAction(candidate)
+                | LayoutKind::BarGlyph(candidate, _)
                 | LayoutKind::NavDestination(candidate)
                 | LayoutKind::NavDestinationSelected(candidate)
                 | LayoutKind::Tile(candidate)
@@ -4949,7 +5028,7 @@ fn diagnose_screen(
     if let Some(top) = &screen.top_bar {
         check_identifier(top.id, &mut identifiers, &mut issues);
         check_text_coverage(top.id, &top.title, Face::Text, &mut issues);
-        if let Some(action) = &top.action {
+        for action in &top.actions {
             check_text_coverage(top.id, &action.label, Face::Text, &mut issues);
         }
     }
@@ -5295,6 +5374,7 @@ const fn is_tappable(kind: LayoutKind) -> bool {
         LayoutKind::Button(_, ControlState::Enabled, _)
             | LayoutKind::Back
             | LayoutKind::BarAction(_)
+            | LayoutKind::BarGlyph(..)
             | LayoutKind::NavDestination(_)
             | LayoutKind::NavDestinationSelected(_)
             | LayoutKind::Row(_)
@@ -6009,6 +6089,23 @@ pub fn render_all(
                 clip,
             ),
             LayoutKind::Back => draw_back_arrow(surface, node.rect, clip),
+            // A picture in the bar, drawn from the same geometry as every other
+            // icon so it cannot arrive as a low-contrast bitmap that vanishes
+            // on a grey panel.
+            LayoutKind::BarGlyph(_, glyph) => {
+                let side = min(node.rect.width, node.rect.height) * 3 / 5;
+                draw_vector(
+                    surface,
+                    &vector::shapes(glyph),
+                    Rect {
+                        x: node.rect.x + (node.rect.width - side) / 2,
+                        y: node.rect.y + (node.rect.height - side) / 2,
+                        width: side,
+                        height: side,
+                    },
+                    clip,
+                );
+            }
             LayoutKind::BarAction(_) => draw_centered(
                 surface,
                 &node.text_lines,
@@ -7550,7 +7647,10 @@ mod chrome_tests {
             let layout = screen.layout_with(&metrics, &Chrome::with_back(true));
             let bar = metrics.top_bar_height();
             for node in &layout.nodes {
-                if !matches!(node.kind, LayoutKind::Back | LayoutKind::BarAction(_)) {
+                if !matches!(
+                    node.kind,
+                    LayoutKind::Back | LayoutKind::BarAction(_) | LayoutKind::BarGlyph(..)
+                ) {
                     continue;
                 }
                 assert!(
@@ -8484,6 +8584,7 @@ mod loading_tests {
             .filter_map(|node| match node.kind {
                 LayoutKind::Button(action, ControlState::Enabled, _)
                 | LayoutKind::BarAction(action)
+                | LayoutKind::BarGlyph(action, _)
                 | LayoutKind::Tile(action)
                 | LayoutKind::Row(action)
                 | LayoutKind::Cell(action)
@@ -10157,6 +10258,48 @@ mod prose_tests {
         ));
         let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
         assert_eq!(layout.hit_page_turn(4, CLARA_BW_METRICS.height / 2), None);
+    }
+
+    #[test]
+    fn a_popover_too_tall_for_either_side_draws_no_caret() {
+        // On a Clara the reading panel could not fit below its control in the
+        // top bar or above it, so it was clamped into the middle of the screen
+        // -- covering the control -- and still drew a caret, at the far bottom
+        // corner, pointing down at the page. A mark that points at nothing is
+        // read as pointing at whatever is nearest.
+        let tall = (0..14)
+            .map(|index| Node::Button {
+                id: NodeId(100 + index),
+                action: ActionId(100 + index),
+                label: format!("Choice {index}"),
+                state: ControlState::Enabled,
+                emphasis: Emphasis::Normal,
+            })
+            .collect::<Vec<_>>();
+        let screen = Screen::new(1, Vec::new())
+            .with_top_bar(TopBar::new(NodeId(1), "Title").action(ActionId(9), "Aa"))
+            .with_overlay(Overlay::popover(NodeId(40), ActionId(9), tall));
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
+        let anchor = layout
+            .rect_of_action(ActionId(9))
+            .expect("the control the panel hangs off");
+        let box_rect = layout
+            .nodes
+            .iter()
+            .find(|node| node.kind == LayoutKind::Overlay)
+            .map(|node| node.rect)
+            .expect("the panel");
+        let caret = layout
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::OverlayCaret(_)));
+        let overlaps =
+            box_rect.y < anchor.y + anchor.height && anchor.y < box_rect.y + box_rect.height;
+        assert!(overlaps, "this case is only interesting when they overlap");
+        assert!(
+            caret.is_none(),
+            "a caret was drawn on a panel that covers its own anchor"
+        );
     }
 
     #[test]

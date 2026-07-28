@@ -860,6 +860,22 @@ impl Gutenbird {
         }
     }
 
+    /// Asks the device what the front light is at, for a book that has no
+    /// setting of its own.
+    ///
+    /// Without this the light panel opens reading nought per cent under a lit
+    /// panel, and the first step from it takes the room to a level nobody
+    /// asked for.
+    fn ask_light(&mut self, context: &mut Context) {
+        if self
+            .reader
+            .as_ref()
+            .is_some_and(|reader| reader.light().is_none())
+        {
+            context.device().read_frontlight();
+        }
+    }
+
     fn took_catalogue(&mut self, bytes: &[u8], more: bool) {
         match std::str::from_utf8(bytes)
             .ok()
@@ -910,6 +926,7 @@ impl Gutenbird {
         // face, so paginating with the default would run every page past the
         // bottom of the panel and lose its last lines.
         self.reopen(context);
+        self.ask_light(context);
         if self.complete {
             self.keep_book(context);
         }
@@ -1011,6 +1028,27 @@ impl KoboApp for Gutenbird {
                 self.place = Some(memory);
             }
             _ => {}
+        }
+    }
+
+    fn on_device_result(
+        &mut self,
+        context: &mut Context,
+        _request: kobo_sdk::DeviceRequest,
+        result: kobo_sdk::DeviceResult,
+    ) {
+        let kobo_sdk::DeviceResult::Frontlight { percent } = result else {
+            return;
+        };
+        // Only fills a blank, so a book that has been read before keeps the
+        // level it was read at rather than being overwritten by whatever the
+        // last application left the room at.
+        if self
+            .reader
+            .as_mut()
+            .is_some_and(|reader| reader.seed_light(percent))
+        {
+            self.show(context);
         }
     }
 
@@ -1951,18 +1989,50 @@ Please read this before you distribute or use this work.\n";
                 _ => None,
             })
             .collect::<Vec<_>>();
-        // Three type sizes, two front light steps, a bookmark and the notes.
-        // "Mark a paragraph" is not counted: a book of one sentence has a
-        // paragraph to mark, but a book of none would not, and the count is
-        // about the controls that are always there.
+        // Three type sizes, a bookmark and the notes. The front light is not
+        // here: it has a control of its own, checked below, because a panel
+        // this size covers the words brightness is judged against.
         assert!(
-            controls.len() >= 7,
+            controls.len() >= 5,
             "the reading controls are not all there: {controls:?}"
         );
         for (action, rect) in controls {
             let hit = layout.hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2);
             assert_eq!(hit, Some(action));
         }
+    }
+
+    #[test]
+    fn the_front_light_has_a_control_of_its_own() {
+        // It used to be two rows inside the type panel, which is tall enough
+        // to cover the page: somebody adjusting the brightness could not see
+        // what they were adjusting it for.
+        let mut reader = opened("A short book.");
+        reader.act(kobo_read::action::LIGHT, &CLARA_BW_METRICS);
+        let application = Gutenbird {
+            view: View::Reading,
+            reader: Some(reader),
+            complete: true,
+            ..Gutenbird::default()
+        };
+        let screen = application.reading();
+        let bar = screen.top_bar.as_ref().expect("a top bar");
+        assert!(
+            bar.actions
+                .iter()
+                .any(|action| action.glyph == Some(kobo_ui::Glyph::Light)),
+            "there is no light control in the bar"
+        );
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
+        let steps = layout
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, LayoutKind::ChoiceOption(..)))
+            .count();
+        assert_eq!(
+            steps, 2,
+            "the light panel is not the two steps and nothing else"
+        );
     }
 
     #[test]

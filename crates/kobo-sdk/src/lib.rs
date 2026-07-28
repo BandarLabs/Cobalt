@@ -660,18 +660,37 @@ impl ScreenBuilder {
         self
     }
 
-    /// Adds the single permitted action to the top bar.
+    /// Adds an action to the top bar, right to left.
     ///
-    /// A no-op if there is no top bar, because an action with nowhere to live
-    /// is an author mistake that should not silently become a floating button.
+    /// At most two; see `kobo_ui::MAX_BAR_ACTIONS`. A no-op if there is no top
+    /// bar, because an action with nowhere to live is an author mistake that
+    /// should not silently become a floating button.
     #[must_use]
     pub fn top_bar_action(mut self, name: impl AsRef<str>, label: impl Into<String>) -> Self {
         let action = self.register(name.as_ref());
         if let Some(top_bar) = self.top_bar.take() {
-            self.top_bar = Some(TopBar {
-                action: Some(BarAction::new(action, label)),
-                ..top_bar
-            });
+            self.top_bar = Some(top_bar.with_action(BarAction::new(action, label)));
+        }
+        self
+    }
+
+    /// The same, drawn as one of the built-in icons.
+    ///
+    /// For a control whose meaning has a picture everyone already knows: the
+    /// front light, a search. The label is still required, because it is what
+    /// the control is called everywhere that is not the panel -- a preview, a
+    /// test, a log -- and a mark with no word anywhere near it is a puzzle.
+    #[must_use]
+    pub fn top_bar_glyph(
+        mut self,
+        name: impl AsRef<str>,
+        label: impl Into<String>,
+        glyph: kobo_ui::Glyph,
+    ) -> Self {
+        let action = self.register(name.as_ref());
+        if let Some(top_bar) = self.top_bar.take() {
+            self.top_bar =
+                Some(top_bar.with_action(BarAction::new(action, label).with_glyph(glyph)));
         }
         self
     }

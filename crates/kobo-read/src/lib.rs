@@ -80,8 +80,15 @@ pub enum Chrome {
     /// essentially all of their time.
     #[default]
     Hidden,
-    /// Type size, front light, and the mark controls.
+    /// Type size and the mark controls.
     Controls,
+    /// The front light, on its own.
+    ///
+    /// Apart from the type controls rather than inside them: the panel that
+    /// carries three sizes, a bookmark, a marking list and the notes covers
+    /// most of the page, and a reader setting the brightness is judging it by
+    /// the words underneath, which were the first thing hidden.
+    Light,
     /// Everything marked in this book, in order, each one a way back to it.
     Highlights,
     /// The paragraphs on this page, to choose one to mark.
@@ -230,6 +237,8 @@ pub mod action {
     pub const BACK: &str = "reader-back";
     /// Shows the controls, or puts them away again.
     pub const CONTROLS: &str = "reader-controls";
+    /// Shows the front light on its own, or puts it away again.
+    pub const LIGHT: &str = "reader-light";
     /// One per type size, suffixed with its step: 0 standard, 2 largest.
     pub const SIZE: &str = "reader-size-";
     pub const CLOSE: &str = "reader-close";
@@ -470,6 +479,20 @@ impl Reader {
         self.memory.light
     }
 
+    /// Records the level the device is already at, if this book has no view.
+    ///
+    /// A brightness panel that reads zero while the light is plainly on is
+    /// worse than one that says nothing: the first step from it jumps to a
+    /// level nobody asked for. A book that has been read before keeps its own
+    /// setting, which is why this only fills a blank.
+    pub const fn seed_light(&mut self, percent: u8) -> bool {
+        if self.memory.light.is_some() {
+            return false;
+        }
+        self.memory.light = Some(if percent > 100 { 100 } else { percent });
+        true
+    }
+
     /// Whether any of the words on this page are bookmarked.
     ///
     /// A mark sits on a *block*, not on a page, and asks whether this page is
@@ -651,10 +674,22 @@ impl Reader {
                 }
             }
             action::CONTROLS => {
-                let next = if self.chrome == Chrome::Hidden {
-                    Chrome::Controls
-                } else {
+                // A second tap on the control that opened it puts it away,
+                // which is the only thing a reader tries when a panel is in
+                // the way and they have not spotted the scrim.
+                let next = if self.chrome == Chrome::Controls {
                     Chrome::Hidden
+                } else {
+                    Chrome::Controls
+                };
+                self.set_chrome(next, panel);
+                Outcome::Repaint
+            }
+            action::LIGHT => {
+                let next = if self.chrome == Chrome::Light {
+                    Chrome::Hidden
+                } else {
+                    Chrome::Light
                 };
                 self.set_chrome(next, panel);
                 Outcome::Repaint
@@ -724,6 +759,7 @@ impl Reader {
             action::FORWARD.into(),
             action::BACK.into(),
             action::CONTROLS.into(),
+            action::LIGHT.into(),
             action::CLOSE.into(),
             action::LARGER.into(),
             action::SMALLER.into(),
@@ -768,23 +804,24 @@ impl Reader {
         match self.chrome {
             Chrome::Highlights => self.marks_screen(title),
             Chrome::Marking => self.marking_screen(title),
-            Chrome::Controls | Chrome::Hidden => self.book_screen(title),
+            Chrome::Controls | Chrome::Light | Chrome::Hidden => self.book_screen(title),
         }
     }
 
-    /// The book's name, and where in it this page is.
+    /// Where in the book this page is.
     ///
-    /// The place belongs in the bar rather than at the foot: the foot of a
-    /// reading screen is empty on purpose, and a reader who wants to know how
-    /// far through they are is asking a question the title bar is already
-    /// there to answer. Both, because a number with no book beside it is a
-    /// number about nothing.
+    /// Not the book's name. A reader holding an open book knows which book it
+    /// is -- it is the thing they are reading -- and the name took the width
+    /// two controls needed, so it was ellipsised into "Alice's Adventures in
+    /// W..." to make room for nothing anyone was asking for. The place belongs
+    /// in the bar rather than at the foot, because the foot of a reading
+    /// screen is empty on purpose.
     fn bar_title(&self, title: &str) -> String {
         let pages = self.page_count();
         if pages <= 1 {
             return title.to_owned();
         }
-        format!("{title} \u{b7} {} of {pages}", self.page_number())
+        format!("{} of {pages}", self.page_number())
     }
 
     fn book_screen(&self, title: &str) -> Screen {
@@ -795,6 +832,11 @@ impl Reader {
             // A visible way in, as well as the middle column. A gesture nobody
             // is told about is a feature nobody has: every setting behind this
             // was built and shipped and could not be reached with a finger.
+            //
+            // The light is its own control rather than a row inside the type
+            // panel. Brightness is judged against the page, and the type panel
+            // is large enough to hide it.
+            .top_bar_glyph(action::LIGHT, "Front light", kobo_ui::Glyph::Light)
             .top_bar_action(action::CONTROLS, "Aa");
         for piece in self.page() {
             screen = match piece.kind {
@@ -849,9 +891,27 @@ impl Reader {
         //
         // It also holds more than five things, which the bar could not: the
         // bar dropped its sixth control silently.
-        screen
-            .popover(action::CONTROLS, |panel| self.controls_panel(panel))
-            .build()
+        match self.chrome {
+            Chrome::Light => screen
+                .popover(action::LIGHT, |panel| Self::light_panel(self, panel))
+                .build(),
+            _ => screen
+                .popover(action::CONTROLS, |panel| self.controls_panel(panel))
+                .build(),
+        }
+    }
+
+    /// What the light control opens: the front light and nothing else.
+    fn light_panel(&self, panel: ScreenBuilder) -> ScreenBuilder {
+        // The level is drawn as well as stepped, because "dimmer" with no
+        // reading of what it is now tells somebody in a dark room nothing.
+        let light = self.memory.light.unwrap_or(0);
+        panel
+            .choose(
+                format!("Front light {light}%"),
+                [(action::DIMMER, "Dimmer"), (action::BRIGHTER, "Brighter")],
+            )
+            .progress(light)
     }
 
     /// What the "Aa" control opens: everything that is not the book itself.
@@ -878,18 +938,6 @@ impl Reader {
                     .map(|(step, (_, label))| (format!("{}{step}", action::SIZE), *label)),
             )
             .chosen(chosen);
-
-        // The level is drawn as well as stepped, because "dimmer" with no
-        // reading of what it is now tells somebody in a dark room nothing.
-        // None means this book has never set one, and the device keeps
-        // whatever it was already at.
-        let light = self.memory.light.unwrap_or(0);
-        panel = panel
-            .choose(
-                format!("Front light {light}%"),
-                [(action::DIMMER, "Dimmer"), (action::BRIGHTER, "Brighter")],
-            )
-            .progress(light);
 
         panel = panel.divider();
         panel = panel.button(
@@ -1236,17 +1284,15 @@ mod tests {
     }
 
     /// A reader wants to know how far through they are, and the foot of the
-    /// page is deliberately empty.
+    /// page is deliberately empty. The book's name is not repeated: whoever is
+    /// reading it knows what it is, and the room it took is now two controls.
     #[test]
     fn the_bar_says_where_in_the_book_this_page_is() {
         let mut reader = reader(40);
         let pages = reader.page_count();
         assert!(reader.forward());
         let title = reader.bar_title("Pride and Prejudice");
-        assert!(
-            title.contains("Pride and Prejudice") && title.contains(&format!("2 of {pages}")),
-            "the bar did not say the place: {title}"
-        );
+        assert_eq!(title, format!("2 of {pages}"));
         // A book of one page has no place worth stating.
         let short = Reader::open(
             Document {
@@ -1259,6 +1305,56 @@ mod tests {
             &panel(),
         );
         assert_eq!(short.bar_title("Short"), "Short");
+    }
+
+    /// The front light is judged against the page, so it has a control of its
+    /// own rather than a row buried in a panel that covers the page. Its panel
+    /// carries the level and the two steps, and nothing else.
+    #[test]
+    fn the_front_light_opens_a_panel_of_its_own() {
+        let mut reader = reader(40);
+        reader.act(action::LIGHT, &panel());
+        assert_eq!(reader.chrome(), Chrome::Light);
+        let screen = reader.screen("Pride and Prejudice");
+        let overlay = screen.overlay.as_ref().expect("a panel over the page");
+        assert!(
+            matches!(overlay.kind, kobo_ui::OverlayKind::Popover { anchor }
+                if anchor == kobo_sdk::action_id(action::LIGHT)),
+            "the panel is not attached to the light control"
+        );
+        let layout = screen.layout_with(&panel(), &kobo_ui::Chrome::with_back(true));
+        let on_panel = |name: &str| {
+            let wanted = kobo_sdk::action_id(name);
+            layout.nodes.iter().any(|node| matches!(
+                node.kind,
+                kobo_ui::LayoutKind::Button(found, ..) | kobo_ui::LayoutKind::ChoiceOption(found, _)
+                if found == wanted
+            ))
+        };
+        assert!(on_panel(action::DIMMER), "dimmer is not on the light panel");
+        assert!(
+            on_panel(action::BRIGHTER),
+            "brighter is not on the light panel"
+        );
+        // The type panel's contents are not dragged along behind it.
+        assert!(
+            !on_panel(action::BOOKMARK) && !on_panel(action::HIGHLIGHTS),
+            "the light panel carries the type panel's controls too"
+        );
+    }
+
+    /// A book that has never been read takes the level the room is already at.
+    /// Without this the panel opened saying nought per cent under a lit panel,
+    /// and the first step from it took the light somewhere nobody asked for.
+    #[test]
+    fn a_book_with_no_setting_takes_the_light_the_device_is_at() {
+        let mut reader = reader(40);
+        assert!(reader.light().is_none());
+        assert!(reader.seed_light(35));
+        assert_eq!(reader.light(), Some(35));
+        // A book that has been read before keeps what it was read at.
+        assert!(!reader.seed_light(90));
+        assert_eq!(reader.light(), Some(35));
     }
 
     /// Opening the controls used to take their height out of the page, so the
@@ -1287,13 +1383,7 @@ mod tests {
         let screen = reader.screen("Pride and Prejudice");
         let overlay = screen.overlay.as_ref().expect("a panel over the page");
         let layout = screen.layout_with(&panel(), &kobo_ui::Chrome::with_back(true));
-        for name in [
-            action::DIMMER,
-            action::BRIGHTER,
-            action::BOOKMARK,
-            action::HIGHLIGHTS,
-            action::MARKING,
-        ] {
+        for name in [action::BOOKMARK, action::HIGHLIGHTS, action::MARKING] {
             let action = kobo_sdk::action_id(name);
             assert!(
                 layout.nodes.iter().any(|node| matches!(

@@ -8,8 +8,8 @@ use std::io::{self, Read, Write};
 use kobo_ui::{
     ActionId, BannerLevel, BarAction, BottomAction, Caret, Cell, ControlState, Freeform, Glyph,
     NavBar, Node, NodeId, PageTurns, Percent, PictureHandle, Row, RowLead, RowState, Screen, Space,
-    TextScale, Tile, TilePicture, TileShape, TopBar, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS,
-    MIN_NAV_DESTINATIONS,
+    TextScale, Tile, TilePicture, TileShape, TopBar, MAX_BAR_ACTIONS, MAX_TERMINAL_COLUMNS,
+    MAX_TERMINAL_ROWS, MIN_NAV_DESTINATIONS,
 };
 use std::cmp::min;
 
@@ -1513,10 +1513,18 @@ fn encoded_screen_len(
     }
     let mut length = 8;
     if let Some(top_bar) = &screen.top_bar {
+        // Four for the identifier and one for how many controls the bar
+        // carries. The flag byte saying there is a bar at all is in the base
+        // length above, which is paid whether there is one or not.
         add_encoded_len(&mut length, 5)?;
         add_encoded_len(&mut length, encoded_string_len(&top_bar.title)?)?;
-        if let Some(action) = &top_bar.action {
-            add_encoded_len(&mut length, 4)?;
+        for action in &top_bar.actions {
+            // Four for the identifier, one flag for whether it is drawn as a
+            // picture, and one more carrying which picture.
+            add_encoded_len(&mut length, 5)?;
+            if action.glyph.is_some() {
+                add_encoded_len(&mut length, 1)?;
+            }
             add_encoded_len(&mut length, encoded_string_len(&action.label)?)?;
         }
     }
@@ -2159,6 +2167,36 @@ pub fn read_from<R: Read>(reader: &mut R) -> Result<Frame, StreamError> {
     Ok(decode(&bytes)?)
 }
 
+fn encode_top_bar(output: &mut Vec<u8>, top_bar: Option<&TopBar>) -> Result<(), ProtocolError> {
+    let Some(top_bar) = top_bar else {
+        output.push(0);
+        return Ok(());
+    };
+    output.push(1);
+    push_u32(output, top_bar.id.0);
+    push_string(output, &top_bar.title)?;
+    // A count rather than a flag. One control was the whole shape of this bar
+    // until a reading screen needed the type size and the front light kept
+    // apart, and a flag byte cannot grow into two without every peer
+    // disagreeing about what the next byte is.
+    let actions = &top_bar.actions[..min(top_bar.actions.len(), MAX_BAR_ACTIONS)];
+    output.push(u8::try_from(actions.len()).unwrap_or(0));
+    for action in actions {
+        encode_bar_action(output, action)?;
+        // Only a top bar carries pictures. Everywhere else a bar action is a
+        // word, and putting the flag in the shared encoder would have moved
+        // four other fields on the wire for a field none of them can use.
+        match action.glyph {
+            None => output.push(0),
+            Some(glyph) => {
+                output.push(1);
+                output.push(encode_glyph(glyph));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn encode_screen(
     output: &mut Vec<u8>,
     screen: &Screen,
@@ -2169,21 +2207,7 @@ fn encode_screen(
     // Bars are encoded as presence flags outside the node list, mirroring the
     // in-memory shape. A screen with two nav bars is not a frame this format
     // can express, so no validation is needed to reject one.
-    match &screen.top_bar {
-        None => output.push(0),
-        Some(top_bar) => {
-            output.push(1);
-            push_u32(output, top_bar.id.0);
-            push_string(output, &top_bar.title)?;
-            match &top_bar.action {
-                None => output.push(0),
-                Some(action) => {
-                    output.push(1);
-                    encode_bar_action(output, action)?;
-                }
-            }
-        }
-    }
+    encode_top_bar(output, screen.top_bar.as_ref())?;
     match &screen.nav_bar {
         None => output.push(0),
         Some(nav_bar) => {
@@ -2311,6 +2335,7 @@ fn decode_bar_action(reader: &mut Reader<'_>) -> Result<BarAction, ProtocolError
     Ok(BarAction {
         action,
         label: reader.string()?,
+        glyph: None,
     })
 }
 
@@ -2729,6 +2754,7 @@ const fn encode_glyph(glyph: Glyph) -> u8 {
         Glyph::Chat => 16,
         Glyph::News => 17,
         Glyph::Rss => 18,
+        Glyph::Light => 19,
     }
 }
 
@@ -2753,6 +2779,7 @@ const fn decode_glyph(tag: u8) -> Option<Glyph> {
         16 => Glyph::Chat,
         17 => Glyph::News,
         18 => Glyph::Rss,
+        19 => Glyph::Light,
         _ => return None,
     })
 }
@@ -2769,15 +2796,27 @@ fn decode_screen(
         1 => {
             let bar_id = NodeId(reader.u32()?);
             let title = reader.string()?;
-            let action = match reader.u8()? {
-                0 => None,
-                1 => Some(decode_bar_action(reader)?),
-                _ => return Err(ProtocolError::InvalidValue("top bar action flag")),
-            };
+            let count = usize::from(reader.u8()?);
+            if count > MAX_BAR_ACTIONS {
+                return Err(ProtocolError::InvalidValue("top bar action count"));
+            }
+            let mut actions = Vec::with_capacity(count);
+            for _ in 0..count {
+                let action = decode_bar_action(reader)?;
+                let glyph = match reader.u8()? {
+                    0 => None,
+                    1 => Some(
+                        decode_glyph(reader.u8()?)
+                            .ok_or(ProtocolError::InvalidValue("bar glyph"))?,
+                    ),
+                    _ => return Err(ProtocolError::InvalidValue("bar glyph flag")),
+                };
+                actions.push(BarAction { glyph, ..action });
+            }
             Some(TopBar {
                 id: bar_id,
                 title,
-                action,
+                actions,
             })
         }
         _ => return Err(ProtocolError::InvalidValue("top bar flag")),

@@ -644,6 +644,27 @@ pub fn shapes(glyph: Glyph) -> Vec<Shape> {
         // `circle` gives: a single quadratic per quarter sits about six percent
         // proud of the radius at its midpoint, which at 24 pixels stops reading
         // as a curve and starts reading as a corner.
+        // A disc with eight rays. The rays stop well short of the box so the
+        // whole mark still reads as round at 24 pixels: drawn to the edge, the
+        // gaps between them close up and it becomes a blob with a bite out of
+        // it. Four square and four diagonal, because seven or nine of them
+        // cannot be spaced evenly on a pixel grid this coarse.
+        Glyph::Light => {
+            let mut shapes = vec![Shape::Fill(Path::circle(500, 500, 210))];
+            for (from, to) in [
+                ((500, 120), (500, 250)),
+                ((500, 750), (500, 880)),
+                ((120, 500), (250, 500)),
+                ((750, 500), (880, 500)),
+                ((232, 232), (324, 324)),
+                ((676, 676), (768, 768)),
+                ((232, 768), (324, 676)),
+                ((676, 324), (768, 232)),
+            ] {
+                shapes.push(stroke(Path::line(from.0, from.1, to.0, to.1)));
+            }
+            shapes
+        }
         Glyph::Rss => vec![
             Shape::Fill(Path::circle(280, 700, 95)),
             stroke(
