@@ -90,9 +90,13 @@ const DATA_ROOT: &str = "/mnt/onboard/.adds/cobalt/data";
 /// control away from where it can be seen.
 fn metrics_for(screen: &Screen) -> kobo_ui::DisplayMetrics {
     let mut metrics = display_metrics_from_env();
-    if let Some(scale) = screen.text_scale {
-        metrics.text_scale = scale;
-    }
+    let scale = screen.text_scale.unwrap_or(metrics.text_scale);
+    metrics.text_scale = scale;
+    // The typeface is installed once and lives as long as the process, so the
+    // size it sets at has to be told to it rather than carried in the metrics
+    // it was built with. Set here, where the screen's own answer is known, so
+    // that measuring and drawing this frame cannot disagree.
+    kobo_ui::set_text_scale(scale);
     metrics
 }
 

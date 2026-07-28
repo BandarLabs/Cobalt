@@ -3531,9 +3531,17 @@ impl FontSize {
         )
     }
 
-    /// The built-in bitmap's line height.
+    /// The built-in bitmap's line height, at the current type size.
+    ///
+    /// Scaled like the real one. Without this a host test could not tell two
+    /// type sizes apart, and pagination is exactly the thing that has to be
+    /// tested without hardware.
     #[must_use]
-    pub const fn fallback_line_height(self) -> i32 {
+    pub fn fallback_line_height(self) -> i32 {
+        (self.unscaled_fallback_line_height() * text_scale().percent() + 50) / 100
+    }
+
+    const fn unscaled_fallback_line_height(self) -> i32 {
         match self {
             Self::Caption => 18,
             Self::Body => 27,
@@ -3651,6 +3659,67 @@ pub enum BreakOpportunity {
 /// type to arrive without touching a single application or example.
 static TYPESETTER: OnceLock<Box<dyn Typesetter>> = OnceLock::new();
 
+// The type size everything is currently being measured and drawn at.
+//
+// Why this is ambient rather than a parameter
+// -------------------------------------------
+//
+// A reader adjusting the size of a book changes the size of the *type*, and
+// every one of the dozens of places that measures a word, wraps a line, picks
+// a line height or rasterises a glyph has to agree about what that size is.
+// Threading a scale through all of them would work exactly until one call site
+// was missed -- and the symptom of missing one is not a compile error, it is a
+// page measured at one size and drawn at another, which loses its last lines
+// off the bottom of the panel with nothing to say they were ever there.
+//
+// So it sits beside the typeface, which is ambient for the same reason and has
+// been all along. A frame is laid out and drawn in one pass on one thread, and
+// the scale is set at the top of that pass, so the whole of a frame is always
+// measured at one size.
+// It is per-thread rather than per-process for the same reason it exists at
+// all: a second thread measuring a page at its own size would otherwise cut
+// this one's page to a size it was never laid out at, and the result is the
+// same lost lines by a different route. A frame belongs to the thread drawing
+// it.
+thread_local! {
+    static TEXT_SCALE: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
+}
+
+/// Sets the type size for everything measured or drawn after this.
+///
+/// The runtime calls this once per screen, from the scale the screen asked
+/// for; an application paginating for that screen calls it with the same value
+/// so that the two agree.
+pub fn set_text_scale(scale: TextScale) {
+    TEXT_SCALE.with(|slot| slot.set(scale.wire_value()));
+}
+
+/// The size text is currently being set at.
+#[must_use]
+pub fn text_scale() -> TextScale {
+    TextScale::from_wire(TEXT_SCALE.with(std::cell::Cell::get)).unwrap_or_default()
+}
+
+/// Runs `body` with the type at `scale`, putting it back afterwards.
+///
+/// For measuring a page that is not the one on screen -- which is what an
+/// application does the moment a reader touches A+, because it has to know how
+/// the book breaks up at the new size before it can draw it.
+///
+/// The previous size is put back even if `body` panics, because a scale left
+/// behind by a failure would quietly mis-set every screen after it.
+pub fn with_text_scale<T>(scale: TextScale, body: impl FnOnce() -> T) -> T {
+    struct Restore(TextScale);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            set_text_scale(self.0);
+        }
+    }
+    let _restore = Restore(text_scale());
+    set_text_scale(scale);
+    body()
+}
+
 /// Installs the typeface the runtime has chosen.
 ///
 /// # Errors
@@ -3685,7 +3754,12 @@ pub fn measure_text_in(text: &str, size: FontSize, face: Face) -> (i32, i32) {
     }
     let scale = size.scale();
     let glyphs = i32::try_from(text.chars().count()).unwrap_or(i32::MAX);
-    (glyphs.saturating_mul(6).saturating_mul(scale), 7 * scale)
+    let percent = text_scale().percent();
+    let width = glyphs.saturating_mul(6).saturating_mul(scale);
+    (
+        (width.saturating_mul(percent) + 50) / 100,
+        (7 * scale * percent + 50) / 100,
+    )
 }
 
 /// The first character of `text` the installed face cannot draw, if any.

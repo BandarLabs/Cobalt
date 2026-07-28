@@ -13,6 +13,7 @@ members = [
     "crates/kobo-text",
     "crates/kobo-policy",
     "crates/kobo-profile",
+    "crates/kobo-read",
     "crates/kobo-protocol",
     "crates/kobo-sdk",
     "crates/kobo-shell",

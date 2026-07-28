@@ -263,7 +263,14 @@ impl Typeface {
     fn pixels(&self, size: FontSize) -> f32 {
         // `tenth_mm` is the panel-independent definition; this is the only place
         // it becomes a pixel count, so a different panel needs no other change.
-        let pixels = self.metrics.scaled_type_tenth_mm(size.tenth_mm());
+        //
+        // The scale comes from the ambient setting rather than from the metrics
+        // this face was built with. A face is installed once and lives for the
+        // life of the process, so a reader who makes a book larger would
+        // otherwise be changing a value nothing reads: the glyphs would come
+        // back the same size while the layout around them moved.
+        let tenths = (size.tenth_mm() * kobo_ui::text_scale().percent() + 50) / 100;
+        let pixels = self.metrics.tenth_mm(tenths);
         pixels.max(1) as f32
     }
 
@@ -616,15 +623,35 @@ mod tests {
 
     #[test]
     fn accessibility_scale_changes_real_glyph_metrics() {
-        let default = Typeface::from_bytes(TEXT_FONT, "text.ttf", CLARA).expect("font");
-        let mut large_metrics = CLARA;
-        large_metrics.text_scale = TextScale::Large;
-        let large = Typeface::from_bytes(TEXT_FONT, "text.ttf", large_metrics).expect("font");
+        // On the *installed* face, because that is the only face there is. A
+        // typeface is loaded once and lives as long as the process, so a
+        // reader who asks for larger type is asking this face to set larger --
+        // not for a second face to be built, which nothing is in a position to
+        // do by the time they press the button.
+        let face = Typeface::from_bytes(TEXT_FONT, "text.ttf", CLARA).expect("font");
+        let at = |scale| {
+            kobo_ui::with_text_scale(scale, || {
+                (
+                    face.measure_run("Readable", FontSize::Body, None).0,
+                    face.height(FontSize::Body),
+                )
+            })
+        };
+        let (default_width, default_height) = at(TextScale::Default);
+        let (large_width, large_height) = at(TextScale::Large);
+        let (largest_width, largest_height) = at(TextScale::ExtraLarge);
+
+        assert!(large_width > default_width, "larger type did not set wider");
         assert!(
-            large.measure_run("Readable", FontSize::Body, None).0
-                > default.measure_run("Readable", FontSize::Body, None).0
+            large_height > default_height,
+            "larger type did not set taller"
         );
-        assert!(large.height(FontSize::Body) > default.height(FontSize::Body));
+        assert!(largest_width > large_width);
+        assert!(largest_height > large_height);
+
+        // And it goes back, so one screen asking for large does not leave
+        // every screen after it large.
+        assert_eq!(at(TextScale::Default), (default_width, default_height));
     }
 
     #[test]

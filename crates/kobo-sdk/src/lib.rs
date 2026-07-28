@@ -1265,11 +1265,17 @@ impl Context {
         nav_bar: bool,
         scale: kobo_ui::TextScale,
     ) -> Vec<Vec<String>> {
-        kobo_ui::paginate(
-            text,
-            self.metrics_at(scale)
-                .prose_area_in(true, nav_bar, kobo_ui::Face::Reading),
-        )
+        // Measured with the type actually at that size. Setting it on the
+        // metrics alone moves the margins and leaves the words the size they
+        // were, which is how a page comes out measured for one size and drawn
+        // at another.
+        kobo_ui::with_text_scale(scale, || {
+            kobo_ui::paginate(
+                text,
+                self.metrics_at(scale)
+                    .prose_area_in(true, nav_bar, kobo_ui::Face::Reading),
+            )
+        })
     }
 
     /// Breaks threaded prose into pages that fit this panel, keeping the

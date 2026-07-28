@@ -529,14 +529,15 @@ fn write_screen(
     // was the one part of every screen that could not be looked at without a
     // reader — and it is the part that traps somebody when it is missing.
     let screen = kobo_ui::ensure_way_back(screen, chrome, name);
-    kobo_ui::render_all(
-        &screen,
-        &kobo_ui::display_metrics_from_env(),
-        chrome,
-        pictures,
-        &mut surface,
-        None,
-    );
+    let mut metrics = kobo_ui::display_metrics_from_env();
+    if let Some(scale) = screen.text_scale {
+        metrics.text_scale = scale;
+    }
+    // The same reason as on the device: the typeface sets at the ambient
+    // scale, so a preview of a screen that asked for larger type has to say so
+    // or it is a preview of a screen nobody will see.
+    kobo_ui::set_text_scale(metrics.text_scale);
+    kobo_ui::render_all(&screen, &metrics, chrome, pictures, &mut surface, None);
 
     let temporary = path.with_extension(format!("raw.tmp-{}", std::process::id()));
     let mut file = OpenOptions::new()
