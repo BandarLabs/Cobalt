@@ -31,8 +31,8 @@
 
 use kobo_json::Value;
 use kobo_sdk::{
-    action_id, ActionId, Context, Glyph, KoboApp, LogLevel, Screen, ScreenBuilder, Space,
-    StoreResult, Task, TaskError, TaskId, TaskOutcome,
+    action_id, ActionId, BandAlign, Context, Glyph, KoboApp, LogLevel, Screen, ScreenBuilder,
+    SlotWidth, Space, StoreResult, Task, TaskError, TaskId, TaskOutcome,
 };
 use std::process::ExitCode;
 
@@ -187,10 +187,25 @@ impl Brief {
             // that was invisible when the sites were only a line under each
             // title.
             let sources = self.sources();
-            screen = screen.facts([
-                ("Stories", self.stories.len().to_string()),
-                ("Sources", sources.to_string()),
-            ]);
+            // Side by side rather than stacked: two counts of one or two
+            // digits each, given a full line apiece, read as a list of
+            // findings rather than the one-line summary they are.
+            let stories = self.stories.len().to_string();
+            let sources = sources.to_string();
+            screen = screen.band(
+                BandAlign::Top,
+                [
+                    (
+                        SlotWidth::Fill,
+                        Box::new(move |slot: ScreenBuilder| slot.facts([("Stories", stories)]))
+                            as Box<dyn FnOnce(ScreenBuilder) -> ScreenBuilder>,
+                    ),
+                    (
+                        SlotWidth::Fill,
+                        Box::new(move |slot: ScreenBuilder| slot.facts([("Sources", sources)])),
+                    ),
+                ],
+            );
             // Numbered rather than illustrated: the same note icon beside
             // every headline is decoration, and a briefing is ordered, so the
             // position is the one thing the well can usefully say.

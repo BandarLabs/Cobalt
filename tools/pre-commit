@@ -1,0 +1,62 @@
+#!/bin/sh
+# Refuses a commit that carries a credential.
+#
+# `kobo secret` exists so a key goes from this machine to the reader without
+# passing through the tree, but the tree is where a key ends up when someone
+# pastes one into a test to see if it works and forgets. A key that reaches a
+# commit has to be treated as burned even if the commit is never pushed, so
+# this stops it one step earlier.
+#
+# Install with: git config core.hooksPath tools
+#
+# Bypass, when a match really is a false positive: git commit --no-verify
+
+set -e
+
+added=$(git diff --cached --diff-filter=ACM -U0 | grep '^+' | grep -v '^+++' || true)
+
+if [ -z "$added" ]; then
+	exit 0
+fi
+
+# Each pattern is a credential shape published by the issuer it belongs to,
+# plus the two generic shapes (a PEM block, a shell assignment of something
+# named like a key) that catch the rest.
+# Each pattern is a credential shape published by the issuer it belongs to,
+# plus the two generic shapes (a PEM block, a shell assignment of something
+# named like a key) that catch the rest. Read a line at a time rather than
+# word-split, because a pattern may contain a space.
+found=0
+while IFS= read -r pattern; do
+	[ -z "$pattern" ] && continue
+	# `-e` because a pattern may begin with a dash, as a PEM header does.
+	if printf '%s\n' "$added" | grep -q -e "$pattern"; then
+		# The match itself is never printed. Naming the shape is enough to
+		# find it, and echoing the key would write it to a terminal
+		# scrollback and a CI log, which is the thing being prevented.
+		echo "pre-commit: a staged line matches a credential shape: $pattern"
+		found=1
+	fi
+done <<'PATTERNS'
+sk-[A-Za-z0-9_-]\{20,\}
+sk-ant-[A-Za-z0-9_-]\{20,\}
+ghp_[A-Za-z0-9]\{30,\}
+gho_[A-Za-z0-9]\{30,\}
+github_pat_[A-Za-z0-9_]\{30,\}
+AKIA[0-9A-Z]\{16\}
+AIza[0-9A-Za-z_-]\{30,\}
+xox[baprs]-[A-Za-z0-9-]\{20,\}
+-----BEGIN[A-Z ]*PRIVATE KEY-----
+\(API_KEY\|SECRET_KEY\|ACCESS_TOKEN\|AUTH_TOKEN\|PASSWORD\)[[:space:]]*=[[:space:]]*["'"'"']\{0,1\}[A-Za-z0-9_/+-]\{16,\}
+PATTERNS
+
+if [ "$found" -eq 1 ]; then
+	echo
+	echo "Nothing was committed. Install credentials with:"
+	echo "  kobo secret set <name> --from <path> --device <ip>"
+	echo "so the value goes to the reader and never to the tree."
+	echo "If this is genuinely not a credential, commit with --no-verify."
+	exit 1
+fi
+
+exit 0

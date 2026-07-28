@@ -302,6 +302,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "package" => build_package(&arguments[1..]),
         "setup" => setup_device(&arguments[1..]),
         "deploy" => deploy_package(&arguments[1..]),
+        "secret" => secret_command(&arguments[1..]),
         "inspect" => inspect_package(&arguments[1..]),
         "verify" => verify_command(&arguments[1..]),
         "run" if arguments.get(1).is_some_and(|value| value == "--sim") => {
@@ -3253,6 +3254,310 @@ const DRIVE_USAGE: &str = "usage: kobo drive [--address host:port] [--shots DIR]
                            \u{20}       expect-missing TEXT | wait-for TEXT | clean | dump\n\
                            \u{20}       lifecycle foreground|background | scenario NAME | wait MS";
 
+/// Where the runtime reads named secrets from, mirrored from `kobod`.
+const DEVICE_SECRETS_DIRECTORY: &str = "/mnt/onboard/.adds/cobalt/secrets";
+
+/// The largest credential the runtime will read back, from `kobo-policy`.
+const SECRET_MAXIMUM_BYTES: usize = 4096;
+
+/// The heredoc delimiter the install script uses.
+///
+/// A credential is written through the shell, so it must not be possible for
+/// the credential itself to end the document early. Any value containing this
+/// line is refused rather than truncated.
+const SECRET_DELIMITER: &str = "COBALT_SECRET_VALUE_ENDS_HERE";
+
+#[derive(Debug, Eq, PartialEq)]
+enum SecretAction {
+    Set { name: String, source: PathBuf },
+    List,
+    Remove { name: String },
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum SecretTarget {
+    Device(String),
+    Volume(PathBuf),
+}
+
+const SECRET_USAGE: &str =
+    "usage: kobo secret set <name> [--from PATH] (--device IP | --volume PATH)\n\
+                            \x20      kobo secret list (--device IP | --volume PATH)\n\
+                            \x20      kobo secret remove <name> (--device IP | --volume PATH)";
+
+/// Accepts the names the runtime will actually resolve.
+///
+/// The same rule as `kobo_policy::tasks::secret`, applied here so a name that
+/// could never be read back is refused at the point it is typed rather than
+/// installed and silently ignored.
+fn valid_secret_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+}
+
+/// Where a credential is looked for when `--from` is not given.
+///
+/// A key already on this machine is the common case, and asking for its path
+/// every time is the kind of friction this SDK exists to remove. The order is
+/// most specific first: an explicit secrets directory, then the SDK's own
+/// configuration, then the dotfile people actually keep.
+fn secret_source_candidates(name: &str) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(directory) = std::env::var_os("KOBO_SECRETS_DIR") {
+        candidates.push(PathBuf::from(directory).join(name));
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        let home = PathBuf::from(home);
+        candidates.push(
+            home.join(".config")
+                .join("cobalt")
+                .join("secrets")
+                .join(name),
+        );
+        candidates.push(home.join(".config").join("kobo").join("secrets").join(name));
+        candidates.push(home.join(format!(".{name}")));
+    }
+    candidates
+}
+
+fn find_secret_source(name: &str) -> Result<PathBuf, String> {
+    let candidates = secret_source_candidates(name);
+    for candidate in &candidates {
+        if candidate.is_file() {
+            return Ok(candidate.clone());
+        }
+    }
+    let looked = candidates
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(format!(
+        "no file holds the '{name}' credential; pass --from PATH, or put it in one of: {looked}"
+    ))
+}
+
+/// Reads a credential off this machine and checks the runtime could read it back.
+fn read_secret_file(path: &Path) -> Result<String, String> {
+    let bytes = std::fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))?;
+    if bytes.len() > SECRET_MAXIMUM_BYTES {
+        return Err(format!(
+            "{} holds {} bytes; the runtime refuses anything over {SECRET_MAXIMUM_BYTES}",
+            path.display(),
+            bytes.len()
+        ));
+    }
+    let value = String::from_utf8(bytes).map_err(|_| format!("{} is not text", path.display()))?;
+    let value = value.trim().to_owned();
+    if value.is_empty() {
+        return Err(format!("{} is empty", path.display()));
+    }
+    if value.lines().any(|line| line.trim() == SECRET_DELIMITER) {
+        return Err("the credential contains the delimiter this command writes with".to_owned());
+    }
+    // A key pasted with its shell assignment still reads as a key to a person
+    // and as forty wrong characters to the server, so it is caught here.
+    if let Some((before, _)) = value.split_once('=') {
+        if !before.contains(char::is_whitespace)
+            && before
+                .bytes()
+                .all(|byte| byte.is_ascii_uppercase() || byte == b'_')
+            && !before.is_empty()
+        {
+            return Err(format!(
+                "{} looks like a shell assignment ({before}=...); store the value on its own",
+                path.display()
+            ));
+        }
+    }
+    Ok(value)
+}
+
+fn parse_secret(arguments: &[String]) -> Result<(SecretAction, SecretTarget), String> {
+    let (verb, rest) = arguments
+        .split_first()
+        .ok_or_else(|| SECRET_USAGE.to_owned())?;
+    let (name, rest) = match verb.as_str() {
+        "set" | "remove" => {
+            let (name, rest) = rest.split_first().ok_or_else(|| SECRET_USAGE.to_owned())?;
+            if !valid_secret_name(name) {
+                return Err(
+                    "a secret name is letters, digits, '-' and '_', up to 64 characters".to_owned(),
+                );
+            }
+            (Some(name.clone()), rest)
+        }
+        "list" => (None, rest),
+        _ => return Err(SECRET_USAGE.to_owned()),
+    };
+    let mut target = None;
+    let mut source = None;
+    let mut index = 0;
+    while index < rest.len() {
+        let flag = rest[index].as_str();
+        let value = || {
+            rest.get(index + 1)
+                .cloned()
+                .ok_or_else(|| SECRET_USAGE.to_owned())
+        };
+        match flag {
+            flag if is_device_flag(flag) => {
+                let host = value()?;
+                if !valid_device_host(&host) {
+                    return Err("device host contains unsupported characters".to_owned());
+                }
+                target = Some(SecretTarget::Device(host));
+                index += 2;
+            }
+            "--volume" => {
+                target = Some(SecretTarget::Volume(PathBuf::from(value()?)));
+                index += 2;
+            }
+            "--from" => {
+                source = Some(PathBuf::from(value()?));
+                index += 2;
+            }
+            _ => return Err(SECRET_USAGE.to_owned()),
+        }
+    }
+    let target = target.ok_or_else(|| SECRET_USAGE.to_owned())?;
+    let action = match verb.as_str() {
+        "set" => {
+            let name = name.expect("set parsed a name");
+            let source = match source {
+                Some(path) => path,
+                None => find_secret_source(&name)?,
+            };
+            SecretAction::Set { name, source }
+        }
+        "remove" => SecretAction::Remove {
+            name: name.expect("remove parsed a name"),
+        },
+        _ => SecretAction::List,
+    };
+    Ok((action, target))
+}
+
+fn secret_command(arguments: &[String]) -> Result<(), String> {
+    let (action, target) = parse_secret(arguments)?;
+    match (&action, &target) {
+        (SecretAction::Set { name, source }, _) => {
+            let value = read_secret_file(source)?;
+            // The value is never printed and never passed as an argument, so
+            // it does not reach a terminal, a shell history or the remote
+            // process table. Only its length is reported.
+            let bytes = value.len();
+            match &target {
+                SecretTarget::Device(host) => {
+                    let script = format!(
+                        "set -e\n\
+                         mkdir -p {DEVICE_SECRETS_DIRECTORY}\n\
+                         chmod 700 {DEVICE_SECRETS_DIRECTORY}\n\
+                         cat > {DEVICE_SECRETS_DIRECTORY}/{name} <<'{SECRET_DELIMITER}'\n\
+                         {value}\n\
+                         {SECRET_DELIMITER}\n\
+                         chmod 600 {DEVICE_SECRETS_DIRECTORY}/{name}\n"
+                    );
+                    let output =
+                        run_remote_shell(&format!("root@{host}"), &script, DEVICE_PROBE_TIMEOUT)?;
+                    if !output.status.success() {
+                        return Err(remote_shell_error(
+                            format!("install the '{name}' credential"),
+                            &output.stdout,
+                            &output.stderr,
+                        ));
+                    }
+                    println!("Installed '{name}' ({bytes} bytes) on {host}.");
+                }
+                SecretTarget::Volume(volume) => {
+                    let directory = volume.join(".adds").join("cobalt").join("secrets");
+                    std::fs::create_dir_all(&directory)
+                        .map_err(|error| format!("create {}: {error}", directory.display()))?;
+                    let path = directory.join(name);
+                    std::fs::write(&path, format!("{value}\n"))
+                        .map_err(|error| format!("write {}: {error}", path.display()))?;
+                    println!("Installed '{name}' ({bytes} bytes) at {}.", path.display());
+                }
+            }
+            println!("An application reaches it by naming the secret '{name}'; the value is never sent to the application itself.");
+            Ok(())
+        }
+        (SecretAction::Remove { name }, SecretTarget::Device(host)) => {
+            let script = format!("rm -f {DEVICE_SECRETS_DIRECTORY}/{name}\n");
+            let output = run_remote_shell(&format!("root@{host}"), &script, DEVICE_PROBE_TIMEOUT)?;
+            if !output.status.success() {
+                return Err(remote_shell_error(
+                    format!("remove the '{name}' credential"),
+                    &output.stdout,
+                    &output.stderr,
+                ));
+            }
+            println!("Removed '{name}' from {host}.");
+            Ok(())
+        }
+        (SecretAction::Remove { name }, SecretTarget::Volume(volume)) => {
+            let path = volume
+                .join(".adds")
+                .join("cobalt")
+                .join("secrets")
+                .join(name);
+            match std::fs::remove_file(&path) {
+                Ok(()) => println!("Removed {}.", path.display()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    println!("No '{name}' credential was installed.");
+                }
+                Err(error) => return Err(format!("remove {}: {error}", path.display())),
+            }
+            Ok(())
+        }
+        (SecretAction::List, SecretTarget::Device(host)) => {
+            // Names only. A command that can print a key is a command someone
+            // will run over a shoulder or paste into a bug report.
+            let script = format!("ls -1 {DEVICE_SECRETS_DIRECTORY} 2>/dev/null || true\n");
+            let output = run_remote_shell(&format!("root@{host}"), &script, DEVICE_PROBE_TIMEOUT)?;
+            if !output.status.success() {
+                return Err(remote_shell_error(
+                    "list credentials".to_owned(),
+                    &output.stdout,
+                    &output.stderr,
+                ));
+            }
+            report_secret_names(String::from_utf8_lossy(&output.stdout).lines());
+            Ok(())
+        }
+        (SecretAction::List, SecretTarget::Volume(volume)) => {
+            let directory = volume.join(".adds").join("cobalt").join("secrets");
+            let mut names = Vec::new();
+            if let Ok(entries) = std::fs::read_dir(&directory) {
+                for entry in entries.flatten() {
+                    names.push(entry.file_name().to_string_lossy().into_owned());
+                }
+            }
+            names.sort();
+            report_secret_names(names.iter().map(String::as_str));
+            Ok(())
+        }
+    }
+}
+
+fn report_secret_names<'a>(names: impl Iterator<Item = &'a str>) {
+    let names: Vec<&str> = names
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .collect();
+    if names.is_empty() {
+        println!("No credentials are installed.");
+        return;
+    }
+    println!("Installed credentials:");
+    for name in names {
+        println!("  {name}");
+    }
+}
+
 fn print_help() {
     println!(
         "Kobo application SDK\n\n\
@@ -3275,6 +3580,8 @@ fn print_help() {
            setup [--volume PATH] [--undo]  Prepare a reader over USB: install, enable SSH,\n\
                                    set the sleep timer, eject, then wait for it to return\n\
            deploy --device IP [--package PATH]   Install over Wi-Fi, no reboot\n\
+           secret set <name> [--from PATH] --device IP   Install a credential an app can name\n\
+           secret list --device IP   Name the installed credentials, never their values\n\
            inspect <package>       List a package and prove it writes nothing to the rootfs\n\
            verify <arm-binary>     Verify static ARM hard-float format\n\
            run --sim [--app NAME]  Run SDK, IPC, daemon and one app on host\n\

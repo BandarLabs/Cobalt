@@ -872,6 +872,34 @@ goes straight to Anthropic or Gemini rather than through a proxy that would
 have to be trusted with the key. The value never enters the application's
 memory, its logs or its crash dump, and it is not replayed across a redirect.
 
+Getting a key onto the reader is a command, not an errand:
+
+```sh
+kobo secret set openai --from ~/.openai --device 192.168.1.5
+kobo secret list --device 192.168.1.5      # names only, never values
+kobo secret remove openai --device 192.168.1.5
+```
+
+With no `--from`, the key is looked for in `$KOBO_SECRETS_DIR/<name>`,
+`~/.config/cobalt/secrets/<name>` and `~/.<name>`, in that order. The value is
+read on this machine and written straight to the reader: it is never passed as
+an argument, so it does not reach a process table or a shell history, and it is
+never printed. `--volume` does the same thing over USB for a reader that is not
+yet on Wi-Fi.
+
+A key must never reach a commit. `tools/pre-commit` refuses one, and is enabled
+per clone with:
+
+```sh
+git config core.hooksPath tools
+```
+
+It scans staged lines for published credential shapes -- OpenAI, Anthropic,
+GitHub, AWS, Google, Slack -- for a PEM private key header, and for a shell
+assignment of something named like a key. It reports the shape it matched and
+never the match, because printing the key to a terminal or a CI log is the
+thing being prevented.
+
 ## What applications may ask for
 
 Applications never touch hardware. They declare capabilities and the runtime

@@ -1266,7 +1266,14 @@ impl Screen {
         let content_bottom = if self.nav_bar.is_some() || self.bottom_action.is_some() {
             metrics.height - metrics.nav_bar_height()
         } else {
-            metrics.height
+            // A screen margin, the same one the sides get. Without a bar to
+            // provide it the last control sat on the bezel: a button whose
+            // border was the final row of pixels on the panel, and a keyboard
+            // whose bottom row ran off the edge. `prose_area` has always
+            // measured against this margin, so the engine not honouring it
+            // also meant everything that paginates was handed a page taller
+            // than the one that would be drawn.
+            metrics.height - metrics.screen_margin()
         };
         // Reserved before any content is placed, for the same reason the bottom
         // bar is: a strip taken out from under a page that has already been set
@@ -13064,6 +13071,41 @@ mod prose_tests {
             inked(&cache) > inked(&empty),
             "the cover was not drawn once it had arrived"
         );
+    }
+
+    #[test]
+    fn a_screen_with_no_bottom_bar_still_keeps_the_bezel_margin() {
+        // The sides get a screen margin and the bottom got nothing, so the
+        // last control on a screen with no bar under it was drawn onto the
+        // final rows of the panel: on the reader the Add button's border was
+        // the bottom edge of the glass.
+        let screen = Screen::new(
+            1,
+            vec![
+                Node::Text {
+                    id: NodeId(1),
+                    text: "Nothing to do.".into(),
+                },
+                Node::Button {
+                    id: NodeId(2),
+                    action: ActionId(1),
+                    label: "Add".into(),
+                    state: ControlState::Enabled,
+                    emphasis: Emphasis::Normal,
+                },
+            ],
+        )
+        .with_top_bar(TopBar::new(NodeId(0), "Todo"));
+        let layout = screen.layout();
+        let floor = CLARA_BW_METRICS.height - CLARA_BW_METRICS.screen_margin();
+        for node in &layout.nodes {
+            assert!(
+                node.rect.y + node.rect.height <= floor,
+                "{:?} ran to {}, past the bezel margin at {floor}",
+                node.kind,
+                node.rect.y + node.rect.height
+            );
+        }
     }
 
     #[test]

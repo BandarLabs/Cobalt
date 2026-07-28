@@ -1705,12 +1705,20 @@ impl ScreenBuilder {
                 Percent::new(u8::try_from(percent.min(100)).unwrap_or(100))
             })
         });
+        // "4.2 MB" with no total is a truthful report of an unknown-length
+        // download. "0 B" is not the same statement: it is the state every
+        // such download begins in, it is what a reader sees for the whole of
+        // a transfer the runtime hands over in one piece, and it reads as a
+        // download that is failing rather than one that has not answered yet.
+        // With nothing received and no total there is no amount to report, so
+        // the label carries the screen alone.
+        let transferred = (received > 0 || total.is_some()).then_some((received, total));
         self.nodes.push(Node::Activity {
             id,
             label: label.into(),
             progress,
             cancel: None,
-            transferred: Some((received, total)),
+            transferred,
             failure: None,
         });
         self
@@ -3675,6 +3683,26 @@ mod tests {
             Some(result) => download.advance(context, result),
         });
         assert_eq!(progress, ShelfProgress::Failed(StoreError::Missing));
+    }
+
+    #[test]
+    fn a_transfer_that_has_received_nothing_reports_no_amount() {
+        let nodes = |received, total| match ScreenBuilder::new("t")
+            .transfer("Downloading", received, total)
+            .build()
+            .nodes
+            .first()
+            .expect("the transfer was built")
+        {
+            Node::Activity { transferred, .. } => *transferred,
+            other => panic!("a transfer is an activity, not {other:?}"),
+        };
+        // Nothing has arrived and nothing is expected: there is no amount, so
+        // none is claimed. "0 B" reads as a download that is going wrong.
+        assert_eq!(nodes(0, None), None);
+        // Once bytes are in, or once a total is known, the report is real.
+        assert_eq!(nodes(512, None), Some((512, None)));
+        assert_eq!(nodes(0, Some(2048)), Some((0, Some(2048))));
     }
 
     #[test]

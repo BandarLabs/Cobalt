@@ -2,3 +2,16 @@
 /.kobo/
 /target/
 /.pass
+
+# Credentials. `kobo secret` reads keys off this machine and writes them
+# straight to the reader; nothing it touches belongs in a commit. These
+# patterns are here so a key that is copied into the tree for a moment cannot
+# be added by accident.
+secrets/
+*.pem
+*.key
+.env
+.env.*
+.openai
+.anthropic
+.credentials
