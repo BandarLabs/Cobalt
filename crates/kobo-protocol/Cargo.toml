@@ -4,10 +4,11 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "Bounded wire protocol between Kobo applications and the Cobalt runtime"
 
 [dependencies]
-kobo-ui = { path = "../kobo-ui" }
+kobo-ui = { version = "0.1.0", path = "../kobo-ui" }
 
 [lints]
 workspace = true
-

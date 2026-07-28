@@ -24,7 +24,7 @@
 //! # Why applications cannot supply paths
 //!
 //! Nothing here is reachable over the protocol. An application names a
-//! [`Glyph`](crate::Glyph) and the runtime draws it. Arbitrary path data from
+//! [`Glyph`] and the runtime draws it. Arbitrary path data from
 //! an application is an untrusted input to a scanline rasteriser and a way for
 //! one application to draw something indistinguishable from a system control.
 //! A curated set is the same choice the rest of this UI layer makes everywhere.

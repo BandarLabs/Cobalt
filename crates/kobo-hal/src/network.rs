@@ -284,7 +284,7 @@ mod tests {
         assert_eq!(signal_dbm_in("only\nheaders\n", "wlan0"), None);
     }
 
-    use super::{has_default_route, Connection};
+    use super::{has_default_route, signal_dbm_in, Connection};
 
     /// Taken verbatim from the device, header row included.
     const REAL_TABLE: &str =

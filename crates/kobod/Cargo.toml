@@ -10,6 +10,7 @@ name = "kobod"
 path = "src/main.rs"
 
 [dependencies]
+kobo-abi = { path = "../kobo-abi" }
 kobo-hal = { path = "../kobo-hal", default-features = false }
 kobo-net = { path = "../kobo-net" }
 kobo-policy = { path = "../kobo-policy" }

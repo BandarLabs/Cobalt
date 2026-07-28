@@ -16,19 +16,18 @@
 //! the runtime links its own verifier and its own roots and ignores the
 //! device's libraries entirely.
 //!
-//! ## Why a pure-Rust provider
+//! ## Parsing and cryptography
 //!
-//! The usual providers compile C and assembly, which would require a cross
-//! toolchain and end this project's property that a plain
-//! `rustup target add armv7-unknown-linux-musleabihf` is enough to build a
-//! device binary. The provider used here is pure Rust and cross-compiles with
-//! no system packages. It is also young and unaudited, which is the reason all
-//! of this sits behind one function: changing it is a change to this file.
+//! URL syntax is parsed by [`http::Uri`], and response heads and chunk sizes
+//! by `httparse`, rather than by request-line and header string splitting.
+//! The transport remains deliberately small so its byte ceilings, range
+//! requests and Kobo-specific TLS roots stay visible, while Rustls uses its
+//! maintained ring provider instead of an experimental provider.
 
 use kobo_protocol::TaskError;
 use std::borrow::Cow;
 use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -37,6 +36,9 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The largest response header block accepted before the body is refused.
 const MAX_HEADER_BYTES: usize = 32 * 1024;
+
+/// The most response headers retained while parsing.
+const MAX_RESPONSE_HEADERS: usize = 64;
 
 /// How many redirects to follow before giving up.
 ///
@@ -52,6 +54,7 @@ pub struct Address {
     pub host: String,
     pub port: u16,
     pub path: String,
+    authority: String,
 }
 
 /// Splits an `https` URL, refusing anything this runtime will not fetch.
@@ -65,28 +68,39 @@ pub struct Address {
 /// Returns [`TaskError::NotFound`] for anything that is not a well formed
 /// `https` URL with a host.
 pub fn parse(url: &str) -> Result<Address, TaskError> {
-    let rest = url.strip_prefix("https://").ok_or(TaskError::NotFound)?;
-    let (authority, path) = match rest.find('/') {
-        Some(index) => (&rest[..index], &rest[index..]),
-        None => (rest, "/"),
-    };
+    let target = url.parse::<http::Uri>().map_err(|_| TaskError::NotFound)?;
+    if target.scheme_str() != Some("https") {
+        return Err(TaskError::NotFound);
+    }
+    let authority = target.authority().ok_or(TaskError::NotFound)?;
     // Credentials in a URL would be sent to the host and written into any log
     // that records the request, so they are refused rather than stripped.
-    if authority.contains('@') || authority.is_empty() {
+    if authority.as_str().contains('@') {
         return Err(TaskError::NotFound);
     }
-    let (host, port) = match authority.rsplit_once(':') {
-        Some((host, port)) => (host, port.parse::<u16>().map_err(|_| TaskError::NotFound)?),
-        None => (authority, 443),
-    };
-    if host.is_empty() || host.contains('/') {
+    let host = authority.host();
+    if host.is_empty() {
         return Err(TaskError::NotFound);
     }
+    let port = authority.port_u16().unwrap_or(443);
+    let path = target
+        .path_and_query()
+        .map_or("/", http::uri::PathAndQuery::as_str);
     Ok(Address {
         host: host.to_string(),
         port,
         path: path.to_string(),
+        authority: authority.as_str().to_string(),
     })
+}
+
+/// Whether `url` has exactly the supplied HTTPS host and port.
+///
+/// Credential policy uses this instead of string prefixes, for which
+/// `api.example.com.attacker.invalid` would look like the intended host.
+#[must_use]
+pub fn has_origin(url: &str, host: &str, port: u16) -> bool {
+    parse(url).is_ok_and(|address| address.host.eq_ignore_ascii_case(host) && address.port == port)
 }
 
 /// What a server said, once the status line has been understood.
@@ -106,26 +120,36 @@ pub enum Response<'a> {
 /// Returns [`TaskError::Unreachable`] if the response is not recognisable
 /// HTTP, and [`TaskError::NotFound`] for a 4xx or 5xx status.
 pub fn split_response(response: &[u8]) -> Result<Response<'_>, TaskError> {
-    let head_end = find_header_end(response).ok_or(TaskError::Unreachable)?;
-    let head = std::str::from_utf8(&response[..head_end]).map_err(|_| TaskError::Unreachable)?;
-    let status = head
-        .lines()
-        .next()
-        .and_then(|line| line.split_whitespace().nth(1))
-        .and_then(|code| code.parse::<u16>().ok())
-        .ok_or(TaskError::Unreachable)?;
+    let mut headers = [httparse::EMPTY_HEADER; MAX_RESPONSE_HEADERS];
+    let mut parsed = httparse::Response::new(&mut headers);
+    let head_end = match parsed.parse(response) {
+        Ok(httparse::Status::Complete(end)) if end <= MAX_HEADER_BYTES => end,
+        Ok(httparse::Status::Complete(_) | httparse::Status::Partial) | Err(_) => {
+            return Err(TaskError::Unreachable);
+        }
+    };
+    let status = parsed.code.ok_or(TaskError::Unreachable)?;
+    let headers = parsed.headers;
     match status {
         200..=299 => {
-            let body = &response[head_end + 4..];
+            let body = &response[head_end..];
             // Chunked is not an exotic case to handle later: every large CDN
             // answers HTTP/1.1 with it, and api.openai.com behind Cloudflare
             // always does. Handing the framing back as if it were the body
             // means the caller sees `1f4\r\n{"id":...` and reports the reply as
             // unreadable, which is exactly how this was found.
-            if header(head, "transfer-encoding")
-                .is_some_and(|value| value.to_ascii_lowercase().contains("chunked"))
-            {
+            let chunked = transfer_is_chunked(headers)?;
+            let length = content_length(headers)?;
+            if chunked && length.is_some() {
+                return Err(TaskError::Unreachable);
+            }
+            if chunked {
                 Ok(Response::Body(Cow::Owned(decode_chunked(body)?)))
+            } else if let Some(length) = length {
+                if body.len() != length {
+                    return Err(TaskError::Unreachable);
+                }
+                Ok(Response::Body(Cow::Borrowed(body)))
             } else {
                 Ok(Response::Body(Cow::Borrowed(body)))
             }
@@ -136,7 +160,7 @@ pub fn split_response(response: &[u8]) -> Result<Response<'_>, TaskError> {
         // alternative is reporting the last page of every book as a failure.
         416 => Ok(Response::Body(Cow::Borrowed(&[]))),
         // 304 carries no body and no Location, so it is not a redirect here.
-        301..=303 | 307 | 308 => header(head, "location")
+        301..=303 | 307 | 308 => header(headers, "location")
             .map(|target| Response::Redirect(target.to_string()))
             .ok_or(TaskError::Unreachable),
         400..=599 => Err(TaskError::NotFound),
@@ -144,14 +168,56 @@ pub fn split_response(response: &[u8]) -> Result<Response<'_>, TaskError> {
     }
 }
 
-/// Reads one header value, matching the name case insensitively.
-fn header<'a>(head: &'a str, wanted: &str) -> Option<&'a str> {
-    head.lines().skip(1).find_map(|line| {
-        let (name, value) = line.split_once(':')?;
-        name.trim()
-            .eq_ignore_ascii_case(wanted)
-            .then(|| value.trim())
+/// Reads one ASCII header value, matching the name case insensitively.
+fn header<'a>(headers: &[httparse::Header<'a>], wanted: &str) -> Option<&'a str> {
+    headers.iter().find_map(|header| {
+        if header.name.eq_ignore_ascii_case(wanted) {
+            std::str::from_utf8(header.value).ok().map(str::trim)
+        } else {
+            None
+        }
     })
+}
+
+/// Accepts the one transfer coding this transport implements.
+fn transfer_is_chunked(headers: &[httparse::Header<'_>]) -> Result<bool, TaskError> {
+    let mut codings = 0_u8;
+    for header in headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case("transfer-encoding"))
+    {
+        let value = std::str::from_utf8(header.value).map_err(|_| TaskError::Unreachable)?;
+        for coding in value.split(',') {
+            codings = codings.checked_add(1).ok_or(TaskError::Unreachable)?;
+            if !coding.trim().eq_ignore_ascii_case("chunked") {
+                return Err(TaskError::Unreachable);
+            }
+        }
+    }
+    match codings {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(TaskError::Unreachable),
+    }
+}
+
+/// Reads a unique, decimal content length.
+fn content_length(headers: &[httparse::Header<'_>]) -> Result<Option<usize>, TaskError> {
+    let mut length = None;
+    for header in headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case("content-length"))
+    {
+        let parsed = std::str::from_utf8(header.value)
+            .ok()
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .ok_or(TaskError::Unreachable)?;
+        if length.is_some_and(|previous| previous != parsed) {
+            return Err(TaskError::Unreachable);
+        }
+        length = Some(parsed);
+    }
+    Ok(length)
 }
 
 /// Resolves a `Location` value against the request it answered.
@@ -213,38 +279,34 @@ pub fn resolve_redirect(from: &Address, location: &str) -> Result<String, TaskEr
 fn decode_chunked(mut body: &[u8]) -> Result<Vec<u8>, TaskError> {
     let mut out = Vec::with_capacity(body.len());
     loop {
-        let line_end = find(body, b"\r\n").ok_or(TaskError::Unreachable)?;
-        let header = std::str::from_utf8(&body[..line_end]).map_err(|_| TaskError::Unreachable)?;
-        // The extension after a semicolon is metadata about the chunk, never
-        // part of its length.
-        let size = header.split(';').next().unwrap_or(header).trim();
-        let size = usize::from_str_radix(size, 16).map_err(|_| TaskError::Unreachable)?;
-        body = &body[line_end + 2..];
+        let (line_end, size) = match httparse::parse_chunk_size(body) {
+            Ok(httparse::Status::Complete(parsed)) => parsed,
+            Ok(httparse::Status::Partial) | Err(_) => return Err(TaskError::Unreachable),
+        };
+        let size = usize::try_from(size).map_err(|_| TaskError::Unreachable)?;
+        body = &body[line_end..];
         if size == 0 {
-            return Ok(out);
+            let mut trailers = [httparse::EMPTY_HEADER; MAX_RESPONSE_HEADERS];
+            let end = match httparse::parse_headers(body, &mut trailers) {
+                Ok(httparse::Status::Complete((end, _))) => end,
+                Ok(httparse::Status::Partial) | Err(_) => return Err(TaskError::Unreachable),
+            };
+            return if end == body.len() {
+                Ok(out)
+            } else {
+                Err(TaskError::Unreachable)
+            };
         }
-        if body.len() < size + 2 {
+        let framed = size.checked_add(2).ok_or(TaskError::Unreachable)?;
+        if body.len() < framed {
             return Err(TaskError::Unreachable);
         }
         out.extend_from_slice(&body[..size]);
         if &body[size..size + 2] != b"\r\n" {
             return Err(TaskError::Unreachable);
         }
-        body = &body[size + 2..];
+        body = &body[framed..];
     }
-}
-
-fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack
-        .windows(needle.len())
-        .position(|window| window == needle)
-}
-
-fn find_header_end(response: &[u8]) -> Option<usize> {
-    response
-        .windows(4)
-        .take(MAX_HEADER_BYTES)
-        .position(|window| window == b"\r\n\r\n")
 }
 
 /// Fetches `url`, returning at most `max_bytes` of body.
@@ -357,23 +419,24 @@ pub fn post(
     headers: &[(&str, &str)],
     max_bytes: u32,
 ) -> Result<Vec<u8>, TaskError> {
-    // A header containing a newline would let a caller append headers of its
-    // own to the request. The runtime reads the credential off a file whose
-    // contents it does not control, so this is checked rather than assumed,
-    // and it is checked here because this is the last gate before the socket.
-    let clean = |text: &str| !text.bytes().any(|byte| byte < 0x20 || byte == 0x7f);
+    // Header grammar is checked by the same maintained types used for URI
+    // syntax. This is the last gate before the socket, and both names and
+    // values may ultimately originate outside the runtime.
+    let valid_header = |name: &str, value: &str| {
+        name.parse::<http::HeaderName>().is_ok() && value.parse::<http::HeaderValue>().is_ok()
+    };
     if let Some((name, value)) = credential {
-        if name.is_empty() || !clean(name) || !clean(value) {
+        if !valid_header(name, value) {
             return Err(TaskError::Denied);
         }
     }
     if headers
         .iter()
-        .any(|(name, value)| name.is_empty() || !clean(name) || !clean(value))
+        .any(|(name, value)| !valid_header(name, value))
     {
         return Err(TaskError::Denied);
     }
-    if !clean(content_type) {
+    if content_type.parse::<http::HeaderValue>().is_err() {
         return Err(TaskError::Denied);
     }
     let address = parse(url)?;
@@ -406,7 +469,11 @@ pub fn post(
 /// first piece of a document, which no test could see because it only showed
 /// up as a server sending more than the ceiling allowed.
 fn head(address: &Address, method: &Method<'_>, max_bytes: u32) -> String {
-    let (verb, path, host) = (method.verb(), address.path.as_str(), address.host.as_str());
+    let (verb, path, host) = (
+        method.verb(),
+        address.path.as_str(),
+        address.authority.as_str(),
+    );
     let mut head = format!(
         "{verb} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nAccept-Encoding: identity\r\nUser-Agent: kobo-runtime\r\n"
     );
@@ -458,8 +525,7 @@ fn head(address: &Address, method: &Method<'_>, max_bytes: u32) -> String {
 /// it, so every request paid a full handshake -- an extra round trip and the
 /// asymmetric signature verification -- even when it was the sixth cover from
 /// the host we had been talking to a second earlier. That verification is the
-/// expensive half on a 1 GHz ARM core driving a pure-Rust crypto provider with
-/// no AES instructions behind it.
+/// expensive half on a 1 GHz ARM core.
 ///
 /// Measured over four runs of five sequential requests to gutenberg.org:
 /// 7.7s with a config per request against 6.1s with one shared, consistently
@@ -473,12 +539,13 @@ fn tls_config() -> Result<Arc<rustls::ClientConfig>, TaskError> {
     let roots = rustls::RootCertStore {
         roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
     };
-    let config =
-        rustls::ClientConfig::builder_with_provider(Arc::new(rustls_rustcrypto::provider()))
-            .with_safe_default_protocol_versions()
-            .map_err(|_| TaskError::Unreachable)?
-            .with_root_certificates(roots)
-            .with_no_client_auth();
+    let config = rustls::ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .map_err(|_| TaskError::Unreachable)?
+    .with_root_certificates(roots)
+    .with_no_client_auth();
     // Whichever call built it first wins; the loser drops its own copy. Both
     // are the same configuration, so it does not matter which.
     Ok(Arc::clone(TLS_CONFIG.get_or_init(|| Arc::new(config))))
@@ -493,8 +560,12 @@ fn request(address: &Address, method: &Method<'_>, max_bytes: u32) -> Result<Vec
         .map_err(|_| TaskError::NotFound)?;
     let mut connection =
         rustls::ClientConnection::new(config, name).map_err(|_| TaskError::Unreachable)?;
-    let mut socket = TcpStream::connect((address.host.as_str(), address.port))
+    let mut addresses = (address.host.as_str(), address.port)
+        .to_socket_addrs()
         .map_err(|_| TaskError::Unreachable)?;
+    let mut socket = addresses
+        .find_map(|address| TcpStream::connect_timeout(&address, REQUEST_TIMEOUT).ok())
+        .ok_or(TaskError::Unreachable)?;
     socket
         .set_read_timeout(Some(REQUEST_TIMEOUT))
         .and_then(|()| socket.set_write_timeout(Some(REQUEST_TIMEOUT)))
@@ -559,6 +630,7 @@ mod tests {
             host: "www.gutenberg.org".into(),
             port: 443,
             path: "/files/1342/1342-0.txt".into(),
+            authority: "www.gutenberg.org".into(),
         }
     }
 
@@ -627,7 +699,8 @@ mod tests {
             Ok(Address {
                 host: "example.com".into(),
                 port: 443,
-                path: "/".into()
+                path: "/".into(),
+                authority: "example.com".into(),
             })
         );
     }
@@ -639,7 +712,8 @@ mod tests {
             Ok(Address {
                 host: "example.com".into(),
                 port: 8443,
-                path: "/feed.xml?since=1".into()
+                path: "/feed.xml?since=1".into(),
+                authority: "example.com:8443".into(),
             })
         );
     }
@@ -670,6 +744,25 @@ mod tests {
         ] {
             assert_eq!(parse(url), Err(TaskError::NotFound), "accepted {url}");
         }
+    }
+
+    #[test]
+    fn request_line_control_characters_are_refused() {
+        for url in [
+            "https://example.com/x\r\nX-Stolen: yes",
+            "https://example.com/x\nGET /second",
+            "https://example.com/a b",
+            "https://example.com/\u{7f}",
+        ] {
+            assert_eq!(parse(url), Err(TaskError::NotFound), "accepted {url:?}");
+        }
+    }
+
+    #[test]
+    fn a_non_default_port_is_present_in_the_host_header() {
+        let address = parse("https://example.com:8443/path").expect("a URL");
+        let request = head(&address, &Method::Get { offset: None }, 1024);
+        assert!(request.contains("Host: example.com:8443\r\n"), "{request}");
     }
 
     #[test]
@@ -727,6 +820,7 @@ mod tests {
             host: host.into(),
             port: 443,
             path: path.into(),
+            authority: host.into(),
         }
     }
 
@@ -822,6 +916,30 @@ mod tests {
     }
 
     #[test]
+    fn a_chunked_body_requires_its_final_header_terminator() {
+        let response = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n";
+        assert_eq!(split_response(response), Err(TaskError::Unreachable));
+    }
+
+    #[test]
+    fn conflicting_lengths_are_refused() {
+        let response = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Length: 4\r\n\r\nhello";
+        assert_eq!(split_response(response), Err(TaskError::Unreachable));
+    }
+
+    #[test]
+    fn transfer_encoding_and_content_length_cannot_disagree() {
+        let response = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\n5\r\nhello\r\n0\r\n\r\n";
+        assert_eq!(split_response(response), Err(TaskError::Unreachable));
+    }
+
+    #[test]
+    fn a_length_framed_body_must_arrive_whole() {
+        let response = b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nhello";
+        assert_eq!(split_response(response), Err(TaskError::Unreachable));
+    }
+
+    #[test]
     fn a_length_framed_body_is_still_borrowed_rather_than_copied() {
         let response = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello";
         assert!(matches!(
@@ -875,14 +993,20 @@ mod tests {
 
     #[test]
     fn a_header_that_could_forge_another_one_is_refused() {
-        let refused = post(
-            "https://example.invalid/",
-            b"{}",
-            "application/json",
-            None,
-            &[("x-note", "one\r\nAuthorization: Bearer stolen")],
-            1024,
-        );
-        assert_eq!(refused, Err(TaskError::Denied));
+        for headers in [
+            &[("x-note", "one\r\nAuthorization: Bearer stolen")][..],
+            &[("Host: attacker.invalid", "anything")][..],
+            &[(" Host", "attacker.invalid")][..],
+        ] {
+            let refused = post(
+                "https://example.invalid/",
+                b"{}",
+                "application/json",
+                None,
+                headers,
+                1024,
+            );
+            assert_eq!(refused, Err(TaskError::Denied));
+        }
     }
 }

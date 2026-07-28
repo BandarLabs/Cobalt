@@ -124,9 +124,12 @@ Copy that to `.kobo/KoboRoot.tgz` on the reader over USB and eject. The reader
 installs it at the next boot. Everything lands in `.adds/cobalt` on the book
 partition; uninstalling is deleting that folder.
 
-`rustup target add armv7-unknown-linux-musleabihf` is the entire cross-build
-setup. Section 11 has the rest of the device story, section 12 has the rules
-the SDK will not let you break.
+Install the Rust target and an ARM hard-float C compiler (the
+`gcc-arm-linux-gnueabihf` package on Debian). Set
+`CC_armv7_unknown_linux_musleabihf=arm-linux-gnueabihf-gcc` when building.
+That compiler builds the maintained `ring` provider; the resulting program is
+still statically linked. Section 11 has the rest of the device story, section
+12 has the rules the SDK will not let you break.
 
 ---
 
@@ -793,14 +796,15 @@ cargo run -p kobo-cli -- dev --builtin
 cargo run -p kobo-cli -- run --sim
 
 # For the device.
-cargo build --release --target armv7-unknown-linux-musleabihf -p your-app
+CC_armv7_unknown_linux_musleabihf=arm-linux-gnueabihf-gcc \
+  cargo build --release --target armv7-unknown-linux-musleabihf -p your-app
 
 # For somebody else's device, with no terminal at their end.
 cargo run -p kobo-cli -- package
 ```
 
-`rustup target add armv7-unknown-linux-musleabihf` is the entire cross-build
-setup. Binaries are statically linked and have no device-side dependencies.
+The Rust target plus an ARM hard-float C compiler are the cross-build setup.
+Binaries are statically linked and have no device-side dependencies.
 
 The simulator performs real work rather than faking it. A fetch is a real
 request, a terminal is a real shell on the developer's own machine, and the
@@ -993,6 +997,12 @@ something other than the shipped path.
 
 ## 12. The rules the SDK will not let you break
 
+On a reader these are enforced by a root-owned, per-process chroot, an
+unprivileged UID, `no_new_privs`, network syscall isolation, validated binary
+identity, denied child-process creation and runtime brokers. The host simulator
+is a development tool running as the developer's own user; it exercises the
+protocol and policies but is not an operating-system security boundary.
+
 - **You cannot draw.** No pixels, no colour, no fonts, no coordinates.
 - **You cannot block the panel.** Long work is a task or it does not happen.
 - **You cannot hold a credential.** You may name one.
@@ -1035,9 +1045,10 @@ writes), `kobo-handoff` (stopping and restarting the stock reader) and
 `kobo-profile` sit under `kobo-hal`: the only `unsafe` in the workspace, and the
 exact hardware identity that gates it.
 
-Outside dependencies live in exactly four of those crates, each behind one
-interface: `kobo-net`, `kobo-text`, `kobo-term` and `kobo-image`. Nothing an
-application imports has any.
+External dependencies live behind narrow interfaces in `kobo-net`,
+`kobo-text`, `kobo-term`, `kobo-image`, `kobo-doc` and `kobo-abi`; applications
+do not depend on the particular HTTP, font, terminal, image or kernel binding
+implementation.
 
 Worked examples, smallest first: `examples/tictactoe`, `examples/todo` (state
 that survives a restart), `examples/gallery` (every primitive on one screen),

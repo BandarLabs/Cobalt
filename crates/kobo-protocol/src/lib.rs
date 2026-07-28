@@ -292,7 +292,7 @@ pub enum Task {
 pub enum TaskOutcome {
     Completed(Vec<u8>),
     Failed(TaskError),
-    /// The application asked for this through [`Context::cancel`].
+    /// The application asked for this through `Context::cancel`.
     Cancelled,
 }
 

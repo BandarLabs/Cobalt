@@ -22,7 +22,7 @@
 //! lets Gutenbird read a novel in pieces does not work here: asking for the
 //! second half returns the whole document again and the ceiling rejects it.
 //!
-//! So the request comes back [`TaskError::TooLarge`], and rather than showing
+//! So the request comes back `TaskError::TooLarge`, and rather than showing
 //! a dead end this asks a different question, `search_by_date` over that
 //! story's comments, thirty at a time, which is bounded by construction. The
 //! nesting is gone in that answer, so the screen *says* the nesting is gone.
@@ -106,7 +106,7 @@ const SKELETON_ROWS: u8 = 6;
 /// The thread is measured as prose so the runtime's own wrapping decides where
 /// each page ends, but the facts at the top of the first page are a labelled
 /// block, not prose. So a paragraph is set aside for each fact -- measured, and
-/// so counted against the page -- and swapped for the real [`facts`] block when
+/// so counted against the page -- and swapped for the real `facts` block when
 /// the page is drawn. `u32::MAX` is the tag because comment tags are one-based
 /// indices into a list capped far below it, so this can never be one of them.
 const FACT_TAG: u32 = u32::MAX;

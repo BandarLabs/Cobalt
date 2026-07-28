@@ -538,6 +538,356 @@ pub mod hwtcon {
     }
 }
 
+/// Kernel isolation applied to an application immediately before it starts.
+///
+/// Device applications are ordinary static binaries, but they are not trusted
+/// with the daemon's root identity or view of the filesystem. The daemon
+/// prepares a root-owned directory containing only that binary and its Unix
+/// socket, then this enters it, drops all supplementary groups and changes to
+/// the unprivileged `nobody` identity. A seccomp filter permits local Unix
+/// sockets but refuses network sockets and prevents descendants from escaping
+/// their process group. If seccomp is unavailable, a private network namespace
+/// provides the network boundary instead.
+pub mod sandbox {
+    #[cfg(target_os = "linux")]
+    use std::fs;
+    use std::io;
+    #[cfg(target_os = "linux")]
+    use std::os::unix::fs::MetadataExt;
+    use std::os::unix::process::CommandExt;
+    use std::path::Path;
+    use std::process::Command;
+
+    #[cfg(target_os = "linux")]
+    use std::ffi::CString;
+    #[cfg(target_os = "linux")]
+    use std::os::unix::ffi::OsStrExt;
+
+    #[cfg(target_os = "linux")]
+    const UNPRIVILEGED_ID: libc::uid_t = 65_534;
+
+    /// Prepared, allocation-free state for a post-fork sandbox transition.
+    pub struct Sandbox {
+        #[cfg(target_os = "linux")]
+        root: CString,
+    }
+
+    impl Sandbox {
+        /// Prepares a sandbox rooted at `root`.
+        ///
+        /// # Errors
+        ///
+        /// Refuses a path containing a NUL byte.
+        pub fn new(root: &Path) -> io::Result<Self> {
+            #[cfg(target_os = "linux")]
+            {
+                let root = CString::new(root.as_os_str().as_bytes()).map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "sandbox path has NUL")
+                })?;
+                Ok(Self { root })
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = root;
+                Ok(Self {})
+            }
+        }
+
+        /// Configures `command` to enter this sandbox after fork and before
+        /// exec. Keeping the unsafe hook inside the ABI crate means callers
+        /// cannot accidentally run the transition in their own process.
+        pub fn configure(self, command: &mut Command) {
+            #[cfg(target_os = "linux")]
+            // SAFETY: Command runs this only in the freshly forked child. The
+            // prepared sandbox owns every byte the closure reads.
+            unsafe {
+                command.pre_exec(move || self.enter());
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = self;
+                command.process_group(0);
+            }
+        }
+
+        /// Enters the prepared sandbox in the freshly forked child.
+        ///
+        /// # Safety
+        ///
+        /// This must only run from `Command::pre_exec`: it changes the process
+        /// root, identity, process group and syscall policy irreversibly.
+        #[cfg(target_os = "linux")]
+        pub unsafe fn enter(&self) -> io::Result<()> {
+            if libc::setpgid(0, 0) < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if libc::chroot(self.root.as_ptr()) < 0 || libc::chdir(c"/".as_ptr()) < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if install_filter().is_err() && libc::unshare(libc::CLONE_NEWNET) < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if libc::setgroups(0, std::ptr::null()) < 0
+                || libc::setgid(UNPRIVILEGED_ID) < 0
+                || libc::setuid(UNPRIVILEGED_ID) < 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        }
+    }
+
+    /// Whether the current process has the privilege required to prepare and
+    /// enter a device sandbox. Development-host runs are already non-root and
+    /// keep their ordinary filesystem so local examples remain easy to run.
+    #[must_use]
+    pub fn is_root() -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            // SAFETY: `geteuid` takes no pointers and has no failure mode.
+            unsafe { libc::geteuid() == 0 }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            false
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    unsafe fn install_filter() -> io::Result<()> {
+        const LD_W_ABS: u16 = 0x20;
+        const JMP_JEQ_K: u16 = 0x15;
+        const RET_K: u16 = 0x06;
+        const ERRNO: u32 = libc::SECCOMP_RET_ERRNO | libc::EPERM as u32;
+
+        const fn statement(code: u16, value: u32) -> libc::sock_filter {
+            libc::sock_filter {
+                code,
+                jt: 0,
+                jf: 0,
+                k: value,
+            }
+        }
+
+        const fn jump(value: u32, yes: u8, no: u8) -> libc::sock_filter {
+            libc::sock_filter {
+                code: JMP_JEQ_K,
+                jt: yes,
+                jf: no,
+                k: value,
+            }
+        }
+
+        // seccomp_data.nr is at byte 0 and args[0] at byte 16 on the little-
+        // endian ARM and x86 Linux targets supported by this workspace. SDK
+        // applications are single-process event loops; their asynchronous work
+        // is performed by the runtime broker. Refusing process/thread creation
+        // makes it impossible for an application to leave an untracked child
+        // behind without changing any shipped application.
+        let filter = [
+            statement(LD_W_ABS, 0),
+            jump(libc::SYS_socket as u32, 9, 0),
+            jump(libc::SYS_setsid as u32, 10, 0),
+            jump(libc::SYS_setpgid as u32, 9, 0),
+            jump(libc::SYS_unshare as u32, 8, 0),
+            jump(libc::SYS_setns as u32, 7, 0),
+            jump(libc::SYS_fork as u32, 6, 0),
+            jump(libc::SYS_vfork as u32, 5, 0),
+            jump(libc::SYS_clone as u32, 4, 0),
+            jump(libc::SYS_clone3 as u32, 3, 0),
+            statement(RET_K, libc::SECCOMP_RET_ALLOW),
+            statement(LD_W_ABS, 16),
+            jump(libc::AF_UNIX as u32, 1, 0),
+            statement(RET_K, ERRNO),
+            statement(RET_K, libc::SECCOMP_RET_ALLOW),
+        ];
+        let program = libc::sock_fprog {
+            len: u16::try_from(filter.len()).unwrap_or(u16::MAX),
+            filter: filter.as_ptr().cast_mut(),
+        };
+        if libc::prctl(
+            libc::PR_SET_SECCOMP,
+            libc::SECCOMP_MODE_FILTER,
+            std::ptr::from_ref(&program),
+        ) < 0
+        {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Signals every process whose filesystem root is the prepared sandbox.
+    ///
+    /// This is the fail-safe for kernels that lack seccomp filtering: even a
+    /// descendant that changed its process group still carries the unique
+    /// chroot inode and can be found before the directory is removed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the sandbox or Linux process table cannot be
+    /// inspected.
+    pub fn signal(root: &Path, signal_number: i32) -> io::Result<usize> {
+        #[cfg(target_os = "linux")]
+        {
+            let wanted = fs::metadata(root)?;
+            let mut signalled = 0;
+            for entry in fs::read_dir("/proc")? {
+                let Ok(entry) = entry else { continue };
+                let Some(pid) = entry
+                    .file_name()
+                    .to_str()
+                    .and_then(|name| name.parse::<u32>().ok())
+                else {
+                    continue;
+                };
+                if pid == std::process::id() {
+                    continue;
+                }
+                let Ok(candidate) = fs::metadata(entry.path().join("root")) else {
+                    continue;
+                };
+                if candidate.dev() != wanted.dev() || candidate.ino() != wanted.ino() {
+                    continue;
+                }
+                let Ok(pid) = i32::try_from(pid) else {
+                    continue;
+                };
+                // SAFETY: the PID came from procfs and is passed by value.
+                if unsafe { libc::kill(pid, signal_number) } == 0 {
+                    signalled += 1;
+                }
+            }
+            Ok(signalled)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = (root, signal_number);
+            Ok(0)
+        }
+    }
+}
+
+/// Signals a child-owned process group rather than only its leader.
+pub mod process_group {
+    #[cfg(target_os = "linux")]
+    use std::fs;
+    use std::io;
+    use std::os::unix::process::CommandExt;
+    use std::process::Command;
+
+    pub const SIGTERM: i32 = 15;
+    pub const SIGKILL: i32 = 9;
+
+    /// Makes `command` the leader of a new process group before exec.
+    pub fn configure(command: &mut Command) {
+        command.process_group(0);
+    }
+
+    /// Sends `signal` to every process in the group whose id is `leader`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the process identifier cannot be represented by
+    /// the platform API or the signal cannot be delivered.
+    pub fn signal(leader: u32, signal: i32) -> io::Result<()> {
+        let leader = i32::try_from(leader)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "process id is too large"))?;
+        // SAFETY: a negative pid is the documented `kill(2)` process-group
+        // form. The caller created this group and supplies its leader.
+        if unsafe { libc::kill(-leader, signal) } < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Signals every process still attached to a child-created session.
+    ///
+    /// Terminal job control may place foreground jobs in process groups other
+    /// than the shell's. Linux exposes the session id in `/proc`, so closing a
+    /// hosted terminal can include those jobs rather than only its shell.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the process table cannot be read and no
+    /// process-group fallback can be signalled.
+    pub fn signal_session(leader: u32, signal_number: i32) -> io::Result<()> {
+        #[cfg(target_os = "linux")]
+        {
+            let mut found = false;
+            for entry in fs::read_dir("/proc")? {
+                let Ok(entry) = entry else { continue };
+                let Some(pid) = entry
+                    .file_name()
+                    .to_str()
+                    .and_then(|name| name.parse::<u32>().ok())
+                else {
+                    continue;
+                };
+                let Ok(stat) = fs::read_to_string(entry.path().join("stat")) else {
+                    continue;
+                };
+                let Some(after_name) = stat.rsplit_once(") ").map(|(_, fields)| fields) else {
+                    continue;
+                };
+                let session = after_name
+                    .split_whitespace()
+                    .nth(3)
+                    .and_then(|field| field.parse::<u32>().ok());
+                if session != Some(leader) {
+                    continue;
+                }
+                found = true;
+                let Ok(pid) = i32::try_from(pid) else {
+                    continue;
+                };
+                // SAFETY: `pid` was read from procfs and kill takes it by value.
+                let _ignored = unsafe { libc::kill(pid, signal_number) };
+            }
+            if found {
+                Ok(())
+            } else {
+                signal(leader, signal_number)
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            signal(leader, signal_number)
+        }
+    }
+}
+
+#[cfg(test)]
+mod process_group_tests {
+    use std::process::Command;
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn signalling_a_group_stops_a_child_that_started_another_process() {
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "sleep 30 & wait"]);
+        super::process_group::configure(&mut command);
+        let mut child = command.spawn().expect("start a process group");
+        super::process_group::signal(child.id(), super::process_group::SIGTERM)
+            .expect("stop the process group");
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline {
+            if child.try_wait().expect("poll child").is_some() {
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        let _ignored = super::process_group::signal(child.id(), super::process_group::SIGKILL);
+        let _ignored = child.wait();
+        panic!("the process-group leader survived SIGTERM");
+    }
+}
+
 /// A pseudo-terminal: the only way this platform runs another program and both
 /// sees what it printed and answers it.
 ///
@@ -789,9 +1139,13 @@ pub mod pty {
         /// Returns the error from signalling or waiting, except for a program
         /// that had already exited, which is success.
         pub fn close(&mut self) -> io::Result<()> {
-            if self.child.try_wait()?.is_none() {
-                self.child.kill()?;
-            }
+            let _status = self.child.try_wait()?;
+            // Always sweep the session: the shell leader may already have
+            // exited after leaving a foreground or background job behind.
+            let _ignored = super::process_group::signal_session(
+                self.child.id(),
+                super::process_group::SIGKILL,
+            );
             self.child.wait()?;
             Ok(())
         }
@@ -954,8 +1308,8 @@ mod tests {
 
         // Sending it to ourselves is the whole point: if the handler were not
         // installed this call would end the test process.
-        super::process::signal(std::process::id().cast_signed(), stop::SIGTERM)
-            .expect("signal this process");
+        let pid = i32::try_from(std::process::id()).expect("test process id fits in i32");
+        super::process::signal(pid, stop::SIGTERM).expect("signal this process");
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while stop::requested().is_none() && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(5));

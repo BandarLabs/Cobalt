@@ -381,7 +381,7 @@ impl ScreenBuilder {
     ///
     /// Labels share one column measured across every entry at once, so the
     /// values line up; the column is capped so one long label cannot squeeze
-    /// every value into a gutter. Entries past [`MAX_FACTS`] are dropped and
+    /// every value into a gutter. Entries past `MAX_FACTS` are dropped and
     /// reported by [`Screen::validate`], rather than silently set and clipped.
     #[must_use]
     pub fn facts<I, K, V>(mut self, entries: I) -> Self

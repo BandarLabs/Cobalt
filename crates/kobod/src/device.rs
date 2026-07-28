@@ -41,7 +41,7 @@ use kobo_hal::touch::TouchEvent;
 use kobo_hal::{Rect, RefreshIntent, RefreshPlan, RegionSnapshot};
 use kobo_policy::{Backends, Capability, Declared, DeviceServices, PowerPolicy, TaskRunner};
 use kobo_profile::{DeviceProfile, CLARA_BW_391};
-use kobo_protocol::{Frame, Lifecycle, Message, TaskError, TaskOutcome};
+use kobo_protocol::{Credential, Frame, Lifecycle, Message, SecretHeader, TaskError, TaskOutcome};
 use kobo_ui::{
     display_metrics_from_env, render_all, ActionId, Chrome, FramePlanner, PanelWaveform,
     PictureCache, Screen, Surface,
@@ -81,6 +81,35 @@ const STATE_ROOT: &str = "/mnt/onboard/.adds/cobalt/state";
 /// plugged in -- not one of the internal partitions the firmware lives on.
 /// Nothing here can stop the device booting.
 const DATA_ROOT: &str = "/mnt/onboard/.adds/cobalt/data";
+
+/// Whether a shipped application may attach one named secret to this URL.
+///
+/// The application selects a service, but the runtime independently binds the
+/// secret, header convention and HTTPS origin. A modified application can no
+/// longer turn a stored credential into a POST to an address it controls.
+fn credential_allowed(app: &str, credential: &Credential, url: &str) -> bool {
+    if app != "chat" {
+        return false;
+    }
+    match (&*credential.secret, &credential.header) {
+        ("openai", SecretHeader::Bearer) => {
+            url == "https://api.openai.com/v1/chat/completions"
+                && kobo_net::has_origin(url, "api.openai.com", 443)
+        }
+        ("anthropic", SecretHeader::Named(header)) => {
+            header.eq_ignore_ascii_case("x-api-key")
+                && url == "https://api.anthropic.com/v1/messages"
+                && kobo_net::has_origin(url, "api.anthropic.com", 443)
+        }
+        ("gemini", SecretHeader::Named(header)) => {
+            header.eq_ignore_ascii_case("x-goog-api-key")
+                && url
+                    == "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+                && kobo_net::has_origin(url, "generativelanguage.googleapis.com", 443)
+        }
+        _ => false,
+    }
+}
 /// The panel metrics a screen is drawn and hit-tested with.
 ///
 /// A screen may ask for a text size other than the reader's own, a reader
@@ -568,6 +597,8 @@ struct Hosted {
     id: u64,
     name: String,
     path: PathBuf,
+    /// Root-owned filesystem visible to this application on the device.
+    jail: Option<PathBuf>,
     child: Child,
     stream: std::os::unix::net::UnixStream,
     store: kobo_policy::store::Store,
@@ -590,6 +621,70 @@ struct Hosted {
     painted: u32,
     /// When this was last on the panel, for deciding what to stop first.
     used: Instant,
+}
+
+struct AppLaunch {
+    listener: std::os::unix::net::UnixListener,
+    socket_path: PathBuf,
+    child_socket: PathBuf,
+    program: PathBuf,
+    jail: Option<PathBuf>,
+    sandbox: Option<kobo_abi::sandbox::Sandbox>,
+}
+
+impl AppLaunch {
+    fn prepare(path: &Path, id: u64) -> Result<Self, String> {
+        if kobo_abi::sandbox::is_root() {
+            return Self::sandboxed(path, id);
+        }
+        let socket_path =
+            std::env::temp_dir().join(format!("kobo-session-{}-{id}.sock", std::process::id()));
+        let _ignored = fs::remove_file(&socket_path);
+        let listener = std::os::unix::net::UnixListener::bind(&socket_path)
+            .map_err(|error| format!("bind application socket: {error}"))?;
+        Ok(Self {
+            listener,
+            child_socket: socket_path.clone(),
+            socket_path,
+            program: path.to_path_buf(),
+            jail: None,
+            sandbox: None,
+        })
+    }
+
+    fn sandboxed(path: &Path, id: u64) -> Result<Self, String> {
+        let root = std::env::temp_dir().join(format!("kobo-app-{}-{id}", std::process::id()));
+        fs::create_dir(&root)
+            .map_err(|error| format!("create application sandbox {}: {error}", root.display()))?;
+        let prepared = (|| -> Result<Self, String> {
+            fs::set_permissions(&root, fs::Permissions::from_mode(0o755))
+                .map_err(|error| format!("protect application sandbox: {error}"))?;
+            let program = root.join("app");
+            fs::copy(path, &program)
+                .map_err(|error| format!("copy {} into sandbox: {error}", path.display()))?;
+            fs::set_permissions(&program, fs::Permissions::from_mode(0o555))
+                .map_err(|error| format!("protect sandboxed application: {error}"))?;
+            let socket_path = root.join("runtime.sock");
+            let listener = std::os::unix::net::UnixListener::bind(&socket_path)
+                .map_err(|error| format!("bind sandbox application socket: {error}"))?;
+            fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o666))
+                .map_err(|error| format!("make sandbox socket connectable: {error}"))?;
+            let sandbox = kobo_abi::sandbox::Sandbox::new(&root)
+                .map_err(|error| format!("prepare application sandbox: {error}"))?;
+            Ok(Self {
+                listener,
+                socket_path,
+                child_socket: PathBuf::from("/runtime.sock"),
+                program: PathBuf::from("/app"),
+                jail: Some(root.clone()),
+                sandbox: Some(sandbox),
+            })
+        })();
+        if prepared.is_err() {
+            let _ignored = fs::remove_dir_all(&root);
+        }
+        prepared
+    }
 }
 
 impl Hosted {
@@ -637,11 +732,6 @@ fn host_applications(
         .parent()
         .map_or_else(|| PathBuf::from("/tmp"), Path::to_path_buf);
     let home = application.to_path_buf();
-    let socket_path = PathBuf::from(format!("/tmp/kobo-session-{}.sock", std::process::id()));
-    let _ignored = fs::remove_file(&socket_path);
-    let listener = std::os::unix::net::UnixListener::bind(&socket_path)
-        .map_err(|error| format!("bind application socket: {error}"))?;
-
     let (sender, events) = mpsc::channel();
     touch.set(Some(sender.clone()));
 
@@ -700,14 +790,7 @@ fn host_applications(
     }
 
     let result = (|| -> Result<String, String> {
-        let front = start_application(
-            &mut apps,
-            &mut next_id,
-            &home,
-            &listener,
-            whole_screen,
-            &sender,
-        )?;
+        let front = start_application(&mut apps, &mut next_id, &home, whole_screen, &sender)?;
         let mut front = front;
         let mut visited: Vec<String> = Vec::new();
         let ceiling = Instant::now() + limits.ceiling;
@@ -1150,7 +1233,6 @@ fn host_applications(
                                 &mut next_id,
                                 &catalogue,
                                 &wanted,
-                                &listener,
                                 whole_screen,
                                 &sender,
                                 front,
@@ -1226,7 +1308,6 @@ fn host_applications(
     for app in apps {
         stop_hosted(app);
     }
-    let _ignored = fs::remove_file(&socket_path);
     result
 }
 
@@ -1315,7 +1396,6 @@ fn open_application(
     next_id: &mut u64,
     catalogue: &Path,
     name: &str,
-    listener: &std::os::unix::net::UnixListener,
     whole_screen: Rect,
     sender: &Sender<Event>,
     front: u64,
@@ -1327,7 +1407,7 @@ fn open_application(
     if apps.len() >= MAX_HOSTED {
         evict(apps, front);
     }
-    start_application(apps, next_id, &path, listener, whole_screen, sender)
+    start_application(apps, next_id, &path, whole_screen, sender)
 }
 
 /// Stops whichever background application has been left alone longest.
@@ -1362,43 +1442,72 @@ fn start_application(
     apps: &mut Vec<Hosted>,
     next_id: &mut u64,
     path: &Path,
-    listener: &std::os::unix::net::UnixListener,
     whole_screen: Rect,
     sender: &Sender<Event>,
 ) -> Result<u64, String> {
-    let socket_path = listener
-        .local_addr()
-        .ok()
-        .and_then(|address| address.as_pathname().map(Path::to_path_buf))
-        .ok_or_else(|| "the application socket has no path".to_owned())?;
-    let mut child = Command::new(path)
+    let expected_name = installed_name(path)?;
+    let launch = AppLaunch::prepare(path, *next_id)?;
+    let AppLaunch {
+        listener,
+        socket_path,
+        child_socket,
+        program,
+        jail,
+        sandbox,
+    } = launch;
+    let mut command = Command::new(&program);
+    command
         .env_clear()
-        .env("KOBO_SOCKET", &socket_path)
+        .env("KOBO_SOCKET", &child_socket)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|error| format!("start {}: {error}", path.display()))?;
-    let (stream, name) = match greet(listener, whole_screen) {
+        .stderr(Stdio::null());
+    if let Some(sandbox) = sandbox {
+        sandbox.configure(&mut command);
+    } else {
+        kobo_abi::process_group::configure(&mut command);
+    }
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            let _ignored = fs::remove_file(&socket_path);
+            if let Some(root) = &jail {
+                let _ignored = fs::remove_dir_all(root);
+            }
+            return Err(format!("start {}: {error}", path.display()));
+        }
+    };
+    let greeting = greet(&listener, whole_screen, &expected_name);
+    drop(listener);
+    let _ignored = fs::remove_file(&socket_path);
+    let (stream, name) = match greeting {
         Ok(greeting) => greeting,
         Err(error) => {
-            let _ignored = child.kill();
-            let _ignored = child.wait();
+            stop_application(&mut child, jail.as_deref());
+            if let Some(root) = &jail {
+                let _ignored = fs::remove_dir_all(root);
+            }
             return Err(error);
         }
     };
     let id = *next_id;
     *next_id += 1;
     if let Err(error) = pump_application(&stream, sender, id) {
-        let _ignored = child.kill();
-        let _ignored = child.wait();
+        stop_application(&mut child, jail.as_deref());
+        if let Some(root) = &jail {
+            let _ignored = fs::remove_dir_all(root);
+        }
         return Err(error);
     }
     let waker = sender.clone();
+    let credential_app = name.clone();
     let tasks = TaskRunner::simulated(std::env::temp_dir())
         .with_fetch(Arc::new(kobo_net::fetch_from))
         .with_post(Arc::new(kobo_net::post))
         .with_secrets(SECRETS)
+        .with_credential_policy(Arc::new(move |credential, url| {
+            credential_allowed(&credential_app, credential, url)
+        }))
         .with_wake(Arc::new(move || {
             let _ = waker.send(Event::TaskReady);
         }))
@@ -1434,6 +1543,7 @@ fn start_application(
         shelf: kobo_policy::shelf::Shelf::new(Path::new(DATA_ROOT).join(&name)),
         name,
         path: path.to_path_buf(),
+        jail,
         child,
         stream,
         tasks,
@@ -1448,7 +1558,10 @@ fn start_application(
 /// Ends one hosted application and everything it started.
 fn stop_hosted(mut app: Hosted) {
     app.tasks.shutdown();
-    stop_application(&mut app.child);
+    stop_application(&mut app.child, app.jail.as_deref());
+    if let Some(root) = app.jail {
+        let _ignored = fs::remove_dir_all(root);
+    }
 }
 
 /// Refuses a session that cannot possibly succeed, while it is still free.
@@ -1483,12 +1596,7 @@ fn preflight(application: &Path) -> Result<(), String> {
 /// path could start anything on the device, so the catalogue is a directory the
 /// runtime chooses and the name may only select an entry within it.
 fn resolve(catalogue: &Path, name: &str) -> Result<PathBuf, String> {
-    let sane = !name.is_empty()
-        && name.len() <= 32
-        && name.chars().all(|character| {
-            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
-        });
-    if !sane {
+    if !valid_application_name(name) {
         return Err(format!("{name:?} is not a valid application name"));
     }
     let path = catalogue.join(format!("kobo-{name}"));
@@ -1497,6 +1605,27 @@ fn resolve(catalogue: &Path, name: &str) -> Result<PathBuf, String> {
     } else {
         Err(format!("no application named {name} is installed"))
     }
+}
+
+fn valid_application_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 32
+        && name.chars().all(|character| {
+            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
+        })
+}
+
+/// The identity attached to an installed binary by its catalogue entry.
+fn installed_name(path: &Path) -> Result<String, String> {
+    let file = path
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .ok_or_else(|| format!("{} has no UTF-8 file name", path.display()))?;
+    let name = file
+        .strip_prefix("kobo-")
+        .filter(|name| valid_application_name(name))
+        .ok_or_else(|| format!("{} is not an installed application name", path.display()))?;
+    Ok(name.to_owned())
 }
 
 /// How long a finger must stay down for a touch to count as a hold.
@@ -1514,22 +1643,36 @@ const HOLD_TIME: Duration = Duration::from_millis(500);
 const HOLD_SLIP: i32 = 40;
 
 /// Ends the application, politely if it has already finished and firmly if not.
-fn stop_application(child: &mut Child) {
+fn stop_application(child: &mut Child, jail: Option<&Path>) {
+    let group = child.id();
+    let _ignored = kobo_abi::process_group::signal(group, kobo_abi::process_group::SIGTERM);
+    if let Some(root) = jail {
+        let _ignored = kobo_abi::sandbox::signal(root, kobo_abi::process_group::SIGTERM);
+    }
     let deadline = Instant::now() + APP_STOP_GRACE;
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => return,
-            Ok(None) => {}
-            Err(_) => break,
-        }
+    while let Ok(None) = child.try_wait() {
         if Instant::now() >= deadline {
             break;
         }
         thread::sleep(Duration::from_millis(50));
     }
-    // Nothing an application started may outlive the session.
-    let _ignored = child.kill();
-    let _ignored = child.wait();
+    // The process-group signal handles normal and development-host launches.
+    // The chroot sweep is a second identity on device: it catches a descendant
+    // even on a kernel too old to install the filter that prevents spawning it.
+    let _ignored = kobo_abi::process_group::signal(group, kobo_abi::process_group::SIGKILL);
+    if let Some(root) = jail {
+        // Repeated because a legacy-kernel process could fork while the first
+        // procfs scan was in progress. Current kernels deny clone in seccomp.
+        for _ in 0..3 {
+            if kobo_abi::sandbox::signal(root, kobo_abi::process_group::SIGKILL).ok() == Some(0) {
+                break;
+            }
+            thread::yield_now();
+        }
+    }
+    if child.try_wait().ok().flatten().is_none() {
+        let _ignored = child.wait();
+    }
 }
 
 /// Resolves a touch to the action it activates, if any.
@@ -1591,6 +1734,7 @@ fn trace_picture_evictions(handle: kobo_ui::PictureHandle, evicted: &[kobo_ui::P
 fn greet(
     listener: &std::os::unix::net::UnixListener,
     whole_screen: Rect,
+    expected_name: &str,
 ) -> Result<(std::os::unix::net::UnixStream, String), String> {
     let (mut stream, _) = listener
         .accept()
@@ -1600,6 +1744,11 @@ fn greet(
     let Message::Hello { name } = hello.message else {
         return Err("the first application message must be Hello".to_owned());
     };
+    if name != expected_name {
+        return Err(format!(
+            "application identity mismatch: launched {expected_name:?}, but it said {name:?}"
+        ));
+    }
     kobo_protocol::write_to(
         &mut stream,
         &Frame {
@@ -2170,6 +2319,37 @@ mod tests {
             resolve(&directory, "hello").expect("hello is installed"),
             directory.join("kobo-hello")
         );
+    }
+
+    #[test]
+    fn a_binary_name_is_the_identity_the_handshake_must_use() {
+        let path = catalogue().join("kobo-hello");
+        assert_eq!(super::installed_name(&path).as_deref(), Ok("hello"));
+        for path in ["hello", "kobo-Terminal", "kobo-../terminal", "kobo-"] {
+            assert!(super::installed_name(std::path::Path::new(path)).is_err());
+        }
+    }
+
+    #[test]
+    fn chat_credentials_are_bound_to_their_exact_service() {
+        use kobo_protocol::Credential;
+
+        let openai = Credential::bearer("openai");
+        assert!(super::credential_allowed(
+            "chat",
+            &openai,
+            "https://api.openai.com/v1/chat/completions"
+        ));
+        for (app, url) in [
+            ("other", "https://api.openai.com/v1/chat/completions"),
+            (
+                "chat",
+                "https://api.openai.com.attacker.invalid/v1/chat/completions",
+            ),
+            ("chat", "https://attacker.invalid/collect"),
+        ] {
+            assert!(!super::credential_allowed(app, &openai, url));
+        }
     }
 
     #[test]

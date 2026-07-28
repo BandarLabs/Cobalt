@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "Application SDK for declarative Kobo E Ink applications"
+documentation = "https://docs.rs/kobo-sdk"
 
 [features]
 # On by default, because an application that measures text with different type
@@ -13,11 +16,10 @@ default = ["text"]
 text = ["dep:kobo-text"]
 
 [dependencies]
-kobo-policy = { path = "../kobo-policy" }
-kobo-protocol = { path = "../kobo-protocol" }
-kobo-text = { path = "../kobo-text", optional = true }
-kobo-ui = { path = "../kobo-ui" }
+kobo-policy = { version = "0.1.0", path = "../kobo-policy" }
+kobo-protocol = { version = "0.1.0", path = "../kobo-protocol" }
+kobo-text = { version = "0.1.0", path = "../kobo-text", optional = true }
+kobo-ui = { version = "0.1.0", path = "../kobo-ui" }
 
 [lints]
 workspace = true
-

@@ -185,6 +185,17 @@ pub struct Listed {
     pub kind: u8,
 }
 
+fn safe_archive_path(path: &str) -> bool {
+    let path = path.strip_suffix('/').unwrap_or(path);
+    !path.is_empty()
+        && path
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'.' | b'_' | b'-'))
+        && !path
+            .split('/')
+            .any(|component| component.is_empty() || component == "." || component == "..")
+}
+
 /// Reads an archive back, so a package can be inspected rather than trusted.
 ///
 /// # Errors
@@ -203,6 +214,9 @@ pub fn list(archive: &[u8]) -> Result<Vec<Listed>, String> {
         }
         verify_checksum(block)?;
         let path = read_string(&block[0..100]);
+        if !safe_archive_path(&path) {
+            return Err(format!("{path:?} is not a safe relative archive path"));
+        }
         let mode = u32::try_from(read_octal(&block[100..108])?)
             .map_err(|_| format!("{path:?} has an implausible mode"))?;
         let size = usize::try_from(read_octal(&block[124..136])?)
@@ -212,13 +226,23 @@ pub fn list(archive: &[u8]) -> Result<Vec<Listed>, String> {
             return Err(format!("{path:?} is not a plain file or directory"));
         }
         entries.push(Listed {
-            path,
+            path: path.clone(),
             size,
             mode,
             kind,
         });
         let payload = if kind == b'5' { 0 } else { size };
-        offset += BLOCK + payload.div_ceil(BLOCK) * BLOCK;
+        let occupied = payload
+            .div_ceil(BLOCK)
+            .checked_mul(BLOCK)
+            .and_then(|payload| BLOCK.checked_add(payload))
+            .ok_or_else(|| format!("{path:?} has an overflowing size"))?;
+        offset = offset
+            .checked_add(occupied)
+            .ok_or_else(|| format!("{path:?} has an overflowing offset"))?;
+        if offset > archive.len() {
+            return Err(format!("{path:?} is truncated"));
+        }
     }
     if entries.is_empty() {
         return Err("the archive contains nothing".to_owned());
@@ -301,7 +325,7 @@ fn set_executable(path: &PathBuf) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{check, list, tar, write_folder, Member, INSTALL_ROOT};
+    use super::{check, header, list, tar, write_folder, Member, BLOCK, INSTALL_ROOT};
 
     fn member(name: &str, bytes: &[u8]) -> Member {
         Member {
@@ -349,6 +373,22 @@ mod tests {
             assert!(check(&members).is_err(), "{path} was accepted");
             assert!(tar(&members).is_err(), "{path} was packaged");
         }
+    }
+
+    #[test]
+    fn an_archive_read_from_disk_cannot_hide_traversal_beneath_the_install_prefix() {
+        let path = format!("{INSTALL_ROOT}/../../../../etc/passwd");
+        let mut archive = header(&path, 1, b'0', 0o644).to_vec();
+        archive.extend_from_slice(b"x");
+        archive.resize(BLOCK * 2, 0);
+        assert!(list(&archive).is_err());
+    }
+
+    #[test]
+    fn an_archive_member_must_be_complete() {
+        let path = format!("{INSTALL_ROOT}/large");
+        let archive = header(&path, BLOCK * 4, b'0', 0o644);
+        assert!(list(&archive).is_err());
     }
 
     #[test]

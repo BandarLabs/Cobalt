@@ -258,7 +258,8 @@ pub fn install_script(encoded_archive: &str, checksum: &str) -> String {
         "set -eu\n\
          umask 022\n\
          archive=/tmp/kobo-deploy.tgz\n\
-         cleanup() {{ rm -f \"$archive\"; }}\n\
+         listing=/tmp/kobo-deploy.list\n\
+         cleanup() {{ rm -f \"$archive\" \"$listing\"; }}\n\
          trap cleanup EXIT HUP INT TERM\n\
          if [ -n \"$(ps | grep '[k]obod' || true)\" ]; then\n\
            echo 'a Cobalt session is running on the device; exit it first' >&2\n\
@@ -273,13 +274,15 @@ pub fn install_script(encoded_archive: &str, checksum: &str) -> String {
            exit 1\n\
          fi\n\
          gzip -t \"$archive\"\n\
-         for path in $(tar ztf \"$archive\"); do\n\
+         tar ztf \"$archive\" > \"$listing\"\n\
+         while IFS= read -r path; do\n\
            case \"$path\" in\n\
+             /*|../*|*/../*|*/..|./*|*/./*|*/.|*//*) echo \"unsafe package path: $path\" >&2; exit 1 ;;\n\
              {root}/*) ;;\n\
              mnt/|mnt/onboard/|mnt/onboard/.adds/|{root}/) ;;\n\
              *) echo \"package would write outside {INSTALL_DIRECTORY}: $path\" >&2; exit 1 ;;\n\
            esac\n\
-         done\n\
+         done < \"$listing\"\n\
          tar zxf \"$archive\" -C /\n\
          sync\n\
          echo \"installed=$(cat '{INSTALL_DIRECTORY}/VERSION' 2>/dev/null || echo unknown)\"\n\

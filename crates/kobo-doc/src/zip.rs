@@ -57,7 +57,7 @@ pub enum Fault {
     Damaged,
     /// Stored with something other than *stored* or *deflate*.
     Unsupported,
-    /// Claims to unpack to more than [`MAX_UNPACKED`].
+    /// Claims to unpack to more than `MAX_UNPACKED`.
     TooLarge,
 }
 
@@ -155,7 +155,7 @@ impl<'a> Archive<'a> {
     /// [`Fault::Damaged`] when the member is not there or its header does not
     /// lead to its data, [`Fault::Unsupported`] for a compression method this
     /// does not know, and [`Fault::TooLarge`] when it claims to unpack past
-    /// [`MAX_UNPACKED`].
+    /// `MAX_UNPACKED`.
     pub fn read(&self, name: &str) -> Result<Vec<u8>, Fault> {
         let entry = *self.entries.get(&normalise(name)).ok_or(Fault::Damaged)?;
         if entry.unpacked > MAX_UNPACKED {

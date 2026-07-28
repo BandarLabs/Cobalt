@@ -781,18 +781,18 @@ icons, twenty-odd UI primitives, keyed storage that survives a restart, several
 applications running at once with a background lifecycle, a terminal, a browser
 simulator sharing the same renderer, a bounded protocol, application launching
 with runtime-owned Back, a reproducible package an owner installs over USB, and
-a CLI. 542 tests, no clippy warnings, statically
-linked ARMv7 binaries with no device-side dependencies, `rustup target add` is
-the entire setup.
+a CLI. Device binaries remain statically linked; the maintained TLS provider
+also requires an ARM C compiler during the host build.
 
 Confirmed on the panel: applications launch, their controls work, Back returns
 to the launcher.
 
 Not done, and not pretended otherwise:
 
-- **Isolation.** Applications currently run as root. Per-application UID,
-  capability dropping, and the tests that prove an application *cannot* reach
-  the framebuffer are the single biggest gap to production.
+- **Isolation.** Device applications now run in a root-owned chroot as UID/GID
+  65534 with supplementary groups removed, `no_new_privs`, direct networking
+  and process creation denied, plus process-group and chroot sweeps on exit.
+  The terminal's root shell remains an explicit runtime-hosted capability.
 - **Manifests, rollback and self-update.** There is a package and an install
   path, but no manifest, no version negotiation, no rollback, and no way for a
   device to update itself. Since the install folder is executable, self-update

@@ -1844,14 +1844,14 @@ fn remote_session_failure(
     result
 }
 
-/// Where the key `kobo setup` installs on the reader is kept on this machine.
+/// Where an owner may keep a dedicated key for a reader they secured.
 ///
 /// A name of its own rather than `id_ed25519`, so that setting up a reader
 /// never touches whatever key somebody already uses for everything else.
 pub const DEVICE_KEY_NAME: &str = "kobo_cobalt";
 
-/// The path to that key, or `None` when this machine has no home directory or
-/// the key has not been made yet.
+/// `kobo setup` does not create or install this key: firmware SSH is an
+/// explicit opt-in and its authentication must be configured by the owner.
 #[must_use]
 pub fn device_key_path() -> Option<PathBuf> {
     let home = std::env::var_os("HOME")?;
@@ -2121,6 +2121,31 @@ fn build_package_bytes() -> Result<BuiltPackage, String> {
     members.push(text_member("start.sh", START_SCRIPT, true));
     members.push(text_member("README.txt", INSTALL_README, false));
     members.push(text_member(
+        "LICENSE",
+        include_str!("../../../LICENSE"),
+        false,
+    ));
+    members.push(text_member(
+        "THIRD-PARTY.md",
+        include_str!("../../../THIRD-PARTY.md"),
+        false,
+    ));
+    members.push(text_member(
+        "licenses/LICENSE-Rust-dependencies.txt",
+        include_str!("../../../licenses/LICENSE-Rust-dependencies.txt"),
+        false,
+    ));
+    members.push(text_member(
+        "licenses/LICENSE-AtkinsonHyperlegible.txt",
+        include_str!("../../kobo-text/fonts/LICENSE-AtkinsonHyperlegible.txt"),
+        false,
+    ));
+    members.push(text_member(
+        "licenses/LICENSE-DejaVu.txt",
+        include_str!("../../kobo-text/fonts/LICENSE-DejaVu.txt"),
+        false,
+    ));
+    members.push(text_member(
         "VERSION",
         &format!("{}\n", env!("CARGO_PKG_VERSION")),
         false,
@@ -2191,6 +2216,7 @@ enum MenuEntry {
 
 /// How `kobo setup` was asked to run.
 #[derive(Debug)]
+#[allow(clippy::struct_excessive_bools)]
 struct SetupOptions {
     volume: Option<PathBuf>,
     mode: SetupMode,
@@ -2198,6 +2224,7 @@ struct SetupOptions {
     eject: bool,
     dry_run: bool,
     wait: bool,
+    enable_ssh: bool,
 }
 
 fn parse_setup(arguments: &[String]) -> Result<SetupOptions, String> {
@@ -2208,6 +2235,7 @@ fn parse_setup(arguments: &[String]) -> Result<SetupOptions, String> {
         eject: true,
         dry_run: false,
         wait: true,
+        enable_ssh: false,
     };
     let mut index = 0;
     while index < arguments.len() {
@@ -2223,12 +2251,13 @@ fn parse_setup(arguments: &[String]) -> Result<SetupOptions, String> {
             "--no-eject" => options.eject = false,
             "--no-wait" => options.wait = false,
             "--no-menu" => options.menu = MenuEntry::Skip,
+            "--enable-ssh" => options.enable_ssh = true,
             "--dry-run" => options.dry_run = true,
             other => {
                 return Err(format!(
                     "unknown option '{other}'\n\
-                     usage: kobo setup [--volume PATH] [--undo] [--no-eject] [--no-wait] \
-                     [--no-menu] [--dry-run]"
+                     usage: kobo setup [--volume PATH] [--undo] [--enable-ssh] [--no-eject] \
+                     [--no-wait] [--no-menu] [--dry-run]"
                 ))
             }
         }
@@ -2290,7 +2319,10 @@ fn setup_device(arguments: &[String]) -> Result<(), String> {
     let built = build_package_bytes()?;
     let installed = setup::write_payload(&built.members, &reader.volume)?;
     setup::verify_payload(&built.members, &reader.volume)?;
-    let ssh = setup::enable_ssh(&reader.volume)?;
+    let ssh = options
+        .enable_ssh
+        .then(|| setup::enable_ssh(&reader.volume))
+        .transpose()?;
     let settings = setup::apply_settings(&reader.volume)?;
     let menu = (options.menu == MenuEntry::Add).then(|| add_menu_entry(&reader.volume));
     let ejected = ejected_or_explained(&reader.volume, options.eject);
@@ -2298,13 +2330,13 @@ fn setup_device(arguments: &[String]) -> Result<(), String> {
     // A reader that was never ejected has not seen the install and will not be
     // restarted into it, so there is nothing to wait for.
     let subnet = connect::local_subnet();
-    let waiting = options.wait && ejected && subnet.is_some();
+    let waiting = options.enable_ssh && options.wait && ejected && subnet.is_some();
 
     print!(
         "{}",
         setup::Report {
             installed,
-            ssh: Some(ssh),
+            ssh,
             settings,
             menu,
             ejected,
@@ -2432,14 +2464,22 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
     }
     format!(
         "would install Cobalt into {}/{}\n\
-         would enable the firmware's SSH server by renaming {}\n\
+         {}\n\
          would set {keys}\n\
          {}\n\
          would eject, then {}\n\
          nothing outside the book partition{}",
         reader.volume.display(),
         setup::INSTALL_FOLDER,
-        setup::SSH_DISABLED,
+        if options.enable_ssh {
+            format!(
+                "would enable the firmware's root SSH server by renaming {}; this is explicit because firmware authentication must be secured separately",
+                setup::SSH_DISABLED
+            )
+        } else {
+            "would leave the firmware's SSH server disabled (pass --enable-ssh to opt in)"
+                .to_owned()
+        },
         if options.menu == MenuEntry::Add {
             format!(
                 "would write a Cobalt entry to {}, and stage NickelMenu {} in {}\n\
@@ -2453,8 +2493,10 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
         } else {
             "would add no menu entry, because --no-menu was given".to_owned()
         },
-        if options.wait {
+        if options.enable_ssh && options.wait {
             "wait for the restarted reader to appear on the network"
+        } else if !options.enable_ssh {
+            "stop after ejecting, because SSH was not enabled"
         } else {
             "stop, because --no-wait was given"
         },
@@ -2691,11 +2733,12 @@ fn parse_deploy(arguments: &[String]) -> Result<(&str, Option<PathBuf>), String>
 /// extracts as root. The directories leading down to the root are allowed,
 /// since an archive has to create them to create anything inside them.
 fn members_outside_install_root(listed: &[package::Listed]) -> Vec<String> {
-    let root = format!("{}/", package::INSTALL_ROOT);
+    let root = Path::new(package::INSTALL_ROOT);
     listed
         .iter()
         .filter(|entry| {
-            !(entry.path.starts_with(&root) || root.starts_with(entry.path.trim_end_matches('/')))
+            let path = Path::new(entry.path.trim_end_matches('/'));
+            !(path.starts_with(root) || root.starts_with(path))
         })
         .map(|entry| entry.path.clone())
         .collect()
@@ -3577,8 +3620,8 @@ fn print_help() {
            touch-probe --device IP [--seconds N]  Watch touch read-only to check the transform\n\
            guard-test --device IP --confirm ...   Prove the guardian restores the screen\n\
            package [--out PATH] [--folder PATH]  Build the KoboRoot.tgz an owner copies\n\
-           setup [--volume PATH] [--undo]  Prepare a reader over USB: install, enable SSH,\n\
-                                   set the sleep timer, eject, then wait for it to return\n\
+           setup [--volume PATH] [--undo] [--enable-ssh]  Prepare a reader over USB;\n\
+                                   root SSH is an explicit opt-in\n\
            deploy --device IP [--package PATH]   Install over Wi-Fi, no reboot\n\
            secret set <name> [--from PATH] --device IP   Install a credential an app can name\n\
            secret list --device IP   Name the installed credentials, never their values\n\
@@ -4277,16 +4320,19 @@ mod tests {
             .map(|argument| argument.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
         assert_eq!(
-            ssh_args,
-            [
-                "-T",
-                "-o",
-                "BatchMode=yes",
-                "-o",
-                "ConnectTimeout=10",
-                "root@192.0.2.1"
-            ]
+            &ssh_args[..5],
+            ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
         );
+        assert!(matches!(ssh_args.len(), 6 | 8), "{ssh_args:?}");
+        if ssh_args.len() == 8 {
+            assert_eq!(ssh_args[5], "-i");
+            assert_eq!(
+                PathBuf::from(&ssh_args[6])
+                    .file_name()
+                    .and_then(|name| name.to_str()),
+                Some(super::DEVICE_KEY_NAME)
+            );
+        }
         assert_eq!(ssh_args.last().expect("remote host"), "root@192.0.2.1");
         let checksum = "a".repeat(64);
         let encoded = super::base64_encode(b"fixed artifact");
@@ -4542,6 +4588,7 @@ mod tests {
             assert!(parsed.eject);
             assert!(parsed.wait);
             assert!(!parsed.dry_run);
+            assert!(!parsed.enable_ssh);
         }
 
         #[test]
@@ -4574,16 +4621,27 @@ mod tests {
             let parsed = parse_setup(&arguments(&["--dry-run"])).expect("parse");
             let plan = dry_run_plan(&parsed, &reader());
             assert!(plan.contains("would install"));
-            assert!(plan.contains(setup::SSH_DISABLED));
-            assert!(plan.contains("wait for the restarted reader"));
+            assert!(plan.contains("leave the firmware's SSH server disabled"));
+            assert!(plan.contains("stop after ejecting"));
             for (section, key, value) in setup::SETTINGS_APPLIED {
                 assert!(plan.contains(&format!("{section}/{key}={value}")), "{plan}");
             }
         }
 
         #[test]
+        fn root_ssh_requires_an_explicit_opt_in() {
+            let parsed = parse_setup(&arguments(&["--enable-ssh", "--dry-run"])).expect("parse");
+            assert!(parsed.enable_ssh);
+            let plan = dry_run_plan(&parsed, &reader());
+            assert!(plan.contains(setup::SSH_DISABLED), "{plan}");
+            assert!(plan.contains("root SSH"), "{plan}");
+            assert!(plan.contains("wait for the restarted reader"), "{plan}");
+        }
+
+        #[test]
         fn a_dry_run_that_will_not_wait_says_so() {
-            let parsed = parse_setup(&arguments(&["--dry-run", "--no-wait"])).expect("parse");
+            let parsed = parse_setup(&arguments(&["--dry-run", "--enable-ssh", "--no-wait"]))
+                .expect("parse");
             assert!(dry_run_plan(&parsed, &reader()).contains("--no-wait was given"));
         }
 

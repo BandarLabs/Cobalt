@@ -51,7 +51,9 @@ fn write(name: &str, screen: &Screen, metrics: &DisplayMetrics) {
     let directory = std::path::Path::new("target/previews");
     std::fs::create_dir_all(directory).expect("make the preview directory");
     let name = directory.join(name);
-    let mut surface = Surface::new(metrics.width as usize, metrics.height as usize);
+    let width = usize::try_from(metrics.width).expect("display width is positive");
+    let height = usize::try_from(metrics.height).expect("display height is positive");
+    let mut surface = Surface::new(width, height);
     render_with(screen, metrics, &Chrome::default(), &mut surface, None);
     let mut out = format!("P5\n{} {}\n255\n", surface.width, surface.height).into_bytes();
     out.extend_from_slice(&surface.pixels);

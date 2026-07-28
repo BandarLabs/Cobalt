@@ -4,7 +4,7 @@
 //! owner can see. It is still among the mildest things the platform does: one
 //! small integer into one sysfs file, held in a register on the light driver
 //! and nowhere else. A reboot restores whatever the stock reader last set, and
-//! so does [`Frontlight::restore`], which is what the runtime calls when a
+//! so does `Frontlight::restore`, which is what the runtime calls when a
 //! session ends.
 //!
 //! # Why the control is discovered rather than named

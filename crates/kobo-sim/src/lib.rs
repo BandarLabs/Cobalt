@@ -1289,7 +1289,6 @@ mod writer_tests {
     fn writing_to_an_application_that_is_not_reading_does_not_block_the_writer() {
         let (ours, theirs) = std::os::unix::net::UnixStream::pair().expect("socket pair");
         // Deliberately never read from.
-        let _theirs = theirs;
         let writer = AppWriter::spawn(ours);
         let frame = Frame {
             request_id: 0,
@@ -1310,6 +1309,7 @@ mod writer_tests {
         waiting
             .recv_timeout(std::time::Duration::from_secs(5))
             .expect("512 frames queued without blocking on the socket");
+        drop(theirs);
     }
 }
 

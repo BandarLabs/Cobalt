@@ -105,7 +105,7 @@ const NAMED: [(&str, &str); 34] = [
 ///
 /// `<p>` becomes a paragraph break, an `<img>` becomes its bracketed `alt`
 /// text, every other tag is removed, and entities are decoded. The result is
-/// what [`kobo_sdk::Context::paginate`] expects: paragraphs separated by a
+/// what `kobo_sdk::Context::paginate` expects: paragraphs separated by a
 /// blank line, with no markup left in them.
 #[must_use]
 pub fn to_text(html: &str) -> String {

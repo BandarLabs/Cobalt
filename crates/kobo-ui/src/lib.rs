@@ -3164,7 +3164,7 @@ impl LayoutKind {
     /// been laid out.
     ///
     /// The one place a laid-out thing is mapped to the action it names.
-    /// [`Layout::hit_control`] is written in terms of this rather than
+    /// `Layout::hit_control` is written in terms of this rather than
     /// repeating the list, because it was repeated once and the copies drifted:
     /// a bar glyph was added to the hit test and not to here, so the front
     /// light popover could not find the control it hung from, quietly became a

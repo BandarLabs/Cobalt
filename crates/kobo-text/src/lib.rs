@@ -1,3 +1,5 @@
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+
 //! Real type for the panel.
 //!
 //! # Why this is a separate crate
@@ -29,7 +31,7 @@
 //! advance leaves `i` swimming in space and `m` touching its neighbours, and a
 //! terminal is precisely where column alignment carries meaning.
 //!
-//! So this one face travels with us. DejaVu Sans Mono is redistributable, and
+//! So this one face travels with us. `DejaVu Sans Mono` is redistributable, and
 //! its licence is shipped beside it in `fonts/`. It also covers the box-drawing
 //! block, which is what stops a full-screen program drawing its frame as a
 //! column of question marks.
@@ -66,7 +68,7 @@ pub const DEVICE_FONT_CANDIDATES: &[&str] = &[
 /// `fonts/LICENSE-AtkinsonHyperlegible.txt`, which travels with it.
 ///
 /// It exists because the simulator used to fall back to whatever the developer
-/// happened to have installed (Verdana on a Mac, DejaVu on a Linux box) so two
+/// happened to have installed (Verdana on a Mac, `DejaVu` on a Linux box) so two
 /// people previewing the same screen saw different line breaks, and neither
 /// saw the device's. A compiled-in face makes the preview identical everywhere
 /// and close to the panel. The device's own copy still wins when it is
@@ -81,7 +83,7 @@ pub const TEXT_FONT: &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Regul
 /// these is a serif drawn for continuous reading, and all of them are already
 /// on the device.
 ///
-/// KoboNickel leads because it is the face the reader's own software sets
+/// `KoboNickel` leads because it is the face the reader's own software sets
 /// books in, so a book here looks like a book there. Bitter follows: a slab
 /// serif drawn specifically for screens, whose sturdy stems survive a panel
 /// that resolves few tones. Vollkorn is a classic book face and the last serif

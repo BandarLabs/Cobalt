@@ -3,6 +3,10 @@
 A Rust application platform for Kobo E Ink readers: an SDK, a declarative UI
 layer, a runtime that owns the hardware, a browser simulator, and a CLI.
 
+This is an independent, unofficial project. It is not affiliated with,
+endorsed by, or sponsored by Rakuten Kobo Inc. “Kobo” and related product
+names are trademarks of their respective owners.
+
 Applications are ordinary Rust binaries. They describe whole screens and
 receive named actions. They never open the framebuffer, the touch device, a
 network socket or a credential; everything else is a request the runtime may
@@ -121,11 +125,11 @@ examples/  launcher, terminal, todo, brief, chat, gutenbird, gallery,
            tictactoe, hn, rss
 ```
 
-Outside dependencies are quarantined in exactly four crates, each behind one
-interface: `kobo-net` (TLS), `kobo-text` (glyph rasterisation), `kobo-term`
-(a vt100 parser) and `kobo-image` (JPEG and PNG decoding). Everything an
-application touches is dependency free, and each of those four can be replaced
-without a single application changing.
+External dependencies are kept behind narrow crates: `kobo-net` (HTTP and
+TLS), `kobo-text` (glyph rasterisation), `kobo-term` (a vt100 parser),
+`kobo-image` (JPEG and PNG decoding), `kobo-doc` (document parsing) and
+`kobo-abi` (libc/kernel calls). Their interfaces keep applications independent
+of the particular implementations.
 Device binaries are statically linked ARMv7 and need nothing installed on the
 device.
 
@@ -215,12 +219,15 @@ Build every device-side program:
 
 ```sh
 rustup target add armv7-unknown-linux-musleabihf
-cargo run -p kobo-cli -- build --device
+# Also install an ARM hard-float compiler (Debian: gcc-arm-linux-gnueabihf).
+CC_armv7_unknown_linux_musleabihf=arm-linux-gnueabihf-gcc \
+  cargo run -p kobo-cli -- build --device
 ```
 
-That `rustup target add` is the entire cross-build setup. The linker is pinned
-in `.cargo/config.toml` to `rust-lld`, which ships with the toolchain, so a
-fresh checkout builds device binaries with no system packages.
+Rust code is linked by `rust-lld`, which ships with the toolchain. Rustls uses
+the maintained `ring` cryptography provider, whose small C/assembly core also
+needs an ARM hard-float compiler at build time. The resulting binaries remain
+statically linked and need no library installed on the reader.
 
 ## Connecting a device
 
@@ -322,12 +329,24 @@ kobo setup            # with the reader connected by USB and showing 'Connected'
 ```
 
 It finds the mounted reader, copies Cobalt into `.adds/cobalt`, reads every
-file back to prove it arrived intact, enables the firmware's **own** SSH server,
-sets `DeveloperSettings/ForceWifiOn` so the radio stays up between deploys and
-`PowerOptions/AutoSleepMinutes=90` so the reader is still reachable when you
-come back to it, adds a **Cobalt** entry to the reader's own menu, and ejects.
+file back to prove it arrived intact, sets
+`DeveloperSettings/ForceWifiOn` and `PowerOptions/AutoSleepMinutes=90`, adds a
+**Cobalt** entry to the reader's own menu, and ejects. It leaves the firmware's
+root SSH server disabled.
 
-Then it waits. The restart is the one step that has to happen on the reader,
+Developers who need Wi-Fi deployment may opt in explicitly:
+
+```
+kobo setup --enable-ssh
+```
+
+That enables the firmware's **own root SSH server**. Cobalt does not create a
+password, install a key, or weaken authentication, and cannot verify that a
+particular firmware build has a safe authentication policy. Secure the server
+with a dedicated key before leaving it enabled; `kobo setup --undo` disables it
+again. A plain `kobo setup` is the recommended owner-facing installation.
+
+With `--enable-ssh`, it then waits. The restart is the one step that has to happen on the reader,
 its SSH server only starts at boot, and nothing on this side can press the
 power button, so the command asks for it and then watches the network for the
 reader to come back, printing its address and the exact `kobo deploy` line when
@@ -349,7 +368,7 @@ says so. Anything else is passed over and named at the end. An address that
 accepts a connection but answers neither way is asked again next round rather
 than written off, because a booting reader does exactly that.
 
-`--no-wait` skips the wait and `--no-menu` skips the menu entry.
+`--no-wait` skips that SSH wait and `--no-menu` skips the menu entry.
 `kobo setup --undo` puts every part of the setup back,
 and `kobo setup --dry-run` prints what it would do without touching anything.
 including for `--undo`, which is what `--undo --dry-run` means.
@@ -361,7 +380,7 @@ uses, and for the same reason: the suspend is requested by nickel itself, so
 nickel's timer is the only thing that can prevent it. It costs battery, and the
 reader's Energy saving screen overrides it at any time.
 
-The SSH server is the part worth explaining, because it is not ours. Firmware
+The optional SSH server is the part worth explaining, because it is not ours. Firmware
 4.42 and later ship one, switched off, gated on the name of a file on the book
 partition: `.kobo/ssh-disabled`. Renaming it to `ssh-enabled` is the firmware's
 documented mechanism, and the file says so in its own text. Renaming it back

