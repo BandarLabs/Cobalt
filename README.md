@@ -167,7 +167,7 @@ with the same metrics used for pagination.
 
 A layout assertion proves a button was placed. It does not prove the screen
 reads as a product, and it does not prove the button is reachable. Closing that
-loop — for a person, or for something automating on their behalf — means
+loop, for a person or for something automating on their behalf, means
 driving the application the way a finger does and then looking at the result.
 
 ```sh
@@ -196,7 +196,7 @@ cargo run -p kobo-cli -- shot --device <address> --out screen.png
 cargo run -p kobo-cli --features device-write -- tap --device <address> 536,900
 ```
 
-`shot --device` is read-only — it opens the framebuffer for reading and never
+`shot --device` is read-only. It opens the framebuffer for reading and never
 grabs, refreshes or writes, so it is safe against a device with the stock
 reader in the foreground. `tap --device` writes real evdev records to the real
 touch node, so the digitiser, the transform, the multitouch decoder and the
@@ -364,7 +364,7 @@ reader's Energy saving screen overrides it at any time.
 The SSH server is the part worth explaining, because it is not ours. Firmware
 4.42 and later ship one, switched off, gated on the name of a file on the book
 partition: `.kobo/ssh-disabled`. Renaming it to `ssh-enabled` is the firmware's
-documented mechanism -- the file says so in its own text -- and renaming it back
+documented mechanism, and the file says so in its own text. Renaming it back
 is the whole of the uninstall. This was found on a factory-reset Clara BW
 running 4.45.23697, and it replaces the worse answer that came before it:
 `EnableDebugServices=true`, which brings up telnet and FTP as root **with no
@@ -894,8 +894,8 @@ per clone with:
 git config core.hooksPath tools
 ```
 
-It scans staged lines for published credential shapes -- OpenAI, Anthropic,
-GitHub, AWS, Google, Slack -- for a PEM private key header, and for a shell
+It scans staged lines for published credential shapes (OpenAI, Anthropic,
+GitHub, AWS, Google, Slack), for a PEM private key header, and for a shell
 assignment of something named like a key. It reports the shape it matched and
 never the match, because printing the key to a terminal or a CI log is the
 thing being prevented.
