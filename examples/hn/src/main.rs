@@ -19,7 +19,7 @@
 //! `kobo-protocol`, well under the 1 MiB `MAX_FRAME_LEN` that carries it — and
 //! a busy thread is comfortably more. A real one measured while writing this
 //! was 734 KB for 925 comments. Algolia ignores `Range`, so the trick that
-//! lets Gutenshelf read a novel in pieces does not work here: asking for the
+//! lets Gutenbird read a novel in pieces does not work here: asking for the
 //! second half returns the whole document again and the ceiling rejects it.
 //!
 //! So the request comes back [`TaskError::TooLarge`], and rather than showing
@@ -33,7 +33,7 @@ mod model;
 
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, KoboApp, QuoteRole, Screen, ScreenBuilder, Task,
-    TaskError, TaskId, TaskOutcome,
+    TaskId, TaskOutcome,
 };
 use model::{Comment, Story};
 use std::collections::HashSet;
@@ -42,33 +42,45 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Hacker News' own API, which is the authority on what is on the site.
 ///
-/// It answers one item per request, which is why it is not the only source
-/// here: a thirty-story list would be thirty-one round trips and the thread
-/// this application was written for has five hundred and sixty-seven comments.
-/// What it is used for is *which* stories, in *what* order — the four list
-/// endpoints are literally the pages the site serves.
+/// Everything a reader sees comes from here. It answers one item per request,
+/// which is more round trips than an index does, and it is worth every one of
+/// them: it is the site's own record, so a story submitted a minute ago is in
+/// the list, every score is the score on the page, and `kids` is the order the
+/// site draws replies in. That ordering cannot be recomputed by a client, and
+/// it is the reason this is not a search index reading.
 const HN_API: &str = "https://hacker-news.firebaseio.com/v0";
 
-/// Algolia's index of the same site, which answers in bulk.
+/// How many item fetches run at once.
 ///
-/// One request returns thirty stories by number, or a whole nested thread.
-/// What it is not good at is ranking: its ranked search is ranked over all of
-/// Hacker News forever, which is how this application came to open Ask HN on a
-/// question from 2013. So the ordering comes from `HN_API` and the substance
-/// comes from here.
-const API: &str = "https://hn.algolia.com/api/v1";
+/// One below the runtime's ceiling of four on purpose, so a thread filling in
+/// can never leave the list with nowhere to go.
+const LANES: usize = 3;
+
+const _: () = assert!(LANES < kobo_sdk::MAX_TASKS_IN_FLIGHT);
+
+/// How many comments are fetched before the panel is repainted.
+///
+/// The panel takes most of a second to redraw and flashes while it does, so a
+/// repaint per comment would be unusable. A run of this many is a few screens
+/// of reading and a handful of seconds on the radio.
+const CHUNK: usize = 24;
+
+/// How much of one item to accept.
+///
+/// A comment is a paragraph or two of text plus a list of reply numbers. The
+/// longest ones on the site are a few kilobytes; this is generous headroom.
+const ITEM_BYTES: u32 = 64 * 1024;
+
+/// One item, by number, from Hacker News itself.
+fn item_url(id: i64) -> String {
+    format!("{HN_API}/item/{id}.json")
+}
 
 /// How many stories a tab asks for.
 ///
 /// One screenful is six or seven rows, so this is four or five page turns
 /// deep. More would be a longer wait on the radio for pages nobody reaches.
 const HITS: u32 = 30;
-
-/// The fields a story row and a story screen actually use.
-///
-/// Asked for by name so the answer does not carry Algolia's search-highlight
-/// apparatus, which is a tenth of the payload and of no use to anything here.
-const FIELDS: &str = "objectID,title,url,author,points,num_comments,created_at_i,story_text";
 
 /// How much of a ranking to accept.
 ///
@@ -85,19 +97,6 @@ const RANKING_BYTES: u32 = 8 * 1024;
 /// headlines that say what they are about. Pagination measures every row
 /// individually, so a ragged column costs nothing but the raggedness.
 const TITLE_LINES: usize = 2;
-
-/// How much of a list response to accept.
-///
-/// A thirty-hit list is around 31 KB, and an Ask HN list is larger because
-/// each hit carries the whole question. This is generous headroom over both
-/// and still a small fraction of the ceiling.
-const LIST_BYTES: u32 = 256 * 1024;
-
-/// How much of a thread to accept.
-///
-/// The transport ceiling exactly. Asking for more is silently clamped to it by
-/// the protocol, and asking for less would refuse threads that do in fact fit.
-const THREAD_BYTES: u32 = 512 * 1024;
 
 /// How many placeholder rows stand in for a list while it is arriving.
 const SKELETON_ROWS: u8 = 6;
@@ -179,27 +178,6 @@ impl Tab {
         };
         format!("{HN_API}/{list}.json?orderBy=%22%24key%22&limitToFirst={HITS}")
     }
-
-    /// Everything about those stories, in one request.
-    ///
-    /// Algolia tags every item with `story_<number>`, so an OR group of tags
-    /// fetches an arbitrary set by number. `story` is `AND`ed in front of the
-    /// group because a comment carries its parent story's tag too, and without
-    /// it a list of thirty stories comes back as a list of their comments.
-    ///
-    /// The answer arrives in Algolia's order, not the site's, which is why
-    /// [`Hn::took_list`] sorts it back.
-    fn stories_url(ids: &[i64]) -> String {
-        use std::fmt::Write as _;
-        let mut tags = String::new();
-        for id in ids.iter().take(HITS as usize) {
-            if !tags.is_empty() {
-                tags.push(',');
-            }
-            let _ = write!(tags, "story_{id}");
-        }
-        format!("{API}/search?tags=story,({tags})&hitsPerPage={HITS}&attributesToRetrieve={FIELDS}")
-    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -211,19 +189,28 @@ enum View {
 
 /// What the outstanding request is for.
 ///
-/// Only ever one. A tab tapped twice while the first answer is in the air
-/// would otherwise land two lists on the panel in an order decided by the
-/// network.
+/// Only ever one of these at a time. A tab tapped twice while the first answer
+/// is in the air would otherwise land two lists on the panel in an order
+/// decided by the network. Individual items are not in here: they run several
+/// at a time in their own lanes and are matched by the item number they carry.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Awaiting {
     /// Which stories this tab holds, and in what order.
     Ranking(Tab),
-    /// What those stories say.
-    List(Tab),
-    /// The whole thread, nested, in one request.
-    Thread,
-    /// One page of the flat fallback, for a thread too large to fetch whole.
-    FlatPage,
+}
+
+/// One place in a thread, whether or not its comment has arrived yet.
+///
+/// The thread is held as a flat list in the order the site draws it, with a
+/// slot for every reply that is known to exist. A slot with nothing in it is a
+/// comment that has been named by its parent and not yet fetched; it takes up
+/// no room on the panel, and when it lands it appears exactly where it belongs
+/// rather than at the end.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Slot {
+    id: i64,
+    depth: u16,
+    comment: Option<Comment>,
 }
 
 #[derive(Default)]
@@ -249,12 +236,31 @@ struct Hn {
     /// this panel rather than guessed at by character count.
     titles: Vec<String>,
     thread_page: usize,
-    /// Set once a thread has been found too large to fetch whole.
-    flat: bool,
-    /// How many pages of flat comments have already been taken.
-    flat_taken: u32,
-    /// How many the fallback says there are.
-    flat_pages: u32,
+    /// Every reply the site says exists, in the site's own order.
+    ///
+    /// Held alongside `comments` rather than instead of it: `comments` is what
+    /// is drawable now, and this is the shape of the whole conversation
+    /// including the parts still on their way.
+    slots: Vec<Slot>,
+    /// Item fetches running at once, each with the item number it will answer.
+    ///
+    /// Matched by number rather than by position, because a comment landing
+    /// splices its own replies into the middle of the list and every position
+    /// after it moves.
+    lanes: Vec<(TaskId, i64)>,
+    /// How many comments are worth having on hand before the panel repaints.
+    ///
+    /// Grown when the reader reaches the end of what has arrived. Fetching one
+    /// comment per request is what buys exact ordering, and repainting on each
+    /// arrival would be one full refresh per comment; the panel is left alone
+    /// until a whole chunk has landed.
+    want: usize,
+    /// Story details still to fetch, and the lanes fetching them.
+    ///
+    /// The tab's ranking arrives as bare item numbers, so each row's title and
+    /// score is a request of its own. The first screenful is fetched before
+    /// anything is drawn and the rest follows behind it.
+    story_lanes: Vec<(TaskId, i64)>,
     /// What the screen has to admit about what it is showing.
     note: Option<String>,
     /// The device clock at the last answer, for relative ages.
@@ -283,10 +289,9 @@ impl Hn {
         if let Some(problem) = &self.problem {
             screen = screen.banner(BannerLevel::Attention, problem.clone());
         }
-        if matches!(
-            self.task,
-            Some((_, Awaiting::Ranking(_) | Awaiting::List(_)))
-        ) {
+        if matches!(self.task, Some((_, Awaiting::Ranking(_))))
+            || self.stories.is_empty() && !self.story_lanes.is_empty()
+        {
             // A skeleton rather than a spinner, because there are no spinners
             // here: every frame is a full panel refresh. A list-shaped
             // placeholder puts the rows where the eye is already looking.
@@ -362,9 +367,7 @@ impl Hn {
             return self.list();
         };
         let mut screen = ScreenBuilder::new("hn-thread").top_bar(story.title.clone());
-        if matches!(self.task, Some((_, Awaiting::Thread | Awaiting::FlatPage)))
-            && self.comments.is_empty()
-        {
+        if !self.lanes.is_empty() && self.comments.is_empty() {
             // The same bar as the loaded thread, rather than a smaller one
             // that grows when the comments land: a control that moves out from
             // under a finger on a panel this slow is a tap the reader watches
@@ -503,12 +506,12 @@ impl Hn {
             .count()
     }
 
-    /// Drops whatever is already on its way.
+    /// Drops the ranking request that is already on its way.
     ///
-    /// Exactly one request is ever outstanding. A reader who taps three tabs
+    /// Only one of these is ever outstanding. A reader who taps three tabs
     /// while the first is in the air is asking for the third one, and letting
     /// all three run would land three lists on the panel in an order the
-    /// network chose — each one a full refresh the reader watches happen.
+    /// network chose, each one a full refresh the reader watches happen.
     fn cancel_outstanding(&mut self, context: &mut Context) {
         if let Some((task, _)) = self.task.take() {
             context.cancel(task);
@@ -518,8 +521,11 @@ impl Hn {
     /// Asks Hacker News which stories this tab holds. The substance follows.
     fn ask_list(&mut self, context: &mut Context) {
         self.cancel_outstanding(context);
+        self.drop_lanes(context);
         self.problem = None;
         self.ranking.clear();
+        self.stories.clear();
+        self.pages.clear();
         match context.spawn(Task::Fetch {
             url: self.tab.ranking_url(),
             offset: 0,
@@ -530,52 +536,127 @@ impl Hn {
         }
     }
 
-    /// Asks Algolia for those stories, all of them in one request.
-    fn ask_stories(&mut self, context: &mut Context, tab: Tab) {
-        match context.spawn(Task::Fetch {
-            url: Tab::stories_url(&self.ranking),
-            offset: 0,
-            max_bytes: LIST_BYTES,
-        }) {
-            Some(task) => self.task = Some((task, Awaiting::List(tab))),
-            None => self.problem = Some("Too much is already in flight.".to_owned()),
+    /// Starts as many story fetches as there are free lanes.
+    ///
+    /// One request per story, because that is the only way to see what the site
+    /// sees. The search index that answered thirty at once is minutes behind,
+    /// which on a front page that turns over in minutes is a different front
+    /// page: a story submitted five minutes ago was simply missing, and every
+    /// score was slightly wrong.
+    fn pump_stories(&mut self, context: &mut Context) {
+        while self.story_lanes.len() < LANES {
+            let Some(id) = self.next_story() else { break };
+            let Some(task) = context.spawn(Task::Fetch {
+                url: item_url(id),
+                offset: 0,
+                max_bytes: ITEM_BYTES,
+            }) else {
+                break;
+            };
+            self.story_lanes.push((task, id));
         }
     }
 
-    /// Asks for one whole thread, nested, in a single request.
+    /// The next story number with neither an answer nor a lane on it.
+    fn next_story(&self) -> Option<i64> {
+        self.ranking
+            .iter()
+            .copied()
+            .take(HITS as usize)
+            .find(|id| {
+                !self.story_lanes.iter().any(|(_, wanted)| wanted == id)
+                    && !self.stories.iter().any(|story| story.id == id.to_string())
+            })
+            .filter(|_| self.stories.len() < model::MAX_STORIES)
+    }
+
+    /// Asks for the story item itself, which names its replies in site order.
     fn ask_thread(&mut self, context: &mut Context) {
-        let Some(id) = self.open_id().map(str::to_owned) else {
+        let Some(id) = self.open_id().and_then(|id| id.parse::<i64>().ok()) else {
             self.problem = Some("That story has no thread to open.".to_owned());
             return;
         };
         self.cancel_outstanding(context);
+        self.drop_lanes(context);
         self.problem = None;
+        self.want = CHUNK;
         match context.spawn(Task::Fetch {
-            url: format!("{API}/items/{id}"),
+            url: item_url(id),
             offset: 0,
-            max_bytes: THREAD_BYTES,
+            max_bytes: ITEM_BYTES,
         }) {
-            Some(task) => self.task = Some((task, Awaiting::Thread)),
+            Some(task) => self.lanes.push((task, id)),
             None => self.problem = Some("Too much is already in flight.".to_owned()),
         }
     }
 
-    /// Asks for the next page of the flat fallback.
-    fn ask_flat_page(&mut self, context: &mut Context) {
-        let Some(id) = self.open_id().map(str::to_owned) else {
+    /// Starts as many comment fetches as there are free lanes and appetite.
+    fn pump_thread(&mut self, context: &mut Context) {
+        while self.lanes.len() < LANES
+            && self.loaded() + self.lanes.len() < self.want
+            && self.loaded() < model::MAX_COMMENTS
+        {
+            let Some(id) = self.next_slot() else { break };
+            let Some(task) = context.spawn(Task::Fetch {
+                url: item_url(id),
+                offset: 0,
+                max_bytes: ITEM_BYTES,
+            }) else {
+                break;
+            };
+            self.lanes.push((task, id));
+        }
+    }
+
+    /// The next empty slot with no lane already on it, in reading order.
+    fn next_slot(&self) -> Option<i64> {
+        self.slots
+            .iter()
+            .find(|slot| slot.comment.is_none() && !self.lanes.iter().any(|(_, id)| *id == slot.id))
+            .map(|slot| slot.id)
+    }
+
+    /// How many comments have actually arrived.
+    fn loaded(&self) -> usize {
+        self.slots
+            .iter()
+            .filter(|slot| slot.comment.is_some())
+            .count()
+    }
+
+    /// Drops every item fetch on the floor.
+    fn drop_lanes(&mut self, context: &mut Context) {
+        for (task, _) in self.lanes.drain(..).chain(self.story_lanes.drain(..)) {
+            context.cancel(task);
+        }
+    }
+
+    /// Places one comment in its slot and opens slots for its own replies.
+    fn place(&mut self, item: &model::Item) {
+        let Some(at) = self.slots.iter().position(|slot| slot.id == item.id) else {
             return;
         };
-        self.cancel_outstanding(context);
-        let page = self.flat_taken;
-        match context.spawn(Task::Fetch {
-            url: format!(
-                "{API}/search_by_date?tags=comment,story_{id}&hitsPerPage={HITS}&page={page}"
-            ),
-            offset: 0,
-            max_bytes: LIST_BYTES,
-        }) {
-            Some(task) => self.task = Some((task, Awaiting::FlatPage)),
-            None => self.problem = Some("Too much is already in flight.".to_owned()),
+        let depth = self.slots[at].depth;
+        self.slots[at].comment = item.comment(depth);
+        if self.slots[at].comment.is_none() {
+            // Nothing to draw and nothing underneath it. The slot goes rather
+            // than sitting there forever as a hole the fetcher keeps skipping.
+            self.slots.remove(at);
+            return;
+        }
+        let room = model::MAX_COMMENTS.saturating_sub(self.slots.len());
+        let kids = item.kids.iter().take(room).enumerate().map(|(step, id)| {
+            (
+                step,
+                Slot {
+                    id: *id,
+                    depth: depth.saturating_add(1),
+                    comment: None,
+                },
+            )
+        });
+        for (step, slot) in kids.collect::<Vec<_>>() {
+            self.slots.insert(at + 1 + step, slot);
         }
     }
 
@@ -599,15 +680,13 @@ impl Hn {
         // left in place would be drawn under the new title for the second it
         // takes the request to come back.
         self.comments.clear();
+        self.slots.clear();
         // Folds are positions in the list that is being thrown away. Left
         // behind, they would shut whichever comments of the new story happened
         // to land on the same indices.
         self.collapsed.clear();
         self.thread_pages.clear();
         self.thread_page = 0;
-        self.flat = false;
-        self.flat_taken = 0;
-        self.flat_pages = 0;
         self.note = None;
         self.problem = None;
         self.ask_thread(context);
@@ -638,40 +717,85 @@ impl Hn {
             self.problem = Some("That tab came back empty.".to_owned());
             return;
         }
-        self.ask_stories(context, tab);
+        self.now = unix_now();
+        self.pump_stories(context);
     }
 
-    fn took_list(&mut self, context: &Context, bytes: &[u8], tab: Tab) {
-        let Some(value) = std::str::from_utf8(bytes)
+    /// Places one story in the tab's own order and asks for the next.
+    ///
+    /// Sorted by the ranking rather than by arrival, because the lanes finish
+    /// out of order and the order is the whole point: `topstories` *is* the
+    /// front page.
+    fn took_story(&mut self, context: &mut Context, bytes: &[u8], id: i64) {
+        let taken = std::str::from_utf8(bytes)
             .ok()
             .and_then(|body| kobo_json::parse(body).ok())
-        else {
-            self.problem = Some("Hacker News' answer could not be read.".to_owned());
-            return;
-        };
-        self.tab = tab;
-        self.now = unix_now();
-        self.stories = model::stories_from(&value);
-        // Algolia answers a set of item numbers in its own order, which for a
-        // tags query is relevance and means nothing here. Hacker News' order is
-        // what the reader came for, so it is imposed rather than received.
-        // Anything the index has not caught up with sorts to the end instead of
-        // disappearing.
-        let ranking = std::mem::take(&mut self.ranking);
-        self.stories.sort_by_key(|story| {
-            story
-                .id
-                .parse::<i64>()
-                .ok()
-                .and_then(|id| ranking.iter().position(|listed| *listed == id))
-                .unwrap_or(usize::MAX)
-        });
-        self.ranking = ranking;
-        self.page = 0;
-        self.repaginate_list(context);
-        if self.stories.is_empty() {
-            self.problem = Some("That tab came back empty.".to_owned());
+            .as_ref()
+            .and_then(model::item_from)
+            .as_ref()
+            .and_then(model::Item::story);
+        match taken {
+            Some(story) => {
+                self.stories.push(story);
+                let ranking = std::mem::take(&mut self.ranking);
+                self.stories.sort_by_key(|story| {
+                    story
+                        .id
+                        .parse::<i64>()
+                        .ok()
+                        .and_then(|id| ranking.iter().position(|listed| *listed == id))
+                        .unwrap_or(usize::MAX)
+                });
+                self.ranking = ranking;
+            }
+            // A number the site no longer answers for, or an item a list
+            // cannot show. It leaves the ranking, because otherwise the lane
+            // that was on it picks it straight back up and asks forever.
+            None => self.ranking.retain(|listed| *listed != id),
         }
+        self.pump_stories(context);
+    }
+
+    /// Places one comment, opens slots for its replies, and asks for the next.
+    fn took_item(&mut self, context: &mut Context, bytes: &[u8], id: i64) {
+        let item = std::str::from_utf8(bytes)
+            .ok()
+            .and_then(|body| kobo_json::parse(body).ok())
+            .as_ref()
+            .and_then(model::item_from);
+        match item {
+            Some(item) if item.id == id => {
+                if self.slots.is_empty() {
+                    // The story itself, which is what names the top-level
+                    // replies. Its own text is drawn from the list row.
+                    self.slots = item
+                        .kids
+                        .iter()
+                        .take(model::MAX_COMMENTS)
+                        .map(|id| Slot {
+                            id: *id,
+                            depth: 0,
+                            comment: None,
+                        })
+                        .collect();
+                    if usize::try_from(item.descendants).unwrap_or(usize::MAX) > model::MAX_COMMENTS
+                    {
+                        self.note = Some(format!(
+                            "This thread has {} comments. The first {} are shown in the site's \
+                             own order; the rest are more than this device will hold at once.",
+                            item.descendants,
+                            model::MAX_COMMENTS
+                        ));
+                    }
+                } else {
+                    self.place(&item);
+                }
+            }
+            // An item number the site no longer answers for. The slot goes, so
+            // the fetcher moves on instead of asking for it again forever.
+            _ => self.slots.retain(|slot| slot.id != id),
+        }
+        self.pump_thread(context);
     }
 
     /// Measures the rows against the panel to find where the folds are.
@@ -696,65 +820,18 @@ impl Hn {
         self.page = self.page.min(self.pages.len().saturating_sub(1));
     }
 
-    /// Reads a whole nested thread, or falls back if it cannot.
-    fn took_thread(&mut self, context: &Context, bytes: &[u8]) {
-        let parsed = std::str::from_utf8(bytes)
-            .ok()
-            .and_then(|body| kobo_json::parse(body).ok());
-        let Some(value) = parsed else {
-            // Almost always the parser's own nesting ceiling: a thread with
-            // more than thirty levels of reply in it. The fallback reads the
-            // same comments without the nesting, so this is recoverable
-            // rather than fatal.
-            self.begin_fallback("This thread is nested deeper than it can be read whole.");
-            return;
-        };
-        self.comments = model::flatten(&value);
-        let expected = self
-            .open
-            .and_then(|index| self.stories.get(index))
-            .map_or(0, |story| story.comments);
-        if self.comments.len() >= model::MAX_COMMENTS {
-            self.note = Some(format!(
-                "This thread has {expected} comments. The first {} are shown; the rest \
-                 are more than this device will hold at once.",
-                model::MAX_COMMENTS
-            ));
-        }
-        self.repaginate_thread(context);
-    }
-
-    /// Switches to the flat fallback and says why on the screen.
+    /// Rebuilds the drawable thread from whatever has arrived.
     ///
-    /// Deliberately not silent, and deliberately not a truncation. The reader
-    /// is told the nesting is gone, told the order has changed, and given the
-    /// rest of the thread a page at a time. The alternative — showing the
-    /// first 512 KB of a JSON document as if it were the whole conversation —
-    /// produces a thread that ends mid-sentence and looks correct.
-    fn begin_fallback(&mut self, because: &str) {
-        self.flat = true;
-        self.flat_taken = 0;
-        self.flat_pages = 1;
-        self.comments.clear();
-        self.note = Some(format!(
-            "{because} It is shown flat instead: newest first, without replies \
-             threaded under what they answer. Tap Next past the last page for more."
-        ));
-    }
-
-    fn took_flat_page(&mut self, context: &Context, bytes: &[u8]) {
-        let Some(value) = std::str::from_utf8(bytes)
-            .ok()
-            .and_then(|body| kobo_json::parse(body).ok())
-        else {
-            self.problem = Some("Hacker News' answer could not be read.".to_owned());
-            return;
-        };
-        self.flat_pages = model::pages_of(&value);
-        self.flat_taken = self.flat_taken.saturating_add(1);
-        let room = model::MAX_COMMENTS.saturating_sub(self.comments.len());
-        self.comments
-            .extend(model::flat_comments_from(&value).into_iter().take(room));
+    /// The slots are already in the site's order, so this is a filter rather
+    /// than a sort. A slot still on its way contributes nothing and takes up
+    /// no room, which is what lets the top of a conversation be read while the
+    /// bottom of it is still being fetched.
+    fn rebuild_thread(&mut self, context: &Context) {
+        self.comments = self
+            .slots
+            .iter()
+            .filter_map(|slot| slot.comment.clone())
+            .collect();
         self.repaginate_thread(context);
     }
 
@@ -795,9 +872,10 @@ impl Hn {
             .min(self.thread_pages.len().saturating_sub(1));
     }
 
-    /// Whether there is more of a fallback thread to ask for.
+    /// Whether there is more of the thread still to fetch.
     fn more_to_take(&self) -> bool {
-        self.flat && self.flat_taken < self.flat_pages && self.comments.len() < model::MAX_COMMENTS
+        self.comments.len() < model::MAX_COMMENTS
+            && self.slots.iter().any(|slot| slot.comment.is_none())
     }
 
     fn turn_list(&mut self, forwards: bool) {
@@ -902,6 +980,55 @@ impl KoboApp for Hn {
     }
 
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
+        if let Some(at) = self.lanes.iter().position(|(lane, _)| *lane == task) {
+            let (_, id) = self.lanes.remove(at);
+            match outcome {
+                TaskOutcome::Completed(bytes) => self.took_item(context, &bytes, id),
+                TaskOutcome::Failed(_) => {
+                    // One comment that will not come is one comment missing,
+                    // not a broken thread. Its slot goes so the rest carries
+                    // on, and its own replies go with it because there is
+                    // nothing left to hang them under.
+                    self.slots.retain(|slot| slot.id != id);
+                    self.pump_thread(context);
+                }
+                TaskOutcome::Cancelled => return,
+            }
+            // Repainted only once a whole run has landed. Fetching one comment
+            // per request is what buys the site's exact ordering; repainting
+            // on each arrival would be one full panel refresh per comment.
+            if self.lanes.is_empty() {
+                self.rebuild_thread(context);
+                if self.comments.is_empty() && !self.more_to_take() {
+                    self.problem = Some("This thread came back empty.".to_owned());
+                }
+                self.show(context);
+            }
+            return;
+        }
+        if let Some(at) = self.story_lanes.iter().position(|(lane, _)| *lane == task) {
+            let (_, id) = self.story_lanes.remove(at);
+            match outcome {
+                TaskOutcome::Completed(bytes) => self.took_story(context, &bytes, id),
+                TaskOutcome::Failed(_) => {
+                    // One story that will not come is one row missing, not a
+                    // broken list. It leaves the ranking so the lane moves on
+                    // rather than asking for it again forever.
+                    self.ranking.retain(|listed| *listed != id);
+                    self.pump_stories(context);
+                }
+                TaskOutcome::Cancelled => return,
+            }
+            if self.story_lanes.is_empty() {
+                self.page = self.page.min(self.stories.len());
+                self.repaginate_list(context);
+                if self.stories.is_empty() {
+                    self.problem = Some("That tab came back empty.".to_owned());
+                }
+                self.show(context);
+            }
+            return;
+        }
         let Some((outstanding, awaiting)) = self.task else {
             return;
         };
@@ -913,33 +1040,18 @@ impl KoboApp for Hn {
             TaskOutcome::Completed(bytes) => match awaiting {
                 Awaiting::Ranking(tab) => {
                     self.took_ranking(context, &bytes, tab);
-                    // The second request is already in the air, so the skeleton
-                    // stays up rather than flashing a half-drawn list.
-                    if matches!(self.task, Some((_, Awaiting::List(_)))) {
+                    // The stories themselves are already in the air, so the
+                    // skeleton stays up rather than flashing an empty list.
+                    if !self.story_lanes.is_empty() {
                         self.show(context);
                         return;
                     }
                 }
-                Awaiting::List(tab) => self.took_list(context, &bytes, tab),
-                Awaiting::Thread => self.took_thread(context, &bytes),
-                Awaiting::FlatPage => self.took_flat_page(context, &bytes),
             },
-            TaskOutcome::Failed(TaskError::TooLarge) if awaiting == Awaiting::Thread => {
-                // The case this application was written around. Not an error
-                // the reader caused and not one they can do anything about, so
-                // it is handled rather than reported.
-                self.begin_fallback("This thread is larger than this device can fetch at once.");
-                self.ask_flat_page(context);
-                self.show(context);
-                return;
-            }
             TaskOutcome::Failed(error) => {
                 // Named rather than summarised: "not found" and "the network
                 // could not be reached" call for entirely different things.
                 self.problem = Some(format!("That did not work: {error}."));
-                if awaiting == Awaiting::Thread && self.comments.is_empty() {
-                    self.repaginate_thread(context);
-                }
             }
             TaskOutcome::Cancelled => self.problem = Some("Cancelled.".to_owned()),
         }
@@ -948,15 +1060,19 @@ impl KoboApp for Hn {
 }
 
 impl Hn {
-    /// Turns the thread forward, fetching more of a fallback at the end.
+    /// Turns the thread forward, going after more of it at the end.
+    ///
+    /// Reaching the end of what has arrived is an appetite for more, not a
+    /// dead end: the rest of the conversation is known to exist and is being
+    /// fetched a run at a time.
     fn turn_thread(&mut self, context: &mut Context) {
         if self.thread_page + 1 < self.thread_pages.len() {
             self.thread_page += 1;
             self.problem = None;
-        } else if self.more_to_take() && self.task.is_none() {
-            self.ask_flat_page(context);
-        } else if self.flat {
-            self.problem = Some("That is everything this thread will give.".to_owned());
+        } else if self.more_to_take() {
+            self.want = self.loaded().saturating_add(CHUNK);
+            self.pump_thread(context);
+            self.problem = None;
         } else {
             self.problem = Some("That is the end of the thread.".to_owned());
         }
@@ -990,25 +1106,56 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{model, Awaiting, Hn, Tab, View, TABS, TITLE_LINES};
+    use super::{model, Awaiting, Hn, Slot, Tab, View, CHUNK, LANES, TABS, TITLE_LINES};
     use kobo_sdk::{action_id, AppRunner, Command, Task, TaskError, TaskId, TaskOutcome};
     use kobo_ui::{Chrome, LayoutKind, Rect, CLARA_BW_METRICS};
+    use std::collections::BTreeMap;
 
     /// Hacker News' own answer for the front page: item numbers, in order.
     ///
-    /// Deliberately in a different order from the hits in `FRONT_PAGE`, which
-    /// is Algolia's relevance order. If the application ever stops imposing
-    /// this order the tests below say so, and the reader would otherwise be
-    /// shown a front page that is not the front page.
+    /// Deliberately not in ascending order. `topstories` *is* the front page,
+    /// and if the application ever sorts the answer itself the tests below say
+    /// so, because the reader would then be shown a front page that is not the
+    /// front page.
     const RANKING: &str = include_str!("../tests/ranking.json");
-    const FRONT_PAGE: &str = include_str!("../tests/front_page.json");
-    const THREAD: &str = include_str!("../tests/thread.json");
-    const COMMENT_PAGE: &str = include_str!("../tests/comment_page.json");
+
+    /// The five stories that ranking names, one captured item per line.
+    const FRONT_PAGE: &str = include_str!("../tests/front_page.jsonl");
+
+    /// A whole captured conversation: the story item and every comment under
+    /// it, one item per line, exactly as `item/<number>.json` answered.
+    const THREAD: &str = include_str!("../tests/thread.jsonl");
+
+    /// The story the captured thread belongs to.
+    const THREAD_STORY: i64 = 49_079_727;
+
+    /// Every captured item in a fixture, by item number.
+    fn fixture(body: &str) -> BTreeMap<i64, String> {
+        body.lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| {
+                let id = kobo_json::parse(line)
+                    .expect("a captured item parses")
+                    .get("id")
+                    .and_then(kobo_json::Value::as_i64)
+                    .expect("a captured item is numbered");
+                (id, line.to_owned())
+            })
+            .collect()
+    }
+
+    /// The item numbers in a ranking fixture, in the order it lists them.
+    fn ranking_of(body: &str) -> Vec<i64> {
+        kobo_json::parse(body)
+            .expect("the fixture parses")
+            .as_array()
+            .expect("an array of item numbers")
+            .iter()
+            .filter_map(kobo_json::Value::as_i64)
+            .collect()
+    }
 
     /// An application with a real front page already loaded.
-    ///
-    /// Two answers, because a list is two requests: which stories, then what
-    /// they say.
     fn loaded() -> AppRunner<Hn> {
         let mut runner = AppRunner::new(Hn::default());
         runner.start();
@@ -1016,12 +1163,54 @@ mod tests {
         runner
     }
 
-    /// Answers whichever half of a list request is outstanding, then the other.
+    /// Answers the ranking request, then every story item it leads to.
     fn answer_list(runner: &mut AppRunner<Hn>) {
         let task = spawned(runner);
         runner.task_outcome(task, TaskOutcome::Completed(RANKING.as_bytes().to_vec()));
-        let task = spawned(runner);
-        runner.task_outcome(task, TaskOutcome::Completed(FRONT_PAGE.as_bytes().to_vec()));
+        answer_lanes(runner, &fixture(FRONT_PAGE));
+    }
+
+    /// Opens the captured thread and answers every item it asks for.
+    fn opened_thread() -> (AppRunner<Hn>, usize) {
+        let mut runner = loaded();
+        let index = runner
+            .app()
+            .stories
+            .iter()
+            .position(|story| story.id == THREAD_STORY.to_string())
+            .expect("the captured thread's story is on the captured front page");
+        runner.action(action_id(&format!("story-{index}")));
+        answer_lanes(&mut runner, &fixture(THREAD));
+        (runner, index)
+    }
+
+    /// Answers every outstanding item fetch from `bodies` until none is left.
+    ///
+    /// An item number the fixture does not hold is answered `null`, which is
+    /// what the site itself says about a number that is not an item.
+    fn answer_lanes(runner: &mut AppRunner<Hn>, bodies: &BTreeMap<i64, String>) -> usize {
+        let mut repaints = 0;
+        for _ in 0..2000 {
+            let Some((task, id)) = runner
+                .app()
+                .story_lanes
+                .first()
+                .or_else(|| runner.app().lanes.first())
+                .copied()
+            else {
+                return repaints;
+            };
+            let body = bodies
+                .get(&id)
+                .cloned()
+                .unwrap_or_else(|| "null".to_owned());
+            let commands = runner.task_outcome(task, TaskOutcome::Completed(body.into_bytes()));
+            repaints += commands
+                .iter()
+                .filter(|command| matches!(command, Command::SetScreen(_)))
+                .count();
+        }
+        panic!("the fetcher never ran out of work");
     }
 
     fn spawned(runner: &AppRunner<Hn>) -> TaskId {
@@ -1040,6 +1229,20 @@ mod tests {
             } => Some(url.clone()),
             _ => None,
         })
+    }
+
+    /// Every URL a batch of commands asked the network for.
+    fn all_asked(commands: &[Command]) -> Vec<String> {
+        commands
+            .iter()
+            .filter_map(|command| match command {
+                Command::Spawn {
+                    work: Task::Fetch { url, .. },
+                    ..
+                } => Some(url.clone()),
+                _ => None,
+            })
+            .collect()
     }
 
     fn tab_rects(screen: &kobo_sdk::Screen) -> Vec<Rect> {
@@ -1126,18 +1329,14 @@ mod tests {
 
     #[test]
     fn nothing_ranks_the_stories_except_hacker_news() {
-        // The whole reason there are two requests. Algolia answers a set of
-        // item numbers in its own relevance order, and taking that order gave
-        // an Ask HN tab whose top entry was from 2013. The site's order is
-        // imposed on the answer, whatever order the answer arrives in.
+        // The reason the list is fetched an item at a time. The lanes finish in
+        // whatever order the radio gives them back, and taking that order gave
+        // a front page shuffled by network timing. `topstories` is the front
+        // page; its order is imposed on the answers however they arrive.
         let runner = loaded();
-        let listed = kobo_json::parse(RANKING)
-            .expect("the fixture parses")
-            .as_array()
-            .expect("an array of item numbers")
+        let listed = ranking_of(RANKING)
             .iter()
-            .filter_map(kobo_json::Value::as_i64)
-            .map(|id| id.to_string())
+            .map(i64::to_string)
             .collect::<Vec<_>>();
         let shown = runner
             .app()
@@ -1149,33 +1348,71 @@ mod tests {
     }
 
     #[test]
-    fn the_second_request_names_every_story_the_first_one_listed() {
-        // One request for thirty stories rather than thirty requests, which is
-        // why Algolia is here at all. `story` is ANDed in front of the group
-        // because a comment carries its parent story's tag too, and without it
-        // a list of stories comes back as a list of their comments.
+    fn every_story_is_asked_for_by_its_own_item_number() {
+        // The site's own record of a story is the only source that is never
+        // behind. The search index this application used to read lags by
+        // minutes, and on a front page that turns over in minutes that meant a
+        // story could be on the site and missing from the list, with every
+        // score and comment count slightly wrong.
         let mut runner = AppRunner::new(Hn::default());
         runner.start();
         let task = spawned(&runner);
         let commands =
             runner.task_outcome(task, TaskOutcome::Completed(RANKING.as_bytes().to_vec()));
-        let url = asked(&commands).expect("the stories were asked for");
-        assert!(
-            url.starts_with("https://hn.algolia.com/api/v1/search?tags=story,("),
-            "{url}"
-        );
-        for id in [
-            49_063_754_i64,
-            49_057_175,
-            49_060_495,
-            49_063_022,
-            49_057_241,
-        ] {
-            assert!(
-                url.contains(&format!("story_{id}")),
-                "{id} was not asked for: {url}"
+        let urls = all_asked(&commands);
+        assert_eq!(urls.len(), LANES, "the lanes were not all filled at once");
+        let ranking = ranking_of(RANKING);
+        for (url, id) in urls.iter().zip(&ranking) {
+            assert_eq!(
+                *url,
+                format!("https://hacker-news.firebaseio.com/v0/item/{id}.json"),
+                "a lane asked for something other than the next story"
             );
         }
+        answer_lanes(&mut runner, &fixture(FRONT_PAGE));
+        assert_eq!(runner.app().stories.len(), ranking.len());
+    }
+
+    #[test]
+    fn the_list_repaints_once_the_lanes_are_done_rather_than_once_per_story() {
+        // Every repaint is a full panel refresh. Thirty of them for one list
+        // would be a list that flickers for half a minute before it settles.
+        let mut runner = AppRunner::new(Hn::default());
+        runner.start();
+        let task = spawned(&runner);
+        runner.task_outcome(task, TaskOutcome::Completed(RANKING.as_bytes().to_vec()));
+        let repaints = answer_lanes(&mut runner, &fixture(FRONT_PAGE));
+        assert_eq!(
+            repaints, 1,
+            "the list repainted {repaints} times for one page of stories"
+        );
+    }
+
+    #[test]
+    fn a_story_the_site_no_longer_answers_for_does_not_wedge_the_list() {
+        // Items are deleted, and a number in the ranking that answers `null`
+        // has to move the lane on rather than hold it forever.
+        let mut runner = AppRunner::new(Hn::default());
+        runner.start();
+        let task = spawned(&runner);
+        runner.task_outcome(task, TaskOutcome::Completed(RANKING.as_bytes().to_vec()));
+        let mut bodies = fixture(FRONT_PAGE);
+        let gone = ranking_of(RANKING)[1];
+        bodies.remove(&gone);
+        answer_lanes(&mut runner, &bodies);
+        assert_eq!(
+            runner.app().stories.len(),
+            4,
+            "the missing story took the others with it"
+        );
+        assert!(
+            runner
+                .app()
+                .stories
+                .iter()
+                .all(|story| story.id != gone.to_string()),
+            "a story the site does not have was drawn anyway"
+        );
     }
 
     #[test]
@@ -1226,24 +1463,6 @@ mod tests {
                 "page {page} measured as {} rows but drew {drawn}",
                 application.pages[page].len()
             );
-        }
-    }
-
-    #[test]
-    fn probe_hit_test() {
-        let runner = loaded();
-        let application = runner.app();
-        let mut showing = Hn::default();
-        showing.stories.clone_from(&application.stories);
-        showing.titles.clone_from(&application.titles);
-        showing.pages.clone_from(&application.pages);
-        let screen = showing.list();
-        for y in [200, 400, 1390] {
-            println!("hit {y} -> {:?}", screen.hit_test(400, y));
-        }
-        let layout = screen.layout();
-        for node in &layout.nodes {
-            println!("{:?} {:?}", node.kind, node.rect);
         }
     }
 
@@ -1311,10 +1530,7 @@ mod tests {
         // Depth used to be drawn with chevrons in the text because no node
         // took an offset. It is real indentation now, so this asserts the
         // pixels rather than the characters.
-        let mut runner = loaded();
-        runner.action(action_id("story-0"));
-        let task = spawned(&runner);
-        runner.task_outcome(task, TaskOutcome::Completed(THREAD.as_bytes().to_vec()));
+        let (runner, _) = opened_thread();
         let application = runner.app();
         assert!(
             application.comments.iter().any(|comment| comment.depth > 0),
@@ -1363,10 +1579,7 @@ mod tests {
         // The same property for prose. A comment thread that measured wrongly
         // loses its last paragraph on every page, and nothing on the panel
         // says so.
-        let mut runner = loaded();
-        runner.action(action_id("story-0"));
-        let task = spawned(&runner);
-        runner.task_outcome(task, TaskOutcome::Completed(THREAD.as_bytes().to_vec()));
+        let (runner, _) = opened_thread();
         let application = runner.app();
         assert_eq!(application.view, View::Thread);
         assert!(
@@ -1402,10 +1615,7 @@ mod tests {
     fn the_page_controls_on_a_thread_are_reachable_at_their_centres() {
         // They are the pinned bar rather than the end of the flow, so a long
         // page loses its final sentence rather than its way forward.
-        let mut runner = loaded();
-        runner.action(action_id("story-0"));
-        let task = spawned(&runner);
-        runner.task_outcome(task, TaskOutcome::Completed(THREAD.as_bytes().to_vec()));
+        let (runner, _) = opened_thread();
         let layout = runner
             .app()
             .thread()
@@ -1426,79 +1636,238 @@ mod tests {
     }
 
     #[test]
-    fn a_thread_too_large_to_fetch_falls_back_instead_of_dead_ending() {
-        // The centre of this application. Algolia ignores `Range`, so there is
-        // no second chunk to ask for: the only alternatives are a flat
-        // fallback or a story whose comments cannot be read at all.
-        let mut runner = loaded();
-        runner.action(action_id("story-0"));
-        let task = spawned(&runner);
-        let commands = runner.task_outcome(task, TaskOutcome::Failed(TaskError::TooLarge));
-        let url = asked(&commands).expect("nothing was asked for after the ceiling");
-        assert_eq!(
-            url,
-            "https://hn.algolia.com/api/v1/search_by_date?tags=comment,story_49063754\
-             &hitsPerPage=30&page=0"
+    fn a_thread_is_drawn_in_the_order_the_site_draws_it() {
+        // The single reason this application asks for one item at a time. The
+        // site ranks siblings by its own scoring, which is neither
+        // chronological nor anything a client can recompute; `kids` is that
+        // ranking, and the captured fixture proves it is not a sort, because
+        // its first reply has a higher item number than its second and its
+        // last is the oldest of the four.
+        let (runner, _) = opened_thread();
+        let bodies = fixture(THREAD);
+        let root = kobo_json::parse(&bodies[&THREAD_STORY]).expect("the story parses");
+        let kids = model::item_from(&root).expect("the story reads").kids;
+        assert!(
+            kids.windows(2).any(|pair| pair[0] > pair[1]),
+            "the fixture is in ascending order, so it proves nothing"
         );
-        assert!(runner.app().flat);
+        let top = runner
+            .app()
+            .slots
+            .iter()
+            .filter(|slot| slot.depth == 0)
+            .map(|slot| slot.id)
+            .collect::<Vec<_>>();
+        // The fixture's last reply is flagged with nothing under it, which is
+        // a comment a reader of the site does not see either.
+        let drawn = kids
+            .iter()
+            .copied()
+            .filter(|id| *id != 49_079_728)
+            .collect::<Vec<_>>();
+        assert_eq!(top, drawn, "the top level was not in the site's order");
+    }
 
-        let task = spawned(&runner);
+    #[test]
+    fn a_reply_lands_under_what_it_answers_rather_than_at_the_end() {
+        // Replies arrive out of order because the lanes finish out of order.
+        // Appending them would give a conversation where every answer is at
+        // the bottom, which is the shape of a chat log and not of a thread.
+        let (runner, _) = opened_thread();
+        let slots = &runner.app().slots;
+        let parent = slots
+            .iter()
+            .position(|slot| slot.id == 49_080_373)
+            .expect("the fixture's first reply is in the thread");
+        assert_eq!(slots[parent].depth, 0);
+        assert_eq!(
+            slots[parent + 1].id,
+            49_080_510,
+            "the reply did not follow the comment it answers"
+        );
+        assert_eq!(slots[parent + 1].depth, 1);
+        assert_eq!(slots[parent + 2].id, 49_080_628);
+        assert_eq!(slots[parent + 2].depth, 2);
+        assert_eq!(slots[parent + 3].id, 49_080_734);
+        assert_eq!(slots[parent + 3].depth, 3);
+    }
+
+    #[test]
+    fn a_flagged_comment_with_nothing_under_it_is_not_drawn_at_all() {
+        // The fixture holds one, and a reader of the site does not see it
+        // either. Drawing its text would put on the panel the one thing the
+        // site took off it.
+        let (runner, _) = opened_thread();
+        assert!(
+            runner
+                .app()
+                .comments
+                .iter()
+                .all(|comment| !comment.body.contains("[flagged]")),
+            "a flagged comment reached the panel"
+        );
+        assert!(
+            runner.app().slots.iter().all(|slot| slot.id != 49_079_728),
+            "a flagged comment kept a slot the fetcher would keep filling"
+        );
+    }
+
+    #[test]
+    fn a_comment_the_site_no_longer_answers_for_does_not_wedge_the_thread() {
+        // An item number in `kids` that answers `null` has to take its slot
+        // with it, or the fetcher asks for it again forever and the thread
+        // never finishes loading.
+        let mut runner = loaded();
+        let index = runner
+            .app()
+            .stories
+            .iter()
+            .position(|story| story.id == THREAD_STORY.to_string())
+            .expect("the captured story is on the captured front page");
+        runner.action(action_id(&format!("story-{index}")));
+        let mut bodies = fixture(THREAD);
+        bodies.remove(&49_080_366);
+        answer_lanes(&mut runner, &bodies);
+        let application = runner.app();
+        assert!(
+            application.slots.iter().all(|slot| slot.id != 49_080_366),
+            "a comment the site does not have kept its slot"
+        );
+        assert!(
+            application.comments.len() >= 5,
+            "the missing comment took the thread with it: {} left",
+            application.comments.len()
+        );
+    }
+
+    #[test]
+    fn a_request_that_fails_costs_one_comment_and_not_the_thread() {
+        // A radio that drops one answer out of a hundred is an ordinary radio.
+        let mut runner = loaded();
+        let index = runner
+            .app()
+            .stories
+            .iter()
+            .position(|story| story.id == THREAD_STORY.to_string())
+            .expect("the captured story is on the captured front page");
+        runner.action(action_id(&format!("story-{index}")));
+        let (task, id) = runner.app().lanes[0];
+        assert_eq!(id, THREAD_STORY);
+        let bodies = fixture(THREAD);
         runner.task_outcome(
             task,
-            TaskOutcome::Completed(COMMENT_PAGE.as_bytes().to_vec()),
+            TaskOutcome::Completed(bodies[&id].clone().into_bytes()),
         );
-        let application = runner.app();
-        assert_eq!(application.comments.len(), 5);
-        let note = application.note.as_deref().expect("nothing was admitted");
+        let (task, dropped) = runner.app().lanes[0];
+        runner.task_outcome(task, TaskOutcome::Failed(TaskError::TooLarge));
+        answer_lanes(&mut runner, &bodies);
         assert!(
-            note.contains("flat") && note.contains("newest first"),
-            "the fallback did not say what it changed: {note}"
+            runner.app().slots.iter().all(|slot| slot.id != dropped),
+            "a dropped comment kept its slot"
         );
-        // And the admission is inside the measured flow, so it cannot push the
-        // last paragraph of the page off the bottom of the panel.
         assert!(
-            application.thread_pages[0]
-                .iter()
-                .any(|(_, _, _, paragraph)| paragraph.contains("flat")),
-            "the note was not on the first page"
+            !runner.app().comments.is_empty(),
+            "one dropped answer emptied the thread"
         );
     }
 
     #[test]
-    fn a_thread_nested_past_the_parser_falls_back_rather_than_showing_nothing() {
-        // The other way a thread can be unreadable. A parse failure that
-        // reported an error would leave a story with a comment count and no
-        // comments, which reads as a broken application.
+    fn the_thread_repaints_once_a_run_has_landed_rather_than_once_per_comment() {
+        // Every repaint is a full panel refresh, so one per comment would be a
+        // thread that flashes for a minute before it can be read. The lanes
+        // are refilled before the panel is asked to redraw, so they only ever
+        // empty at the end of a run.
         let mut runner = loaded();
-        runner.action(action_id("story-0"));
-        let task = spawned(&runner);
-        let deep = format!("{}1{}", "[".repeat(200), "]".repeat(200));
-        let commands = runner.task_outcome(task, TaskOutcome::Completed(deep.into_bytes()));
-        assert!(runner.app().flat);
-        assert!(asked(&commands).is_none(), "the fallback raced the repaint");
-        assert!(runner
+        let index = runner
             .app()
-            .note
-            .as_deref()
-            .is_some_and(|note| note.contains("nested")));
+            .stories
+            .iter()
+            .position(|story| story.id == THREAD_STORY.to_string())
+            .expect("the captured story is on the captured front page");
+        runner.action(action_id(&format!("story-{index}")));
+        let repaints = answer_lanes(&mut runner, &fixture(THREAD));
+        let comments = runner.app().comments.len();
+        assert!(comments > 4, "too few comments to prove anything");
+        assert!(
+            repaints <= 1 + comments / CHUNK,
+            "the thread repainted {repaints} times for {comments} comments"
+        );
     }
 
     #[test]
-    fn the_fallback_stops_asking_at_the_ceiling_rather_than_growing_forever() {
-        // A thread of forty thousand comments is thirteen hundred pages. The
-        // cap is what stops "tap Next" being a way to fill the device's memory
-        // one page at a time.
+    fn reaching_the_end_of_what_arrived_asks_for_more_rather_than_dead_ending() {
+        // The rest of the conversation is known to exist. Saying "that is the
+        // end of the thread" when it is only the end of what has been fetched
+        // is the application lying about the site.
         let mut runner = loaded();
-        runner.action(action_id("story-0"));
-        runner.app_mut().flat = true;
-        runner.app_mut().flat_pages = 5000;
-        runner.app_mut().flat_taken = 1;
-        runner.app_mut().task = None;
+        let index = runner
+            .app()
+            .stories
+            .iter()
+            .position(|story| story.id == THREAD_STORY.to_string())
+            .expect("the captured story is on the captured front page");
+        runner.action(action_id(&format!("story-{index}")));
+        let bodies = fixture(THREAD);
+        let (task, id) = runner.app().lanes[0];
+        runner.task_outcome(
+            task,
+            TaskOutcome::Completed(bodies[&id].clone().into_bytes()),
+        );
+        // Nothing else answered, so every slot below the top is still empty
+        // and the reader is looking at the end of what arrived.
+        runner.app_mut().lanes.clear();
+        runner.app_mut().want = 0;
+        assert!(runner.app().more_to_take());
+        let commands = runner.action(action_id("thread-next"));
+        assert!(
+            asked(&commands).is_some(),
+            "the end of the loaded part was reported as the end of the thread"
+        );
+        assert_eq!(runner.app().problem, None);
+    }
+
+    #[test]
+    fn a_thread_stops_asking_at_the_ceiling_rather_than_growing_forever() {
+        // A thread of forty thousand comments is one request each. The cap is
+        // what stops "tap Next" being a way to fill the device's memory, and a
+        // panel that turns a page a second is nobody's way through it.
+        let (mut runner, _) = opened_thread();
+        runner.app_mut().slots = (1..=10)
+            .map(|id| Slot {
+                id,
+                depth: 0,
+                comment: None,
+            })
+            .collect();
+        runner.app_mut().comments.clear();
         assert!(runner.app().more_to_take());
         runner.app_mut().comments = vec![model::Comment::default(); model::MAX_COMMENTS];
         assert!(
             !runner.app().more_to_take(),
-            "the fallback would keep asking past the ceiling"
+            "the fetcher would keep asking past the ceiling"
+        );
+    }
+
+    #[test]
+    fn a_thread_larger_than_the_device_will_hold_says_so_rather_than_stopping_quietly() {
+        let mut runner = loaded();
+        let index = runner
+            .app()
+            .stories
+            .iter()
+            .position(|story| story.id == THREAD_STORY.to_string())
+            .expect("the captured story is on the captured front page");
+        runner.action(action_id(&format!("story-{index}")));
+        let (task, _) = runner.app().lanes[0];
+        let huge = format!(
+            r#"{{"id": {THREAD_STORY}, "type": "story", "by": "a", "title": "T",
+                 "descendants": 40000, "kids": [1, 2, 3]}}"#
+        );
+        runner.task_outcome(task, TaskOutcome::Completed(huge.into_bytes()));
+        let note = runner.app().note.as_deref().expect("nothing was admitted");
+        assert!(
+            note.contains("40000") && note.contains(&model::MAX_COMMENTS.to_string()),
+            "the thread did not say what it was leaving out: {note}"
         );
     }
 
@@ -1534,9 +1903,9 @@ mod tests {
 
     #[test]
     fn an_identifier_that_is_not_a_number_never_becomes_a_url() {
-        // `objectID` arrives from the network and goes straight into a request
-        // this device makes. Anything but digits is somebody else naming the
-        // address.
+        // The identifier arrives from the network and goes straight into a
+        // request this device makes. Anything but digits is somebody else
+        // naming the address.
         let mut runner = loaded();
         runner.app_mut().stories[0].id = "1/../../evil?x=".to_owned();
         runner.app_mut().open = Some(0);
@@ -1556,10 +1925,7 @@ mod tests {
     fn coming_back_from_a_thread_does_not_ask_for_the_list_again() {
         // A second of radio for a list that has not changed since the reader
         // tapped into it, on a device that reads for weeks on a charge.
-        let mut runner = loaded();
-        runner.action(action_id("story-0"));
-        let task = spawned(&runner);
-        runner.task_outcome(task, TaskOutcome::Completed(THREAD.as_bytes().to_vec()));
+        let (mut runner, _) = opened_thread();
         let commands = runner.action(action_id("tab-top"));
         assert!(asked(&commands).is_none(), "the list was fetched twice");
         assert_eq!(runner.app().view, View::List);
@@ -1570,19 +1936,17 @@ mod tests {
         // The comments are held as one list. Leaving them in place draws the
         // last story's thread under the new story's title for as long as the
         // request takes.
-        let mut runner = loaded();
-        runner.action(action_id("story-0"));
-        let task = spawned(&runner);
-        runner.task_outcome(task, TaskOutcome::Completed(THREAD.as_bytes().to_vec()));
+        let (mut runner, _) = opened_thread();
         assert!(!runner.app().comments.is_empty());
         runner.action(action_id("stories"));
         runner.action(action_id("story-1"));
         let application = runner.app();
         assert!(application.comments.is_empty());
+        assert!(application.slots.is_empty());
         assert_eq!(application.thread_page, 0);
-        assert!(!application.flat);
         assert_eq!(application.note, None);
     }
+
     fn a_thread_of(depths: &[u16]) -> Hn {
         Hn {
             stories: vec![model::Story {

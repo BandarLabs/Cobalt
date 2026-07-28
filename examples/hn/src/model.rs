@@ -1,15 +1,13 @@
-//! The shapes Algolia sends, and the shapes the panel needs.
+//! The shapes Hacker News sends, and the shapes the panel needs.
 //!
-//! Two responses matter. `search` returns `{"hits": [{objectID, title, url,
-//! points, author, num_comments, created_at_i, story_text?}, …]}`, where `url`
-//! is absent on an Ask HN post and `story_text` is absent on everything else.
-//! `items/:id` returns one recursively nested object: `{id, created_at_i,
-//! type, author, text, points, children: [ … the same shape … ]}`, where a
-//! comment's `points` and `title` are `null` and the story's `text` is `null`.
+//! One response matters. `item/<number>.json` returns a single object: `{id,
+//! type, by, time, text?, title?, url?, score?, descendants?, kids?}`, where
+//! `title` and `url` belong to stories, `text` to comments and self-posts, and
+//! `kids` lists the replies in the order the site draws them.
 //!
-//! Both are read defensively. A missing field is a missing field, not a
-//! reason to show nothing: a thread with one deleted comment in it is still a
-//! thread, and a story with no score is still a story.
+//! Read defensively. A missing field is a missing field, not a reason to show
+//! nothing: a thread with one deleted comment in it is still a thread, and a
+//! story with no score is still a story.
 
 /// The most stories kept from one response.
 ///
@@ -36,13 +34,13 @@ pub const MAX_INDENT: u8 = kobo_sdk::MAX_QUOTE_DEPTH;
 /// One entry in a tab's list.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Story {
-    /// Algolia's `objectID`, which is the Hacker News item number as a string.
+    /// The Hacker News item number, as a string.
     pub id: String,
     pub title: String,
     pub author: String,
     pub points: u32,
     pub comments: u32,
-    /// Seconds since the epoch, as `created_at_i`.
+    /// Seconds since the epoch, as the API's `time`.
     pub created: i64,
     /// The self-post body of an Ask HN or a Show HN, already plain text.
     pub text: Option<String>,
@@ -128,149 +126,148 @@ fn host_of(url: &str) -> Option<String> {
     plausible.then(|| host.to_ascii_lowercase())
 }
 
-/// Reads a `search` or `search_by_date` response into a list of stories.
-#[must_use]
-pub fn stories_from(value: &kobo_json::Value) -> Vec<Story> {
-    let Some(hits) = value.get("hits").and_then(kobo_json::Value::as_array) else {
-        return Vec::new();
-    };
-    hits.iter()
-        .take(MAX_STORIES)
-        .filter_map(|hit| {
-            // A hit with no identifier cannot be opened and a hit with no
-            // title has nothing to tap on, so both are dropped rather than
-            // drawn as a blank row that does nothing.
-            let id = hit.get("objectID").and_then(kobo_json::Value::as_str)?;
-            let title = hit.get("title").and_then(kobo_json::Value::as_str)?;
-            Some(Story {
-                id: id.to_owned(),
-                title: kobo_html::to_text(title),
-                author: text_of(hit, "author").unwrap_or_else(|| "[deleted]".to_owned()),
-                points: count_of(hit, "points"),
-                comments: count_of(hit, "num_comments"),
-                created: hit
-                    .get("created_at_i")
-                    .and_then(kobo_json::Value::as_i64)
-                    .unwrap_or_default(),
-                text: hit
-                    .get("story_text")
-                    .and_then(kobo_json::Value::as_str)
-                    .map(kobo_html::to_text)
-                    .filter(|text| !text.is_empty()),
-                site: hit
-                    .get("url")
-                    .and_then(kobo_json::Value::as_str)
-                    .and_then(host_of),
-            })
-        })
-        .collect()
+/// One item exactly as Hacker News' own API gives it.
+///
+/// `item/<number>.json` is the site's own record of a story, a comment, a job
+/// or a poll. It is the only source that is never behind: the search index
+/// this application used to read from lags by minutes, which on a front page
+/// that turns over in minutes meant a story could be on the site and not in
+/// the list, and every score and comment count was slightly wrong.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Item {
+    pub id: i64,
+    /// `story`, `comment`, `job`, `poll` or `pollopt`.
+    pub kind: String,
+    pub by: String,
+    pub time: i64,
+    /// The body, already converted out of Hacker News' HTML.
+    pub text: String,
+    pub title: String,
+    pub url: Option<String>,
+    pub score: u32,
+    /// How many comments the whole thread holds, on a story.
+    pub descendants: u32,
+    /// The replies, in the order the site draws them.
+    ///
+    /// This is the field that makes exact ordering possible. Hacker News ranks
+    /// siblings by its own scoring, which is neither chronological nor
+    /// anything a client can recompute, and `kids` is that ranking.
+    pub kids: Vec<i64>,
+    pub dead: bool,
+    pub deleted: bool,
 }
 
-/// Flattens an `items/:id` tree into reading order.
-///
-/// Depth-first with an explicit stack rather than recursion. The parser
-/// already refuses a document nested past its own ceiling, so the tree that
-/// arrives here is bounded — but a flattener that recursed would still put one
-/// stack frame per reply on a device whose threads are 8 KB, and the shape of
-/// the input is chosen by whoever wrote the comment.
-///
-/// The root is the story itself and is not emitted: its title and score are
-/// drawn from the [`Story`] the list already holds.
-#[must_use]
-pub fn flatten(root: &kobo_json::Value) -> Vec<Comment> {
-    let mut comments = Vec::new();
-    // (node, depth), with siblings pushed in reverse so the first reply comes
-    // off the stack first and the order on screen is the order on the site.
-    let mut stack = children_of(root, 0);
-    while let Some((node, depth)) = stack.pop() {
-        if comments.len() >= MAX_COMMENTS {
-            break;
+impl Item {
+    /// This item as a list row, when it is something a list can show.
+    #[must_use]
+    pub fn story(&self) -> Option<Story> {
+        if self.deleted || self.dead || self.title.is_empty() {
+            return None;
         }
-        let body = node
+        Some(Story {
+            id: self.id.to_string(),
+            title: self.title.clone(),
+            author: if self.by.is_empty() {
+                "[deleted]".to_owned()
+            } else {
+                self.by.clone()
+            },
+            points: self.score,
+            comments: self.descendants,
+            created: self.time,
+            text: (!self.text.is_empty()).then(|| self.text.clone()),
+            site: self.url.as_deref().and_then(host_of),
+        })
+    }
+
+    /// This item as a comment at `depth`, when it is one worth drawing.
+    ///
+    /// A deleted comment with replies under it keeps its place, because the
+    /// replies are still answers to something and the site draws it the same
+    /// way. A deleted comment with nothing under it is not drawn at all, which
+    /// is also what the site does.
+    #[must_use]
+    pub fn comment(&self, depth: u16) -> Option<Comment> {
+        let gone = self.deleted || self.dead;
+        if gone && self.kids.is_empty() {
+            return None;
+        }
+        if !gone && self.text.is_empty() && self.by.is_empty() {
+            return None;
+        }
+        Some(Comment {
+            author: if gone { String::new() } else { self.by.clone() },
+            created: self.time,
+            depth,
+            body: if gone {
+                "[deleted]".to_owned()
+            } else {
+                self.text.clone()
+            },
+        })
+    }
+}
+
+/// Reads one `item/<number>.json` answer.
+///
+/// `null` is a real answer here: it is what the API says about an item number
+/// that does not exist, and it has to be told apart from a request that failed.
+#[must_use]
+pub fn item_from(value: &kobo_json::Value) -> Option<Item> {
+    let id = value.get("id").and_then(kobo_json::Value::as_i64)?;
+    Some(Item {
+        id,
+        kind: value
+            .get("type")
+            .and_then(kobo_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        by: value
+            .get("by")
+            .and_then(kobo_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        time: value
+            .get("time")
+            .and_then(kobo_json::Value::as_i64)
+            .unwrap_or_default(),
+        text: value
             .get("text")
             .and_then(kobo_json::Value::as_str)
             .map(kobo_html::to_text)
-            .unwrap_or_default();
-        let author = text_of(node, "author").unwrap_or_default();
-        // A comment that was deleted keeps its place in the thread — the
-        // replies underneath it are still answers to something — but it has
-        // neither an author nor a body, and drawing an empty one would look
-        // like a rendering fault.
-        if !body.is_empty() || !author.is_empty() {
-            comments.push(Comment {
-                author,
-                created: node
-                    .get("created_at_i")
-                    .and_then(kobo_json::Value::as_i64)
-                    .unwrap_or_default(),
-                depth,
-                body,
-            });
-        }
-        stack.extend(children_of(node, depth.saturating_add(1)));
-    }
-    comments
-}
-
-/// The replies of one node, in reverse, ready to push onto a depth-first stack.
-fn children_of(node: &kobo_json::Value, depth: u16) -> Vec<(&kobo_json::Value, u16)> {
-    node.get("children")
-        .and_then(kobo_json::Value::as_array)
-        .map(|children| children.iter().rev().map(|child| (child, depth)).collect())
-        .unwrap_or_default()
-}
-
-/// Reads a flat page of comments from a `search_by_date` response.
-///
-/// This is the fallback for a thread too large to fetch whole. The nesting is
-/// gone — these hits carry a `parent_id` but not the replies it names — so
-/// every comment comes back at depth zero, and the screen says so rather than
-/// pretending the conversation was flat all along.
-#[must_use]
-pub fn flat_comments_from(value: &kobo_json::Value) -> Vec<Comment> {
-    let Some(hits) = value.get("hits").and_then(kobo_json::Value::as_array) else {
-        return Vec::new();
-    };
-    hits.iter()
-        .take(MAX_COMMENTS)
-        .filter_map(|hit| {
-            let body = hit
-                .get("comment_text")
-                .and_then(kobo_json::Value::as_str)
-                .map(kobo_html::to_text)?;
-            if body.is_empty() {
-                return None;
-            }
-            Some(Comment {
-                author: text_of(hit, "author").unwrap_or_default(),
-                created: hit
-                    .get("created_at_i")
-                    .and_then(kobo_json::Value::as_i64)
-                    .unwrap_or_default(),
-                depth: 0,
-                body,
+            .unwrap_or_default(),
+        title: value
+            .get("title")
+            .and_then(kobo_json::Value::as_str)
+            .map(kobo_html::to_text)
+            .unwrap_or_default(),
+        url: value
+            .get("url")
+            .and_then(kobo_json::Value::as_str)
+            .map(str::to_owned),
+        score: count_of(value, "score"),
+        descendants: count_of(value, "descendants"),
+        kids: value
+            .get("kids")
+            .and_then(kobo_json::Value::as_array)
+            .map(|kids| {
+                kids.iter()
+                    .filter_map(kobo_json::Value::as_i64)
+                    .filter(|id| *id > 0)
+                    .take(MAX_COMMENTS)
+                    .collect()
             })
-        })
-        .collect()
+            .unwrap_or_default(),
+        dead: flag(value, "dead"),
+        deleted: flag(value, "deleted"),
+    })
 }
 
-/// How many pages of flat comments a fallback thread has, from `nbPages`.
-#[must_use]
-pub fn pages_of(value: &kobo_json::Value) -> u32 {
-    value
-        .get("nbPages")
-        .and_then(kobo_json::Value::as_i64)
-        .and_then(|pages| u32::try_from(pages).ok())
-        .unwrap_or(1)
-        .max(1)
-}
-
-fn text_of(value: &kobo_json::Value, key: &str) -> Option<String> {
+fn flag(value: &kobo_json::Value, key: &str) -> bool {
     value
         .get(key)
-        .and_then(kobo_json::Value::as_str)
-        .map(kobo_html::to_text)
-        .filter(|text| !text.is_empty())
+        .and_then(kobo_json::Value::as_bool)
+        .unwrap_or(false)
 }
 
 /// Reads a count, clamping anything negative or absurd to something drawable.
@@ -338,50 +335,48 @@ fn plural(count: u32, noun: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        age, flat_comments_from, flatten, pages_of, stories_from, summary, MAX_COMMENTS, MAX_INDENT,
-    };
-    use std::fmt::Write as _;
+    use super::{age, host_of, item_from, summary, Item, MAX_COMMENTS, MAX_INDENT};
 
-    const FRONT_PAGE: &str = include_str!("../tests/front_page.json");
-    const ASK: &str = include_str!("../tests/ask.json");
-    const THREAD: &str = include_str!("../tests/thread.json");
-    const COMMENT_PAGE: &str = include_str!("../tests/comment_page.json");
+    const STORY: &str = include_str!("../tests/item_story.json");
+    const ASK: &str = include_str!("../tests/item_ask.json");
+    const COMMENT: &str = include_str!("../tests/item_comment.json");
 
     fn parse(body: &str) -> kobo_json::Value {
         kobo_json::parse(body).expect("a captured response parses")
     }
 
-    #[test]
-    fn a_real_front_page_response_becomes_a_list_of_stories() {
-        // Captured from `search?tags=front_page` rather than written by hand.
-        // A field this application reads that the API stopped sending is a
-        // blank row on the device and nothing anywhere else.
-        let stories = stories_from(&parse(FRONT_PAGE));
-        assert_eq!(stories.len(), 5);
-        let first = &stories[0];
-        assert_eq!(first.id, "49057175");
-        assert_eq!(first.title, "Kill The Cookie Banner");
-        assert_eq!(first.author, "rapnie");
-        assert_eq!(first.points, 962);
-        assert_eq!(first.comments, 459);
-        assert_eq!(first.created, 1_785_066_797);
-        assert_eq!(first.text, None, "a link post has no self text");
+    fn read(body: &str) -> Item {
+        item_from(&parse(body)).expect("a captured item reads")
     }
 
     #[test]
-    fn a_real_ask_hn_response_carries_the_question_itself() {
-        // Ask and Show posts have no `url` and a `story_text` instead. Reading
-        // only `url` would leave the entire question off the screen.
-        let stories = stories_from(&parse(ASK));
-        let question = stories[0].text.as_deref().expect("an Ask HN has a body");
+    fn a_real_story_item_becomes_a_list_row() {
+        // Captured from the site's own API rather than written by hand. A
+        // field this application reads that the API stopped sending is a blank
+        // row on the device and nothing anywhere else.
+        let item = read(STORY);
+        assert_eq!(item.kind, "story");
+        let story = item.story().expect("a story is a row");
+        assert_eq!(story.id, "49076057");
+        assert_eq!(story.title, "Our position on open-weights models");
+        assert_eq!(story.author, "surprisetalk");
+        assert_eq!(story.points, 826);
+        assert_eq!(story.comments, 1187);
+        assert_eq!(story.created, 1_785_189_829);
+        assert_eq!(story.site.as_deref(), Some("anthropic.com"));
+        assert_eq!(story.text, None, "a link post has no self text");
+    }
+
+    #[test]
+    fn a_real_ask_hn_carries_the_question_itself() {
+        // An Ask post has no `url` and a `text` instead. Reading only `url`
+        // would leave the entire question off the screen.
+        let story = read(ASK).story().expect("an Ask post is a row");
+        assert_eq!(story.site, None);
+        let question = story.text.as_deref().expect("an Ask HN has a body");
         assert!(
-            question.starts_with("Hi everyone,"),
+            question.starts_with("Anthropic has released"),
             "the question did not survive: {question:.60}"
-        );
-        assert!(
-            question.contains("\n\n"),
-            "the paragraphs were lost, so the question is one wall of text"
         );
         assert!(
             !question.contains("<p>") && !question.contains("&#x27;"),
@@ -390,163 +385,173 @@ mod tests {
     }
 
     #[test]
-    fn a_hit_with_no_identifier_or_no_title_is_dropped_rather_than_drawn() {
+    fn a_real_comment_item_keeps_the_order_the_site_draws_its_replies_in() {
+        // `kids` is the whole reason this application reads the site's API
+        // rather than a search index. The site ranks siblings by its own
+        // scoring, which is neither chronological nor anything a client can
+        // recompute, so the order has to survive parsing exactly.
+        let item = read(COMMENT);
+        let numbers = &item.kids;
+        assert!(numbers.len() > 8, "only {} replies", numbers.len());
+        assert_eq!(numbers[0], 49_079_084);
+        assert_eq!(numbers[1], 49_076_830);
+        assert!(
+            numbers.windows(2).any(|pair| pair[0] > pair[1]),
+            "the replies came back in ascending order, which is a sort, not \
+             the site's ranking"
+        );
+        let comment = item.comment(1).expect("a comment is drawable");
+        assert_eq!(comment.author, "vhantz");
+        assert_eq!(comment.depth, 1);
+        assert!(
+            !comment.body.contains("&#x") && !comment.body.contains("<p>"),
+            "an entity reached the panel: {:.120}",
+            comment.body
+        );
+    }
+
+    #[test]
+    fn an_item_number_that_does_not_exist_is_told_apart_from_a_failure() {
+        // The API answers `null` for a number that was never an item, and
+        // that is a real answer. Treating it as a broken request would retry
+        // it forever.
+        assert!(item_from(&parse("null")).is_none());
+        assert!(item_from(&parse(r#"{"by": "a", "type": "comment"}"#)).is_none());
+    }
+
+    #[test]
+    fn a_deleted_comment_with_replies_keeps_its_place_and_one_without_does_not() {
+        // The site draws a deleted comment that has answers under it, because
+        // the answers are still answers to something. One with nothing under
+        // it is not drawn at all.
+        let orphan = read(r#"{"id": 1, "deleted": true, "type": "comment"}"#);
+        assert!(orphan.comment(0).is_none());
+
+        let parent = read(r#"{"id": 2, "deleted": true, "type": "comment", "kids": [3]}"#);
+        let drawn = parent.comment(0).expect("a deleted parent still shows");
+        assert_eq!(drawn.body, "[deleted]");
+        assert!(drawn.author.is_empty());
+    }
+
+    #[test]
+    fn a_dead_comment_is_treated_the_same_way_a_deleted_one_is() {
+        // Flagged items come back with `dead: true` and their text intact.
+        // Drawing that text would put on the panel the one thing the site
+        // took off it.
+        let dead = read(
+            r#"{"id": 4, "dead": true, "type": "comment", "by": "a",
+                            "text": "flagged", "kids": [5]}"#,
+        );
+        let drawn = dead.comment(0).expect("a dead parent still shows");
+        assert_eq!(drawn.body, "[deleted]");
+        assert!(
+            read(r#"{"id": 6, "dead": true, "type": "story", "title": "T"}"#)
+                .story()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn an_empty_comment_is_dropped_rather_than_drawn_as_a_blank_row() {
+        // An empty row on the panel reads as a rendering fault.
+        let blank = read(r#"{"id": 7, "type": "comment"}"#);
+        assert!(blank.comment(0).is_none());
+    }
+
+    #[test]
+    fn a_story_with_no_identifier_or_no_title_is_dropped_rather_than_drawn() {
         // A row with nothing to tap and nowhere to go is worse than one fewer
         // story: the reader taps it, the panel refreshes, nothing happens.
-        let value = parse(
-            r#"{"hits": [
-                {"title": "No identifier", "author": "a"},
-                {"objectID": "1", "author": "b"},
-                {"objectID": "2", "title": "Fine", "author": "c"}
-            ]}"#,
+        assert!(read(r#"{"id": 8, "type": "story", "by": "a"}"#)
+            .story()
+            .is_none());
+    }
+
+    #[test]
+    fn a_reply_list_longer_than_the_ceiling_stops_at_the_ceiling() {
+        // Unbounded is the failure mode that matters: one request per reply,
+        // and a thread with fifteen hundred of them is fifteen hundred trips
+        // over a radio that manages a few a second.
+        let numbers: Vec<String> = (1..=MAX_COMMENTS + 50)
+            .map(|number| number.to_string())
+            .collect();
+        let body = format!(
+            r#"{{"id": 9, "type": "comment", "by": "a", "text": "t", "kids": [{}]}}"#,
+            numbers.join(",")
         );
-        let stories = stories_from(&value);
-        assert_eq!(stories.len(), 1);
-        assert_eq!(stories[0].id, "2");
+        assert_eq!(read(&body).kids.len(), MAX_COMMENTS);
+    }
+
+    #[test]
+    fn a_reply_number_that_is_not_a_number_does_not_become_a_request() {
+        // Every entry in `kids` turns into a URL this device asks for. A
+        // string or a negative in there would be a request for something that
+        // is not an item.
+        let item = read(
+            r#"{"id": 10, "type": "comment", "by": "a", "text": "t",
+                            "kids": [1, "2", -3, null, 4]}"#,
+        );
+        assert_eq!(item.kids, vec![1, 4]);
+    }
+
+    #[test]
+    fn a_deeply_nested_reply_is_capped_in_width_but_still_says_how_deep_it_is() {
+        // The panel is 91 mm across. Eleven levels of real indentation is a
+        // column of single words; dropping the replies instead would hide the
+        // half of a thread that is usually the argument.
+        let item = read(r#"{"id": 11, "type": "comment", "by": "a", "text": "deep"}"#);
+        let deep = item.comment(38).expect("a deep reply is still a reply");
+        assert!(
+            deep.indent() <= MAX_INDENT,
+            "indent {} past the ceiling",
+            deep.indent()
+        );
+        assert!(
+            deep.byline(0).contains("38 deep"),
+            "depth past the gutter was not stated: {}",
+            deep.byline(0)
+        );
+        let top = item.comment(0).expect("a top level comment draws");
+        assert!(
+            !top.byline(0).contains("deep"),
+            "a top level comment was labelled as a reply"
+        );
     }
 
     #[test]
     fn one_of_something_is_not_written_as_one_somethings() {
-        // The Ask and Show pages carry the site's own ordering now, so a story
-        // minutes old with a single comment is the ordinary case rather than
-        // the rare one.
-        let value = parse(
-            r#"{"hits": [{"objectID": "1", "title": "T", "author": "a",
-                          "points": 1, "num_comments": 1, "created_at_i": 0}]}"#,
+        let item = read(
+            r#"{"id": 12, "type": "story", "title": "T", "by": "a",
+                            "score": 1, "descendants": 1, "time": 0}"#,
         );
-        let stories = stories_from(&value);
         assert_eq!(
-            summary(&stories[0], 0),
+            summary(&item.story().expect("a row"), 0),
             "a \u{b7} 1 point \u{b7} 1 comment \u{b7} just now"
         );
     }
 
     #[test]
     fn a_story_with_no_score_and_no_author_still_draws_a_second_line() {
-        // Algolia sends `null` for both on some old items. Formatting `null`
-        // as an empty string leaves a row whose second line is punctuation.
-        let value = parse(r#"{"hits": [{"objectID": "1", "title": "T"}]}"#);
-        let stories = stories_from(&value);
+        // Old items come back without either. Formatting a missing field as an
+        // empty string leaves a row whose second line is punctuation.
+        let item = read(r#"{"id": 13, "type": "story", "title": "T"}"#);
         assert_eq!(
-            summary(&stories[0], 0),
+            summary(&item.story().expect("a row"), 0),
             "[deleted] \u{b7} 0 points \u{b7} 0 comments \u{b7} just now"
         );
     }
 
     #[test]
-    fn a_real_thread_flattens_into_reading_order() {
-        // The order is the whole point: a flattened tree in the wrong order is
-        // a conversation where the answers come before the questions.
-        let comments = flatten(&parse(THREAD));
-        assert!(comments.len() > 8, "only {} comments", comments.len());
-        assert_eq!(comments[0].depth, 0);
-        assert_eq!(comments[0].author, "ibejoeb");
-        assert!(
-            comments[0]
-                .body
-                .starts_with("Anyone have camera suggestions?"),
-            "{}",
-            comments[0].body
+    fn a_host_is_shown_the_way_the_site_shows_it() {
+        assert_eq!(
+            host_of("https://www.example.com/a/b"),
+            Some("example.com".into())
         );
-        // A reply comes immediately after the comment it answers, never after
-        // the next sibling.
-        assert_eq!(comments[1].depth, 1);
-        assert_eq!(comments[1].author, "ranger_danger");
-        assert!(comments.iter().any(|comment| comment.depth >= 3));
-        assert!(
-            comments.iter().all(|comment| !comment.body.contains("&#x")),
-            "an entity reached the panel"
+        assert_eq!(
+            host_of("http://EXAMPLE.co.uk"),
+            Some("example.co.uk".into())
         );
-    }
-
-    #[test]
-    fn a_deeply_nested_thread_is_capped_in_width_but_not_in_content() {
-        // The panel is 91 mm across. Eleven levels of real indentation is a
-        // column of single words; dropping the replies instead would hide the
-        // half of a thread that is usually the argument.
-        let mut json = String::new();
-        for depth in 0..40 {
-            let _ = write!(
-                json,
-                r#"{{"author": "a{depth}", "text": "reply {depth}", "created_at_i": 0, "children": ["#
-            );
-        }
-        json.push_str(&"]}".repeat(40));
-        let Ok(tree) = kobo_json::parse(&json) else {
-            // The parser's own depth ceiling is a legitimate answer here; what
-            // must not happen is a panic or a silent half-thread.
-            return;
-        };
-        let comments = flatten(&tree);
-        assert_eq!(comments.len(), 39, "replies were lost to the depth");
-        assert_eq!(comments[38].depth, 38);
-        for comment in &comments {
-            assert!(
-                comment.indent() <= MAX_INDENT,
-                "indent {} past the ceiling",
-                comment.indent()
-            );
-        }
-        assert!(
-            comments[38].byline(0).contains("reply 38 deep"),
-            "depth past the gutter was not stated: {}",
-            comments[38].byline(0)
-        );
-        assert!(
-            !comments[0].byline(0).contains("deep"),
-            "a top level comment was labelled as a reply"
-        );
-    }
-
-    #[test]
-    fn a_thread_longer_than_the_ceiling_stops_at_the_ceiling() {
-        // Unbounded is the failure mode that matters: a thousand comments of
-        // 8 KB each is 8 MB of `String` on a device with a few hundred.
-        let mut json = String::from(r#"{"children": ["#);
-        for index in 0..(MAX_COMMENTS + 50) {
-            if index > 0 {
-                json.push(',');
-            }
-            let _ = write!(
-                json,
-                r#"{{"author": "a", "text": "c{index}", "created_at_i": 0}}"#
-            );
-        }
-        json.push_str("]}");
-        let comments = flatten(&parse(&json));
-        assert_eq!(comments.len(), MAX_COMMENTS);
-    }
-
-    #[test]
-    fn a_deleted_comment_does_not_leave_an_empty_paragraph_behind() {
-        // Algolia sends `null` for both fields on a deleted item, and an empty
-        // comment on the panel reads as a rendering fault.
-        let value = parse(
-            r#"{"children": [
-                {"author": null, "text": null, "created_at_i": 1,
-                 "children": [{"author": "b", "text": "still an answer", "created_at_i": 2}]}
-            ]}"#,
-        );
-        let comments = flatten(&value);
-        assert_eq!(comments.len(), 1);
-        assert_eq!(comments[0].author, "b");
-        // The reply keeps the depth it really had, so it is not promoted into
-        // the top level of the thread.
-        assert_eq!(comments[0].depth, 1);
-    }
-
-    #[test]
-    fn a_real_flat_comment_page_is_read_for_the_fallback() {
-        // The oversized-thread path. These hits spell the body
-        // `comment_text`, not `text`, so reading the wrong key gives a page of
-        // nothing with no error anywhere.
-        let value = parse(COMMENT_PAGE);
-        let comments = flat_comments_from(&value);
-        assert_eq!(comments.len(), 5);
-        assert_eq!(comments[0].author, "fragmede");
-        assert!(comments[0].body.starts_with("Having a category"));
-        assert!(comments.iter().all(|comment| comment.depth == 0));
-        assert_eq!(pages_of(&value), 185);
+        assert_eq!(host_of("not a url"), None);
     }
 
     #[test]
