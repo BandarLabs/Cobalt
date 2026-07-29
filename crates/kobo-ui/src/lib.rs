@@ -1908,6 +1908,7 @@ fn layout_bottom_action(bottom: &BottomAction, metrics: &DisplayMetrics, layout:
     let y = top
         .saturating_add(rule)
         .saturating_add((band - rule - height) / 2);
+    let label = one_line(&bottom.action.label, width - 32, FontSize::Body);
     layout.nodes.push(LayoutNode {
         id: bottom.id,
         rect: Rect {
@@ -1921,8 +1922,28 @@ fn layout_bottom_action(bottom: &BottomAction, metrics: &DisplayMetrics, layout:
             ControlState::Enabled,
             Emphasis::Normal,
         ),
-        text_lines: vec![one_line(&bottom.action.label, width - 32, FontSize::Body)],
+        text_lines: vec![label.clone()],
     });
+    // The mark sits beside the centred word rather than replacing it. A bar
+    // this wide has room for both, and the band is often the only way off a
+    // screen, so it is the last place to make somebody guess.
+    if let Some(glyph) = bottom.action.glyph {
+        let (text_width, _) = measure_text(&label, FontSize::Body);
+        let side = height * 2 / 5;
+        let gap = metrics.space(Space::Small);
+        let text_left = margin + (width - text_width) / 2;
+        layout.nodes.push(LayoutNode {
+            id: bottom.id,
+            rect: Rect {
+                x: text_left.saturating_sub(gap + side).max(margin),
+                y: y + (height - side) / 2,
+                width: side,
+                height: side,
+            },
+            kind: LayoutKind::InlineGlyph(glyph),
+            text_lines: Vec::new(),
+        });
+    }
 }
 
 fn layout_nav_bar(nav_bar: &NavBar, metrics: &DisplayMetrics, layout: &mut Layout) {
@@ -2602,6 +2623,10 @@ impl Tile {
 pub struct Cell {
     pub action: ActionId,
     pub label: String,
+    /// Drawn above the label, centred, when the action has a picture everyone
+    /// already knows. Optional because most cells do not: a glyph invented for
+    /// a verb nobody draws is worse than the verb written out.
+    pub glyph: Option<Glyph>,
 }
 
 impl Cell {
@@ -2610,7 +2635,20 @@ impl Cell {
         Self {
             action,
             label: label.into(),
+            glyph: None,
         }
+    }
+
+    /// Gives this cell a picture to sit above its label.
+    ///
+    /// The label stays. A transport control drawn as a bare triangle is
+    /// unambiguous to anyone who has used a tape recorder and silent to a
+    /// screen reader, and "back thirty seconds" is a fact only the words can
+    /// carry.
+    #[must_use]
+    pub const fn with_glyph(mut self, glyph: Glyph) -> Self {
+        self.glyph = Some(glyph);
+        self
     }
 }
 
@@ -2881,6 +2919,23 @@ pub enum Glyph {
     /// natural picture, so this is the thing you hold against it rather than
     /// the thing that does the sensing.
     Magnet,
+    /// A right-pointing triangle: start playing. Every transport control on
+    /// every device made since the tape recorder draws this, which is why the
+    /// audiobook player is the one place a picture beats a word.
+    Play,
+    /// Two upright bars: stop, but keep the place. Distinct from a square,
+    /// which is stop and forget it, and which this platform has no use for.
+    Pause,
+    /// An arrow curling anticlockwise: go back a fixed step. Pair it with a
+    /// label saying how far, because the glyph says "back" and only the label
+    /// can say "thirty seconds".
+    Rewind,
+    /// An arrow curling clockwise: go forward a fixed step.
+    Forward,
+    /// A speaker cone with a minus: quieter.
+    VolumeDown,
+    /// A speaker cone with a plus: louder.
+    VolumeUp,
 }
 
 impl Glyph {
@@ -2891,7 +2946,7 @@ impl Glyph {
     /// the set was twenty-one: `Light` and `Close` were authored, shipped, and
     /// covered by none of the tests that walk every glyph. A glyph nobody
     /// rasterises in a test is a blank space beside a label on the panel.
-    pub const ALL: [Self; 32] = [
+    pub const ALL: [Self; 38] = [
         Self::App,
         Self::Book,
         Self::Note,
@@ -2924,6 +2979,12 @@ impl Glyph {
         Self::Bluetooth,
         Self::Key,
         Self::Magnet,
+        Self::Play,
+        Self::Pause,
+        Self::Rewind,
+        Self::Forward,
+        Self::VolumeDown,
+        Self::VolumeUp,
     ];
 }
 
@@ -3176,6 +3237,12 @@ pub enum LayoutKind {
     /// A count or a word in the tile's leading corner, in the same chip.
     TileBadge,
     TileGlyph(Glyph),
+    /// A picture drawn inside another control's rect, carrying no action of
+    /// its own: the mark above a grid cell's label, or the one beside a bottom
+    /// action's word. Deliberately not a control, so hit testing and press
+    /// inversion both belong to the thing underneath it. A glyph that was its
+    /// own target would invert a square in the middle of a button.
+    InlineGlyph(Glyph),
     /// A picture, already placed. `rect` is where it goes; the renderer scales
     /// it to fit only if the application handed over something larger.
     Picture(PictureHandle),
@@ -4543,7 +4610,7 @@ fn layout_node(
             });
             let mut rows = 0;
             for (position, cell) in cells.iter().take(MAX_CELLS).enumerate() {
-                if layout.nodes.len() + 2 > MAX_LAYOUT_NODES {
+                if layout.nodes.len() + 3 > MAX_LAYOUT_NODES {
                     break;
                 }
                 let position = i32::try_from(position).unwrap_or(0);
@@ -4562,9 +4629,40 @@ fn layout_node(
                     kind: LayoutKind::Cell(cell.action),
                     text_lines: Vec::new(),
                 });
+                // A glyph and its label are one object, centred together, for
+                // the reason the tiles are: a mark centred in the cell with the
+                // word pinned under it leaves the word touching the rule.
+                let label_rect = if let Some(glyph) = cell.glyph {
+                    let mark = metrics.tenth_mm(70).min(cell_height / 2);
+                    let inset = metrics.space(Space::Tight);
+                    let caption = FontSize::Body.line_height();
+                    let group = mark.saturating_add(inset).saturating_add(caption);
+                    let top = rect
+                        .y
+                        .saturating_add((cell_height.saturating_sub(group)).max(0) / 2);
+                    layout.nodes.push(LayoutNode {
+                        id: *id,
+                        rect: Rect {
+                            x: rect.x.saturating_add((cell_width - mark).max(0) / 2),
+                            y: top,
+                            width: mark,
+                            height: mark,
+                        },
+                        kind: LayoutKind::InlineGlyph(glyph),
+                        text_lines: Vec::new(),
+                    });
+                    Rect {
+                        x: rect.x,
+                        y: top.saturating_add(mark).saturating_add(inset),
+                        width: cell_width,
+                        height: caption,
+                    }
+                } else {
+                    rect
+                };
                 layout.nodes.push(LayoutNode {
                     id: *id,
-                    rect,
+                    rect: label_rect,
                     kind: LayoutKind::CellLabel,
                     text_lines: vec![cell.label.clone()],
                 });
@@ -8670,7 +8768,9 @@ pub fn render_all(
                 clip,
             ),
             LayoutKind::RowLead(lead) => draw_row_lead(surface, lead, node.rect, pictures, clip),
-            LayoutKind::TileGlyph(glyph) => draw_glyph_icon(surface, glyph, node.rect, clip),
+            LayoutKind::TileGlyph(glyph) | LayoutKind::InlineGlyph(glyph) => {
+                draw_glyph_icon(surface, glyph, node.rect, clip);
+            }
             // Outlined, because a cover with pale edges on white paper has no
             // boundary at all and reads as text floating in space.
             LayoutKind::Picture(handle) => {
@@ -9506,6 +9606,61 @@ fn glyph(character: char) -> [u8; 7] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_cell_glyph_and_a_bottom_action_glyph_both_reach_the_layout() {
+        // Both builders hand a glyph to a layout function that used to ignore
+        // it: the cell payload had no glyph at all, and layout_bottom_action
+        // read only the label. A builder whose argument is silently dropped is
+        // worse than no builder, because the call site looks correct.
+        let cells = vec![
+            Cell::new(ActionId(11), "Back 30 sec").with_glyph(Glyph::Rewind),
+            Cell::new(ActionId(12), "Play").with_glyph(Glyph::Play),
+        ];
+        let screen = Screen::new(
+            1,
+            vec![Node::Grid {
+                id: NodeId(1),
+                columns: 2,
+                square: false,
+                cells,
+            }],
+        )
+        .with_bottom_action(BottomAction::new(
+            NodeId(2),
+            BarAction::new(ActionId(20), "Bluetooth audio output").with_glyph(Glyph::Bluetooth),
+        ));
+        let layout = screen.layout();
+        let drawn: Vec<Glyph> = layout
+            .nodes
+            .iter()
+            .filter_map(|node| match node.kind {
+                LayoutKind::InlineGlyph(glyph) => Some(glyph),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            drawn,
+            vec![Glyph::Rewind, Glyph::Play, Glyph::Bluetooth],
+            "a glyph was accepted by a builder and never drawn"
+        );
+        // The mark is decoration. Every one of them must sit inside a control
+        // that owns the tap, or a reader who hits the icon gets nothing.
+        for node in layout
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, LayoutKind::InlineGlyph(_)))
+        {
+            assert!(
+                layout.nodes.iter().any(|other| {
+                    matches!(other.kind, LayoutKind::Cell(_) | LayoutKind::Button(..))
+                        && other.rect.intersection(node.rect) == Some(node.rect)
+                }),
+                "a glyph at {:?} sits outside every control",
+                node.rect
+            );
+        }
+    }
 
     #[test]
     fn wrapping_and_measurement_are_deterministic() {

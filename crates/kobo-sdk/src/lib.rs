@@ -1662,6 +1662,7 @@ impl ScreenBuilder {
         self.nodes.push(Node::Terminal { id, rows, cursor });
         self
     }
+    /// A grid of buttons.
     ///
     /// The general one: the caller picks the columns, so a board, a keypad and
     /// an on-screen keyboard are all this, rather than three primitives that
@@ -1693,6 +1694,62 @@ impl ScreenBuilder {
             square,
             cells,
         });
+        self
+    }
+
+    /// A row of buttons that each have a picture as well as a word.
+    ///
+    /// For the handful of actions that have a drawing everybody already knows:
+    /// the transport controls, chiefly. Reach for it only when the picture is
+    /// genuinely universal. A glyph invented for a verb nobody draws is worse
+    /// than the verb written out, because the reader now has to decode the
+    /// icon *and* read the label to check they agree.
+    ///
+    /// The label always stays. The picture is the fast path for someone who
+    /// already knows the control; the word is what makes it learnable, and it
+    /// is the only part that can say "thirty seconds".
+    #[must_use]
+    pub fn controls<I, N, L>(mut self, columns: u8, cells: I) -> Self
+    where
+        I: IntoIterator<Item = (N, L, Glyph)>,
+        N: AsRef<str>,
+        L: Into<String>,
+    {
+        let id = self.next_id();
+        let mut source = cells.into_iter();
+        let mut cells = Vec::new();
+        for (name, label, glyph) in source.by_ref().take(MAX_CELLS) {
+            cells.push(Cell::new(self.register(name.as_ref()), label).with_glyph(glyph));
+        }
+        if source.next().is_some() {
+            self.warn_limit(id, "grid cells", MAX_CELLS);
+        }
+        self.nodes.push(Node::Grid {
+            id,
+            columns: columns.clamp(1, MAX_COLUMNS),
+            square: false,
+            cells,
+        });
+        self
+    }
+
+    /// The same, with a picture beside the word.
+    ///
+    /// For the small set of bottom actions whose mark is already known: the
+    /// Bluetooth rune, chiefly. The word stays, because the band is wide
+    /// enough for it and a lone rune at the foot of the panel is a guess.
+    #[must_use]
+    pub fn bottom_action_glyph(
+        mut self,
+        name: impl AsRef<str>,
+        label: impl Into<String>,
+        glyph: Glyph,
+    ) -> Self {
+        let id = self.next_id();
+        let action = BarAction::new(self.register(name.as_ref()), label).with_glyph(glyph);
+        self.warn_second_bottom_bar(id);
+        self.bottom_action = Some(BottomAction::new(id, action));
+        self.nav_bar = None;
         self
     }
 

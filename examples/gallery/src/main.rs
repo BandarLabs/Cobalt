@@ -446,6 +446,15 @@ impl Gallery {
                     .enumerate()
                     .map(|(index, label)| (format!("chip-{index}"), label, index == self.chip)),
             )
+            .section("Controls that have a picture everybody knows")
+            .controls(
+                3,
+                [
+                    ("control-back", "Back 30 sec", Glyph::Rewind),
+                    ("control-play", "Play", Glyph::Play),
+                    ("control-forward", "Forward 30 sec", Glyph::Forward),
+                ],
+            )
             .button("open-confirm", "Delete this shelf")
             .compose(|screen| {
                 // A confirmation is an overlay, so it is drawn only while it

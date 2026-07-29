@@ -441,6 +441,22 @@ fn add_span(accumulator: &mut [i64], from: i64, to: i64) {
     }
 }
 
+/// The speaker cone both volume glyphs are built on.
+///
+/// Shared rather than duplicated so the two controls cannot drift apart: a
+/// louder button whose cone sits two units left of the quieter one reads as a
+/// rendering fault, not as a pair.
+fn speaker() -> Path {
+    Path::new()
+        .move_to(150, 390)
+        .line_to(290, 390)
+        .line_to(460, 210)
+        .line_to(460, 790)
+        .line_to(290, 610)
+        .line_to(150, 610)
+        .line_to(150, 390)
+}
+
 /// The geometry of one glyph.
 ///
 /// Designed as line art at a single stroke weight rather than as filled
@@ -835,6 +851,56 @@ pub fn shapes(glyph: Glyph) -> Vec<Shape> {
                     .quad_to(429, 200, 604, 376)
                     .quad_to(780, 551, 780, 800),
             ),
+        ],
+        Glyph::Play => vec![stroke(
+            Path::new()
+                .move_to(340, 230)
+                .line_to(780, 500)
+                .line_to(340, 770)
+                .line_to(340, 230),
+        )],
+        Glyph::Pause => vec![
+            stroke(Path::new().move_to(370, 230).line_to(370, 770)),
+            stroke(Path::new().move_to(630, 230).line_to(630, 770)),
+        ],
+        Glyph::Rewind => vec![
+            stroke(
+                Path::new()
+                    .move_to(500, 260)
+                    .quad_to(770, 260, 770, 530)
+                    .quad_to(770, 800, 500, 800)
+                    .quad_to(230, 800, 230, 530),
+            ),
+            stroke(
+                Path::new()
+                    .move_to(610, 170)
+                    .line_to(500, 260)
+                    .line_to(610, 350),
+            ),
+        ],
+        Glyph::Forward => vec![
+            stroke(
+                Path::new()
+                    .move_to(500, 260)
+                    .quad_to(230, 260, 230, 530)
+                    .quad_to(230, 800, 500, 800)
+                    .quad_to(770, 800, 770, 530),
+            ),
+            stroke(
+                Path::new()
+                    .move_to(390, 170)
+                    .line_to(500, 260)
+                    .line_to(390, 350),
+            ),
+        ],
+        Glyph::VolumeDown => vec![
+            stroke(speaker()),
+            stroke(Path::new().move_to(620, 500).line_to(880, 500)),
+        ],
+        Glyph::VolumeUp => vec![
+            stroke(speaker()),
+            stroke(Path::new().move_to(620, 500).line_to(880, 500)),
+            stroke(Path::new().move_to(750, 370).line_to(750, 630)),
         ],
     }
 }

@@ -14,7 +14,13 @@ use kobo_ui::{
 use std::cmp::min;
 
 pub const MAGIC: [u8; 4] = *b"KOBO";
-pub const VERSION: u8 = 2;
+/// The wire version, refused rather than reinterpreted on a mismatch.
+///
+/// Went to 3 when a grid cell gained an optional glyph. That is a change to
+/// the payload of an existing tag rather than a new tag, so an old runtime
+/// would have read the flag byte as the next cell's action. The version byte
+/// exists precisely so it declines the frame instead.
+pub const VERSION: u8 = 3;
 pub const HEADER_LEN: usize = 14;
 pub const MAX_FRAME_LEN: usize = 1_048_576;
 /// The largest decoded picture accepted from one application.
@@ -2545,6 +2551,7 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
             for cell in cells {
                 add_encoded_len(&mut length, 4)?;
                 add_encoded_len(&mut length, encoded_string_len(&cell.label)?)?;
+                add_encoded_len(&mut length, if cell.glyph.is_some() { 2 } else { 1 })?;
             }
             length
         }
@@ -3523,6 +3530,13 @@ fn encode_node(
             for cell in cells {
                 push_u32(output, cell.action.0);
                 push_string(output, &cell.label)?;
+                match cell.glyph {
+                    None => output.push(0),
+                    Some(glyph) => {
+                        output.push(1);
+                        output.push(encode_glyph(glyph));
+                    }
+                }
             }
         }
         Node::Rows { id, rows } => {
@@ -3865,6 +3879,12 @@ const fn encode_glyph(glyph: Glyph) -> u8 {
         Glyph::Bluetooth => 29,
         Glyph::Key => 30,
         Glyph::Magnet => 31,
+        Glyph::Play => 32,
+        Glyph::Pause => 33,
+        Glyph::Rewind => 34,
+        Glyph::Forward => 35,
+        Glyph::VolumeDown => 36,
+        Glyph::VolumeUp => 37,
     }
 }
 
@@ -3902,6 +3922,12 @@ const fn decode_glyph(tag: u8) -> Option<Glyph> {
         29 => Glyph::Bluetooth,
         30 => Glyph::Key,
         31 => Glyph::Magnet,
+        32 => Glyph::Play,
+        33 => Glyph::Pause,
+        34 => Glyph::Rewind,
+        35 => Glyph::Forward,
+        36 => Glyph::VolumeDown,
+        37 => Glyph::VolumeUp,
 
         _ => return None,
     })
@@ -4536,7 +4562,15 @@ fn decode_node(
                 if action.is_reserved() {
                     return Err(ProtocolError::InvalidValue("reserved action id"));
                 }
-                cells.push(Cell::new(action, reader.string()?));
+                let label = reader.string()?;
+                let cell = Cell::new(action, label);
+                cells.push(match reader.u8()? {
+                    0 => cell,
+                    1 => cell.with_glyph(
+                        decode_glyph(reader.u8()?).ok_or(ProtocolError::InvalidValue("glyph"))?,
+                    ),
+                    _ => return Err(ProtocolError::InvalidValue("cell glyph flag")),
+                });
             }
             Ok(Node::Grid {
                 id,
@@ -5525,6 +5559,32 @@ mod node_coverage_tests {
         match decode(&bytes).expect("decode").message {
             Message::SetScreen(screen) => screen,
             other => panic!("expected a screen, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_grid_cell_carries_its_glyph_across_the_wire() {
+        // The cell payload gained a flag byte after its label. An encoder that
+        // wrote it and a decoder that did not would read the flag as the top
+        // byte of the next cell's action, so the second button of a transport
+        // row would fire something nobody named. VERSION went to 3 for this.
+        let cells = vec![
+            kobo_ui::Cell::new(ActionId(11), "Back 30 sec").with_glyph(Glyph::Rewind),
+            kobo_ui::Cell::new(ActionId(12), "Play"),
+            kobo_ui::Cell::new(ActionId(13), "Louder").with_glyph(Glyph::VolumeUp),
+        ];
+        let screen = Screen::new(
+            1,
+            vec![Node::Grid {
+                id: NodeId(1),
+                columns: 3,
+                square: false,
+                cells: cells.clone(),
+            }],
+        );
+        match round_trip(screen).nodes.first() {
+            Some(Node::Grid { cells: back, .. }) => assert_eq!(back, &cells),
+            other => panic!("expected a grid, got {other:?}"),
         }
     }
 

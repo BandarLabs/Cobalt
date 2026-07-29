@@ -257,6 +257,13 @@ impl AudioPlayer {
             AudioPlaybackState::Loading => "Loading…",
             _ => "Play",
         };
+        // Loading keeps the play triangle rather than borrowing another
+        // picture: the button is about to become Play, and swapping the icon
+        // for a third shape mid-fetch reads as a different control.
+        let play_glyph = match self.playback {
+            AudioPlaybackState::Playing => Glyph::Pause,
+            _ => Glyph::Play,
+        };
         let mut screen = ScreenBuilder::new("audio-player")
             .top_bar("Now playing")
             .owns_back(self.owns_back)
@@ -272,21 +279,23 @@ impl AudioPlayer {
                 "Position",
                 format!("{} / {}", clock(self.position_ms), clock(self.duration_ms)),
             )
-            .grid(
+            .controls(
                 3,
-                false,
                 [
-                    (BACK_THIRTY, "−30 sec"),
-                    (PLAY, play_label),
-                    (FORWARD_THIRTY, "+30 sec"),
+                    (BACK_THIRTY, "Back 30 sec", Glyph::Rewind),
+                    (PLAY, play_label, play_glyph),
+                    (FORWARD_THIRTY, "Forward 30 sec", Glyph::Forward),
                 ],
             )
-            .grid(
+            // The volume is stated once, above the pair, rather than printed on
+            // both buttons. Two buttons carrying the same number is the same
+            // fault as a byline stated twice: it reads as two facts.
+            .section_with_value("Volume", format!("{}%", self.volume))
+            .controls(
                 2,
-                false,
                 [
-                    (VOLUME_DOWN, format!("Volume −  {}%", self.volume)),
-                    (VOLUME_UP, format!("Volume +  {}%", self.volume)),
+                    (VOLUME_DOWN, "Quieter", Glyph::VolumeDown),
+                    (VOLUME_UP, "Louder", Glyph::VolumeUp),
                 ],
             );
         screen = match &self.secondary_action {
@@ -294,7 +303,7 @@ impl AudioPlayer {
                 (OUTPUT.to_owned(), "Bluetooth output".to_owned()),
                 (name.clone(), label.clone()),
             ]),
-            None => screen.bottom_action(OUTPUT, "Bluetooth audio output"),
+            None => screen.bottom_action_glyph(OUTPUT, "Bluetooth audio output", Glyph::Bluetooth),
         };
         if self.audio_available == Availability::Unavailable {
             screen = screen.banner(
@@ -784,6 +793,34 @@ mod tests {
         assert!(!alone.screen().owns_back);
         let from_a_shelf = AudioPlayer::shelf("book.mp3z", "A History of the Moon").owns_back(true);
         assert!(from_a_shelf.screen().owns_back);
+    }
+
+    #[test]
+    fn a_volume_is_stated_once_not_on_both_buttons() {
+        // Both volume buttons used to print the current level, so a reader saw
+        // "Volume -  40%" beside "Volume +  40%" and had to work out that the
+        // two numbers were one number. Same fault as the doubled byline above.
+        let mut player = AudioPlayer::shelf("book.mp3z", "A History of the Moon");
+        player.volume = 40;
+        let drawn = format!("{:?}", player.screen());
+        assert_eq!(drawn.matches("40%").count(), 1, "{drawn}");
+    }
+
+    #[test]
+    fn the_play_control_shows_the_picture_of_what_it_will_do() {
+        // Stopped, the button plays, so it draws a triangle. Playing, it
+        // pauses, so it draws two bars. A control whose icon describes the
+        // current state rather than the pending action is the classic way to
+        // get this backwards.
+        let stopped = AudioPlayer::shelf("book.mp3z", "A History of the Moon");
+        let drawn = format!("{:?}", stopped.screen());
+        assert!(drawn.contains("Play"), "{drawn}");
+        assert!(!drawn.contains("Pause"), "{drawn}");
+
+        let mut playing = AudioPlayer::shelf("book.mp3z", "A History of the Moon");
+        playing.playback = AudioPlaybackState::Playing;
+        let drawn = format!("{:?}", playing.screen());
+        assert!(drawn.contains("Pause"), "{drawn}");
     }
 
     #[test]

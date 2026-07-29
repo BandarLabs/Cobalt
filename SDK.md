@@ -236,6 +236,7 @@ one cannot.
 | `tiles([(name, label, glyph), …])` | A grid of square destinations. |
 | `apps([metadata, …])` | Launcher tiles from `AppMetadata`, with picture-to-glyph fallback. |
 | `grid(columns, square, cells)` | A board. What tic-tac-toe is drawn with. |
+| `controls(columns, [(name, label, glyph), …])` | The same row, where each button carries a picture above its word. |
 | `choose(prompt, [(name, label), …])` | A question with tappable answers. |
 | `chosen(index)` | Marks which answer of the preceding `choose` is already given. |
 | `or_type(name, placeholder)` | A freeform row on the end of a `choose`. |
@@ -296,6 +297,22 @@ with coverage antialiasing at whatever size the layout asks for, so they are
 crisp at every density. Applications cannot supply their own paths: arbitrary
 path data is untrusted input to a rasteriser, and an application must not be
 able to draw something indistinguishable from a system control.
+
+Three places take one: `rows` and `tiles`, where the icon is the row's lead,
+and `controls`, where it sits above the button's word. There is deliberately
+no way to put a glyph on `button`. A full-width button already has room to say
+what it does, and an icon inside one is decoration that has to be checked
+against the label before it can be trusted.
+
+Reach for `controls` only when the picture is genuinely universal. The
+transport controls are the case it was added for: play, pause, back and
+forward are drawn the same way on every device anyone has used, so the icon is
+read faster than the word. "Create another" has no such picture, and inventing
+one makes the reader decode a shape *and* read the label to check they agree.
+
+The label never goes away. The picture is the fast path for someone who
+already knows the control; the word is what makes it learnable, and it is the
+only part that can say "thirty seconds".
 
 ### How a screen is composed
 
