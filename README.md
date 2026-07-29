@@ -879,6 +879,11 @@ inside the runtime. `kobo_sdk::audio::AudioPlayer` composes album art, position,
 seek, play/pause, volume and an audio-only Bluetooth picker. If Play has no
 connected output, the picker powers Bluetooth, scans, pairs and connects, then
 continues playback automatically.
+On Clara BW firmware 4.45.23697 the stable capability marker is
+`/usr/lib/libaudio.a2dp.default.so`; `btservice` owns
+`/tmp/audio.a2dp_ctrl` and creates `/tmp/audio.a2dp_data` after START. The
+runtime therefore detects the HAL before a headset connects and opens the live
+sockets only when playback begins.
 On MediaTek Clara devices, using Bluetooth requests a clean reboot when leaving
 Cobalt because restarting Nickel into an already-initialised driver can panic
 the vendor Wi-Fi module.

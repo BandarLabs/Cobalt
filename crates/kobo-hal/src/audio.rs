@@ -38,7 +38,10 @@ const MAX_TRACK_FRAMES_U64: u64 = 8_000_000;
 const _: () = assert!(MAX_TRACK_FRAMES * 4 <= 32 * 1024 * 1024);
 const FETCH_CHUNK: u32 = 512 * 1024;
 
-const BACKEND_MARKERS: [&str; 7] = [
+const BACKEND_MARKERS: [&str; 8] = [
+    // Clara BW 4.45.23697. Unlike many Android trees, Kobo installs the HAL
+    // directly in /usr/lib rather than beneath an hw/ directory.
+    "/usr/lib/libaudio.a2dp.default.so",
     "/usr/lib/hw/audio.a2dp.default.so",
     "/usr/local/Kobo/lib/hw/audio.a2dp.default.so",
     "/usr/local/Kobo/lib/audio.a2dp.default.so",
@@ -821,7 +824,12 @@ fn io_error(error: std::io::Error) -> DeviceError {
 
 #[cfg(test)]
 mod tests {
-    use super::{frames_to_ms, resample_stereo, Audio};
+    use super::{frames_to_ms, resample_stereo, Audio, BACKEND_MARKERS};
+
+    #[test]
+    fn clara_bw_stable_a2dp_hal_marker_is_known() {
+        assert!(BACKEND_MARKERS.contains(&"/usr/lib/libaudio.a2dp.default.so"));
+    }
 
     #[test]
     fn resampling_preserves_channels_and_duration() {
