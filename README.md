@@ -87,10 +87,19 @@ the device, and nothing written outside the partition your books live on.
   level and fails silently, so charge it first.
 - A **USB cable**, and the reader showing *Connected* when you plug it in.
 - [**Rust**](https://rustup.rs), stable.
-- An **ARM hard-float C compiler**, because the cryptography library has a
-  small C and assembly core. On Debian or Ubuntu that is
-  `gcc-arm-linux-gnueabihf`; on macOS, `brew install arm-linux-gnueabihf-binutils`
-  and a GCC cross toolchain.
+- An **ARM cross-compiler**, because the TLS stack carries C and assembly that
+  is built from source. Everything else is linked by `rust-lld`, which the Rust
+  toolchain already ships.
+
+  ```sh
+  # macOS
+  brew install messense/macos-cross-toolchains/armv7-unknown-linux-musleabihf
+  # Debian or Ubuntu
+  sudo apt-get install gcc-arm-linux-gnueabihf
+  ```
+
+  Cobalt finds it under any of its usual names, and tells you which package to
+  install if it is missing.
 
 ### 1. Get the code and the cross-compilation target
 
@@ -105,8 +114,7 @@ rustup target add armv7-unknown-linux-musleabihf
 Wait for the reader to say *Connected*, then:
 
 ```sh
-CC_armv7_unknown_linux_musleabihf=arm-linux-gnueabihf-gcc \
-  cargo run -p kobo-cli -- setup
+cargo run -p kobo-cli -- setup
 ```
 
 That one command builds every device-side program, finds the mounted reader,
@@ -372,15 +380,14 @@ Build every device-side program:
 
 ```sh
 rustup target add armv7-unknown-linux-musleabihf
-# Also install an ARM hard-float compiler (Debian: gcc-arm-linux-gnueabihf).
-CC_armv7_unknown_linux_musleabihf=arm-linux-gnueabihf-gcc \
-  cargo run -p kobo-cli -- build --device
+cargo run -p kobo-cli -- build --device
 ```
 
-Rust code is linked by `rust-lld`, which ships with the toolchain. Rustls uses
-the maintained `ring` cryptography provider, whose small C/assembly core also
-needs an ARM hard-float compiler at build time. The resulting binaries remain
-statically linked and need no library installed on the reader.
+The cross-compiler the TLS stack needs is listed under
+[What you need](#what-you-need); `build --device` finds it under any of its
+usual names and names the package to install when there is none. Rust code is
+linked by `rust-lld`, which ships with the toolchain. The resulting binaries
+are statically linked and need no library installed on the reader.
 
 ## Connecting a device
 
