@@ -1,7 +1,9 @@
-# Kobo
+# Cobalt
 
-A Rust application platform for Kobo E Ink readers: an SDK, a declarative UI
-layer, a runtime that owns the hardware, a browser simulator, and a CLI.
+**Real applications on a Kobo E Ink reader, without ever owning the boot.**
+
+An SDK, a declarative UI layer, a runtime that takes the hardware for the
+length of a session and always gives it back, a browser simulator, and a CLI.
 
 This is an independent, unofficial project. It is not affiliated with,
 endorsed by, or sponsored by Rakuten Kobo Inc. “Kobo” and related product
@@ -12,30 +14,160 @@ receive named actions. They never open the framebuffer, the touch device, a
 network socket or a credential; everything else is a request the runtime may
 refuse, and a refusal is a value rather than a crash.
 
-**[SDK.md](SDK.md) is the developer guide.** [BUILD_IN_PUBLIC.md](BUILD_IN_PUBLIC.md)
-is the running account of what was built, what broke, and what the device
-taught us.
+**[SDK.md](SDK.md) is the developer guide.**
 
-## Read this before you run it on a reader
+## Contents
 
-**Tested on one device: the Kobo Clara BW (N365, device code 391).** Nothing
-here has been run on any other model. Every device write is gated on an exact
-match of framebuffer identity, geometry, device code, serial model prefix,
-firmware version and kernel release, so a different reader is refused rather
-than guessed at. That refusal is the safety mechanism, not a limitation to
-work around.
+**Using it**
 
-**You run this at your own risk.** It is MIT licensed, which means it comes
-with no warranty of any kind. The design rule is that nothing survives a
-reboot, and it is followed carefully (see below), but nobody here can promise
-your reader will be fine. If you brick a device, that is your device and your
-decision. Do not run this on a reader you cannot afford to lose.
+- [Before you install](#before-you-install)
+- [Install it on your Kobo](#install-it-on-your-kobo)
+- [Removing it](#removing-it)
+- [What is here, and what is not](#what-is-here-and-what-is-not)
+- [What runs on the panel](#what-runs-on-the-panel)
+
+**How it stays safe**
+
+- [The governing rule](#the-governing-rule)
+- [Why Cobalt itself is not a `KoboRoot.tgz`](#why-cobalt-itself-is-not-a-koboroottgz)
+- [Credentials](#credentials)
+- [What applications may ask for](#what-applications-may-ask-for)
+- [Verified on the hardware](#verified-on-the-hardware)
+
+**Building on it**
+
+- [Writing an application](#writing-an-application)
+- [What the UI layer draws](#what-the-ui-layer-draws)
+- [Development](#development)
+- [Layout](#layout)
+
+**Working against a real reader**
+
+- [Connecting a device](#connecting-a-device)
+- [Talking to a device](#talking-to-a-device)
+- [Keeping a device reachable while developing](#keeping-a-device-reachable-while-developing)
+- [Attended display smoke tests](#attended-display-smoke-tests)
+
+**The project**
+
+- [Contributing](#contributing)
+- [Licence](#licence)
+
+## Before you install
+
+**Tested on one device: the Kobo Clara BW (N365, device code 391), firmware
+4.45.23697.** Nothing here has been run on any other model. Every device write
+is gated on an exact match of framebuffer identity, geometry, device code,
+serial model prefix, firmware version and kernel release, so a different reader
+is refused rather than guessed at. That refusal is the safety mechanism, not a
+limitation to work around. On any other Kobo, Cobalt will decline to draw.
+
+**You run this at your own risk.** It is AGPL-3.0 licensed, which means it
+comes with no warranty of any kind. The design rule is that nothing survives a
+reboot, and it is followed carefully (see [The governing
+rule](#the-governing-rule)), but nobody here can promise your reader will be
+fine. If you brick a device, that is your device and your decision. Do not run
+this on a reader you cannot afford to lose.
 
 **Other devices: pull requests welcome.** Support for another Kobo means a new
 profile with its own geometry, waveforms, touch transform and identity gate.
 If you have a Libra, a Sage, a Clara 2E or anything else and you are willing to
 test on it, that contribution would be genuinely valuable. Open an issue first
 so the profile shape can be agreed before you write it.
+
+## Install it on your Kobo
+
+This is the whole of it: one command over USB, one restart, and a **Cobalt**
+entry appears on the reader's own menu. No SSH, no IP address, no terminal on
+the device, and nothing written outside the partition your books live on.
+
+### What you need
+
+- A **Kobo Clara BW**, charged. The reader's own installer is gated on battery
+  level and fails silently, so charge it first.
+- A **USB cable**, and the reader showing *Connected* when you plug it in.
+- [**Rust**](https://rustup.rs), stable.
+- An **ARM hard-float C compiler**, because the cryptography library has a
+  small C and assembly core. On Debian or Ubuntu that is
+  `gcc-arm-linux-gnueabihf`; on macOS, `brew install arm-linux-gnueabihf-binutils`
+  and a GCC cross toolchain.
+
+### 1. Get the code and the cross-compilation target
+
+```sh
+git clone https://github.com/BandarLabs/Cobalt
+cd Cobalt
+rustup target add armv7-unknown-linux-musleabihf
+```
+
+### 2. Plug the reader in and run setup
+
+Wait for the reader to say *Connected*, then:
+
+```sh
+CC_armv7_unknown_linux_musleabihf=arm-linux-gnueabihf-gcc \
+  cargo run -p kobo-cli -- setup
+```
+
+That one command builds every device-side program, finds the mounted reader,
+copies Cobalt into `.adds/cobalt`, reads every file back to prove it arrived
+intact, sets the reader's own `ForceWifiOn` and `AutoSleepMinutes` settings,
+adds a **Cobalt** entry to the reader's menu, and ejects. It builds before it
+writes anything, so a build that fails leaves the reader untouched. It leaves
+the firmware's root SSH server disabled.
+
+The binaries are statically linked, so nothing has to be installed on the
+reader to support them.
+
+Not sure? Add `--dry-run` and it prints every step it would take and touches
+nothing.
+
+### 3. Restart the reader
+
+Hold the power button until it powers off, then turn it back on. This is the
+one step that has to happen on the device, and it is needed because the menu
+entry is loaded at startup.
+
+### 4. Open Cobalt
+
+Tap the menu on the reader's home screen and choose **Cobalt**. The launcher
+appears, and every application ships with it.
+
+To leave, use the way back at the bottom of the launcher. The stock reader
+comes back. So does a reboot, always, from anywhere.
+
+### If something goes wrong
+
+- **There is no Cobalt entry after the restart.** The menu entry is the one
+  piece that arrives through the reader's own installer, and that installer is
+  gated on battery level and fails silently. Charge the reader properly and
+  restart it again. Cobalt itself is already on the device either way.
+- **Setup refused to do something.** Read what it printed. It refuses rather
+  than guesses, and it names the reason: an unrecognised volume, a menu slot
+  another mod is already using, or a file that did not read back byte for byte.
+- **The screen looks wrong, or nothing draws.** Cobalt declines to write to a
+  panel it does not recognise exactly. Hold the power button to reboot, and you
+  are back in the stock reader with nothing to undo.
+
+### Deploying over Wi-Fi instead
+
+If you are developing rather than reading, `kobo setup --enable-ssh` turns on
+the firmware's own SSH server so that `kobo deploy` can install without a
+reboot. That is a developer path with its own trade-offs, and it is described
+under [Connecting a device](#connecting-a-device).
+
+## Removing it
+
+Cobalt never writes to the root filesystem, the bootloader, the kernel, a
+partition table or any startup script, so removing it is deleting a folder:
+
+```sh
+cargo run -p kobo-cli -- setup --undo
+```
+
+Or, with no tooling at all, plug the reader in and delete `.adds/cobalt` from
+it. That is the entire uninstall. If you used `--enable-ssh`, `--undo` also
+switches the SSH server back off.
 
 ## What is here, and what is not
 
@@ -382,9 +514,9 @@ read-only identity script every other device command uses.
 
 Change alone was not enough. A laptop waking from sleep mid-wait was reported
 as the reader, and a confident wrong address is worse than none. The obvious
-second test was the SSH banner, and it was wrong: this firmware runs **OpenSSH**,
-not Dropbear as this file claimed for months, so a banner check rejected the
-very device it was written to find. What each newcomer gets asked instead is
+second test was the SSH banner, and it was wrong: this firmware runs
+**OpenSSH** rather than Dropbear, so a banner check rejected the very device it
+was written to find. What each newcomer gets asked instead is
 who it is, over the same identity script every other command uses. A reader
 says so. Anything else is passed over and named at the end. An address that
 accepts a connection but answers neither way is asked again next round rather
@@ -1111,11 +1243,12 @@ Beyond that:
 - Anything that touches the device has to keep the governing rule: nothing a
   reboot cannot undo.
 - A test that asserts intention rather than a measured result is not worth
-  much here. Most of the defects in `BUILD_IN_PUBLIC.md` were found by
-  rendering something and looking at it, against real captured data, and the
-  tests that survived are the ones written that way.
+  much here. Most of the defects in this project were found by rendering
+  something and looking at it, against real captured data, and the tests that
+  survived are the ones written that way.
 
 ## Licence
 
-MIT. See [LICENSE](LICENSE). What ships inside the binary, and what its authors
-ask for in return, is in [THIRD-PARTY.md](THIRD-PARTY.md).
+GNU Affero General Public License, version 3. See [LICENSE](LICENSE). What
+ships inside the binary, and what its authors ask for in return, is in
+[THIRD-PARTY.md](THIRD-PARTY.md).

@@ -1,9 +1,10 @@
 # Third-party licences
 
-Cobalt is MIT licensed. It links code and embeds fonts written by other
-people, all under permissive licences. Nothing here is copyleft, so a binary
-built from this tree can be redistributed under the MIT terms as long as the
-notices below travel with it.
+Cobalt is licensed under the GNU Affero General Public License, version 3. It
+links code and embeds fonts written by other people, all under permissive
+licences that impose no copyleft of their own, so a binary built from this tree
+can be redistributed under the AGPL as long as the notices below travel with
+it.
 
 ## Rust dependencies
 

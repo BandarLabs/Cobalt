@@ -46,7 +46,7 @@ fn main() {
 ## 0. Your own application, end to end
 
 Before anything else: **this has only ever been run on a Kobo Clara BW (N365,
-device code 391).** It is MIT licensed and comes with no warranty. Every device
+device code 391).** It is AGPL-3.0 licensed and comes with no warranty. Every device
 write is gated on an exact hardware match, so another reader is refused rather
 than guessed at, but nobody can promise your device will be fine. Do not run it
 on a reader you cannot afford to lose. If you want to add another model, that
@@ -331,8 +331,8 @@ diagnostics; the rest are here because a screen that breaks them looks wrong
 without anybody being able to say why.
 
 **One screen has one heading.** A second heading is a second screen that has
-not been separated yet. Below it, at most one `primary_button` — the thing the
-reader came here to do — and at most one region of supporting detail. If two
+not been separated yet. Below it, at most one `primary_button`, the thing the
+reader came here to do, and at most one region of supporting detail. If two
 actions are equally important, neither is primary and both are ordinary
 buttons.
 
@@ -373,7 +373,7 @@ clearest possible evidence that a labelled group was missing.
 
 **Never break a section header from its first row.** `paginate_rows_in_sections`
 exists for this. A header alone at the foot of a page with its contents
-overleaf is the most common way a paginated layout reads as broken — and on a
+overleaf is the most common way a paginated layout reads as broken, and on a
 panel that takes a second to turn, the reader has a whole second to look at it.
 
 **One way out.** The runtime's Back plus `owns_back` is already the way back.
@@ -393,14 +393,14 @@ carry "Back" in the page-turn band meaning *previous page* and "Back" in the
 nav bar meaning *leave the shelf*.
 
 **A refusal names the cause and the remedy.** "No network" is a symptom;
-"Wi-Fi is off — turn it on from the top bar" is an answer. `offline_state`,
+"Wi-Fi is off, turn it on from the top bar" is an answer. `offline_state`,
 `permission_denied_state` and `error_state` exist so the shape is consistent;
 the sentence inside is still yours.
 
 **Never invent a number.** If the source does not supply a total, the transfer
 shows bytes received and no percentage. If it does not supply a date, there is
 no date. A fabricated fact is the one failure a reader cannot detect and the
-one this SDK will not help you with — see *Refusing rather than inventing*.
+one this SDK will not help you with. See *Refusing rather than inventing*.
 
 **State is a field, not a suffix.** `TileState::Held`, not `format!("{title}
 (kept)")`. See the next section, which is the same argument at the renderer's
@@ -1045,7 +1045,7 @@ what it actually looks like, without a person watching it.
 The gap this closes is specific. A layout assertion proves a button was placed;
 it does not prove the screen reads as a product, and it does not prove the
 button is reachable. The only thing that answers either question is to drive
-the application the way a finger does and then look at the result — which is
+the application the way a finger does and then look at the result, which is
 also exactly the loop something automating on your behalf needs, and it was the
 one loop this SDK had no way to close.
 
@@ -1076,7 +1076,7 @@ A script is one step per line; `#` is a comment.
 | `wait MS` | waits |
 
 A failing step reports the line, the step and the reason, and takes a
-screenshot first — because the question that immediately follows "tap Search
+screenshot first, because the question that immediately follows "tap Search
 failed" is "what was on the screen".
 
 **Pass `--ideal` when you are reading the screenshots rather than the
@@ -1114,7 +1114,7 @@ cargo run -p kobo-cli --features device-write -- tap --device <address> 536,900
 `shot --device` is read-only: it opens the framebuffer for reading, copies it,
 and closes it. Nothing is grabbed, nothing is refreshed and no pixel is
 written, so it is safe to point at a device with the stock reader in the
-foreground — which matters, because the screen worth photographing is usually
+foreground, which matters, because the screen worth photographing is usually
 the one that has just gone wrong and must not be disturbed to be seen. The
 panel comes back as base64 grey with its measured width, height and length, so
 a transfer cut short is refused rather than saved as half a picture.
@@ -1130,7 +1130,7 @@ there.
 
 The division is deliberate. **`drive` is the simulator; `shot` and `tap` are
 the device.** Resolving a label to a coordinate needs the layout, and the
-layout lives in the process doing the rendering — on the host that is the
+layout lives in the process doing the rendering. On the host that is the
 simulator, which runs the identical renderer, layout engine, hit-testing and
 refresh planner. On the device it is inside the running application, and
 opening a control channel into it in order to test it would be testing
