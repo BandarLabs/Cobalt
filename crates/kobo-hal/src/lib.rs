@@ -36,6 +36,7 @@ pub mod wifi;
 /// Noticing that this process has been asked to stop, so that everything it
 /// took from the device is given back before it goes.
 pub use kobo_abi::stop;
+pub mod soc_watchdog;
 pub mod supervisor;
 pub mod surface;
 pub mod touch;

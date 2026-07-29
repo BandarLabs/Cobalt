@@ -61,8 +61,10 @@ pub const ARCHIVE_MEMBERS: &[&str] = &[
 /// The firmware's install slot, relative to the mounted volume.
 ///
 /// The reader looks for this at boot, extracts it, and deletes it. It is a
-/// single slot shared by every mod, which is why staging one on top of another
-/// is refused rather than merged.
+/// single slot shared by every mod, which is why staging one on top of
+/// somebody else's is refused. The one exception is the key
+/// [`crate::authorize`] installs in the same run: that is merged into the
+/// archive rather than made to wait for a second run.
 pub const KOBOROOT: &str = ".kobo/KoboRoot.tgz";
 
 /// NickelMenu's configuration folder, relative to the mounted volume.
@@ -150,6 +152,11 @@ impl Menu {
 /// When the archive cannot be listed, or names a member outside
 /// [`ARCHIVE_MEMBERS`].
 pub fn check_archive(archive: &Path) -> Result<(), String> {
+    check_members(&listing(archive)?)
+}
+
+/// What `tar` says is in an archive, or why it could not say.
+fn listing(archive: &Path) -> Result<String, String> {
     let output = Command::new("tar")
         .arg("tzf")
         .arg(archive)
@@ -162,7 +169,28 @@ pub fn check_archive(archive: &Path) -> Result<(), String> {
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    check_members(&String::from_utf8_lossy(&output.stdout))
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// True when everything in the slot is something this tool put there.
+///
+/// Wider than [`check_members`] on purpose. That one guards what may be
+/// installed, so it stays exact. This one decides what an undo may take back,
+/// and by then the archive may also carry the key `kobo setup` merged into it,
+/// which is still ours to remove.
+fn ours_to_unstage(archive: &Path) -> bool {
+    let Ok(listing) = listing(archive) else {
+        return false;
+    };
+    let members: Vec<&str> = listing
+        .lines()
+        .map(|line| line.trim().trim_end_matches('/'))
+        .filter(|line| !line.is_empty())
+        .collect();
+    !members.is_empty()
+        && members.iter().all(|member| {
+            ARCHIVE_MEMBERS.contains(member) || crate::authorize::STAGED_MEMBERS.contains(member)
+        })
 }
 
 /// The judgement itself, separated from running `tar` so it can be tested.
@@ -297,10 +325,11 @@ pub fn remove(volume: &Path) -> Result<Removed, String> {
         removed.entry = true;
     }
 
-    // Only ours. An archive that fails the check is somebody else's, and
-    // taking it away would be undoing something this command never did.
+    // Only ours. An archive that holds anything this tool does not stage is
+    // somebody else's, and taking it away would be undoing something this
+    // command never did.
     let slot = volume.join(KOBOROOT);
-    if slot.exists() && check_archive(&slot).is_ok() {
+    if slot.exists() && ours_to_unstage(&slot) {
         fs::remove_file(&slot).map_err(|error| format!("remove {}: {error}", slot.display()))?;
         removed.unstaged = true;
     }
@@ -429,6 +458,65 @@ mod tests {
         // cmd_output would block the reader's UI thread for as long as Cobalt
         // ran, which is the whole session.
         assert!(!text.contains("cmd_output"), "{text}");
+    }
+
+    #[test]
+    fn an_undo_takes_back_the_archive_the_key_was_merged_into() {
+        // A merged archive fails check_members on purpose, because it holds
+        // one path NickelMenu's release never does. If the undo used that
+        // check it would decide its own archive was somebody else's and leave
+        // it in the slot for the reader to install after the undo.
+        let volume = volume();
+        let merged = crate::package::archive(
+            &[("root/.ssh", 0o700)],
+            &[
+                (ARCHIVE_MEMBERS[0].to_owned(), b"doc".to_vec(), 0o644),
+                (ARCHIVE_MEMBERS[1].to_owned(), b"plugin".to_vec(), 0o755),
+                (
+                    "root/.ssh/authorized_keys".to_owned(),
+                    b"ssh-ed25519 AAAA\n".to_vec(),
+                    0o600,
+                ),
+            ],
+        );
+        let slot = volume.join(KOBOROOT);
+        fs::write(&slot, gzipped(&merged)).expect("stage the merged archive");
+        assert!(check_archive(&slot).is_err(), "it is not a plain release");
+        let removed = remove(&volume).expect("undo");
+        assert!(removed.unstaged, "the merged archive was left behind");
+        assert!(!slot.exists());
+        let _ = fs::remove_dir_all(&volume);
+    }
+
+    #[test]
+    fn an_undo_leaves_somebody_elses_archive_where_it_is() {
+        let volume = volume();
+        let theirs = crate::package::archive(
+            &[],
+            &[("usr/local/other/thing".to_owned(), b"x".to_vec(), 0o644)],
+        );
+        let slot = volume.join(KOBOROOT);
+        fs::write(&slot, gzipped(&theirs)).expect("stage");
+        let removed = remove(&volume).expect("undo");
+        assert!(!removed.unstaged, "somebody else's archive was taken");
+        assert!(slot.exists());
+        let _ = fs::remove_dir_all(&volume);
+    }
+
+    fn gzipped(bytes: &[u8]) -> Vec<u8> {
+        use std::io::Write;
+        let mut child = Command::new("gzip")
+            .args(["-n", "-c"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .expect("gzip");
+        let owned = bytes.to_vec();
+        let mut stdin = child.stdin.take().expect("stdin");
+        let writer = std::thread::spawn(move || stdin.write_all(&owned));
+        let output = child.wait_with_output().expect("gzip output");
+        writer.join().expect("writer").expect("write");
+        output.stdout
     }
 
     fn volume() -> std::path::PathBuf {

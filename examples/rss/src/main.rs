@@ -41,8 +41,8 @@ mod search;
 
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, LogLevel, Screen, ScreenBuilder,
-    StoreResult, Task, TaskId, TaskOutcome,
+    action_id, ActionId, BannerLevel, Context, Failure, Glyph, KoboApp, LogLevel, Screen,
+    ScreenBuilder, StoreResult, Task, TaskId, TaskOutcome,
 };
 use std::process::ExitCode;
 
@@ -153,6 +153,9 @@ struct Feeds {
     list_page: usize,
     task: Option<(TaskId, Awaiting)>,
     problem: Option<String>,
+    /// The last task failure as the SDK read it. An empty article list wants
+    /// the whole-screen version of it; a list with articles wants the banner.
+    trouble: Option<Failure>,
 }
 
 impl Feeds {
@@ -170,8 +173,9 @@ impl Feeds {
     fn ask_search(&mut self, context: &mut Context, url: &str) {
         self.found.clear();
         self.problem = None;
+        self.trouble = None;
         let request = search::request(url);
-        match context.spawn(Task::Fetch {
+        match context.spawn_retrying(Task::Fetch {
             url: request,
             offset: 0,
             max_bytes: SEARCH_BYTES,
@@ -189,7 +193,8 @@ impl Feeds {
         let url = subscription.url.clone();
         self.items.clear();
         self.problem = None;
-        match context.spawn(Task::Fetch {
+        self.trouble = None;
+        match context.spawn_retrying(Task::Fetch {
             url,
             offset: 0,
             max_bytes: FEED_BYTES,
@@ -403,6 +408,17 @@ impl Feeds {
                 .build();
         }
         if self.items.is_empty() {
+            // A feed that failed and a feed that published nothing are not the
+            // same thing, and saying "Nothing published yet" about a reader who
+            // is simply offline is a lie the SDK can avoid.
+            if let Some(failure) = self.trouble {
+                let screen = screen.standard_state(failure.state, failure.advice);
+                return if failure.retryable {
+                    screen.primary_button("refresh", "Check again").build()
+                } else {
+                    screen.build()
+                };
+            }
             return screen
                 .empty_state("Nothing published yet.")
                 .primary_button("refresh", "Check again")
@@ -654,6 +670,7 @@ impl KoboApp for Feeds {
 
         if action == ActionId::BACK {
             self.problem = None;
+            self.trouble = None;
             match self.view {
                 View::Shelf => {}
                 View::Search | View::Items => {
@@ -673,6 +690,7 @@ impl KoboApp for Feeds {
         if action == action_id("add") {
             self.keyboard.clear();
             self.problem = None;
+            self.trouble = None;
             self.view = View::Search;
             self.show(context);
             return;
@@ -814,7 +832,11 @@ impl KoboApp for Feeds {
                 },
             },
             TaskOutcome::Failed(error) => {
-                self.problem = Some(format!("That did not work: {error}."));
+                // The SDK owns the wording. Five applications wrote five
+                // different sentences for the same failure before this existed.
+                let failure = Failure::of(error);
+                self.trouble = Some(failure);
+                self.problem = Some(failure.advice.to_owned());
             }
             TaskOutcome::Cancelled => self.problem = Some("Cancelled.".to_owned()),
         }
@@ -1128,6 +1150,69 @@ mod tests {
     }
 
     /// The last screen an action produced.
+    #[test]
+    fn an_empty_feed_after_a_failure_says_the_failure_rather_than_nothing_published() {
+        // "Nothing published yet" is a statement about the feed. Saying it to a
+        // reader who is simply offline is a lie the SDK already knows better
+        // than, and it sends them back to a publisher who did nothing wrong.
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            view: View::Items,
+            open: Some(0),
+            subscriptions: following(),
+            task: Some((TaskId(1), Awaiting::Feed)),
+            ..Feeds::default()
+        });
+        let commands =
+            runner.task_outcome(TaskId(1), TaskOutcome::Failed(kobo_sdk::TaskError::Offline));
+        let text = text_of(&screen_of(&commands));
+        assert!(
+            text.iter().any(|line| line.contains("not on a network")),
+            "the offline advice is not on the article list: {text:?}"
+        );
+        assert!(
+            !text.iter().any(|line| line.contains("Nothing published")),
+            "an offline reader is still told the feed published nothing: {text:?}"
+        );
+    }
+
+    #[test]
+    fn every_failure_is_worded_by_the_sdk() {
+        // Five applications wrote five sentences for one failure before
+        // `Failure` existed. This is the assertion that keeps rss on it.
+        for (error, expected) in [
+            (kobo_sdk::TaskError::Offline, "not on a network"),
+            (kobo_sdk::TaskError::Unreachable, "did not answer"),
+            (kobo_sdk::TaskError::TimedOut, "too slow"),
+        ] {
+            let mut runner = AppRunner::new(Feeds {
+                loaded: true,
+                view: View::Items,
+                open: Some(0),
+                subscriptions: following(),
+                task: Some((TaskId(1), Awaiting::Feed)),
+                ..Feeds::default()
+            });
+            runner.task_outcome(TaskId(1), TaskOutcome::Failed(error));
+            let said = runner.app_mut().problem.clone().unwrap_or_default();
+            assert_eq!(said, kobo_sdk::Failure::of(error).advice);
+            assert!(said.contains(expected), "{error:?} was worded as {said:?}");
+        }
+    }
+
+    /// Every string a screen would draw, flattened.
+    fn text_of(screen: &kobo_sdk::Screen) -> Vec<String> {
+        screen
+            .layout_with(
+                &kobo_sdk::CLARA_BW_METRICS,
+                &kobo_sdk::Chrome::with_back(true),
+            )
+            .nodes
+            .iter()
+            .flat_map(|node| node.text_lines.clone())
+            .collect()
+    }
+
     fn screen_of(commands: &[Command]) -> kobo_sdk::Screen {
         commands
             .iter()

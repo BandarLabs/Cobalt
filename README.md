@@ -54,7 +54,7 @@ Verified on the physical Clara BW unless stated otherwise.
 | Audio | Bounded MP3/MP3Z decode, A2DP playback, shared album-art player, Bluetooth output handoff |
 | Storage | Per-application keyed state under its own directory |
 | Navigation | A runtime-owned Back the application may answer first (see below) |
-| Tooling | `devices`, `doctor`, `package`, `deploy`, `inspect`, `verify`, `session`, `wait`, `logs`, `touch-probe`, and a Clara BW simulator in the browser |
+| Tooling | `devices`, `doctor`, `package`, `deploy`, `inspect`, `verify`, `session`, `wait`, `logs`, `touch-probe`, `record`, and a Clara BW simulator in the browser |
 | Applications | `launcher`, `audiobook`, `settings`, `hn`, `rss`, `gutenbird`, `chat`, `todo`, `terminal`, `tictactoe`, `gallery`, `brief` |
 
 **Not here yet, stated plainly**
@@ -207,6 +207,26 @@ reader in the foreground. `tap --device` writes real evdev records to the real
 touch node, so the digitiser, the transform, the multitouch decoder and the
 hit-testing all run as they do under a finger; it is behind `device-write` and
 an unlock phrase, and it always lifts.
+
+To record the panel rather than photograph it once:
+
+```sh
+cargo run -p kobo-cli -- record --device <address> --seconds 24 --out target/run
+```
+
+`record --device` is read-only in the same way `shot --device` is. It writes
+numbered greyscale PNGs and a `timings.txt`, plus an `recording.mp4` when
+ffmpeg is on the path. Every grey level is kept: the panel is greyscale and its
+text is anti-aliased, so a recording that flattened the greys would look
+harsher than the device and would read as a rendering bug that is not there.
+What keeps it small is that e-ink barely moves, so identical frames are dropped
+and only the changes are stored.
+
+`scripts/record-apps.sh --device <address>` drives every example application
+through a short tap sequence and records each one, into a dated directory under
+`target/device-test/`. It is a script rather than a list of commands because
+the interesting failures are the ones that appear between two runs, and
+comparing runs is only possible if both were driven the same way.
 
 Create and run a new application:
 
@@ -523,6 +543,56 @@ that something is feeding it (see `resume_once_fed`), and the network is simply
 never restored. A developer working over Wi-Fi loses the link when the session
 ends and reconnects the reader's own way, or reboots. That is a worse afternoon
 and a better trade.
+
+### The three watchdogs
+
+Three separate things on this device will reset it, and for a long time they
+were mistaken for each other. It is worth naming them apart.
+
+| | What it is | How it is handled |
+| --- | --- | --- |
+| Recovery watchdog | Ours, a shell loop in `/tmp` | Restarts the reader if the runtime dies |
+| Freeze watchdog | Kobo's `sickel`, on the session bus | `Suspend` for the session, `Resume` on evidence it is being fed |
+| SoC watchdog | A counter inside the MediaTek chip | Given slack for the session, armed again afterwards |
+
+The third one is the one that reset a device every time a session ended, and it
+took days to find because it leaves no trace at all. There is no kernel message,
+nothing is synced, and the next line in the log is a cold boot.
+
+The numbers are the whole explanation:
+
+```text
+mtk-wdt 10007000.toprgu: Watchdog enabled (timeout=31 sec, nowayout=0)
+[112:feeding_thread] watchdog feeding_interval = 28000 ms
+```
+
+A kernel thread feeds a thirty-one second counter every twenty-eight seconds.
+Three seconds of margin, and stopping and restarting the reader is the heaviest
+thing this device ever does.
+
+Almost everything about the symptom pointed elsewhere. The reset landed about
+ten seconds after `kobo present` handed the panel back, so `present` looked
+guilty; it is not, and restarting the reader with no display session, no touch
+session and no panel involvement at all resets the device just the same.
+Scanning `/proc/*/fd` for a process holding `/dev/watchdog` finds nobody, which
+reads as "never armed" and is wrong, because the feeder is a kernel thread and
+kernel threads have no descriptor table. Reading that as innocence sent the
+search after the Bluetooth chip, the freeze watchdog and a phantom second reader
+in turn. What settled it was `/proc/wdk`, which is writable, and an A/B:
+
+| `/proc/wdk` | uptime across a session | outcome |
+| --- | --- | --- |
+| `0` (slack) | 247s to 389s | survived, and kept going |
+| `1` (armed) | 420s to 446s | reset, cold boot |
+
+So `crates/kobo-hal/src/soc_watchdog.rs` gives the counter slack for exactly as
+long as the runtime stands between the reader and the hardware, on the same
+lifetime as the freeze watchdog suspension, and arms it again once the reader is
+demonstrably back. The window is bounded by a guard that restores the previous
+value on every exit path including a panic, the recovery path arms it explicitly
+because a killed session leaves nobody to do so, and the kernel arms it anyway
+on the next boot. A device that resets every time a developer looks at it has no
+working safety net either.
 
 ### If you have shipped for Android or iOS
 

@@ -8,11 +8,18 @@ use std::process::{Child, Command, ExitCode, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+mod authorize;
 mod connect;
 mod devsession;
 mod drive;
 mod menu;
 mod package;
+// Only the `device-write` build dispatches to this, but its tests decide what
+// gets sent to a reader and are worth running on every build. So it compiles
+// either way, and the unused warning is silenced rather than the module gated
+// out and its tests with it.
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
+mod panel;
 mod setup;
 mod sha256;
 
@@ -303,6 +310,15 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "shot" => shot_command(&arguments[1..]),
         #[cfg(feature = "device-write")]
         "tap" => tap_command(&arguments[1..]),
+        #[cfg(feature = "device-write")]
+        "present" => panel::present(&arguments[1..]),
+        #[cfg(feature = "device-write")]
+        "stop" => panel::stop(&arguments[1..]),
+        #[cfg(not(feature = "device-write"))]
+        "present" | "stop" => Err(format!(
+            "{command} takes the panel, so it is not compiled in; rebuild the CLI with \
+             --features device-write"
+        )),
         "build" => build_device(arguments.iter().any(|argument| is_device_flag(argument))),
         "doctor" => doctor(&arguments[1..]),
         "devices" => list_devices(&arguments[1..]),
@@ -310,6 +326,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "wait" => wait_for_device(&arguments[1..]),
         "logs" => device_logs(&arguments[1..]),
         "touch-probe" => touch_probe(&arguments[1..]),
+        "record" => record_command(&arguments[1..]),
         #[cfg(feature = "device-write")]
         "smoke-display" => smoke_display(&arguments[1..]),
         #[cfg(feature = "device-write")]
@@ -1427,6 +1444,11 @@ enum RemoteProgram {
     TouchProbe(u64),
     /// The same read-only doctor binary, additionally copying the panel out.
     Capture,
+    /// The same read-only doctor binary, copying the panel out repeatedly.
+    Record {
+        seconds: u64,
+        fps: u32,
+    },
     /// One synthetic tap at a point on the panel.
     #[cfg(feature = "device-write")]
     Tap {
@@ -1457,6 +1479,12 @@ impl RemoteArtifact {
             RemoteProgram::TouchProbe(seconds) => {
                 Duration::from_secs(seconds) + TOUCH_PROBE_OVERHEAD
             }
+            // The reading itself is bounded in the binary and again by
+            // timeout, and the wait has to outlast the recording rather than
+            // the usual single round trip.
+            RemoteProgram::Record { seconds, .. } => {
+                Duration::from_secs(seconds) + TOUCH_PROBE_OVERHEAD
+            }
             RemoteProgram::Doctor | RemoteProgram::Capture => REMOTE_COMMAND_TIMEOUT,
             #[cfg(feature = "device-write")]
             RemoteProgram::Smoke(_) | RemoteProgram::Guard | RemoteProgram::Tap { .. } => {
@@ -1483,6 +1511,14 @@ impl RemoteArtifact {
         Self {
             program: RemoteProgram::Capture,
             label: "read-only screen capture",
+            ..Self::doctor()
+        }
+    }
+
+    fn record(seconds: u64, fps: u32) -> Self {
+        Self {
+            program: RemoteProgram::Record { seconds, fps },
+            label: "read-only screen recording",
             ..Self::doctor()
         }
     }
@@ -1689,6 +1725,18 @@ fn remote_fixed_artifact_script(
         // reading and never grabs, refreshes or writes, so it is safe to point
         // at a device with the stock reader in the foreground.
         RemoteProgram::Capture => "KOBO_DOCTOR_CAPTURE=1 \"$bin\"".to_owned(),
+        // Bounded twice, like the touch probe: a tool that watches the panel
+        // for a while must stop on its own even if the host walks away.
+        RemoteProgram::Record { seconds, fps } => format!(
+            "if [ -x /usr/bin/timeout ]; then\n\
+             \x20 KOBO_DOCTOR_RECORD={seconds}:{fps} KOBO_DOCTOR_RECORD_PATH='{RECORDING_ON_DEVICE}' \
+             /usr/bin/timeout {} \"$bin\"\n\
+             else\n\
+             \x20 echo 'BusyBox timeout is unavailable; refusing recording' >&2\n\
+             \x20 exit 1\n\
+             fi",
+            seconds + 20
+        ),
         // Bounded twice: the observation window is enforced in the binary and
         // again by timeout, so a stuck read cannot hold the device.
         RemoteProgram::TouchProbe(seconds) => format!(
@@ -1734,9 +1782,10 @@ fn remote_fixed_artifact_script(
         ),
     };
     let checksum_error = match program {
-        RemoteProgram::Doctor | RemoteProgram::TouchProbe(_) | RemoteProgram::Capture => {
-            "uploaded doctor checksum does not match"
-        }
+        RemoteProgram::Doctor
+        | RemoteProgram::TouchProbe(_)
+        | RemoteProgram::Capture
+        | RemoteProgram::Record { .. } => "uploaded doctor checksum does not match",
         #[cfg(feature = "device-write")]
         RemoteProgram::Smoke(_) => "uploaded smoke checksum does not match",
         #[cfg(feature = "device-write")]
@@ -1895,65 +1944,6 @@ fn default_device_key_path() -> Option<PathBuf> {
 pub fn device_key_path() -> Option<PathBuf> {
     let key = default_device_key_path()?;
     key.is_file().then_some(key)
-}
-
-/// Creates the reader key when needed and derives its public half.
-///
-/// The private key never crosses the USB volume. An existing encrypted key is
-/// refused instead of prompting midway through unattended setup: this
-/// dedicated automation key must work with the CLI's batch-mode SSH.
-fn ensure_device_key() -> Result<(PathBuf, String), String> {
-    let key = default_device_key_path().ok_or("HOME is not set; cannot place the reader key")?;
-    if key.exists() && !key.is_file() {
-        return Err(format!("{} is not a regular file", key.display()));
-    }
-    if !key.exists() {
-        let parent = key
-            .parent()
-            .ok_or_else(|| format!("{} has no parent directory", key.display()))?;
-        if !parent.exists() {
-            fs::create_dir_all(parent)
-                .map_err(|error| format!("create {}: {error}", parent.display()))?;
-            fs::set_permissions(parent, fs::Permissions::from_mode(0o700))
-                .map_err(|error| format!("secure {}: {error}", parent.display()))?;
-        }
-        let output = Command::new("ssh-keygen")
-            .args(["-q", "-t", "ed25519", "-N", "", "-C", "cobalt-kobo", "-f"])
-            .arg(&key)
-            .stdin(Stdio::null())
-            .output()
-            .map_err(|error| format!("start ssh-keygen: {error}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "create {}: {}",
-                key.display(),
-                String::from_utf8_lossy(&output.stderr).trim()
-            ));
-        }
-    }
-    let output = Command::new("ssh-keygen")
-        .args(["-y", "-f"])
-        .arg(&key)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|error| format!("read public half of {}: {error}", key.display()))?;
-    if !output.status.success() {
-        return Err(format!(
-            "read public half of {}: {}; the dedicated key must not require a passphrase",
-            key.display(),
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    let public = String::from_utf8(output.stdout)
-        .map_err(|_| format!("ssh-keygen returned non-text for {}", key.display()))?;
-    let public = public.trim();
-    if !setup::valid_ssh_public_key(public) {
-        return Err(format!(
-            "ssh-keygen returned an unsupported public key for {}",
-            key.display()
-        ));
-    }
-    Ok((key, format!("{public} cobalt-kobo")))
 }
 
 /// An `ssh` invocation that will offer the reader's key.
@@ -2321,6 +2311,12 @@ struct SetupOptions {
     dry_run: bool,
     wait: bool,
     enable_ssh: bool,
+    /// Whether this machine's key is installed alongside the SSH server.
+    ///
+    /// Default on, because a server that starts and accepts nobody is not a
+    /// thing anybody asked for. `--no-key` is for a reader that already has
+    /// the key, or one being prepared for somebody else.
+    authorize_key: bool,
 }
 
 fn parse_setup(arguments: &[String]) -> Result<SetupOptions, String> {
@@ -2332,6 +2328,7 @@ fn parse_setup(arguments: &[String]) -> Result<SetupOptions, String> {
         dry_run: false,
         wait: true,
         enable_ssh: false,
+        authorize_key: true,
     };
     let mut index = 0;
     while index < arguments.len() {
@@ -2348,12 +2345,13 @@ fn parse_setup(arguments: &[String]) -> Result<SetupOptions, String> {
             "--no-wait" => options.wait = false,
             "--no-menu" => options.menu = MenuEntry::Skip,
             "--enable-ssh" => options.enable_ssh = true,
+            "--no-key" => options.authorize_key = false,
             "--dry-run" => options.dry_run = true,
             other => {
                 return Err(format!(
                     "unknown option '{other}'\n\
-                     usage: kobo setup [--volume PATH] [--undo] [--enable-ssh] [--no-eject] \
-                     [--no-wait] [--no-menu] [--dry-run]"
+                     usage: kobo setup [--volume PATH] [--undo] [--enable-ssh] [--no-key] \
+                     [--no-eject] [--no-wait] [--no-menu] [--dry-run]"
                 ))
             }
         }
@@ -2413,18 +2411,22 @@ fn setup_device(arguments: &[String]) -> Result<(), String> {
     // Built before anything is written, so a build that fails leaves the
     // reader exactly as it was rather than half set up.
     let built = build_package_bytes()?;
-    let ssh_key = options.enable_ssh.then(ensure_device_key).transpose()?;
     let installed = setup::write_payload(&built.members, &reader.volume)?;
     setup::verify_payload(&built.members, &reader.volume)?;
-    if let Some((_, public)) = &ssh_key {
-        setup::stage_ssh_key(&reader.volume, public)?;
-    }
     let ssh = options
         .enable_ssh
         .then(|| setup::enable_ssh(&reader.volume))
         .transpose()?;
     let settings = setup::apply_settings(&reader.volume)?;
     let menu = (options.menu == MenuEntry::Add).then(|| add_menu_entry(&reader.volume));
+    // After the menu, because the firmware extracts exactly one archive and
+    // the first draft of this raced the menu for it: staging the key first
+    // meant NickelMenu reported the slot taken on every first-time setup, and
+    // the owner had to run the command twice to get the entry they asked for.
+    // When this run is the one that staged that archive, the key goes into it.
+    let staged_here = matches!(menu, Some(Ok(menu::Menu::Staged)));
+    let key = (options.enable_ssh && options.authorize_key)
+        .then(|| authorize_this_machine(&reader.volume, staged_here));
     let ejected = ejected_or_explained(&reader.volume, options.eject);
 
     // A reader that was never ejected has not seen the install and will not be
@@ -2437,7 +2439,7 @@ fn setup_device(arguments: &[String]) -> Result<(), String> {
         setup::Report {
             installed,
             ssh,
-            ssh_key: ssh_key.map(|(path, _)| path),
+            key,
             settings,
             menu,
             ejected,
@@ -2452,8 +2454,41 @@ fn setup_device(arguments: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// Adds the reader's own way into Cobalt, or explains why it could not.
+/// Puts this machine's public key where the reader will accept it.
 ///
+/// Never fails the setup, for the same reason the menu entry does not: the
+/// install itself succeeded, and a reader that has to be reached some other
+/// way is still a reader with Cobalt on it.
+fn authorize_this_machine(
+    volume: &Path,
+    staged_here: bool,
+) -> Result<(authorize::Key, authorize::Staged), String> {
+    let (public_key, key) = authorize::public_key()?;
+    let slot = volume.join(authorize::KOBOROOT);
+    if slot.exists() {
+        // Anything already in the slot that this run did not put there
+        // belongs to somebody else, and replacing it would quietly cancel an
+        // install the owner is expecting.
+        if !staged_here {
+            return Ok((key, authorize::Staged::SlotTaken));
+        }
+        let existing =
+            fs::read(&slot).map_err(|error| format!("read {}: {error}", slot.display()))?;
+        let merged = authorize::merge(&gunzip(&existing)?, &public_key)?;
+        return Ok((key, authorize::restage(volume, &compressed(&merged)?)?));
+    }
+    let alone = authorize::archive(&public_key)?;
+    Ok((key, authorize::stage(volume, &compressed(&alone)?)?))
+}
+
+/// Gzips an archive and checks it the way the reader's own `rcS` will.
+fn compressed(archive: &[u8]) -> Result<Vec<u8>, String> {
+    let bytes = gzip(archive)?;
+    gzip_test(&bytes)?;
+    Ok(bytes)
+}
+
+/// Adds the reader's own way into Cobalt, or explains why it could not.
 /// Never fails the setup. Everything else this command does works without a
 /// menu entry (`start.sh` over SSH is how the whole project has been run so
 /// far) so a download that cannot happen on an aeroplane should not cost
@@ -2543,6 +2578,11 @@ fn await_reader(subnet: &str) {
 /// A pure function of the options and the reader, so that what `--dry-run`
 /// promises can be tested rather than read.
 fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
+    // Asked of the reader in front of us rather than assumed. A plan that
+    // promised to stage NickelMenu on a device that already has it described
+    // an archive that was never going to be written, and then described the
+    // key as sharing it.
+    let plugin_installed = menu::installed(&reader.volume);
     let keys = setup::SETTINGS_APPLIED
         .iter()
         .map(|(section, key, value)| format!("{section}/{key}={value}"))
@@ -2568,6 +2608,7 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
          {}\n\
          would set {keys}\n\
          {}\n\
+         {}\n\
          would eject, then {}\n\
          nothing outside the book partition{}",
         reader.volume.display(),
@@ -2581,7 +2622,15 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
             "would leave the firmware's SSH server disabled (pass --enable-ssh to opt in)"
                 .to_owned()
         },
-        if options.menu == MenuEntry::Add {
+        if options.menu != MenuEntry::Add {
+            "would add no menu entry, because --no-menu was given".to_owned()
+        } else if plugin_installed {
+            format!(
+                "would write a Cobalt entry to {}, and stage nothing, because NickelMenu\n\
+                 \x20 is already installed on this reader",
+                menu::CONFIG,
+            )
+        } else {
             format!(
                 "would write a Cobalt entry to {}, and stage NickelMenu {} in {}\n\
                  \x20 for the firmware to extract, after checking that the archive contains\n\
@@ -2591,9 +2640,8 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
                 menu::KOBOROOT,
                 menu::ARCHIVE_MEMBERS.join(" and "),
             )
-        } else {
-            "would add no menu entry, because --no-menu was given".to_owned()
         },
+        describe_key_plan(options, plugin_installed),
         if options.enable_ssh && options.wait {
             "wait for the restarted reader to appear on the network"
         } else if !options.enable_ssh {
@@ -2601,11 +2649,40 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
         } else {
             "stop, because --no-wait was given"
         },
-        if options.menu == MenuEntry::Add {
-            ", and nothing extracted as root but NickelMenu's own two files"
-        } else {
-            ", nothing extracted as root"
+        match (
+            options.menu == MenuEntry::Add && !plugin_installed,
+            options.enable_ssh && options.authorize_key,
+        ) {
+            (true, true) => ", and nothing extracted as root but NickelMenu's own two files and one authorized_keys",
+            (true, false) => ", and nothing extracted as root but NickelMenu's own two files",
+            (false, true) => ", and nothing extracted as root but one authorized_keys",
+            (false, false) => ", nothing extracted as root",
         }
+    )
+}
+
+/// The one line of the dry run that covers this machine's key.
+fn describe_key_plan(options: &SetupOptions, plugin_installed: bool) -> String {
+    if !options.enable_ssh {
+        return "would install no key, because there is no SSH server to use it".to_owned();
+    }
+    if !options.authorize_key {
+        return "would install no key, because --no-key was given".to_owned();
+    }
+    let slot = if options.menu == MenuEntry::Add && !plugin_installed {
+        format!(
+            "into the same {} the menu plugin is staged in",
+            menu::KOBOROOT
+        )
+    } else {
+        format!("into {}", menu::KOBOROOT)
+    };
+    format!(
+        "would put this machine's public key {slot}, creating\n\
+         \x20 ~/.ssh/{} first if it does not exist, so that 'kobo devices' and every\n\
+         \x20 other device command can reach the reader without a password. This replaces\n\
+         \x20 any keys the reader already accepts, because USB cannot read that file back",
+        authorize::KEY_NAME,
     )
 }
 
@@ -2663,6 +2740,16 @@ fn undo_setup(reader: &setup::Mounted, eject: bool) -> Result<(), String> {
         } else {
             "volume left mounted"
         }
+    );
+    // Said plainly rather than left for somebody to discover. The book
+    // partition is all this command can reach over USB, and a key the reader
+    // has already extracted lives on the root filesystem, so an undo cannot
+    // reach it.
+    println!(
+        "\nA key this tool staged is taken back with the archive it was in. One the\n\
+         reader has already extracted stays in /root/.ssh/authorized_keys, which is\n\
+         on the root filesystem, and USB does not reach it. To remove that one, edit\n\
+         the file over SSH and delete the line ending in 'kobo-cobalt'."
     );
     Ok(())
 }
@@ -3421,6 +3508,264 @@ fn shot_command(arguments: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// Where the doctor leaves a recording, and where the host looks for it.
+const RECORDING_ON_DEVICE: &str = "/mnt/onboard/.kobo-record.bin";
+
+/// Long enough to carry a recording home over the reader's radio, which is the
+/// slowest thing in this loop by a wide margin.
+const RECORDING_TRANSFER_TIMEOUT: Duration = Duration::from_secs(300);
+
+const RECORD_USAGE: &str = "usage: kobo record --device HOST [--seconds N] [--fps F] \
+                            [--out DIR] [--keep-on-device]";
+
+/// Records the panel while somebody, or something, drives the reader.
+///
+/// The still picture's sibling. `kobo shot` answers what the screen looks
+/// like; this answers what it did, which is the question whenever a tap lands
+/// somewhere unexpected, a screen flashes through a wrong state before
+/// settling, or a refresh leaves ink behind.
+///
+/// Read-only on the device, exactly like `kobo shot`: it opens the framebuffer
+/// for reading and never grabs, refreshes or writes, so it can watch our own
+/// application or the stock reader without changing either.
+fn record_command(arguments: &[String]) -> Result<(), String> {
+    let mut host: Option<String> = None;
+    let mut seconds = 20_u64;
+    let mut fps = 2_u32;
+    let mut output = PathBuf::from("kobo-recording");
+    let mut keep = false;
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            flag if is_device_flag(flag) => {
+                let value = arguments.get(index + 1).ok_or("--device needs a host")?;
+                if !valid_device_host(value) {
+                    return Err(format!("'{value}' is not a usable device host"));
+                }
+                host = Some(value.clone());
+                index += 1;
+            }
+            "--seconds" => {
+                seconds = arguments
+                    .get(index + 1)
+                    .ok_or("--seconds needs a count")?
+                    .parse()
+                    .map_err(|_| "--seconds takes a whole number".to_owned())?;
+                index += 1;
+            }
+            "--fps" => {
+                fps = arguments
+                    .get(index + 1)
+                    .ok_or("--fps needs a rate")?
+                    .parse()
+                    .map_err(|_| "--fps takes a whole number".to_owned())?;
+                index += 1;
+            }
+            "--out" => {
+                output = PathBuf::from(arguments.get(index + 1).ok_or("--out needs a path")?);
+                index += 1;
+            }
+            "--keep-on-device" => keep = true,
+            other => return Err(format!("unknown option '{other}'\n{RECORD_USAGE}")),
+        }
+        index += 1;
+    }
+    let host = host.ok_or(RECORD_USAGE)?;
+    println!("recording {seconds}s at {fps} fps from {host}; drive the reader now");
+    let transcript = capture_remote_fixed_artifact(&host, &RemoteArtifact::record(seconds, fps))?;
+    let summary = transcript
+        .lines()
+        .find_map(|line| line.strip_prefix("record-written "))
+        .ok_or("the device did not report a recording")?;
+    println!(
+        "device kept {} frames",
+        summary.split(' ').nth(1).unwrap_or("?")
+    );
+
+    let raw = pull_recording(&host)?;
+    let frames = decode_recording(&raw)?;
+    write_recording(&output, &frames)?;
+    if !keep {
+        // A megabyte-a-frame file left in the library shows up as a broken
+        // book on the reader's home screen, so it goes as soon as it is home.
+        let _ = run_remote_shell(
+            &format!("root@{host}"),
+            &format!("rm -f '{RECORDING_ON_DEVICE}'\n"),
+            REMOTE_COMMAND_TIMEOUT,
+        );
+    }
+    Ok(())
+}
+
+/// Brings the recording home, compressed on the way.
+///
+/// Gzipped by the device rather than sent raw: a frame is flat white over most
+/// of its area and compresses to a fraction of its size, and this crosses
+/// Wi-Fi from a reader whose radio is the slowest thing in the loop.
+fn pull_recording(host: &str) -> Result<Vec<u8>, String> {
+    let output = run_remote_shell(
+        &format!("root@{host}"),
+        &format!("gzip -c < '{RECORDING_ON_DEVICE}'\n"),
+        RECORDING_TRANSFER_TIMEOUT,
+    )
+    .map_err(unreachable_device)?;
+    if !output.status.success() {
+        return Err(format!(
+            "fetch the recording: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    gunzip(&output.stdout)
+}
+
+/// One recorded frame: when it appeared, and what was on the panel.
+struct RecordedFrame {
+    millis: u32,
+    grey: Vec<u8>,
+}
+
+/// Reads the device's recording format.
+///
+/// Deliberately strict. A truncated recording is a real possibility, because
+/// the device can be unplugged or run out of room mid-write, and half a frame
+/// decoded as a whole one would be a picture of nothing that looks like a
+/// rendering bug.
+fn decode_recording(raw: &[u8]) -> Result<(u32, u32, Vec<RecordedFrame>), String> {
+    const MAGIC: &[u8; 8] = b"KOBOCST1";
+    if raw.len() < 16 || &raw[..8] != MAGIC {
+        return Err("this is not a recording written by this version".to_owned());
+    }
+    let width = u32::from_le_bytes([raw[8], raw[9], raw[10], raw[11]]);
+    let height = u32::from_le_bytes([raw[12], raw[13], raw[14], raw[15]]);
+    let pixels = usize::try_from(width)
+        .ok()
+        .and_then(|width| width.checked_mul(usize::try_from(height).ok()?))
+        .filter(|pixels| *pixels > 0)
+        .ok_or("the recording claims a panel of no size")?;
+    let mut frames = Vec::new();
+    let mut at = 16;
+    while at + 4 + pixels <= raw.len() {
+        let millis = u32::from_le_bytes([raw[at], raw[at + 1], raw[at + 2], raw[at + 3]]);
+        frames.push(RecordedFrame {
+            millis,
+            grey: raw[at + 4..at + 4 + pixels].to_vec(),
+        });
+        at += 4 + pixels;
+    }
+    if at != raw.len() {
+        eprintln!(
+            "warning: {} trailing bytes; the recording was cut short",
+            raw.len() - at
+        );
+    }
+    if frames.is_empty() {
+        return Err("the recording holds no frames".to_owned());
+    }
+    Ok((width, height, frames))
+}
+
+/// Writes the recording out as numbered pictures, and a video if one can be
+/// made.
+///
+/// Numbered PNGs are the product, not a fallback. They are what a reviewer
+/// actually opens, they diff, and they need nothing installed. A video is
+/// offered on top when ffmpeg happens to be on the path, because scrubbing is
+/// the better way to watch a transition.
+fn write_recording(
+    directory: &Path,
+    (width, height, frames): &(u32, u32, Vec<RecordedFrame>),
+) -> Result<(), String> {
+    fs::create_dir_all(directory)
+        .map_err(|error| format!("create {}: {error}", directory.display()))?;
+    for (index, frame) in frames.iter().enumerate() {
+        let png = kobo_image::encode_png_grey(*width, *height, &frame.grey)
+            .map_err(|error| format!("encode frame {index}: {error}"))?;
+        let path = directory.join(format!("frame-{index:04}.png"));
+        fs::write(&path, png).map_err(|error| format!("write {}: {error}", path.display()))?;
+    }
+    let timings = frames
+        .iter()
+        .enumerate()
+        .map(|(index, frame)| format!("frame-{index:04}.png {}\n", frame.millis))
+        .collect::<String>();
+    let index_path = directory.join("timings.txt");
+    fs::write(&index_path, timings)
+        .map_err(|error| format!("write {}: {error}", index_path.display()))?;
+    println!(
+        "recorded {} frames ({width}x{height}) into {}",
+        frames.len(),
+        directory.display()
+    );
+    match write_recording_video(directory, frames) {
+        Ok(Some(path)) => println!("video {}", path.display()),
+        Ok(None) => println!("ffmpeg is not on the path, so no video was made"),
+        Err(error) => eprintln!("warning: the pictures are fine but the video failed: {error}"),
+    }
+    Ok(())
+}
+
+/// Turns the frames into an mp4, if ffmpeg is available.
+///
+/// The frames are not evenly spaced, because only the ones that changed were
+/// kept, so a concat list carrying each frame's real duration is used rather
+/// than a fixed rate. Otherwise a screen held for ten seconds would flash past
+/// in the same time as one held for a tenth of a second.
+fn write_recording_video(
+    directory: &Path,
+    frames: &[RecordedFrame],
+) -> Result<Option<PathBuf>, String> {
+    if std::process::Command::new("ffmpeg")
+        .arg("-version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_err()
+    {
+        return Ok(None);
+    }
+    let mut list = String::new();
+    for (index, frame) in frames.iter().enumerate() {
+        let next = frames
+            .get(index + 1)
+            .map_or(frame.millis + 1000, |frame| frame.millis);
+        let seconds = f64::from(next.saturating_sub(frame.millis)).max(100.0) / 1000.0;
+        list.push_str(&format!(
+            "file 'frame-{index:04}.png'\nduration {seconds:.3}\n"
+        ));
+    }
+    // ffmpeg's concat demuxer ignores the last duration, so the final frame is
+    // named twice to give it one.
+    if let Some(index) = frames.len().checked_sub(1) {
+        list.push_str(&format!("file 'frame-{index:04}.png'\n"));
+    }
+    let list_path = directory.join("frames.txt");
+    fs::write(&list_path, list)
+        .map_err(|error| format!("write {}: {error}", list_path.display()))?;
+    let video = directory.join("recording.mp4");
+    let status = std::process::Command::new("ffmpeg")
+        .args(["-y", "-f", "concat", "-safe", "0", "-i"])
+        .arg(&list_path)
+        // Even dimensions, because h264 refuses odd ones and 1072x1448 is only
+        // even by luck.
+        .args([
+            "-vf",
+            "pad=ceil(iw/2)*2:ceil(ih/2)*2",
+            "-pix_fmt",
+            "yuv420p",
+            "-r",
+            "10",
+        ])
+        .arg(&video)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map_err(|error| format!("run ffmpeg: {error}"))?;
+    if !status.success() {
+        return Err("ffmpeg refused the frames".to_owned());
+    }
+    Ok(Some(video))
+}
+
 const SHOT_USAGE: &str =
     "usage: kobo shot [--device HOST | --address host:port] [--out PATH] [--ideal]";
 
@@ -3768,6 +4113,8 @@ fn print_help() {
            dev [--builtin] [address]  Run this SDK app in the browser simulator\n\
            drive --script PATH    Drive a running simulator and save PNG screenshots\n\
            shot [--device HOST]   Save a PNG of the panel (device or simulator)\n\
+           present <app> --device IP [--seconds N]  Run one app on the panel\n\
+           stop --device IP       Hand the panel back to the reader now\n\
            build [--device]       Build host workspace or ARM safe doctor, disabled kobod, and sample app\n\
            doctor [--device IP]   Run read-only device diagnostics\n\
            devices [--subnet A.B.C]  Find every reader on the local network\n\
@@ -3778,8 +4125,9 @@ fn print_help() {
            touch-probe --device IP [--seconds N]  Watch touch read-only to check the transform\n\
            guard-test --device IP --confirm ...   Prove the guardian restores the screen\n\
            package [--out PATH] [--folder PATH]  Build the KoboRoot.tgz an owner copies\n\
-           setup [--volume PATH] [--undo] [--enable-ssh]  Prepare a reader over USB;\n\
-                                   root SSH is an explicit opt-in\n\
+           setup [--volume PATH] [--undo] [--enable-ssh] [--no-key]  Prepare a reader\n\
+                                   over USB; root SSH is an explicit opt-in, and it\n\
+                                   installs this machine's key unless --no-key\n\
            deploy --device IP [--package PATH]   Install over Wi-Fi, no reboot\n\
            secret set <name> [--from PATH] --device IP   Install a credential an app can name\n\
            secret list --device IP   Name the installed credentials, never their values\n\
@@ -3797,6 +4145,62 @@ fn print_help() {
 
 #[cfg(test)]
 mod tests {
+    /// Builds a recording the way the device writes one.
+    fn recording(width: u32, height: u32, frames: &[(u32, u8)]) -> Vec<u8> {
+        let mut raw = b"KOBOCST1".to_vec();
+        raw.extend_from_slice(&width.to_le_bytes());
+        raw.extend_from_slice(&height.to_le_bytes());
+        for (millis, fill) in frames {
+            raw.extend_from_slice(&millis.to_le_bytes());
+            raw.extend(std::iter::repeat_n(*fill, (width * height) as usize));
+        }
+        raw
+    }
+
+    #[test]
+    fn a_recording_decodes_to_the_frames_that_were_kept() {
+        let raw = recording(2, 3, &[(0, 0xff), (500, 0x40)]);
+        let (width, height, frames) = super::decode_recording(&raw).expect("decode");
+        assert_eq!((width, height), (2, 3));
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0].millis, 0);
+        assert_eq!(frames[1].millis, 500);
+        assert_eq!(frames[1].grey, vec![0x40; 6]);
+    }
+
+    #[test]
+    fn every_grey_level_survives_the_round_trip() {
+        // The panel is greyscale and the text on it is anti-aliased. A
+        // recording that flattened the greys would look harsher than the
+        // device and would be read as a rendering bug that is not there.
+        let mut raw = b"KOBOCST1".to_vec();
+        raw.extend_from_slice(&16_u32.to_le_bytes());
+        raw.extend_from_slice(&16_u32.to_le_bytes());
+        raw.extend_from_slice(&0_u32.to_le_bytes());
+        let ramp: Vec<u8> = (0..=255_u8).step_by(1).take(256).collect();
+        raw.extend_from_slice(&ramp);
+        let (_, _, frames) = super::decode_recording(&raw).expect("decode");
+        assert_eq!(frames[0].grey, ramp);
+    }
+
+    #[test]
+    fn half_a_frame_is_dropped_rather_than_shown_as_a_whole_one() {
+        // The device can be unplugged or fill up mid-write. Half a frame
+        // decoded as a whole one is a picture of nothing that looks exactly
+        // like a rendering failure.
+        let mut raw = recording(2, 3, &[(0, 0xff)]);
+        raw.extend_from_slice(&99_u32.to_le_bytes());
+        raw.extend_from_slice(&[0x10, 0x10]);
+        let (_, _, frames) = super::decode_recording(&raw).expect("decode");
+        assert_eq!(frames.len(), 1, "a torn frame was kept");
+    }
+
+    #[test]
+    fn something_that_is_not_a_recording_is_refused() {
+        assert!(super::decode_recording(b"not a recording at all").is_err());
+        assert!(super::decode_recording(&recording(2, 3, &[])).is_err());
+    }
+
     use super::package;
     use super::{
         build_executables, canonical, is_device_flag, manifest_uses_sdk, normalise_secret_value,
@@ -4751,9 +5155,58 @@ mod tests {
             values.iter().map(|value| (*value).to_owned()).collect()
         }
 
-        fn reader() -> setup::Mounted {
+        /// A reader that has never had NickelMenu on it.
+        ///
+        /// A real path rather than a made-up one, because the plan now asks
+        /// the volume what is already installed. The first version of this
+        /// pointed at /Volumes/KOBOeReader and quietly read whichever device
+        /// happened to be plugged in, so the test passed or failed by what was
+        /// on somebody's desk.
+        fn fresh_reader() -> (setup::Mounted, TempVolume) {
+            let volume = TempVolume::new("fresh");
+            (mounted(volume.path.clone()), volume)
+        }
+
+        /// A reader that already has the plugin, which most do by the second
+        /// run of this command.
+        fn prepared_reader() -> (setup::Mounted, TempVolume) {
+            let volume = TempVolume::new("prepared");
+            let folder = volume.path.join(menu_config_folder());
+            std::fs::create_dir_all(&folder).expect("the plugin folder");
+            std::fs::write(folder.join("doc"), "nickelmenu").expect("the marker");
+            (mounted(volume.path.clone()), volume)
+        }
+
+        fn menu_config_folder() -> &'static str {
+            crate::menu::CONFIG_FOLDER
+        }
+
+        struct TempVolume {
+            path: PathBuf,
+        }
+
+        impl TempVolume {
+            fn new(name: &str) -> Self {
+                let path = std::env::temp_dir().join(format!(
+                    "kobo-plan-{name}-{}-{:?}",
+                    std::process::id(),
+                    std::thread::current().id()
+                ));
+                let _ = std::fs::remove_dir_all(&path);
+                std::fs::create_dir_all(&path).expect("a volume");
+                Self { path }
+            }
+        }
+
+        impl Drop for TempVolume {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.path);
+            }
+        }
+
+        fn mounted(volume: PathBuf) -> setup::Mounted {
             setup::Mounted {
-                volume: PathBuf::from("/Volumes/KOBOeReader"),
+                volume,
                 serial: "N365410043013".to_owned(),
                 firmware: "4.45.23697".to_owned(),
             }
@@ -4787,7 +5240,7 @@ mod tests {
             let parsed = parse_setup(&arguments(&["--undo", "--dry-run"])).expect("parse");
             assert_eq!(parsed.mode, SetupMode::Undo);
             assert!(parsed.dry_run);
-            let plan = dry_run_plan(&parsed, &reader());
+            let plan = dry_run_plan(&parsed, &fresh_reader().0);
             assert!(plan.starts_with("would "), "{plan}");
             assert!(plan.contains("would remove"), "{plan}");
             assert!(plan.contains(setup::SSH_ENABLED), "{plan}");
@@ -4797,7 +5250,7 @@ mod tests {
         #[test]
         fn a_dry_run_names_every_change_it_would_make() {
             let parsed = parse_setup(&arguments(&["--dry-run"])).expect("parse");
-            let plan = dry_run_plan(&parsed, &reader());
+            let plan = dry_run_plan(&parsed, &fresh_reader().0);
             assert!(plan.contains("would install"));
             assert!(plan.contains("leave the firmware's SSH server disabled"));
             assert!(plan.contains("stop after ejecting"));
@@ -4810,7 +5263,7 @@ mod tests {
         fn root_ssh_requires_an_explicit_opt_in() {
             let parsed = parse_setup(&arguments(&["--enable-ssh", "--dry-run"])).expect("parse");
             assert!(parsed.enable_ssh);
-            let plan = dry_run_plan(&parsed, &reader());
+            let plan = dry_run_plan(&parsed, &fresh_reader().0);
             assert!(plan.contains(setup::SSH_DISABLED), "{plan}");
             assert!(plan.contains("root SSH"), "{plan}");
             assert!(plan.contains("wait for the restarted reader"), "{plan}");
@@ -4820,7 +5273,69 @@ mod tests {
         fn a_dry_run_that_will_not_wait_says_so() {
             let parsed = parse_setup(&arguments(&["--dry-run", "--enable-ssh", "--no-wait"]))
                 .expect("parse");
-            assert!(dry_run_plan(&parsed, &reader()).contains("--no-wait was given"));
+            assert!(dry_run_plan(&parsed, &fresh_reader().0).contains("--no-wait was given"));
+        }
+
+        #[test]
+        fn enabling_ssh_installs_this_machines_key_by_default() {
+            let parsed = parse_setup(&arguments(&["--enable-ssh", "--dry-run"])).expect("parse");
+            assert!(parsed.authorize_key);
+            let plan = dry_run_plan(&parsed, &fresh_reader().0);
+            assert!(plan.contains("this machine's public key"), "{plan}");
+            assert!(plan.contains("kobo_cobalt"), "{plan}");
+            // Both go into the one slot the firmware reads, so the plan has to
+            // say so rather than describe two archives that cannot both exist.
+            assert!(plan.contains("same .kobo/KoboRoot.tgz"), "{plan}");
+            assert!(plan.contains("one authorized_keys"), "{plan}");
+        }
+
+        #[test]
+        fn no_key_says_why_no_key() {
+            let parsed =
+                parse_setup(&arguments(&["--enable-ssh", "--no-key", "--dry-run"])).expect("parse");
+            assert!(!parsed.authorize_key);
+            let plan = dry_run_plan(&parsed, &fresh_reader().0);
+            assert!(plan.contains("--no-key was given"), "{plan}");
+            assert!(!plan.contains("one authorized_keys"), "{plan}");
+        }
+
+        #[test]
+        fn without_ssh_there_is_no_key_to_install() {
+            let parsed = parse_setup(&arguments(&["--dry-run"])).expect("parse");
+            let plan = dry_run_plan(&parsed, &fresh_reader().0);
+            assert!(plan.contains("no SSH server to use it"), "{plan}");
+        }
+
+        #[test]
+        fn a_fresh_reader_is_told_both_things_go_into_the_one_slot() {
+            // The firmware extracts exactly one archive, so a plan that
+            // described two would be describing something impossible.
+            let (reader, _volume) = fresh_reader();
+            let parsed = parse_setup(&arguments(&["--enable-ssh", "--dry-run"])).expect("parse");
+            let plan = dry_run_plan(&parsed, &reader);
+            assert!(plan.contains("stage NickelMenu"), "{plan}");
+            assert!(plan.contains("same .kobo/KoboRoot.tgz"), "{plan}");
+            assert!(
+                plan.contains("NickelMenu's own two files and one authorized_keys"),
+                "{plan}"
+            );
+        }
+
+        #[test]
+        fn a_reader_that_already_has_the_plugin_is_not_promised_it_again() {
+            // Found on a real reader: the plan said it would stage NickelMenu
+            // and put the key in beside it, on a device that already had the
+            // plugin and where the key would go in alone.
+            let (reader, _volume) = prepared_reader();
+            let parsed = parse_setup(&arguments(&["--enable-ssh", "--dry-run"])).expect("parse");
+            let plan = dry_run_plan(&parsed, &reader);
+            assert!(plan.contains("already installed on this reader"), "{plan}");
+            assert!(!plan.contains("stage NickelMenu"), "{plan}");
+            assert!(!plan.contains("same .kobo/KoboRoot.tgz"), "{plan}");
+            assert!(
+                plan.contains("nothing extracted as root but one authorized_keys"),
+                "{plan}"
+            );
         }
 
         #[test]
@@ -4828,6 +5343,7 @@ mod tests {
             let error = parse_setup(&arguments(&["--force"])).expect_err("refused");
             assert!(error.contains("--no-wait"), "{error}");
             assert!(error.contains("--undo"), "{error}");
+            assert!(error.contains("--no-key"), "{error}");
         }
     }
 

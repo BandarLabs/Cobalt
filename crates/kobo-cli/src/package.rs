@@ -127,6 +127,76 @@ pub fn tar(members: &[Member]) -> Result<Vec<u8>, String> {
     Ok(archive)
 }
 
+/// Writes a ustar archive from entries given exactly, without [`check`].
+///
+/// [`tar`] is the only way to build the Cobalt payload, and it refuses any
+/// path outside the install root because that payload must never touch the
+/// root filesystem. This is the primitive underneath it, and it is
+/// `pub(crate)` rather than `pub` so that the one caller which does need to
+/// write elsewhere, [`crate::authorize`], has to be a named module in this
+/// crate rather than anything that happens to link against it.
+///
+/// Directories are listed explicitly rather than inferred from the file paths.
+/// Inferring them meant an archive holding `root/.ssh/authorized_keys` also
+/// carried an entry for `root/`, and an archive extracted as root should
+/// create the one directory it needs rather than reach for the mode of a
+/// directory that was already there.
+pub(crate) fn archive(folders: &[(&str, u32)], files: &[(String, Vec<u8>, u32)]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for (folder, mode) in folders {
+        out.extend_from_slice(&header(&format!("{folder}/"), 0, b'5', *mode));
+    }
+    for (path, bytes, mode) in files {
+        out.extend_from_slice(&header(path, bytes.len(), b'0', *mode));
+        out.extend_from_slice(bytes);
+        let padding = (BLOCK - bytes.len() % BLOCK) % BLOCK;
+        out.extend(std::iter::repeat_n(0u8, padding));
+    }
+    out.extend(std::iter::repeat_n(0u8, BLOCK * 2));
+    out
+}
+
+/// Appends entries to an archive that has already been terminated.
+///
+/// The single `KoboRoot.tgz` slot is the reason this exists. The firmware
+/// extracts exactly one archive, so a run that wants to install both
+/// NickelMenu and this machine's key cannot stage two: it has to hand over one
+/// archive carrying both. Concatenating the two would not do, because a reader
+/// stops at the end-of-archive marker and would never see the second.
+///
+/// `pub(crate)` for the same reason [`archive`] is: only [`crate::authorize`]
+/// needs it.
+///
+/// # Errors
+///
+/// When `base` is not a whole number of blocks, or does not end with the two
+/// zero blocks that terminate a tar. Both mean the input is not an archive
+/// this can safely reopen.
+pub(crate) fn extend(
+    base: &[u8],
+    folders: &[(&str, u32)],
+    files: &[(String, Vec<u8>, u32)],
+) -> Result<Vec<u8>, String> {
+    if base.is_empty() || base.len() % BLOCK != 0 {
+        return Err(format!(
+            "this is not a tar archive: {} bytes is not a whole number of {BLOCK}-byte blocks",
+            base.len()
+        ));
+    }
+    let mut end = base.len();
+    while end >= BLOCK && base[end - BLOCK..end].iter().all(|&byte| byte == 0) {
+        end -= BLOCK;
+    }
+    // Padding to the blocking factor means there may be many trailing zero
+    // blocks, but there must be at least the two that end an archive.
+    if base.len() - end < BLOCK * 2 {
+        return Err("this tar archive does not end, so nothing can be added to it".to_owned());
+    }
+    let mut out = base[..end].to_vec();
+    out.extend_from_slice(&archive(folders, files));
+    Ok(out)
+}
+
 /// Every directory the members live in, parents first.
 fn directories(members: &[Member]) -> Vec<String> {
     let mut all = BTreeSet::new();

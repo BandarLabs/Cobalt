@@ -56,9 +56,6 @@ pub const SSH_DISABLED: &str = ".kobo/ssh-disabled";
 /// The same marker, renamed to let the server start.
 pub const SSH_ENABLED: &str = ".kobo/ssh-enabled";
 
-/// A public key staged on the book partition for the first Cobalt launch.
-pub const STAGED_SSH_KEY: &str = "bootstrap/authorized_key";
-
 /// The reader's own settings file, in Qt's INI dialect.
 pub const SETTINGS: &str = ".kobo/Kobo/Kobo eReader.conf";
 
@@ -247,55 +244,6 @@ pub fn enable_ssh(volume: &Path) -> Result<Ssh, String> {
     fs::rename(&disabled, &enabled)
         .map_err(|error| format!("rename {}: {error}", disabled.display()))?;
     Ok(Ssh::Enabled)
-}
-
-/// True only for a plain, single-line OpenSSH public key.
-///
-/// Key options are deliberately not accepted: this value is produced by
-/// `ssh-keygen -y`, and accepting arbitrary prefixes would turn the staging
-/// path into an accidental root `authorized_keys` editor.
-#[must_use]
-pub fn valid_ssh_public_key(key: &str) -> bool {
-    if key.is_empty() || key.contains(['\r', '\n']) {
-        return false;
-    }
-    let mut fields = key.split_ascii_whitespace();
-    let Some(kind) = fields.next() else {
-        return false;
-    };
-    let Some(material) = fields.next() else {
-        return false;
-    };
-    matches!(kind, "ssh-ed25519" | "ssh-rsa" | "ecdsa-sha2-nistp256")
-        && material.len() >= 32
-        && material
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'='))
-}
-
-/// Stages a public key for `start.sh` to install on its first root-owned run.
-///
-/// The mounted USB partition cannot write `/root`. The public half therefore
-/// waits inside Cobalt until the owner launches it from the reader menu; the
-/// start script appends it exactly once and removes this staging file.
-pub fn stage_ssh_key(volume: &Path, key: &str) -> Result<(), String> {
-    if !valid_ssh_public_key(key) {
-        return Err("refusing to stage an invalid SSH public key".to_owned());
-    }
-    let destination = volume.join(INSTALL_FOLDER).join(STAGED_SSH_KEY);
-    let parent = destination
-        .parent()
-        .ok_or_else(|| format!("{} has no parent directory", destination.display()))?;
-    fs::create_dir_all(parent).map_err(|error| format!("create {}: {error}", parent.display()))?;
-    let value = format!("{}\n", key.trim());
-    fs::write(&destination, value.as_bytes())
-        .map_err(|error| format!("write {}: {error}", destination.display()))?;
-    let written = fs::read(&destination)
-        .map_err(|error| format!("read back {}: {error}", destination.display()))?;
-    if written != value.as_bytes() {
-        return Err(format!("{} differs after writing", destination.display()));
-    }
-    Ok(())
 }
 
 /// Puts the SSH marker back, leaving the reader as it shipped.
@@ -578,8 +526,8 @@ pub struct Report {
     pub installed: usize,
     /// What became of the SSH server.
     pub ssh: Option<Ssh>,
-    /// The host private key whose public half was staged.
-    pub ssh_key: Option<PathBuf>,
+    /// What became of this machine's key, when one was asked for.
+    pub key: Option<Result<(crate::authorize::Key, crate::authorize::Staged), String>>,
     /// Settings keys that changed.
     pub settings: Vec<String>,
     /// What became of the reader's own menu entry, when one was asked for.
@@ -604,12 +552,16 @@ impl Report {
         if let Some(ssh) = self.ssh {
             let _ = writeln!(text, "  · {}", ssh.describe());
         }
-        if let Some(key) = &self.ssh_key {
-            let _ = writeln!(
-                text,
-                "  · public key staged; private key kept at {}",
-                key.display()
-            );
+        match &self.key {
+            Some(Ok((key, staged))) => {
+                let _ = writeln!(text, "  · {}", describe_key(*key, *staged));
+            }
+            // Reported, not raised. Everything else worked, and a key can be
+            // installed on the next run once whatever holds the slot is gone.
+            Some(Err(error)) => {
+                let _ = writeln!(text, "  · this machine's key was not installed: {error}");
+            }
+            None => {}
         }
         if self.settings.is_empty() {
             let _ = writeln!(text, "  · settings already as wanted");
@@ -636,12 +588,50 @@ impl Report {
                 "volume left mounted"
             }
         );
-        text.push_str(&next_steps(
-            self.waiting,
-            matches!(self.menu, Some(Ok(crate::menu::Menu::Staged))),
-            self.ssh_key.is_some(),
-        ));
+        text.push_str(&next_steps(self.waiting, self.staged_an_archive()));
         text
+    }
+
+    /// Whether anything was left for the firmware to extract as root.
+    ///
+    /// Both the menu plugin and this machine's key are staged the same way, so
+    /// either one makes the "nothing was extracted as root" wording false.
+    fn staged_an_archive(&self) -> Staged {
+        let plugin = matches!(self.menu, Some(Ok(crate::menu::Menu::Staged)));
+        let key = matches!(
+            self.key,
+            Some(Ok((
+                _,
+                crate::authorize::Staged::Written | crate::authorize::Staged::Merged
+            )))
+        );
+        match (plugin, key) {
+            (true, true) => Staged::PluginAndKey,
+            (true, false) => Staged::Plugin,
+            (false, true) => Staged::Key,
+            (false, false) => Staged::Nothing,
+        }
+    }
+}
+
+/// What was done with this machine's key, in one line.
+fn describe_key(key: crate::authorize::Key, staged: crate::authorize::Staged) -> String {
+    let origin = match key {
+        crate::authorize::Key::Created => "a key was created for this machine and",
+        crate::authorize::Key::Existing => "this machine's key",
+    };
+    match staged {
+        crate::authorize::Staged::Written | crate::authorize::Staged::Merged => format!(
+            "{origin} will be accepted by the reader after it restarts. This replaces \
+             /root/.ssh/authorized_keys rather than adding to it, because that file is on \
+             the root filesystem and USB cannot read it back. Another machine that had \
+             access will need to run this again from its own desk."
+        ),
+        crate::authorize::Staged::SlotTaken => format!(
+            "{origin} was not installed: another archive is already waiting in \
+             .kobo/KoboRoot.tgz. Restart the reader to let it be taken, then run \
+             'kobo setup --enable-ssh --no-menu' again."
+        ),
     }
 }
 
@@ -651,31 +641,56 @@ impl Report {
 /// Telling somebody to run `kobo devices` and then running it for them reads
 /// as though one of the two did not happen.
 #[must_use]
-pub fn next_steps(waiting: bool, staged: bool, ssh_key_staged: bool) -> String {
+pub fn next_steps(waiting: bool, staged: Staged) -> String {
     let finding = if waiting {
         "  3. This command is waiting for it, and will print its address when it\n\
          \x20    appears. Ctrl-C stops the wait; nothing on the reader depends on it."
     } else {
         "  3. Find it with 'kobo devices', then 'kobo deploy' works from here on."
     };
-    let scope = if staged {
-        STAGED_SCOPE
-    } else {
-        UNTOUCHED_SCOPE
-    };
-    let key = if ssh_key_staged {
-        "  3. Open Cobalt once from the reader menu. That installs the staged public\n\
-         \x20    key into /root/.ssh/authorized_keys; the private key never left this computer.\n\
-         \x20    The staged copy is deleted after installation.\n"
-    } else {
-        ""
-    };
-    let finding = if ssh_key_staged {
-        finding.replacen("  3.", "  4.", 1)
-    } else {
-        finding.to_owned()
-    };
-    format!("{scope}{NEXT_STEPS_HEAD}{key}{finding}{NEXT_STEPS_TAIL}")
+    format!(
+        "{}{}{finding}{NEXT_STEPS_TAIL}",
+        staged.scope(),
+        staged.restart()
+    )
+}
+
+/// What ended up in the single archive the firmware extracts as root.
+///
+/// Named rather than counted, because this paragraph is the one part of the
+/// report an owner cannot check with a file manager, and a paragraph that
+/// describes NickelMenu on a reader that only received a key is worse than no
+/// paragraph at all.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Staged {
+    /// Nothing. Everything went to the book partition.
+    Nothing,
+    /// The plugin alone, on a reader that asked for no key.
+    Plugin,
+    /// This machine's key alone, on a reader that already had the plugin.
+    Key,
+    /// Both, because there is only one slot and they had to travel together.
+    PluginAndKey,
+}
+
+impl Staged {
+    fn scope(self) -> &'static str {
+        match self {
+            Self::Nothing => UNTOUCHED_SCOPE,
+            Self::Plugin => PLUGIN_SCOPE,
+            Self::Key => KEY_SCOPE,
+            Self::PluginAndKey => PLUGIN_AND_KEY_SCOPE,
+        }
+    }
+
+    /// Whether the owner has to restart the reader, or the firmware will.
+    fn restart(self) -> &'static str {
+        if self == Self::Nothing {
+            RESTART_BY_HAND
+        } else {
+            RESTARTS_ITSELF
+        }
+    }
 }
 
 /// What was written, when the only thing written was the book partition.
@@ -685,13 +700,13 @@ root. To undo all of it: 'kobo setup --undo', or delete .adds/cobalt and rename
 .kobo/ssh-enabled back to ssh-disabled.
 ";
 
-/// What was written, when a menu entry was staged as well.
+/// What was written, when the plugin was staged and no key was asked for.
 ///
 /// Said plainly because it is the one thing this command does that the owner
 /// cannot undo with a file manager. The archive was listed before it was
 /// written and contains only NickelMenu's plugin and its documentation, but it
 /// is still the firmware that extracts it, and it still extracts it as root.
-const STAGED_SCOPE: &str = "
+const PLUGIN_SCOPE: &str = "
 One archive was staged for the firmware to extract as root at the next restart:
 NickelMenu, checked first to contain nothing but its own plugin and its own
 documentation. Everything else was written to the book partition. NickelMenu
@@ -699,12 +714,48 @@ removes itself if it fails to start, so it cannot leave the reader unable to
 boot. To undo all of it: 'kobo setup --undo'.
 ";
 
+/// What was written, when the reader already had the plugin.
+const KEY_SCOPE: &str = "
+One archive was staged for the firmware to extract as root at the next restart:
+this machine's public key, and nothing else. It becomes
+/root/.ssh/authorized_keys, which is the file the reader's SSH server reads to
+decide who may log in. Everything else was written to the book partition. To
+undo all of it: 'kobo setup --undo'.
+";
+
+/// What was written, on a reader receiving both. The usual first-time case.
+const PLUGIN_AND_KEY_SCOPE: &str = "
+One archive was staged for the firmware to extract as root at the next restart,
+holding two things, because the firmware extracts one archive and both had to
+travel in it: NickelMenu, checked first to contain nothing but its own plugin
+and its own documentation, and this machine's public key, which becomes
+/root/.ssh/authorized_keys and is the file the reader's SSH server reads to
+decide who may log in. Everything else was written to the book partition.
+NickelMenu removes itself if it fails to start, so it cannot leave the reader
+unable to boot. To undo all of it: 'kobo setup --undo'.
+";
+
 /// Everything above the step that differs.
-const NEXT_STEPS_HEAD: &str = "
+const RESTART_BY_HAND: &str = "
 Next, on the reader:
 
   1. Restart it. Hold the power button until it powers off, then press it
      again. The SSH server only starts at boot.
+  2. Join it to Wi-Fi if it is not already.
+";
+
+/// The same, for a reader that was left an archive.
+///
+/// Measured rather than assumed: ejecting a reader with an archive waiting
+/// makes the firmware show its Updating screen, take the archive, and reboot,
+/// with nobody touching the power button. Telling somebody to restart a reader
+/// that has already restarted reads as though the command did not work.
+const RESTARTS_ITSELF: &str = "
+Next, on the reader:
+
+  1. Nothing. It restarts by itself: ejecting leaves the archive where the
+     firmware looks, so it shows its Updating screen, takes it, and reboots.
+     The SSH server starts with that boot.
   2. Join it to Wi-Fi if it is not already.
 ";
 
@@ -826,9 +877,9 @@ pub fn wait_for_reader(
 #[cfg(test)]
 mod tests {
     use super::{
-        clear_setting, is_kobo_serial, next_steps, parse_version, set_setting, stage_ssh_key,
-        valid_ssh_public_key, wait_for_reader, Arrival, Mounted, Report, Ssh, Verdict,
-        INSTALL_FOLDER, SETTINGS_APPLIED, SSH_DISABLED, SSH_ENABLED, STAGED_SSH_KEY,
+        clear_setting, is_kobo_serial, next_steps, parse_version, set_setting, wait_for_reader,
+        Arrival, Mounted, Report, Ssh, Staged, Verdict, INSTALL_FOLDER, SETTINGS_APPLIED,
+        SSH_DISABLED, SSH_ENABLED,
     };
     use std::net::Ipv4Addr;
     use std::path::PathBuf;
@@ -1013,12 +1064,84 @@ mod tests {
     }
 
     #[test]
+    fn a_reader_that_restarts_itself_is_not_told_to_restart() {
+        // Watched on hardware: the reader was ejected, showed its Updating
+        // screen, took the archive and rebooted, with nobody touching the
+        // power button. The instruction to hold it down described work that
+        // was already done.
+        for staged in [Staged::Plugin, Staged::Key, Staged::PluginAndKey] {
+            let text = next_steps(false, staged);
+            assert!(text.contains("restarts by itself"), "{text}");
+            assert!(!text.contains("Hold the power button"), "{text}");
+        }
+        let untouched = next_steps(false, Staged::Nothing);
+        assert!(untouched.contains("Hold the power button"), "{untouched}");
+    }
+
+    #[test]
+    fn the_staged_paragraph_names_what_was_actually_staged() {
+        // Found on a real reader: it had NickelMenu already, so only the key
+        // was staged, and the report still described the archive as
+        // NickelMenu's plugin and documentation. This paragraph is the one
+        // part an owner cannot check with a file manager, so it has to be
+        // about the archive that exists.
+        let key_only = next_steps(false, Staged::Key);
+        assert!(key_only.contains("authorized_keys"), "{key_only}");
+        assert!(!key_only.contains("NickelMenu"), "{key_only}");
+
+        let plugin_only = next_steps(false, Staged::Plugin);
+        assert!(plugin_only.contains("NickelMenu"), "{plugin_only}");
+        assert!(!plugin_only.contains("authorized_keys"), "{plugin_only}");
+
+        let both = next_steps(false, Staged::PluginAndKey);
+        assert!(both.contains("NickelMenu"), "{both}");
+        assert!(both.contains("authorized_keys"), "{both}");
+        assert!(both.contains("one archive"), "{both}");
+
+        let neither = next_steps(false, Staged::Nothing);
+        assert!(neither.contains("nothing was extracted as"), "{neither}");
+    }
+
+    #[test]
+    fn the_report_picks_the_paragraph_from_what_it_did() {
+        let report = |menu, key| Report {
+            installed: 19,
+            ssh: Some(Ssh::Enabled),
+            key,
+            settings: Vec::new(),
+            menu,
+            ejected: true,
+            waiting: false,
+        };
+        let staged_key = Some(Ok((
+            crate::authorize::Key::Existing,
+            crate::authorize::Staged::Written,
+        )));
+        assert_eq!(
+            report(Some(Ok(crate::menu::Menu::Added)), staged_key.clone()).staged_an_archive(),
+            Staged::Key
+        );
+        assert_eq!(
+            report(Some(Ok(crate::menu::Menu::Staged)), None).staged_an_archive(),
+            Staged::Plugin
+        );
+        assert_eq!(
+            report(Some(Ok(crate::menu::Menu::Staged)), staged_key).staged_an_archive(),
+            Staged::PluginAndKey
+        );
+        assert_eq!(
+            report(Some(Ok(crate::menu::Menu::Unchanged)), None).staged_an_archive(),
+            Staged::Nothing
+        );
+    }
+
+    #[test]
     fn the_reader_is_not_told_to_go_looking_for_it_while_this_is_looking_for_it() {
-        assert!(next_steps(true, false, false).contains("waiting for it"));
-        assert!(!next_steps(true, false, false).contains("Find it with"));
-        assert!(next_steps(false, false, false).contains("Find it with 'kobo devices'"));
+        assert!(next_steps(true, Staged::Nothing).contains("waiting for it"));
+        assert!(!next_steps(true, Staged::Nothing).contains("Find it with"));
+        assert!(next_steps(false, Staged::Nothing).contains("Find it with 'kobo devices'"));
         for waiting in [true, false] {
-            let text = next_steps(waiting, false, false);
+            let text = next_steps(waiting, Staged::Nothing);
             assert!(text.contains("kobo setup --undo"), "undo is always offered");
             assert!(
                 text.contains("Restart it"),
@@ -1202,7 +1325,7 @@ mod tests {
         let report = Report {
             installed: 13,
             ssh: Some(Ssh::Enabled),
-            ssh_key: None,
+            key: None,
             settings: vec!["DeveloperSettings/ForceWifiOn".to_owned()],
             menu: None,
             ejected: true,
@@ -1223,7 +1346,7 @@ mod tests {
         let report = Report {
             installed: 13,
             ssh: Some(Ssh::Enabled),
-            ssh_key: None,
+            key: None,
             settings: Vec::new(),
             menu: Some(Ok(crate::menu::Menu::Staged)),
             ejected: true,
@@ -1240,11 +1363,80 @@ mod tests {
     }
 
     #[test]
+    fn a_report_that_installed_a_key_stops_claiming_nothing_was_extracted() {
+        // The key is staged the same way the menu plugin is, so it makes the
+        // same claim false. Reporting it as though nothing left the book
+        // partition would be the one untruth in this whole report.
+        let report = Report {
+            installed: 13,
+            ssh: Some(Ssh::Enabled),
+            key: Some(Ok((
+                crate::authorize::Key::Created,
+                crate::authorize::Staged::Written,
+            ))),
+            settings: Vec::new(),
+            menu: None,
+            ejected: true,
+            waiting: false,
+        };
+        let text = report.describe(&PathBuf::from("/Volumes/KOBOeReader"));
+        assert!(!text.contains("nothing was extracted as"), "{text}");
+        assert!(
+            text.contains("a key was created for this machine"),
+            "{text}"
+        );
+        assert!(text.contains("after it restarts"), "{text}");
+    }
+
+    #[test]
+    fn a_key_that_could_not_be_staged_says_what_to_do_about_it() {
+        let report = Report {
+            installed: 13,
+            ssh: Some(Ssh::Enabled),
+            key: Some(Ok((
+                crate::authorize::Key::Existing,
+                crate::authorize::Staged::SlotTaken,
+            ))),
+            settings: Vec::new(),
+            menu: None,
+            ejected: true,
+            waiting: false,
+        };
+        let text = report.describe(&PathBuf::from("/Volumes/KOBOeReader"));
+        assert!(
+            text.contains("another archive is already waiting"),
+            "{text}"
+        );
+        assert!(text.contains("--enable-ssh --no-menu"), "{text}");
+        // Nothing of ours was staged, so the claim is still true.
+        assert!(text.contains("nothing was extracted as\nroot"), "{text}");
+    }
+
+    #[test]
+    fn a_key_that_failed_is_reported_without_failing_the_install() {
+        let report = Report {
+            installed: 13,
+            ssh: Some(Ssh::Enabled),
+            key: Some(Err("ssh-keygen refused".to_owned())),
+            settings: Vec::new(),
+            menu: None,
+            ejected: true,
+            waiting: false,
+        };
+        let text = report.describe(&PathBuf::from("/Volumes/KOBOeReader"));
+        assert!(text.contains("13 files"), "{text}");
+        assert!(
+            text.contains("was not installed: ssh-keygen refused"),
+            "{text}"
+        );
+    }
+
+    #[test]
     fn a_report_that_only_wrote_the_entry_keeps_the_claim() {
         let report = Report {
             installed: 13,
             ssh: Some(Ssh::Enabled),
-            ssh_key: None,
+            key: None,
             settings: Vec::new(),
             menu: Some(Ok(crate::menu::Menu::Added)),
             ejected: true,
@@ -1276,35 +1468,6 @@ mod tests {
         let error = verify_payload(&members, &root).expect_err("a short file is caught");
         assert!(error.contains("written short"), "{error}");
 
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn only_a_plain_public_key_can_be_staged() {
-        let material = "A".repeat(43);
-        assert!(valid_ssh_public_key(&format!(
-            "ssh-ed25519 {material} cobalt-kobo"
-        )));
-        assert!(!valid_ssh_public_key(&format!(
-            "command=oops ssh-ed25519 {material}"
-        )));
-        assert!(!valid_ssh_public_key(&format!(
-            "ssh-ed25519 {material}\nssh-ed25519 {material}"
-        )));
-    }
-
-    #[test]
-    fn the_public_key_is_staged_inside_cobalt_and_read_back() {
-        let root = std::env::temp_dir().join(format!("kobo-setup-key-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).expect("temporary volume");
-        let key = format!("ssh-ed25519 {} cobalt-kobo", "A".repeat(43));
-        stage_ssh_key(&root, &key).expect("stage key");
-        assert_eq!(
-            std::fs::read_to_string(root.join(INSTALL_FOLDER).join(STAGED_SSH_KEY))
-                .expect("read key"),
-            format!("{key}\n")
-        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

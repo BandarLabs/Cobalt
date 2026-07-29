@@ -38,6 +38,63 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// The largest response header block accepted before the body is refused.
 const MAX_HEADER_BYTES: usize = 32 * 1024;
 
+/// Where Linux lists the routes it holds, and so whether there is a network.
+const ROUTE_TABLE: &str = "/proc/net/route";
+
+/// Decides whether a failure to connect was this reader's fault or the host's.
+///
+/// Only ever called *after* something has already failed, and that ordering is
+/// the whole design. The radio on this reader powers down when idle and wakes
+/// when a socket asks for it, so a check made before a request would report a
+/// reader offline that was about to succeed. Asked afterwards it costs nothing
+/// on the path where everything worked, and it can only sharpen a failure that
+/// has already happened.
+///
+/// A default route is the question, not a ping: a ping needs a host to answer
+/// and would fail for the same reasons the request just did.
+///
+/// Anywhere without a Linux route table, which is every host this is tested
+/// on, is treated as having a network. A simulator that claimed to be offline
+/// because it is not a Kobo would teach the apps the wrong lesson.
+fn no_route_to_anywhere() -> bool {
+    let Ok(table) = std::fs::read_to_string(ROUTE_TABLE) else {
+        return false;
+    };
+    !has_default_route(&table)
+}
+
+/// True when the route table holds a usable default route.
+///
+/// The columns are iface, destination, gateway, flags, and the rest. A default
+/// route is the one whose destination is all zeroes. Loopback is skipped
+/// because a reader with nothing but `lo` is a reader with no network, and it
+/// is exactly the state a powered-down radio leaves behind.
+fn has_default_route(table: &str) -> bool {
+    table
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let interface = fields.next()?;
+            let destination = fields.next()?;
+            let flags = fields.nth(1)?;
+            Some((interface, destination, flags))
+        })
+        .any(|(interface, destination, flags)| {
+            let up = u32::from_str_radix(flags, 16).is_ok_and(|flags| flags & 1 != 0);
+            interface != "lo" && destination.trim_start_matches('0').is_empty() && up
+        })
+}
+
+/// The failure to report when a socket could not be opened.
+fn could_not_connect() -> TaskError {
+    if no_route_to_anywhere() {
+        TaskError::Offline
+    } else {
+        TaskError::Unreachable
+    }
+}
+
 /// The most response headers retained while parsing.
 const MAX_RESPONSE_HEADERS: usize = 64;
 
@@ -564,12 +621,16 @@ fn request(address: &Address, method: &Method<'_>, max_bytes: u32) -> Result<Vec
         .map_err(|_| TaskError::NotFound)?;
     let mut connection =
         rustls::ClientConnection::new(config, name).map_err(|_| TaskError::Unreachable)?;
+    // The two places a request fails before anything has been said. Both are
+    // asked which kind of failure it was, because a name that will not resolve
+    // and a socket that will not open are the same event on a reader whose
+    // radio is off, and different events on one that is on a network.
     let mut addresses = (address.host.as_str(), address.port)
         .to_socket_addrs()
-        .map_err(|_| TaskError::Unreachable)?;
+        .map_err(|_| could_not_connect())?;
     let mut socket = addresses
         .find_map(|address| TcpStream::connect_timeout(&address, REQUEST_TIMEOUT).ok())
-        .ok_or(TaskError::Unreachable)?;
+        .ok_or_else(could_not_connect)?;
     socket
         .set_read_timeout(Some(REQUEST_TIMEOUT))
         .and_then(|()| socket.set_write_timeout(Some(REQUEST_TIMEOUT)))
@@ -607,6 +668,56 @@ fn request(address: &Address, method: &Method<'_>, max_bytes: u32) -> Result<Vec
 
 #[cfg(test)]
 mod tests {
+    use super::has_default_route;
+
+    /// Read off a Clara BW on Wi-Fi, header and spacing untouched.
+    const READER_ONLINE: &str = "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\nwlan0\t00000000\t0101A8C0\t0003\t0\t0\t307\t00000000\t0\t0\t0\nwlan0\t0001A8C0\t00000000\t0001\t0\t0\t307\t00FFFFFF\t0\t0\t0\n";
+
+    #[test]
+    fn a_reader_on_wifi_has_a_route() {
+        assert!(has_default_route(READER_ONLINE));
+    }
+
+    #[test]
+    fn a_reader_with_only_a_subnet_route_has_no_way_out() {
+        // The second line of the real table on its own. A reader that can
+        // reach its own subnet and nothing else cannot fetch anything, and
+        // calling that reachable would send the app looking for a host to
+        // blame.
+        let table = "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\nwlan0\t0001A8C0\t00000000\t0001\t0\t0\t307\t00FFFFFF\t0\t0\t0\n";
+        assert!(!has_default_route(table));
+    }
+
+    #[test]
+    fn loopback_is_not_a_network() {
+        // What a reader with its radio powered down is left holding.
+        let table = "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\nlo\t00000000\t00000000\t0003\t0\t0\t0\t00000000\t0\t0\t0\n";
+        assert!(!has_default_route(table));
+    }
+
+    #[test]
+    fn a_route_that_is_not_up_does_not_count() {
+        // Flags without bit one set: the entry is in the table but the kernel
+        // will not send anything down it.
+        let table = "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\nwlan0\t00000000\t0101A8C0\t0002\t0\t0\t307\t00000000\t0\t0\t0\n";
+        assert!(!has_default_route(table));
+    }
+
+    #[test]
+    fn an_empty_or_broken_table_is_not_read_as_a_network() {
+        assert!(!has_default_route(""));
+        assert!(!has_default_route("Iface\tDestination\tGateway\tFlags\n"));
+        assert!(!has_default_route("nonsense"));
+        assert!(!has_default_route("Iface\nwlan0\t00000000\n"));
+    }
+
+    #[test]
+    fn a_second_interface_keeps_its_own_route() {
+        // A reader on both Wi-Fi and a USB network. Only one needs a way out.
+        let table = "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\nusb0\t0002A8C0\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0\nwlan0\t00000000\t0101A8C0\t0003\t0\t0\t307\t00000000\t0\t0\t0\n";
+        assert!(has_default_route(table));
+    }
+
     /// Sharing the configuration is the whole optimisation, so it is worth a
     /// test that fails if someone moves it back inside `request`.
     ///

@@ -36,6 +36,7 @@ use crate::blackbox::{self, trace};
 use kobo_hal::display::{DisplaySession, OWNER_UNLOCK_PHRASE};
 use kobo_hal::input::TouchSession;
 use kobo_hal::reader::{Reader, Watchdog, WATCHDOG_CHECK};
+use kobo_hal::soc_watchdog::SocWatchdog;
 use kobo_hal::supervisor::Suspended;
 use kobo_hal::touch::TouchEvent;
 use kobo_hal::{Rect, RefreshIntent, RefreshPlan, RegionSnapshot};
@@ -475,6 +476,20 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     let suspended = Suspended::suspend(reader.environment("DBUS_SESSION_BUS_ADDRESS"))
         .map_err(|error| format!("suspend the freeze watchdog: {error}"))?;
 
+    // The SoC's own counter gets the same treatment, and for the same span. It
+    // is fed by a kernel thread every 28 seconds against a 31 second timeout,
+    // and stopping and restarting the reader is the heaviest thing this device
+    // ever does. Those three seconds are the entire margin, and a session
+    // spends them: with the counter armed a session ended in a cold boot around
+    // ten seconds after the panel went back, and with it slack the same session
+    // ran through and kept going. `soc_watchdog` carries the measurements.
+    //
+    // A device that lacks the node is not a failure, so this only refuses when
+    // the node is there and will not answer.
+    let slack = SocWatchdog::default()
+        .slacken()
+        .map_err(|error| format!("slacken the hardware watchdog: {error}"))?;
+
     // The point of no return.
     trace("stopping the reader");
     reader
@@ -509,10 +524,13 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     let _ignored = touch.release();
     // The panel and the touch descriptor are given up *before* the reader is
     // started, not after it. Holding the display open while the reader brings
-    // the EPD controller back up leaves two owners of one piece of hardware,
-    // and the device then resets around thirty seconds later without syncing
-    // anything, which is the SoC's own 31 second hardware watchdog rather than
-    // any watchdog we can talk to. Ordering this correctly costs nothing.
+    // the EPD controller back up leaves two owners of one piece of hardware.
+    //
+    // This ordering was originally credited with fixing a reset that happened
+    // about thirty seconds later. That credit was misplaced: the reset was the
+    // SoC watchdog, it happens with no display session open at all, and it is
+    // handled by `slack` above. The ordering stays because two owners of one
+    // controller is wrong on its own terms, not because it fixes that.
     drop(touch);
     drop(display);
     // The Clara BW's MediaTek Bluetooth driver cannot be initialised twice in
@@ -557,6 +575,11 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     // the process exists lights a ten second fuse that a still-starting reader
     // cannot feed, which is what rebooted the device at the end of a session.
     let resumed = suspended.resume_once_fed(WATCHDOG_HANDBACK);
+    // Armed again only now. The reader has been given the panel back and has
+    // proved it is feeding the freeze watchdog, which is the best evidence
+    // available that it is far enough along to survive being timed. Dropping
+    // this guard would arm it too, on any early return or panic above.
+    let rearmed = slack.rearm();
     watchdog.disarm();
     drop(teardown);
     let _ignored = fs::remove_dir_all(&state);
@@ -574,6 +597,15 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     };
     let reader_state =
         format!("{reader_state}; the Wi-Fi connection is the reader's own again, so reconnect from its network screen if it does not return by itself");
+    // Worth saying out loud rather than swallowing. The device is running
+    // without its hardware watchdog until it is rebooted, which is a real loss
+    // even though the kernel arms it again on the next boot.
+    let reader_state = match rearmed {
+        Ok(()) => reader_state,
+        Err(error) => format!(
+            "{reader_state}; the hardware watchdog could not be armed again ({error}), so it stays slack until the next reboot"
+        ),
+    };
     match (outcome, restored) {
         (Ok(summary), Ok(())) => Ok(format!("{summary}; typeface {typeface}; {reader_state}")),
         (Ok(summary), Err(error)) => Ok(format!(
