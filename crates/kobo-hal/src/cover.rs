@@ -170,19 +170,33 @@ impl CoverSensor {
 
     /// Takes the next change, or `None` when nothing has changed.
     ///
-    /// Drains the channel rather than returning one queued change at a time,
-    /// so a caller that polls slowly sees where the magnet is now rather than
-    /// replaying a backlog of where it has been.
+    /// One change per call, in the order they happened.
+    ///
+    /// This used to drain the channel and keep only the newest state, on the
+    /// reasoning that a slow caller wants to know where the magnet is now
+    /// rather than replay where it has been. That reasoning is wrong, and
+    /// wrong in the way that makes the sensor look broken.
+    ///
+    /// A magnet waved past the bezel arrives and leaves about two hundred
+    /// milliseconds apart. Both changes land in the channel between two polls,
+    /// draining keeps only the last one, the last one is `Absent`, and
+    /// `Absent` is where the magnet already was. The change is filtered out as
+    /// no change at all. Every wave was silently swallowed: the kernel logged
+    /// the edges, a raw read of the node showed both events, and the
+    /// application on the panel was never told about either.
+    ///
+    /// The sender only ever emits genuine transitions, so nothing here needs
+    /// to collapse anything. The caller polls in a loop and drains a backlog
+    /// within a few iterations, which is what an application counting edges,
+    /// or waiting for a tap, actually needs.
     pub fn poll(&mut self) -> Option<Magnet> {
-        let mut latest = None;
         while let Ok(magnet) = self.changes.try_recv() {
-            latest = Some(magnet);
+            if magnet != self.magnet {
+                self.magnet = magnet;
+                return Some(magnet);
+            }
         }
-        latest.filter(|magnet| {
-            let changed = *magnet != self.magnet;
-            self.magnet = *magnet;
-            changed
-        })
+        None
     }
 
     /// Waits up to `timeout` for the state to change.
@@ -262,7 +276,8 @@ fn find_sensor(directory: &Path) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{cover_state, Magnet};
+    use super::{cover_state, CoverSensor, Magnet};
+    use std::sync::mpsc;
 
     fn event(kind: u16, code: u16, value: i32) -> [u8; 16] {
         let mut bytes = [0_u8; 16];
@@ -284,6 +299,45 @@ mod tests {
     #[test]
     fn an_auto_repeat_is_the_same_state_as_the_press_that_started_it() {
         assert_eq!(cover_state(&event(1, 35, 2)), Some(Magnet::Present));
+    }
+
+    /// A wave is two changes, and both of them are the point.
+    ///
+    /// This is the bug that made the sensor look dead on hardware. A magnet
+    /// walked past the bezel is present for about two hundred milliseconds,
+    /// so the arrival and the departure both queue up between two polls.
+    /// `poll` used to drain the queue and keep the newest, which is `Absent`,
+    /// which is where the magnet already was, so it reported nothing. The
+    /// kernel had logged both edges and a raw read of the node had shown both
+    /// events; only the application heard nothing.
+    #[test]
+    fn a_magnet_that_arrives_and_leaves_between_polls_reports_both() {
+        let (sender, changes) = mpsc::channel();
+        let mut sensor = CoverSensor {
+            magnet: Magnet::Absent,
+            changes,
+        };
+        sender.send(Magnet::Present).expect("queue the arrival");
+        sender.send(Magnet::Absent).expect("queue the departure");
+
+        assert_eq!(sensor.poll(), Some(Magnet::Present), "the magnet arrived");
+        assert_eq!(sensor.poll(), Some(Magnet::Absent), "and then it left");
+        assert_eq!(sensor.poll(), None, "and nothing else happened");
+        assert_eq!(sensor.magnet(), Magnet::Absent);
+    }
+
+    /// A restated state is not a change, whoever restates it.
+    #[test]
+    fn a_repeat_of_the_state_already_held_is_not_reported() {
+        let (sender, changes) = mpsc::channel();
+        let mut sensor = CoverSensor {
+            magnet: Magnet::Absent,
+            changes,
+        };
+        sender.send(Magnet::Absent).expect("queue a repeat");
+        assert_eq!(sensor.poll(), None);
+        sender.send(Magnet::Present).expect("queue a real change");
+        assert_eq!(sensor.poll(), Some(Magnet::Present));
     }
 
     #[test]

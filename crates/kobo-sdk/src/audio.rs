@@ -118,6 +118,7 @@ pub struct AudioPlayer {
     autoplay: PlayIntent,
     trouble: Option<String>,
     secondary_action: Option<(String, String)>,
+    owns_back: bool,
 }
 
 impl AudioPlayer {
@@ -144,6 +145,7 @@ impl AudioPlayer {
             autoplay: PlayIntent::Manual,
             trouble: None,
             secondary_action: None,
+            owns_back: false,
         }
     }
 
@@ -171,6 +173,20 @@ impl AudioPlayer {
 
     pub fn set_cover(&mut self, cover: Option<TilePicture>) {
         self.cover = cover;
+    }
+
+    /// Asks for the runtime's back control to be offered to the application
+    /// first, for a player that was reached from a list rather than opened as
+    /// the application's own front door. Without it a player at the root of a
+    /// single-application session is drawn with no way back to the shelf that
+    /// opened it, which strands whoever tapped a book.
+    ///
+    /// The application must answer [`ActionId::BACK`] with the screen to
+    /// return to; if it does not, the runtime leaves the application anyway.
+    #[must_use]
+    pub const fn owns_back(mut self, owns_back: bool) -> Self {
+        self.owns_back = owns_back;
+        self
     }
 
     /// Adds one application-owned action beside the output picker. The player
@@ -215,10 +231,11 @@ impl AudioPlayer {
         let output = self
             .connected_output()
             .map_or("No Bluetooth audio device", |device| device.name.as_str());
+        // The author is the hero's byline, immediately under the title, which is
+        // where a reader looks for it. Repeating it as an "Author" fact two lines
+        // lower says the same sentence twice and reads like a bug, so the facts
+        // list carries only what the byline cannot.
         let mut facts = Vec::new();
-        if let Some(author) = self.metadata.author.as_deref() {
-            facts.push(("Author", author.to_owned()));
-        }
         if let Some(chapter) = self.metadata.chapter.as_deref() {
             facts.push(("Chapter", chapter.to_owned()));
         }
@@ -242,6 +259,7 @@ impl AudioPlayer {
         };
         let mut screen = ScreenBuilder::new("audio-player")
             .top_bar("Now playing")
+            .owns_back(self.owns_back)
             .hero(
                 self.cover,
                 26,
@@ -747,6 +765,25 @@ mod tests {
             paired: connected,
             connected,
         }
+    }
+
+    #[test]
+    fn an_author_is_stated_once_not_twice() {
+        // It is the hero's byline. A facts row repeating it word for word two
+        // lines below reads as a rendering bug, and did on the reader.
+        let player = AudioPlayer::shelf("book.mp3z", "A History of the Moon")
+            .metadata(AudioMetadata::new("A History of the Moon").author("Cobalt Audio"));
+        let drawn = format!("{:?}", player.screen());
+        assert_eq!(drawn.matches("Cobalt Audio").count(), 1, "{drawn}");
+        assert!(!drawn.contains("Author"), "{drawn}");
+    }
+
+    #[test]
+    fn a_player_reached_from_a_shelf_keeps_the_way_back() {
+        let alone = AudioPlayer::shelf("book.mp3z", "A History of the Moon");
+        assert!(!alone.screen().owns_back);
+        let from_a_shelf = AudioPlayer::shelf("book.mp3z", "A History of the Moon").owns_back(true);
+        assert!(from_a_shelf.screen().owns_back);
     }
 
     #[test]

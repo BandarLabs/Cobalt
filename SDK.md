@@ -635,6 +635,35 @@ Show that something is happening. `activity(label, None)` plus `skeleton(n)`
 puts a placeholder where the content will land, which reads far better on a
 slow panel than an empty screen that suddenly fills.
 
+### Work that takes minutes
+
+A bar that sits at thirty percent for ninety seconds is indistinguishable from
+a hung application, and nothing on this panel animates to say otherwise. For
+anything longer than a few seconds, run a `Heartbeat` alongside the work and
+count up on the screen:
+
+```rust
+self.clock = Heartbeat::every(5);
+self.clock.start(context);
+
+// First in on_task, and returned from immediately, or a nap is mistaken
+// for the provider's reply.
+if self.clock.on_task(context, task) {
+    context.set_screen(self.screen());   // "2 min 45 s so far"
+    return;
+}
+```
+
+`Heartbeat::default()` is five seconds, not zero. Stop it on every path that
+ends the work, including cancel and failure, or it naps forever.
+
+A `Post` body may be up to `MAX_POST_BODY_LEN`, which is far larger than the
+16 KiB ceiling on a label, because a request that carries research or a
+document is not a string on a screen. `Context::spawn` returns `None` rather
+than failing the process if a task is still too large to send, so an
+over-large request is something the application shows rather than something
+the runtime dies of.
+
 ### Credentials
 
 ```rust
@@ -857,6 +886,15 @@ pairs and connects the selected output, and resumes the pending Play action.
 Keyboard and remote connections do not count as audio outputs. Shelf paths are
 resolved within the calling application's shelf, and stream sources are
 unauthenticated HTTPS objects cached under a 64 MiB ceiling before playback.
+
+`AudioPlayer::owns_back(true)` is for a player reached from a list rather than
+opened as the application's front door. Without it, a player sitting at the
+root of a single-application session is drawn with no back control at all, so
+tapping a book is a one way door. With it the application receives
+`ActionId::BACK` and answers with the list it came from.
+
+The author is the hero's byline and is stated exactly once. It is deliberately
+not repeated as a fact row two lines below.
 
 ---
 

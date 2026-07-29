@@ -57,6 +57,15 @@ pub const MAX_TASK_BYTES_U32: u32 = 512 * 1024;
 /// Declaring the wire width first means the conversion only ever widens.
 pub const MAX_TASK_BYTES: usize = MAX_TASK_BYTES_U32 as usize;
 
+/// The most an application may send in one request body.
+///
+/// A body is not a label. It carries a document, a research digest, a batch of
+/// items, and it outgrows [`MAX_STRING_LEN`] the first time an application asks
+/// a model to work on something it fetched. A task may already hand back
+/// [`MAX_TASK_BYTES`], so sending is now bounded the same way receiving is
+/// rather than at a fortieth of it.
+pub const MAX_POST_BODY_LEN: usize = MAX_TASK_BYTES;
+
 /// The most radios a device scan can report in one answer.
 pub const MAX_RADIO_DEVICES: usize = 32;
 
@@ -294,6 +303,37 @@ pub enum Task {
     ReadFile { path: String },
     /// Waits, without holding a wake lock.
     Sleep { seconds: u32 },
+}
+
+impl Task {
+    /// Whether this task fits on the wire.
+    ///
+    /// Asked before a task is handed over rather than discovered by the
+    /// encoder, so an application that assembles an over-large request can be
+    /// told about it on screen instead of ending mid-frame.
+    #[must_use]
+    pub fn is_sendable(&self) -> bool {
+        match self {
+            Self::Fetch { url, .. } => url.len() <= MAX_URL_LEN,
+            Self::Post {
+                url,
+                body,
+                content_type,
+                credential,
+                headers,
+                ..
+            } => {
+                url.len() <= MAX_URL_LEN
+                    && body.len() <= MAX_POST_BODY_LEN
+                    && content_type.len() <= MAX_STRING_LEN
+                    && headers.len() <= MAX_HEADERS
+                    && headers.iter().all(Header::is_well_formed)
+                    && credential.as_ref().is_none_or(Credential::is_well_formed)
+            }
+            Self::ReadFile { path } => path.len() <= MAX_STRING_LEN,
+            Self::Sleep { .. } => true,
+        }
+    }
 }
 
 /// How a task ended.
@@ -1335,7 +1375,7 @@ fn encode_task_message(payload: &mut Vec<u8>, message: &Message) -> Result<(), P
                 } => {
                     payload.push(3);
                     push_string(payload, url)?;
-                    push_string(payload, body)?;
+                    push_long_string(payload, body)?;
                     push_string(payload, content_type)?;
                     match credential {
                         None => payload.push(0),
@@ -1654,7 +1694,7 @@ fn encoded_task_len(work: &Task) -> Result<usize, ProtocolError> {
             }
             add_encoded_len(&mut length, 6)?;
             add_encoded_len(&mut length, encoded_string_len(url)?)?;
-            add_encoded_len(&mut length, encoded_string_len(body)?)?;
+            add_encoded_len(&mut length, encoded_body_len(body)?)?;
             add_encoded_len(&mut length, encoded_string_len(content_type)?)?;
             if let Some(credential) = credential {
                 add_encoded_len(&mut length, encoded_string_len(&credential.secret)?)?;
@@ -2647,6 +2687,13 @@ fn encoded_string_len(text: &str) -> Result<usize, ProtocolError> {
     Ok(2 + text.len())
 }
 
+fn encoded_body_len(text: &str) -> Result<usize, ProtocolError> {
+    if text.len() > MAX_POST_BODY_LEN {
+        return Err(ProtocolError::StringTooLarge);
+    }
+    Ok(4 + text.len())
+}
+
 fn add_encoded_len(total: &mut usize, additional: usize) -> Result<(), ProtocolError> {
     *total = total
         .checked_add(additional)
@@ -2738,7 +2785,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
                     if url.len() > MAX_URL_LEN {
                         return Err(ProtocolError::StringTooLarge);
                     }
-                    let body = reader.string()?;
+                    let body = reader.long_string()?;
                     let content_type = reader.string()?;
                     let credential = match reader.u8()? {
                         0 => None,
@@ -4606,6 +4653,20 @@ fn push_string(output: &mut Vec<u8>, text: &str) -> Result<(), ProtocolError> {
     Ok(())
 }
 
+/// Writes a request body, which is length-prefixed with four bytes rather than
+/// two because a body is allowed to be far larger than a label.
+fn push_long_string(output: &mut Vec<u8>, text: &str) -> Result<(), ProtocolError> {
+    if text.len() > MAX_POST_BODY_LEN {
+        return Err(ProtocolError::StringTooLarge);
+    }
+    push_u32(
+        output,
+        u32::try_from(text.len()).map_err(|_| ProtocolError::StringTooLarge)?,
+    );
+    output.extend_from_slice(text.as_bytes());
+    Ok(())
+}
+
 fn push_u16(output: &mut Vec<u8>, value: u16) {
     output.extend_from_slice(&value.to_be_bytes());
 }
@@ -4715,6 +4776,16 @@ impl<'a> Reader<'a> {
     fn string(&mut self) -> Result<String, ProtocolError> {
         let length = usize::from(self.u16()?);
         if length > MAX_STRING_LEN {
+            return Err(ProtocolError::StringTooLarge);
+        }
+        let bytes = self.take(length)?;
+        let text = std::str::from_utf8(bytes).map_err(|_| ProtocolError::InvalidUtf8)?;
+        Ok(text.to_owned())
+    }
+
+    fn long_string(&mut self) -> Result<String, ProtocolError> {
+        let length = usize::try_from(self.u32()?).map_err(|_| ProtocolError::StringTooLarge)?;
+        if length > MAX_POST_BODY_LEN {
             return Err(ProtocolError::StringTooLarge);
         }
         let bytes = self.take(length)?;
@@ -5808,6 +5879,49 @@ mod store_tests {
     fn a_terminal_chunk_exactly_at_the_bound_is_carried() {
         let message = Message::ShellRequest(ShellRequest::Input(vec![b'x'; MAX_SHELL_CHUNK]));
         assert_eq!(message_round_trip(message.clone()), message);
+    }
+
+    #[test]
+    fn a_request_body_may_be_far_larger_than_a_label() {
+        // The body used to be encoded as a label, so an application that
+        // handed a model the research it had just fetched could not spawn the
+        // request at all: encoding failed with `StringTooLarge` and the
+        // application ended, having said nothing about why.
+        let body = "x".repeat(64 * 1024);
+        let message = Message::Spawn {
+            task: TaskId(3),
+            work: Task::Post {
+                url: "https://example.invalid/v1".into(),
+                body: body.clone(),
+                content_type: "application/json".into(),
+                credential: Some(Credential::bearer("openai")),
+                headers: Vec::new(),
+                max_bytes: 4096,
+            },
+        };
+        let frame = Frame {
+            request_id: 1,
+            message,
+        };
+        let encoded = encode(&frame).expect("a 64 KiB body encodes");
+        let decoded = decode(&encoded).expect("a 64 KiB body decodes");
+        assert_eq!(decoded, frame);
+
+        let oversized = Frame {
+            request_id: 1,
+            message: Message::Spawn {
+                task: TaskId(3),
+                work: Task::Post {
+                    url: "https://example.invalid/v1".into(),
+                    body: "x".repeat(MAX_POST_BODY_LEN + 1),
+                    content_type: "application/json".into(),
+                    credential: None,
+                    headers: Vec::new(),
+                    max_bytes: 4096,
+                },
+            },
+        };
+        assert_eq!(encode(&oversized), Err(ProtocolError::StringTooLarge));
     }
 
     #[test]

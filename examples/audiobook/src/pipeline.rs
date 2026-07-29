@@ -230,17 +230,22 @@ fn research_context(response: &[u8]) -> Result<String, &'static str> {
     Ok(context)
 }
 
+/// Finds the written script in a Responses envelope.
+///
+/// Every item without content is skipped rather than ending the search. A
+/// reasoning model puts its reasoning first and that item carries no `content`
+/// at all, so a `?` here would return empty for every successful response: the
+/// script is in the second item and the search stopped at the first. It looked
+/// exactly like the model having said nothing, which is the worst kind of bug
+/// to read a log for.
 fn response_text(response: &Value) -> Option<&str> {
-    for item in response.get("output")?.as_array()? {
-        for content in item.get("content")?.as_array()? {
-            if content.get("type").and_then(Value::as_str) == Some("output_text") {
-                if let Some(text) = content.get("text").and_then(Value::as_str) {
-                    return Some(text);
-                }
-            }
-        }
-    }
-    None
+    let items = response.get("output")?.as_array()?;
+    items
+        .iter()
+        .filter_map(|item| item.get("content").and_then(Value::as_array))
+        .flatten()
+        .find(|content| content.get("type").and_then(Value::as_str) == Some("output_text"))
+        .and_then(|content| content.get("text").and_then(Value::as_str))
 }
 
 fn string(value: &Value, key: &str) -> Result<String, &'static str> {
@@ -348,6 +353,60 @@ mod tests {
         let book = parse_book(envelope.as_bytes()).expect("a book");
         assert_eq!(book.title, "The Moon");
         assert_eq!(book.chapters.len(), 3);
+    }
+
+    /// The shape a reasoning model actually returns. The first item is its
+    /// reasoning and carries no `content` key, so anything that treats a
+    /// missing `content` as the end of the search never reaches the script in
+    /// the second item and reports a perfectly good answer as no answer.
+    #[test]
+    fn a_reasoning_item_before_the_script_does_not_hide_the_script() {
+        let script = r#"{"title":"Deep Time","summary":"A tour","chapters":[{"title":"One","narration":"First."},{"title":"Two","narration":"Second."},{"title":"Three","narration":"Third."}]}"#;
+        let reasoning = kobo_json::ObjectBuilder::new()
+            .set("type", "reasoning")
+            .set("id", "rs_1")
+            .set(
+                "summary",
+                vec![kobo_json::ObjectBuilder::new()
+                    .set("type", "summary_text")
+                    .set("text", "Planning the chapters.")],
+            );
+        let message = kobo_json::ObjectBuilder::new()
+            .set("type", "message")
+            .set("role", "assistant")
+            .set(
+                "content",
+                vec![kobo_json::ObjectBuilder::new()
+                    .set("type", "output_text")
+                    .set("text", script)],
+            );
+        let envelope = kobo_json::ObjectBuilder::new()
+            .set("output", vec![reasoning, message])
+            .build()
+            .to_json();
+        let book = parse_book(envelope.as_bytes()).expect("a book behind the reasoning");
+        assert_eq!(book.title, "Deep Time");
+        assert_eq!(book.chapters.len(), 3);
+    }
+
+    /// A response that genuinely says nothing must still say nothing, rather
+    /// than the fix above turning every empty answer into a parse error
+    /// further down.
+    #[test]
+    fn reasoning_alone_is_still_reported_as_no_script() {
+        let envelope = kobo_json::ObjectBuilder::new()
+            .set(
+                "output",
+                vec![kobo_json::ObjectBuilder::new()
+                    .set("type", "reasoning")
+                    .set("id", "rs_1")],
+            )
+            .build()
+            .to_json();
+        assert_eq!(
+            parse_book(envelope.as_bytes()).unwrap_err(),
+            "No script came back for that topic."
+        );
     }
 
     #[test]

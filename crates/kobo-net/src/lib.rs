@@ -24,7 +24,7 @@
 //! requests and Kobo-specific TLS roots stay visible, while Rustls uses its
 //! maintained ring provider instead of an experimental provider.
 
-use kobo_protocol::TaskError;
+use kobo_protocol::{Credential, SecretHeader, TaskError};
 use std::borrow::Cow;
 use std::fmt::Write as _;
 use std::io::{Read, Write};
@@ -32,8 +32,24 @@ use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-/// How long a single request may spend connected before it is abandoned.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long opening a connection may take before the host is called
+/// unreachable.
+///
+/// Short on purpose. A reader whose radio is off, or which is associated with
+/// a network that goes nowhere, should be told so in seconds rather than
+/// minutes, and nothing has been said yet that would be worth waiting for.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long a server that has accepted the connection may stay silent.
+///
+/// Deliberately much longer than [`CONNECT_TIMEOUT`], because the two are not
+/// the same failure. A host that will not answer at all is broken; a host that
+/// has taken the request and is working on it is not. A reasoning model
+/// answering a request for a four chapter script takes a measured hundred
+/// seconds to send its first byte, and at thirty seconds every audiobook this
+/// project generates failed as "the network was too slow to answer" -- which
+/// was the runtime giving up, not the network.
+const RESPONSE_TIMEOUT: Duration = Duration::from_secs(180);
 
 /// The largest response header block accepted before the body is refused.
 const MAX_HEADER_BYTES: usize = 32 * 1024;
@@ -159,6 +175,65 @@ pub fn parse(url: &str) -> Result<Address, TaskError> {
 #[must_use]
 pub fn has_origin(url: &str, host: &str, port: u16) -> bool {
     parse(url).is_ok_and(|address| address.host.eq_ignore_ascii_case(host) && address.port == port)
+}
+
+/// Whether a shipped application may attach one named secret to this URL.
+///
+/// The application selects a service, but the runtime independently binds the
+/// secret, header convention and HTTPS origin. A modified application can no
+/// longer turn a stored credential into a POST to an address it controls.
+///
+/// It lives here, beside [`has_origin`], because both the device runtime and
+/// the simulator have to apply the same answer. They did not: the simulator
+/// installed no policy at all, so every credentialed request was refused off
+/// the device, and the two applications that need a key could only be run on
+/// hardware. That is the one thing this project is arranged to avoid.
+#[must_use]
+pub fn credential_allowed(app: &str, credential: &Credential, url: &str) -> bool {
+    if app == "audiobook" {
+        return match (&*credential.secret, &credential.header) {
+            ("exa", SecretHeader::Named(header)) => {
+                header.eq_ignore_ascii_case("x-api-key")
+                    && url == "https://api.exa.ai/search"
+                    && has_origin(url, "api.exa.ai", 443)
+            }
+            ("openai", SecretHeader::Bearer) => {
+                url == "https://api.openai.com/v1/responses"
+                    && has_origin(url, "api.openai.com", 443)
+            }
+            ("elevenlabs", SecretHeader::Named(header)) => {
+                header.eq_ignore_ascii_case("xi-api-key")
+                    && url
+                        == concat!(
+                            "https://api.elevenlabs.io/v1/text-to-speech/",
+                            "JBFqnCBsd6RMkjVDRZzb?output_format=mp3_22050_32"
+                        )
+                    && has_origin(url, "api.elevenlabs.io", 443)
+            }
+            _ => false,
+        };
+    }
+    if app != "chat" {
+        return false;
+    }
+    match (&*credential.secret, &credential.header) {
+        ("openai", SecretHeader::Bearer) => {
+            url == "https://api.openai.com/v1/chat/completions"
+                && has_origin(url, "api.openai.com", 443)
+        }
+        ("anthropic", SecretHeader::Named(header)) => {
+            header.eq_ignore_ascii_case("x-api-key")
+                && url == "https://api.anthropic.com/v1/messages"
+                && has_origin(url, "api.anthropic.com", 443)
+        }
+        ("gemini", SecretHeader::Named(header)) => {
+            header.eq_ignore_ascii_case("x-goog-api-key")
+                && url
+                    == "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+                && has_origin(url, "generativelanguage.googleapis.com", 443)
+        }
+        _ => false,
+    }
 }
 
 /// What a server said, once the status line has been understood.
@@ -629,11 +704,11 @@ fn request(address: &Address, method: &Method<'_>, max_bytes: u32) -> Result<Vec
         .to_socket_addrs()
         .map_err(|_| could_not_connect())?;
     let mut socket = addresses
-        .find_map(|address| TcpStream::connect_timeout(&address, REQUEST_TIMEOUT).ok())
+        .find_map(|address| TcpStream::connect_timeout(&address, CONNECT_TIMEOUT).ok())
         .ok_or_else(could_not_connect)?;
     socket
-        .set_read_timeout(Some(REQUEST_TIMEOUT))
-        .and_then(|()| socket.set_write_timeout(Some(REQUEST_TIMEOUT)))
+        .set_read_timeout(Some(RESPONSE_TIMEOUT))
+        .and_then(|()| socket.set_write_timeout(Some(RESPONSE_TIMEOUT)))
         .map_err(|_| TaskError::Unreachable)?;
     let mut tls = rustls::Stream::new(&mut connection, &mut socket);
     tls.write_all(head(address, method, max_bytes).as_bytes())
@@ -668,6 +743,63 @@ fn request(address: &Address, method: &Method<'_>, max_bytes: u32) -> Result<Vec
 
 #[cfg(test)]
 mod tests {
+    /// The policy is one function for both runtimes, so the tests that pin
+    /// it live beside it rather than in whichever runtime happened to own it
+    /// first. In the device runtime they only ran under a feature flag.
+    #[test]
+    fn chat_credentials_are_bound_to_their_exact_service() {
+        use kobo_protocol::Credential;
+
+        let openai = Credential::bearer("openai");
+        assert!(super::credential_allowed(
+            "chat",
+            &openai,
+            "https://api.openai.com/v1/chat/completions"
+        ));
+        for (app, url) in [
+            ("other", "https://api.openai.com/v1/chat/completions"),
+            (
+                "chat",
+                "https://api.openai.com.attacker.invalid/v1/chat/completions",
+            ),
+            ("chat", "https://attacker.invalid/collect"),
+        ] {
+            assert!(!super::credential_allowed(app, &openai, url));
+        }
+    }
+
+    #[test]
+    fn audiobook_credentials_are_bound_to_three_exact_provider_requests() {
+        use kobo_protocol::Credential;
+
+        let requests = [
+            (
+                Credential::in_header("exa", "x-api-key"),
+                "https://api.exa.ai/search",
+            ),
+            (
+                Credential::bearer("openai"),
+                "https://api.openai.com/v1/responses",
+            ),
+            (
+                Credential::in_header("elevenlabs", "xi-api-key"),
+                concat!(
+                    "https://api.elevenlabs.io/v1/text-to-speech/",
+                    "JBFqnCBsd6RMkjVDRZzb?output_format=mp3_22050_32"
+                ),
+            ),
+        ];
+        for (credential, url) in requests {
+            assert!(super::credential_allowed("audiobook", &credential, url));
+            assert!(!super::credential_allowed("chat", &credential, url));
+            assert!(!super::credential_allowed(
+                "audiobook",
+                &credential,
+                "https://attacker.invalid/collect"
+            ));
+        }
+    }
+
     use super::has_default_route;
 
     /// Read off a Clara BW on Wi-Fi, header and spacing untouched.

@@ -636,8 +636,28 @@ fn push_managed(parsed: &mut Vec<(BluetoothDevice, i16)>, mut device: ManagedDev
     ));
 }
 
+/// The string inside a `variant`, however deeply `dbus-send` indented it.
+///
+/// The gap between `variant` and the value it contains is not fixed.
+/// `dbus-send` prints a variant by printing the word and then recursing one
+/// indent level deeper, so the spacing grows with nesting. This matched a
+/// literal ten spaces, which is the depth a device property sits at in a
+/// single-property reply and *not* the depth it sits at inside
+/// `GetManagedObjects`.
+///
+/// The symptom on hardware was that every string property silently failed to
+/// parse. `Address` fell back to the one recoverable from the object path, so
+/// the list still had the right devices, and `Name` and `Alias` had no
+/// fallback at all, so every pair of headphones was listed by its MAC address.
+/// It looked like the reader could not resolve names. It had never read them.
+///
+/// `boolean_variant` splits on whitespace and was never affected, which is why
+/// paired and connected were right while the names beside them were not.
 fn dbus_string(line: &str) -> Option<&str> {
-    let value = line.strip_prefix("variant          string \"")?;
+    let value = line
+        .strip_prefix("variant")?
+        .trim_start()
+        .strip_prefix("string \"")?;
     value.strip_suffix('"')
 }
 
@@ -790,6 +810,44 @@ mod tests {
         assert_eq!(devices[0].kind, BluetoothDeviceKind::Keyboard);
         assert!(devices[0].paired);
         assert!(!devices[0].connected);
+    }
+
+    /// The indentation is the bug, so the fixture has to carry the real one.
+    ///
+    /// This is the shape `dbus-send` actually prints for
+    /// `GetManagedObjects`, where a device property sits several levels deeper
+    /// than in a single-property reply. Parsed with a fixed ten-space gap it
+    /// yielded no name at all, and the reader listed a pair of headphones as
+    /// `AA:BB:CC:DD:EE:FF`.
+    #[test]
+    fn a_name_survives_however_deeply_dbus_send_indented_it() {
+        let output = "object path \"/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF\"\n\
+            array [\n\
+            dict entry(\n\
+            string \"org.bluez.Device1\"\n\
+            array [\n\
+            dict entry(\n\
+            string \"Address\"\n\
+            variant                            string \"AA:BB:CC:DD:EE:FF\"\n\
+            )\n\
+            dict entry(\n\
+            string \"Name\"\n\
+            variant                            string \"AirPods Pro\"\n\
+            )\n\
+            dict entry(\n\
+            string \"Icon\"\n\
+            variant                            string \"audio-headphones\"\n\
+            )\n\
+            dict entry(\n\
+            string \"Connected\"\n\
+            variant                            boolean true\n\
+            )\n";
+        let devices = parse_managed_devices(output);
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].name, "AirPods Pro", "not the MAC address");
+        assert_eq!(devices[0].address, "AA:BB:CC:DD:EE:FF");
+        assert_eq!(devices[0].kind, BluetoothDeviceKind::Audio);
+        assert!(devices[0].connected);
     }
 
     #[test]

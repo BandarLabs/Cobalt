@@ -7,6 +7,12 @@ sleep cover closes against, and until now it was the runtime's private
 business. This application is the whole of the new public surface, used
 honestly: ask once for the state, then wait to be told when it changes.
 
+| Nothing there | After a few sweeps |
+| --- | --- |
+| ![The empty state, telling you to walk a magnet along each edge](screenshots/no-magnet.png) | ![The same screen with a count of how many times the sensor changed](screenshots/counting.png) |
+
+*Captured from a Kobo Clara BW over Wi-Fi with `kobo shot --device`.*
+
 ## Using it
 
 Hold a magnet against an edge and walk it slowly along. The screen goes from

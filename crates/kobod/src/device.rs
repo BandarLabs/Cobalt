@@ -42,7 +42,7 @@ use kobo_hal::touch::TouchEvent;
 use kobo_hal::{Rect, RefreshIntent, RefreshPlan, RegionSnapshot};
 use kobo_policy::{Backends, Capability, Declared, DeviceServices, PowerPolicy, TaskRunner};
 use kobo_profile::{DeviceProfile, CLARA_BW_391};
-use kobo_protocol::{Credential, Frame, Lifecycle, Message, SecretHeader, TaskError, TaskOutcome};
+use kobo_protocol::{Frame, Lifecycle, Message, TaskError, TaskOutcome};
 use kobo_ui::{
     display_metrics_from_env, render_all, ActionId, Chrome, FramePlanner, PanelWaveform,
     PictureCache, Screen, Surface,
@@ -83,57 +83,6 @@ const STATE_ROOT: &str = "/mnt/onboard/.adds/cobalt/state";
 /// Nothing here can stop the device booting.
 const DATA_ROOT: &str = "/mnt/onboard/.adds/cobalt/data";
 
-/// Whether a shipped application may attach one named secret to this URL.
-///
-/// The application selects a service, but the runtime independently binds the
-/// secret, header convention and HTTPS origin. A modified application can no
-/// longer turn a stored credential into a POST to an address it controls.
-fn credential_allowed(app: &str, credential: &Credential, url: &str) -> bool {
-    if app == "audiobook" {
-        return match (&*credential.secret, &credential.header) {
-            ("exa", SecretHeader::Named(header)) => {
-                header.eq_ignore_ascii_case("x-api-key")
-                    && url == "https://api.exa.ai/search"
-                    && kobo_net::has_origin(url, "api.exa.ai", 443)
-            }
-            ("openai", SecretHeader::Bearer) => {
-                url == "https://api.openai.com/v1/responses"
-                    && kobo_net::has_origin(url, "api.openai.com", 443)
-            }
-            ("elevenlabs", SecretHeader::Named(header)) => {
-                header.eq_ignore_ascii_case("xi-api-key")
-                    && url
-                        == concat!(
-                            "https://api.elevenlabs.io/v1/text-to-speech/",
-                            "JBFqnCBsd6RMkjVDRZzb?output_format=mp3_22050_32"
-                        )
-                    && kobo_net::has_origin(url, "api.elevenlabs.io", 443)
-            }
-            _ => false,
-        };
-    }
-    if app != "chat" {
-        return false;
-    }
-    match (&*credential.secret, &credential.header) {
-        ("openai", SecretHeader::Bearer) => {
-            url == "https://api.openai.com/v1/chat/completions"
-                && kobo_net::has_origin(url, "api.openai.com", 443)
-        }
-        ("anthropic", SecretHeader::Named(header)) => {
-            header.eq_ignore_ascii_case("x-api-key")
-                && url == "https://api.anthropic.com/v1/messages"
-                && kobo_net::has_origin(url, "api.anthropic.com", 443)
-        }
-        ("gemini", SecretHeader::Named(header)) => {
-            header.eq_ignore_ascii_case("x-goog-api-key")
-                && url
-                    == "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-                && kobo_net::has_origin(url, "generativelanguage.googleapis.com", 443)
-        }
-        _ => false,
-    }
-}
 /// The panel metrics a screen is drawn and hit-tested with.
 ///
 /// A screen may ask for a text size other than the reader's own, a reader
@@ -339,8 +288,16 @@ impl StatusSource {
 /// reader hides its own status bar the moment a page is opened, and a clock
 /// ticking above a novel is both a distraction and a panel update per minute
 /// for something nobody opened the book to see.
+/// The back control is drawn for an application that is not the launcher, and
+/// also for any screen that asked for Back itself. The second case used to be
+/// missing, and it stranded people: a rooted application, which is what
+/// `kobo present` and a single-application install both produce, is "at home",
+/// so its sub-screens were drawn with no way back at all. Settings could open
+/// Bluetooth and then had nothing to return to Settings with. The screen had
+/// said `owns_back`, which is an application declaring it has somewhere of its
+/// own to go, so drawing the control is exactly what it asked for.
 fn chrome_for(screen: &Screen, at_home: bool, status: &mut StatusSource) -> Chrome {
-    let chrome = Chrome::with_back(!at_home);
+    let chrome = Chrome::with_back(!at_home || screen.owns_back);
     if screen.reading {
         return chrome;
     }
@@ -2029,7 +1986,7 @@ fn start_application(
         .with_post(Arc::new(kobo_net::post))
         .with_secrets(SECRETS)
         .with_credential_policy(Arc::new(move |credential, url| {
-            credential_allowed(&credential_app, credential, url)
+            kobo_net::credential_allowed(&credential_app, credential, url)
         }))
         .with_wake(Arc::new(move || {
             let _ = waker.send(Event::TaskReady);
@@ -2626,6 +2583,33 @@ mod tests {
         assert!(home.status.is_some(), "the launcher lost its status band");
     }
 
+    /// A rooted application's sub-screen still gets a way back.
+    ///
+    /// `kobo present` runs one application as home, and every screen it opened
+    /// from there was drawn with no back control, because back was decided
+    /// purely by whether the application was the launcher. Settings could
+    /// reach its Bluetooth pane and then had nothing to return with, on a
+    /// device whose only other way out is the power button.
+    #[test]
+    fn a_rooted_applications_sub_screen_is_still_drawn_a_way_back() {
+        let mut status = StatusSource::new();
+        let pane = Screen::new(1, Vec::new())
+            .with_top_bar(kobo_ui::TopBar::new(kobo_ui::NodeId(1), "Bluetooth"))
+            .with_own_back(true);
+        let chrome = super::chrome_for(&pane, true, &mut status);
+        assert!(
+            chrome.back,
+            "a screen that owns back was left with no way to use it"
+        );
+
+        let rooted = Screen::new(1, Vec::new())
+            .with_top_bar(kobo_ui::TopBar::new(kobo_ui::NodeId(1), "Settings"));
+        assert!(
+            !super::chrome_for(&rooted, true, &mut status).back,
+            "an application's own root still has nowhere to go back to"
+        );
+    }
+
     use super::*;
 
     fn hello() -> Screen {
@@ -2859,60 +2843,6 @@ mod tests {
         assert_eq!(super::installed_name(&path).as_deref(), Ok("hello"));
         for path in ["hello", "kobo-Terminal", "kobo-../terminal", "kobo-"] {
             assert!(super::installed_name(std::path::Path::new(path)).is_err());
-        }
-    }
-
-    #[test]
-    fn chat_credentials_are_bound_to_their_exact_service() {
-        use kobo_protocol::Credential;
-
-        let openai = Credential::bearer("openai");
-        assert!(super::credential_allowed(
-            "chat",
-            &openai,
-            "https://api.openai.com/v1/chat/completions"
-        ));
-        for (app, url) in [
-            ("other", "https://api.openai.com/v1/chat/completions"),
-            (
-                "chat",
-                "https://api.openai.com.attacker.invalid/v1/chat/completions",
-            ),
-            ("chat", "https://attacker.invalid/collect"),
-        ] {
-            assert!(!super::credential_allowed(app, &openai, url));
-        }
-    }
-
-    #[test]
-    fn audiobook_credentials_are_bound_to_three_exact_provider_requests() {
-        use kobo_protocol::Credential;
-
-        let requests = [
-            (
-                Credential::in_header("exa", "x-api-key"),
-                "https://api.exa.ai/search",
-            ),
-            (
-                Credential::bearer("openai"),
-                "https://api.openai.com/v1/responses",
-            ),
-            (
-                Credential::in_header("elevenlabs", "xi-api-key"),
-                concat!(
-                    "https://api.elevenlabs.io/v1/text-to-speech/",
-                    "JBFqnCBsd6RMkjVDRZzb?output_format=mp3_22050_32"
-                ),
-            ),
-        ];
-        for (credential, url) in requests {
-            assert!(super::credential_allowed("audiobook", &credential, url));
-            assert!(!super::credential_allowed("chat", &credential, url));
-            assert!(!super::credential_allowed(
-                "audiobook",
-                &credential,
-                "https://attacker.invalid/collect"
-            ));
         }
     }
 

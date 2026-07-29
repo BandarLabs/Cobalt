@@ -51,9 +51,9 @@ pub mod prelude {
         AudioMetadata, AudioPlaybackState, AudioPlayer, AudioSource, BluetoothDevice,
         BluetoothDeviceKind, Capability, Client, ClientEvent, Command, Context, ControlState,
         DenyReason, Device, DeviceError, DeviceRequest, DeviceResult, DialogAction, Failure, Grant,
-        Grants, KoboApp, Lifecycle, Navigator, Node, NodeId, PowerPolicy, Screen, ScreenBuilder,
-        ShelfDownload, ShelfProgress, ShelfUpload, ShellError, ShellEvent, ShellRequest,
-        StandardState, StoreError, StoreRequest, StoreResult, WifiNetwork,
+        Grants, Heartbeat, KoboApp, Lifecycle, Navigator, Node, NodeId, PowerPolicy, Screen,
+        ScreenBuilder, ShelfDownload, ShelfProgress, ShelfUpload, ShellError, ShellEvent,
+        ShellRequest, StandardState, StoreError, StoreRequest, StoreResult, WifiNetwork,
     };
 }
 
@@ -2440,8 +2440,14 @@ impl Context {
     ///
     /// There is no blocking equivalent anywhere in this API. A blocking fetch
     /// would freeze the screen and the back control along with it.
+    /// A task that cannot be put on the wire is refused the same way, because
+    /// the alternative is worse: the encoder rejects the frame, the transport
+    /// call returns the error, and the whole application ends with a protocol
+    /// name printed at a terminal nobody on a reader is looking at. A request
+    /// too large to send is the application's problem to show, not the
+    /// runtime's problem to die of.
     pub fn spawn(&mut self, work: Task) -> Option<TaskId> {
-        if self.in_flight >= MAX_TASKS_IN_FLIGHT {
+        if self.in_flight >= MAX_TASKS_IN_FLIGHT || !work.is_sendable() {
             return None;
         }
         self.next_task = self.next_task.saturating_add(1);
@@ -2697,6 +2703,149 @@ pub enum ShelfProgress {
     Done,
     /// Refused, and no further request was made.
     Failed(StoreError),
+}
+
+/// A clock for a screen that is waiting on something slow.
+///
+/// # Why an application needs one at all
+///
+/// Nothing else on this device ticks. The event loop is woken by taps, task
+/// results and device answers, so a screen showing "Writing the spoken script"
+/// against a request that takes a hundred seconds to send its first byte is
+/// not slow to update, it is not updating at all. It is pixel for pixel
+/// identical to the same application having crashed, and the only honest
+/// difference is that one of them will eventually change.
+///
+/// So this borrows the one thing the runtime already has that finishes on a
+/// schedule: a sleep task. Each nap that ends is a tick, and each tick is
+/// re-armed until somebody stops it.
+///
+/// # What to do with the tick
+///
+/// Show [`Self::waited`]. Not a made-up percentage that advances on a timer,
+/// which is a lie the moment the request finishes early or late, but the plain
+/// count of how long this has been going. It is the one number that is always
+/// true, and it is enough: a reader who can see the wait growing knows the
+/// reader is alive, and a reader who can see it has reached four minutes knows
+/// to press Cancel.
+///
+/// # What it costs
+///
+/// One partial refresh per tick. Five seconds is the default because it is
+/// slow enough that a two minute wait costs two dozen repaints rather than a
+/// hundred, and fast enough that the panel is never still for long enough to
+/// look dead.
+#[derive(Clone, Debug)]
+pub struct Heartbeat {
+    task: Option<TaskId>,
+    seconds: u32,
+    waited: u32,
+}
+
+/// How often a clock ticks when nobody says otherwise.
+pub const DEFAULT_HEARTBEAT_SECONDS: u32 = 5;
+
+/// Written out rather than derived, because a derived one would tick every
+/// zero seconds. That is not a slow clock, it is a spin: the runtime completes
+/// the nap immediately, the tick re-arms it, and the application asks for four
+/// hundred sleeps in the time one request takes. Every application that holds
+/// a clock in a `#[derive(Default)]` state struct gets it this way, so the
+/// default has to be the sensible cadence rather than the zero value.
+impl Default for Heartbeat {
+    fn default() -> Self {
+        Self::every(DEFAULT_HEARTBEAT_SECONDS)
+    }
+}
+
+impl Heartbeat {
+    /// A clock that ticks every `seconds`, not yet running.
+    #[must_use]
+    pub const fn every(seconds: u32) -> Self {
+        Self {
+            task: None,
+            seconds: if seconds == 0 { 1 } else { seconds },
+            waited: 0,
+        }
+    }
+
+    /// Starts ticking from zero. Starting one that is already running does
+    /// nothing, so this is safe to call on every stage change.
+    pub fn start(&mut self, context: &mut Context) {
+        if self.task.is_some() {
+            return;
+        }
+        self.waited = 0;
+        self.arm(context);
+    }
+
+    /// Stops ticking, and forgets the wait.
+    ///
+    /// The nap is cancelled rather than left to expire, because a tick that
+    /// arrives after the thing it was timing has finished would re-arm itself
+    /// against a screen nobody is waiting on.
+    pub fn stop(&mut self, context: &mut Context) {
+        if let Some(task) = self.task.take() {
+            context.cancel(task);
+        }
+        self.waited = 0;
+    }
+
+    /// Whether `task` was this clock's, re-arming it if so.
+    ///
+    /// Call it first in [`KoboApp::on_task`] and return early when it is
+    /// `true`: a tick is not the application's answer and must not be matched
+    /// against whatever the application is waiting for.
+    pub fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: &TaskOutcome) -> bool {
+        if self.task != Some(task) {
+            return false;
+        }
+        self.task = None;
+        if matches!(outcome, TaskOutcome::Cancelled) {
+            return true;
+        }
+        self.waited = self.waited.saturating_add(self.seconds);
+        self.arm(context);
+        true
+    }
+
+    /// How long this has been waiting, to the tick.
+    #[must_use]
+    pub const fn waited(&self) -> Duration {
+        Duration::from_secs(self.waited as u64)
+    }
+
+    /// Whether the clock is running.
+    #[must_use]
+    pub const fn is_running(&self) -> bool {
+        self.task.is_some()
+    }
+
+    /// The wait as words, for the line under an activity label.
+    ///
+    /// Empty until the first tick, so a screen that has only just appeared
+    /// does not flash "0 seconds" at somebody before it has waited for
+    /// anything at all.
+    #[must_use]
+    pub fn waited_words(&self) -> String {
+        match self.waited {
+            0 => String::new(),
+            seconds if seconds < 60 => format!("{seconds} seconds so far"),
+            seconds => {
+                let (minutes, rest) = (seconds / 60, seconds % 60);
+                if rest == 0 {
+                    format!("{minutes} min so far")
+                } else {
+                    format!("{minutes} min {rest} s so far")
+                }
+            }
+        }
+    }
+
+    fn arm(&mut self, context: &mut Context) {
+        self.task = context.spawn(Task::Sleep {
+            seconds: self.seconds.max(1),
+        });
+    }
 }
 
 /// Writes a blob to the shelf in as many pieces as it takes.
@@ -3431,7 +3580,7 @@ impl<A: KoboApp> AppRunner<A> {
             if matches!(outcome, TaskOutcome::Cancelled) {
                 self.settled = true;
                 return self.dispatch(|app, context| {
-                    app.on_task(context, waiting_on, TaskOutcome::Cancelled)
+                    app.on_task(context, waiting_on, TaskOutcome::Cancelled);
                 });
             }
             let (again, command) = self.hand_over(work);
@@ -3993,6 +4142,81 @@ mod tests {
             metrics: DisplayMetrics::default(),
             retrying: Vec::new(),
         }
+    }
+
+    /// A tick is not the application's answer, and a stopped clock stops.
+    #[test]
+    fn a_heartbeat_re_arms_itself_until_it_is_stopped() {
+        let mut context = context();
+        let mut clock = Heartbeat::every(5);
+        assert!(!clock.is_running());
+        clock.start(&mut context);
+        let first = clock.task.expect("the clock armed a nap");
+        assert!(clock.waited_words().is_empty(), "nothing has been waited");
+
+        // Somebody else's task is left alone.
+        assert!(!clock.on_task(&mut context, TaskId(first.0 + 99), &TaskOutcome::Cancelled));
+
+        assert!(clock.on_task(&mut context, first, &TaskOutcome::Completed(Vec::new())));
+        assert_eq!(clock.waited(), Duration::from_secs(5));
+        let second = clock.task.expect("the clock re-armed");
+        assert_ne!(second, first);
+        assert!(clock.on_task(&mut context, second, &TaskOutcome::Completed(Vec::new())));
+        assert_eq!(clock.waited_words(), "10 seconds so far");
+
+        clock.stop(&mut context);
+        assert!(!clock.is_running());
+        assert_eq!(clock.waited(), Duration::ZERO);
+        assert!(context
+            .commands
+            .iter()
+            .any(|command| matches!(command, Command::Cancel(_))));
+    }
+
+    /// A cancelled nap is the runtime agreeing to stop, not a tick.
+    #[test]
+    fn a_cancelled_nap_does_not_re_arm_the_clock() {
+        let mut context = context();
+        let mut clock = Heartbeat::every(5);
+        clock.start(&mut context);
+        let task = clock.task.expect("the clock armed a nap");
+        assert!(clock.on_task(&mut context, task, &TaskOutcome::Cancelled));
+        assert!(!clock.is_running());
+    }
+
+    /// The default is the cadence, not the zero value.
+    ///
+    /// A clock left at `u32::default()` asks for a zero second sleep, which
+    /// the runtime completes at once, which re-arms it: four hundred and fifty
+    /// naps went out in the half minute this was live, and the application
+    /// that held the clock never showed a single tick.
+    #[test]
+    fn a_default_heartbeat_naps_for_a_sensible_time() {
+        let mut context = context();
+        let mut clock = Heartbeat::default();
+        clock.start(&mut context);
+        let napped = context
+            .commands
+            .iter()
+            .filter_map(|command| match command {
+                Command::Spawn {
+                    work: Task::Sleep { seconds },
+                    ..
+                } => Some(*seconds),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(napped, vec![DEFAULT_HEARTBEAT_SECONDS]);
+        const { assert!(DEFAULT_HEARTBEAT_SECONDS > 0) };
+    }
+
+    #[test]
+    fn a_long_wait_is_spelled_in_minutes() {
+        let mut clock = Heartbeat::every(5);
+        clock.waited = 60;
+        assert_eq!(clock.waited_words(), "1 min so far");
+        clock.waited = 135;
+        assert_eq!(clock.waited_words(), "2 min 15 s so far");
     }
 
     /// Runs a transfer against the real policy shelf until it stops.
