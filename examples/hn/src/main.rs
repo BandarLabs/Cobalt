@@ -32,8 +32,8 @@
 mod model;
 
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, KoboApp, QuoteRole, Screen, ScreenBuilder, Task,
-    TaskId, TaskOutcome,
+    action_id, ActionId, BannerLevel, Context, Failure, KoboApp, QuoteRole, Screen, ScreenBuilder,
+    Task, TaskId, TaskOutcome,
 };
 use model::{Comment, Story};
 use std::collections::HashSet;
@@ -277,6 +277,10 @@ struct Hn {
     now: i64,
     task: Option<(TaskId, Awaiting)>,
     problem: Option<String>,
+    /// The last task failure, kept as the SDK read it rather than as a
+    /// sentence, because an empty list wants the whole-screen version of the
+    /// same thing and a list with rows on it wants the banner.
+    trouble: Option<Failure>,
 }
 
 impl Hn {
@@ -314,6 +318,20 @@ impl Hn {
                 .build();
         }
         let Some(indices) = self.pages.get(self.page) else {
+            // A failure with an empty list is the whole screen, not a banner
+            // over nothing. `standard_state` centres it and names it the same
+            // way every other application does.
+            if let Some(failure) = self.trouble {
+                let screen = ScreenBuilder::new("hn")
+                    .top_bar(self.list_title())
+                    .standard_state(failure.state, failure.advice);
+                let screen = if failure.retryable {
+                    screen.primary_button("retry", "Try again")
+                } else {
+                    screen
+                };
+                return self.with_tabs(screen).build();
+            }
             return self
                 .with_tabs(
                     screen
@@ -556,10 +574,11 @@ impl Hn {
         self.cancel_outstanding(context);
         self.drop_lanes(context);
         self.problem = None;
+        self.trouble = None;
         self.ranking.clear();
         self.stories.clear();
         self.pages.clear();
-        match context.spawn(Task::Fetch {
+        match context.spawn_retrying(Task::Fetch {
             url: self.tab.ranking_url(),
             offset: 0,
             max_bytes: RANKING_BYTES,
@@ -579,7 +598,7 @@ impl Hn {
     fn pump_stories(&mut self, context: &mut Context) {
         while self.story_lanes.len() < LANES {
             let Some(id) = self.next_story() else { break };
-            let Some(task) = context.spawn(Task::Fetch {
+            let Some(task) = context.spawn_retrying(Task::Fetch {
                 url: item_url(id),
                 offset: 0,
                 max_bytes: ITEM_BYTES,
@@ -612,8 +631,9 @@ impl Hn {
         self.cancel_outstanding(context);
         self.drop_lanes(context);
         self.problem = None;
+        self.trouble = None;
         self.want = CHUNK;
-        match context.spawn(Task::Fetch {
+        match context.spawn_retrying(Task::Fetch {
             url: item_url(id),
             offset: 0,
             max_bytes: ITEM_BYTES,
@@ -630,7 +650,7 @@ impl Hn {
             && self.loaded() < model::MAX_COMMENTS
         {
             let Some(id) = self.next_slot() else { break };
-            let Some(task) = context.spawn(Task::Fetch {
+            let Some(task) = context.spawn_retrying(Task::Fetch {
                 url: item_url(id),
                 offset: 0,
                 max_bytes: ITEM_BYTES,
@@ -722,6 +742,7 @@ impl Hn {
         self.thread_page = 0;
         self.note = None;
         self.problem = None;
+        self.trouble = None;
         self.ask_thread(context);
         self.show(context);
     }
@@ -889,6 +910,7 @@ impl Hn {
             self.thread_page = page;
         }
         self.problem = None;
+        self.trouble = None;
         self.show(context);
     }
 
@@ -925,6 +947,7 @@ impl Hn {
             self.page.saturating_sub(1)
         };
         self.problem = None;
+        self.trouble = None;
     }
 
     fn switch_tab(&mut self, context: &mut Context, tab: Tab) {
@@ -962,6 +985,7 @@ impl KoboApp for Hn {
             // always a thread returning to the list it was opened from.
             self.view = View::List;
             self.problem = None;
+            self.trouble = None;
             self.show(context);
             return;
         }
@@ -974,6 +998,7 @@ impl KoboApp for Hn {
         if action == action_id("stories") {
             self.view = View::List;
             self.problem = None;
+            self.trouble = None;
             self.show(context);
             return;
         }
@@ -1000,6 +1025,7 @@ impl KoboApp for Hn {
         if action == action_id("thread-back") {
             self.thread_page = self.thread_page.saturating_sub(1);
             self.problem = None;
+            self.trouble = None;
             self.show(context);
             return;
         }
@@ -1081,9 +1107,12 @@ impl KoboApp for Hn {
                 }
             },
             TaskOutcome::Failed(error) => {
-                // Named rather than summarised: "not found" and "the network
-                // could not be reached" call for entirely different things.
-                self.problem = Some(format!("That did not work: {error}."));
+                // The SDK owns the wording, so every application says the same
+                // thing about the same failure and a new TaskError variant does
+                // not need an edit here.
+                let failure = Failure::of(error);
+                self.trouble = Some(failure);
+                self.problem = Some(failure.advice.to_owned());
             }
             TaskOutcome::Cancelled => self.problem = Some("Cancelled.".to_owned()),
         }
@@ -1101,10 +1130,12 @@ impl Hn {
         if self.thread_page + 1 < self.thread_pages.len() {
             self.thread_page += 1;
             self.problem = None;
+            self.trouble = None;
         } else if self.more_to_take() {
             self.want = self.loaded().saturating_add(CHUNK);
             self.pump_thread(context);
             self.problem = None;
+            self.trouble = None;
         } else {
             self.problem = Some("That is the end of the thread.".to_owned());
         }
@@ -1292,6 +1323,79 @@ mod tests {
             .task
             .map(|(task, _)| task)
             .expect("a request is in flight")
+    }
+
+    #[test]
+    fn a_failed_tab_with_no_stories_is_the_whole_screen_not_a_banner_over_nothing() {
+        // A banner needs something to sit above. With no rows, the failure is
+        // the screen, and `standard_state` centres it and names it the same
+        // way every other application does.
+        let mut runner = AppRunner::new(Hn {
+            task: Some((TaskId(1), Awaiting::Ranking(Tab::Top))),
+            ..Hn::default()
+        });
+        runner.task_outcome(TaskId(1), TaskOutcome::Failed(TaskError::Offline));
+        let screen = runner.app_mut().list();
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
+        assert!(
+            layout
+                .nodes
+                .iter()
+                .any(|node| matches!(node.kind, LayoutKind::SplashTitle)),
+            "the offline failure did not become a splash"
+        );
+        let text: Vec<String> = layout
+            .nodes
+            .iter()
+            .flat_map(|node| node.text_lines.clone())
+            .collect();
+        assert!(
+            text.iter().any(|line| line.contains("not on a network")),
+            "the SDK's wording is not on the screen: {text:?}"
+        );
+    }
+
+    #[test]
+    fn every_failure_is_worded_by_the_sdk() {
+        // The wording lives in one place so a new TaskError variant does not
+        // need an edit in every application that can see it.
+        for error in [
+            TaskError::Offline,
+            TaskError::Unreachable,
+            TaskError::Denied,
+        ] {
+            let mut runner = AppRunner::new(Hn {
+                task: Some((TaskId(1), Awaiting::Ranking(Tab::Top))),
+                ..Hn::default()
+            });
+            runner.task_outcome(TaskId(1), TaskOutcome::Failed(error));
+            assert_eq!(
+                runner.app_mut().problem.clone().unwrap_or_default(),
+                kobo_sdk::Failure::of(error).advice
+            );
+        }
+    }
+
+    #[test]
+    fn a_failure_that_retrying_cannot_help_offers_no_retry() {
+        // A refused permission will refuse again. The control is left off
+        // rather than offered and disappointing.
+        let mut runner = AppRunner::new(Hn {
+            task: Some((TaskId(1), Awaiting::Ranking(Tab::Top))),
+            ..Hn::default()
+        });
+        runner.task_outcome(TaskId(1), TaskOutcome::Failed(TaskError::Denied));
+        let screen = runner.app_mut().list();
+        let text: Vec<String> = screen
+            .layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true))
+            .nodes
+            .iter()
+            .flat_map(|node| node.text_lines.clone())
+            .collect();
+        assert!(
+            !text.iter().any(|line| line.contains("Try again")),
+            "a retry is offered for a failure retrying cannot help: {text:?}"
+        );
     }
 
     fn asked(commands: &[Command]) -> Option<String> {

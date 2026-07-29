@@ -33,7 +33,7 @@
 use kobo_read::{Memory, Outcome, Reader};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Chrome, Context, DiagnosticSeverity, Glyph, KoboApp,
+    action_id, ActionId, BannerLevel, Chrome, Context, DiagnosticSeverity, Failure, Glyph, KoboApp,
     PictureHandle, RowLead, ScreenBuilder, ShelfDownload, ShelfProgress, ShelfUpload, StoreResult,
     Task, TaskId, TaskOutcome, Tile, TilePicture, TileShape, TileState, MAX_STORE_VALUE,
 };
@@ -284,6 +284,9 @@ struct Gutenbird {
     covers: Vec<(TaskId, usize, u8)>,
     task: Option<(TaskId, Awaiting)>,
     problem: Option<String>,
+    /// The last catalogue failure as the SDK read it. An empty shelf wants the
+    /// whole-screen version; a shelf with books on it wants the banner.
+    trouble: Option<Failure>,
     /// Books already on the shelf, by blob name, with their size.
     ///
     /// A downloaded book is the expensive thing this application produces: it
@@ -346,6 +349,10 @@ struct Gutenbird {
     /// rather than as a banner that throws the reader back to the list they
     /// came from with nothing to retry.
     failed: Option<String>,
+    /// Whether the failed download is worth trying again. A refused permission
+    /// and a body over the ceiling will do the same thing next time, and a
+    /// control that cannot help is worse than no control.
+    retryable: bool,
 }
 
 impl Default for Gutenbird {
@@ -354,6 +361,8 @@ impl Default for Gutenbird {
             view: View::Results,
             keyboard: Keyboard::new(),
             books: Vec::new(),
+            trouble: None,
+            retryable: false,
             open: None,
             query: None,
             text: String::new(),
@@ -447,6 +456,17 @@ impl Gutenbird {
                 .build();
         }
         if self.books.is_empty() {
+            // An empty shelf because Gutenberg could not be reached is not an
+            // invitation to search. Saying "Search for an author" to a reader
+            // who is offline sends them to type into a box that cannot answer.
+            if let Some(failure) = self.trouble {
+                let screen = screen.standard_state(failure.state, failure.advice);
+                return if failure.retryable {
+                    screen.primary_button("catalogue", "Try again").build()
+                } else {
+                    screen.build()
+                };
+            }
             // The one screen where a full-width button belongs, because it is
             // the only thing on it and the only thing to do.
             return screen
@@ -637,11 +657,14 @@ impl Gutenbird {
         // them while its bytes arrive, and a failure is said on the same page
         // with a way to try again rather than thrown back to the list.
         if let Some(reason) = &self.failed {
-            return bare
+            let bare = bare
                 .transfer("Download stopped", u64::from(self.fetched), None)
-                .transfer_failed(reason.clone(), true)
-                .transfer_retry("read", "Try again")
-                .build();
+                .transfer_failed(reason.clone(), self.retryable);
+            return if self.retryable {
+                bare.transfer_retry("read", "Try again").build()
+            } else {
+                bare.build()
+            };
         }
         if self.awaiting_text() || self.loading.is_some() {
             // No total, so no bar. The runtime hands over bytes with no
@@ -886,6 +909,17 @@ impl Gutenbird {
         reader.screen(&title)
     }
 
+    /// The retry offered on the failure screen.
+    ///
+    /// It repeats the request that failed, which is the current query if there
+    /// is one and the popular list if there is not, rather than always dropping
+    /// the reader back to popular and losing what they searched for.
+    fn retry_catalogue(&mut self, context: &mut Context) {
+        let query = self.query.clone();
+        self.ask_catalogue(context, query.as_deref());
+        self.show(context);
+    }
+
     fn ask_catalogue(&mut self, context: &mut Context, query: Option<&str>) {
         let tail = match query {
             None => "sort=popular".to_owned(),
@@ -940,7 +974,8 @@ impl Gutenbird {
 
     fn spawn_catalogue(&mut self, context: &mut Context, url: String, awaiting: Awaiting) {
         self.problem = None;
-        match context.spawn(Task::Fetch {
+        self.trouble = None;
+        match context.spawn_retrying(Task::Fetch {
             url,
             offset: 0,
             max_bytes: CATALOGUE_BYTES,
@@ -1132,7 +1167,7 @@ impl Gutenbird {
             let Some(url) = self.books.get(index).and_then(|book| book.cover.clone()) else {
                 continue;
             };
-            if let Some(task) = context.spawn(Task::Fetch {
+            if let Some(task) = context.spawn_retrying(Task::Fetch {
                 url,
                 offset: 0,
                 max_bytes: COVER_BYTES,
@@ -1302,6 +1337,7 @@ impl Gutenbird {
                 download.start(context);
                 self.loading = Some(download);
                 self.problem = None;
+                self.trouble = None;
                 self.failed = None;
                 return;
             }
@@ -1319,8 +1355,9 @@ impl Gutenbird {
             return;
         };
         self.problem = None;
+        self.trouble = None;
         self.failed = None;
-        match context.spawn(Task::Fetch {
+        match context.spawn_retrying(Task::Fetch {
             url,
             offset: self.fetched,
             max_bytes: CHUNK_BYTES,
@@ -1366,6 +1403,7 @@ impl Gutenbird {
         self.fetched = 0;
         self.complete = false;
         self.problem = None;
+        self.trouble = None;
         self.failed = None;
         if let Some((_, place)) = self.open_names() {
             // Asked now rather than when Read is tapped, so the position is
@@ -1691,6 +1729,7 @@ impl KoboApp for Gutenbird {
                 _ => View::Results,
             };
             self.problem = None;
+            self.trouble = None;
             self.show(context);
             return;
         }
@@ -1718,6 +1757,10 @@ impl KoboApp for Gutenbird {
             }
         }
 
+        if action == action_id("catalogue") {
+            self.retry_catalogue(context);
+            return;
+        }
         if action == action_id("search") {
             self.view = View::Search;
             self.show(context);
@@ -1833,7 +1876,9 @@ impl KoboApp for Gutenbird {
                     // back to the list behind an Attention banner. The book the
                     // reader chose stays in front of them the whole time.
                     if self.text.is_empty() {
-                        self.failed = Some(format!("The download stopped: {error}."));
+                        let failure = Failure::of(error);
+                        self.failed = Some(failure.advice.to_owned());
+                        self.retryable = failure.retryable;
                         self.view = View::Details;
                     } else if let Some(reader) = &mut self.reader {
                         // A top-up mid-book that failed is no longer on its
@@ -1846,7 +1891,9 @@ impl KoboApp for Gutenbird {
                     // Named rather than summarised. "Not found" and "the
                     // network could not be reached" call for completely
                     // different things from the reader.
-                    self.problem = Some(format!("That did not work: {error}."));
+                    let failure = Failure::of(error);
+                    self.trouble = Some(failure);
+                    self.problem = Some(failure.advice.to_owned());
                 }
             },
             TaskOutcome::Cancelled => {
@@ -2868,6 +2915,68 @@ Please read this before you distribute or use this work.\n";
         // The failure is its own thing, kept apart from the "could not be
         // read" problem banner above the cover.
         assert!(runner.app_mut().problem.is_none());
+    }
+
+    #[test]
+    fn an_empty_shelf_after_a_failure_says_the_failure_rather_than_inviting_a_search() {
+        // "Sixty thousand books, search for an author" is the right thing to
+        // say to a reader who has not searched yet. It is the wrong thing to
+        // say to a reader who is offline, because the search box cannot answer
+        // either, and it hides the one fact that would explain the empty shelf.
+        let mut runner = AppRunner::new(Gutenbird {
+            task: Some((kobo_sdk::TaskId(1), Awaiting::Catalogue)),
+            ..Gutenbird::default()
+        });
+        runner.task_outcome(
+            kobo_sdk::TaskId(1),
+            kobo_sdk::TaskOutcome::Failed(kobo_sdk::TaskError::Offline),
+        );
+        let screen = runner.app_mut().results();
+        let text = screen_text(&screen);
+        assert!(
+            text.iter().any(|line| line.contains("not on a network")),
+            "the offline advice is not on the shelf: {text:?}"
+        );
+        assert!(
+            !text.iter().any(|line| line.contains("Sixty thousand")),
+            "the shelf still invites a search it cannot answer: {text:?}"
+        );
+    }
+
+    #[test]
+    fn a_failure_that_retrying_cannot_help_offers_no_retry() {
+        // A refused permission does the same thing next time. Offering "Try
+        // again" for it spends a reader's tap to reprint the same screen.
+        let mut runner = AppRunner::new(Gutenbird {
+            view: View::Reading,
+            open: Some(0),
+            books: books_from(&parsed()),
+            task: Some((kobo_sdk::TaskId(1), Awaiting::Text)),
+            ..Gutenbird::default()
+        });
+        runner.task_outcome(
+            kobo_sdk::TaskId(1),
+            kobo_sdk::TaskOutcome::Failed(kobo_sdk::TaskError::Denied),
+        );
+        assert!(!runner.app_mut().retryable);
+        let screen = runner.app_mut().details(&kobo_sdk::Context::default());
+        assert!(
+            !screen_text(&screen)
+                .iter()
+                .any(|line| line.contains("Try again")),
+            "a retry is offered for a failure that retrying cannot help"
+        );
+    }
+
+    /// Every string a screen would draw, flattened, for assertions that care
+    /// about what a reader sees rather than which node carried it.
+    fn screen_text(screen: &kobo_sdk::Screen) -> Vec<String> {
+        screen
+            .layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true))
+            .nodes
+            .iter()
+            .flat_map(|node| node.text_lines.clone())
+            .collect()
     }
 
     #[test]
