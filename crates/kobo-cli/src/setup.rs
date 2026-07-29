@@ -526,6 +526,8 @@ pub struct Report {
     pub installed: usize,
     /// What became of the SSH server.
     pub ssh: Option<Ssh>,
+    /// What became of this machine's key, when one was asked for.
+    pub key: Option<Result<(crate::authorize::Key, crate::authorize::Staged), String>>,
     /// Settings keys that changed.
     pub settings: Vec<String>,
     /// What became of the reader's own menu entry, when one was asked for.
@@ -549,6 +551,17 @@ impl Report {
         );
         if let Some(ssh) = self.ssh {
             let _ = writeln!(text, "  · {}", ssh.describe());
+        }
+        match &self.key {
+            Some(Ok((key, staged))) => {
+                let _ = writeln!(text, "  · {}", describe_key(*key, *staged));
+            }
+            // Reported, not raised. Everything else worked, and a key can be
+            // installed on the next run once whatever holds the slot is gone.
+            Some(Err(error)) => {
+                let _ = writeln!(text, "  · this machine's key was not installed: {error}");
+            }
+            None => {}
         }
         if self.settings.is_empty() {
             let _ = writeln!(text, "  · settings already as wanted");
@@ -575,11 +588,41 @@ impl Report {
                 "volume left mounted"
             }
         );
-        text.push_str(&next_steps(
-            self.waiting,
-            matches!(self.menu, Some(Ok(crate::menu::Menu::Staged))),
-        ));
+        text.push_str(&next_steps(self.waiting, self.staged_an_archive()));
         text
+    }
+
+    /// Whether anything was left for the firmware to extract as root.
+    ///
+    /// Both the menu plugin and this machine's key are staged the same way, so
+    /// either one makes the "nothing was extracted as root" wording false.
+    fn staged_an_archive(&self) -> bool {
+        matches!(self.menu, Some(Ok(crate::menu::Menu::Staged)))
+            || matches!(
+                self.key,
+                Some(Ok((
+                    _,
+                    crate::authorize::Staged::Written | crate::authorize::Staged::Merged
+                )))
+            )
+    }
+}
+
+/// What was done with this machine's key, in one line.
+fn describe_key(key: crate::authorize::Key, staged: crate::authorize::Staged) -> String {
+    let origin = match key {
+        crate::authorize::Key::Created => "a key was created for this machine and",
+        crate::authorize::Key::Existing => "this machine's key",
+    };
+    match staged {
+        crate::authorize::Staged::Written | crate::authorize::Staged::Merged => {
+            format!("{origin} will be accepted by the reader after it restarts")
+        }
+        crate::authorize::Staged::SlotTaken => format!(
+            "{origin} was not installed: another archive is already waiting in \
+             .kobo/KoboRoot.tgz. Restart the reader to let it be taken, then run \
+             'kobo setup --enable-ssh --no-menu' again."
+        ),
     }
 }
 
@@ -1128,6 +1171,7 @@ mod tests {
         let report = Report {
             installed: 13,
             ssh: Some(Ssh::Enabled),
+            key: None,
             settings: vec!["DeveloperSettings/ForceWifiOn".to_owned()],
             menu: None,
             ejected: true,
@@ -1148,6 +1192,7 @@ mod tests {
         let report = Report {
             installed: 13,
             ssh: Some(Ssh::Enabled),
+            key: None,
             settings: Vec::new(),
             menu: Some(Ok(crate::menu::Menu::Staged)),
             ejected: true,
@@ -1164,10 +1209,80 @@ mod tests {
     }
 
     #[test]
+    fn a_report_that_installed_a_key_stops_claiming_nothing_was_extracted() {
+        // The key is staged the same way the menu plugin is, so it makes the
+        // same claim false. Reporting it as though nothing left the book
+        // partition would be the one untruth in this whole report.
+        let report = Report {
+            installed: 13,
+            ssh: Some(Ssh::Enabled),
+            key: Some(Ok((
+                crate::authorize::Key::Created,
+                crate::authorize::Staged::Written,
+            ))),
+            settings: Vec::new(),
+            menu: None,
+            ejected: true,
+            waiting: false,
+        };
+        let text = report.describe(&PathBuf::from("/Volumes/KOBOeReader"));
+        assert!(!text.contains("nothing was extracted as"), "{text}");
+        assert!(
+            text.contains("a key was created for this machine"),
+            "{text}"
+        );
+        assert!(text.contains("after it restarts"), "{text}");
+    }
+
+    #[test]
+    fn a_key_that_could_not_be_staged_says_what_to_do_about_it() {
+        let report = Report {
+            installed: 13,
+            ssh: Some(Ssh::Enabled),
+            key: Some(Ok((
+                crate::authorize::Key::Existing,
+                crate::authorize::Staged::SlotTaken,
+            ))),
+            settings: Vec::new(),
+            menu: None,
+            ejected: true,
+            waiting: false,
+        };
+        let text = report.describe(&PathBuf::from("/Volumes/KOBOeReader"));
+        assert!(
+            text.contains("another archive is already waiting"),
+            "{text}"
+        );
+        assert!(text.contains("--enable-ssh --no-menu"), "{text}");
+        // Nothing of ours was staged, so the claim is still true.
+        assert!(text.contains("nothing was extracted as\nroot"), "{text}");
+    }
+
+    #[test]
+    fn a_key_that_failed_is_reported_without_failing_the_install() {
+        let report = Report {
+            installed: 13,
+            ssh: Some(Ssh::Enabled),
+            key: Some(Err("ssh-keygen refused".to_owned())),
+            settings: Vec::new(),
+            menu: None,
+            ejected: true,
+            waiting: false,
+        };
+        let text = report.describe(&PathBuf::from("/Volumes/KOBOeReader"));
+        assert!(text.contains("13 files"), "{text}");
+        assert!(
+            text.contains("was not installed: ssh-keygen refused"),
+            "{text}"
+        );
+    }
+
+    #[test]
     fn a_report_that_only_wrote_the_entry_keeps_the_claim() {
         let report = Report {
             installed: 13,
             ssh: Some(Ssh::Enabled),
+            key: None,
             settings: Vec::new(),
             menu: Some(Ok(crate::menu::Menu::Added)),
             ejected: true,

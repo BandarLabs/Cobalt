@@ -8,11 +8,18 @@ use std::process::{Child, Command, ExitCode, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+mod authorize;
 mod connect;
 mod devsession;
 mod drive;
 mod menu;
 mod package;
+// Only the `device-write` build dispatches to this, but its tests decide what
+// gets sent to a reader and are worth running on every build. So it compiles
+// either way, and the unused warning is silenced rather than the module gated
+// out and its tests with it.
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
+mod panel;
 mod setup;
 mod sha256;
 
@@ -278,6 +285,15 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "shot" => shot_command(&arguments[1..]),
         #[cfg(feature = "device-write")]
         "tap" => tap_command(&arguments[1..]),
+        #[cfg(feature = "device-write")]
+        "present" => panel::present(&arguments[1..]),
+        #[cfg(feature = "device-write")]
+        "stop" => panel::stop(&arguments[1..]),
+        #[cfg(not(feature = "device-write"))]
+        "present" | "stop" => Err(format!(
+            "{command} takes the panel, so it is not compiled in; rebuild the CLI with \
+             --features device-write"
+        )),
         "build" => build_device(arguments.iter().any(|argument| is_device_flag(argument))),
         "doctor" => doctor(&arguments[1..]),
         "devices" => list_devices(&arguments[1..]),
@@ -2235,6 +2251,12 @@ struct SetupOptions {
     dry_run: bool,
     wait: bool,
     enable_ssh: bool,
+    /// Whether this machine's key is installed alongside the SSH server.
+    ///
+    /// Default on, because a server that starts and accepts nobody is not a
+    /// thing anybody asked for. `--no-key` is for a reader that already has
+    /// the key, or one being prepared for somebody else.
+    authorize_key: bool,
 }
 
 fn parse_setup(arguments: &[String]) -> Result<SetupOptions, String> {
@@ -2246,6 +2268,7 @@ fn parse_setup(arguments: &[String]) -> Result<SetupOptions, String> {
         dry_run: false,
         wait: true,
         enable_ssh: false,
+        authorize_key: true,
     };
     let mut index = 0;
     while index < arguments.len() {
@@ -2262,12 +2285,13 @@ fn parse_setup(arguments: &[String]) -> Result<SetupOptions, String> {
             "--no-wait" => options.wait = false,
             "--no-menu" => options.menu = MenuEntry::Skip,
             "--enable-ssh" => options.enable_ssh = true,
+            "--no-key" => options.authorize_key = false,
             "--dry-run" => options.dry_run = true,
             other => {
                 return Err(format!(
                     "unknown option '{other}'\n\
-                     usage: kobo setup [--volume PATH] [--undo] [--enable-ssh] [--no-eject] \
-                     [--no-wait] [--no-menu] [--dry-run]"
+                     usage: kobo setup [--volume PATH] [--undo] [--enable-ssh] [--no-key] \
+                     [--no-eject] [--no-wait] [--no-menu] [--dry-run]"
                 ))
             }
         }
@@ -2335,6 +2359,14 @@ fn setup_device(arguments: &[String]) -> Result<(), String> {
         .transpose()?;
     let settings = setup::apply_settings(&reader.volume)?;
     let menu = (options.menu == MenuEntry::Add).then(|| add_menu_entry(&reader.volume));
+    // After the menu, because the firmware extracts exactly one archive and
+    // the first draft of this raced the menu for it: staging the key first
+    // meant NickelMenu reported the slot taken on every first-time setup, and
+    // the owner had to run the command twice to get the entry they asked for.
+    // When this run is the one that staged that archive, the key goes into it.
+    let staged_here = matches!(menu, Some(Ok(menu::Menu::Staged)));
+    let key = (options.enable_ssh && options.authorize_key)
+        .then(|| authorize_this_machine(&reader.volume, staged_here));
     let ejected = ejected_or_explained(&reader.volume, options.eject);
 
     // A reader that was never ejected has not seen the install and will not be
@@ -2347,6 +2379,7 @@ fn setup_device(arguments: &[String]) -> Result<(), String> {
         setup::Report {
             installed,
             ssh,
+            key,
             settings,
             menu,
             ejected,
@@ -2361,8 +2394,41 @@ fn setup_device(arguments: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// Adds the reader's own way into Cobalt, or explains why it could not.
+/// Puts this machine's public key where the reader will accept it.
 ///
+/// Never fails the setup, for the same reason the menu entry does not: the
+/// install itself succeeded, and a reader that has to be reached some other
+/// way is still a reader with Cobalt on it.
+fn authorize_this_machine(
+    volume: &Path,
+    staged_here: bool,
+) -> Result<(authorize::Key, authorize::Staged), String> {
+    let (public_key, key) = authorize::public_key()?;
+    let slot = volume.join(authorize::KOBOROOT);
+    if slot.exists() {
+        // Anything already in the slot that this run did not put there
+        // belongs to somebody else, and replacing it would quietly cancel an
+        // install the owner is expecting.
+        if !staged_here {
+            return Ok((key, authorize::Staged::SlotTaken));
+        }
+        let existing =
+            fs::read(&slot).map_err(|error| format!("read {}: {error}", slot.display()))?;
+        let merged = authorize::merge(&gunzip(&existing)?, &public_key)?;
+        return Ok((key, authorize::restage(volume, &compressed(&merged)?)?));
+    }
+    let alone = authorize::archive(&public_key)?;
+    Ok((key, authorize::stage(volume, &compressed(&alone)?)?))
+}
+
+/// Gzips an archive and checks it the way the reader's own `rcS` will.
+fn compressed(archive: &[u8]) -> Result<Vec<u8>, String> {
+    let bytes = gzip(archive)?;
+    gzip_test(&bytes)?;
+    Ok(bytes)
+}
+
+/// Adds the reader's own way into Cobalt, or explains why it could not.
 /// Never fails the setup. Everything else this command does works without a
 /// menu entry (`start.sh` over SSH is how the whole project has been run so
 /// far) so a download that cannot happen on an aeroplane should not cost
@@ -2477,6 +2543,7 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
          {}\n\
          would set {keys}\n\
          {}\n\
+         {}\n\
          would eject, then {}\n\
          nothing outside the book partition{}",
         reader.volume.display(),
@@ -2503,6 +2570,7 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
         } else {
             "would add no menu entry, because --no-menu was given".to_owned()
         },
+        describe_key_plan(options),
         if options.enable_ssh && options.wait {
             "wait for the restarted reader to appear on the network"
         } else if !options.enable_ssh {
@@ -2510,11 +2578,36 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
         } else {
             "stop, because --no-wait was given"
         },
-        if options.menu == MenuEntry::Add {
-            ", and nothing extracted as root but NickelMenu's own two files"
-        } else {
-            ", nothing extracted as root"
+        match (options.menu == MenuEntry::Add, options.enable_ssh && options.authorize_key) {
+            (true, true) => ", and nothing extracted as root but NickelMenu's own two files and one authorized_keys",
+            (true, false) => ", and nothing extracted as root but NickelMenu's own two files",
+            (false, true) => ", and nothing extracted as root but one authorized_keys",
+            (false, false) => ", nothing extracted as root",
         }
+    )
+}
+
+/// The one line of the dry run that covers this machine's key.
+fn describe_key_plan(options: &SetupOptions) -> String {
+    if !options.enable_ssh {
+        return "would install no key, because there is no SSH server to use it".to_owned();
+    }
+    if !options.authorize_key {
+        return "would install no key, because --no-key was given".to_owned();
+    }
+    let slot = if options.menu == MenuEntry::Add {
+        format!(
+            "into the same {} the menu plugin is staged in",
+            menu::KOBOROOT
+        )
+    } else {
+        format!("into {}", menu::KOBOROOT)
+    };
+    format!(
+        "would put this machine's public key {slot}, creating\n\
+         \x20 ~/.ssh/{} first if it does not exist, so that 'kobo devices' and every\n\
+         \x20 other device command can reach the reader without a password",
+        authorize::KEY_NAME,
     )
 }
 
@@ -2572,6 +2665,16 @@ fn undo_setup(reader: &setup::Mounted, eject: bool) -> Result<(), String> {
         } else {
             "volume left mounted"
         }
+    );
+    // Said plainly rather than left for somebody to discover. The book
+    // partition is all this command can reach over USB, and a key the reader
+    // has already extracted lives on the root filesystem, so an undo cannot
+    // reach it.
+    println!(
+        "\nA key this tool staged is taken back with the archive it was in. One the\n\
+         reader has already extracted stays in /root/.ssh/authorized_keys, which is\n\
+         on the root filesystem, and USB does not reach it. To remove that one, edit\n\
+         the file over SSH and delete the line ending in 'kobo-cobalt'."
     );
     Ok(())
 }
@@ -3652,6 +3755,8 @@ fn print_help() {
            dev [--builtin] [address]  Run this SDK app in the browser simulator\n\
            drive --script PATH    Drive a running simulator and save PNG screenshots\n\
            shot [--device HOST]   Save a PNG of the panel (device or simulator)\n\
+           present <app> --device IP [--seconds N]  Run one app on the panel\n\
+           stop --device IP       Hand the panel back to the reader now\n\
            build [--device]       Build host workspace or ARM safe doctor, disabled kobod, and sample app\n\
            doctor [--device IP]   Run read-only device diagnostics\n\
            devices [--subnet A.B.C]  Find every reader on the local network\n\
@@ -3662,8 +3767,9 @@ fn print_help() {
            touch-probe --device IP [--seconds N]  Watch touch read-only to check the transform\n\
            guard-test --device IP --confirm ...   Prove the guardian restores the screen\n\
            package [--out PATH] [--folder PATH]  Build the KoboRoot.tgz an owner copies\n\
-           setup [--volume PATH] [--undo] [--enable-ssh]  Prepare a reader over USB;\n\
-                                   root SSH is an explicit opt-in\n\
+           setup [--volume PATH] [--undo] [--enable-ssh] [--no-key]  Prepare a reader\n\
+                                   over USB; root SSH is an explicit opt-in, and it\n\
+                                   installs this machine's key unless --no-key\n\
            deploy --device IP [--package PATH]   Install over Wi-Fi, no reboot\n\
            secret set <name> [--from PATH] --device IP   Install a credential an app can name\n\
            secret list --device IP   Name the installed credentials, never their values\n\
@@ -4688,10 +4794,41 @@ mod tests {
         }
 
         #[test]
+        fn enabling_ssh_installs_this_machines_key_by_default() {
+            let parsed = parse_setup(&arguments(&["--enable-ssh", "--dry-run"])).expect("parse");
+            assert!(parsed.authorize_key);
+            let plan = dry_run_plan(&parsed, &reader());
+            assert!(plan.contains("this machine's public key"), "{plan}");
+            assert!(plan.contains("kobo_cobalt"), "{plan}");
+            // Both go into the one slot the firmware reads, so the plan has to
+            // say so rather than describe two archives that cannot both exist.
+            assert!(plan.contains("same .kobo/KoboRoot.tgz"), "{plan}");
+            assert!(plan.contains("one authorized_keys"), "{plan}");
+        }
+
+        #[test]
+        fn no_key_says_why_no_key() {
+            let parsed =
+                parse_setup(&arguments(&["--enable-ssh", "--no-key", "--dry-run"])).expect("parse");
+            assert!(!parsed.authorize_key);
+            let plan = dry_run_plan(&parsed, &reader());
+            assert!(plan.contains("--no-key was given"), "{plan}");
+            assert!(!plan.contains("one authorized_keys"), "{plan}");
+        }
+
+        #[test]
+        fn without_ssh_there_is_no_key_to_install() {
+            let parsed = parse_setup(&arguments(&["--dry-run"])).expect("parse");
+            let plan = dry_run_plan(&parsed, &reader());
+            assert!(plan.contains("no SSH server to use it"), "{plan}");
+        }
+
+        #[test]
         fn an_unknown_option_is_refused_with_the_whole_usage() {
             let error = parse_setup(&arguments(&["--force"])).expect_err("refused");
             assert!(error.contains("--no-wait"), "{error}");
             assert!(error.contains("--undo"), "{error}");
+            assert!(error.contains("--no-key"), "{error}");
         }
     }
 
