@@ -682,6 +682,12 @@ The value is never in the application's memory, its logs, or its crash dump,
 and it cannot be sent anywhere the application did not name: the request is
 not replayed across a redirect.
 
+`Failure::of(error)` turns a task failure into a state, a sentence and an
+honest answer about whether a Retry control would help. For a missing
+credential, `Failure::naming(secret)` says which one: an application running
+against three providers that only says "install a key" leaves whoever is
+holding the reader to guess which of the three.
+
 ---
 
 ## 6. Typing, where it is unavoidable

@@ -302,6 +302,30 @@ impl Failure {
     pub const fn title(self) -> &'static str {
         self.state.title()
     }
+
+    /// The advice, naming the credential the work asked for.
+    ///
+    /// [`Failure::of`] is const and its advice is a `&'static str`, so it can
+    /// only say "that service". An application that runs against three
+    /// providers then tells whoever is holding the reader to install a key
+    /// without saying which one, and they have to guess or go and read the
+    /// source. The application knows the name, because it named the secret
+    /// when it spawned the work, so it is the one that can say it.
+    ///
+    /// Every other failure is unchanged: a slow network and a refused request
+    /// have nothing to do with which key was asked for.
+    #[must_use]
+    pub fn naming(self, secret: &str) -> String {
+        if self.state == StandardState::PermissionDenied
+            && self.advice.starts_with("This reader has no API key")
+        {
+            return format!(
+                "This reader has no API key called {secret}. \
+                 Install one with kobo secret set {secret}."
+            );
+        }
+        self.advice.to_owned()
+    }
 }
 
 impl Failure {
@@ -4190,6 +4214,20 @@ mod tests {
     /// the runtime completes at once, which re-arms it: four hundred and fifty
     /// naps went out in the half minute this was live, and the application
     /// that held the clock never showed a single tick.
+    #[test]
+    fn a_missing_key_can_be_named() {
+        let missing = Failure::of(TaskError::NoCredential);
+        let said = missing.naming("elevenlabs");
+        assert!(said.contains("called elevenlabs"), "{said}");
+        assert!(said.contains("kobo secret set elevenlabs"), "{said}");
+        assert!(!said.contains("that service"), "{said}");
+
+        // Naming a key is meaningless for a failure that had nothing to do
+        // with one, so the sentence is left exactly as it was.
+        let slow = Failure::of(TaskError::TimedOut);
+        assert_eq!(slow.naming("elevenlabs"), slow.advice);
+    }
+
     #[test]
     fn a_default_heartbeat_naps_for_a_sensible_time() {
         let mut context = context();

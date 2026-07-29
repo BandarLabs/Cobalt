@@ -471,7 +471,19 @@ impl Audiobook {
     /// right mark and heading rather than "Something went wrong" for all of
     /// them.
     fn fail_with(&mut self, failure: Failure) {
-        self.fail_as(failure.state, failure.advice);
+        // Three providers, three keys. "Install one with kobo secret set" is
+        // no help at all if it does not say which of the three is missing, and
+        // the stage that failed is exactly the thing that knows.
+        self.fail_as(failure.state, failure.naming(self.secret_wanted()));
+    }
+
+    /// The credential the stage in flight asked for.
+    const fn secret_wanted(&self) -> &'static str {
+        match self.stage {
+            Stage::Research => "exa",
+            Stage::Narrate => "elevenlabs",
+            _ => "openai",
+        }
     }
 
     fn fail_as(&mut self, state: StandardState, error: impl Into<String>) {
@@ -971,14 +983,29 @@ mod tests {
     /// screen has to say which thing is actually wrong.
     #[test]
     fn a_missing_key_names_the_key_rather_than_blaming_the_application() {
-        let mut app = Audiobook::default();
-        app.fail_with(Failure::of(kobo_sdk::TaskError::NoCredential));
-        let (state, advice) = app.trouble.clone().expect("a failure was recorded");
-        assert_eq!(state, StandardState::PermissionDenied);
-        assert!(advice.contains("kobo secret set"), "{advice}");
-        assert!(
-            !advice.contains("does not hold this permission"),
-            "{advice}"
-        );
+        // Each stage asks a different provider, so the sentence has to name the
+        // one that was actually missing rather than "that service".
+        for (stage, key) in [
+            (Stage::Research, "exa"),
+            (Stage::Write, "openai"),
+            (Stage::Narrate, "elevenlabs"),
+        ] {
+            let mut app = Audiobook {
+                stage,
+                ..Audiobook::default()
+            };
+            app.fail_with(Failure::of(kobo_sdk::TaskError::NoCredential));
+            let (state, advice) = app.trouble.clone().expect("a failure was recorded");
+            assert_eq!(state, StandardState::PermissionDenied);
+            assert!(advice.contains(key), "{stage:?}: {advice}");
+            assert!(
+                advice.contains(&format!("kobo secret set {key}")),
+                "{stage:?}: {advice}"
+            );
+            assert!(
+                !advice.contains("does not hold this permission"),
+                "{advice}"
+            );
+        }
     }
 }
