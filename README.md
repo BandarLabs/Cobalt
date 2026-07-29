@@ -64,19 +64,6 @@ Verified on the physical Clara BW unless stated otherwise.
   native one: `brief` is the shape of it and on a device it only collects while
   it is in the foreground. Making it real means `kobod` owning suspend on the
   only device there is.
-- **A `present` session ends in a reboot.** On firmware 4.45.23697 the device
-  resets about thirty seconds after `kobo present` hands the panel back. It was
-  isolated by running each half alone: `kobo record` for thirty seconds left
-  the reader up continuously, and `kobo present` on its own, with nothing
-  recording, reset it every time. `kobod`'s log reaches "panel released,
-  restarting the reader" and then contact is lost, so the fault is in the
-  teardown that restarts the reader rather than in anything a session does
-  while it owns the panel. Ruled out: a `KoboRoot.tgz` upgrade loop, an
-  `inittab` respawn, the freeze watchdog being armed without evidence, and
-  userspace starving `/dev/watchdog`. The remaining suspect is named in the
-  code itself, at `crates/kobod/src/device.rs`: the handback waits up to ninety
-  seconds for the restarted reader to feed the freeze watchdog, and the SoC's
-  own hardware watchdog fires at thirty-one.
 - **One device.** Clara BW N365, device code 391. Everything else is refused
   rather than mapped to a similar model, so there is no second profile to test
   against and no evidence any of this holds elsewhere.
@@ -554,6 +541,56 @@ that something is feeding it (see `resume_once_fed`), and the network is simply
 never restored. A developer working over Wi-Fi loses the link when the session
 ends and reconnects the reader's own way, or reboots. That is a worse afternoon
 and a better trade.
+
+### The three watchdogs
+
+Three separate things on this device will reset it, and for a long time they
+were mistaken for each other. It is worth naming them apart.
+
+| | What it is | How it is handled |
+| --- | --- | --- |
+| Recovery watchdog | Ours, a shell loop in `/tmp` | Restarts the reader if the runtime dies |
+| Freeze watchdog | Kobo's `sickel`, on the session bus | `Suspend` for the session, `Resume` on evidence it is being fed |
+| SoC watchdog | A counter inside the MediaTek chip | Given slack for the session, armed again afterwards |
+
+The third one is the one that reset a device every time a session ended, and it
+took days to find because it leaves no trace at all. There is no kernel message,
+nothing is synced, and the next line in the log is a cold boot.
+
+The numbers are the whole explanation:
+
+```text
+mtk-wdt 10007000.toprgu: Watchdog enabled (timeout=31 sec, nowayout=0)
+[112:feeding_thread] watchdog feeding_interval = 28000 ms
+```
+
+A kernel thread feeds a thirty-one second counter every twenty-eight seconds.
+Three seconds of margin, and stopping and restarting the reader is the heaviest
+thing this device ever does.
+
+Almost everything about the symptom pointed elsewhere. The reset landed about
+ten seconds after `kobo present` handed the panel back, so `present` looked
+guilty; it is not, and restarting the reader with no display session, no touch
+session and no panel involvement at all resets the device just the same.
+Scanning `/proc/*/fd` for a process holding `/dev/watchdog` finds nobody, which
+reads as "never armed" and is wrong, because the feeder is a kernel thread and
+kernel threads have no descriptor table. Reading that as innocence sent the
+search after the Bluetooth chip, the freeze watchdog and a phantom second reader
+in turn. What settled it was `/proc/wdk`, which is writable, and an A/B:
+
+| `/proc/wdk` | uptime across a session | outcome |
+| --- | --- | --- |
+| `0` (slack) | 247s to 389s | survived, and kept going |
+| `1` (armed) | 420s to 446s | reset, cold boot |
+
+So `crates/kobo-hal/src/soc_watchdog.rs` gives the counter slack for exactly as
+long as the runtime stands between the reader and the hardware, on the same
+lifetime as the freeze watchdog suspension, and arms it again once the reader is
+demonstrably back. The window is bounded by a guard that restores the previous
+value on every exit path including a panic, the recovery path arms it explicitly
+because a killed session leaves nobody to do so, and the kernel arms it anyway
+on the next boot. A device that resets every time a developer looks at it has no
+working safety net either.
 
 ### If you have shipped for Android or iOS
 

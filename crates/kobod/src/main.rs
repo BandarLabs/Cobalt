@@ -156,7 +156,23 @@ fn restart_reader(state: &Path) -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     let reader = Reader::load(state)?;
+    // The restart below is the operation that trips the SoC watchdog, and this
+    // process is here precisely because the session that should have been
+    // holding it off is dead. Slack first, then arm unconditionally once the
+    // reader is back, which also repays the slack the dead session left.
+    let watchdog = kobo_hal::soc_watchdog::SocWatchdog::default();
+    let slack = watchdog.slacken();
+    if let Err(error) = &slack {
+        println!("the hardware watchdog could not be slackened ({error}); restarting anyway");
+    }
     let pid = reader.start(std::time::Duration::from_secs(45))?;
+    drop(slack);
+    match watchdog.arm() {
+        Ok(()) => {}
+        Err(error) => println!(
+            "the hardware watchdog could not be armed ({error}); it returns on the next reboot"
+        ),
+    }
     // A session that died without cleaning up also left the freeze watchdog
     // suspended. Putting it back is part of recovery, not an afterthought.
     match kobo_hal::supervisor::resume_with(reader.environment("DBUS_SESSION_BUS_ADDRESS")) {
