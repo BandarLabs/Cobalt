@@ -102,6 +102,7 @@ struct Settings {
     bluetooth_state: RadioState,
     devices: Vec<BluetoothDevice>,
     bluetooth_page: usize,
+    restart_on_exit: bool,
     wifi_state: RadioState,
     connected_ssid: Option<String>,
     networks: Vec<WifiNetwork>,
@@ -189,6 +190,11 @@ impl Settings {
             );
         if let Some(trouble) = self.banner_for(Topic::Bluetooth) {
             screen = screen.banner(kobo_sdk::BannerLevel::Attention, trouble);
+        } else if self.restart_on_exit {
+            screen = screen.banner(
+                kobo_sdk::BannerLevel::Info,
+                "Bluetooth shares one radio with Wi-Fi on this reader, and it can only start once per boot. Your reader will restart itself when you leave this app. Nothing you have saved is lost.",
+            );
         }
         if self.bluetooth_state.enabled() {
             if self.devices.is_empty() {
@@ -578,10 +584,14 @@ impl KoboApp for Settings {
                 available,
                 enabled,
                 devices,
+                restart_on_exit,
             } => {
                 self.bluetooth_state = RadioState::new(available, enabled);
                 self.devices = devices;
                 self.bluetooth_page %= page_count(self.devices.len());
+                // Latched, so a later reading cannot withdraw a warning the
+                // reader has already been shown.
+                self.restart_on_exit |= restart_on_exit;
                 self.settled(Topic::Bluetooth);
                 if matches!(request, DeviceRequest::PairBluetooth { .. }) {
                     if let Some(Pending::ConnectAfterPair(address)) = self.pending.take() {

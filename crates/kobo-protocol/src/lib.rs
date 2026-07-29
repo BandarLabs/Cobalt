@@ -20,7 +20,11 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// the payload of an existing tag rather than a new tag, so an old runtime
 /// would have read the flag byte as the next cell's action. The version byte
 /// exists precisely so it declines the frame instead.
-pub const VERSION: u8 = 3;
+///
+/// Went to 4 when the Bluetooth result gained `restart_on_exit`, for the same
+/// reason: a trailing byte on an existing tag, which an old application would
+/// have left in the buffer.
+pub const VERSION: u8 = 4;
 pub const HEADER_LEN: usize = 14;
 pub const MAX_FRAME_LEN: usize = 1_048_576;
 /// The largest decoded picture accepted from one application.
@@ -977,6 +981,15 @@ pub enum DeviceResult {
         available: bool,
         enabled: bool,
         devices: Vec<BluetoothDevice>,
+        /// Whether leaving this session will reboot the reader rather than
+        /// hand the panel back to it.
+        ///
+        /// The Clara BW's `MediaTek` radio driver cannot be initialised twice in
+        /// one boot, so once Cobalt has touched that stack the only proven
+        /// hand-back is a clean reboot. That is not a failure, but it is
+        /// indistinguishable from one unless the application says so first,
+        /// which is why the runtime reports it instead of keeping it private.
+        restart_on_exit: bool,
     },
     /// Wi-Fi controller state and the bounded set currently known.
     Wifi {
@@ -2151,6 +2164,7 @@ fn encode_device_result(output: &mut Vec<u8>, result: &DeviceResult) -> Result<(
             available,
             enabled,
             devices,
+            restart_on_exit,
         } => {
             if devices.len() > MAX_RADIO_DEVICES {
                 return Err(ProtocolError::InvalidValue("too many Bluetooth devices"));
@@ -2163,6 +2177,9 @@ fn encode_device_result(output: &mut Vec<u8>, result: &DeviceResult) -> Result<(
                 output.push(device.kind as u8);
                 output.push(radio_flags(device.paired, device.connected));
             }
+            // Trailing, so the shape the device list already had is untouched
+            // and only the tail is new.
+            output.push(u8::from(*restart_on_exit));
         }
         DeviceResult::Wifi {
             available,
@@ -2267,10 +2284,16 @@ fn decode_device_result(reader: &mut Reader<'_>) -> Result<DeviceResult, Protoco
                     connected: flags_second(device_flags),
                 });
             }
+            let restart_on_exit = match reader.u8()? {
+                0 => false,
+                1 => true,
+                _ => return Err(ProtocolError::InvalidValue("Bluetooth restart flag")),
+            };
             Ok(DeviceResult::Bluetooth {
                 available: flags_first(flags),
                 enabled: flags_second(flags),
                 devices,
+                restart_on_exit,
             })
         }
         7 => {
@@ -4959,6 +4982,13 @@ mod tests {
                     paired: true,
                     connected: true,
                 }],
+                restart_on_exit: false,
+            },
+            DeviceResult::Bluetooth {
+                available: true,
+                enabled: true,
+                devices: Vec::new(),
+                restart_on_exit: true,
             },
             DeviceResult::Wifi {
                 available: true,

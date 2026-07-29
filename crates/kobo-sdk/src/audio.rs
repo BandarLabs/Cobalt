@@ -110,6 +110,8 @@ pub struct AudioPlayer {
     audio_available: Availability,
     bluetooth_available: Availability,
     bluetooth_enabled: Switch,
+    /// Whether the runtime has said that leaving will reboot the reader.
+    restart_on_exit: bool,
     devices: Vec<BluetoothDevice>,
     page: usize,
     pending_bluetooth: Option<PendingBluetooth>,
@@ -137,6 +139,7 @@ impl AudioPlayer {
             audio_available: Availability::Available,
             bluetooth_available: Availability::Available,
             bluetooth_enabled: Switch::Off,
+            restart_on_exit: false,
             devices: Vec::new(),
             page: 0,
             pending_bluetooth: None,
@@ -349,6 +352,15 @@ impl AudioPlayer {
             );
         } else if let Some(trouble) = &self.trouble {
             screen = screen.banner(BannerLevel::Attention, trouble);
+        } else if self.restart_on_exit {
+            // Said before it happens, not after. Bluetooth and Wi-Fi share one
+            // radio here whose driver starts once per boot, so the only safe
+            // way back to the reader is a restart. Unannounced, that is
+            // indistinguishable from a crash, which is exactly how it was read.
+            screen = screen.banner(
+                BannerLevel::Info,
+                "Bluetooth shares one radio with Wi-Fi on this reader, and it can only start once per boot. Your reader will restart itself when you leave this app. Nothing you have saved is lost.",
+            );
         }
         if self.bluetooth_enabled == Switch::On {
             let devices = self.audio_devices().collect::<Vec<_>>();
@@ -614,6 +626,7 @@ impl AudioPlayer {
                 available,
                 enabled,
                 devices,
+                restart_on_exit,
             } => {
                 self.bluetooth_available = if *available {
                     Availability::Available
@@ -621,6 +634,11 @@ impl AudioPlayer {
                     Availability::Unavailable
                 };
                 self.bluetooth_enabled = if *enabled { Switch::On } else { Switch::Off };
+                // Latched, never cleared. Once the shared radio has been
+                // touched the reboot is owed for the rest of the session, so a
+                // later reading that happens to report false must not withdraw
+                // a warning the reader has already been given.
+                self.restart_on_exit |= *restart_on_exit;
                 self.devices.clone_from(devices);
                 self.page = self.page.min(page_count(self.audio_devices().count()) - 1);
                 self.trouble = None;
@@ -878,12 +896,62 @@ mod tests {
                 available: true,
                 enabled: true,
                 devices: vec![headphones(true)],
+                restart_on_exit: false,
             },
         );
         assert!(context.take_commands().iter().any(|command| matches!(
             command,
             crate::Command::Device(DeviceRequest::LoadAudio { .. })
         )));
+    }
+
+    /// The reboot this warns about used to happen with no warning at all, and
+    /// was reported as the operating system crashing. The warning is owed only
+    /// when the runtime says the radio has actually been touched, so the
+    /// quieter case must stay quiet or the warning stops meaning anything.
+    #[test]
+    fn the_coming_restart_is_announced_only_when_it_is_really_coming() {
+        fn reading(restart_on_exit: bool) -> String {
+            let mut player = AudioPlayer::shelf("book.mp3z", "Book");
+            player.view = super::View::Bluetooth;
+            player.on_device_result(
+                &mut crate::Context::default(),
+                &DeviceRequest::ReadBluetooth,
+                &DeviceResult::Bluetooth {
+                    available: true,
+                    enabled: true,
+                    devices: vec![headphones(false)],
+                    restart_on_exit,
+                },
+            );
+            format!("{:?}", player.screen())
+        }
+
+        assert!(reading(true).contains("restart itself"));
+        assert!(!reading(false).contains("restart itself"));
+    }
+
+    /// The debt is owed for the rest of the session once the radio is touched.
+    /// A later reading that answers false must not withdraw a promise the
+    /// reader has already been shown.
+    #[test]
+    fn the_restart_warning_is_never_withdrawn() {
+        let mut player = AudioPlayer::shelf("book.mp3z", "Book");
+        player.view = super::View::Bluetooth;
+        let mut context = crate::Context::default();
+        for restart_on_exit in [true, false] {
+            player.on_device_result(
+                &mut context,
+                &DeviceRequest::ReadBluetooth,
+                &DeviceResult::Bluetooth {
+                    available: true,
+                    enabled: true,
+                    devices: vec![headphones(false)],
+                    restart_on_exit,
+                },
+            );
+        }
+        assert!(format!("{:?}", player.screen()).contains("restart itself"));
     }
 
     #[test]

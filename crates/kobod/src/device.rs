@@ -546,6 +546,17 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     // Without this the recovery watchdog would conclude the runtime had died
     // and restart a reader that is already starting.
     let teardown = KeepBeating::start(&watchdog);
+    // Asked once, before the panel is given up, because the answer decides
+    // whether the owner is owed an explanation and the display is gone by the
+    // time the reboot itself is requested.
+    let rebooting = kobo_hal::bluetooth::requires_reboot_after_use();
+    if rebooting {
+        if let Err(error) = announce_reboot(&display, whole_screen) {
+            // Not fatal. Failing to explain the reboot is worse than not
+            // rebooting, but it is not a reason to leave the radio broken.
+            trace(&format!("could not show the restart notice: {error}"));
+        }
+    }
     // Reverse order, on every path.
     let restored = restore_screen(&display, &backup, whole_screen);
     let _ignored = touch.release();
@@ -565,7 +576,7 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     // can panic the kernel inside wlan_drv_gen4m. A normal, synced reboot is
     // the only proven hand-back: it returns directly to the stock reader with
     // a pristine shared Wi-Fi/Bluetooth driver state.
-    if kobo_hal::bluetooth::requires_reboot_after_use() {
+    if rebooting {
         trace("MediaTek Bluetooth was used; rebooting cleanly instead of restarting the reader");
         println!("Bluetooth changed; rebooting cleanly back to the reader");
         watchdog.disarm();
@@ -681,6 +692,56 @@ fn describe(limit: Duration) -> String {
         rest => format!("{minutes} minute {rest} second"),
     }
 }
+
+/// Tells the reader a restart is coming, and that it is not a fault.
+///
+/// Painted *before* the screen is restored rather than instead of it, so the
+/// guarantee that a session always puts the reader's own screen back holds even
+/// on the path that ends in a reboot. If the reboot then fails, the panel is
+/// already back to normal and nothing has to undo this.
+///
+/// It exists because the reboot below was silent. The only warning was a line
+/// on a developer's terminal, so from the owner's chair a Bluetooth connection
+/// simply killed the device, which is exactly how it was reported.
+fn announce_reboot(display: &DisplaySession, whole_screen: Rect) -> Result<(), String> {
+    let screen = Screen::new(
+        0,
+        vec![kobo_ui::Node::Splash {
+            id: kobo_ui::NodeId(1),
+            glyph: Some(kobo_ui::Glyph::Bluetooth),
+            title: "Restarting your reader".to_owned(),
+            summary: "Bluetooth shares one radio with Wi-Fi here, and that radio can only be \
+                      started once per boot. Restarting is the only way to hand it back working. \
+                      This is expected, it is not a crash, and everything you have saved is \
+                      already on the disk."
+                .to_owned(),
+        }],
+    );
+    let mut surface = Surface::new(
+        usize::try_from(whole_screen.width).unwrap_or(0),
+        usize::try_from(whole_screen.height).unwrap_or(0),
+    );
+    render_all(
+        &screen,
+        &metrics_for(&screen),
+        &Chrome::with_back(false),
+        &(),
+        &mut surface,
+        None,
+    );
+    // A fresh planner, so its idea of what is already on the panel is blank and
+    // the whole notice is drawn rather than diffed against the session's last
+    // frame.
+    Painter::new(surface.width, surface.height).paint(display, whole_screen, &surface)?;
+    // Long enough to be read by someone who has just looked down at a reader
+    // that appeared to be doing nothing. The reboot that follows costs far
+    // more than this, so the wait is not what makes the wait long.
+    thread::sleep(NOTICE_DWELL);
+    Ok(())
+}
+
+/// How long the restart notice stays up before the screen is put back.
+const NOTICE_DWELL: Duration = Duration::from_secs(5);
 
 fn restore_screen(
     display: &DisplaySession,

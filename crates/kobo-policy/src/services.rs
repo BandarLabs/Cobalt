@@ -365,6 +365,9 @@ impl DeviceServices {
                 available: true,
                 enabled: self.bluetooth_enabled,
                 devices: Vec::new(),
+                // The simulated host hands the panel back by returning, so
+                // nothing here ever reboots.
+                restart_on_exit: false,
             },
             DeviceResult::Denied,
         )

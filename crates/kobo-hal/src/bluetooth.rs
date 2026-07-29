@@ -420,6 +420,9 @@ fn bluetooth_result(enabled: bool, devices: Vec<BluetoothDevice>) -> DeviceResul
         available: true,
         enabled,
         devices,
+        // Read here rather than remembered by the caller, because every path
+        // that reaches this funnel has already had its chance to set the flag.
+        restart_on_exit: requires_reboot_after_use(),
     }
 }
 
