@@ -709,6 +709,13 @@ fn build_device(device: bool) -> Result<(), String> {
     if device {
         let linker = find_rust_lld()?;
         command.env("CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER", linker);
+        // Rust code needs no C compiler, but `ring` carries assembly and C
+        // that cc-rs builds itself, and cc-rs looks for a tool named after the
+        // target and then gives up with a message about a name nobody has
+        // heard of. Resolved here so the failure names the missing package.
+        if std::env::var_os("CC_armv7_unknown_linux_musleabihf").is_none() {
+            command.env("CC_armv7_unknown_linux_musleabihf", find_device_cc()?);
+        }
         command.args(["--target", "armv7-unknown-linux-musleabihf"]);
         for package in DEVICE_PACKAGES {
             command.args(["-p", package]);
@@ -1378,6 +1385,9 @@ fn device_build_command(package: &str, features: Option<&str>) -> Result<Command
             package,
         ])
         .env("CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER", linker);
+    if std::env::var_os("CC_armv7_unknown_linux_musleabihf").is_none() {
+        command.env("CC_armv7_unknown_linux_musleabihf", find_device_cc()?);
+    }
     if let Some(features) = features {
         command.args(["--features", features]);
     }
@@ -3059,6 +3069,38 @@ fn find_rust_lld() -> Result<PathBuf, String> {
         }
     }
     Err("rust-lld was not found in the active Rust toolchain".to_owned())
+}
+
+/// The C cross-compiler `ring` needs to build its own sources for the reader.
+///
+/// Several distributions and taps spell the same toolchain differently, so
+/// every name in use is tried before the build is refused.
+fn find_device_cc() -> Result<String, String> {
+    const NAMES: [&str; 4] = [
+        "armv7-unknown-linux-musleabihf-gcc",
+        "armv7-linux-musleabihf-gcc",
+        "arm-linux-musleabihf-gcc",
+        "arm-linux-gnueabihf-gcc",
+    ];
+    for name in NAMES {
+        let found = Command::new(name)
+            .arg("--version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success());
+        if found {
+            return Ok(name.to_owned());
+        }
+    }
+    Err(format!(
+        "no ARM C cross-compiler was found, and one is needed because the TLS \
+         stack builds C for the reader. Tried: {}.\n  macOS:  brew install \
+         messense/macos-cross-toolchains/armv7-unknown-linux-musleabihf\n  \
+         Debian: sudo apt-get install gcc-arm-linux-gnueabihf\nSet \
+         CC_armv7_unknown_linux_musleabihf to override.",
+        NAMES.join(", ")
+    ))
 }
 
 fn verify_arm_elf(path: &Path) -> Result<(), String> {

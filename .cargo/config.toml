@@ -4,8 +4,15 @@
 # few genuine ways to leave a device unbootable, so we never link against one.
 #
 # The linker is the LLVM one that ships with the Rust toolchain rather than a
-# cross gcc. That is deliberate: it means a checkout builds device binaries on
-# a stock `rustup target add armv7-unknown-linux-musleabihf` with no system
-# packages, so the build cannot silently differ between machines.
+# cross gcc, so linking cannot silently differ between machines.
+#
+# Compiling still needs one system package. The TLS stack carries assembly and
+# C that cc-rs builds itself, so an ARM C cross-compiler has to be on the path:
+#
+#   macOS   brew install messense/macos-cross-toolchains/armv7-unknown-linux-musleabihf
+#   Debian  sudo apt-get install gcc-arm-linux-gnueabihf
+#
+# `kobo build --device` finds it under any of its usual names and says which
+# package to install when there is none.
 [target.armv7-unknown-linux-musleabihf]
 linker = "rust-lld"
