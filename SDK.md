@@ -768,6 +768,11 @@ back, rather than sending one per chunk of progress.
 context.device().read_battery();
 context.device().hold_wifi(Duration::from_secs(60));
 context.device().set_frontlight(40);
+context.device().set_bluetooth(true);
+context.device().scan_bluetooth();
+context.device().pair_bluetooth("AA:BB:CC:DD:EE:FF");
+context.device().scan_wifi();
+context.device().join_wifi("Library", "eight-or-more");
 ```
 
 Every one is a request, answered at `on_device_result` with a `DeviceResult`
@@ -778,11 +783,15 @@ things:
 - **`WithheldForBattery`**. Policy will not spend the charge right now.
 - **`Unsupported`**. This build genuinely cannot do it.
 
-A build performs only what it has a proven backend for. Today that is the
-read-only battery gauge; everything else is honestly refused rather than
-answered with a plausible invention. **An invented reading is worse than a
-refusal**, because an application cannot tell one from the other and will act
-on it.
+A build performs only what it has a proven backend for. The device backend
+uses the firmware's running `wpa_supplicant` and Bluetooth service; it does not
+start a second network owner or manipulate HCI/module state. Radio answers are
+typed `DeviceResult::Wifi` and `DeviceResult::Bluetooth` values, while backend
+failures are `DeviceResult::Failed(DeviceError)`. On a MediaTek Clara, using
+an active Bluetooth stack makes the runtime reboot cleanly when the Cobalt
+session ends because handing the initialised vendor driver directly back to
+Nickel is not safe. **An invented reading is worse than a refusal**, because an
+application cannot tell one from the other and will act on it.
 
 ---
 

@@ -189,6 +189,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-audiobook"
+version = "0.1.0"
+dependencies = [
+ "kobo-doc",
+ "kobo-json",
+ "kobo-sdk",
+]
+
+[[package]]
 name = "kobo-brief"
 version = "0.1.0"
 dependencies = [
@@ -263,6 +272,7 @@ version = "0.1.0"
 dependencies = [
  "kobo-abi",
  "kobo-profile",
+ "kobo-protocol",
 ]
 
 [[package]]
@@ -362,6 +372,13 @@ dependencies = [
  "kobo-protocol",
  "kobo-text",
  "kobo-ui",
+]
+
+[[package]]
+name = "kobo-settings"
+version = "0.1.0"
+dependencies = [
+ "kobo-sdk",
 ]
 
 [[package]]

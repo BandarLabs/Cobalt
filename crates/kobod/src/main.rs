@@ -372,7 +372,7 @@ fn serve_application(
             Message::Launch { name } => println!("launch requested: {name}"),
             Message::Log { level, message } => log_app(level, &message),
             Message::DeviceRequest(request) => {
-                let result = services.handle(request);
+                let result = services.handle(request.clone());
                 println!("device request {request:?} -> {result:?}");
                 write_shared(
                     &writer,

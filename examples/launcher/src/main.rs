@@ -45,6 +45,22 @@ struct Entry {
 
 const ENTRIES: &[Entry] = &[
     Entry {
+        name: "audiobook",
+        title: "Audiobook Studio",
+        label: "Audiobooks",
+        summary: "Research and narrate an original audiobook about any topic.",
+        needs: "Uses Exa, OpenAI and ElevenLabs keys, plus the network.",
+        glyph: Glyph::Download,
+    },
+    Entry {
+        name: "settings",
+        title: "Settings",
+        label: "Settings",
+        summary: "Connect Wi-Fi, headphones, speakers and keyboards.",
+        needs: "Changes the device's Wi-Fi and Bluetooth radios.",
+        glyph: Glyph::Settings,
+    },
+    Entry {
         name: "gutenbird",
         title: "Gutenbird",
         label: "Gutenbird",

@@ -3,6 +3,9 @@
 /// Read-only battery observation. Not gated: it reads two text files and
 /// changes nothing.
 pub mod battery;
+/// Bluetooth control through the firmware-owned BlueZ service.
+#[cfg(feature = "device-write")]
+pub mod bluetooth;
 #[cfg(feature = "device-write")]
 pub mod display;
 /// Exclusive touch ownership. Available only with `device-write`, because a
@@ -24,6 +27,9 @@ pub mod probe;
 #[cfg(feature = "device-write")]
 pub mod reader;
 pub mod refresh;
+/// Wi-Fi control through the firmware-owned supplicant.
+#[cfg(feature = "device-write")]
+pub mod wifi;
 /// Noticing that this process has been asked to stop, so that everything it
 /// took from the device is given back before it goes.
 pub use kobo_abi::stop;

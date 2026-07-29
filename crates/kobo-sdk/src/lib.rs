@@ -6,12 +6,13 @@
 //! [`AppRunner::action`] from their platform event loop.
 
 pub use kobo_protocol::{
-    Credential, DenyReason, DeviceRequest, DeviceResult, Frame, Header, Lifecycle, LogLevel,
-    Message, SecretHeader, ShellError, ShellEvent, ShellRequest, StoreError, StoreRequest,
-    StoreResult, StreamError, Task, TaskError, TaskId, TaskOutcome, CACHE_PREFIX, MAX_CACHE_KEYS,
-    MAX_HEADERS, MAX_HEADER_NAME, MAX_HEADER_VALUE, MAX_INLINE_PICTURE_BYTES, MAX_PICTURE_BYTES,
-    MAX_PICTURE_CHUNK_BYTES, MAX_SHELF_CHUNK, MAX_SHELL_CHUNK, MAX_STORE_KEYS, MAX_STORE_VALUE,
-    MAX_TASK_BYTES, MAX_URL_LEN,
+    BluetoothDevice, BluetoothDeviceKind, Credential, DenyReason, DeviceError, DeviceRequest,
+    DeviceResult, Frame, Header, Lifecycle, LogLevel, Message, SecretHeader, ShellError,
+    ShellEvent, ShellRequest, StoreError, StoreRequest, StoreResult, StreamError, Task, TaskError,
+    TaskId, TaskOutcome, WifiNetwork, CACHE_PREFIX, MAX_CACHE_KEYS, MAX_HEADERS, MAX_HEADER_NAME,
+    MAX_HEADER_VALUE, MAX_INLINE_PICTURE_BYTES, MAX_PICTURE_BYTES, MAX_PICTURE_CHUNK_BYTES,
+    MAX_RADIO_DEVICES, MAX_RADIO_NAME, MAX_SHELF_CHUNK, MAX_SHELL_CHUNK, MAX_STORE_KEYS,
+    MAX_STORE_VALUE, MAX_TASK_BYTES, MAX_URL_LEN,
 };
 pub use kobo_ui::QuoteRole;
 pub use kobo_ui::{
@@ -42,11 +43,11 @@ pub mod terminal;
 pub mod prelude {
     pub use crate::{
         action_id, ActionId, AppIcon, AppMetadata, AppRunner, AppShelf, AppShell, AppStore,
-        Capability, Client, ClientEvent, Command, Context, ControlState, DenyReason, Device,
-        DeviceRequest, DeviceResult, DialogAction, Grant, Grants, KoboApp, Lifecycle, Navigator,
-        Node, NodeId, PowerPolicy, Screen, ScreenBuilder, ShelfDownload, ShelfProgress,
-        ShelfUpload, ShellError, ShellEvent, ShellRequest, StandardState, StoreError, StoreRequest,
-        StoreResult,
+        BluetoothDevice, BluetoothDeviceKind, Capability, Client, ClientEvent, Command, Context,
+        ControlState, DenyReason, Device, DeviceError, DeviceRequest, DeviceResult, DialogAction,
+        Grant, Grants, KoboApp, Lifecycle, Navigator, Node, NodeId, PowerPolicy, Screen,
+        ScreenBuilder, ShelfDownload, ShelfProgress, ShelfUpload, ShellError, ShellEvent,
+        ShellRequest, StandardState, StoreError, StoreRequest, StoreResult, WifiNetwork,
     };
 }
 
@@ -2826,9 +2827,108 @@ impl Device<'_> {
         self.request(DeviceRequest::ReadFrontlight);
     }
 
+    /// Asks whether Bluetooth is available and powered, including remembered
+    /// devices when the backend can enumerate them without scanning.
+    pub fn read_bluetooth(&mut self) {
+        self.request(DeviceRequest::ReadBluetooth);
+    }
+
+    /// Powers Bluetooth on or off.
+    pub fn set_bluetooth(&mut self, enabled: bool) {
+        self.request(DeviceRequest::SetBluetooth { enabled });
+    }
+
+    /// Starts a bounded discovery and returns the resulting device list.
+    pub fn scan_bluetooth(&mut self) {
+        self.request(DeviceRequest::ScanBluetooth);
+    }
+
+    /// Pairs with `address`. Returns `false` without queueing when the address
+    /// is not a canonical six-byte Bluetooth address.
+    pub fn pair_bluetooth(&mut self, address: impl Into<String>) -> bool {
+        self.bluetooth_address(address, |address| DeviceRequest::PairBluetooth { address })
+    }
+
+    /// Connects a Bluetooth device.
+    pub fn connect_bluetooth(&mut self, address: impl Into<String>) -> bool {
+        self.bluetooth_address(address, |address| DeviceRequest::ConnectBluetooth {
+            address,
+        })
+    }
+
+    /// Disconnects a Bluetooth device without forgetting the pairing.
+    pub fn disconnect_bluetooth(&mut self, address: impl Into<String>) -> bool {
+        self.bluetooth_address(address, |address| DeviceRequest::DisconnectBluetooth {
+            address,
+        })
+    }
+
+    /// Removes a remembered Bluetooth pairing.
+    pub fn forget_bluetooth(&mut self, address: impl Into<String>) -> bool {
+        self.bluetooth_address(address, |address| DeviceRequest::ForgetBluetooth {
+            address,
+        })
+    }
+
+    /// Asks for Wi-Fi power and association state.
+    pub fn read_wifi(&mut self) {
+        self.request(DeviceRequest::ReadWifi);
+    }
+
+    /// Powers the Wi-Fi interface on or off.
+    pub fn set_wifi(&mut self, enabled: bool) {
+        self.request(DeviceRequest::SetWifi { enabled });
+    }
+
+    /// Scans for nearby Wi-Fi networks.
+    pub fn scan_wifi(&mut self) {
+        self.request(DeviceRequest::ScanWifi);
+    }
+
+    /// Joins a Wi-Fi network. Pass an empty password for an open network.
+    /// Returns `false` without queueing malformed credentials.
+    pub fn join_wifi(&mut self, ssid: impl Into<String>, password: impl Into<String>) -> bool {
+        let ssid = ssid.into();
+        let password = password.into();
+        if ssid.is_empty()
+            || ssid.len() > 32
+            || !(password.is_empty() || (8..=63).contains(&password.len()))
+        {
+            return false;
+        }
+        self.request(DeviceRequest::JoinWifi { ssid, password });
+        true
+    }
+
+    /// Leaves the current network without powering Wi-Fi off.
+    pub fn disconnect_wifi(&mut self) {
+        self.request(DeviceRequest::DisconnectWifi);
+    }
+
+    fn bluetooth_address(
+        &mut self,
+        address: impl Into<String>,
+        request: impl FnOnce(String) -> DeviceRequest,
+    ) -> bool {
+        let address = address.into();
+        if !is_bluetooth_address(&address) {
+            return false;
+        }
+        self.request(request(address));
+        true
+    }
+
     fn request(&mut self, request: DeviceRequest) {
         self.context.commands.push(Command::Device(request));
     }
+}
+
+fn is_bluetooth_address(address: &str) -> bool {
+    let mut parts = address.split(':');
+    let valid = (&mut parts)
+        .take(6)
+        .all(|part| part.len() == 2 && part.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    valid && parts.next().is_none() && address.matches(':').count() == 5
 }
 
 /// Converts a duration to whole seconds without overflowing or rounding to zero.
@@ -3141,7 +3241,7 @@ impl<A: KoboApp> AppRunner<A> {
         });
         for command in &commands {
             match command {
-                Command::Device(request) => self.pending.push_back(*request),
+                Command::Device(request) => self.pending.push_back(request.clone()),
                 Command::Store(_) => {
                     self.pending_stores = self.pending_stores.saturating_add(1);
                 }

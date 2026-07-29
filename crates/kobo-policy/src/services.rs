@@ -10,7 +10,7 @@
 //!   is willing to pay for.
 
 use crate::{Capability, Declared, Grant, Grants, PowerPolicy};
-use kobo_protocol::{DenyReason, DeviceRequest, DeviceResult};
+use kobo_protocol::{DenyReason, DeviceError, DeviceRequest, DeviceResult};
 use std::collections::BTreeSet;
 use std::time::Duration;
 
@@ -81,6 +81,9 @@ pub struct DeviceServices {
     wifi_held_for: Option<Duration>,
     awake_held_for: Option<Duration>,
     wake_scheduled_in: Option<Duration>,
+    bluetooth_enabled: bool,
+    wifi_enabled: bool,
+    connected_ssid: Option<String>,
 }
 
 impl DeviceServices {
@@ -112,6 +115,9 @@ impl DeviceServices {
             wifi_held_for: None,
             awake_held_for: None,
             wake_scheduled_in: None,
+            bluetooth_enabled: false,
+            wifi_enabled: true,
+            connected_ssid: None,
         }
     }
 
@@ -185,7 +191,64 @@ impl DeviceServices {
             }
             DeviceRequest::SetFrontlight { percent } => self.set_frontlight(percent),
             DeviceRequest::ReadFrontlight => self.read_frontlight(),
+            DeviceRequest::ReadBluetooth | DeviceRequest::ScanBluetooth => self.bluetooth_state(),
+            DeviceRequest::SetBluetooth { enabled } => {
+                if let Some(reason) = self.refusal(Capability::BluetoothControl) {
+                    DeviceResult::Denied(reason)
+                } else {
+                    self.bluetooth_enabled = enabled;
+                    self.bluetooth_state()
+                }
+            }
+            DeviceRequest::PairBluetooth { .. }
+            | DeviceRequest::ConnectBluetooth { .. }
+            | DeviceRequest::DisconnectBluetooth { .. }
+            | DeviceRequest::ForgetBluetooth { .. } => {
+                if let Some(reason) = self.refusal(Capability::BluetoothControl) {
+                    DeviceResult::Denied(reason)
+                } else if self.bluetooth_enabled {
+                    DeviceResult::Done
+                } else {
+                    DeviceResult::Failed(DeviceError::Unreachable)
+                }
+            }
+            DeviceRequest::ReadWifi | DeviceRequest::ScanWifi => self.wifi_state(),
+            DeviceRequest::SetWifi { enabled } => {
+                if let Some(reason) = self.refusal(Capability::WifiControl) {
+                    DeviceResult::Denied(reason)
+                } else {
+                    self.wifi_enabled = enabled;
+                    if !enabled {
+                        self.connected_ssid = None;
+                    }
+                    self.wifi_state()
+                }
+            }
+            DeviceRequest::JoinWifi { ssid, .. } => {
+                if let Some(reason) = self.refusal(Capability::WifiControl) {
+                    DeviceResult::Denied(reason)
+                } else {
+                    self.wifi_enabled = true;
+                    self.connected_ssid = Some(ssid);
+                    self.wifi_state()
+                }
+            }
+            DeviceRequest::DisconnectWifi => {
+                if let Some(reason) = self.refusal(Capability::WifiControl) {
+                    DeviceResult::Denied(reason)
+                } else {
+                    self.connected_ssid = None;
+                    self.wifi_state()
+                }
+            }
         }
+    }
+
+    /// Returns the policy refusal for a request that a real hardware backend
+    /// wants to execute, or `None` when the backend may proceed.
+    #[must_use]
+    pub fn refusal_for(&self, request: &DeviceRequest) -> Option<DenyReason> {
+        self.refusal(request_capability(request))
     }
 
     /// Returns the refusal that applies to a capability, or `None` when the
@@ -221,6 +284,29 @@ impl DeviceServices {
         self.refusal(Capability::FrontlightControl).map_or(
             DeviceResult::Frontlight {
                 percent: self.state.frontlight_percent,
+            },
+            DeviceResult::Denied,
+        )
+    }
+
+    fn bluetooth_state(&self) -> DeviceResult {
+        self.refusal(Capability::BluetoothControl).map_or_else(
+            || DeviceResult::Bluetooth {
+                available: true,
+                enabled: self.bluetooth_enabled,
+                devices: Vec::new(),
+            },
+            DeviceResult::Denied,
+        )
+    }
+
+    fn wifi_state(&self) -> DeviceResult {
+        self.refusal(Capability::WifiControl).map_or_else(
+            || DeviceResult::Wifi {
+                available: true,
+                enabled: self.wifi_enabled,
+                connected_ssid: self.connected_ssid.clone(),
+                networks: Vec::new(),
             },
             DeviceResult::Denied,
         )
@@ -280,6 +366,30 @@ impl DeviceServices {
         DeviceResult::Granted {
             seconds: clamp_seconds(granted),
         }
+    }
+}
+
+fn request_capability(request: &DeviceRequest) -> Capability {
+    match request {
+        DeviceRequest::ReadBattery => Capability::BatteryRead,
+        DeviceRequest::HoldWifi { .. } | DeviceRequest::ReleaseWifi => Capability::HoldWifi,
+        DeviceRequest::KeepAwake { .. } | DeviceRequest::AllowSleep => Capability::KeepAwake,
+        DeviceRequest::ScheduleWake { .. } | DeviceRequest::CancelWake => Capability::ScheduledWake,
+        DeviceRequest::SetFrontlight { .. } | DeviceRequest::ReadFrontlight => {
+            Capability::FrontlightControl
+        }
+        DeviceRequest::ReadBluetooth
+        | DeviceRequest::SetBluetooth { .. }
+        | DeviceRequest::ScanBluetooth
+        | DeviceRequest::PairBluetooth { .. }
+        | DeviceRequest::ConnectBluetooth { .. }
+        | DeviceRequest::DisconnectBluetooth { .. }
+        | DeviceRequest::ForgetBluetooth { .. } => Capability::BluetoothControl,
+        DeviceRequest::ReadWifi
+        | DeviceRequest::SetWifi { .. }
+        | DeviceRequest::ScanWifi
+        | DeviceRequest::JoinWifi { .. }
+        | DeviceRequest::DisconnectWifi => Capability::WifiControl,
     }
 }
 
@@ -488,7 +598,7 @@ mod tests {
             DeviceRequest::ReadFrontlight,
         ] {
             assert_eq!(
-                services.handle(request),
+                services.handle(request.clone()),
                 DeviceResult::Denied(DenyReason::Unsupported),
                 "{request:?} must be refused without a backend"
             );

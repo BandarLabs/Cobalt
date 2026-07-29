@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 kobo-abi = { path = "../kobo-abi", default-features = false }
 kobo-profile = { path = "../kobo-profile" }
+kobo-protocol = { path = "../kobo-protocol" }
 
 [features]
 default = []

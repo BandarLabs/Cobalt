@@ -26,6 +26,7 @@
 
 use kobo_protocol::TaskError;
 use std::borrow::Cow;
+use std::fmt::Write as _;
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::{Arc, OnceLock};
@@ -488,7 +489,8 @@ fn head(address: &Address, method: &Method<'_>, max_bytes: u32) -> String {
             // 256 KB of a 738 KB novel without a range is answered with the
             // whole novel, and then rejected by the ceiling.
             let last = u64::from(*start) + u64::from(max_bytes) - 1;
-            head.push_str(&format!("Range: bytes={start}-{last}\r\n"));
+            write!(head, "Range: bytes={start}-{last}\r\n")
+                .expect("writing to a String cannot fail");
         }
         Method::Post {
             body,
@@ -497,15 +499,17 @@ fn head(address: &Address, method: &Method<'_>, max_bytes: u32) -> String {
             headers,
         } => {
             if let Some((name, value)) = credential {
-                head.push_str(&format!("{name}: {value}\r\n"));
+                write!(head, "{name}: {value}\r\n").expect("writing to a String cannot fail");
             }
             for (name, value) in *headers {
-                head.push_str(&format!("{name}: {value}\r\n"));
+                write!(head, "{name}: {value}\r\n").expect("writing to a String cannot fail");
             }
-            head.push_str(&format!(
+            write!(
+                head,
                 "Content-Type: {content_type}\r\nContent-Length: {}\r\n",
                 body.len()
-            ));
+            )
+            .expect("writing to a String cannot fail");
         }
     }
     head.push_str("\r\n");

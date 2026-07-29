@@ -57,6 +57,15 @@ pub const MAX_TASK_BYTES_U32: u32 = 512 * 1024;
 /// Declaring the wire width first means the conversion only ever widens.
 pub const MAX_TASK_BYTES: usize = MAX_TASK_BYTES_U32 as usize;
 
+/// The most radios a device scan can report in one answer.
+pub const MAX_RADIO_DEVICES: usize = 32;
+
+/// Human-readable radio identifiers are deliberately shorter than an ordinary
+/// protocol string. They are drawn on one row and are also accepted from local
+/// system tools, so bounding them prevents a broken backend from manufacturing
+/// a very large frame.
+pub const MAX_RADIO_NAME: usize = 96;
+
 /// The longest a stored key may be.
 pub const MAX_STORE_KEY_LEN: usize = 64;
 
@@ -684,7 +693,7 @@ pub fn is_cache_key(key: &str) -> bool {
 ///
 /// Applications never open a device node. They describe an intent, the runtime
 /// decides whether to honour it, and the answer is always explicit.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DeviceRequest {
     /// Report battery percentage and whether the device is charging.
     ReadBattery,
@@ -704,10 +713,34 @@ pub enum DeviceRequest {
     SetFrontlight { percent: u8 },
     /// Report the current front light percentage.
     ReadFrontlight,
+    /// Report whether the Bluetooth controller is available and powered.
+    ReadBluetooth,
+    /// Power the Bluetooth controller on or off.
+    SetBluetooth { enabled: bool },
+    /// Discover nearby and remembered Bluetooth devices.
+    ScanBluetooth,
+    /// Pair with a Bluetooth device by its canonical address.
+    PairBluetooth { address: String },
+    /// Connect a paired Bluetooth device.
+    ConnectBluetooth { address: String },
+    /// Disconnect a Bluetooth device without forgetting it.
+    DisconnectBluetooth { address: String },
+    /// Remove a remembered Bluetooth pairing.
+    ForgetBluetooth { address: String },
+    /// Report Wi-Fi power and association state.
+    ReadWifi,
+    /// Power the Wi-Fi interface on or off.
+    SetWifi { enabled: bool },
+    /// Discover nearby Wi-Fi networks.
+    ScanWifi,
+    /// Join a Wi-Fi network. An empty password means an open network.
+    JoinWifi { ssid: String, password: String },
+    /// Leave the current Wi-Fi network without powering the radio off.
+    DisconnectWifi,
 }
 
 /// The runtime's answer to a device request.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DeviceResult {
     /// The request was carried out and needs no value.
     Done,
@@ -717,8 +750,114 @@ pub enum DeviceResult {
     Battery { percent: u8, charging: bool },
     /// Front light state.
     Frontlight { percent: u8 },
+    /// Bluetooth controller state and the bounded set currently known.
+    Bluetooth {
+        available: bool,
+        enabled: bool,
+        devices: Vec<BluetoothDevice>,
+    },
+    /// Wi-Fi controller state and the bounded set currently known.
+    Wifi {
+        available: bool,
+        enabled: bool,
+        connected_ssid: Option<String>,
+        networks: Vec<WifiNetwork>,
+    },
+    /// The backend exists, but the requested operation failed.
+    Failed(DeviceError),
     /// The request was refused, with the exact reason.
     Denied(DenyReason),
+}
+
+/// A Bluetooth device discovered or remembered by the system controller.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BluetoothDevice {
+    pub address: String,
+    pub name: String,
+    pub kind: BluetoothDeviceKind,
+    pub paired: bool,
+    pub connected: bool,
+}
+
+/// The device classes the settings UI can meaningfully distinguish.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum BluetoothDeviceKind {
+    Audio = 1,
+    Keyboard = 2,
+    Input = 3,
+    Other = 4,
+}
+
+impl TryFrom<u8> for BluetoothDeviceKind {
+    type Error = ProtocolError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::Audio),
+            2 => Ok(Self::Keyboard),
+            3 => Ok(Self::Input),
+            4 => Ok(Self::Other),
+            _ => Err(ProtocolError::InvalidValue("Bluetooth device kind")),
+        }
+    }
+}
+
+/// A Wi-Fi network returned by a scan.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WifiNetwork {
+    pub ssid: String,
+    pub signal_dbm: i16,
+    pub secured: bool,
+    pub connected: bool,
+}
+
+/// Failures from an available radio backend.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum DeviceError {
+    NotFound = 1,
+    Authentication = 2,
+    TimedOut = 3,
+    Unreachable = 4,
+    InvalidInput = 5,
+    Backend = 6,
+}
+
+impl DeviceError {
+    #[must_use]
+    pub const fn describe(self) -> &'static str {
+        match self {
+            Self::NotFound => "the device or network was not found",
+            Self::Authentication => "authentication failed",
+            Self::TimedOut => "the radio operation timed out",
+            Self::Unreachable => "the device or network is unreachable",
+            Self::InvalidInput => "the address or credentials are invalid",
+            Self::Backend => "the system radio service failed",
+        }
+    }
+}
+
+impl fmt::Display for DeviceError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.describe())
+    }
+}
+
+impl TryFrom<u8> for DeviceError {
+    type Error = ProtocolError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::NotFound),
+            2 => Ok(Self::Authentication),
+            3 => Ok(Self::TimedOut),
+            4 => Ok(Self::Unreachable),
+            5 => Ok(Self::InvalidInput),
+            6 => Ok(Self::Backend),
+            _ => Err(ProtocolError::InvalidValue("device error")),
+        }
+    }
 }
 
 /// Why a device request was refused.
@@ -880,8 +1019,8 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
         }
         Message::Exit => {}
         Message::Launch { name } => push_string(&mut payload, name)?,
-        Message::DeviceRequest(request) => encode_device_request(&mut payload, *request),
-        Message::DeviceResult(result) => encode_device_result(&mut payload, *result),
+        Message::DeviceRequest(request) => encode_device_request(&mut payload, request)?,
+        Message::DeviceResult(result) => encode_device_result(&mut payload, result)?,
         Message::Spawn { .. } | Message::Cancel { .. } | Message::TaskOutcome { .. } => {
             encode_task_message(&mut payload, &frame.message)?;
         }
@@ -1327,8 +1466,8 @@ fn encoded_message_layout(message: &Message) -> Result<(u8, usize), ProtocolErro
             add_encoded_len(&mut length, encoded_string_len(name)?)?;
             Ok((12, length))
         }
-        Message::DeviceRequest(_) => Ok((7, 5)),
-        Message::DeviceResult(result) => Ok((8, 1 + device_result_value_len(*result))),
+        Message::DeviceRequest(request) => Ok((7, device_request_len(request)?)),
+        Message::DeviceResult(result) => Ok((8, device_result_len(result)?)),
         Message::Spawn { work, .. } => Ok((9, encoded_task_len(work)?)),
         Message::Cancel { .. } => Ok((10, 4)),
         Message::TaskOutcome { outcome, .. } => {
@@ -1400,77 +1539,274 @@ fn picture_len(width: u32, height: u32) -> Result<usize, ProtocolError> {
         .ok_or(ProtocolError::FrameTooLarge)
 }
 
-/// Every device request encodes as one tag byte and one 32-bit argument, so a
-/// malformed request can never change the frame length.
-fn encode_device_request(output: &mut Vec<u8>, request: DeviceRequest) {
-    let (tag, argument) = match request {
-        DeviceRequest::ReadBattery => (1_u8, 0_u32),
-        DeviceRequest::HoldWifi { seconds } => (2, seconds),
-        DeviceRequest::ReleaseWifi => (3, 0),
-        DeviceRequest::KeepAwake { seconds } => (4, seconds),
-        DeviceRequest::AllowSleep => (5, 0),
-        DeviceRequest::ScheduleWake { seconds } => (6, seconds),
-        DeviceRequest::CancelWake => (7, 0),
-        DeviceRequest::SetFrontlight { percent } => (8, u32::from(percent)),
-        DeviceRequest::ReadFrontlight => (9, 0),
-    };
+fn encode_device_request(
+    output: &mut Vec<u8>,
+    request: &DeviceRequest,
+) -> Result<(), ProtocolError> {
+    match request {
+        DeviceRequest::ReadBattery => fixed_device_request(output, 1, 0),
+        DeviceRequest::HoldWifi { seconds } => fixed_device_request(output, 2, *seconds),
+        DeviceRequest::ReleaseWifi => fixed_device_request(output, 3, 0),
+        DeviceRequest::KeepAwake { seconds } => fixed_device_request(output, 4, *seconds),
+        DeviceRequest::AllowSleep => fixed_device_request(output, 5, 0),
+        DeviceRequest::ScheduleWake { seconds } => fixed_device_request(output, 6, *seconds),
+        DeviceRequest::CancelWake => fixed_device_request(output, 7, 0),
+        DeviceRequest::SetFrontlight { percent } => {
+            fixed_device_request(output, 8, u32::from(*percent));
+        }
+        DeviceRequest::ReadFrontlight => fixed_device_request(output, 9, 0),
+        DeviceRequest::ReadBluetooth => output.push(10),
+        DeviceRequest::SetBluetooth { enabled } => {
+            output.extend_from_slice(&[11, u8::from(*enabled)]);
+        }
+        DeviceRequest::ScanBluetooth => output.push(12),
+        DeviceRequest::PairBluetooth { address } => {
+            output.push(13);
+            push_radio_string(output, address)?;
+        }
+        DeviceRequest::ConnectBluetooth { address } => {
+            output.push(14);
+            push_radio_string(output, address)?;
+        }
+        DeviceRequest::DisconnectBluetooth { address } => {
+            output.push(15);
+            push_radio_string(output, address)?;
+        }
+        DeviceRequest::ForgetBluetooth { address } => {
+            output.push(16);
+            push_radio_string(output, address)?;
+        }
+        DeviceRequest::ReadWifi => output.push(17),
+        DeviceRequest::SetWifi { enabled } => {
+            output.extend_from_slice(&[18, u8::from(*enabled)]);
+        }
+        DeviceRequest::ScanWifi => output.push(19),
+        DeviceRequest::JoinWifi { ssid, password } => {
+            if ssid.is_empty()
+                || ssid.len() > 32
+                || !(password.is_empty() || (8..=63).contains(&password.len()))
+            {
+                return Err(ProtocolError::InvalidValue("Wi-Fi credentials"));
+            }
+            output.push(20);
+            push_radio_string(output, ssid)?;
+            push_radio_string(output, password)?;
+        }
+        DeviceRequest::DisconnectWifi => output.push(21),
+    }
+    Ok(())
+}
+
+fn fixed_device_request(output: &mut Vec<u8>, tag: u8, argument: u32) {
     output.push(tag);
     push_u32(output, argument);
 }
 
+fn device_request_len(request: &DeviceRequest) -> Result<usize, ProtocolError> {
+    let mut encoded = Vec::new();
+    encode_device_request(&mut encoded, request)?;
+    Ok(encoded.len())
+}
+
+fn device_result_len(result: &DeviceResult) -> Result<usize, ProtocolError> {
+    let mut encoded = Vec::new();
+    encode_device_result(&mut encoded, result)?;
+    Ok(encoded.len())
+}
+
+fn push_radio_string(output: &mut Vec<u8>, value: &str) -> Result<(), ProtocolError> {
+    if value.len() > MAX_RADIO_NAME {
+        return Err(ProtocolError::InvalidValue("radio string"));
+    }
+    push_string(output, value)
+}
+
+fn radio_string(reader: &mut Reader<'_>) -> Result<String, ProtocolError> {
+    let value = reader.string()?;
+    if value.len() > MAX_RADIO_NAME {
+        Err(ProtocolError::InvalidValue("radio string"))
+    } else {
+        Ok(value)
+    }
+}
+
+fn wifi_ssid(reader: &mut Reader<'_>) -> Result<String, ProtocolError> {
+    let ssid = radio_string(reader)?;
+    if ssid.is_empty() || ssid.len() > 32 {
+        Err(ProtocolError::InvalidValue("Wi-Fi SSID"))
+    } else {
+        Ok(ssid)
+    }
+}
+
+fn read_boolean(reader: &mut Reader<'_>, field: &'static str) -> Result<bool, ProtocolError> {
+    match reader.u8()? {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(ProtocolError::InvalidValue(field)),
+    }
+}
+
+fn radio_flags(first: bool, second: bool) -> u8 {
+    u8::from(first) | (u8::from(second) << 1)
+}
+
+const fn flags_first(flags: u8) -> bool {
+    flags & 1 != 0
+}
+
+const fn flags_second(flags: u8) -> bool {
+    flags & 2 != 0
+}
+
+fn valid_radio_flags(flags: u8, field: &'static str) -> Result<u8, ProtocolError> {
+    if flags & !3 == 0 {
+        Ok(flags)
+    } else {
+        Err(ProtocolError::InvalidValue(field))
+    }
+}
+
 fn decode_device_request(reader: &mut Reader<'_>) -> Result<DeviceRequest, ProtocolError> {
     let tag = reader.u8()?;
-    let argument = reader.u32()?;
     match tag {
-        1 => Ok(DeviceRequest::ReadBattery),
-        2 => Ok(DeviceRequest::HoldWifi { seconds: argument }),
-        3 => Ok(DeviceRequest::ReleaseWifi),
-        4 => Ok(DeviceRequest::KeepAwake { seconds: argument }),
-        5 => Ok(DeviceRequest::AllowSleep),
-        6 => Ok(DeviceRequest::ScheduleWake { seconds: argument }),
-        7 => Ok(DeviceRequest::CancelWake),
+        1 => fixed_argument(reader, 0).map(|()| DeviceRequest::ReadBattery),
+        2 => Ok(DeviceRequest::HoldWifi {
+            seconds: reader.u32()?,
+        }),
+        3 => fixed_argument(reader, 0).map(|()| DeviceRequest::ReleaseWifi),
+        4 => Ok(DeviceRequest::KeepAwake {
+            seconds: reader.u32()?,
+        }),
+        5 => fixed_argument(reader, 0).map(|()| DeviceRequest::AllowSleep),
+        6 => Ok(DeviceRequest::ScheduleWake {
+            seconds: reader.u32()?,
+        }),
+        7 => fixed_argument(reader, 0).map(|()| DeviceRequest::CancelWake),
         8 => {
+            let argument = reader.u32()?;
             let percent = u8::try_from(argument)
                 .ok()
                 .filter(|percent| *percent <= 100)
                 .ok_or(ProtocolError::InvalidValue("frontlight percent"))?;
             Ok(DeviceRequest::SetFrontlight { percent })
         }
-        9 => Ok(DeviceRequest::ReadFrontlight),
+        9 => fixed_argument(reader, 0).map(|()| DeviceRequest::ReadFrontlight),
+        10 => Ok(DeviceRequest::ReadBluetooth),
+        11 => Ok(DeviceRequest::SetBluetooth {
+            enabled: read_boolean(reader, "Bluetooth enabled")?,
+        }),
+        12 => Ok(DeviceRequest::ScanBluetooth),
+        13 => Ok(DeviceRequest::PairBluetooth {
+            address: radio_string(reader)?,
+        }),
+        14 => Ok(DeviceRequest::ConnectBluetooth {
+            address: radio_string(reader)?,
+        }),
+        15 => Ok(DeviceRequest::DisconnectBluetooth {
+            address: radio_string(reader)?,
+        }),
+        16 => Ok(DeviceRequest::ForgetBluetooth {
+            address: radio_string(reader)?,
+        }),
+        17 => Ok(DeviceRequest::ReadWifi),
+        18 => Ok(DeviceRequest::SetWifi {
+            enabled: read_boolean(reader, "Wi-Fi enabled")?,
+        }),
+        19 => Ok(DeviceRequest::ScanWifi),
+        20 => {
+            let ssid = wifi_ssid(reader)?;
+            let password = radio_string(reader)?;
+            if !(password.is_empty() || (8..=63).contains(&password.len())) {
+                return Err(ProtocolError::InvalidValue("Wi-Fi credentials"));
+            }
+            Ok(DeviceRequest::JoinWifi { ssid, password })
+        }
+        21 => Ok(DeviceRequest::DisconnectWifi),
         _ => Err(ProtocolError::InvalidValue("device request")),
     }
 }
 
-const fn device_result_value_len(result: DeviceResult) -> usize {
-    match result {
-        DeviceResult::Done => 0,
-        DeviceResult::Granted { .. } => 4,
-        DeviceResult::Battery { .. } => 2,
-        DeviceResult::Frontlight { .. } | DeviceResult::Denied(_) => 1,
+fn fixed_argument(reader: &mut Reader<'_>, expected: u32) -> Result<(), ProtocolError> {
+    if reader.u32()? == expected {
+        Ok(())
+    } else {
+        Err(ProtocolError::InvalidValue("device request argument"))
     }
 }
 
-fn encode_device_result(output: &mut Vec<u8>, result: DeviceResult) {
+fn encode_device_result(output: &mut Vec<u8>, result: &DeviceResult) -> Result<(), ProtocolError> {
     match result {
         DeviceResult::Done => output.push(1),
         DeviceResult::Granted { seconds } => {
             output.push(2);
-            push_u32(output, seconds);
+            push_u32(output, *seconds);
         }
         DeviceResult::Battery { percent, charging } => {
             output.push(3);
-            output.push(percent);
-            output.push(u8::from(charging));
+            output.push(*percent);
+            output.push(u8::from(*charging));
         }
         DeviceResult::Frontlight { percent } => {
             output.push(4);
-            output.push(percent);
+            output.push(*percent);
         }
         DeviceResult::Denied(reason) => {
             output.push(5);
-            output.push(reason as u8);
+            output.push(*reason as u8);
+        }
+        DeviceResult::Bluetooth {
+            available,
+            enabled,
+            devices,
+        } => {
+            if devices.len() > MAX_RADIO_DEVICES {
+                return Err(ProtocolError::InvalidValue("too many Bluetooth devices"));
+            }
+            output.extend_from_slice(&[6, radio_flags(*available, *enabled)]);
+            output.push(u8::try_from(devices.len()).map_err(|_| ProtocolError::FrameTooLarge)?);
+            for device in devices {
+                push_radio_string(output, &device.address)?;
+                push_radio_string(output, &device.name)?;
+                output.push(device.kind as u8);
+                output.push(radio_flags(device.paired, device.connected));
+            }
+        }
+        DeviceResult::Wifi {
+            available,
+            enabled,
+            connected_ssid,
+            networks,
+        } => {
+            if networks.len() > MAX_RADIO_DEVICES {
+                return Err(ProtocolError::InvalidValue("too many Wi-Fi networks"));
+            }
+            output.extend_from_slice(&[7, radio_flags(*available, *enabled)]);
+            match connected_ssid {
+                Some(ssid) => {
+                    if ssid.is_empty() || ssid.len() > 32 {
+                        return Err(ProtocolError::InvalidValue("Wi-Fi SSID"));
+                    }
+                    output.push(1);
+                    push_radio_string(output, ssid)?;
+                }
+                None => output.push(0),
+            }
+            output.push(u8::try_from(networks.len()).map_err(|_| ProtocolError::FrameTooLarge)?);
+            for network in networks {
+                if network.ssid.is_empty() || network.ssid.len() > 32 {
+                    return Err(ProtocolError::InvalidValue("Wi-Fi SSID"));
+                }
+                push_radio_string(output, &network.ssid)?;
+                push_u16(output, u16::from_be_bytes(network.signal_dbm.to_be_bytes()));
+                output.push(radio_flags(network.secured, network.connected));
+            }
+        }
+        DeviceResult::Failed(error) => {
+            output.extend_from_slice(&[8, *error as u8]);
         }
     }
+    Ok(())
 }
 
 fn decode_device_result(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
@@ -1499,6 +1835,63 @@ fn decode_device_result(reader: &mut Reader<'_>) -> Result<DeviceResult, Protoco
             Ok(DeviceResult::Frontlight { percent })
         }
         5 => Ok(DeviceResult::Denied(DenyReason::try_from(reader.u8()?)?)),
+        6 => {
+            let flags = valid_radio_flags(reader.u8()?, "Bluetooth state flags")?;
+            let count = usize::from(reader.u8()?);
+            if count > MAX_RADIO_DEVICES {
+                return Err(ProtocolError::InvalidValue("too many Bluetooth devices"));
+            }
+            let mut devices = Vec::with_capacity(count);
+            for _ in 0..count {
+                let address = radio_string(reader)?;
+                let name = radio_string(reader)?;
+                let kind = BluetoothDeviceKind::try_from(reader.u8()?)?;
+                let device_flags = valid_radio_flags(reader.u8()?, "Bluetooth device flags")?;
+                devices.push(BluetoothDevice {
+                    address,
+                    name,
+                    kind,
+                    paired: flags_first(device_flags),
+                    connected: flags_second(device_flags),
+                });
+            }
+            Ok(DeviceResult::Bluetooth {
+                available: flags_first(flags),
+                enabled: flags_second(flags),
+                devices,
+            })
+        }
+        7 => {
+            let flags = valid_radio_flags(reader.u8()?, "Wi-Fi state flags")?;
+            let connected_ssid = match reader.u8()? {
+                0 => None,
+                1 => Some(wifi_ssid(reader)?),
+                _ => return Err(ProtocolError::InvalidValue("Wi-Fi connection flag")),
+            };
+            let count = usize::from(reader.u8()?);
+            if count > MAX_RADIO_DEVICES {
+                return Err(ProtocolError::InvalidValue("too many Wi-Fi networks"));
+            }
+            let mut networks = Vec::with_capacity(count);
+            for _ in 0..count {
+                let ssid = wifi_ssid(reader)?;
+                let signal_dbm = i16::from_be_bytes(reader.u16()?.to_be_bytes());
+                let network_flags = valid_radio_flags(reader.u8()?, "Wi-Fi network flags")?;
+                networks.push(WifiNetwork {
+                    ssid,
+                    signal_dbm,
+                    secured: flags_first(network_flags),
+                    connected: flags_second(network_flags),
+                });
+            }
+            Ok(DeviceResult::Wifi {
+                available: flags_first(flags),
+                enabled: flags_second(flags),
+                connected_ssid,
+                networks,
+            })
+        }
+        8 => Ok(DeviceResult::Failed(DeviceError::try_from(reader.u8()?)?)),
         _ => Err(ProtocolError::InvalidValue("device result")),
     }
 }
@@ -3927,7 +4320,7 @@ mod tests {
 
     #[test]
     fn every_device_request_round_trips() {
-        let requests = [
+        let requests = vec![
             DeviceRequest::ReadBattery,
             DeviceRequest::HoldWifi { seconds: 600 },
             DeviceRequest::ReleaseWifi,
@@ -3938,6 +4331,29 @@ mod tests {
             DeviceRequest::SetFrontlight { percent: 100 },
             DeviceRequest::SetFrontlight { percent: 0 },
             DeviceRequest::ReadFrontlight,
+            DeviceRequest::ReadBluetooth,
+            DeviceRequest::SetBluetooth { enabled: true },
+            DeviceRequest::ScanBluetooth,
+            DeviceRequest::PairBluetooth {
+                address: "AA:BB:CC:DD:EE:FF".to_owned(),
+            },
+            DeviceRequest::ConnectBluetooth {
+                address: "AA:BB:CC:DD:EE:FF".to_owned(),
+            },
+            DeviceRequest::DisconnectBluetooth {
+                address: "AA:BB:CC:DD:EE:FF".to_owned(),
+            },
+            DeviceRequest::ForgetBluetooth {
+                address: "AA:BB:CC:DD:EE:FF".to_owned(),
+            },
+            DeviceRequest::ReadWifi,
+            DeviceRequest::SetWifi { enabled: false },
+            DeviceRequest::ScanWifi,
+            DeviceRequest::JoinWifi {
+                ssid: "Library".to_owned(),
+                password: "readmore".to_owned(),
+            },
+            DeviceRequest::DisconnectWifi,
         ];
         for request in requests {
             let frame = Frame {
@@ -3945,14 +4361,13 @@ mod tests {
                 message: Message::DeviceRequest(request),
             };
             let bytes = encode(&frame).expect("encode");
-            assert_eq!(bytes.len(), HEADER_LEN + 5, "requests are fixed width");
             assert_eq!(decode(&bytes).expect("decode"), frame);
         }
     }
 
     #[test]
     fn every_device_result_round_trips() {
-        let results = [
+        let results = vec![
             DeviceResult::Done,
             DeviceResult::Granted { seconds: 300 },
             DeviceResult::Battery {
@@ -3969,6 +4384,29 @@ mod tests {
             DeviceResult::Denied(DenyReason::Unsupported),
             DeviceResult::Denied(DenyReason::PolicyRejected),
             DeviceResult::Denied(DenyReason::Busy),
+            DeviceResult::Bluetooth {
+                available: true,
+                enabled: true,
+                devices: vec![BluetoothDevice {
+                    address: "AA:BB:CC:DD:EE:FF".to_owned(),
+                    name: "Headphones".to_owned(),
+                    kind: BluetoothDeviceKind::Audio,
+                    paired: true,
+                    connected: true,
+                }],
+            },
+            DeviceResult::Wifi {
+                available: true,
+                enabled: true,
+                connected_ssid: Some("Library".to_owned()),
+                networks: vec![WifiNetwork {
+                    ssid: "Library".to_owned(),
+                    signal_dbm: -48,
+                    secured: true,
+                    connected: true,
+                }],
+            },
+            DeviceResult::Failed(DeviceError::Authentication),
         ];
         for result in results {
             let frame = Frame {

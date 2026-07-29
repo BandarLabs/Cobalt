@@ -1526,7 +1526,7 @@ fn read_app_messages(
                     Scenario::PermissionDenied => {
                         kobo_protocol::DeviceResult::Denied(kobo_protocol::DenyReason::NotDeclared)
                     }
-                    _ => services.handle(request),
+                    _ => services.handle(request.clone()),
                 };
                 {
                     let mut state = state

@@ -42,8 +42,12 @@ pub enum Capability {
     BatteryRead,
     /// Change the front light brightness.
     FrontlightControl,
+    /// Power, discover, pair and connect Bluetooth devices.
+    BluetoothControl,
     /// Use the Bluetooth audio profile, for example for spoken content.
     BluetoothAudio,
+    /// Power, scan and join Wi-Fi networks.
+    WifiControl,
     /// Play audio through the active output.
     Audio,
     /// Draw the sleep screen.
@@ -78,7 +82,9 @@ impl Capability {
             Self::ScheduledWake => "scheduled-wake",
             Self::BatteryRead => "battery-read",
             Self::FrontlightControl => "frontlight-control",
+            Self::BluetoothControl => "bluetooth-control",
             Self::BluetoothAudio => "bluetooth-audio",
+            Self::WifiControl => "wifi-control",
             Self::Audio => "audio",
             Self::SleepScreen => "sleep-screen",
             Self::Notifications => "notifications",
@@ -98,7 +104,7 @@ impl Capability {
     }
 
     /// Every capability, in declaration order.
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 15] = [
         Self::Network,
         Self::BackgroundNetwork,
         Self::HoldWifi,
@@ -106,7 +112,9 @@ impl Capability {
         Self::ScheduledWake,
         Self::BatteryRead,
         Self::FrontlightControl,
+        Self::BluetoothControl,
         Self::BluetoothAudio,
+        Self::WifiControl,
         Self::Audio,
         Self::SleepScreen,
         Self::Notifications,
@@ -182,7 +190,9 @@ impl PowerPolicy {
                 | Capability::KeepAwake
                 | Capability::ScheduledWake
                 | Capability::BluetoothAudio
+                | Capability::BluetoothControl
                 | Capability::Audio
+                | Capability::WifiControl
         )
     }
 }

@@ -88,6 +88,29 @@ const DATA_ROOT: &str = "/mnt/onboard/.adds/cobalt/data";
 /// secret, header convention and HTTPS origin. A modified application can no
 /// longer turn a stored credential into a POST to an address it controls.
 fn credential_allowed(app: &str, credential: &Credential, url: &str) -> bool {
+    if app == "audiobook" {
+        return match (&*credential.secret, &credential.header) {
+            ("exa", SecretHeader::Named(header)) => {
+                header.eq_ignore_ascii_case("x-api-key")
+                    && url == "https://api.exa.ai/search"
+                    && kobo_net::has_origin(url, "api.exa.ai", 443)
+            }
+            ("openai", SecretHeader::Bearer) => {
+                url == "https://api.openai.com/v1/responses"
+                    && kobo_net::has_origin(url, "api.openai.com", 443)
+            }
+            ("elevenlabs", SecretHeader::Named(header)) => {
+                header.eq_ignore_ascii_case("xi-api-key")
+                    && url
+                        == concat!(
+                            "https://api.elevenlabs.io/v1/text-to-speech/",
+                            "JBFqnCBsd6RMkjVDRZzb?output_format=mp3_22050_32"
+                        )
+                    && kobo_net::has_origin(url, "api.elevenlabs.io", 443)
+            }
+            _ => false,
+        };
+    }
     if app != "chat" {
         return false;
     }
@@ -492,6 +515,24 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     // any watchdog we can talk to. Ordering this correctly costs nothing.
     drop(touch);
     drop(display);
+    // The Clara BW's MediaTek Bluetooth driver cannot be initialised twice in
+    // one boot. If Cobalt changed or scanned that stack, starting Nickel here
+    // can panic the kernel inside wlan_drv_gen4m. A normal, synced reboot is
+    // the only proven hand-back: it returns directly to the stock reader with
+    // a pristine shared Wi-Fi/Bluetooth driver state.
+    if kobo_hal::bluetooth::requires_reboot_after_use() {
+        trace("MediaTek Bluetooth was used; rebooting cleanly instead of restarting the reader");
+        println!("Bluetooth changed; rebooting cleanly back to the reader");
+        watchdog.disarm();
+        drop(teardown);
+        let _ignored = fs::remove_dir_all(&state);
+        let summary = outcome.unwrap_or_else(|error| format!("application ended: {error}"));
+        return request_clean_reboot().map(|()| {
+            format!(
+                "{summary}; typeface {typeface}; Bluetooth used the shared MediaTek radio, so a clean reboot was requested before returning to the stock reader"
+            )
+        });
+    }
     trace("panel and touch released, restarting the reader");
     println!("panel released, restarting the reader");
     let restarted = reader.start(START_GRACE);
@@ -540,6 +581,30 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
         )),
         (Err(error), _) => Err(format!("{error}; {reader_state}")),
     }
+}
+
+/// Syncs user storage and requests the firmware's ordinary reboot path.
+fn request_clean_reboot() -> Result<(), String> {
+    let sync = Command::new("sync")
+        .status()
+        .map_err(|error| format!("start sync before Bluetooth reboot: {error}"))?;
+    if !sync.success() {
+        return Err("sync failed before Bluetooth reboot; power-cycle the reader".to_owned());
+    }
+    for tool in ["/sbin/reboot", "/bin/reboot", "/usr/sbin/reboot"] {
+        if Path::new(tool).is_file() {
+            return Command::new(tool)
+                .status()
+                .map_err(|error| format!("request reboot with {tool}: {error}"))
+                .and_then(|status| {
+                    status
+                        .success()
+                        .then_some(())
+                        .ok_or_else(|| format!("{tool} refused the reboot; power-cycle the reader"))
+                });
+        }
+    }
+    Err("the firmware has no reboot command; power-cycle the reader".to_owned())
 }
 
 /// Renders a duration the way the summary should read it.
@@ -755,6 +820,14 @@ fn host_applications(
     }
     if frontlight.is_some() {
         backends.push(Capability::FrontlightControl);
+    }
+    let bluetooth = kobo_hal::bluetooth::Bluetooth::open();
+    if bluetooth.is_some() {
+        backends.push(Capability::BluetoothControl);
+    }
+    let wifi = kobo_hal::wifi::Wifi::open();
+    if wifi.is_some() {
+        backends.push(Capability::WifiControl);
     }
     let mut services = DeviceServices::new(
         Declared::all(),
@@ -1154,7 +1227,114 @@ fn host_applications(
                                     _ => {}
                                 }
                             }
-                            let result = services.handle(request);
+                            let result = if let Some(reason) = services.refusal_for(&request) {
+                                kobo_protocol::DeviceResult::Denied(reason)
+                            } else {
+                                match &request {
+                                    kobo_protocol::DeviceRequest::ReadBluetooth => {
+                                        bluetooth.as_ref().map_or(
+                                            kobo_protocol::DeviceResult::Denied(
+                                                kobo_protocol::DenyReason::Unsupported,
+                                            ),
+                                            kobo_hal::bluetooth::Bluetooth::state,
+                                        )
+                                    }
+                                    kobo_protocol::DeviceRequest::SetBluetooth { enabled } => {
+                                        // Kobo documents Bluetooth as sharing the wireless
+                                        // radio with Wi-Fi. Bring Wi-Fi up first, exactly as
+                                        // Nickel does, but do not fail Bluetooth merely because
+                                        // association itself has not completed yet.
+                                        if *enabled {
+                                            if let Some(wifi) = &wifi {
+                                                let _ignored = wifi.set_enabled(true);
+                                            }
+                                        }
+                                        bluetooth.as_ref().map_or(
+                                            kobo_protocol::DeviceResult::Denied(
+                                                kobo_protocol::DenyReason::Unsupported,
+                                            ),
+                                            |bluetooth| bluetooth.set_enabled(*enabled),
+                                        )
+                                    }
+                                    kobo_protocol::DeviceRequest::ScanBluetooth => {
+                                        bluetooth.as_ref().map_or(
+                                            kobo_protocol::DeviceResult::Denied(
+                                                kobo_protocol::DenyReason::Unsupported,
+                                            ),
+                                            kobo_hal::bluetooth::Bluetooth::scan,
+                                        )
+                                    }
+                                    kobo_protocol::DeviceRequest::PairBluetooth { address } => {
+                                        bluetooth.as_ref().map_or(
+                                            kobo_protocol::DeviceResult::Denied(
+                                                kobo_protocol::DenyReason::Unsupported,
+                                            ),
+                                            |bluetooth| bluetooth.pair(address),
+                                        )
+                                    }
+                                    kobo_protocol::DeviceRequest::ConnectBluetooth { address } => {
+                                        bluetooth.as_ref().map_or(
+                                            kobo_protocol::DeviceResult::Denied(
+                                                kobo_protocol::DenyReason::Unsupported,
+                                            ),
+                                            |bluetooth| bluetooth.connect(address),
+                                        )
+                                    }
+                                    kobo_protocol::DeviceRequest::DisconnectBluetooth {
+                                        address,
+                                    } => bluetooth.as_ref().map_or(
+                                        kobo_protocol::DeviceResult::Denied(
+                                            kobo_protocol::DenyReason::Unsupported,
+                                        ),
+                                        |bluetooth| bluetooth.disconnect(address),
+                                    ),
+                                    kobo_protocol::DeviceRequest::ForgetBluetooth { address } => {
+                                        bluetooth.as_ref().map_or(
+                                            kobo_protocol::DeviceResult::Denied(
+                                                kobo_protocol::DenyReason::Unsupported,
+                                            ),
+                                            |bluetooth| bluetooth.forget(address),
+                                        )
+                                    }
+                                    kobo_protocol::DeviceRequest::ReadWifi => wifi.as_ref().map_or(
+                                        kobo_protocol::DeviceResult::Denied(
+                                            kobo_protocol::DenyReason::Unsupported,
+                                        ),
+                                        kobo_hal::wifi::Wifi::state,
+                                    ),
+                                    kobo_protocol::DeviceRequest::SetWifi { enabled } => {
+                                        wifi.as_ref().map_or(
+                                            kobo_protocol::DeviceResult::Denied(
+                                                kobo_protocol::DenyReason::Unsupported,
+                                            ),
+                                            |wifi| wifi.set_enabled(*enabled),
+                                        )
+                                    }
+                                    kobo_protocol::DeviceRequest::ScanWifi => wifi.as_ref().map_or(
+                                        kobo_protocol::DeviceResult::Denied(
+                                            kobo_protocol::DenyReason::Unsupported,
+                                        ),
+                                        kobo_hal::wifi::Wifi::scan,
+                                    ),
+                                    kobo_protocol::DeviceRequest::JoinWifi { ssid, password } => {
+                                        wifi.as_ref().map_or(
+                                            kobo_protocol::DeviceResult::Denied(
+                                                kobo_protocol::DenyReason::Unsupported,
+                                            ),
+                                            |wifi| wifi.join(ssid, password),
+                                        )
+                                    }
+                                    kobo_protocol::DeviceRequest::DisconnectWifi => {
+                                        wifi.as_ref().map_or(
+                                            kobo_protocol::DeviceResult::Denied(
+                                                kobo_protocol::DenyReason::Unsupported,
+                                            ),
+                                            kobo_hal::wifi::Wifi::disconnect,
+                                        )
+                                    }
+                                    _ => services.handle(request.clone()),
+                                }
+                            };
                             reply(
                                 &mut apps[index],
                                 frame.request_id,
@@ -1518,6 +1698,15 @@ fn start_application(
         // than being absent, so that the day manifests arrive there is exactly
         // one line to change.
         .with_capabilities([kobo_policy::Capability::Network]);
+    let shelf_root = if name == "audiobook" {
+        // `.mp3z` is the firmware's sideloaded-audiobook container. Keeping
+        // this one privileged shelf in a visible directory means Nickel finds
+        // the finished archive after the panel session ends. Every other app
+        // remains confined to its private Cobalt data directory.
+        PathBuf::from("/mnt/onboard/Audiobooks")
+    } else {
+        Path::new(DATA_ROOT).join(&name)
+    };
     apps.push(Hosted {
         id,
         // Named explicitly, and only here. A shell on this device is root on a
@@ -1540,7 +1729,7 @@ fn start_application(
         // the one place a reinstall does not wipe. An application that never
         // saves creates nothing here.
         store: kobo_policy::store::Store::new(Path::new(STATE_ROOT).join(&name)),
-        shelf: kobo_policy::shelf::Shelf::new(Path::new(DATA_ROOT).join(&name)),
+        shelf: kobo_policy::shelf::Shelf::new(shelf_root),
         name,
         path: path.to_path_buf(),
         jail,
@@ -2349,6 +2538,38 @@ mod tests {
             ("chat", "https://attacker.invalid/collect"),
         ] {
             assert!(!super::credential_allowed(app, &openai, url));
+        }
+    }
+
+    #[test]
+    fn audiobook_credentials_are_bound_to_three_exact_provider_requests() {
+        use kobo_protocol::Credential;
+
+        let requests = [
+            (
+                Credential::in_header("exa", "x-api-key"),
+                "https://api.exa.ai/search",
+            ),
+            (
+                Credential::bearer("openai"),
+                "https://api.openai.com/v1/responses",
+            ),
+            (
+                Credential::in_header("elevenlabs", "xi-api-key"),
+                concat!(
+                    "https://api.elevenlabs.io/v1/text-to-speech/",
+                    "JBFqnCBsd6RMkjVDRZzb?output_format=mp3_22050_32"
+                ),
+            ),
+        ];
+        for (credential, url) in requests {
+            assert!(super::credential_allowed("audiobook", &credential, url));
+            assert!(!super::credential_allowed("chat", &credential, url));
+            assert!(!super::credential_allowed(
+                "audiobook",
+                &credential,
+                "https://attacker.invalid/collect"
+            ));
         }
     }
 
