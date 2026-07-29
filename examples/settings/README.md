@@ -16,7 +16,7 @@ the Bluetooth chip and the battery.
 ## Why the front screen states everything
 
 Every row says what it is and what it is doing, on the row. "Bluetooth / Off",
-"Wi-Fi / Connected to Koh_907", "Battery / 95% and discharging". A settings
+"Wi-Fi / Connected to Fernwood", "Battery / 95% and discharging". A settings
 screen whose rows are only nouns makes you open all three to find the one you
 wanted, and on a panel that takes most of a second to redraw, that is three
 seconds spent learning nothing.

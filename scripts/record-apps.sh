@@ -25,7 +25,7 @@ DEVICE=""
 OUT=""
 SECONDS_EACH=24
 FPS=2
-APPS="hn rss brief gutenbird todo tictactoe gallery terminal chat launcher"
+APPS="launcher hn rss brief gutenbird todo tictactoe gallery terminal chat settings magnet audiobook"
 
 usage() {
     sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
@@ -74,6 +74,19 @@ steps_for() {
         # A keyboard, so the taps go to where the keys are.
         chat|terminal)
             echo "6:$TAP_BAR 4:300,1100 3:500,1100 3:700,1100" ;;
+        # Rows that open a pane each, and the way back from each of them.
+        settings)
+            echo "5:536,770 5:$TAP_BACK 4:536,525 4:$TAP_BACK" ;;
+        # A shelf, the player it opens, and back to the shelf.
+        audiobook)
+            echo "5:530,250 8:$TAP_BACK" ;;
+        # Nothing to tap. The screen only moves when a magnet does, so this
+        # records whatever the sensor says for the length of the run.
+        magnet)
+            echo "" ;;
+        # Tiles, then the second page of them.
+        launcher)
+            echo "5:869,880 6:$TAP_BACK 4:890,1380" ;;
         *)
             echo "6:$TAP_CONTENT 5:$TAP_BACK 4:$TAP_BAR" ;;
     esac
