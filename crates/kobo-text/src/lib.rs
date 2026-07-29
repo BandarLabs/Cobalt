@@ -1114,6 +1114,54 @@ mod tests {
         );
     }
 
+    /// Every substitute must be a character the face can actually draw.
+    ///
+    /// A table entry pointing at a second missing glyph would swap one empty
+    /// box for another while looking like a fix. This walks the whole table
+    /// against the compiled-in face, so an entry added for a character this
+    /// face happens to lack cannot pass unnoticed.
+    #[test]
+    fn every_substitute_is_a_character_the_face_carries() {
+        let face = Typeface::from_bytes(TEXT_FONT, "bundled", CLARA).expect("the compiled-in face");
+        let mut checked = 0;
+        for code in 0..=0x1_ffff_u32 {
+            let Some(character) = char::from_u32(code) else {
+                continue;
+            };
+            let Some(stand_in) = substitute(character) else {
+                continue;
+            };
+            checked += 1;
+            assert!(
+                face.font.lookup_glyph_index(stand_in) != 0,
+                "{character:?} is replaced by {stand_in:?}, which the face cannot draw either"
+            );
+        }
+        assert!(checked > 20, "only {checked} substitutions were examined");
+    }
+
+    /// Nothing in ordinary web text should reach the panel as an empty box.
+    ///
+    /// The punctuation a title, a feed or an article is made of, gathered in
+    /// one place so that the day a face is swapped, this says which character
+    /// stopped working rather than a reader noticing it.
+    #[test]
+    fn the_punctuation_of_ordinary_web_text_is_all_drawable() {
+        let fonts = SystemFonts::discover(CLARA).expect("fonts");
+        let text = "\u{2018}\u{2019}\u{201c}\u{201d}\u{2013}\u{2014}\u{2010}\u{2011}\u{2012}\
+                    \u{2026}\u{00a0}\u{2009}\u{202f}\u{200b}\u{feff}\u{2060}\u{fe0f}\u{2032}\
+                    \u{2033}\u{2192}\u{2190}\u{2022}\u{00b7}\u{00d7}\u{2212}\u{2044}\u{00ad}";
+        for face in [Face::Text, Face::Reading, Face::Mono] {
+            for character in text.chars() {
+                assert!(
+                    fonts.has_glyph(character, face),
+                    "U+{:04X} would draw an empty box in {face:?}",
+                    character as u32
+                );
+            }
+        }
+    }
+
     /// Every pixel a run puts down, so two runs can be compared exactly.
     fn ink(face: &Typeface, text: &str) -> Vec<(i32, i32)> {
         let mut marks = Vec::new();
