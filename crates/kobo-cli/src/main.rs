@@ -2518,6 +2518,11 @@ fn await_reader(subnet: &str) {
 /// A pure function of the options and the reader, so that what `--dry-run`
 /// promises can be tested rather than read.
 fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
+    // Asked of the reader in front of us rather than assumed. A plan that
+    // promised to stage NickelMenu on a device that already has it described
+    // an archive that was never going to be written, and then described the
+    // key as sharing it.
+    let plugin_installed = menu::installed(&reader.volume);
     let keys = setup::SETTINGS_APPLIED
         .iter()
         .map(|(section, key, value)| format!("{section}/{key}={value}"))
@@ -2557,7 +2562,15 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
             "would leave the firmware's SSH server disabled (pass --enable-ssh to opt in)"
                 .to_owned()
         },
-        if options.menu == MenuEntry::Add {
+        if options.menu != MenuEntry::Add {
+            "would add no menu entry, because --no-menu was given".to_owned()
+        } else if plugin_installed {
+            format!(
+                "would write a Cobalt entry to {}, and stage nothing, because NickelMenu\n\
+                 \x20 is already installed on this reader",
+                menu::CONFIG,
+            )
+        } else {
             format!(
                 "would write a Cobalt entry to {}, and stage NickelMenu {} in {}\n\
                  \x20 for the firmware to extract, after checking that the archive contains\n\
@@ -2567,10 +2580,8 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
                 menu::KOBOROOT,
                 menu::ARCHIVE_MEMBERS.join(" and "),
             )
-        } else {
-            "would add no menu entry, because --no-menu was given".to_owned()
         },
-        describe_key_plan(options),
+        describe_key_plan(options, plugin_installed),
         if options.enable_ssh && options.wait {
             "wait for the restarted reader to appear on the network"
         } else if !options.enable_ssh {
@@ -2578,7 +2589,10 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
         } else {
             "stop, because --no-wait was given"
         },
-        match (options.menu == MenuEntry::Add, options.enable_ssh && options.authorize_key) {
+        match (
+            options.menu == MenuEntry::Add && !plugin_installed,
+            options.enable_ssh && options.authorize_key,
+        ) {
             (true, true) => ", and nothing extracted as root but NickelMenu's own two files and one authorized_keys",
             (true, false) => ", and nothing extracted as root but NickelMenu's own two files",
             (false, true) => ", and nothing extracted as root but one authorized_keys",
@@ -2588,14 +2602,14 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
 }
 
 /// The one line of the dry run that covers this machine's key.
-fn describe_key_plan(options: &SetupOptions) -> String {
+fn describe_key_plan(options: &SetupOptions, plugin_installed: bool) -> String {
     if !options.enable_ssh {
         return "would install no key, because there is no SSH server to use it".to_owned();
     }
     if !options.authorize_key {
         return "would install no key, because --no-key was given".to_owned();
     }
-    let slot = if options.menu == MenuEntry::Add {
+    let slot = if options.menu == MenuEntry::Add && !plugin_installed {
         format!(
             "into the same {} the menu plugin is staged in",
             menu::KOBOROOT
@@ -2606,7 +2620,8 @@ fn describe_key_plan(options: &SetupOptions) -> String {
     format!(
         "would put this machine's public key {slot}, creating\n\
          \x20 ~/.ssh/{} first if it does not exist, so that 'kobo devices' and every\n\
-         \x20 other device command can reach the reader without a password",
+         \x20 other device command can reach the reader without a password. This replaces\n\
+         \x20 any keys the reader already accepts, because USB cannot read that file back",
         authorize::KEY_NAME,
     )
 }
@@ -4721,9 +4736,58 @@ mod tests {
             values.iter().map(|value| (*value).to_owned()).collect()
         }
 
-        fn reader() -> setup::Mounted {
+        /// A reader that has never had NickelMenu on it.
+        ///
+        /// A real path rather than a made-up one, because the plan now asks
+        /// the volume what is already installed. The first version of this
+        /// pointed at /Volumes/KOBOeReader and quietly read whichever device
+        /// happened to be plugged in, so the test passed or failed by what was
+        /// on somebody's desk.
+        fn fresh_reader() -> (setup::Mounted, TempVolume) {
+            let volume = TempVolume::new("fresh");
+            (mounted(volume.path.clone()), volume)
+        }
+
+        /// A reader that already has the plugin, which most do by the second
+        /// run of this command.
+        fn prepared_reader() -> (setup::Mounted, TempVolume) {
+            let volume = TempVolume::new("prepared");
+            let folder = volume.path.join(menu_config_folder());
+            std::fs::create_dir_all(&folder).expect("the plugin folder");
+            std::fs::write(folder.join("doc"), "nickelmenu").expect("the marker");
+            (mounted(volume.path.clone()), volume)
+        }
+
+        fn menu_config_folder() -> &'static str {
+            crate::menu::CONFIG_FOLDER
+        }
+
+        struct TempVolume {
+            path: PathBuf,
+        }
+
+        impl TempVolume {
+            fn new(name: &str) -> Self {
+                let path = std::env::temp_dir().join(format!(
+                    "kobo-plan-{name}-{}-{:?}",
+                    std::process::id(),
+                    std::thread::current().id()
+                ));
+                let _ = std::fs::remove_dir_all(&path);
+                std::fs::create_dir_all(&path).expect("a volume");
+                Self { path }
+            }
+        }
+
+        impl Drop for TempVolume {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.path);
+            }
+        }
+
+        fn mounted(volume: PathBuf) -> setup::Mounted {
             setup::Mounted {
-                volume: PathBuf::from("/Volumes/KOBOeReader"),
+                volume,
                 serial: "N365410043013".to_owned(),
                 firmware: "4.45.23697".to_owned(),
             }
@@ -4757,7 +4821,7 @@ mod tests {
             let parsed = parse_setup(&arguments(&["--undo", "--dry-run"])).expect("parse");
             assert_eq!(parsed.mode, SetupMode::Undo);
             assert!(parsed.dry_run);
-            let plan = dry_run_plan(&parsed, &reader());
+            let plan = dry_run_plan(&parsed, &fresh_reader().0);
             assert!(plan.starts_with("would "), "{plan}");
             assert!(plan.contains("would remove"), "{plan}");
             assert!(plan.contains(setup::SSH_ENABLED), "{plan}");
@@ -4767,7 +4831,7 @@ mod tests {
         #[test]
         fn a_dry_run_names_every_change_it_would_make() {
             let parsed = parse_setup(&arguments(&["--dry-run"])).expect("parse");
-            let plan = dry_run_plan(&parsed, &reader());
+            let plan = dry_run_plan(&parsed, &fresh_reader().0);
             assert!(plan.contains("would install"));
             assert!(plan.contains("leave the firmware's SSH server disabled"));
             assert!(plan.contains("stop after ejecting"));
@@ -4780,7 +4844,7 @@ mod tests {
         fn root_ssh_requires_an_explicit_opt_in() {
             let parsed = parse_setup(&arguments(&["--enable-ssh", "--dry-run"])).expect("parse");
             assert!(parsed.enable_ssh);
-            let plan = dry_run_plan(&parsed, &reader());
+            let plan = dry_run_plan(&parsed, &fresh_reader().0);
             assert!(plan.contains(setup::SSH_DISABLED), "{plan}");
             assert!(plan.contains("root SSH"), "{plan}");
             assert!(plan.contains("wait for the restarted reader"), "{plan}");
@@ -4790,14 +4854,14 @@ mod tests {
         fn a_dry_run_that_will_not_wait_says_so() {
             let parsed = parse_setup(&arguments(&["--dry-run", "--enable-ssh", "--no-wait"]))
                 .expect("parse");
-            assert!(dry_run_plan(&parsed, &reader()).contains("--no-wait was given"));
+            assert!(dry_run_plan(&parsed, &fresh_reader().0).contains("--no-wait was given"));
         }
 
         #[test]
         fn enabling_ssh_installs_this_machines_key_by_default() {
             let parsed = parse_setup(&arguments(&["--enable-ssh", "--dry-run"])).expect("parse");
             assert!(parsed.authorize_key);
-            let plan = dry_run_plan(&parsed, &reader());
+            let plan = dry_run_plan(&parsed, &fresh_reader().0);
             assert!(plan.contains("this machine's public key"), "{plan}");
             assert!(plan.contains("kobo_cobalt"), "{plan}");
             // Both go into the one slot the firmware reads, so the plan has to
@@ -4811,7 +4875,7 @@ mod tests {
             let parsed =
                 parse_setup(&arguments(&["--enable-ssh", "--no-key", "--dry-run"])).expect("parse");
             assert!(!parsed.authorize_key);
-            let plan = dry_run_plan(&parsed, &reader());
+            let plan = dry_run_plan(&parsed, &fresh_reader().0);
             assert!(plan.contains("--no-key was given"), "{plan}");
             assert!(!plan.contains("one authorized_keys"), "{plan}");
         }
@@ -4819,8 +4883,40 @@ mod tests {
         #[test]
         fn without_ssh_there_is_no_key_to_install() {
             let parsed = parse_setup(&arguments(&["--dry-run"])).expect("parse");
-            let plan = dry_run_plan(&parsed, &reader());
+            let plan = dry_run_plan(&parsed, &fresh_reader().0);
             assert!(plan.contains("no SSH server to use it"), "{plan}");
+        }
+
+        #[test]
+        fn a_fresh_reader_is_told_both_things_go_into_the_one_slot() {
+            // The firmware extracts exactly one archive, so a plan that
+            // described two would be describing something impossible.
+            let (reader, _volume) = fresh_reader();
+            let parsed = parse_setup(&arguments(&["--enable-ssh", "--dry-run"])).expect("parse");
+            let plan = dry_run_plan(&parsed, &reader);
+            assert!(plan.contains("stage NickelMenu"), "{plan}");
+            assert!(plan.contains("same .kobo/KoboRoot.tgz"), "{plan}");
+            assert!(
+                plan.contains("NickelMenu's own two files and one authorized_keys"),
+                "{plan}"
+            );
+        }
+
+        #[test]
+        fn a_reader_that_already_has_the_plugin_is_not_promised_it_again() {
+            // Found on a real reader: the plan said it would stage NickelMenu
+            // and put the key in beside it, on a device that already had the
+            // plugin and where the key would go in alone.
+            let (reader, _volume) = prepared_reader();
+            let parsed = parse_setup(&arguments(&["--enable-ssh", "--dry-run"])).expect("parse");
+            let plan = dry_run_plan(&parsed, &reader);
+            assert!(plan.contains("already installed on this reader"), "{plan}");
+            assert!(!plan.contains("stage NickelMenu"), "{plan}");
+            assert!(!plan.contains("same .kobo/KoboRoot.tgz"), "{plan}");
+            assert!(
+                plan.contains("nothing extracted as root but one authorized_keys"),
+                "{plan}"
+            );
         }
 
         #[test]

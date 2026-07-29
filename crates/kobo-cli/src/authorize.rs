@@ -373,6 +373,103 @@ mod tests {
         std::fs::remove_dir_all(&volume).ok();
     }
 
+    /// Proves the merge against the real NickelMenu release.
+    ///
+    /// Skipped unless `KOBO_RELEASE_ARCHIVE` names a downloaded `KoboRoot.tgz`,
+    /// because a test that reaches the network fails on an aeroplane for a
+    /// reason that has nothing to do with the code. It exists because the
+    /// fresh-reader path cannot be tried on a reader that already has the
+    /// plugin, and that path is the one a non-developer takes: if the merge
+    /// damaged the release, their reader would restart with no menu entry and
+    /// nothing to tell them why.
+    ///
+    /// Run it with:
+    ///
+    /// ```text
+    /// KOBO_RELEASE_ARCHIVE=/tmp/KoboRoot.tgz cargo test -p kobo-cli
+    /// ```
+    #[test]
+    fn the_real_release_survives_having_the_key_merged_into_it() {
+        let Some(path) = std::env::var_os("KOBO_RELEASE_ARCHIVE") else {
+            return;
+        };
+        let compressed = std::fs::read(&path).expect("the release archive");
+        let before = decompress(&compressed);
+        let after = merge(&before, SAMPLE).expect("a merged archive");
+
+        // Everything the release itself wrote must be byte for byte where it
+        // was. Only the terminator was replaced, so the archive up to it is
+        // the whole of the release's own content.
+        let kept = content_length(&before);
+        assert!(kept > 0 && kept < before.len());
+        assert_eq!(
+            &after[..kept],
+            &before[..kept],
+            "the release's own bytes were disturbed"
+        );
+
+        // Then read it the way the reader will, with tar rather than our own
+        // parser, because our parser refuses the './' prefix this release uses
+        // and the firmware does not.
+        let merged = std::env::temp_dir().join(format!("kobo-merged-{}.tgz", std::process::id()));
+        std::fs::write(&merged, recompress(&after)).expect("write the merged archive");
+        let listing = std::process::Command::new("tar")
+            .arg("tzvf")
+            .arg(&merged)
+            .output()
+            .expect("tar");
+        let listing = String::from_utf8_lossy(&listing.stdout).into_owned();
+        let _ = std::fs::remove_file(&merged);
+        for member in crate::menu::ARCHIVE_MEMBERS {
+            assert!(listing.contains(member), "{member} was lost\n{listing}");
+        }
+        assert!(
+            listing.contains(AUTHORIZED_KEYS),
+            "the key did not arrive\n{listing}"
+        );
+        assert!(
+            listing.contains("136056"),
+            "libnm.so changed size\n{listing}"
+        );
+        assert!(
+            listing.contains("-rwxr-xr-x"),
+            "libnm.so stopped being a program\n{listing}"
+        );
+    }
+
+    /// Where an archive's content ends and its terminator begins.
+    fn content_length(archive: &[u8]) -> usize {
+        let mut end = archive.len();
+        while end >= 512 && archive[end - 512..end].iter().all(|&byte| byte == 0) {
+            end -= 512;
+        }
+        end
+    }
+
+    fn recompress(bytes: &[u8]) -> Vec<u8> {
+        pipe(bytes, &["-n", "-c"])
+    }
+
+    fn decompress(bytes: &[u8]) -> Vec<u8> {
+        pipe(bytes, &["-d", "-c"])
+    }
+
+    fn pipe(bytes: &[u8], arguments: &[&str]) -> Vec<u8> {
+        use std::io::Write;
+        let mut child = std::process::Command::new("gzip")
+            .args(arguments)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .expect("gzip");
+        let owned = bytes.to_vec();
+        let mut stdin = child.stdin.take().expect("stdin");
+        let writer = std::thread::spawn(move || stdin.write_all(&owned));
+        let output = child.wait_with_output().expect("gzip output");
+        let _ = writer.join().expect("the writer");
+        output.stdout
+    }
+
     #[test]
     fn a_slot_somebody_else_is_using_is_left_alone() {
         let volume = std::env::temp_dir().join(format!("kobo-authorize-{}", std::process::id()));
