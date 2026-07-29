@@ -3881,8 +3881,8 @@ const fn encode_glyph(glyph: Glyph) -> u8 {
         Glyph::Magnet => 31,
         Glyph::Play => 32,
         Glyph::Pause => 33,
-        Glyph::Rewind => 34,
-        Glyph::Forward => 35,
+        Glyph::Rewind30 => 34,
+        Glyph::Forward30 => 35,
         Glyph::VolumeDown => 36,
         Glyph::VolumeUp => 37,
     }
@@ -3924,8 +3924,8 @@ const fn decode_glyph(tag: u8) -> Option<Glyph> {
         31 => Glyph::Magnet,
         32 => Glyph::Play,
         33 => Glyph::Pause,
-        34 => Glyph::Rewind,
-        35 => Glyph::Forward,
+        34 => Glyph::Rewind30,
+        35 => Glyph::Forward30,
         36 => Glyph::VolumeDown,
         37 => Glyph::VolumeUp,
 
@@ -5569,7 +5569,7 @@ mod node_coverage_tests {
         // byte of the next cell's action, so the second button of a transport
         // row would fire something nobody named. VERSION went to 3 for this.
         let cells = vec![
-            kobo_ui::Cell::new(ActionId(11), "Back 30 sec").with_glyph(Glyph::Rewind),
+            kobo_ui::Cell::new(ActionId(11), "Back 30 sec").with_glyph(Glyph::Rewind30),
             kobo_ui::Cell::new(ActionId(12), "Play"),
             kobo_ui::Cell::new(ActionId(13), "Louder").with_glyph(Glyph::VolumeUp),
         ];

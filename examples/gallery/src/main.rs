@@ -450,9 +450,9 @@ impl Gallery {
             .controls(
                 3,
                 [
-                    ("control-back", "Back 30 sec", Glyph::Rewind),
+                    ("control-back", "Back 30 sec", Glyph::Rewind30),
                     ("control-play", "Play", Glyph::Play),
-                    ("control-forward", "Forward 30 sec", Glyph::Forward),
+                    ("control-forward", "Forward 30 sec", Glyph::Forward30),
                 ],
             )
             .button("open-confirm", "Delete this shelf")

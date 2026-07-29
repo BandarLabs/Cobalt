@@ -236,7 +236,7 @@ one cannot.
 | `tiles([(name, label, glyph), …])` | A grid of square destinations. |
 | `apps([metadata, …])` | Launcher tiles from `AppMetadata`, with picture-to-glyph fallback. |
 | `grid(columns, square, cells)` | A board. What tic-tac-toe is drawn with. |
-| `controls(columns, [(name, label, glyph), …])` | The same row, where each button carries a picture above its word. |
+| `controls(columns, [(name, label, glyph), …])` | The same row, drawn as pictures. The label names the action but is not set. |
 | `choose(prompt, [(name, label), …])` | A question with tappable answers. |
 | `chosen(index)` | Marks which answer of the preceding `choose` is already given. |
 | `or_type(name, placeholder)` | A freeform row on the end of a `choose`. |
@@ -298,21 +298,29 @@ crisp at every density. Applications cannot supply their own paths: arbitrary
 path data is untrusted input to a rasteriser, and an application must not be
 able to draw something indistinguishable from a system control.
 
-Three places take one: `rows` and `tiles`, where the icon is the row's lead,
-and `controls`, where it sits above the button's word. There is deliberately
-no way to put a glyph on `button`. A full-width button already has room to say
-what it does, and an icon inside one is decoration that has to be checked
-against the label before it can be trusted.
+Three places take one: `rows` and `tiles`, where the icon leads a title, and
+`controls`, where it replaces one. There is deliberately no way to put a glyph
+on `button`. A full-width button already has room to say what it does.
 
-Reach for `controls` only when the picture is genuinely universal. The
-transport controls are the case it was added for: play, pause, back and
-forward are drawn the same way on every device anyone has used, so the icon is
-read faster than the word. "Create another" has no such picture, and inventing
-one makes the reader decode a shape *and* read the label to check they agree.
+A `controls` button draws the picture and nothing else. Setting both is the
+worst of the two, because an icon that has to be checked against a word
+underneath it is slower to read than either on its own.
 
-The label never goes away. The picture is the fast path for someone who
-already knows the control; the word is what makes it learnable, and it is the
-only part that can say "thirty seconds".
+That is a high bar, so reach for `controls` only when the picture is genuinely
+universal. Play, pause and skip are drawn the same way on every device anyone
+has used. "Create another" has no such picture, and a shape invented for it is
+a shape nobody can read.
+
+It also means the glyph has to carry everything the word did. An arrow says
+"back" but cannot say how far, which is why the skip glyphs are `Rewind30` and
+`Forward30` with the numeral drawn inside the arc rather than a plain arrow
+next to the words "30 sec". If you cannot draw the whole meaning, use a label.
+
+The label is still given and still carried on the wire. It is the action's
+name and the only thing a reader could be told out loud; it is simply not set
+on the panel. Anything that must be *read* belongs somewhere that is read: the
+audiobook player moved "Loading…" off its play button and onto the position
+line above it, which was going to change anyway.
 
 ### How a screen is composed
 

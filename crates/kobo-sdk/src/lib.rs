@@ -1733,26 +1733,6 @@ impl ScreenBuilder {
         self
     }
 
-    /// The same, with a picture beside the word.
-    ///
-    /// For the small set of bottom actions whose mark is already known: the
-    /// Bluetooth rune, chiefly. The word stays, because the band is wide
-    /// enough for it and a lone rune at the foot of the panel is a guess.
-    #[must_use]
-    pub fn bottom_action_glyph(
-        mut self,
-        name: impl AsRef<str>,
-        label: impl Into<String>,
-        glyph: Glyph,
-    ) -> Self {
-        let id = self.next_id();
-        let action = BarAction::new(self.register(name.as_ref()), label).with_glyph(glyph);
-        self.warn_second_bottom_bar(id);
-        self.bottom_action = Some(BottomAction::new(id, action));
-        self.nav_bar = None;
-        self
-    }
-
     /// Asks a question by offering answers.
     ///
     /// Prefer this over a text field. Typing on this device means summoning a

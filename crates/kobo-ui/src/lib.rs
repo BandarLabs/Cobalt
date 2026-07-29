@@ -2926,12 +2926,13 @@ pub enum Glyph {
     /// Two upright bars: stop, but keep the place. Distinct from a square,
     /// which is stop and forget it, and which this platform has no use for.
     Pause,
-    /// An arrow curling anticlockwise: go back a fixed step. Pair it with a
-    /// label saying how far, because the glyph says "back" and only the label
-    /// can say "thirty seconds".
-    Rewind,
-    /// An arrow curling clockwise: go forward a fixed step.
-    Forward,
+    /// An arrow curling anticlockwise around the numeral 30: go back half a
+    /// minute. The number is inside the glyph rather than in a label beside
+    /// it, because these controls are drawn without words and an arrow on its
+    /// own cannot say how far it goes.
+    Rewind30,
+    /// The same, curling clockwise: go forward half a minute.
+    Forward30,
     /// A speaker cone with a minus: quieter.
     VolumeDown,
     /// A speaker cone with a plus: louder.
@@ -2981,8 +2982,8 @@ impl Glyph {
         Self::Magnet,
         Self::Play,
         Self::Pause,
-        Self::Rewind,
-        Self::Forward,
+        Self::Rewind30,
+        Self::Forward30,
         Self::VolumeDown,
         Self::VolumeUp,
     ];
@@ -4629,43 +4630,36 @@ fn layout_node(
                     kind: LayoutKind::Cell(cell.action),
                     text_lines: Vec::new(),
                 });
-                // A glyph and its label are one object, centred together, for
-                // the reason the tiles are: a mark centred in the cell with the
-                // word pinned under it leaves the word touching the rule.
-                let label_rect = if let Some(glyph) = cell.glyph {
-                    let mark = metrics.tenth_mm(70).min(cell_height / 2);
-                    let inset = metrics.space(Space::Tight);
-                    let caption = FontSize::Body.line_height();
-                    let group = mark.saturating_add(inset).saturating_add(caption);
-                    let top = rect
-                        .y
-                        .saturating_add((cell_height.saturating_sub(group)).max(0) / 2);
-                    layout.nodes.push(LayoutNode {
-                        id: *id,
-                        rect: Rect {
-                            x: rect.x.saturating_add((cell_width - mark).max(0) / 2),
-                            y: top,
-                            width: mark,
-                            height: mark,
-                        },
-                        kind: LayoutKind::InlineGlyph(glyph),
-                        text_lines: Vec::new(),
-                    });
-                    Rect {
-                        x: rect.x,
-                        y: top.saturating_add(mark).saturating_add(inset),
-                        width: cell_width,
-                        height: caption,
+                // A cell with a picture is drawn as the picture alone. The
+                // label is still carried, because it is the action's name and
+                // the only thing a reader could be told out loud, but setting
+                // both is the worst of the two: an icon that has to be checked
+                // against a word underneath it is slower to read than either.
+                //
+                // So the mark has to be large enough to be the whole control,
+                // not the thumbnail that sat above a caption.
+                match cell.glyph {
+                    Some(glyph) => {
+                        let mark = min(cell_height, cell_width) * 3 / 5;
+                        layout.nodes.push(LayoutNode {
+                            id: *id,
+                            rect: Rect {
+                                x: rect.x.saturating_add((cell_width - mark).max(0) / 2),
+                                y: rect.y.saturating_add((cell_height - mark).max(0) / 2),
+                                width: mark,
+                                height: mark,
+                            },
+                            kind: LayoutKind::InlineGlyph(glyph),
+                            text_lines: vec![cell.label.clone()],
+                        });
                     }
-                } else {
-                    rect
-                };
-                layout.nodes.push(LayoutNode {
-                    id: *id,
-                    rect: label_rect,
-                    kind: LayoutKind::CellLabel,
-                    text_lines: vec![cell.label.clone()],
-                });
+                    None => layout.nodes.push(LayoutNode {
+                        id: *id,
+                        rect,
+                        kind: LayoutKind::CellLabel,
+                        text_lines: vec![cell.label.clone()],
+                    }),
+                }
             }
             let height = if rows == 0 {
                 0
@@ -9614,7 +9608,7 @@ mod tests {
         // read only the label. A builder whose argument is silently dropped is
         // worse than no builder, because the call site looks correct.
         let cells = vec![
-            Cell::new(ActionId(11), "Back 30 sec").with_glyph(Glyph::Rewind),
+            Cell::new(ActionId(11), "Back 30 sec").with_glyph(Glyph::Rewind30),
             Cell::new(ActionId(12), "Play").with_glyph(Glyph::Play),
         ];
         let screen = Screen::new(
@@ -9641,7 +9635,7 @@ mod tests {
             .collect();
         assert_eq!(
             drawn,
-            vec![Glyph::Rewind, Glyph::Play, Glyph::Bluetooth],
+            vec![Glyph::Rewind30, Glyph::Play, Glyph::Bluetooth],
             "a glyph was accepted by a builder and never drawn"
         );
         // The mark is decoration. Every one of them must sit inside a control

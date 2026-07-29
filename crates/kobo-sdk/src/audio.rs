@@ -252,9 +252,13 @@ impl AudioPlayer {
             .unwrap_or(100)
             .min(100)
         };
+        // The transport is drawn as pictures, so the button can no longer
+        // spell "Loading…" at anybody. The word moves to the line that was
+        // going to change anyway: the control says what it does, and the
+        // position says what is happening. This label is still the action's
+        // name, which is what a reader would be told out loud.
         let play_label = match self.playback {
             AudioPlaybackState::Playing => "Pause",
-            AudioPlaybackState::Loading => "Loading…",
             _ => "Play",
         };
         // Loading keeps the play triangle rather than borrowing another
@@ -263,6 +267,11 @@ impl AudioPlayer {
         let play_glyph = match self.playback {
             AudioPlaybackState::Playing => Glyph::Pause,
             _ => Glyph::Play,
+        };
+        let position = if self.playback == AudioPlaybackState::Loading {
+            "Loading\u{2026}".to_owned()
+        } else {
+            format!("{} / {}", clock(self.position_ms), clock(self.duration_ms))
         };
         let mut screen = ScreenBuilder::new("audio-player")
             .top_bar("Now playing")
@@ -275,16 +284,13 @@ impl AudioPlayer {
                 facts,
             )
             .progress(progress)
-            .section_with_value(
-                "Position",
-                format!("{} / {}", clock(self.position_ms), clock(self.duration_ms)),
-            )
+            .section_with_value("Position", position)
             .controls(
                 3,
                 [
-                    (BACK_THIRTY, "Back 30 sec", Glyph::Rewind),
+                    (BACK_THIRTY, "Back 30 sec", Glyph::Rewind30),
                     (PLAY, play_label, play_glyph),
-                    (FORWARD_THIRTY, "Forward 30 sec", Glyph::Forward),
+                    (FORWARD_THIRTY, "Forward 30 sec", Glyph::Forward30),
                 ],
             )
             // The volume is stated once, above the pair, rather than printed on
@@ -303,7 +309,7 @@ impl AudioPlayer {
                 (OUTPUT.to_owned(), "Bluetooth output".to_owned()),
                 (name.clone(), label.clone()),
             ]),
-            None => screen.bottom_action_glyph(OUTPUT, "Bluetooth audio output", Glyph::Bluetooth),
+            None => screen.bottom_action(OUTPUT, "Bluetooth audio output"),
         };
         if self.audio_available == Availability::Unavailable {
             screen = screen.banner(

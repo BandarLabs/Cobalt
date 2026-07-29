@@ -441,6 +441,37 @@ fn add_span(accumulator: &mut [i64], from: i64, to: i64) {
     }
 }
 
+/// The numeral set inside the two skip arrows.
+///
+/// Drawn at a lighter weight than the arrow around it. At the icon's own
+/// weight the two digits closed up into a blot at the sizes a grid cell asks
+/// for, which is the failure mode a number inside a ring invites.
+const DIGIT_WEIGHT: i32 = 46;
+
+fn digit_three() -> Shape {
+    Shape::Stroke {
+        path: Path::new()
+            .move_to(348, 465)
+            .quad_to(453, 425, 453, 505)
+            .quad_to(453, 552, 383, 552)
+            .quad_to(453, 552, 453, 605)
+            .quad_to(453, 685, 348, 645),
+        width: DIGIT_WEIGHT,
+    }
+}
+
+fn digit_zero() -> Shape {
+    Shape::Stroke {
+        path: Path::new()
+            .move_to(593, 435)
+            .quad_to(658, 435, 658, 555)
+            .quad_to(658, 675, 593, 675)
+            .quad_to(528, 675, 528, 555)
+            .quad_to(580, 435, 593, 435),
+        width: DIGIT_WEIGHT,
+    }
+}
+
 /// The speaker cone both volume glyphs are built on.
 ///
 /// Shared rather than duplicated so the two controls cannot drift apart: a
@@ -863,35 +894,39 @@ pub fn shapes(glyph: Glyph) -> Vec<Shape> {
             stroke(Path::new().move_to(370, 230).line_to(370, 770)),
             stroke(Path::new().move_to(630, 230).line_to(630, 770)),
         ],
-        Glyph::Rewind => vec![
+        Glyph::Rewind30 => vec![
             stroke(
                 Path::new()
-                    .move_to(500, 260)
-                    .quad_to(770, 260, 770, 530)
-                    .quad_to(770, 800, 500, 800)
-                    .quad_to(230, 800, 230, 530),
+                    .move_to(500, 210)
+                    .quad_to(790, 210, 790, 520)
+                    .quad_to(790, 830, 500, 830)
+                    .quad_to(210, 830, 210, 520),
             ),
             stroke(
                 Path::new()
-                    .move_to(610, 170)
-                    .line_to(500, 260)
-                    .line_to(610, 350),
+                    .move_to(620, 110)
+                    .line_to(500, 210)
+                    .line_to(620, 310),
             ),
+            digit_three(),
+            digit_zero(),
         ],
-        Glyph::Forward => vec![
+        Glyph::Forward30 => vec![
             stroke(
                 Path::new()
-                    .move_to(500, 260)
-                    .quad_to(230, 260, 230, 530)
-                    .quad_to(230, 800, 500, 800)
-                    .quad_to(770, 800, 770, 530),
+                    .move_to(500, 210)
+                    .quad_to(210, 210, 210, 520)
+                    .quad_to(210, 830, 500, 830)
+                    .quad_to(790, 830, 790, 520),
             ),
             stroke(
                 Path::new()
-                    .move_to(390, 170)
-                    .line_to(500, 260)
-                    .line_to(390, 350),
+                    .move_to(380, 110)
+                    .line_to(500, 210)
+                    .line_to(380, 310),
             ),
+            digit_three(),
+            digit_zero(),
         ],
         Glyph::VolumeDown => vec![
             stroke(speaker()),
