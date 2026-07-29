@@ -303,6 +303,32 @@ impl Typeface {
         })
     }
 
+    /// What this face should actually draw for `character`.
+    ///
+    /// Returns the character itself when the face has a glyph for it, a near
+    /// equivalent when it does not but one is available, `None` when the
+    /// character is meant to be invisible, and the original otherwise so that
+    /// the empty box still appears for anything genuinely unrepresentable.
+    ///
+    /// Text off the network is full of characters a text face has no reason to
+    /// carry. Atkinson Hyperlegible, the face the reader ships and the one
+    /// compiled in here, has no U+2011 non-breaking hyphen, so a Hacker News
+    /// title reading "one-to-one" arrived on the panel as "one[]to[]one". A
+    /// hyphen drawn for a hyphen is right in every way that matters: it is what
+    /// the author wrote, and the only thing lost is that it may now be broken
+    /// across lines.
+    fn resolve(&self, character: char) -> Option<char> {
+        if self.font.lookup_glyph_index(character) != 0 {
+            return Some(character);
+        }
+        if is_invisible(character) {
+            return None;
+        }
+        substitute(character)
+            .filter(|glyph| self.font.lookup_glyph_index(*glyph) != 0)
+            .or(Some(character))
+    }
+
     /// The distance from the top of a line to the baseline.
     fn ascent(&self, pixels: f32) -> i32 {
         self.font
@@ -335,6 +361,9 @@ impl Typeface {
         let mut width = 0f32;
         let mut previous = None;
         for character in text.chars() {
+            let Some(character) = self.resolve(character) else {
+                continue;
+            };
             if let Some(previous) = previous {
                 width += kern(&self.font, previous, character, pixels);
             }
@@ -371,6 +400,15 @@ impl Typeface {
         let mut pen = x as f32;
         let mut previous = None;
         for character in text.chars() {
+            let Some(character) = self.resolve(character) else {
+                // An invisible character owns a column in a grid and nothing
+                // at all in a proportional run. Advancing here in both cases
+                // would open a hole in the middle of a word.
+                if let Some(cell) = cell {
+                    pen += cell as f32;
+                }
+                continue;
+            };
             // Kerning is a proportional idea. Applying it in a grid would move
             // a character out of its own column depending on its neighbour.
             if let (Some(previous), None) = (previous, cell) {
@@ -523,9 +561,16 @@ impl Typesetter for SystemFonts {
     }
 
     fn has_glyph(&self, character: char, face: Face) -> bool {
+        // Answers for what would actually reach the panel, not for what the
+        // face happens to contain. A character that is substituted or that is
+        // deliberately invisible draws no empty box, so reporting it as
+        // missing would condemn text that comes out perfectly readable.
+        let typeface = self.face(face);
         // Index zero is `.notdef`, the empty box, which is exactly the thing
         // worth catching before it reaches a panel.
-        self.face(face).font.lookup_glyph_index(character) != 0
+        typeface
+            .resolve(character)
+            .is_none_or(|glyph| typeface.font.lookup_glyph_index(glyph) != 0)
     }
 
     fn line_breaks(&self, text: &str) -> Vec<(usize, BreakOpportunity)> {
@@ -553,6 +598,55 @@ impl Typesetter for SystemFonts {
             .fixed_advance(size)
             .unwrap_or_else(|| self.mono.measure_run("0", size, None).0.max(1))
     }
+}
+
+/// Whether a character is meant to leave no mark at all.
+///
+/// A face carries a glyph for a character it is expected to draw. It carries
+/// nothing for a zero-width space or a variation selector, because there is
+/// nothing to draw, and an empty box in place of one is a fault the author
+/// never wrote. These are the invisible characters that turn up in ordinary
+/// web text: word joiners, directional marks, and the byte order mark that
+/// leads a great many files.
+fn is_invisible(character: char) -> bool {
+    matches!(character,
+        '\u{200b}'..='\u{200f}'
+            | '\u{2028}'..='\u{202e}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{feff}'
+            | '\u{fe00}'..='\u{fe0f}'
+    )
+}
+
+/// A character close enough to stand in for one the face does not carry.
+///
+/// Only substitutions that keep the author's meaning are listed. A hyphen for
+/// a non-breaking hyphen reads identically; a question mark for an ideograph
+/// would be a lie. Anything absent from this table keeps the empty box, which
+/// is at least honest about there being a character there.
+fn substitute(character: char) -> Option<char> {
+    Some(match character {
+        // Dashes. Every one of these is drawn as a stroke on the same line.
+        '\u{2010}' | '\u{2011}' | '\u{2012}' | '\u{2013}' | '\u{2014}' | '\u{2015}'
+        | '\u{2212}' | '\u{fe58}' | '\u{fe63}' | '\u{ff0d}' => '-',
+        // Quotation. Typographic quotes are the single most common thing to
+        // survive a copy and paste into a title.
+        '\u{2018}' | '\u{2019}' | '\u{201a}' | '\u{201b}' | '\u{2032}' | '\u{ff07}' => '\'',
+        '\u{201c}' | '\u{201d}' | '\u{201e}' | '\u{201f}' | '\u{2033}' | '\u{ff02}' => '"',
+        // Spaces of every width, including the ones a typesetter inserts.
+        '\u{00a0}'
+        | '\u{1680}'
+        | '\u{2000}'..='\u{200a}'
+        | '\u{202f}'
+        | '\u{205f}'
+        | '\u{3000}' => ' ',
+        '\u{2022}' | '\u{2023}' | '\u{2043}' | '\u{25cf}' | '\u{25aa}' => '*',
+        '\u{2190}' | '\u{27f5}' => '<',
+        '\u{2192}' | '\u{27f6}' => '>',
+        '\u{2044}' | '\u{2215}' | '\u{ff0f}' => '/',
+        '\u{02dc}' | '\u{ff5e}' => '~',
+        _ => return None,
+    })
 }
 
 fn kern(font: &Font, previous: char, current: char, pixels: f32) -> f32 {
@@ -937,6 +1031,98 @@ mod tests {
             );
         }
         assert_eq!(bundled.font.lookup_glyph_index('\u{2713}'), 0);
+    }
+
+    /// The Hacker News tofu, reproduced from the character that caused it.
+    ///
+    /// A title reading "one-to-one" with U+2011 non-breaking hyphens arrived on
+    /// the panel as "one[]to[]one". This asserts the gap is real in the face and
+    /// that nothing reaches the panel because of it.
+    #[test]
+    fn a_hyphen_the_face_lacks_is_drawn_as_the_hyphen_it_is() {
+        let face = Typeface::from_bytes(TEXT_FONT, "bundled", CLARA).expect("the compiled-in face");
+        assert_eq!(
+            face.font.lookup_glyph_index('\u{2011}'),
+            0,
+            "this test is pointless unless the face really lacks the character"
+        );
+
+        let (plain, _) = face.measure_run("one-to-one", FontSize::Body, None);
+        let (fancy, _) = face.measure_run("one\u{2011}to\u{2011}one", FontSize::Body, None);
+        assert_eq!(plain, fancy, "the substitute must measure as what it draws");
+        assert_eq!(
+            ink(&face, "one\u{2011}to\u{2011}one"),
+            ink(&face, "one-to-one")
+        );
+    }
+
+    /// A character with nothing to draw must draw nothing.
+    ///
+    /// The face carries no zero-width space, so before substitution one drew an
+    /// empty box in the middle of a word: the opposite of invisible.
+    #[test]
+    fn an_invisible_character_takes_no_room_and_leaves_no_mark() {
+        let face = Typeface::from_bytes(TEXT_FONT, "bundled", CLARA).expect("the compiled-in face");
+        for invisible in ['\u{200b}', '\u{feff}', '\u{fe0f}', '\u{2060}'] {
+            assert_eq!(
+                face.font.lookup_glyph_index(invisible),
+                0,
+                "{invisible:?} would not exercise the substitution"
+            );
+            let text = format!("wo{invisible}rd");
+            assert_eq!(
+                face.measure_run(&text, FontSize::Body, None),
+                face.measure_run("word", FontSize::Body, None),
+                "{invisible:?} widened the line it should have left alone"
+            );
+            assert_eq!(ink(&face, &text), ink(&face, "word"));
+        }
+    }
+
+    /// An invisible character still owns its column in a grid.
+    ///
+    /// A terminal measures by counting cells. Dropping a character in the
+    /// drawing pass but not in the counting pass would slide the rest of the
+    /// row left of where the emulator believes it is.
+    #[test]
+    fn a_grid_gives_every_character_a_column_even_an_invisible_one() {
+        let mono = Typeface::from_bytes(MONO_FONT, "mono", CLARA).expect("mono");
+        let cell = mono.fixed_advance(FontSize::Body).expect("a fixed advance");
+        let text = "a\u{200b}b";
+        assert_eq!(
+            mono.measure_run(text, FontSize::Body, Some(cell)).0,
+            cell * 3
+        );
+        let mut columns = Vec::new();
+        mono.draw_run(
+            text,
+            0,
+            0,
+            FontSize::Body,
+            Some(cell),
+            &mut |x, _, coverage| {
+                if coverage > 0 {
+                    columns.push(x);
+                }
+            },
+        );
+        let last = columns.iter().copied().max().expect("ink");
+        assert!(
+            last >= cell * 2,
+            "the third column starts at {}, but the last ink is at {last}",
+            cell * 2
+        );
+    }
+
+    /// Every pixel a run puts down, so two runs can be compared exactly.
+    fn ink(face: &Typeface, text: &str) -> Vec<(i32, i32)> {
+        let mut marks = Vec::new();
+        face.draw_run(text, 0, 0, FontSize::Body, None, &mut |x, y, coverage| {
+            if coverage > 0 {
+                marks.push((x, y));
+            }
+        });
+        marks
     }
 
     #[test]
