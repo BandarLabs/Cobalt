@@ -27,8 +27,8 @@ mod conversation;
 use conversation::{Conversation, Provider, Reply, Role, Turn, PROVIDERS};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, LogLevel, Screen, ScreenBuilder,
-    Space, StoreResult, Task, TaskError, TaskId, TaskOutcome,
+    action_id, ActionId, BannerLevel, Context, Failure, Glyph, KoboApp, LogLevel, Screen,
+    ScreenBuilder, Space, StoreResult, Task, TaskError, TaskId, TaskOutcome,
 };
 use std::process::ExitCode;
 
@@ -419,13 +419,14 @@ fn label(option: &str) -> String {
 /// is a chat client that has to be restarted to be used again.
 const fn explain(error: TaskError) -> &'static str {
     match error {
+        // The one failure this application can say more about than the SDK
+        // can: a chat service refuses when the key is missing or spent, which
+        // is a thing the reader can act on.
         TaskError::Denied => {
             "No key is installed for this device, or the network was refused. Nothing was sent."
         }
-        TaskError::Unreachable => "The network could not be reached. Wi-Fi may be asleep.",
-        TaskError::TooLarge => "The reply was too long to read on this device.",
-        TaskError::TimedOut => "The service took too long to answer.",
         TaskError::NotFound => "The service refused the request. The key may be wrong or spent.",
+        other => Failure::of(other).advice,
     }
 }
 
@@ -767,9 +768,13 @@ mod tests {
             TaskOutcome::Failed(kobo_sdk::TaskError::Unreachable),
         );
         let screen = last_screen(&context.take_commands());
-        assert!(shown(&screen)
-            .iter()
-            .any(|line| line.contains("could not be reached")));
+        // Asserted against the SDK's own wording rather than a copy of it, so
+        // this test cannot pass while the reader is shown something else.
+        let expected = kobo_sdk::Failure::of(kobo_sdk::TaskError::Unreachable).advice;
+        assert!(
+            shown(&screen).iter().any(|line| line.contains(expected)),
+            "the banner did not carry {expected:?}"
+        );
         let retry = screen
             .layout_with(&CLARA_BW_METRICS, &Chrome::default())
             .rect_of_action(action_id("retry"));

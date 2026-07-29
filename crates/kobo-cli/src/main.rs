@@ -301,6 +301,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "wait" => wait_for_device(&arguments[1..]),
         "logs" => device_logs(&arguments[1..]),
         "touch-probe" => touch_probe(&arguments[1..]),
+        "record" => record_command(&arguments[1..]),
         #[cfg(feature = "device-write")]
         "smoke-display" => smoke_display(&arguments[1..]),
         #[cfg(feature = "device-write")]
@@ -1418,6 +1419,11 @@ enum RemoteProgram {
     TouchProbe(u64),
     /// The same read-only doctor binary, additionally copying the panel out.
     Capture,
+    /// The same read-only doctor binary, copying the panel out repeatedly.
+    Record {
+        seconds: u64,
+        fps: u32,
+    },
     /// One synthetic tap at a point on the panel.
     #[cfg(feature = "device-write")]
     Tap {
@@ -1448,6 +1454,12 @@ impl RemoteArtifact {
             RemoteProgram::TouchProbe(seconds) => {
                 Duration::from_secs(seconds) + TOUCH_PROBE_OVERHEAD
             }
+            // The reading itself is bounded in the binary and again by
+            // timeout, and the wait has to outlast the recording rather than
+            // the usual single round trip.
+            RemoteProgram::Record { seconds, .. } => {
+                Duration::from_secs(seconds) + TOUCH_PROBE_OVERHEAD
+            }
             RemoteProgram::Doctor | RemoteProgram::Capture => REMOTE_COMMAND_TIMEOUT,
             #[cfg(feature = "device-write")]
             RemoteProgram::Smoke(_) | RemoteProgram::Guard | RemoteProgram::Tap { .. } => {
@@ -1474,6 +1486,14 @@ impl RemoteArtifact {
         Self {
             program: RemoteProgram::Capture,
             label: "read-only screen capture",
+            ..Self::doctor()
+        }
+    }
+
+    fn record(seconds: u64, fps: u32) -> Self {
+        Self {
+            program: RemoteProgram::Record { seconds, fps },
+            label: "read-only screen recording",
             ..Self::doctor()
         }
     }
@@ -1680,6 +1700,18 @@ fn remote_fixed_artifact_script(
         // reading and never grabs, refreshes or writes, so it is safe to point
         // at a device with the stock reader in the foreground.
         RemoteProgram::Capture => "KOBO_DOCTOR_CAPTURE=1 \"$bin\"".to_owned(),
+        // Bounded twice, like the touch probe: a tool that watches the panel
+        // for a while must stop on its own even if the host walks away.
+        RemoteProgram::Record { seconds, fps } => format!(
+            "if [ -x /usr/bin/timeout ]; then\n\
+             \x20 KOBO_DOCTOR_RECORD={seconds}:{fps} KOBO_DOCTOR_RECORD_PATH='{RECORDING_ON_DEVICE}' \
+             /usr/bin/timeout {} \"$bin\"\n\
+             else\n\
+             \x20 echo 'BusyBox timeout is unavailable; refusing recording' >&2\n\
+             \x20 exit 1\n\
+             fi",
+            seconds + 20
+        ),
         // Bounded twice: the observation window is enforced in the binary and
         // again by timeout, so a stuck read cannot hold the device.
         RemoteProgram::TouchProbe(seconds) => format!(
@@ -1725,9 +1757,10 @@ fn remote_fixed_artifact_script(
         ),
     };
     let checksum_error = match program {
-        RemoteProgram::Doctor | RemoteProgram::TouchProbe(_) | RemoteProgram::Capture => {
-            "uploaded doctor checksum does not match"
-        }
+        RemoteProgram::Doctor
+        | RemoteProgram::TouchProbe(_)
+        | RemoteProgram::Capture
+        | RemoteProgram::Record { .. } => "uploaded doctor checksum does not match",
         #[cfg(feature = "device-write")]
         RemoteProgram::Smoke(_) => "uploaded smoke checksum does not match",
         #[cfg(feature = "device-write")]
@@ -3448,6 +3481,264 @@ fn shot_command(arguments: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// Where the doctor leaves a recording, and where the host looks for it.
+const RECORDING_ON_DEVICE: &str = "/mnt/onboard/.kobo-record.bin";
+
+/// Long enough to carry a recording home over the reader's radio, which is the
+/// slowest thing in this loop by a wide margin.
+const RECORDING_TRANSFER_TIMEOUT: Duration = Duration::from_secs(300);
+
+const RECORD_USAGE: &str = "usage: kobo record --device HOST [--seconds N] [--fps F] \
+                            [--out DIR] [--keep-on-device]";
+
+/// Records the panel while somebody, or something, drives the reader.
+///
+/// The still picture's sibling. `kobo shot` answers what the screen looks
+/// like; this answers what it did, which is the question whenever a tap lands
+/// somewhere unexpected, a screen flashes through a wrong state before
+/// settling, or a refresh leaves ink behind.
+///
+/// Read-only on the device, exactly like `kobo shot`: it opens the framebuffer
+/// for reading and never grabs, refreshes or writes, so it can watch our own
+/// application or the stock reader without changing either.
+fn record_command(arguments: &[String]) -> Result<(), String> {
+    let mut host: Option<String> = None;
+    let mut seconds = 20_u64;
+    let mut fps = 2_u32;
+    let mut output = PathBuf::from("kobo-recording");
+    let mut keep = false;
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            flag if is_device_flag(flag) => {
+                let value = arguments.get(index + 1).ok_or("--device needs a host")?;
+                if !valid_device_host(value) {
+                    return Err(format!("'{value}' is not a usable device host"));
+                }
+                host = Some(value.clone());
+                index += 1;
+            }
+            "--seconds" => {
+                seconds = arguments
+                    .get(index + 1)
+                    .ok_or("--seconds needs a count")?
+                    .parse()
+                    .map_err(|_| "--seconds takes a whole number".to_owned())?;
+                index += 1;
+            }
+            "--fps" => {
+                fps = arguments
+                    .get(index + 1)
+                    .ok_or("--fps needs a rate")?
+                    .parse()
+                    .map_err(|_| "--fps takes a whole number".to_owned())?;
+                index += 1;
+            }
+            "--out" => {
+                output = PathBuf::from(arguments.get(index + 1).ok_or("--out needs a path")?);
+                index += 1;
+            }
+            "--keep-on-device" => keep = true,
+            other => return Err(format!("unknown option '{other}'\n{RECORD_USAGE}")),
+        }
+        index += 1;
+    }
+    let host = host.ok_or(RECORD_USAGE)?;
+    println!("recording {seconds}s at {fps} fps from {host}; drive the reader now");
+    let transcript = capture_remote_fixed_artifact(&host, &RemoteArtifact::record(seconds, fps))?;
+    let summary = transcript
+        .lines()
+        .find_map(|line| line.strip_prefix("record-written "))
+        .ok_or("the device did not report a recording")?;
+    println!(
+        "device kept {} frames",
+        summary.split(' ').nth(1).unwrap_or("?")
+    );
+
+    let raw = pull_recording(&host)?;
+    let frames = decode_recording(&raw)?;
+    write_recording(&output, &frames)?;
+    if !keep {
+        // A megabyte-a-frame file left in the library shows up as a broken
+        // book on the reader's home screen, so it goes as soon as it is home.
+        let _ = run_remote_shell(
+            &format!("root@{host}"),
+            &format!("rm -f '{RECORDING_ON_DEVICE}'\n"),
+            REMOTE_COMMAND_TIMEOUT,
+        );
+    }
+    Ok(())
+}
+
+/// Brings the recording home, compressed on the way.
+///
+/// Gzipped by the device rather than sent raw: a frame is flat white over most
+/// of its area and compresses to a fraction of its size, and this crosses
+/// Wi-Fi from a reader whose radio is the slowest thing in the loop.
+fn pull_recording(host: &str) -> Result<Vec<u8>, String> {
+    let output = run_remote_shell(
+        &format!("root@{host}"),
+        &format!("gzip -c < '{RECORDING_ON_DEVICE}'\n"),
+        RECORDING_TRANSFER_TIMEOUT,
+    )
+    .map_err(unreachable_device)?;
+    if !output.status.success() {
+        return Err(format!(
+            "fetch the recording: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    gunzip(&output.stdout)
+}
+
+/// One recorded frame: when it appeared, and what was on the panel.
+struct RecordedFrame {
+    millis: u32,
+    grey: Vec<u8>,
+}
+
+/// Reads the device's recording format.
+///
+/// Deliberately strict. A truncated recording is a real possibility, because
+/// the device can be unplugged or run out of room mid-write, and half a frame
+/// decoded as a whole one would be a picture of nothing that looks like a
+/// rendering bug.
+fn decode_recording(raw: &[u8]) -> Result<(u32, u32, Vec<RecordedFrame>), String> {
+    const MAGIC: &[u8; 8] = b"KOBOCST1";
+    if raw.len() < 16 || &raw[..8] != MAGIC {
+        return Err("this is not a recording written by this version".to_owned());
+    }
+    let width = u32::from_le_bytes([raw[8], raw[9], raw[10], raw[11]]);
+    let height = u32::from_le_bytes([raw[12], raw[13], raw[14], raw[15]]);
+    let pixels = usize::try_from(width)
+        .ok()
+        .and_then(|width| width.checked_mul(usize::try_from(height).ok()?))
+        .filter(|pixels| *pixels > 0)
+        .ok_or("the recording claims a panel of no size")?;
+    let mut frames = Vec::new();
+    let mut at = 16;
+    while at + 4 + pixels <= raw.len() {
+        let millis = u32::from_le_bytes([raw[at], raw[at + 1], raw[at + 2], raw[at + 3]]);
+        frames.push(RecordedFrame {
+            millis,
+            grey: raw[at + 4..at + 4 + pixels].to_vec(),
+        });
+        at += 4 + pixels;
+    }
+    if at != raw.len() {
+        eprintln!(
+            "warning: {} trailing bytes; the recording was cut short",
+            raw.len() - at
+        );
+    }
+    if frames.is_empty() {
+        return Err("the recording holds no frames".to_owned());
+    }
+    Ok((width, height, frames))
+}
+
+/// Writes the recording out as numbered pictures, and a video if one can be
+/// made.
+///
+/// Numbered PNGs are the product, not a fallback. They are what a reviewer
+/// actually opens, they diff, and they need nothing installed. A video is
+/// offered on top when ffmpeg happens to be on the path, because scrubbing is
+/// the better way to watch a transition.
+fn write_recording(
+    directory: &Path,
+    (width, height, frames): &(u32, u32, Vec<RecordedFrame>),
+) -> Result<(), String> {
+    fs::create_dir_all(directory)
+        .map_err(|error| format!("create {}: {error}", directory.display()))?;
+    for (index, frame) in frames.iter().enumerate() {
+        let png = kobo_image::encode_png_grey(*width, *height, &frame.grey)
+            .map_err(|error| format!("encode frame {index}: {error}"))?;
+        let path = directory.join(format!("frame-{index:04}.png"));
+        fs::write(&path, png).map_err(|error| format!("write {}: {error}", path.display()))?;
+    }
+    let timings = frames
+        .iter()
+        .enumerate()
+        .map(|(index, frame)| format!("frame-{index:04}.png {}\n", frame.millis))
+        .collect::<String>();
+    let index_path = directory.join("timings.txt");
+    fs::write(&index_path, timings)
+        .map_err(|error| format!("write {}: {error}", index_path.display()))?;
+    println!(
+        "recorded {} frames ({width}x{height}) into {}",
+        frames.len(),
+        directory.display()
+    );
+    match write_recording_video(directory, frames) {
+        Ok(Some(path)) => println!("video {}", path.display()),
+        Ok(None) => println!("ffmpeg is not on the path, so no video was made"),
+        Err(error) => eprintln!("warning: the pictures are fine but the video failed: {error}"),
+    }
+    Ok(())
+}
+
+/// Turns the frames into an mp4, if ffmpeg is available.
+///
+/// The frames are not evenly spaced, because only the ones that changed were
+/// kept, so a concat list carrying each frame's real duration is used rather
+/// than a fixed rate. Otherwise a screen held for ten seconds would flash past
+/// in the same time as one held for a tenth of a second.
+fn write_recording_video(
+    directory: &Path,
+    frames: &[RecordedFrame],
+) -> Result<Option<PathBuf>, String> {
+    if std::process::Command::new("ffmpeg")
+        .arg("-version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_err()
+    {
+        return Ok(None);
+    }
+    let mut list = String::new();
+    for (index, frame) in frames.iter().enumerate() {
+        let next = frames
+            .get(index + 1)
+            .map_or(frame.millis + 1000, |frame| frame.millis);
+        let seconds = f64::from(next.saturating_sub(frame.millis)).max(100.0) / 1000.0;
+        list.push_str(&format!(
+            "file 'frame-{index:04}.png'\nduration {seconds:.3}\n"
+        ));
+    }
+    // ffmpeg's concat demuxer ignores the last duration, so the final frame is
+    // named twice to give it one.
+    if let Some(index) = frames.len().checked_sub(1) {
+        list.push_str(&format!("file 'frame-{index:04}.png'\n"));
+    }
+    let list_path = directory.join("frames.txt");
+    fs::write(&list_path, list)
+        .map_err(|error| format!("write {}: {error}", list_path.display()))?;
+    let video = directory.join("recording.mp4");
+    let status = std::process::Command::new("ffmpeg")
+        .args(["-y", "-f", "concat", "-safe", "0", "-i"])
+        .arg(&list_path)
+        // Even dimensions, because h264 refuses odd ones and 1072x1448 is only
+        // even by luck.
+        .args([
+            "-vf",
+            "pad=ceil(iw/2)*2:ceil(ih/2)*2",
+            "-pix_fmt",
+            "yuv420p",
+            "-r",
+            "10",
+        ])
+        .arg(&video)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map_err(|error| format!("run ffmpeg: {error}"))?;
+    if !status.success() {
+        return Err("ffmpeg refused the frames".to_owned());
+    }
+    Ok(Some(video))
+}
+
 const SHOT_USAGE: &str =
     "usage: kobo shot [--device HOST | --address host:port] [--out PATH] [--ideal]";
 
@@ -3802,6 +4093,62 @@ fn print_help() {
 
 #[cfg(test)]
 mod tests {
+    /// Builds a recording the way the device writes one.
+    fn recording(width: u32, height: u32, frames: &[(u32, u8)]) -> Vec<u8> {
+        let mut raw = b"KOBOCST1".to_vec();
+        raw.extend_from_slice(&width.to_le_bytes());
+        raw.extend_from_slice(&height.to_le_bytes());
+        for (millis, fill) in frames {
+            raw.extend_from_slice(&millis.to_le_bytes());
+            raw.extend(std::iter::repeat_n(*fill, (width * height) as usize));
+        }
+        raw
+    }
+
+    #[test]
+    fn a_recording_decodes_to_the_frames_that_were_kept() {
+        let raw = recording(2, 3, &[(0, 0xff), (500, 0x40)]);
+        let (width, height, frames) = super::decode_recording(&raw).expect("decode");
+        assert_eq!((width, height), (2, 3));
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0].millis, 0);
+        assert_eq!(frames[1].millis, 500);
+        assert_eq!(frames[1].grey, vec![0x40; 6]);
+    }
+
+    #[test]
+    fn every_grey_level_survives_the_round_trip() {
+        // The panel is greyscale and the text on it is anti-aliased. A
+        // recording that flattened the greys would look harsher than the
+        // device and would be read as a rendering bug that is not there.
+        let mut raw = b"KOBOCST1".to_vec();
+        raw.extend_from_slice(&16_u32.to_le_bytes());
+        raw.extend_from_slice(&16_u32.to_le_bytes());
+        raw.extend_from_slice(&0_u32.to_le_bytes());
+        let ramp: Vec<u8> = (0..=255_u8).step_by(1).take(256).collect();
+        raw.extend_from_slice(&ramp);
+        let (_, _, frames) = super::decode_recording(&raw).expect("decode");
+        assert_eq!(frames[0].grey, ramp);
+    }
+
+    #[test]
+    fn half_a_frame_is_dropped_rather_than_shown_as_a_whole_one() {
+        // The device can be unplugged or fill up mid-write. Half a frame
+        // decoded as a whole one is a picture of nothing that looks exactly
+        // like a rendering failure.
+        let mut raw = recording(2, 3, &[(0, 0xff)]);
+        raw.extend_from_slice(&99_u32.to_le_bytes());
+        raw.extend_from_slice(&[0x10, 0x10]);
+        let (_, _, frames) = super::decode_recording(&raw).expect("decode");
+        assert_eq!(frames.len(), 1, "a torn frame was kept");
+    }
+
+    #[test]
+    fn something_that_is_not_a_recording_is_refused() {
+        assert!(super::decode_recording(b"not a recording at all").is_err());
+        assert!(super::decode_recording(&recording(2, 3, &[])).is_err());
+    }
+
     use super::package;
     use super::{
         build_executables, canonical, is_device_flag, manifest_uses_sdk, parse_deploy,

@@ -24,6 +24,7 @@ pub use kobo_ui::{
     MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_QUOTE_DEPTH, MAX_ROWS, MAX_TABS, MAX_TERMINAL_COLUMNS,
     MAX_TERMINAL_ROWS, TILE_BADGE_LIMIT,
 };
+use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::fmt;
 use std::os::unix::net::UnixStream;
@@ -43,8 +44,8 @@ pub mod prelude {
     pub use crate::{
         action_id, ActionId, AppIcon, AppMetadata, AppRunner, AppShelf, AppShell, AppStore,
         Capability, Client, ClientEvent, Command, Context, ControlState, DenyReason, Device,
-        DeviceRequest, DeviceResult, DialogAction, Grant, Grants, KoboApp, Lifecycle, Navigator,
-        Node, NodeId, PowerPolicy, Screen, ScreenBuilder, ShelfDownload, ShelfProgress,
+        DeviceRequest, DeviceResult, DialogAction, Failure, Grant, Grants, KoboApp, Lifecycle,
+        Navigator, Node, NodeId, PowerPolicy, Screen, ScreenBuilder, ShelfDownload, ShelfProgress,
         ShelfUpload, ShellError, ShellEvent, ShellRequest, StandardState, StoreError, StoreRequest,
         StoreResult,
     };
@@ -220,6 +221,75 @@ impl StandardState {
             Self::PermissionDenied => Some("Access is not available"),
             Self::Error => Some("The operation could not be completed"),
         }
+    }
+}
+
+/// What to put in front of a reader when a task failed.
+///
+/// One mapping, here, rather than a `match` on [`TaskError`] copied into every
+/// application. Five applications wrote five different sentences for the same
+/// failure, and adding a variant to `TaskError` broke all of them at once,
+/// which is how this came to exist.
+///
+/// The wording assumes the SDK has already done what it can. By the time an
+/// application sees a failure, [`Context::spawn_retrying`] has taken its
+/// second attempt, so the advice can be plain rather than hedged.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Failure {
+    /// The whole-screen state, for when there is nothing on the page already.
+    pub state: StandardState,
+    /// One sentence saying what happened and what would change it. Short
+    /// enough to sit in a banner over content that is already on screen.
+    pub advice: &'static str,
+    /// Whether offering a Retry control is honest.
+    ///
+    /// A refused permission and a body over the ceiling will do the same thing
+    /// next time, and a control that cannot help is worse than no control.
+    pub retryable: bool,
+}
+
+impl Failure {
+    /// Reads a task failure the way a reader would.
+    #[must_use]
+    pub const fn of(error: TaskError) -> Self {
+        match error {
+            TaskError::Offline => Self {
+                state: StandardState::Offline,
+                advice: "This reader is not on a network. Join Wi-Fi and try again.",
+                retryable: true,
+            },
+            TaskError::Unreachable => Self {
+                state: StandardState::Error,
+                advice: "The service did not answer. It may be down.",
+                retryable: true,
+            },
+            TaskError::TimedOut => Self {
+                state: StandardState::Error,
+                advice: "The network was too slow to answer.",
+                retryable: true,
+            },
+            TaskError::Denied => Self {
+                state: StandardState::PermissionDenied,
+                advice: "This application is not allowed to do that.",
+                retryable: false,
+            },
+            TaskError::TooLarge => Self {
+                state: StandardState::Error,
+                advice: "The reply was too large to read on this device.",
+                retryable: false,
+            },
+            TaskError::NotFound => Self {
+                state: StandardState::Empty,
+                advice: "The service had nothing to return.",
+                retryable: false,
+            },
+        }
+    }
+
+    /// The heading for a whole-screen version of this failure.
+    #[must_use]
+    pub const fn title(self) -> &'static str {
+        self.state.title()
     }
 }
 
@@ -1922,6 +1992,12 @@ pub struct Context {
     next_task: u32,
     in_flight: usize,
     metrics: DisplayMetrics,
+    /// Work the runner should try once more if it comes back retryable.
+    ///
+    /// Collected here and drained by the runner, because a context is built
+    /// fresh for every callback and anything kept in it would be forgotten
+    /// before the answer arrived.
+    retrying: Vec<(TaskId, Task)>,
 }
 
 impl Context {
@@ -2317,6 +2393,31 @@ impl Context {
         let task = TaskId(self.next_task);
         self.in_flight += 1;
         self.commands.push(Command::Spawn { task, work });
+        Some(task)
+    }
+
+    /// Hands work to the runtime, and quietly tries it once more if the first
+    /// attempt fails for a reason a second attempt could survive.
+    ///
+    /// This exists because of what a Kobo's radio does. It powers down when
+    /// idle and wakes on demand, so the first request after the reader has
+    /// been sitting on a page for a while routinely fails while the interface
+    /// is still coming up, and succeeds a couple of seconds later. An
+    /// application that reported that first failure would be telling the
+    /// reader they are offline at the exact moment they are not.
+    ///
+    /// The retry is invisible. The second attempt reports back under the
+    /// identifier returned here, so an application matches the answer to the
+    /// request it made and never learns there were two. What it does learn is
+    /// that a failure which reaches [`KoboApp::on_task`] has already been
+    /// given its second chance, so it can say so on screen without hedging.
+    ///
+    /// Only [`TaskError::worth_retrying`] failures are tried again, and only
+    /// once. A refused permission or a body too large is not going to change,
+    /// and a reader watching a spinner is owed an answer rather than a loop.
+    pub fn spawn_retrying(&mut self, work: Task) -> Option<TaskId> {
+        let task = self.spawn(work.clone())?;
+        self.retrying.push((task, work));
         Some(task)
     }
 
@@ -2911,6 +3012,13 @@ pub const CALLBACK_DEADLINE: Duration = Duration::from_millis(250);
 /// unbounded amount of radio time.
 pub const MAX_TASKS_IN_FLIGHT: usize = 4;
 
+/// How long the runner waits before trying failed work a second time.
+///
+/// Long enough for a Kobo's radio to finish coming up, which is the failure
+/// this retry exists for, and short enough that a reader watching a spinner
+/// does not conclude the application has hung.
+pub const RETRY_DELAY_SECONDS: u32 = 3;
+
 #[derive(Debug)]
 pub struct AppRunner<A> {
     app: A,
@@ -2929,6 +3037,14 @@ pub struct AppRunner<A> {
     next_task: u32,
     in_flight: usize,
     settled: bool,
+    /// Work handed over by [`Context::spawn_retrying`] that has not yet been
+    /// given its second chance, keyed by the identifier the application holds.
+    retrying: BTreeMap<TaskId, Task>,
+    /// Naps between a first failure and a second attempt, each remembering the
+    /// identifier the application is waiting on and the work to try again.
+    napping: BTreeMap<TaskId, (TaskId, Task)>,
+    /// Second attempts, mapped back to the identifier the application holds.
+    attempts: BTreeMap<TaskId, TaskId>,
     /// The screen the runtime is believed to be showing.
     ///
     /// A screen identical to the one already on the panel is dropped here
@@ -2961,6 +3077,9 @@ impl<A: KoboApp> AppRunner<A> {
             next_task: 0,
             in_flight: 0,
             settled: false,
+            retrying: BTreeMap::new(),
+            napping: BTreeMap::new(),
+            attempts: BTreeMap::new(),
             displayed: None,
         }
     }
@@ -3001,6 +3120,7 @@ impl<A: KoboApp> AppRunner<A> {
             next_task: self.next_task,
             in_flight: self.in_flight,
             metrics: self.metrics,
+            retrying: Vec::new(),
         }
     }
 
@@ -3049,8 +3169,60 @@ impl<A: KoboApp> AppRunner<A> {
     /// keeps starting work can keep starting it, while one that never hears
     /// back stays capped.
     pub fn task_outcome(&mut self, task: TaskId, outcome: TaskOutcome) -> Vec<Command> {
+        // A nap between two attempts finishing is not news for the
+        // application, which never learned there was one.
+        if let Some((waiting_on, work)) = self.napping.remove(&task) {
+            if matches!(outcome, TaskOutcome::Cancelled) {
+                self.settled = true;
+                return self.dispatch(|app, context| {
+                    app.on_task(context, waiting_on, TaskOutcome::Cancelled)
+                });
+            }
+            let (again, command) = self.hand_over(work);
+            self.attempts.insert(again, waiting_on);
+            return vec![command];
+        }
+        // A second attempt reports under the identifier the application is
+        // holding, never the one this runner invented for it.
+        let task = self.attempts.remove(&task).unwrap_or(task);
+        if let TaskOutcome::Failed(error) = outcome {
+            if error.worth_retrying() {
+                if let Some(work) = self.retrying.remove(&task) {
+                    let (nap, command) = self.hand_over(Task::Sleep {
+                        seconds: RETRY_DELAY_SECONDS,
+                    });
+                    self.napping.insert(nap, (task, work));
+                    return vec![command];
+                }
+            }
+        }
+        self.retrying.remove(&task);
         self.settled = true;
         self.dispatch(|app, context| app.on_task(context, task, outcome))
+    }
+
+    /// Starts work the application did not ask for directly.
+    ///
+    /// One task has just settled and one is starting in its place, so the
+    /// count of tasks in flight does not move and `settled` stays false: there
+    /// is no callback coming that would settle it.
+    fn hand_over(&mut self, work: Task) -> (TaskId, Command) {
+        self.next_task = self.next_task.saturating_add(1);
+        let task = TaskId(self.next_task);
+        (task, Command::Spawn { task, work })
+    }
+
+    /// The identifier the runtime knows a task by, which is not the one the
+    /// application holds while a second attempt is in the air.
+    fn live_attempt(&self, held: TaskId) -> Option<TaskId> {
+        self.attempts
+            .iter()
+            .find_map(|(actual, waiting_on)| (*waiting_on == held).then_some(*actual))
+            .or_else(|| {
+                self.napping
+                    .iter()
+                    .find_map(|(nap, (waiting_on, _))| (*waiting_on == held).then_some(*nap))
+            })
     }
 
     /// Tells the application it gained or lost the panel.
@@ -3113,6 +3285,7 @@ impl<A: KoboApp> AppRunner<A> {
             next_task: self.next_task,
             in_flight: self.in_flight,
             metrics: self.metrics,
+            retrying: Vec::new(),
         };
         if std::mem::take(&mut self.settled) {
             context.settle();
@@ -3122,7 +3295,22 @@ impl<A: KoboApp> AppRunner<A> {
         let elapsed = started.elapsed();
         self.next_task = context.next_task;
         self.in_flight = context.in_flight;
+        for (task, work) in std::mem::take(&mut context.retrying) {
+            self.retrying.insert(task, work);
+        }
         let mut commands = context.take_commands();
+        // An application cancelling a task names it by the identifier it was
+        // given, which is not what the runtime is holding once a second
+        // attempt is in the air. Left untranslated the cancel would name
+        // nothing and the attempt would run on.
+        for command in &mut commands {
+            if let Command::Cancel(held) = command {
+                if let Some(actual) = self.live_attempt(*held) {
+                    self.retrying.remove(held);
+                    *command = Command::Cancel(actual);
+                }
+            }
+        }
         commands.retain(|command| match command {
             Command::SetScreen(screen) => {
                 if self.displayed.as_ref() == Some(screen) {
@@ -3539,6 +3727,7 @@ mod tests {
             next_task: 1,
             in_flight: 0,
             metrics: DisplayMetrics::default(),
+            retrying: Vec::new(),
         }
     }
 
@@ -4099,6 +4288,188 @@ mod task_tests {
                 _ => None,
             })
             .collect()
+    }
+
+    /// An application that asks for one retryable fetch and records what it is
+    /// told, so a test can assert on what reached it and, more importantly,
+    /// what did not.
+    #[derive(Default)]
+    struct Fetcher {
+        asked: Option<TaskId>,
+        outcomes: Vec<(TaskId, TaskOutcome)>,
+        cancel_on_action: bool,
+    }
+
+    impl Fetcher {
+        fn work() -> Task {
+            Task::Fetch {
+                url: "https://example.invalid/feed".into(),
+                offset: 0,
+                max_bytes: 1024,
+            }
+        }
+    }
+
+    impl KoboApp for Fetcher {
+        fn on_start(&mut self, context: &mut Context) {
+            self.asked = context.spawn_retrying(Self::work());
+        }
+
+        fn on_action(&mut self, context: &mut Context, _action: ActionId) {
+            if self.cancel_on_action {
+                if let Some(task) = self.asked {
+                    context.cancel(task);
+                }
+            }
+        }
+
+        fn on_task(&mut self, _context: &mut Context, task: TaskId, outcome: TaskOutcome) {
+            self.outcomes.push((task, outcome));
+        }
+    }
+
+    fn spawned_work(commands: &[Command]) -> Vec<(TaskId, Task)> {
+        commands
+            .iter()
+            .filter_map(|command| match command {
+                Command::Spawn { task, work } => Some((*task, work.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_retryable_failure_naps_and_tries_again_without_telling_the_application() {
+        // The radio powers down when idle. The first request after a while
+        // sitting on a page fails while the interface comes up and succeeds
+        // moments later, so reporting that first failure would tell the reader
+        // they are offline at the moment they are not.
+        let mut runner = AppRunner::new(Fetcher::default());
+        let first = spawned_work(&runner.start());
+        assert_eq!(first.len(), 1);
+        let held = first[0].0;
+
+        let nap = spawned_work(&runner.task_outcome(held, TaskOutcome::Failed(TaskError::Offline)));
+        assert_eq!(
+            nap,
+            vec![(
+                TaskId(2),
+                Task::Sleep {
+                    seconds: RETRY_DELAY_SECONDS
+                }
+            )]
+        );
+        assert!(runner.app().outcomes.is_empty(), "the failure was reported");
+
+        let again =
+            spawned_work(&runner.task_outcome(TaskId(2), TaskOutcome::Completed(Vec::new())));
+        assert_eq!(again, vec![(TaskId(3), Fetcher::work())]);
+        assert!(runner.app().outcomes.is_empty());
+    }
+
+    #[test]
+    fn a_second_attempt_reports_under_the_identifier_the_application_holds() {
+        // Otherwise every application would have to keep a set of identifiers
+        // rather than one, and match an answer it never asked for.
+        let mut runner = AppRunner::new(Fetcher::default());
+        runner.start();
+        let held = runner.app().asked.expect("asked");
+        runner.task_outcome(held, TaskOutcome::Failed(TaskError::Offline));
+        runner.task_outcome(TaskId(2), TaskOutcome::Completed(Vec::new()));
+        runner.task_outcome(TaskId(3), TaskOutcome::Completed(b"ok".to_vec()));
+        let outcomes = &runner.app().outcomes;
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].0, held);
+        assert!(matches!(
+            outcomes[0].1,
+            TaskOutcome::Completed(ref body) if body == b"ok"
+        ));
+    }
+
+    #[test]
+    fn a_second_failure_is_reported_rather_than_retried_forever() {
+        let mut runner = AppRunner::new(Fetcher::default());
+        runner.start();
+        let held = runner.app().asked.expect("asked");
+        runner.task_outcome(held, TaskOutcome::Failed(TaskError::Offline));
+        runner.task_outcome(TaskId(2), TaskOutcome::Completed(Vec::new()));
+        let commands = runner.task_outcome(TaskId(3), TaskOutcome::Failed(TaskError::Offline));
+        assert!(spawned_work(&commands).is_empty(), "retried a third time");
+        assert_eq!(runner.app().outcomes.len(), 1);
+        assert!(matches!(
+            runner.app().outcomes[0].1,
+            TaskOutcome::Failed(TaskError::Offline)
+        ));
+    }
+
+    #[test]
+    fn a_failure_a_second_attempt_cannot_survive_is_reported_at_once() {
+        // A refused permission is not going to change, and a reader watching a
+        // spinner is owed an answer rather than a wait for the same no.
+        let mut runner = AppRunner::new(Fetcher::default());
+        runner.start();
+        let held = runner.app().asked.expect("asked");
+        let commands = runner.task_outcome(held, TaskOutcome::Failed(TaskError::Denied));
+        assert!(spawned_work(&commands).is_empty());
+        assert_eq!(runner.app().outcomes.len(), 1);
+    }
+
+    #[test]
+    fn retrying_holds_one_slot_rather_than_two() {
+        let mut runner = AppRunner::new(Fetcher::default());
+        runner.start();
+        let held = runner.app().asked.expect("asked");
+        runner.task_outcome(held, TaskOutcome::Failed(TaskError::Offline));
+        runner.task_outcome(TaskId(2), TaskOutcome::Completed(Vec::new()));
+        assert_eq!(runner.in_flight, 1);
+        runner.task_outcome(TaskId(3), TaskOutcome::Completed(Vec::new()));
+        assert_eq!(runner.in_flight, 0);
+    }
+
+    #[test]
+    fn cancelling_reaches_the_attempt_actually_in_the_air() {
+        // The application names the task it was given. The runtime is holding
+        // a different identifier once a second attempt has started, so an
+        // untranslated cancel would name nothing and the fetch would run on.
+        let mut runner = AppRunner::new(Fetcher {
+            cancel_on_action: true,
+            ..Fetcher::default()
+        });
+        runner.start();
+        let held = runner.app().asked.expect("asked");
+        runner.task_outcome(held, TaskOutcome::Failed(TaskError::Offline));
+        runner.task_outcome(TaskId(2), TaskOutcome::Completed(Vec::new()));
+        let commands = runner.action(ActionId(1));
+        assert!(
+            commands.contains(&Command::Cancel(TaskId(3))),
+            "cancelled the wrong task: {commands:?}"
+        );
+    }
+
+    #[test]
+    fn cancelling_during_the_nap_stops_it_rather_than_retrying_anyway() {
+        let mut runner = AppRunner::new(Fetcher {
+            cancel_on_action: true,
+            ..Fetcher::default()
+        });
+        runner.start();
+        let held = runner.app().asked.expect("asked");
+        runner.task_outcome(held, TaskOutcome::Failed(TaskError::Offline));
+        let commands = runner.action(ActionId(1));
+        assert!(commands.contains(&Command::Cancel(TaskId(2))));
+        let after = runner.task_outcome(TaskId(2), TaskOutcome::Cancelled);
+        assert!(spawned_work(&after).is_empty(), "retried a cancelled fetch");
+        assert_eq!(runner.app().outcomes, vec![(held, TaskOutcome::Cancelled)]);
+    }
+
+    #[test]
+    fn plain_spawn_is_left_alone() {
+        // Only work handed over through spawn_retrying is tried twice.
+        let mut runner = AppRunner::new(Spawner::default());
+        let held = spawned(&runner.start())[0];
+        let commands = runner.task_outcome(held, TaskOutcome::Failed(TaskError::Offline));
+        assert!(spawned_work(&commands).is_empty());
+        assert_eq!(runner.app().outcomes.len(), 1);
     }
 
     #[test]

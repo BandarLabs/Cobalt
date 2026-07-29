@@ -300,6 +300,20 @@ pub enum TaskOutcome {
 pub enum TaskError {
     /// The application does not hold the capability the task requires.
     Denied,
+    /// This reader has no network at all.
+    ///
+    /// Separate from [`TaskError::Unreachable`] because the two need opposite
+    /// things from the person holding the reader. This one is answered by
+    /// joining Wi-Fi, and no amount of retrying will help until they do.
+    /// Deciding between them is the daemon's job: it is the only layer that
+    /// runs outside the sandbox and can see whether the device has a route.
+    Offline,
+    /// The reader has a network, but this host did not answer usefully.
+    ///
+    /// A refused connection, a name that does not resolve while other names
+    /// do, a handshake that fails, or a reply that is not HTTP. Worth
+    /// retrying, and worth reporting as the host's problem rather than the
+    /// reader's.
     Unreachable,
     /// The response exceeded the ceiling the task itself declared.
     TooLarge,
@@ -307,11 +321,29 @@ pub enum TaskError {
     NotFound,
 }
 
+impl TaskError {
+    /// Whether trying the same thing again could reasonably succeed.
+    ///
+    /// The radio on this reader powers down when idle and wakes on demand, so
+    /// the first request after a quiet spell regularly fails while it comes
+    /// back. That is the case this exists for.
+    ///
+    /// [`TaskError::Denied`] is not here because a permission does not appear
+    /// on the second ask, and neither is [`TaskError::TooLarge`], because the
+    /// response will be the same size next time. [`TaskError::NotFound`] is a
+    /// real answer from a host that is working.
+    #[must_use]
+    pub const fn worth_retrying(self) -> bool {
+        matches!(self, Self::Offline | Self::Unreachable | Self::TimedOut)
+    }
+}
+
 impl fmt::Display for TaskError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::Denied => "the application does not hold this permission",
-            Self::Unreachable => "the network could not be reached",
+            Self::Offline => "this reader is not on a network",
+            Self::Unreachable => "the host did not answer",
             Self::TooLarge => "the response was larger than the limit the task declared",
             Self::TimedOut => "the task ran out of time",
             Self::NotFound => "not found",
@@ -5192,6 +5224,10 @@ const fn encode_task_error(error: TaskError) -> u8 {
         TaskError::TooLarge => 2,
         TaskError::TimedOut => 3,
         TaskError::NotFound => 4,
+        // Appended rather than inserted. The tags are the wire, and renumbering
+        // them would make a new daemon and an older app disagree about what
+        // went wrong without either of them noticing.
+        TaskError::Offline => 5,
     }
 }
 
@@ -5202,8 +5238,90 @@ const fn decode_task_error(tag: u8) -> Result<TaskError, ProtocolError> {
         2 => TaskError::TooLarge,
         3 => TaskError::TimedOut,
         4 => TaskError::NotFound,
+        5 => TaskError::Offline,
         _ => return Err(ProtocolError::InvalidValue("task error")),
     })
+}
+
+#[cfg(test)]
+mod task_error_tests {
+    use super::{decode_task_error, encode_task_error, ProtocolError, TaskError};
+
+    /// Every variant, so that adding one without a tag fails here.
+    const EVERY: &[TaskError] = &[
+        TaskError::Denied,
+        TaskError::Offline,
+        TaskError::Unreachable,
+        TaskError::TooLarge,
+        TaskError::TimedOut,
+        TaskError::NotFound,
+    ];
+
+    #[test]
+    fn every_task_error_survives_the_wire() {
+        for error in EVERY {
+            assert_eq!(decode_task_error(encode_task_error(*error)), Ok(*error));
+        }
+    }
+
+    #[test]
+    fn no_two_task_errors_share_a_tag() {
+        let mut tags: Vec<u8> = EVERY
+            .iter()
+            .map(|error| encode_task_error(*error))
+            .collect();
+        tags.sort_unstable();
+        let count = tags.len();
+        tags.dedup();
+        assert_eq!(tags.len(), count, "two errors encode to the same tag");
+    }
+
+    #[test]
+    fn the_tags_that_were_already_on_the_wire_did_not_move() {
+        // An app built before Offline existed is still talking to this daemon
+        // over these numbers. Renumbering would make the two disagree about
+        // what went wrong without either of them noticing.
+        assert_eq!(encode_task_error(TaskError::Denied), 0);
+        assert_eq!(encode_task_error(TaskError::Unreachable), 1);
+        assert_eq!(encode_task_error(TaskError::TooLarge), 2);
+        assert_eq!(encode_task_error(TaskError::TimedOut), 3);
+        assert_eq!(encode_task_error(TaskError::NotFound), 4);
+    }
+
+    #[test]
+    fn a_tag_from_the_future_is_refused_rather_than_guessed() {
+        assert_eq!(
+            decode_task_error(6),
+            Err(ProtocolError::InvalidValue("task error"))
+        );
+        assert_eq!(
+            decode_task_error(255),
+            Err(ProtocolError::InvalidValue("task error"))
+        );
+    }
+
+    #[test]
+    fn only_the_failures_that_could_pass_next_time_are_worth_retrying() {
+        assert!(TaskError::Offline.worth_retrying());
+        assert!(TaskError::Unreachable.worth_retrying());
+        assert!(TaskError::TimedOut.worth_retrying());
+        // A permission does not appear on the second ask, a response does not
+        // shrink, and a 404 is a working host giving a real answer.
+        assert!(!TaskError::Denied.worth_retrying());
+        assert!(!TaskError::TooLarge.worth_retrying());
+        assert!(!TaskError::NotFound.worth_retrying());
+    }
+
+    #[test]
+    fn the_two_network_failures_do_not_read_the_same() {
+        // They ask opposite things of the person holding the reader: one is
+        // answered by joining Wi-Fi, the other by waiting for a host.
+        let offline = TaskError::Offline.to_string();
+        let unreachable = TaskError::Unreachable.to_string();
+        assert_ne!(offline, unreachable);
+        assert!(offline.contains("not on a network"), "{offline}");
+        assert!(unreachable.contains("host"), "{unreachable}");
+    }
 }
 
 #[cfg(test)]

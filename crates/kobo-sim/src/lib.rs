@@ -37,7 +37,14 @@ fn profile_metrics() -> DisplayMetrics {
 enum Scenario {
     #[default]
     Normal,
+    /// The reader has no network at all.
     Offline,
+    /// The reader has a network, but the host it wants does not answer.
+    ///
+    /// Separate from `Offline` because an app should say different things
+    /// about the two, and a simulator that could only produce one of them
+    /// would let an app ship having only been shown half the problem.
+    HostDown,
     LowBattery,
     PermissionDenied,
     MissingSecret,
@@ -47,9 +54,10 @@ enum Scenario {
 }
 
 impl Scenario {
-    const ALL: [Self; 8] = [
+    const ALL: [Self; 9] = [
         Self::Normal,
         Self::Offline,
+        Self::HostDown,
         Self::LowBattery,
         Self::PermissionDenied,
         Self::MissingSecret,
@@ -62,6 +70,7 @@ impl Scenario {
         match self {
             Self::Normal => "normal",
             Self::Offline => "offline",
+            Self::HostDown => "host-down",
             Self::LowBattery => "low-battery",
             Self::PermissionDenied => "permission-denied",
             Self::MissingSecret => "missing-secret",
@@ -1437,7 +1446,8 @@ fn scenario_task_error(
         kobo_protocol::Task::Fetch { .. } | kobo_protocol::Task::Post { .. }
     );
     match scenario {
-        Scenario::Offline if network => Some(kobo_protocol::TaskError::Unreachable),
+        Scenario::Offline if network => Some(kobo_protocol::TaskError::Offline),
+        Scenario::HostDown if network => Some(kobo_protocol::TaskError::Unreachable),
         Scenario::LowBattery | Scenario::PermissionDenied if network => {
             Some(kobo_protocol::TaskError::Denied)
         }
@@ -2216,9 +2226,16 @@ mod tests {
 
         assert_eq!(
             scenario_task_error(Scenario::Offline, &fetch),
-            Some(kobo_protocol::TaskError::Unreachable)
+            Some(kobo_protocol::TaskError::Offline)
         );
         assert_eq!(scenario_task_error(Scenario::Offline, &local), None);
+        // The other half of the same problem, which an app has to answer
+        // differently: the reader is fine, the host is not.
+        assert_eq!(
+            scenario_task_error(Scenario::HostDown, &fetch),
+            Some(kobo_protocol::TaskError::Unreachable)
+        );
+        assert_eq!(scenario_task_error(Scenario::HostDown, &local), None);
         assert_eq!(
             scenario_task_error(Scenario::PermissionDenied, &fetch),
             Some(kobo_protocol::TaskError::Denied)

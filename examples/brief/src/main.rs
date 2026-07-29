@@ -31,8 +31,8 @@
 
 use kobo_json::Value;
 use kobo_sdk::{
-    action_id, ActionId, BandAlign, Context, Glyph, KoboApp, LogLevel, Screen, ScreenBuilder,
-    SlotWidth, Space, StoreResult, Task, TaskError, TaskId, TaskOutcome,
+    action_id, ActionId, BandAlign, Context, Failure, Glyph, KoboApp, LogLevel, Screen,
+    ScreenBuilder, SlotWidth, Space, StoreResult, Task, TaskId, TaskOutcome,
 };
 use std::process::ExitCode;
 
@@ -449,13 +449,10 @@ impl KoboApp for Brief {
                 Fetching::Nothing => {}
             },
             TaskOutcome::Failed(error) => {
-                let why = match error {
-                    TaskError::Unreachable => "No network. This is the brief from last time.",
-                    TaskError::TimedOut => "The network was too slow. Try again on Wi-Fi.",
-                    TaskError::Denied => "This build is not allowed to fetch.",
-                    TaskError::TooLarge => "The reply was too large.",
-                    TaskError::NotFound => "The source did not answer.",
-                };
+                // The SDK owns the wording, so every application says the
+                // same thing about the same failure and a new TaskError
+                // variant does not need five edits.
+                let why = Failure::of(error).advice;
                 // A story that fails is skipped; an index that fails ends the
                 // refresh, because there is nothing to skip to.
                 if matches!(stage, Fetching::Story(_, _)) {

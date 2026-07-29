@@ -53,7 +53,7 @@ Verified on the physical Clara BW unless stated otherwise.
 | Network | HTTPS `Fetch` and `Post`, ranged downloads, a 24 MB transfer, named credentials the application never sees |
 | Storage | Per-application keyed state under its own directory |
 | Navigation | A runtime-owned Back the application may answer first (see below) |
-| Tooling | `devices`, `doctor`, `package`, `deploy`, `inspect`, `verify`, `session`, `wait`, `logs`, `touch-probe`, and a Clara BW simulator in the browser |
+| Tooling | `devices`, `doctor`, `package`, `deploy`, `inspect`, `verify`, `session`, `wait`, `logs`, `touch-probe`, `record`, and a Clara BW simulator in the browser |
 | Applications | `launcher`, `hn`, `rss`, `gutenbird`, `chat`, `todo`, `terminal`, `tictactoe`, `gallery`, `brief` |
 
 **Not here yet, stated plainly**
@@ -64,6 +64,19 @@ Verified on the physical Clara BW unless stated otherwise.
   native one: `brief` is the shape of it and on a device it only collects while
   it is in the foreground. Making it real means `kobod` owning suspend on the
   only device there is.
+- **A `present` session ends in a reboot.** On firmware 4.45.23697 the device
+  resets about thirty seconds after `kobo present` hands the panel back. It was
+  isolated by running each half alone: `kobo record` for thirty seconds left
+  the reader up continuously, and `kobo present` on its own, with nothing
+  recording, reset it every time. `kobod`'s log reaches "panel released,
+  restarting the reader" and then contact is lost, so the fault is in the
+  teardown that restarts the reader rather than in anything a session does
+  while it owns the panel. Ruled out: a `KoboRoot.tgz` upgrade loop, an
+  `inittab` respawn, the freeze watchdog being armed without evidence, and
+  userspace starving `/dev/watchdog`. The remaining suspect is named in the
+  code itself, at `crates/kobod/src/device.rs`: the handback waits up to ninety
+  seconds for the restarted reader to feed the freeze watchdog, and the SoC's
+  own hardware watchdog fires at thirty-one.
 - **One device.** Clara BW N365, device code 391. Everything else is refused
   rather than mapped to a similar model, so there is no second profile to test
   against and no evidence any of this holds elsewhere.
@@ -206,6 +219,26 @@ reader in the foreground. `tap --device` writes real evdev records to the real
 touch node, so the digitiser, the transform, the multitouch decoder and the
 hit-testing all run as they do under a finger; it is behind `device-write` and
 an unlock phrase, and it always lifts.
+
+To record the panel rather than photograph it once:
+
+```sh
+cargo run -p kobo-cli -- record --device <address> --seconds 24 --out target/run
+```
+
+`record --device` is read-only in the same way `shot --device` is. It writes
+numbered greyscale PNGs and a `timings.txt`, plus an `recording.mp4` when
+ffmpeg is on the path. Every grey level is kept: the panel is greyscale and its
+text is anti-aliased, so a recording that flattened the greys would look
+harsher than the device and would read as a rendering bug that is not there.
+What keeps it small is that e-ink barely moves, so identical frames are dropped
+and only the changes are stored.
+
+`scripts/record-apps.sh --device <address>` drives every example application
+through a short tap sequence and records each one, into a dated directory under
+`target/device-test/`. It is a script rather than a list of commands because
+the interesting failures are the ones that appear between two runs, and
+comparing runs is only possible if both were driven the same way.
 
 Create and run a new application:
 
