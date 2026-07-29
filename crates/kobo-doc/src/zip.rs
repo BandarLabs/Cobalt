@@ -91,6 +91,86 @@ pub struct Archive<'a> {
     entries: BTreeMap<String, Entry>,
 }
 
+/// Writes an ordinary ZIP archive whose members are stored without another
+/// layer of compression.
+///
+/// MP3 data is already compressed, so deflating it spends CPU and battery for
+/// no useful reduction. This small writer also lets an SDK application create
+/// Kobo's sideloadable `.mp3z` container without filesystem access.
+///
+/// # Errors
+///
+/// Returns [`Fault::TooLarge`] when a member, name, archive offset, or member
+/// count cannot be represented by the classic ZIP format.
+pub fn stored(members: &[(String, Vec<u8>)]) -> Result<Vec<u8>, Fault> {
+    let count = u16::try_from(members.len()).map_err(|_| Fault::TooLarge)?;
+    let mut out = Vec::new();
+    let mut directory = Vec::new();
+    for (name, body) in members {
+        if name.is_empty() || name.as_bytes().contains(&0) {
+            return Err(Fault::Damaged);
+        }
+        let at = u32::try_from(out.len()).map_err(|_| Fault::TooLarge)?;
+        let size = u32::try_from(body.len()).map_err(|_| Fault::TooLarge)?;
+        let name_len = u16::try_from(name.len()).map_err(|_| Fault::TooLarge)?;
+        let crc = crc32(body);
+
+        out.extend_from_slice(&LOCAL_HEADER.to_le_bytes());
+        out.extend_from_slice(&20u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&STORED.to_le_bytes());
+        out.extend_from_slice(&[0; 4]);
+        out.extend_from_slice(&crc.to_le_bytes());
+        out.extend_from_slice(&size.to_le_bytes());
+        out.extend_from_slice(&size.to_le_bytes());
+        out.extend_from_slice(&name_len.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(name.as_bytes());
+        out.extend_from_slice(body);
+
+        directory.extend_from_slice(&CENTRAL_HEADER.to_le_bytes());
+        directory.extend_from_slice(&20u16.to_le_bytes());
+        directory.extend_from_slice(&20u16.to_le_bytes());
+        directory.extend_from_slice(&0u16.to_le_bytes());
+        directory.extend_from_slice(&STORED.to_le_bytes());
+        directory.extend_from_slice(&[0; 4]);
+        directory.extend_from_slice(&crc.to_le_bytes());
+        directory.extend_from_slice(&size.to_le_bytes());
+        directory.extend_from_slice(&size.to_le_bytes());
+        directory.extend_from_slice(&name_len.to_le_bytes());
+        directory.extend_from_slice(&0u16.to_le_bytes());
+        directory.extend_from_slice(&0u16.to_le_bytes());
+        directory.extend_from_slice(&0u16.to_le_bytes());
+        directory.extend_from_slice(&0u16.to_le_bytes());
+        directory.extend_from_slice(&[0; 4]);
+        directory.extend_from_slice(&at.to_le_bytes());
+        directory.extend_from_slice(name.as_bytes());
+    }
+    let directory_at = u32::try_from(out.len()).map_err(|_| Fault::TooLarge)?;
+    let directory_len = u32::try_from(directory.len()).map_err(|_| Fault::TooLarge)?;
+    out.extend_from_slice(&directory);
+    out.extend_from_slice(&END_OF_DIRECTORY.to_le_bytes());
+    out.extend_from_slice(&[0; 4]);
+    out.extend_from_slice(&count.to_le_bytes());
+    out.extend_from_slice(&count.to_le_bytes());
+    out.extend_from_slice(&directory_len.to_le_bytes());
+    out.extend_from_slice(&directory_at.to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
+    Ok(out)
+}
+
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = u32::MAX;
+    for byte in bytes {
+        crc ^= u32::from(*byte);
+        for _ in 0..8 {
+            let mask = 0_u32.wrapping_sub(crc & 1);
+            crc = (crc >> 1) ^ (0xedb8_8320 & mask);
+        }
+    }
+    !crc
+}
+
 impl<'a> Archive<'a> {
     /// Reads the table of contents. Nothing is unpacked here.
     ///
@@ -302,6 +382,21 @@ pub(crate) mod tests {
         let opened = Archive::open(&bytes).expect("a readable archive");
         assert_eq!(opened.read("one.txt").as_deref(), Ok(&b"first"[..]));
         assert_eq!(opened.read("two.txt").as_deref(), Ok(&b"second"[..]));
+    }
+
+    #[test]
+    fn the_public_writer_makes_a_standard_readable_archive() {
+        let bytes = stored(&[
+            ("001.mp3".to_owned(), b"one".to_vec()),
+            ("002.mp3".to_owned(), b"two".to_vec()),
+        ])
+        .expect("a small archive");
+        let opened = Archive::open(&bytes).expect("a readable archive");
+        assert_eq!(opened.read("001.mp3").as_deref(), Ok(&b"one"[..]));
+        assert_eq!(opened.read("002.mp3").as_deref(), Ok(&b"two"[..]));
+        // A common external unzip implementation checks CRC, unlike this
+        // reader, so pin the well-known checksum for `one` here.
+        assert_eq!(crc32(b"one"), 0x7a6c_86f1);
     }
 
     #[test]

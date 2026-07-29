@@ -51,10 +51,11 @@ Verified on the physical Clara BW unless stated otherwise.
 | UI | Bars, tiles, picture tiles, grids, rows, checklists, keyboard, terminal, prose pagination, skeletons, banners, dialogs |
 | Pictures | Chunked upload, an LRU cache, greyscale conversion, glyph fallback |
 | Network | HTTPS `Fetch` and `Post`, ranged downloads, a 24 MB transfer, named credentials the application never sees |
+| Audio | Bounded MP3/MP3Z decode, A2DP playback, shared album-art player, Bluetooth output handoff |
 | Storage | Per-application keyed state under its own directory |
 | Navigation | A runtime-owned Back the application may answer first (see below) |
 | Tooling | `devices`, `doctor`, `package`, `deploy`, `inspect`, `verify`, `session`, `wait`, `logs`, `touch-probe`, `record`, and a Clara BW simulator in the browser |
-| Applications | `launcher`, `hn`, `rss`, `gutenbird`, `chat`, `todo`, `terminal`, `tictactoe`, `gallery`, `brief` |
+| Applications | `launcher`, `audiobook`, `settings`, `hn`, `rss`, `gutenbird`, `chat`, `todo`, `terminal`, `tictactoe`, `magnet`, `gallery`, `brief` |
 
 **Not here yet, stated plainly**
 
@@ -121,8 +122,8 @@ crates/    kobo-sdk       what an application imports
            kobo-smoke     owner-attended display writes
            kobo-handoff   stopping and restarting the stock reader
            kobo-guard     screen capture and restore around a session
-examples/  launcher, terminal, todo, brief, chat, gutenbird, gallery,
-           tictactoe, hn, rss
+examples/  launcher, audiobook, settings, terminal, todo, brief, chat,
+           gutenbird, gallery, tictactoe, hn, rss
 ```
 
 External dependencies are kept behind narrow crates: `kobo-net` (HTTP and
@@ -360,23 +361,24 @@ Developers who need Wi-Fi deployment may opt in explicitly:
 kobo setup --enable-ssh
 ```
 
-That enables the firmware's **own root SSH server**. Cobalt does not create a
-password, install a key, or weaken authentication, and cannot verify that a
-particular firmware build has a safe authentication policy. Secure the server
-with a dedicated key before leaving it enabled; `kobo setup --undo` disables it
-again. A plain `kobo setup` is the recommended owner-facing installation.
+That enables the firmware's **own root SSH server** and makes the setup
+reproducible. It creates or reuses the dedicated `~/.ssh/kobo_cobalt` key and
+stages only its public half inside Cobalt. After the restart, open Cobalt once
+from the reader menu: its root-owned start script appends the key to
+`/root/.ssh/authorized_keys` exactly once and deletes the staged copy. The
+private key never leaves the computer and no password is created or weakened.
+`kobo setup --undo` disables the server again. A plain `kobo setup` remains the
+recommended owner-facing installation.
 
 With `--enable-ssh`, it then waits. The restart is the one step that has to happen on the reader,
 its SSH server only starts at boot, and nothing on this side can press the
 power button, so the command asks for it and then watches the network for the
-reader to come back, printing its address and the exact `kobo deploy` line when
-it does. It identifies the reader by two things it can learn without writing a
-byte, because on a first setup there is no key installed and the firmware's
-first login forces a password change, so a probe that authenticated would hang.
-It identifies the reader by *change*: it records which addresses answer on port
-22 before the wait, and only ones that were not answering and now are can be
-the reader, which rules out the machine it is running on, the router and a
-NAS, since none of them just joined.
+reader to come back. Open Cobalt once after the reboot to install the staged
+public key; the command then prints the address and exact `kobo deploy` line.
+It identifies the reader first by *change*: it records which addresses answer
+on port 22 before the wait, and only ones that were not answering and now are
+candidates. It then authenticates with the new dedicated key and asks the same
+read-only identity script every other device command uses.
 
 Change alone was not enough. A laptop waking from sleep mid-wait was reported
 as the reader, and a confident wrong address is worse than none. The obvious
@@ -920,6 +922,15 @@ simulator against the same renderer and the same policy the device applies.
 | `schedule_wake(delay)` | Be woken to refresh content |
 | `cancel_wake()` | Drop a pending wake |
 | `set_frontlight(percent)` / `read_frontlight()` | Front light |
+| `read_bluetooth()` / `set_bluetooth(on)` | Bluetooth availability and power |
+| `scan_bluetooth()` | Discover nearby devices |
+| `pair_bluetooth(address)` / `connect_bluetooth(address)` | Pair and connect headphones, speakers, keyboards, remotes and other input devices |
+| `disconnect_bluetooth(address)` / `forget_bluetooth(address)` | Disconnect or remove a pairing |
+| `read_wifi()` / `set_wifi(on)` / `scan_wifi()` | Wi-Fi state, power and nearby networks |
+| `join_wifi(ssid, password)` / `disconnect_wifi()` | Join a WPA personal or open network, or disconnect |
+| `load_shelf_audio(name)` / `load_audio_stream(url)` | Prepare a bounded MP3 or Kobo MP3Z source |
+| `play_audio()` / `pause_audio()` / `stop_audio()` | Control the runtime-owned audio transport |
+| `seek_audio(position)` / `set_audio_volume(percent)` | Seek and adjust software playback volume |
 
 Every call produces exactly one `on_device_result`, so an application always
 learns what happened. A request can come back `Granted` for **less** time than
@@ -928,11 +939,24 @@ declared, it was withheld because the battery is low, system policy refused it,
 another application holds it, or this runtime cannot do it on this hardware.
 
 That last reason is the safety rule made visible. A build only performs what it
-has a proven backend for; anything else is refused rather than pretended. On a
-real device today that means the battery gauge, which is read-only, and nothing
-else: every hardware-changing request is honestly refused. The simulator
-implements all of them, so application logic can be written and tested now and
-will behave identically when a backend is turned on.
+has a proven backend for; anything else is refused rather than pretended. The
+device runtime uses the existing firmware `wpa_supplicant` for Wi-Fi and the
+firmware's BlueZ-compatible D-Bus service for Bluetooth. It never starts a
+second supplicant, attaches HCI itself, or unloads the shared radio modules.
+Audio uses the firmware-owned AOSP A2DP HAL: the runtime decodes MP3, paces
+44.1 kHz stereo PCM into `btservice`, and keeps file paths and HTTPS transport
+inside the runtime. `kobo_sdk::audio::AudioPlayer` composes album art, position,
+seek, play/pause, volume and an audio-only Bluetooth picker. If Play has no
+connected output, the picker powers Bluetooth, scans, pairs and connects, then
+continues playback automatically.
+On Clara BW firmware 4.45.23697 the stable capability marker is
+`/usr/lib/libaudio.a2dp.default.so`; `btservice` owns
+`/tmp/audio.a2dp_ctrl` and creates `/tmp/audio.a2dp_data` after START. The
+runtime therefore detects the HAL before a headset connects and opens the live
+sockets only when playback begins.
+On MediaTek Clara devices, using Bluetooth requests a clean reboot when leaving
+Cobalt because restarting Nickel into an already-initialised driver can panic
+the vendor Wi-Fi module.
 
 ### Refusing rather than inventing
 
@@ -965,6 +989,8 @@ Getting a key onto the reader is a command, not an errand:
 
 ```sh
 kobo secret set openai --from ~/.openai --device 192.168.1.5
+kobo secret set exa --from ~/.exa --device 192.168.1.5
+kobo secret set elevenlabs --from ~/.elevenlabs --device 192.168.1.5
 kobo secret list --device 192.168.1.5      # names only, never values
 kobo secret remove openai --device 192.168.1.5
 ```
@@ -973,8 +999,9 @@ With no `--from`, the key is looked for in `$KOBO_SECRETS_DIR/<name>`,
 `~/.config/cobalt/secrets/<name>` and `~/.<name>`, in that order. The value is
 read on this machine and written straight to the reader: it is never passed as
 an argument, so it does not reach a process table or a shell history, and it is
-never printed. `--volume` does the same thing over USB for a reader that is not
-yet on Wi-Fi.
+never printed. A one-line `NAME=value` file is accepted as well as a raw key;
+only the value is installed. `--volume` does the same thing over USB for a
+reader that is not yet on Wi-Fi.
 
 A key must never reach a commit. `tools/pre-commit` refuses one, and is enabled
 per clone with:
@@ -1004,6 +1031,8 @@ grants a clamped subset:
 | `battery-read` | Read battery percentage and charging state |
 | `frontlight-control` | Change front light brightness |
 | `audio`, `bluetooth-audio` | Play audio, including to headphones |
+| `bluetooth-control` | Power, scan, pair and connect Bluetooth devices |
+| `wifi-control` | Power, scan, join and disconnect Wi-Fi |
 | `sleep-screen` | Draw the sleep screen |
 | `notifications` | Post notifications |
 | `shared-files` | Use a user-visible folder |
@@ -1029,6 +1058,8 @@ runtime is the only thing that can start, bound, or stop a program.
 | Application | What it is for |
 | --- | --- |
 | `launcher` | The home screen, and an ordinary SDK application like the rest |
+| `audiobook` | Research any topic with Exa, write it with OpenAI, narrate it with ElevenLabs, then show album art and play it over Bluetooth while also saving it to My Books |
+| `settings` | Toggle and join Wi-Fi; scan, pair and connect Bluetooth devices |
 | `terminal` | A shell, with keys that send a byte rather than collect a word |
 | `todo` | State that survives a restart, and a row that can be struck through |
 | `brief` | Background work: stories collected while the reader is elsewhere |
@@ -1036,6 +1067,7 @@ runtime is the only thing that can start, bound, or stop a program.
 | `gutenbird` | Sixty thousand free books, downloaded and read on the panel |
 | `gallery` | Every UI primitive at once, for checking by eye on real hardware |
 | `tictactoe` | Two players, one panel, and partial repaints of single cells |
+| `magnet` | The hall sensor behind the bezel, and where to find it |
 | `hn` | Hacker News, with whole threads laid out by reply depth |
 | `rss` | Any site's feed, found by typing its address, read without a browser |
 

@@ -67,6 +67,20 @@ impl Shelf {
         Self { root: None }
     }
 
+    /// Resolves a published blob for a trusted runtime service.
+    ///
+    /// Applications never receive this path; they can only name a validated
+    /// shelf key on the wire. Keeping the resolution here preserves the same
+    /// root confinement used by reads and writes.
+    #[must_use]
+    pub fn published_path(&self, name: &str) -> Option<PathBuf> {
+        if !is_valid_key(name) {
+            return None;
+        }
+        let path = path_for(self.root.as_deref()?, name);
+        path.is_file().then_some(path)
+    }
+
     /// Answers exactly one request, or `None` if it was not a shelf request.
     ///
     /// Returning `None` rather than a denial keeps the ordinary store requests

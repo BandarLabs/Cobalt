@@ -514,7 +514,11 @@ fn run(work: &Task, root: &Path, backends: Backends<'_>, cancel: &AtomicBool) ->
                     return TaskOutcome::Failed(TaskError::Denied);
                 }
                 Some(wanted) => match secret(secrets, &wanted.secret) {
-                    None => return TaskOutcome::Failed(TaskError::Denied),
+                    // Not `Denied`. The application asked for a key it is
+                    // allowed to ask for, by the name the runtime publishes,
+                    // and the check above already said so. What is missing is
+                    // the key itself, which is the reader owner's to install.
+                    None => return TaskOutcome::Failed(TaskError::NoCredential),
                     // Assembled here, in the one place that has both the
                     // convention and the value, so nothing downstream has to
                     // know that Bearer is spelled differently from an API key.
@@ -884,7 +888,13 @@ mod tests {
             )
             .expect("submitted");
         let finished = collect(&mut runner, 1);
-        assert_eq!(finished[0].outcome, TaskOutcome::Failed(TaskError::Denied));
+        // `NoCredential` rather than `Denied`: the application was allowed to
+        // ask, so the refusal has to say the key is missing rather than accuse
+        // the application of lacking a permission it actually holds.
+        assert_eq!(
+            finished[0].outcome,
+            TaskOutcome::Failed(TaskError::NoCredential)
+        );
         assert!(!sent.load(Ordering::SeqCst), "the request was sent anyway");
     }
 

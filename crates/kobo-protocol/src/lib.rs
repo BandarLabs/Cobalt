@@ -57,6 +57,24 @@ pub const MAX_TASK_BYTES_U32: u32 = 512 * 1024;
 /// Declaring the wire width first means the conversion only ever widens.
 pub const MAX_TASK_BYTES: usize = MAX_TASK_BYTES_U32 as usize;
 
+/// The most an application may send in one request body.
+///
+/// A body is not a label. It carries a document, a research digest, a batch of
+/// items, and it outgrows [`MAX_STRING_LEN`] the first time an application asks
+/// a model to work on something it fetched. A task may already hand back
+/// [`MAX_TASK_BYTES`], so sending is now bounded the same way receiving is
+/// rather than at a fortieth of it.
+pub const MAX_POST_BODY_LEN: usize = MAX_TASK_BYTES;
+
+/// The most radios a device scan can report in one answer.
+pub const MAX_RADIO_DEVICES: usize = 32;
+
+/// Human-readable radio identifiers are deliberately shorter than an ordinary
+/// protocol string. They are drawn on one row and are also accepted from local
+/// system tools, so bounding them prevents a broken backend from manufacturing
+/// a very large frame.
+pub const MAX_RADIO_NAME: usize = 96;
+
 /// The longest a stored key may be.
 pub const MAX_STORE_KEY_LEN: usize = 64;
 
@@ -287,6 +305,37 @@ pub enum Task {
     Sleep { seconds: u32 },
 }
 
+impl Task {
+    /// Whether this task fits on the wire.
+    ///
+    /// Asked before a task is handed over rather than discovered by the
+    /// encoder, so an application that assembles an over-large request can be
+    /// told about it on screen instead of ending mid-frame.
+    #[must_use]
+    pub fn is_sendable(&self) -> bool {
+        match self {
+            Self::Fetch { url, .. } => url.len() <= MAX_URL_LEN,
+            Self::Post {
+                url,
+                body,
+                content_type,
+                credential,
+                headers,
+                ..
+            } => {
+                url.len() <= MAX_URL_LEN
+                    && body.len() <= MAX_POST_BODY_LEN
+                    && content_type.len() <= MAX_STRING_LEN
+                    && headers.len() <= MAX_HEADERS
+                    && headers.iter().all(Header::is_well_formed)
+                    && credential.as_ref().is_none_or(Credential::is_well_formed)
+            }
+            Self::ReadFile { path } => path.len() <= MAX_STRING_LEN,
+            Self::Sleep { .. } => true,
+        }
+    }
+}
+
 /// How a task ended.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TaskOutcome {
@@ -300,6 +349,18 @@ pub enum TaskOutcome {
 pub enum TaskError {
     /// The application does not hold the capability the task requires.
     Denied,
+    /// The task named a credential this reader has no key for.
+    ///
+    /// Separate from [`TaskError::Denied`] because the application is not at
+    /// fault and nothing it can do will fix it. It asked for the right key by
+    /// the right name and was allowed to; the key is simply not on the device
+    /// yet. The answer is to install one, which is a thing the person holding
+    /// the reader does once, not a thing the code retries.
+    ///
+    /// Kept apart from the capability refusal so that the two do not share a
+    /// sentence. "The application does not hold this permission" is actively
+    /// misleading when the truth is that a file is missing.
+    NoCredential,
     /// This reader has no network at all.
     ///
     /// Separate from [`TaskError::Unreachable`] because the two need opposite
@@ -331,7 +392,9 @@ impl TaskError {
     /// [`TaskError::Denied`] is not here because a permission does not appear
     /// on the second ask, and neither is [`TaskError::TooLarge`], because the
     /// response will be the same size next time. [`TaskError::NotFound`] is a
-    /// real answer from a host that is working.
+    /// real answer from a host that is working. [`TaskError::NoCredential`] is
+    /// not here for the same reason as `Denied`: a key does not install itself
+    /// between two attempts three seconds apart.
     #[must_use]
     pub const fn worth_retrying(self) -> bool {
         matches!(self, Self::Offline | Self::Unreachable | Self::TimedOut)
@@ -342,6 +405,7 @@ impl fmt::Display for TaskError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::Denied => "the application does not hold this permission",
+            Self::NoCredential => "this reader has no key for that service",
             Self::Offline => "this reader is not on a network",
             Self::Unreachable => "the host did not answer",
             Self::TooLarge => "the response was larger than the limit the task declared",
@@ -418,6 +482,20 @@ pub enum Message {
     ShellRequest(ShellRequest),
     /// The runtime reporting what the program on that terminal did.
     ShellEvent(ShellEvent),
+    /// The hall sensor changed: a magnet arrived, or left.
+    ///
+    /// Unsolicited, and therefore not a [`DeviceResult`]. Device answers are
+    /// matched to the request that produced them and one with nothing
+    /// outstanding is dropped, which is right for answers and wrong for
+    /// something the world did on its own. This is the same shape as
+    /// [`Message::Lifecycle`]: the runtime saying what changed, unprompted.
+    ///
+    /// Only changes are sent. The sensor bounces while a magnet is moved past
+    /// it slowly, and an application acting on every edge would act several
+    /// times for one deliberate gesture.
+    CoverChanged {
+        magnet_present: bool,
+    },
     /// Hands a decoded picture to the runtime, to be referred to afterwards by
     /// `handle`.
     ///
@@ -716,10 +794,24 @@ pub fn is_cache_key(key: &str) -> bool {
 ///
 /// Applications never open a device node. They describe an intent, the runtime
 /// decides whether to honour it, and the answer is always explicit.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DeviceRequest {
     /// Report battery percentage and whether the device is charging.
     ReadBattery,
+    /// Everything the gauge publishes, for a screen that shows it.
+    ///
+    /// Separate from [`DeviceRequest::ReadBattery`], which every session makes
+    /// for the mark in the status band and which policy consults before
+    /// granting expensive work. That one has to stay two numbers the kernel
+    /// answers instantly. This one reads ten files and is asked only when
+    /// somebody has opened a battery screen and is looking at it.
+    ReadBatteryDetail,
+    /// Asks where the magnet is now.
+    ///
+    /// An application is told about changes without asking, but a change is
+    /// only useful to something that knows the state it changed from. This is
+    /// how a screen that has just opened finds that out.
+    ReadCover,
     /// Keep Wi-Fi associated for at most this many seconds.
     HoldWifi { seconds: u32 },
     /// Release a Wi-Fi hold early.
@@ -736,10 +828,125 @@ pub enum DeviceRequest {
     SetFrontlight { percent: u8 },
     /// Report the current front light percentage.
     ReadFrontlight,
+    /// Report whether the Bluetooth controller is available and powered.
+    ReadBluetooth,
+    /// Power the Bluetooth controller on or off.
+    SetBluetooth { enabled: bool },
+    /// Discover nearby and remembered Bluetooth devices.
+    ScanBluetooth,
+    /// Pair with a Bluetooth device by its canonical address.
+    PairBluetooth { address: String },
+    /// Connect a paired Bluetooth device.
+    ConnectBluetooth { address: String },
+    /// Disconnect a Bluetooth device without forgetting it.
+    DisconnectBluetooth { address: String },
+    /// Remove a remembered Bluetooth pairing.
+    ForgetBluetooth { address: String },
+    /// Report Wi-Fi power and association state.
+    ReadWifi,
+    /// Power the Wi-Fi interface on or off.
+    SetWifi { enabled: bool },
+    /// Discover nearby Wi-Fi networks.
+    ScanWifi,
+    /// Join a Wi-Fi network. An empty password means an open network.
+    JoinWifi { ssid: String, password: String },
+    /// Leave the current Wi-Fi network without powering the radio off.
+    DisconnectWifi,
+    /// Report the active audio source and transport state.
+    ReadAudio,
+    /// Prepare a shelf file or HTTPS stream for playback.
+    LoadAudio { source: AudioSource },
+    /// Start or resume the prepared source.
+    PlayAudio,
+    /// Pause without discarding the prepared source or position.
+    PauseAudio,
+    /// Seek to an absolute position in the prepared source.
+    SeekAudio { position_ms: u32 },
+    /// Stop playback and return to the beginning of the prepared source.
+    StopAudio,
+    /// Set software playback volume as a percentage.
+    SetAudioVolume { percent: u8 },
+}
+
+/// Everything the gauge publishes that is worth putting in front of a reader.
+///
+/// Separate from the two fields in [`DeviceResult::Battery`] because the two
+/// have different jobs. That one is read on every session for the mark in the
+/// status band and for the policy rule about expensive work on a low battery,
+/// so it stays what the kernel can answer instantly. This is read only when
+/// somebody has opened a battery screen and asked.
+///
+/// Every field is optional. These readings are a vendor driver's choice, not a
+/// kernel guarantee: the Clara BW publishes all of them and another reader may
+/// publish half. A field that is missing is left out of the screen rather than
+/// shown as zero, for the same reason an unreadable gauge draws no mark.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct BatteryDetail {
+    /// Charge remaining, 0 to 100.
+    pub percent: Option<u8>,
+    /// `Charging`, `Discharging`, `Full`, `Not charging`.
+    pub status: Option<String>,
+    /// The driver's own verdict: `Good`, `Overheat`, `Cold`, and so on.
+    pub health: Option<String>,
+    /// `Li-ion` and friends.
+    pub technology: Option<String>,
+    /// Tenths of a degree Celsius, as the kernel reports it.
+    pub decidegrees: Option<i32>,
+    /// Microvolts across the pack.
+    pub microvolts: Option<i32>,
+    /// Microamps. Negative while discharging, positive while charging.
+    pub microamps: Option<i32>,
+    /// Microamp-hours currently held.
+    pub charge_now: Option<i32>,
+    /// Microamp-hours the pack holds today when full.
+    pub charge_full: Option<i32>,
+    /// Microamp-hours it held when new. Together with `charge_full` this is
+    /// the only honest measure of how worn the battery is.
+    pub charge_full_design: Option<i32>,
+}
+
+impl BatteryDetail {
+    /// How much of the original capacity the pack still holds, 0 to 100.
+    ///
+    /// `None` when either figure is missing or the design capacity is zero,
+    /// rather than a percentage computed from a divisor nobody supplied.
+    #[must_use]
+    pub fn health_percent(&self) -> Option<u8> {
+        let (full, design) = (self.charge_full?, self.charge_full_design?);
+        if design <= 0 || full <= 0 {
+            return None;
+        }
+        let percent = i64::from(full) * 100 / i64::from(design);
+        Some(u8::try_from(percent.clamp(0, 100)).unwrap_or(0))
+    }
+
+    /// Whole minutes until empty at the current draw, or until full.
+    ///
+    /// `None` when the pack is idle or the current is not published, because
+    /// dividing by a current of zero gives an estimate of forever and showing
+    /// that is worse than showing nothing.
+    #[must_use]
+    pub fn minutes_remaining(&self) -> Option<u32> {
+        let current = self.microamps?;
+        if current == 0 {
+            return None;
+        }
+        let held = self.charge_now?;
+        let charge = if current > 0 {
+            i64::from(self.charge_full?.saturating_sub(held))
+        } else {
+            i64::from(held)
+        };
+        if charge <= 0 {
+            return None;
+        }
+        let minutes = charge * 60 / i64::from(current.abs());
+        u32::try_from(minutes).ok()
+    }
 }
 
 /// The runtime's answer to a device request.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DeviceResult {
     /// The request was carried out and needs no value.
     Done,
@@ -747,10 +954,174 @@ pub enum DeviceResult {
     Granted { seconds: u32 },
     /// Battery state.
     Battery { percent: u8, charging: bool },
+    /// Everything the gauge publishes. See [`BatteryDetail`].
+    BatteryDetail(BatteryDetail),
+    /// Where the magnet is, and whether this reader can tell.
+    ///
+    /// `available` is false on a reader with no hall sensor, which is a
+    /// different answer from a sensor that reports no magnet.
+    Cover {
+        available: bool,
+        magnet_present: bool,
+    },
     /// Front light state.
     Frontlight { percent: u8 },
+    /// Bluetooth controller state and the bounded set currently known.
+    Bluetooth {
+        available: bool,
+        enabled: bool,
+        devices: Vec<BluetoothDevice>,
+    },
+    /// Wi-Fi controller state and the bounded set currently known.
+    Wifi {
+        available: bool,
+        enabled: bool,
+        connected_ssid: Option<String>,
+        networks: Vec<WifiNetwork>,
+    },
+    /// Audio backend and transport state.
+    Audio {
+        available: bool,
+        state: AudioPlaybackState,
+        position_ms: u32,
+        duration_ms: u32,
+        volume: u8,
+    },
+    /// The backend exists, but the requested operation failed.
+    Failed(DeviceError),
     /// The request was refused, with the exact reason.
     Denied(DenyReason),
+}
+
+/// A source accepted by the runtime-owned audio player.
+///
+/// Shelf names are resolved inside the calling application's own shelf. A
+/// stream is always HTTPS and carries no credentials, so an application can
+/// neither escape its data root nor turn the player into a secret-bearing
+/// request primitive.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AudioSource {
+    Shelf(String),
+    Stream(String),
+}
+
+/// Observable state of the runtime-owned audio transport.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum AudioPlaybackState {
+    Idle = 1,
+    Loading = 2,
+    Ready = 3,
+    Playing = 4,
+    Paused = 5,
+    Finished = 6,
+}
+
+impl TryFrom<u8> for AudioPlaybackState {
+    type Error = ProtocolError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::Idle),
+            2 => Ok(Self::Loading),
+            3 => Ok(Self::Ready),
+            4 => Ok(Self::Playing),
+            5 => Ok(Self::Paused),
+            6 => Ok(Self::Finished),
+            _ => Err(ProtocolError::InvalidValue("audio playback state")),
+        }
+    }
+}
+
+/// A Bluetooth device discovered or remembered by the system controller.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BluetoothDevice {
+    pub address: String,
+    pub name: String,
+    pub kind: BluetoothDeviceKind,
+    pub paired: bool,
+    pub connected: bool,
+}
+
+/// The device classes the settings UI can meaningfully distinguish.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum BluetoothDeviceKind {
+    Audio = 1,
+    Keyboard = 2,
+    Input = 3,
+    Other = 4,
+}
+
+impl TryFrom<u8> for BluetoothDeviceKind {
+    type Error = ProtocolError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::Audio),
+            2 => Ok(Self::Keyboard),
+            3 => Ok(Self::Input),
+            4 => Ok(Self::Other),
+            _ => Err(ProtocolError::InvalidValue("Bluetooth device kind")),
+        }
+    }
+}
+
+/// A Wi-Fi network returned by a scan.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WifiNetwork {
+    pub ssid: String,
+    pub signal_dbm: i16,
+    pub secured: bool,
+    pub connected: bool,
+}
+
+/// Failures from an available radio backend.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum DeviceError {
+    NotFound = 1,
+    Authentication = 2,
+    TimedOut = 3,
+    Unreachable = 4,
+    InvalidInput = 5,
+    Backend = 6,
+}
+
+impl DeviceError {
+    #[must_use]
+    pub const fn describe(self) -> &'static str {
+        match self {
+            Self::NotFound => "the device or network was not found",
+            Self::Authentication => "authentication failed",
+            Self::TimedOut => "the radio operation timed out",
+            Self::Unreachable => "the device or network is unreachable",
+            Self::InvalidInput => "the address or credentials are invalid",
+            Self::Backend => "the system radio service failed",
+        }
+    }
+}
+
+impl fmt::Display for DeviceError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.describe())
+    }
+}
+
+impl TryFrom<u8> for DeviceError {
+    type Error = ProtocolError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::NotFound),
+            2 => Ok(Self::Authentication),
+            3 => Ok(Self::TimedOut),
+            4 => Ok(Self::Unreachable),
+            5 => Ok(Self::InvalidInput),
+            6 => Ok(Self::Backend),
+            _ => Err(ProtocolError::InvalidValue("device error")),
+        }
+    }
 }
 
 /// Why a device request was refused.
@@ -912,8 +1283,8 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
         }
         Message::Exit => {}
         Message::Launch { name } => push_string(&mut payload, name)?,
-        Message::DeviceRequest(request) => encode_device_request(&mut payload, *request),
-        Message::DeviceResult(result) => encode_device_result(&mut payload, *result),
+        Message::DeviceRequest(request) => encode_device_request(&mut payload, request)?,
+        Message::DeviceResult(result) => encode_device_result(&mut payload, result)?,
         Message::Spawn { .. } | Message::Cancel { .. } | Message::TaskOutcome { .. } => {
             encode_task_message(&mut payload, &frame.message)?;
         }
@@ -957,6 +1328,7 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
             Lifecycle::Foreground => 0,
             Lifecycle::Background => 1,
         }),
+        Message::CoverChanged { magnet_present } => payload.push(u8::from(*magnet_present)),
     }
     debug_assert_eq!(payload.len(), payload_len);
     let mut bytes = Vec::with_capacity(HEADER_LEN + payload.len());
@@ -1003,7 +1375,7 @@ fn encode_task_message(payload: &mut Vec<u8>, message: &Message) -> Result<(), P
                 } => {
                     payload.push(3);
                     push_string(payload, url)?;
-                    push_string(payload, body)?;
+                    push_long_string(payload, body)?;
                     push_string(payload, content_type)?;
                     match credential {
                         None => payload.push(0),
@@ -1322,7 +1694,7 @@ fn encoded_task_len(work: &Task) -> Result<usize, ProtocolError> {
             }
             add_encoded_len(&mut length, 6)?;
             add_encoded_len(&mut length, encoded_string_len(url)?)?;
-            add_encoded_len(&mut length, encoded_string_len(body)?)?;
+            add_encoded_len(&mut length, encoded_body_len(body)?)?;
             add_encoded_len(&mut length, encoded_string_len(content_type)?)?;
             if let Some(credential) = credential {
                 add_encoded_len(&mut length, encoded_string_len(&credential.secret)?)?;
@@ -1359,8 +1731,8 @@ fn encoded_message_layout(message: &Message) -> Result<(u8, usize), ProtocolErro
             add_encoded_len(&mut length, encoded_string_len(name)?)?;
             Ok((12, length))
         }
-        Message::DeviceRequest(_) => Ok((7, 5)),
-        Message::DeviceResult(result) => Ok((8, 1 + device_result_value_len(*result))),
+        Message::DeviceRequest(request) => Ok((7, device_request_len(request)?)),
+        Message::DeviceResult(result) => Ok((8, device_result_len(result)?)),
         Message::Spawn { work, .. } => Ok((9, encoded_task_len(work)?)),
         Message::Cancel { .. } => Ok((10, 4)),
         Message::TaskOutcome { outcome, .. } => {
@@ -1422,6 +1794,7 @@ fn encoded_message_layout(message: &Message) -> Result<(u8, usize), ProtocolErro
             Ok((21, 8 + grey.len()))
         }
         Message::CommitPicture { .. } => Ok((22, 4)),
+        Message::CoverChanged { .. } => Ok((23, 1)),
     }
 }
 
@@ -1432,77 +1805,409 @@ fn picture_len(width: u32, height: u32) -> Result<usize, ProtocolError> {
         .ok_or(ProtocolError::FrameTooLarge)
 }
 
-/// Every device request encodes as one tag byte and one 32-bit argument, so a
-/// malformed request can never change the frame length.
-fn encode_device_request(output: &mut Vec<u8>, request: DeviceRequest) {
-    let (tag, argument) = match request {
-        DeviceRequest::ReadBattery => (1_u8, 0_u32),
-        DeviceRequest::HoldWifi { seconds } => (2, seconds),
-        DeviceRequest::ReleaseWifi => (3, 0),
-        DeviceRequest::KeepAwake { seconds } => (4, seconds),
-        DeviceRequest::AllowSleep => (5, 0),
-        DeviceRequest::ScheduleWake { seconds } => (6, seconds),
-        DeviceRequest::CancelWake => (7, 0),
-        DeviceRequest::SetFrontlight { percent } => (8, u32::from(percent)),
-        DeviceRequest::ReadFrontlight => (9, 0),
-    };
+fn encode_device_request(
+    output: &mut Vec<u8>,
+    request: &DeviceRequest,
+) -> Result<(), ProtocolError> {
+    match request {
+        DeviceRequest::ReadBattery => fixed_device_request(output, 1, 0),
+        DeviceRequest::ReadBatteryDetail => output.push(29),
+        DeviceRequest::ReadCover => output.push(30),
+        DeviceRequest::HoldWifi { seconds } => fixed_device_request(output, 2, *seconds),
+        DeviceRequest::ReleaseWifi => fixed_device_request(output, 3, 0),
+        DeviceRequest::KeepAwake { seconds } => fixed_device_request(output, 4, *seconds),
+        DeviceRequest::AllowSleep => fixed_device_request(output, 5, 0),
+        DeviceRequest::ScheduleWake { seconds } => fixed_device_request(output, 6, *seconds),
+        DeviceRequest::CancelWake => fixed_device_request(output, 7, 0),
+        DeviceRequest::SetFrontlight { percent } => {
+            fixed_device_request(output, 8, u32::from(*percent));
+        }
+        DeviceRequest::ReadFrontlight => fixed_device_request(output, 9, 0),
+        DeviceRequest::ReadBluetooth => output.push(10),
+        DeviceRequest::SetBluetooth { enabled } => {
+            output.extend_from_slice(&[11, u8::from(*enabled)]);
+        }
+        DeviceRequest::ScanBluetooth => output.push(12),
+        DeviceRequest::PairBluetooth { address } => {
+            output.push(13);
+            push_radio_string(output, address)?;
+        }
+        DeviceRequest::ConnectBluetooth { address } => {
+            output.push(14);
+            push_radio_string(output, address)?;
+        }
+        DeviceRequest::DisconnectBluetooth { address } => {
+            output.push(15);
+            push_radio_string(output, address)?;
+        }
+        DeviceRequest::ForgetBluetooth { address } => {
+            output.push(16);
+            push_radio_string(output, address)?;
+        }
+        DeviceRequest::ReadWifi => output.push(17),
+        DeviceRequest::SetWifi { enabled } => {
+            output.extend_from_slice(&[18, u8::from(*enabled)]);
+        }
+        DeviceRequest::ScanWifi => output.push(19),
+        DeviceRequest::JoinWifi { ssid, password } => {
+            if ssid.is_empty()
+                || ssid.len() > 32
+                || !(password.is_empty() || (8..=63).contains(&password.len()))
+            {
+                return Err(ProtocolError::InvalidValue("Wi-Fi credentials"));
+            }
+            output.push(20);
+            push_radio_string(output, ssid)?;
+            push_radio_string(output, password)?;
+        }
+        DeviceRequest::DisconnectWifi => output.push(21),
+        DeviceRequest::ReadAudio => output.push(22),
+        DeviceRequest::LoadAudio { source } => {
+            output.push(23);
+            match source {
+                AudioSource::Shelf(name) if is_valid_key(name) => {
+                    output.push(1);
+                    push_string(output, name)?;
+                }
+                AudioSource::Stream(url)
+                    if url.starts_with("https://") && url.len() <= MAX_URL_LEN =>
+                {
+                    output.push(2);
+                    push_string(output, url)?;
+                }
+                AudioSource::Shelf(_) | AudioSource::Stream(_) => {
+                    return Err(ProtocolError::InvalidValue("audio source"));
+                }
+            }
+        }
+        DeviceRequest::PlayAudio => output.push(24),
+        DeviceRequest::PauseAudio => output.push(25),
+        DeviceRequest::SeekAudio { position_ms } => {
+            fixed_device_request(output, 26, *position_ms);
+        }
+        DeviceRequest::StopAudio => output.push(27),
+        DeviceRequest::SetAudioVolume { percent } if *percent <= 100 => {
+            output.extend_from_slice(&[28, *percent]);
+        }
+        DeviceRequest::SetAudioVolume { .. } => {
+            return Err(ProtocolError::InvalidValue("audio volume"));
+        }
+    }
+    Ok(())
+}
+
+fn fixed_device_request(output: &mut Vec<u8>, tag: u8, argument: u32) {
     output.push(tag);
     push_u32(output, argument);
 }
 
+fn device_request_len(request: &DeviceRequest) -> Result<usize, ProtocolError> {
+    let mut encoded = Vec::new();
+    encode_device_request(&mut encoded, request)?;
+    Ok(encoded.len())
+}
+
+fn device_result_len(result: &DeviceResult) -> Result<usize, ProtocolError> {
+    let mut encoded = Vec::new();
+    encode_device_result(&mut encoded, result)?;
+    Ok(encoded.len())
+}
+
+/// The gauge readings, written as a run of optional fields in a fixed order.
+/// Encoder and decoder sit next to each other so the order stays one fact.
+fn push_battery_detail(output: &mut Vec<u8>, detail: &BatteryDetail) -> Result<(), ProtocolError> {
+    push_optional_u8(output, detail.percent);
+    for text in [&detail.status, &detail.health, &detail.technology] {
+        push_optional_string(output, text.as_deref())?;
+    }
+    for value in [
+        detail.decidegrees,
+        detail.microvolts,
+        detail.microamps,
+        detail.charge_now,
+        detail.charge_full,
+        detail.charge_full_design,
+    ] {
+        push_optional_i32(output, value);
+    }
+    Ok(())
+}
+
+fn battery_detail(reader: &mut Reader<'_>) -> Result<BatteryDetail, ProtocolError> {
+    let percent = reader.optional_u8()?;
+    if percent.is_some_and(|percent| percent > 100) {
+        return Err(ProtocolError::InvalidValue("battery percent"));
+    }
+    Ok(BatteryDetail {
+        percent,
+        status: reader.optional_string()?,
+        health: reader.optional_string()?,
+        technology: reader.optional_string()?,
+        decidegrees: reader.optional_i32()?,
+        microvolts: reader.optional_i32()?,
+        microamps: reader.optional_i32()?,
+        charge_now: reader.optional_i32()?,
+        charge_full: reader.optional_i32()?,
+        charge_full_design: reader.optional_i32()?,
+    })
+}
+
+fn push_radio_string(output: &mut Vec<u8>, value: &str) -> Result<(), ProtocolError> {
+    if value.len() > MAX_RADIO_NAME {
+        return Err(ProtocolError::InvalidValue("radio string"));
+    }
+    push_string(output, value)
+}
+
+fn radio_string(reader: &mut Reader<'_>) -> Result<String, ProtocolError> {
+    let value = reader.string()?;
+    if value.len() > MAX_RADIO_NAME {
+        Err(ProtocolError::InvalidValue("radio string"))
+    } else {
+        Ok(value)
+    }
+}
+
+fn wifi_ssid(reader: &mut Reader<'_>) -> Result<String, ProtocolError> {
+    let ssid = radio_string(reader)?;
+    if ssid.is_empty() || ssid.len() > 32 {
+        Err(ProtocolError::InvalidValue("Wi-Fi SSID"))
+    } else {
+        Ok(ssid)
+    }
+}
+
+fn read_boolean(reader: &mut Reader<'_>, field: &'static str) -> Result<bool, ProtocolError> {
+    match reader.u8()? {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(ProtocolError::InvalidValue(field)),
+    }
+}
+
+fn radio_flags(first: bool, second: bool) -> u8 {
+    u8::from(first) | (u8::from(second) << 1)
+}
+
+const fn flags_first(flags: u8) -> bool {
+    flags & 1 != 0
+}
+
+const fn flags_second(flags: u8) -> bool {
+    flags & 2 != 0
+}
+
+fn valid_radio_flags(flags: u8, field: &'static str) -> Result<u8, ProtocolError> {
+    if flags & !3 == 0 {
+        Ok(flags)
+    } else {
+        Err(ProtocolError::InvalidValue(field))
+    }
+}
+
 fn decode_device_request(reader: &mut Reader<'_>) -> Result<DeviceRequest, ProtocolError> {
     let tag = reader.u8()?;
-    let argument = reader.u32()?;
     match tag {
-        1 => Ok(DeviceRequest::ReadBattery),
-        2 => Ok(DeviceRequest::HoldWifi { seconds: argument }),
-        3 => Ok(DeviceRequest::ReleaseWifi),
-        4 => Ok(DeviceRequest::KeepAwake { seconds: argument }),
-        5 => Ok(DeviceRequest::AllowSleep),
-        6 => Ok(DeviceRequest::ScheduleWake { seconds: argument }),
-        7 => Ok(DeviceRequest::CancelWake),
+        1 => fixed_argument(reader, 0).map(|()| DeviceRequest::ReadBattery),
+        29 => Ok(DeviceRequest::ReadBatteryDetail),
+        30 => Ok(DeviceRequest::ReadCover),
+        2 => Ok(DeviceRequest::HoldWifi {
+            seconds: reader.u32()?,
+        }),
+        3 => fixed_argument(reader, 0).map(|()| DeviceRequest::ReleaseWifi),
+        4 => Ok(DeviceRequest::KeepAwake {
+            seconds: reader.u32()?,
+        }),
+        5 => fixed_argument(reader, 0).map(|()| DeviceRequest::AllowSleep),
+        6 => Ok(DeviceRequest::ScheduleWake {
+            seconds: reader.u32()?,
+        }),
+        7 => fixed_argument(reader, 0).map(|()| DeviceRequest::CancelWake),
         8 => {
+            let argument = reader.u32()?;
             let percent = u8::try_from(argument)
                 .ok()
                 .filter(|percent| *percent <= 100)
                 .ok_or(ProtocolError::InvalidValue("frontlight percent"))?;
             Ok(DeviceRequest::SetFrontlight { percent })
         }
-        9 => Ok(DeviceRequest::ReadFrontlight),
+        9 => fixed_argument(reader, 0).map(|()| DeviceRequest::ReadFrontlight),
+        10 => Ok(DeviceRequest::ReadBluetooth),
+        11 => Ok(DeviceRequest::SetBluetooth {
+            enabled: read_boolean(reader, "Bluetooth enabled")?,
+        }),
+        12 => Ok(DeviceRequest::ScanBluetooth),
+        13 => Ok(DeviceRequest::PairBluetooth {
+            address: radio_string(reader)?,
+        }),
+        14 => Ok(DeviceRequest::ConnectBluetooth {
+            address: radio_string(reader)?,
+        }),
+        15 => Ok(DeviceRequest::DisconnectBluetooth {
+            address: radio_string(reader)?,
+        }),
+        16 => Ok(DeviceRequest::ForgetBluetooth {
+            address: radio_string(reader)?,
+        }),
+        17 => Ok(DeviceRequest::ReadWifi),
+        18 => Ok(DeviceRequest::SetWifi {
+            enabled: read_boolean(reader, "Wi-Fi enabled")?,
+        }),
+        19 => Ok(DeviceRequest::ScanWifi),
+        20 => {
+            let ssid = wifi_ssid(reader)?;
+            let password = radio_string(reader)?;
+            if !(password.is_empty() || (8..=63).contains(&password.len())) {
+                return Err(ProtocolError::InvalidValue("Wi-Fi credentials"));
+            }
+            Ok(DeviceRequest::JoinWifi { ssid, password })
+        }
+        21 => Ok(DeviceRequest::DisconnectWifi),
+        22 => Ok(DeviceRequest::ReadAudio),
+        23 => match reader.u8()? {
+            1 => {
+                let name = reader.string()?;
+                if is_valid_key(&name) {
+                    Ok(DeviceRequest::LoadAudio {
+                        source: AudioSource::Shelf(name),
+                    })
+                } else {
+                    Err(ProtocolError::InvalidValue("audio source"))
+                }
+            }
+            2 => {
+                let url = reader.string()?;
+                if url.starts_with("https://") && url.len() <= MAX_URL_LEN {
+                    Ok(DeviceRequest::LoadAudio {
+                        source: AudioSource::Stream(url),
+                    })
+                } else {
+                    Err(ProtocolError::InvalidValue("audio source"))
+                }
+            }
+            _ => Err(ProtocolError::InvalidValue("audio source")),
+        },
+        24 => Ok(DeviceRequest::PlayAudio),
+        25 => Ok(DeviceRequest::PauseAudio),
+        26 => Ok(DeviceRequest::SeekAudio {
+            position_ms: reader.u32()?,
+        }),
+        27 => Ok(DeviceRequest::StopAudio),
+        28 => {
+            let percent = reader.u8()?;
+            if percent <= 100 {
+                Ok(DeviceRequest::SetAudioVolume { percent })
+            } else {
+                Err(ProtocolError::InvalidValue("audio volume"))
+            }
+        }
         _ => Err(ProtocolError::InvalidValue("device request")),
     }
 }
 
-const fn device_result_value_len(result: DeviceResult) -> usize {
-    match result {
-        DeviceResult::Done => 0,
-        DeviceResult::Granted { .. } => 4,
-        DeviceResult::Battery { .. } => 2,
-        DeviceResult::Frontlight { .. } | DeviceResult::Denied(_) => 1,
+fn fixed_argument(reader: &mut Reader<'_>, expected: u32) -> Result<(), ProtocolError> {
+    if reader.u32()? == expected {
+        Ok(())
+    } else {
+        Err(ProtocolError::InvalidValue("device request argument"))
     }
 }
 
-fn encode_device_result(output: &mut Vec<u8>, result: DeviceResult) {
+fn encode_device_result(output: &mut Vec<u8>, result: &DeviceResult) -> Result<(), ProtocolError> {
     match result {
         DeviceResult::Done => output.push(1),
         DeviceResult::Granted { seconds } => {
             output.push(2);
-            push_u32(output, seconds);
+            push_u32(output, *seconds);
         }
         DeviceResult::Battery { percent, charging } => {
             output.push(3);
-            output.push(percent);
-            output.push(u8::from(charging));
+            output.push(*percent);
+            output.push(u8::from(*charging));
         }
+        DeviceResult::BatteryDetail(detail) => {
+            output.push(10);
+            push_battery_detail(output, detail)?;
+        }
+        DeviceResult::Cover {
+            available,
+            magnet_present,
+        } => output.extend_from_slice(&[11, u8::from(*available), u8::from(*magnet_present)]),
         DeviceResult::Frontlight { percent } => {
             output.push(4);
-            output.push(percent);
+            output.push(*percent);
         }
         DeviceResult::Denied(reason) => {
             output.push(5);
-            output.push(reason as u8);
+            output.push(*reason as u8);
+        }
+        DeviceResult::Bluetooth {
+            available,
+            enabled,
+            devices,
+        } => {
+            if devices.len() > MAX_RADIO_DEVICES {
+                return Err(ProtocolError::InvalidValue("too many Bluetooth devices"));
+            }
+            output.extend_from_slice(&[6, radio_flags(*available, *enabled)]);
+            output.push(u8::try_from(devices.len()).map_err(|_| ProtocolError::FrameTooLarge)?);
+            for device in devices {
+                push_radio_string(output, &device.address)?;
+                push_radio_string(output, &device.name)?;
+                output.push(device.kind as u8);
+                output.push(radio_flags(device.paired, device.connected));
+            }
+        }
+        DeviceResult::Wifi {
+            available,
+            enabled,
+            connected_ssid,
+            networks,
+        } => {
+            if networks.len() > MAX_RADIO_DEVICES {
+                return Err(ProtocolError::InvalidValue("too many Wi-Fi networks"));
+            }
+            output.extend_from_slice(&[7, radio_flags(*available, *enabled)]);
+            match connected_ssid {
+                Some(ssid) => {
+                    if ssid.is_empty() || ssid.len() > 32 {
+                        return Err(ProtocolError::InvalidValue("Wi-Fi SSID"));
+                    }
+                    output.push(1);
+                    push_radio_string(output, ssid)?;
+                }
+                None => output.push(0),
+            }
+            output.push(u8::try_from(networks.len()).map_err(|_| ProtocolError::FrameTooLarge)?);
+            for network in networks {
+                if network.ssid.is_empty() || network.ssid.len() > 32 {
+                    return Err(ProtocolError::InvalidValue("Wi-Fi SSID"));
+                }
+                push_radio_string(output, &network.ssid)?;
+                push_u16(output, u16::from_be_bytes(network.signal_dbm.to_be_bytes()));
+                output.push(radio_flags(network.secured, network.connected));
+            }
+        }
+        DeviceResult::Failed(error) => {
+            output.extend_from_slice(&[8, *error as u8]);
+        }
+        DeviceResult::Audio {
+            available,
+            state,
+            position_ms,
+            duration_ms,
+            volume,
+        } => {
+            if *volume > 100 {
+                return Err(ProtocolError::InvalidValue("audio volume"));
+            }
+            output.extend_from_slice(&[9, u8::from(*available), *state as u8]);
+            push_u32(output, *position_ms);
+            push_u32(output, *duration_ms);
+            output.push(*volume);
         }
     }
+    Ok(())
 }
 
 fn decode_device_result(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
@@ -1523,6 +2228,11 @@ fn decode_device_result(reader: &mut Reader<'_>) -> Result<DeviceResult, Protoco
             };
             Ok(DeviceResult::Battery { percent, charging })
         }
+        10 => battery_detail(reader).map(DeviceResult::BatteryDetail),
+        11 => Ok(DeviceResult::Cover {
+            available: read_boolean(reader, "cover sensor available")?,
+            magnet_present: read_boolean(reader, "cover magnet present")?,
+        }),
         4 => {
             let percent = reader.u8()?;
             if percent > 100 {
@@ -1531,8 +2241,84 @@ fn decode_device_result(reader: &mut Reader<'_>) -> Result<DeviceResult, Protoco
             Ok(DeviceResult::Frontlight { percent })
         }
         5 => Ok(DeviceResult::Denied(DenyReason::try_from(reader.u8()?)?)),
+        6 => {
+            let flags = valid_radio_flags(reader.u8()?, "Bluetooth state flags")?;
+            let count = usize::from(reader.u8()?);
+            if count > MAX_RADIO_DEVICES {
+                return Err(ProtocolError::InvalidValue("too many Bluetooth devices"));
+            }
+            let mut devices = Vec::with_capacity(count);
+            for _ in 0..count {
+                let address = radio_string(reader)?;
+                let name = radio_string(reader)?;
+                let kind = BluetoothDeviceKind::try_from(reader.u8()?)?;
+                let device_flags = valid_radio_flags(reader.u8()?, "Bluetooth device flags")?;
+                devices.push(BluetoothDevice {
+                    address,
+                    name,
+                    kind,
+                    paired: flags_first(device_flags),
+                    connected: flags_second(device_flags),
+                });
+            }
+            Ok(DeviceResult::Bluetooth {
+                available: flags_first(flags),
+                enabled: flags_second(flags),
+                devices,
+            })
+        }
+        7 => {
+            let flags = valid_radio_flags(reader.u8()?, "Wi-Fi state flags")?;
+            let connected_ssid = match reader.u8()? {
+                0 => None,
+                1 => Some(wifi_ssid(reader)?),
+                _ => return Err(ProtocolError::InvalidValue("Wi-Fi connection flag")),
+            };
+            let count = usize::from(reader.u8()?);
+            if count > MAX_RADIO_DEVICES {
+                return Err(ProtocolError::InvalidValue("too many Wi-Fi networks"));
+            }
+            let mut networks = Vec::with_capacity(count);
+            for _ in 0..count {
+                let ssid = wifi_ssid(reader)?;
+                let signal_dbm = i16::from_be_bytes(reader.u16()?.to_be_bytes());
+                let network_flags = valid_radio_flags(reader.u8()?, "Wi-Fi network flags")?;
+                networks.push(WifiNetwork {
+                    ssid,
+                    signal_dbm,
+                    secured: flags_first(network_flags),
+                    connected: flags_second(network_flags),
+                });
+            }
+            Ok(DeviceResult::Wifi {
+                available: flags_first(flags),
+                enabled: flags_second(flags),
+                connected_ssid,
+                networks,
+            })
+        }
+        8 => Ok(DeviceResult::Failed(DeviceError::try_from(reader.u8()?)?)),
+        9 => decode_audio_result(reader),
         _ => Err(ProtocolError::InvalidValue("device result")),
     }
+}
+
+fn decode_audio_result(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
+    let available = read_boolean(reader, "audio available")?;
+    let state = AudioPlaybackState::try_from(reader.u8()?)?;
+    let position_ms = reader.u32()?;
+    let duration_ms = reader.u32()?;
+    let volume = reader.u8()?;
+    if volume > 100 || position_ms > duration_ms && duration_ms != 0 {
+        return Err(ProtocolError::InvalidValue("audio state"));
+    }
+    Ok(DeviceResult::Audio {
+        available,
+        state,
+        position_ms,
+        duration_ms,
+        volume,
+    })
 }
 
 fn encoded_screen_len(
@@ -1901,6 +2687,13 @@ fn encoded_string_len(text: &str) -> Result<usize, ProtocolError> {
     Ok(2 + text.len())
 }
 
+fn encoded_body_len(text: &str) -> Result<usize, ProtocolError> {
+    if text.len() > MAX_POST_BODY_LEN {
+        return Err(ProtocolError::StringTooLarge);
+    }
+    Ok(4 + text.len())
+}
+
 fn add_encoded_len(total: &mut usize, additional: usize) -> Result<(), ProtocolError> {
     *total = total
         .checked_add(additional)
@@ -1992,7 +2785,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
                     if url.len() > MAX_URL_LEN {
                         return Err(ProtocolError::StringTooLarge);
                     }
-                    let body = reader.string()?;
+                    let body = reader.long_string()?;
                     let content_type = reader.string()?;
                     let credential = match reader.u8()? {
                         0 => None,
@@ -2256,6 +3049,9 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
         }
         22 => Message::CommitPicture {
             handle: PictureHandle(reader.u32()?),
+        },
+        23 => Message::CoverChanged {
+            magnet_present: read_boolean(&mut reader, "cover magnet present")?,
         },
         value => return Err(ProtocolError::UnknownMessageType(value)),
     };
@@ -3066,6 +3862,9 @@ const fn encode_glyph(glyph: Glyph) -> u8 {
         Glyph::Globe => 26,
         Glyph::Refresh => 27,
         Glyph::More => 28,
+        Glyph::Bluetooth => 29,
+        Glyph::Key => 30,
+        Glyph::Magnet => 31,
     }
 }
 
@@ -3100,6 +3899,9 @@ const fn decode_glyph(tag: u8) -> Option<Glyph> {
         26 => Glyph::Globe,
         27 => Glyph::Refresh,
         28 => Glyph::More,
+        29 => Glyph::Bluetooth,
+        30 => Glyph::Key,
+        31 => Glyph::Magnet,
 
         _ => return None,
     })
@@ -3851,6 +4653,20 @@ fn push_string(output: &mut Vec<u8>, text: &str) -> Result<(), ProtocolError> {
     Ok(())
 }
 
+/// Writes a request body, which is length-prefixed with four bytes rather than
+/// two because a body is allowed to be far larger than a label.
+fn push_long_string(output: &mut Vec<u8>, text: &str) -> Result<(), ProtocolError> {
+    if text.len() > MAX_POST_BODY_LEN {
+        return Err(ProtocolError::StringTooLarge);
+    }
+    push_u32(
+        output,
+        u32::try_from(text.len()).map_err(|_| ProtocolError::StringTooLarge)?,
+    );
+    output.extend_from_slice(text.as_bytes());
+    Ok(())
+}
+
 fn push_u16(output: &mut Vec<u8>, value: u16) {
     output.extend_from_slice(&value.to_be_bytes());
 }
@@ -3859,9 +4675,38 @@ fn push_u32(output: &mut Vec<u8>, value: u32) {
     output.extend_from_slice(&value.to_be_bytes());
 }
 
+/// A present flag then the value, which is how every optional field on the
+/// wire is written. Three small helpers rather than one generic one, because
+/// the alternative is a trait bound to read for the sake of nine call sites.
+fn push_optional_u8(output: &mut Vec<u8>, value: Option<u8>) {
+    output.push(u8::from(value.is_some()));
+    output.push(value.unwrap_or(0));
+}
+
+fn push_optional_i32(output: &mut Vec<u8>, value: Option<i32>) {
+    output.push(u8::from(value.is_some()));
+    output.extend_from_slice(&value.unwrap_or(0).to_be_bytes());
+}
+
+fn push_optional_string(output: &mut Vec<u8>, text: Option<&str>) -> Result<(), ProtocolError> {
+    match text {
+        None => {
+            output.push(0);
+            Ok(())
+        }
+        Some(text) => {
+            output.push(1);
+            push_string(output, text)
+        }
+    }
+}
+
 fn push_u64(output: &mut Vec<u8>, value: u64) {
     output.extend_from_slice(&value.to_be_bytes());
 }
+
+/// What a present flag is called when it decodes to something other than 0 or 1.
+const PRESENT: &str = "optional field flag";
 
 struct Reader<'a> {
     bytes: &'a [u8],
@@ -3900,6 +4745,27 @@ impl<'a> Reader<'a> {
         Ok(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
     }
 
+    fn optional_u8(&mut self) -> Result<Option<u8>, ProtocolError> {
+        let present = read_boolean(self, PRESENT)?;
+        let value = self.u8()?;
+        Ok(present.then_some(value))
+    }
+
+    fn optional_i32(&mut self) -> Result<Option<i32>, ProtocolError> {
+        let present = read_boolean(self, PRESENT)?;
+        let bytes = self.take(4)?;
+        let value = i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        Ok(present.then_some(value))
+    }
+
+    fn optional_string(&mut self) -> Result<Option<String>, ProtocolError> {
+        if read_boolean(self, PRESENT)? {
+            self.string().map(Some)
+        } else {
+            Ok(None)
+        }
+    }
+
     fn u64(&mut self) -> Result<u64, ProtocolError> {
         let bytes = self.take(8)?;
         let mut octets = [0u8; 8];
@@ -3910,6 +4776,16 @@ impl<'a> Reader<'a> {
     fn string(&mut self) -> Result<String, ProtocolError> {
         let length = usize::from(self.u16()?);
         if length > MAX_STRING_LEN {
+            return Err(ProtocolError::StringTooLarge);
+        }
+        let bytes = self.take(length)?;
+        let text = std::str::from_utf8(bytes).map_err(|_| ProtocolError::InvalidUtf8)?;
+        Ok(text.to_owned())
+    }
+
+    fn long_string(&mut self) -> Result<String, ProtocolError> {
+        let length = usize::try_from(self.u32()?).map_err(|_| ProtocolError::StringTooLarge)?;
+        if length > MAX_POST_BODY_LEN {
             return Err(ProtocolError::StringTooLarge);
         }
         let bytes = self.take(length)?;
@@ -3959,7 +4835,7 @@ mod tests {
 
     #[test]
     fn every_device_request_round_trips() {
-        let requests = [
+        let requests = vec![
             DeviceRequest::ReadBattery,
             DeviceRequest::HoldWifi { seconds: 600 },
             DeviceRequest::ReleaseWifi,
@@ -3970,6 +4846,45 @@ mod tests {
             DeviceRequest::SetFrontlight { percent: 100 },
             DeviceRequest::SetFrontlight { percent: 0 },
             DeviceRequest::ReadFrontlight,
+            DeviceRequest::ReadBluetooth,
+            DeviceRequest::SetBluetooth { enabled: true },
+            DeviceRequest::ScanBluetooth,
+            DeviceRequest::PairBluetooth {
+                address: "AA:BB:CC:DD:EE:FF".to_owned(),
+            },
+            DeviceRequest::ConnectBluetooth {
+                address: "AA:BB:CC:DD:EE:FF".to_owned(),
+            },
+            DeviceRequest::DisconnectBluetooth {
+                address: "AA:BB:CC:DD:EE:FF".to_owned(),
+            },
+            DeviceRequest::ForgetBluetooth {
+                address: "AA:BB:CC:DD:EE:FF".to_owned(),
+            },
+            DeviceRequest::ReadWifi,
+            DeviceRequest::SetWifi { enabled: false },
+            DeviceRequest::ScanWifi,
+            DeviceRequest::JoinWifi {
+                ssid: "Library".to_owned(),
+                password: "readmore".to_owned(),
+            },
+            DeviceRequest::DisconnectWifi,
+            DeviceRequest::ReadAudio,
+            DeviceRequest::LoadAudio {
+                source: AudioSource::Shelf("audiobook.mp3z".to_owned()),
+            },
+            DeviceRequest::LoadAudio {
+                source: AudioSource::Stream("https://example.com/book.mp3".to_owned()),
+            },
+            DeviceRequest::PlayAudio,
+            DeviceRequest::PauseAudio,
+            DeviceRequest::SeekAudio {
+                position_ms: 120_000,
+            },
+            DeviceRequest::StopAudio,
+            DeviceRequest::SetAudioVolume { percent: 65 },
+            DeviceRequest::ReadBatteryDetail,
+            DeviceRequest::ReadCover,
         ];
         for request in requests {
             let frame = Frame {
@@ -3977,14 +4892,13 @@ mod tests {
                 message: Message::DeviceRequest(request),
             };
             let bytes = encode(&frame).expect("encode");
-            assert_eq!(bytes.len(), HEADER_LEN + 5, "requests are fixed width");
             assert_eq!(decode(&bytes).expect("decode"), frame);
         }
     }
 
     #[test]
     fn every_device_result_round_trips() {
-        let results = [
+        let results = vec![
             DeviceResult::Done,
             DeviceResult::Granted { seconds: 300 },
             DeviceResult::Battery {
@@ -4001,6 +4915,57 @@ mod tests {
             DeviceResult::Denied(DenyReason::Unsupported),
             DeviceResult::Denied(DenyReason::PolicyRejected),
             DeviceResult::Denied(DenyReason::Busy),
+            DeviceResult::Bluetooth {
+                available: true,
+                enabled: true,
+                devices: vec![BluetoothDevice {
+                    address: "AA:BB:CC:DD:EE:FF".to_owned(),
+                    name: "Headphones".to_owned(),
+                    kind: BluetoothDeviceKind::Audio,
+                    paired: true,
+                    connected: true,
+                }],
+            },
+            DeviceResult::Wifi {
+                available: true,
+                enabled: true,
+                connected_ssid: Some("Library".to_owned()),
+                networks: vec![WifiNetwork {
+                    ssid: "Library".to_owned(),
+                    signal_dbm: -48,
+                    secured: true,
+                    connected: true,
+                }],
+            },
+            DeviceResult::Audio {
+                available: true,
+                state: AudioPlaybackState::Playing,
+                position_ms: 75_000,
+                duration_ms: 600_000,
+                volume: 70,
+            },
+            DeviceResult::Failed(DeviceError::Authentication),
+            DeviceResult::BatteryDetail(BatteryDetail {
+                percent: Some(28),
+                status: Some("Discharging".to_owned()),
+                health: Some("Good".to_owned()),
+                technology: Some("Li-ion".to_owned()),
+                decidegrees: Some(290),
+                microvolts: Some(3_720_000),
+                microamps: Some(-180_000),
+                charge_now: Some(420_000),
+                charge_full: Some(1_480_000),
+                charge_full_design: Some(1_500_000),
+            }),
+            DeviceResult::BatteryDetail(BatteryDetail::default()),
+            DeviceResult::Cover {
+                available: true,
+                magnet_present: true,
+            },
+            DeviceResult::Cover {
+                available: false,
+                magnet_present: false,
+            },
         ];
         for result in results {
             let frame = Frame {
@@ -4917,6 +5882,49 @@ mod store_tests {
     }
 
     #[test]
+    fn a_request_body_may_be_far_larger_than_a_label() {
+        // The body used to be encoded as a label, so an application that
+        // handed a model the research it had just fetched could not spawn the
+        // request at all: encoding failed with `StringTooLarge` and the
+        // application ended, having said nothing about why.
+        let body = "x".repeat(64 * 1024);
+        let message = Message::Spawn {
+            task: TaskId(3),
+            work: Task::Post {
+                url: "https://example.invalid/v1".into(),
+                body: body.clone(),
+                content_type: "application/json".into(),
+                credential: Some(Credential::bearer("openai")),
+                headers: Vec::new(),
+                max_bytes: 4096,
+            },
+        };
+        let frame = Frame {
+            request_id: 1,
+            message,
+        };
+        let encoded = encode(&frame).expect("a 64 KiB body encodes");
+        let decoded = decode(&encoded).expect("a 64 KiB body decodes");
+        assert_eq!(decoded, frame);
+
+        let oversized = Frame {
+            request_id: 1,
+            message: Message::Spawn {
+                task: TaskId(3),
+                work: Task::Post {
+                    url: "https://example.invalid/v1".into(),
+                    body: "x".repeat(MAX_POST_BODY_LEN + 1),
+                    content_type: "application/json".into(),
+                    credential: None,
+                    headers: Vec::new(),
+                    max_bytes: 4096,
+                },
+            },
+        };
+        assert_eq!(encode(&oversized), Err(ProtocolError::StringTooLarge));
+    }
+
+    #[test]
     fn every_task_message_encodes_to_exactly_the_length_it_claims() {
         // `encode` predicts the payload length before it writes anything, and
         // a wrong prediction used to be a debug assertion that only fired when
@@ -5026,6 +6034,12 @@ mod store_tests {
             Message::StoreResult(StoreResult::Denied(StoreError::BadKey)),
             Message::Lifecycle(Lifecycle::Foreground),
             Message::Lifecycle(Lifecycle::Background),
+            Message::CoverChanged {
+                magnet_present: true,
+            },
+            Message::CoverChanged {
+                magnet_present: false,
+            },
             Message::ShellRequest(ShellRequest::Open {
                 columns: 53,
                 rows: 20,
@@ -5228,6 +6242,7 @@ const fn encode_task_error(error: TaskError) -> u8 {
         // them would make a new daemon and an older app disagree about what
         // went wrong without either of them noticing.
         TaskError::Offline => 5,
+        TaskError::NoCredential => 6,
     }
 }
 
@@ -5239,6 +6254,7 @@ const fn decode_task_error(tag: u8) -> Result<TaskError, ProtocolError> {
         3 => TaskError::TimedOut,
         4 => TaskError::NotFound,
         5 => TaskError::Offline,
+        6 => TaskError::NoCredential,
         _ => return Err(ProtocolError::InvalidValue("task error")),
     })
 }
@@ -5250,6 +6266,7 @@ mod task_error_tests {
     /// Every variant, so that adding one without a tag fails here.
     const EVERY: &[TaskError] = &[
         TaskError::Denied,
+        TaskError::NoCredential,
         TaskError::Offline,
         TaskError::Unreachable,
         TaskError::TooLarge,
@@ -5286,12 +6303,26 @@ mod task_error_tests {
         assert_eq!(encode_task_error(TaskError::TooLarge), 2);
         assert_eq!(encode_task_error(TaskError::TimedOut), 3);
         assert_eq!(encode_task_error(TaskError::NotFound), 4);
+        assert_eq!(encode_task_error(TaskError::Offline), 5);
+        assert_eq!(encode_task_error(TaskError::NoCredential), 6);
+    }
+
+    /// The two refusals have to stay distinguishable in words as well as on
+    /// the wire. A missing key blamed on the application sends whoever is
+    /// holding the reader looking in entirely the wrong place.
+    #[test]
+    fn a_missing_key_and_a_refused_permission_do_not_share_a_sentence() {
+        let denied = TaskError::Denied.to_string();
+        let absent = TaskError::NoCredential.to_string();
+        assert_ne!(denied, absent);
+        assert!(absent.contains("key"), "{absent}");
+        assert!(!TaskError::NoCredential.worth_retrying());
     }
 
     #[test]
     fn a_tag_from_the_future_is_refused_rather_than_guessed() {
         assert_eq!(
-            decode_task_error(6),
+            decode_task_error(7),
             Err(ProtocolError::InvalidValue("task error"))
         );
         assert_eq!(

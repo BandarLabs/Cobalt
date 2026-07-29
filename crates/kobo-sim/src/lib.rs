@@ -12,7 +12,7 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use kobo_policy::{store::Store, DeviceServices, TaskRunner};
+use kobo_policy::{shelf::Shelf, store::Store, DeviceServices, TaskRunner};
 use kobo_profile::{DeviceProfile, CLARA_BW_391};
 use kobo_protocol::{read_from, write_to, Frame, Lifecycle, Message};
 use kobo_ui::{
@@ -545,12 +545,15 @@ impl AppServer {
 
     fn start_session(stream: &mut UnixStream) -> io::Result<AppSession> {
         let hello = read_protocol_frame(stream)?;
-        if !matches!(hello.message, Message::Hello { .. }) {
+        // Kept, not just checked. The name is the identity credential policy
+        // is written against, so a simulator that threw it away could not
+        // apply the same policy the device applies.
+        let Message::Hello { name } = hello.message.clone() else {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "SDK must send Hello before other messages",
             ));
-        }
+        };
         write_protocol_frame(
             stream,
             &Frame {
@@ -578,7 +581,7 @@ impl AppServer {
             // and the developer is told which one: a reader that dies quietly
             // leaves an application talking to nobody, with a panel that keeps
             // showing the last good screen and ignores every tap.
-            if let Err(error) = read_app_messages(reader, &reader_writer, &reader_state) {
+            if let Err(error) = read_app_messages(reader, &name, &reader_writer, &reader_state) {
                 eprintln!("the application's connection ended: {error}");
             }
         });
@@ -1233,8 +1236,24 @@ fn json_string(value: &str) -> String {
     encoded
 }
 
+/// Set this to any value to print the simulator's log as it happens.
+///
+/// Off by default because a shelf upload alone is hundreds of lines. On when a
+/// developer is trying to find out why something failed, which is the only
+/// time any of it is worth reading.
+pub const VERBOSE: &str = "KOBO_SIM_LOG";
+
 /// Records one line in the simulator's log, keeping only the recent tail.
+///
+/// The tail used to be the whole story: it was collected, capped at sixty four
+/// lines, and then read by nothing at all. A developer watching an application
+/// fail in the simulator could see the failed screen and had no way to find
+/// out which request produced it. Now the interesting lines reach the terminal
+/// the simulator is running in.
 fn note(state: &Arc<Mutex<AppState>>, line: &str) -> io::Result<()> {
+    if std::env::var_os(VERBOSE).is_some() {
+        eprintln!("{line}");
+    }
     let mut state = state
         .lock()
         .map_err(|_| io::Error::other("app state lock poisoned"))?;
@@ -1249,10 +1268,16 @@ fn answer_store(
     writer: &Arc<AppWriter>,
     request_id: u32,
     store: &Store,
+    shelf: &Shelf,
     request: &kobo_protocol::StoreRequest,
     state: &Arc<Mutex<AppState>>,
 ) -> io::Result<()> {
-    let result = store.handle(request);
+    // The shelf answers first, and answers `None` to everything that is not
+    // its own, which is what keeps the two from having to know about each
+    // other's request tags.
+    let result = shelf
+        .handle(request)
+        .unwrap_or_else(|| store.handle(request));
     note(state, &format!("store: {request:?} -> {result:?}"))?;
     write_shared(
         writer,
@@ -1473,13 +1498,21 @@ fn scenario_task_error(
 )]
 fn read_app_messages(
     mut stream: UnixStream,
+    name: &str,
     writer: &Arc<AppWriter>,
     state: &Arc<Mutex<AppState>>,
 ) -> io::Result<()> {
     // The simulator owns no hardware, so it answers state queries from a
     // believable model and refuses everything that would change a real device.
     let mut services = DeviceServices::simulated();
-    let tasks = Arc::new(Mutex::new(simulated_tasks()));
+    // There is no bezel here to hold a magnet against, so the state the hall
+    // sensor reports is set on the way in. Without this the second half of
+    // every cover-aware screen is unreachable off hardware.
+    services.set_magnet(matches!(
+        std::env::var("KOBO_MAGNET").as_deref(),
+        Ok("1" | "present")
+    ));
+    let tasks = Arc::new(Mutex::new(simulated_tasks(name)));
     // Drained on its own thread for the same reason terminal output is. The
     // message loop below blocks on the application's socket, so an outcome
     // that arrived while nothing was being typed used to sit in the channel
@@ -1497,6 +1530,13 @@ fn read_app_messages(
     // point of a store: a developer restarting the application should see what
     // the owner would see after closing and reopening it.
     let store = Store::new(std::env::temp_dir().join("cobalt-sim-state"));
+    // The shelf is where an application keeps what will not fit in a message:
+    // an audiobook, a downloaded book. Without one here every shelf request
+    // came back `Unwritable`, so the one class of application that most needs
+    // to be developed off the device -- the ones that take four minutes and a
+    // dozen network calls to produce a file -- was the one class that could
+    // not be run in the simulator at all.
+    let shelf = Shelf::new(std::env::temp_dir().join("cobalt-sim-data"));
     let shells = simulated_shells(writer);
     loop {
         let frame = read_protocol_frame(&mut stream)?;
@@ -1536,7 +1576,7 @@ fn read_app_messages(
                     Scenario::PermissionDenied => {
                         kobo_protocol::DeviceResult::Denied(kobo_protocol::DenyReason::NotDeclared)
                     }
-                    _ => services.handle(request),
+                    _ => services.handle(request.clone()),
                 };
                 {
                     let mut state = state
@@ -1604,7 +1644,7 @@ fn read_app_messages(
                         },
                     )?;
                 } else {
-                    answer_store(writer, request_id, &store, &request, state)?;
+                    answer_store(writer, request_id, &store, &shelf, &request, state)?;
                 }
             }
             Message::ShellRequest(request) => {
@@ -1659,18 +1699,16 @@ fn deliver_task_outcomes(
         .map_err(|_| io::Error::other("simulator task lock poisoned"))?
         .drain();
     for finished in finished {
-        {
-            let mut state = state
-                .lock()
-                .map_err(|_| io::Error::other("app state lock poisoned"))?;
-            state.logs.push(format!(
-                "task {} -> {:?}",
-                finished.task.0, finished.outcome
-            ));
-            if state.logs.len() > 64 {
-                state.logs.remove(0);
-            }
+        // A failure is always printed, whatever the log setting. It is the one
+        // line that explains a screen the developer is looking at, and the
+        // alternative is guessing which of a dozen requests went wrong.
+        if let kobo_protocol::TaskOutcome::Failed(error) = &finished.outcome {
+            eprintln!("task {} failed: {error:?}", finished.task.0);
         }
+        note(
+            state,
+            &format!("task {} -> {:?}", finished.task.0, finished.outcome),
+        )?;
         write_shared(
             writer,
             &Frame {
@@ -1733,15 +1771,24 @@ pub const OFFLINE: &str = "KOBO_SIM_OFFLINE";
 /// only be developed on the device, which is the one thing this project is
 /// arranged to avoid. Network is granted here as the placeholder for a
 /// manifest, exactly as the device runtime grants it, so the two cannot drift.
-fn simulated_tasks() -> TaskRunner {
+fn simulated_tasks(name: &str) -> TaskRunner {
     let runner = TaskRunner::simulated(std::env::temp_dir())
         .with_secrets(std::env::temp_dir().join(SIM_SECRETS));
     if std::env::var_os(OFFLINE).is_some() {
         return runner;
     }
+    // The same policy the device applies, from the same function, because a
+    // runner with no policy at all refuses every credentialed request. That
+    // is what it did: an application that needs an API key reported
+    // "Permission needed" in the simulator no matter which key was installed,
+    // and could only ever be run on hardware.
+    let app = name.to_owned();
     runner
         .with_fetch(Arc::new(kobo_net::fetch_from))
         .with_post(Arc::new(kobo_net::post))
+        .with_credential_policy(Arc::new(move |credential, url| {
+            kobo_net::credential_allowed(&app, credential, url)
+        }))
         .with_capabilities([kobo_policy::Capability::Network])
 }
 
@@ -2109,7 +2156,7 @@ mod tests {
         // simulator refuses requests, and an application that can only reach
         // the network on the device can only be built on the device. Failure
         // handling is still reachable, deliberately, through one variable.
-        let mut online = simulated_tasks();
+        let mut online = simulated_tasks("gallery");
         assert!(
             online
                 .submit(

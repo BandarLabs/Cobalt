@@ -42,7 +42,7 @@ use kobo_hal::touch::TouchEvent;
 use kobo_hal::{Rect, RefreshIntent, RefreshPlan, RegionSnapshot};
 use kobo_policy::{Backends, Capability, Declared, DeviceServices, PowerPolicy, TaskRunner};
 use kobo_profile::{DeviceProfile, CLARA_BW_391};
-use kobo_protocol::{Credential, Frame, Lifecycle, Message, SecretHeader, TaskError, TaskOutcome};
+use kobo_protocol::{Frame, Lifecycle, Message, TaskError, TaskOutcome};
 use kobo_ui::{
     display_metrics_from_env, render_all, ActionId, Chrome, FramePlanner, PanelWaveform,
     PictureCache, Screen, Surface,
@@ -83,34 +83,6 @@ const STATE_ROOT: &str = "/mnt/onboard/.adds/cobalt/state";
 /// Nothing here can stop the device booting.
 const DATA_ROOT: &str = "/mnt/onboard/.adds/cobalt/data";
 
-/// Whether a shipped application may attach one named secret to this URL.
-///
-/// The application selects a service, but the runtime independently binds the
-/// secret, header convention and HTTPS origin. A modified application can no
-/// longer turn a stored credential into a POST to an address it controls.
-fn credential_allowed(app: &str, credential: &Credential, url: &str) -> bool {
-    if app != "chat" {
-        return false;
-    }
-    match (&*credential.secret, &credential.header) {
-        ("openai", SecretHeader::Bearer) => {
-            url == "https://api.openai.com/v1/chat/completions"
-                && kobo_net::has_origin(url, "api.openai.com", 443)
-        }
-        ("anthropic", SecretHeader::Named(header)) => {
-            header.eq_ignore_ascii_case("x-api-key")
-                && url == "https://api.anthropic.com/v1/messages"
-                && kobo_net::has_origin(url, "api.anthropic.com", 443)
-        }
-        ("gemini", SecretHeader::Named(header)) => {
-            header.eq_ignore_ascii_case("x-goog-api-key")
-                && url
-                    == "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-                && kobo_net::has_origin(url, "generativelanguage.googleapis.com", 443)
-        }
-        _ => false,
-    }
-}
 /// The panel metrics a screen is drawn and hit-tested with.
 ///
 /// A screen may ask for a text size other than the reader's own, a reader
@@ -203,13 +175,21 @@ const BATTERY_INTERVAL: Duration = Duration::from_secs(30);
 /// The wireless interface every Kobo names the same thing.
 const WIFI_LINK: &str = "wlan0";
 
-/// How often the status band is allowed to change.
+/// How often the band is re-read.
 ///
-/// A minute, matching the finest thing the band shows. Faster would buy
-/// nothing a reader can see and would cost a panel update: the band is drawn
-/// with the rest of the screen, so a status that changed between two otherwise
-/// identical frames would make them different and force a repaint of a strip
-/// nobody was looking at.
+/// Separate from how often it is allowed to *change*, which is the mistake
+/// this pair of constants exists to undo. The band used to be re-read only
+/// when a frame was already being drawn, so unplugging the charger left the
+/// old mark on the panel until something else happened to redraw. Nothing was
+/// stale in the reading; the reading was simply never taken.
+///
+/// Looking is cheap: four small files the kernel publishes. Drawing is not, so
+/// the loop looks often and repaints only when the value it drew has actually
+/// changed.
+const STATUS_POLL: Duration = Duration::from_secs(2);
+
+/// How stale a status may be before a frame that is already being drawn takes
+/// a fresh one.
 const STATUS_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Reads the clock, the radio and the gauge, no more often than it needs to.
@@ -220,6 +200,19 @@ const STATUS_INTERVAL: Duration = Duration::from_secs(60);
 struct StatusSource {
     last: kobo_ui::Status,
     taken: Option<Instant>,
+    polled: Option<Instant>,
+    /// Whether something is connected over Bluetooth.
+    ///
+    /// Not polled with the rest. The controller on this device is the vendor
+    /// MTK stack behind D-Bus, where asking costs a round trip and, worse, has
+    /// side effects: reading the adapter marks the stack as used and commits
+    /// the session to the slow reboot on hand-back. So this is told rather
+    /// than asked, from the replies the daemon is already carrying.
+    ///
+    /// The cost is that headphones which wander out of range on their own are
+    /// noticed the next time something reads Bluetooth rather than within two
+    /// seconds. That is the right trade against making every session reboot.
+    bluetooth: bool,
 }
 
 impl StatusSource {
@@ -227,7 +220,46 @@ impl StatusSource {
         Self {
             last: kobo_ui::Status::default(),
             taken: None,
+            polled: None,
+            bluetooth: false,
         }
+    }
+
+    /// Records what the daemon just learned about Bluetooth.
+    ///
+    /// Returns whether this changed anything, so the caller can repaint on the
+    /// same footing as [`StatusSource::poll`] without a second code path.
+    fn observe_bluetooth(&mut self, connected: bool) -> bool {
+        if self.bluetooth == connected {
+            return false;
+        }
+        self.bluetooth = connected;
+        self.last.bluetooth = connected;
+        true
+    }
+
+    /// Takes a fresh reading, and says whether anything a reader can see moved.
+    ///
+    /// One comparison covers the clock, the radio, the gauge, the charging
+    /// mark and Bluetooth, because they are five fields of one value. Adding a
+    /// sixth mark to the band needs no change here at all, which is the point:
+    /// the alternative is five timers and five remembered previous values that
+    /// drift apart the first time one of them is forgotten.
+    fn poll(&mut self) -> bool {
+        if self
+            .polled
+            .is_some_and(|polled| polled.elapsed() < STATUS_POLL)
+        {
+            return false;
+        }
+        self.polled = Some(Instant::now());
+        let fresh = self.read();
+        if fresh == self.last {
+            return false;
+        }
+        self.last = fresh;
+        self.taken = Some(Instant::now());
+        true
     }
 
     /// The current status, re-read only when it has gone stale.
@@ -236,10 +268,17 @@ impl StatusSource {
             .taken
             .is_none_or(|taken| taken.elapsed() >= STATUS_INTERVAL);
         if stale {
-            self.last = read_status();
+            self.last = self.read();
             self.taken = Some(Instant::now());
         }
         &self.last
+    }
+
+    fn read(&self) -> kobo_ui::Status {
+        kobo_ui::Status {
+            bluetooth: self.bluetooth,
+            ..read_status()
+        }
     }
 }
 
@@ -249,8 +288,16 @@ impl StatusSource {
 /// reader hides its own status bar the moment a page is opened, and a clock
 /// ticking above a novel is both a distraction and a panel update per minute
 /// for something nobody opened the book to see.
+/// The back control is drawn for an application that is not the launcher, and
+/// also for any screen that asked for Back itself. The second case used to be
+/// missing, and it stranded people: a rooted application, which is what
+/// `kobo present` and a single-application install both produce, is "at home",
+/// so its sub-screens were drawn with no way back at all. Settings could open
+/// Bluetooth and then had nothing to return to Settings with. The screen had
+/// said `owns_back`, which is an application declaring it has somewhere of its
+/// own to go, so drawing the control is exactly what it asked for.
 fn chrome_for(screen: &Screen, at_home: bool, status: &mut StatusSource) -> Chrome {
-    let chrome = Chrome::with_back(!at_home);
+    let chrome = Chrome::with_back(!at_home || screen.owns_back);
     if screen.reading {
         return chrome;
     }
@@ -274,6 +321,9 @@ fn read_status() -> kobo_ui::Status {
         },
         battery: battery.map(|battery| kobo_ui::Percent::new(battery.percent)),
         charging: battery.is_some_and(|battery| battery.charging),
+        // Filled in by the caller, which is the only layer holding what the
+        // daemon has been told about the controller.
+        bluetooth: false,
     }
 }
 
@@ -510,6 +560,24 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     // controller is wrong on its own terms, not because it fixes that.
     drop(touch);
     drop(display);
+    // The Clara BW's MediaTek Bluetooth driver cannot be initialised twice in
+    // one boot. If Cobalt changed or scanned that stack, starting Nickel here
+    // can panic the kernel inside wlan_drv_gen4m. A normal, synced reboot is
+    // the only proven hand-back: it returns directly to the stock reader with
+    // a pristine shared Wi-Fi/Bluetooth driver state.
+    if kobo_hal::bluetooth::requires_reboot_after_use() {
+        trace("MediaTek Bluetooth was used; rebooting cleanly instead of restarting the reader");
+        println!("Bluetooth changed; rebooting cleanly back to the reader");
+        watchdog.disarm();
+        drop(teardown);
+        let _ignored = fs::remove_dir_all(&state);
+        let summary = outcome.unwrap_or_else(|error| format!("application ended: {error}"));
+        return request_clean_reboot().map(|()| {
+            format!(
+                "{summary}; typeface {typeface}; Bluetooth used the shared MediaTek radio, so a clean reboot was requested before returning to the stock reader"
+            )
+        });
+    }
     trace("panel and touch released, restarting the reader");
     println!("panel released, restarting the reader");
     let restarted = reader.start(START_GRACE);
@@ -572,6 +640,30 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
         )),
         (Err(error), _) => Err(format!("{error}; {reader_state}")),
     }
+}
+
+/// Syncs user storage and requests the firmware's ordinary reboot path.
+fn request_clean_reboot() -> Result<(), String> {
+    let sync = Command::new("sync")
+        .status()
+        .map_err(|error| format!("start sync before Bluetooth reboot: {error}"))?;
+    if !sync.success() {
+        return Err("sync failed before Bluetooth reboot; power-cycle the reader".to_owned());
+    }
+    for tool in ["/sbin/reboot", "/bin/reboot", "/usr/sbin/reboot"] {
+        if Path::new(tool).is_file() {
+            return Command::new(tool)
+                .status()
+                .map_err(|error| format!("request reboot with {tool}: {error}"))
+                .and_then(|status| {
+                    status
+                        .success()
+                        .then_some(())
+                        .ok_or_else(|| format!("{tool} refused the reboot; power-cycle the reader"))
+                });
+        }
+    }
+    Err("the firmware has no reboot command; power-cycle the reader".to_owned())
 }
 
 /// Renders a duration the way the summary should read it.
@@ -788,6 +880,53 @@ fn host_applications(
     if frontlight.is_some() {
         backends.push(Capability::FrontlightControl);
     }
+    let bluetooth = kobo_hal::bluetooth::Bluetooth::open();
+    if bluetooth.is_some() {
+        backends.push(Capability::BluetoothControl);
+    }
+    let wifi = kobo_hal::wifi::Wifi::open();
+    if wifi.is_some() {
+        backends.push(Capability::WifiControl);
+        backends.push(Capability::Network);
+    }
+    // Opened once for the whole session rather than per request, because the
+    // sensor's value is in the edges and a reader that is only open while
+    // somebody asks sees none of them.
+    let mut cover = match kobo_hal::cover::CoverSensor::open() {
+        Ok(cover) => {
+            backends.push(Capability::CoverSensor);
+            Some(cover)
+        }
+        Err(error) => {
+            println!("no cover sensor ({error}); cover reads will be refused");
+            None
+        }
+    };
+    let audio_fetcher: kobo_hal::audio::StreamFetcher = Arc::new(|url, offset, max_bytes| {
+        kobo_net::fetch_from(url, offset, max_bytes).map_err(|error| match error {
+            // A reader with no route and a service that will not answer are
+            // different things everywhere else, but `DeviceError` is the radio
+            // vocabulary and has one word for both. Unreachable is the honest
+            // one: from the player's point of view the bytes cannot be got.
+            kobo_protocol::TaskError::Offline | kobo_protocol::TaskError::Unreachable => {
+                kobo_protocol::DeviceError::Unreachable
+            }
+            kobo_protocol::TaskError::TimedOut => kobo_protocol::DeviceError::TimedOut,
+            kobo_protocol::TaskError::NotFound => kobo_protocol::DeviceError::NotFound,
+            kobo_protocol::TaskError::TooLarge => kobo_protocol::DeviceError::InvalidInput,
+            kobo_protocol::TaskError::Denied => kobo_protocol::DeviceError::Backend,
+            // Unreachable today: a plain fetch names no credential, so the
+            // runtime never has one to be missing. Spelled out rather than
+            // caught by a wildcard so that giving fetch a credential later
+            // fails here instead of quietly reporting the wrong thing.
+            kobo_protocol::TaskError::NoCredential => kobo_protocol::DeviceError::Authentication,
+        })
+    });
+    let audio = kobo_hal::audio::Audio::open(Some(audio_fetcher));
+    if audio.is_some() {
+        backends.push(Capability::Audio);
+        backends.push(Capability::BluetoothAudio);
+    }
     let mut services = DeviceServices::new(
         Declared::all(),
         PowerPolicy::DEFAULT,
@@ -843,6 +982,35 @@ fn host_applications(
             // the runtime is still serving the panel rather than merely that
             // the process has not been reaped.
             watchdog.beat();
+            // The band is the only thing on the panel that changes without
+            // anybody touching it, so the loop has to notice it on its own.
+            // Repainting is conditional on the reading having moved, and the
+            // frame planner declines an identical frame anyway, so a session
+            // sitting still costs nothing beyond reading four small files.
+            if status.poll() {
+                repaint(
+                    &mut apps,
+                    front,
+                    display,
+                    whole_screen,
+                    &mut surface,
+                    &mut panel,
+                    &home,
+                    &mut status,
+                )?;
+            }
+            // Only the foreground application hears this. A magnet arriving
+            // is a thing that happened in front of the reader, and a
+            // background application has no standing to react to it.
+            if let Some(sensor) = cover.as_mut() {
+                if let Some(magnet) = sensor.poll() {
+                    if let Some(index) = index_of(&apps, front) {
+                        apps[index].send(kobo_protocol::Message::CoverChanged {
+                            magnet_present: magnet == kobo_hal::cover::Magnet::Present,
+                        })?;
+                    }
+                }
+            }
             if now >= ceiling {
                 return Ok(finish(
                     &apps,
@@ -892,6 +1060,9 @@ fn host_applications(
                 .saturating_duration_since(now)
                 .min(idle_at.saturating_duration_since(now))
                 .min(BEAT_INTERVAL)
+                // So a charger pulled out while nobody is touching the panel
+                // is noticed in seconds rather than at the next heartbeat.
+                .min(STATUS_POLL)
                 .min(back_offered.map_or(BEAT_INTERVAL, |(_, offered_at)| {
                     (offered_at + BACK_GRACE).saturating_duration_since(now)
                 }));
@@ -1186,7 +1357,247 @@ fn host_applications(
                                     _ => {}
                                 }
                             }
-                            let result = services.handle(request);
+                            let result = if let Some(reason) = services.refusal_for(&request) {
+                                kobo_protocol::DeviceResult::Denied(reason)
+                            } else {
+                                match &request {
+                                    kobo_protocol::DeviceRequest::ReadBluetooth => {
+                                        bluetooth.as_ref().map_or(
+                                            kobo_protocol::DeviceResult::Denied(
+                                                kobo_protocol::DenyReason::Unsupported,
+                                            ),
+                                            kobo_hal::bluetooth::Bluetooth::state,
+                                        )
+                                    }
+                                    kobo_protocol::DeviceRequest::SetBluetooth { enabled } => {
+                                        // Kobo documents Bluetooth as sharing the wireless
+                                        // radio with Wi-Fi. Bring Wi-Fi up first, exactly as
+                                        // Nickel does, but do not fail Bluetooth merely because
+                                        // association itself has not completed yet.
+                                        if *enabled {
+                                            if let Some(wifi) = &wifi {
+                                                let _ignored = wifi.set_enabled(true);
+                                            }
+                                        }
+                                        bluetooth.as_ref().map_or(
+                                            kobo_protocol::DeviceResult::Denied(
+                                                kobo_protocol::DenyReason::Unsupported,
+                                            ),
+                                            |bluetooth| bluetooth.set_enabled(*enabled),
+                                        )
+                                    }
+                                    kobo_protocol::DeviceRequest::ScanBluetooth => {
+                                        bluetooth.as_ref().map_or(
+                                            kobo_protocol::DeviceResult::Denied(
+                                                kobo_protocol::DenyReason::Unsupported,
+                                            ),
+                                            kobo_hal::bluetooth::Bluetooth::scan,
+                                        )
+                                    }
+                                    kobo_protocol::DeviceRequest::PairBluetooth { address } => {
+                                        bluetooth.as_ref().map_or(
+                                            kobo_protocol::DeviceResult::Denied(
+                                                kobo_protocol::DenyReason::Unsupported,
+                                            ),
+                                            |bluetooth| bluetooth.pair(address),
+                                        )
+                                    }
+                                    kobo_protocol::DeviceRequest::ConnectBluetooth { address } => {
+                                        bluetooth.as_ref().map_or(
+                                            kobo_protocol::DeviceResult::Denied(
+                                                kobo_protocol::DenyReason::Unsupported,
+                                            ),
+                                            |bluetooth| bluetooth.connect(address),
+                                        )
+                                    }
+                                    kobo_protocol::DeviceRequest::DisconnectBluetooth {
+                                        address,
+                                    } => bluetooth.as_ref().map_or(
+                                        kobo_protocol::DeviceResult::Denied(
+                                            kobo_protocol::DenyReason::Unsupported,
+                                        ),
+                                        |bluetooth| bluetooth.disconnect(address),
+                                    ),
+                                    kobo_protocol::DeviceRequest::ForgetBluetooth { address } => {
+                                        bluetooth.as_ref().map_or(
+                                            kobo_protocol::DeviceResult::Denied(
+                                                kobo_protocol::DenyReason::Unsupported,
+                                            ),
+                                            |bluetooth| bluetooth.forget(address),
+                                        )
+                                    }
+                                    kobo_protocol::DeviceRequest::ReadWifi => wifi.as_ref().map_or(
+                                        kobo_protocol::DeviceResult::Denied(
+                                            kobo_protocol::DenyReason::Unsupported,
+                                        ),
+                                        kobo_hal::wifi::Wifi::state,
+                                    ),
+                                    kobo_protocol::DeviceRequest::SetWifi { enabled } => {
+                                        wifi.as_ref().map_or(
+                                            kobo_protocol::DeviceResult::Denied(
+                                                kobo_protocol::DenyReason::Unsupported,
+                                            ),
+                                            |wifi| wifi.set_enabled(*enabled),
+                                        )
+                                    }
+                                    kobo_protocol::DeviceRequest::ScanWifi => wifi.as_ref().map_or(
+                                        kobo_protocol::DeviceResult::Denied(
+                                            kobo_protocol::DenyReason::Unsupported,
+                                        ),
+                                        kobo_hal::wifi::Wifi::scan,
+                                    ),
+                                    kobo_protocol::DeviceRequest::JoinWifi { ssid, password } => {
+                                        wifi.as_ref().map_or(
+                                            kobo_protocol::DeviceResult::Denied(
+                                                kobo_protocol::DenyReason::Unsupported,
+                                            ),
+                                            |wifi| wifi.join(ssid, password),
+                                        )
+                                    }
+                                    kobo_protocol::DeviceRequest::DisconnectWifi => {
+                                        wifi.as_ref().map_or(
+                                            kobo_protocol::DeviceResult::Denied(
+                                                kobo_protocol::DenyReason::Unsupported,
+                                            ),
+                                            kobo_hal::wifi::Wifi::disconnect,
+                                        )
+                                    }
+                                    kobo_protocol::DeviceRequest::ReadAudio => {
+                                        audio.as_ref().map_or(
+                                            kobo_protocol::DeviceResult::Denied(
+                                                kobo_protocol::DenyReason::Unsupported,
+                                            ),
+                                            kobo_hal::audio::Audio::state,
+                                        )
+                                    }
+                                    kobo_protocol::DeviceRequest::LoadAudio { source } => {
+                                        audio.as_ref().map_or(
+                                            kobo_protocol::DeviceResult::Denied(
+                                                kobo_protocol::DenyReason::Unsupported,
+                                            ),
+                                            |audio| match source {
+                                                kobo_protocol::AudioSource::Shelf(name) => {
+                                                    apps[index].shelf.published_path(name).map_or(
+                                                        kobo_protocol::DeviceResult::Failed(
+                                                            kobo_protocol::DeviceError::NotFound,
+                                                        ),
+                                                        |path| {
+                                                            audio.load(
+                                                                kobo_hal::audio::Source::File(path),
+                                                            )
+                                                        },
+                                                    )
+                                                }
+                                                kobo_protocol::AudioSource::Stream(url) => {
+                                                    if services.may(Capability::Network) {
+                                                        audio.load(kobo_hal::audio::Source::Stream(
+                                                            url.clone(),
+                                                        ))
+                                                    } else {
+                                                        kobo_protocol::DeviceResult::Denied(
+                                                            kobo_protocol::DenyReason::NotDeclared,
+                                                        )
+                                                    }
+                                                }
+                                            },
+                                        )
+                                    }
+                                    kobo_protocol::DeviceRequest::PlayAudio => {
+                                        audio.as_ref().map_or(
+                                            kobo_protocol::DeviceResult::Denied(
+                                                kobo_protocol::DenyReason::Unsupported,
+                                            ),
+                                            kobo_hal::audio::Audio::play,
+                                        )
+                                    }
+                                    kobo_protocol::DeviceRequest::PauseAudio => {
+                                        audio.as_ref().map_or(
+                                            kobo_protocol::DeviceResult::Denied(
+                                                kobo_protocol::DenyReason::Unsupported,
+                                            ),
+                                            kobo_hal::audio::Audio::pause,
+                                        )
+                                    }
+                                    kobo_protocol::DeviceRequest::SeekAudio { position_ms } => {
+                                        audio.as_ref().map_or(
+                                            kobo_protocol::DeviceResult::Denied(
+                                                kobo_protocol::DenyReason::Unsupported,
+                                            ),
+                                            |audio| audio.seek(*position_ms),
+                                        )
+                                    }
+                                    kobo_protocol::DeviceRequest::StopAudio => {
+                                        audio.as_ref().map_or(
+                                            kobo_protocol::DeviceResult::Denied(
+                                                kobo_protocol::DenyReason::Unsupported,
+                                            ),
+                                            kobo_hal::audio::Audio::stop,
+                                        )
+                                    }
+                                    kobo_protocol::DeviceRequest::SetAudioVolume { percent } => {
+                                        audio.as_ref().map_or(
+                                            kobo_protocol::DeviceResult::Denied(
+                                                kobo_protocol::DenyReason::Unsupported,
+                                            ),
+                                            |audio| audio.set_volume(*percent),
+                                        )
+                                    }
+                                    // The gauge is read straight through
+                                    // rather than from the cached percent the
+                                    // band uses, because this is asked once
+                                    // when somebody opens a battery screen
+                                    // and they want today's numbers. When
+                                    // there is no gauge to read, the policy's
+                                    // own answer stands, which is what the
+                                    // simulator runs on.
+                                    kobo_protocol::DeviceRequest::ReadBatteryDetail => {
+                                        kobo_hal::battery::detail().map_or_else(
+                                            || services.handle(request.clone()),
+                                            kobo_protocol::DeviceResult::BatteryDetail,
+                                        )
+                                    }
+                                    // Answered from the sensor opened for the
+                                    // session rather than by opening one here,
+                                    // so the answer and the changes that
+                                    // follow it come from the same reader and
+                                    // cannot disagree.
+                                    kobo_protocol::DeviceRequest::ReadCover => {
+                                        cover.as_ref().map_or_else(
+                                            || services.handle(request.clone()),
+                                            |sensor| kobo_protocol::DeviceResult::Cover {
+                                                available: true,
+                                                magnet_present: sensor.magnet()
+                                                    == kobo_hal::cover::Magnet::Present,
+                                            },
+                                        )
+                                    }
+                                    _ => services.handle(request.clone()),
+                                }
+                            };
+                            // Every Bluetooth reply passes through here, so
+                            // this is the one place that has to know the band
+                            // shows a Bluetooth mark. A reply that changes the
+                            // answer repaints on the spot rather than waiting
+                            // for the next screen.
+                            if let kobo_protocol::DeviceResult::Bluetooth {
+                                enabled, devices, ..
+                            } = &result
+                            {
+                                let connected =
+                                    *enabled && devices.iter().any(|device| device.connected);
+                                if status.observe_bluetooth(connected) {
+                                    repaint(
+                                        &mut apps,
+                                        front,
+                                        display,
+                                        whole_screen,
+                                        &mut surface,
+                                        &mut panel,
+                                        &home,
+                                        &mut status,
+                                    )?;
+                                }
+                            }
                             reply(
                                 &mut apps[index],
                                 frame.request_id,
@@ -1301,6 +1712,7 @@ fn host_applications(
                         | Message::Lifecycle(_)
                         | Message::DeviceResult(_)
                         | Message::StoreResult(_)
+                        | Message::CoverChanged { .. }
                         | Message::ShellEvent(_) => {
                             return Err(format!(
                                 "{} sent a runtime-only message",
@@ -1405,20 +1817,56 @@ fn switch_to(
     // application to draw itself again. An application with nothing drawn yet
     // is the only case where the panel keeps the previous image for a moment,
     // and that is a genuinely new application rather than a returning one.
-    if let Some(screen) = apps[index].screen.clone() {
-        let chrome = chrome_for(&screen, apps[index].path == home, status);
-        render_all(
-            &screen,
-            &metrics_for(&screen),
-            &chrome,
-            &apps[index].pictures,
-            surface,
-            None,
-        );
-        panel.paint(display, whole_screen, surface)?;
-        apps[index].painted += 1;
-    }
+    repaint(
+        apps,
+        wanted,
+        display,
+        whole_screen,
+        surface,
+        panel,
+        home,
+        status,
+    )?;
     Ok(wanted)
+}
+
+/// Draws whatever the application on the panel last drew, with fresh chrome.
+///
+/// Shared by the application switch and the status poll, which want the same
+/// thing for different reasons. Cheap when nothing moved: the frame planner
+/// compares the rendered surface against what is on the panel and declines to
+/// refresh an identical one, so a poll that finds a new battery reading
+/// repaints the strip it changed and a poll that finds the same reading costs
+/// one render and no panel update at all.
+#[allow(clippy::too_many_arguments)]
+fn repaint(
+    apps: &mut [Hosted],
+    id: u64,
+    display: &DisplaySession,
+    whole_screen: Rect,
+    surface: &mut Surface,
+    panel: &mut Painter,
+    home: &Path,
+    status: &mut StatusSource,
+) -> Result<(), String> {
+    let Some(index) = index_of(apps, id) else {
+        return Ok(());
+    };
+    let Some(screen) = apps[index].screen.clone() else {
+        return Ok(());
+    };
+    let chrome = chrome_for(&screen, apps[index].path == home, status);
+    render_all(
+        &screen,
+        &metrics_for(&screen),
+        &chrome,
+        &apps[index].pictures,
+        surface,
+        None,
+    );
+    panel.paint(display, whole_screen, surface)?;
+    apps[index].painted += 1;
+    Ok(())
 }
 
 /// Finds an application by name, starting it only if it is not already running.
@@ -1538,7 +1986,7 @@ fn start_application(
         .with_post(Arc::new(kobo_net::post))
         .with_secrets(SECRETS)
         .with_credential_policy(Arc::new(move |credential, url| {
-            credential_allowed(&credential_app, credential, url)
+            kobo_net::credential_allowed(&credential_app, credential, url)
         }))
         .with_wake(Arc::new(move || {
             let _ = waker.send(Event::TaskReady);
@@ -1550,6 +1998,15 @@ fn start_application(
         // than being absent, so that the day manifests arrive there is exactly
         // one line to change.
         .with_capabilities([kobo_policy::Capability::Network]);
+    let shelf_root = if name == "audiobook" {
+        // `.mp3z` is the firmware's sideloaded-audiobook container. Keeping
+        // this one privileged shelf in a visible directory means Nickel finds
+        // the finished archive after the panel session ends. Every other app
+        // remains confined to its private Cobalt data directory.
+        PathBuf::from("/mnt/onboard/Audiobooks")
+    } else {
+        Path::new(DATA_ROOT).join(&name)
+    };
     apps.push(Hosted {
         id,
         // Named explicitly, and only here. A shell on this device is root on a
@@ -1572,7 +2029,7 @@ fn start_application(
         // the one place a reinstall does not wipe. An application that never
         // saves creates nothing here.
         store: kobo_policy::store::Store::new(Path::new(STATE_ROOT).join(&name)),
-        shelf: kobo_policy::shelf::Shelf::new(Path::new(DATA_ROOT).join(&name)),
+        shelf: kobo_policy::shelf::Shelf::new(shelf_root),
         name,
         path: path.to_path_buf(),
         jail,
@@ -2126,6 +2583,33 @@ mod tests {
         assert!(home.status.is_some(), "the launcher lost its status band");
     }
 
+    /// A rooted application's sub-screen still gets a way back.
+    ///
+    /// `kobo present` runs one application as home, and every screen it opened
+    /// from there was drawn with no back control, because back was decided
+    /// purely by whether the application was the launcher. Settings could
+    /// reach its Bluetooth pane and then had nothing to return with, on a
+    /// device whose only other way out is the power button.
+    #[test]
+    fn a_rooted_applications_sub_screen_is_still_drawn_a_way_back() {
+        let mut status = StatusSource::new();
+        let pane = Screen::new(1, Vec::new())
+            .with_top_bar(kobo_ui::TopBar::new(kobo_ui::NodeId(1), "Bluetooth"))
+            .with_own_back(true);
+        let chrome = super::chrome_for(&pane, true, &mut status);
+        assert!(
+            chrome.back,
+            "a screen that owns back was left with no way to use it"
+        );
+
+        let rooted = Screen::new(1, Vec::new())
+            .with_top_bar(kobo_ui::TopBar::new(kobo_ui::NodeId(1), "Settings"));
+        assert!(
+            !super::chrome_for(&rooted, true, &mut status).back,
+            "an application's own root still has nowhere to go back to"
+        );
+    }
+
     use super::*;
 
     fn hello() -> Screen {
@@ -2359,28 +2843,6 @@ mod tests {
         assert_eq!(super::installed_name(&path).as_deref(), Ok("hello"));
         for path in ["hello", "kobo-Terminal", "kobo-../terminal", "kobo-"] {
             assert!(super::installed_name(std::path::Path::new(path)).is_err());
-        }
-    }
-
-    #[test]
-    fn chat_credentials_are_bound_to_their_exact_service() {
-        use kobo_protocol::Credential;
-
-        let openai = Credential::bearer("openai");
-        assert!(super::credential_allowed(
-            "chat",
-            &openai,
-            "https://api.openai.com/v1/chat/completions"
-        ));
-        for (app, url) in [
-            ("other", "https://api.openai.com/v1/chat/completions"),
-            (
-                "chat",
-                "https://api.openai.com.attacker.invalid/v1/chat/completions",
-            ),
-            ("chat", "https://attacker.invalid/collect"),
-        ] {
-            assert!(!super::credential_allowed(app, &openai, url));
         }
     }
 

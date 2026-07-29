@@ -590,6 +590,9 @@ impl Chrome {
                 signal: Signal::Strong,
                 battery: Some(Percent::new(50)),
                 charging: false,
+                // The busiest strip, so nothing measured against this comes
+                // out narrower than the panel it will be drawn on.
+                bluetooth: true,
             }),
         }
     }
@@ -647,6 +650,10 @@ pub struct Status {
     /// same and mean opposite things.
     pub battery: Option<Percent>,
     pub charging: bool,
+    /// Whether something is connected right now, not whether the controller is
+    /// powered. Drawn as a mark beside the radio so that the answer to "where
+    /// is the sound going" is on every screen rather than only in Settings.
+    pub bluetooth: bool,
 }
 
 /// Gives a screen a top bar to put the way back in, when it has none.
@@ -1699,6 +1706,23 @@ fn layout_status_band(status: &Status, metrics: &DisplayMetrics, layout: &mut La
         kind: LayoutKind::StatusSignal(status.signal),
         text_lines: Vec::new(),
     });
+    // Innermost, and only present when something is connected. Reserving the
+    // space unconditionally would leave a hole beside the radio on every
+    // screen for the sake of a mark that is usually not drawn.
+    if status.bluetooth {
+        right -= mark + gap;
+        layout.nodes.push(LayoutNode {
+            id: NodeId(0),
+            rect: Rect {
+                x: right - mark,
+                y: metrics.space(Space::Tight),
+                width: mark,
+                height: mark,
+            },
+            kind: LayoutKind::StatusBluetooth,
+            text_lines: Vec::new(),
+        });
+    }
     height
 }
 
@@ -2844,6 +2868,19 @@ pub enum Glyph {
     /// Three dots in a row: whatever else this bar would have offered if it
     /// had more than [`MAX_BAR_ACTIONS`] places to offer it in.
     More,
+    /// The Bluetooth rune. Settings drew Bluetooth with the gear before this
+    /// existed, which made the one row about headphones look like a link back
+    /// to the screen it was already on.
+    Bluetooth,
+    /// A key: a credential, a secret, a permission that has to be installed
+    /// rather than granted. The permission state drew a head and shoulders
+    /// before this existed, which read as an account problem when the usual
+    /// cause is an API key nobody has put on the device yet.
+    Key,
+    /// A horseshoe magnet, poles down. The hall sensor behind the bezel has no
+    /// natural picture, so this is the thing you hold against it rather than
+    /// the thing that does the sensing.
+    Magnet,
 }
 
 impl Glyph {
@@ -2854,7 +2891,7 @@ impl Glyph {
     /// the set was twenty-one: `Light` and `Close` were authored, shipped, and
     /// covered by none of the tests that walk every glyph. A glyph nobody
     /// rasterises in a test is a blank space beside a label on the panel.
-    pub const ALL: [Self; 29] = [
+    pub const ALL: [Self; 32] = [
         Self::App,
         Self::Book,
         Self::Note,
@@ -2884,6 +2921,9 @@ impl Glyph {
         Self::Globe,
         Self::Refresh,
         Self::More,
+        Self::Bluetooth,
+        Self::Key,
+        Self::Magnet,
     ];
 }
 
@@ -3045,6 +3085,7 @@ pub enum LayoutKind {
     StatusClock,
     /// The radio, drawn at the strength the runtime measured.
     StatusSignal(Signal),
+    StatusBluetooth,
     /// The battery, drawn at the level the runtime read, and whether it is on
     /// the charger. `None` means unreadable, which is drawn as nothing.
     StatusBattery(Option<Percent>, bool),
@@ -8502,6 +8543,9 @@ pub fn render_all(
             LayoutKind::StatusSignal(strength) => {
                 draw_vector(surface, &vector::wifi(strength), node.rect, clip);
             }
+            LayoutKind::StatusBluetooth => {
+                draw_vector(surface, &vector::bluetooth(), node.rect, clip);
+            }
             LayoutKind::StatusBattery(level, charging) => {
                 // Nothing at all when it could not be read. An empty battery
                 // and an unreadable one look identical and mean the opposite
@@ -11523,6 +11567,7 @@ mod prose_tests {
             signal: Signal::Fair,
             battery: Some(Percent::new(64)),
             charging: false,
+            bluetooth: false,
         }
     }
 

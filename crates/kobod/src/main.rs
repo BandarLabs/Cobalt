@@ -307,6 +307,13 @@ fn serve_application(
     // In simulation the daemon owns no hardware, so every hardware-touching
     // request is answered honestly rather than pretended.
     let mut services = DeviceServices::simulated();
+    // There is no bezel here to hold a magnet against, so the state the hall
+    // sensor reports is set on the way in. Without this the second half of
+    // every cover-aware screen is unreachable off hardware.
+    services.set_magnet(matches!(
+        std::env::var("KOBO_MAGNET").as_deref(),
+        Ok("1" | "present")
+    ));
     // A real network backend, and the same placeholder grant the panel
     // runtime uses. Without the grant the backend could never run, so this
     // path claimed to be the real runtime while refusing every request an
@@ -388,7 +395,7 @@ fn serve_application(
             Message::Launch { name } => println!("launch requested: {name}"),
             Message::Log { level, message } => log_app(level, &message),
             Message::DeviceRequest(request) => {
-                let result = services.handle(request);
+                let result = services.handle(request.clone());
                 println!("device request {request:?} -> {result:?}");
                 write_shared(
                     &writer,
@@ -462,6 +469,7 @@ fn serve_application(
             | Message::DeviceResult(_)
             | Message::StoreResult(_)
             | Message::Lifecycle(_)
+            | Message::CoverChanged { .. }
             | Message::ShellEvent(_) => {
                 return Err("application sent a daemon-only message".into());
             }
@@ -549,6 +557,10 @@ fn simulated_status() -> kobo_ui::Status {
         signal: kobo_ui::Signal::Strong,
         battery: Some(kobo_ui::Percent::new(72)),
         charging: false,
+        // On, so the simulator draws the mark and a layout fault beside the
+        // radio shows up here rather than only on hardware with headphones
+        // paired.
+        bluetooth: true,
     }
 }
 

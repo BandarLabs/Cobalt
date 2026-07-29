@@ -45,6 +45,22 @@ struct Entry {
 
 const ENTRIES: &[Entry] = &[
     Entry {
+        name: "audiobook",
+        title: "Audiobook Studio",
+        label: "Audiobooks",
+        summary: "Research, narrate and play an original audiobook about any topic.",
+        needs: "Needs the network and Bluetooth audio.",
+        glyph: Glyph::Download,
+    },
+    Entry {
+        name: "settings",
+        title: "Settings",
+        label: "Settings",
+        summary: "Connect Wi-Fi, headphones, speakers and keyboards.",
+        needs: "Changes the device's Wi-Fi and Bluetooth radios.",
+        glyph: Glyph::Settings,
+    },
+    Entry {
         name: "gutenbird",
         title: "Gutenbird",
         label: "Gutenbird",
@@ -67,6 +83,14 @@ const ENTRIES: &[Entry] = &[
         summary: "Every UI primitive on real hardware, for checking by eye.",
         needs: "Runs entirely on the device.",
         glyph: Glyph::Chart,
+    },
+    Entry {
+        name: "magnet",
+        title: "Magnet",
+        label: "Magnet",
+        summary: "Find the hall sensor behind the bezel and watch it answer.",
+        needs: "Reads the cover sensor. Runs entirely on the device.",
+        glyph: Glyph::Magnet,
     },
     Entry {
         name: "tictactoe",

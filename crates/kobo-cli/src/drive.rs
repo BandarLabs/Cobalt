@@ -698,14 +698,25 @@ fn json_point(object: &str, field: &str) -> (i32, i32) {
     };
     let inner = &object[start..end];
     (
-        json_number(inner, "\"x\"").unwrap_or(0),
-        json_number(inner, "\"y\"").unwrap_or(0),
+        json_number(inner, "\"x\"")
+            .and_then(|x| i32::try_from(x).ok())
+            .unwrap_or(0),
+        json_number(inner, "\"y\"")
+            .and_then(|y| i32::try_from(y).ok())
+            .unwrap_or(0),
     )
 }
 
 /// The number following `key`, which is given with its quotes already on so a
 /// nested path can be matched without a real parser.
-fn json_number(object: &str, key: &str) -> Option<i32> {
+/// Reads a whole number, wide enough for every number the layout carries.
+///
+/// `i64` rather than `i32` because an action is a `u32` hash and rather more
+/// than half of them are larger than `i32::MAX`. Parsing those into an `i32`
+/// failed, the control came back with no action, and the driver reported the
+/// key as missing from the keyboard: `q` and `o` could not be typed while `h`
+/// could, which reads as a layout bug and is arithmetic.
+fn json_number(object: &str, key: &str) -> Option<i64> {
     let start = object.find(key)? + key.len();
     let rest = object[start..].trim_start_matches([':', '"']);
     let digits: String = rest
@@ -756,6 +767,21 @@ mod tests {
         );
         assert_eq!(json_number(&nodes[0], "\"action\""), Some(77));
         assert!(json_array(&nodes[1], "lines").is_empty());
+    }
+
+    /// An action is a `u32` hash, so most of them do not fit an `i32`. Reading
+    /// one into an `i32` silently produced a control with no action, and the
+    /// driver then reported the key as absent from the keyboard.
+    #[test]
+    fn an_action_larger_than_an_i32_is_still_an_action() {
+        let body = r#"{"nodes":[{"kind":"CellLabel","centre":{"x":882,"y":527},"action":2633322323,"lines":["o"]}]}"#;
+        let node = &json_objects(body)[0];
+        assert_eq!(json_number(node, "\"action\""), Some(2_633_322_323));
+        assert_eq!(
+            json_number(node, "\"action\"").and_then(|value| u32::try_from(value).ok()),
+            Some(2_633_322_323),
+            "the key would be untypable"
+        );
     }
 
     #[test]

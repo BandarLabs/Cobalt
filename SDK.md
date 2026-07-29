@@ -635,6 +635,35 @@ Show that something is happening. `activity(label, None)` plus `skeleton(n)`
 puts a placeholder where the content will land, which reads far better on a
 slow panel than an empty screen that suddenly fills.
 
+### Work that takes minutes
+
+A bar that sits at thirty percent for ninety seconds is indistinguishable from
+a hung application, and nothing on this panel animates to say otherwise. For
+anything longer than a few seconds, run a `Heartbeat` alongside the work and
+count up on the screen:
+
+```rust
+self.clock = Heartbeat::every(5);
+self.clock.start(context);
+
+// First in on_task, and returned from immediately, or a nap is mistaken
+// for the provider's reply.
+if self.clock.on_task(context, task) {
+    context.set_screen(self.screen());   // "2 min 45 s so far"
+    return;
+}
+```
+
+`Heartbeat::default()` is five seconds, not zero. Stop it on every path that
+ends the work, including cancel and failure, or it naps forever.
+
+A `Post` body may be up to `MAX_POST_BODY_LEN`, which is far larger than the
+16 KiB ceiling on a label, because a request that carries research or a
+document is not a string on a screen. `Context::spawn` returns `None` rather
+than failing the process if a task is still too large to send, so an
+over-large request is something the application shows rather than something
+the runtime dies of.
+
 ### Credentials
 
 ```rust
@@ -766,8 +795,18 @@ back, rather than sending one per chunk of progress.
 
 ```rust
 context.device().read_battery();
+context.device().read_battery_detail();
+context.device().read_cover();
 context.device().hold_wifi(Duration::from_secs(60));
 context.device().set_frontlight(40);
+context.device().set_bluetooth(true);
+context.device().scan_bluetooth();
+context.device().pair_bluetooth("AA:BB:CC:DD:EE:FF");
+context.device().scan_wifi();
+context.device().join_wifi("Library", "eight-or-more");
+context.device().load_shelf_audio("chaptered-book.mp3z");
+context.device().play_audio();
+context.device().seek_audio(Duration::from_secs(30));
 ```
 
 Every one is a request, answered at `on_device_result` with a `DeviceResult`
@@ -778,11 +817,84 @@ things:
 - **`WithheldForBattery`**. Policy will not spend the charge right now.
 - **`Unsupported`**. This build genuinely cannot do it.
 
-A build performs only what it has a proven backend for. Today that is the
-read-only battery gauge; everything else is honestly refused rather than
-answered with a plausible invention. **An invented reading is worse than a
-refusal**, because an application cannot tell one from the other and will act
-on it.
+A build performs only what it has a proven backend for. The device backend
+uses the firmware's running `wpa_supplicant` and Bluetooth service; it does not
+start a second network owner or manipulate HCI/module state. Radio answers are
+typed `DeviceResult::Wifi` and `DeviceResult::Bluetooth` values, while backend
+failures are `DeviceResult::Failed(DeviceError)`. On a MediaTek Clara, using
+an active Bluetooth stack makes the runtime reboot cleanly when the Cobalt
+session ends because handing the initialised vendor driver directly back to
+Nickel is not safe. **An invented reading is worse than a refusal**, because an
+application cannot tell one from the other and will act on it.
+
+### The cover sensor
+
+There is a hall sensor behind one edge of the bezel. It is what a sleep cover
+closes against, but it cannot tell a cover from any other magnet, so the SDK
+reports what was measured and leaves the meaning to you.
+
+```rust
+fn on_start(&mut self, context: &mut Context) {
+    context.device().read_cover();
+}
+
+fn on_cover_change(&mut self, context: &mut Context, magnet_present: bool) {
+    self.present = magnet_present;
+    context.set_screen(self.screen());
+}
+```
+
+Two things follow from how the hardware works and both will bite an
+application that ignores them:
+
+- **Edges are not the state.** A magnet that was already there when your
+  application started produced no event and never will. Ask `read_cover` once
+  at the start; after that, changes arrive on their own.
+- **Only the foreground application hears it.** A magnet arriving is something
+  that happened in front of the reader, so a backgrounded application is not
+  told and must ask again when it returns.
+
+The runtime settles the sensor's bounce before telling anyone, so what arrives
+is movement rather than noise. `examples/magnet` is the whole surface on one
+screen, and doubles as the calibration screen: nothing on the case says where
+the sensor is, so you walk a magnet along the edges and watch for the answer.
+
+For a complete playback screen, use the SDK component rather than rebuilding
+transport and pairing state:
+
+```rust
+use kobo_sdk::audio::{AudioMetadata, AudioPlayer};
+
+let mut player = AudioPlayer::shelf("chaptered-book.mp3z", "Night Sky")
+    .metadata(AudioMetadata::new("Night Sky").author("Ada Example"));
+player.start(context);
+
+// In on_action:
+if player.press(context, action) {
+    context.set_screen(player.screen());
+}
+
+// Forward on_device_result and on_task in the same way. The latter owns only
+// its scan-delay and five-second position-poll task IDs, so application tasks
+// remain distinguishable.
+```
+
+The component accepts an optional cached `TilePicture` cover. Its Play action
+uses an already-connected Bluetooth audio-class device; without one, it opens
+its embedded headphones/speaker picker, powers and scans Bluetooth if needed,
+pairs and connects the selected output, and resumes the pending Play action.
+Keyboard and remote connections do not count as audio outputs. Shelf paths are
+resolved within the calling application's shelf, and stream sources are
+unauthenticated HTTPS objects cached under a 64 MiB ceiling before playback.
+
+`AudioPlayer::owns_back(true)` is for a player reached from a list rather than
+opened as the application's front door. Without it, a player sitting at the
+root of a single-application session is drawn with no back control at all, so
+tapping a book is a one way door. With it the application receives
+`ActionId::BACK` and answers with the list it came from.
+
+The author is the hero's byline and is stated exactly once. It is deliberately
+not repeated as a fact row two lines below.
 
 ---
 

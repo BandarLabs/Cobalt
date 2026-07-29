@@ -6,11 +6,13 @@
 //! [`AppRunner::action`] from their platform event loop.
 
 pub use kobo_protocol::{
-    Credential, DenyReason, DeviceRequest, DeviceResult, Frame, Header, Lifecycle, LogLevel,
-    Message, SecretHeader, ShellError, ShellEvent, ShellRequest, StoreError, StoreRequest,
-    StoreResult, StreamError, Task, TaskError, TaskId, TaskOutcome, CACHE_PREFIX, MAX_CACHE_KEYS,
-    MAX_HEADERS, MAX_HEADER_NAME, MAX_HEADER_VALUE, MAX_INLINE_PICTURE_BYTES, MAX_PICTURE_BYTES,
-    MAX_PICTURE_CHUNK_BYTES, MAX_SHELF_CHUNK, MAX_SHELL_CHUNK, MAX_STORE_KEYS, MAX_STORE_VALUE,
+    AudioPlaybackState, AudioSource, BatteryDetail, BluetoothDevice, BluetoothDeviceKind,
+    Credential, DenyReason, DeviceError, DeviceRequest, DeviceResult, Frame, Header, Lifecycle,
+    LogLevel, Message, SecretHeader, ShellError, ShellEvent, ShellRequest, StoreError,
+    StoreRequest, StoreResult, StreamError, Task, TaskError, TaskId, TaskOutcome, WifiNetwork,
+    CACHE_PREFIX, MAX_CACHE_KEYS, MAX_HEADERS, MAX_HEADER_NAME, MAX_HEADER_VALUE,
+    MAX_INLINE_PICTURE_BYTES, MAX_PICTURE_BYTES, MAX_PICTURE_CHUNK_BYTES, MAX_RADIO_DEVICES,
+    MAX_RADIO_NAME, MAX_SHELF_CHUNK, MAX_SHELL_CHUNK, MAX_STORE_KEYS, MAX_STORE_VALUE,
     MAX_TASK_BYTES, MAX_URL_LEN,
 };
 pub use kobo_ui::QuoteRole;
@@ -36,18 +38,22 @@ pub use kobo_policy as permissions;
 
 pub use kobo_policy::{Capability, Declared, Grant, Grants, PowerPolicy};
 
+pub mod audio;
 /// Common application and builder types.
 pub mod keyboard;
 pub mod terminal;
 
+pub use audio::{AudioMetadata, AudioPlayer};
+
 pub mod prelude {
     pub use crate::{
         action_id, ActionId, AppIcon, AppMetadata, AppRunner, AppShelf, AppShell, AppStore,
-        Capability, Client, ClientEvent, Command, Context, ControlState, DenyReason, Device,
-        DeviceRequest, DeviceResult, DialogAction, Failure, Grant, Grants, KoboApp, Lifecycle,
-        Navigator, Node, NodeId, PowerPolicy, Screen, ScreenBuilder, ShelfDownload, ShelfProgress,
-        ShelfUpload, ShellError, ShellEvent, ShellRequest, StandardState, StoreError, StoreRequest,
-        StoreResult,
+        AudioMetadata, AudioPlaybackState, AudioPlayer, AudioSource, BluetoothDevice,
+        BluetoothDeviceKind, Capability, Client, ClientEvent, Command, Context, ControlState,
+        DenyReason, Device, DeviceError, DeviceRequest, DeviceResult, DialogAction, Failure, Grant,
+        Grants, Heartbeat, KoboApp, Lifecycle, Navigator, Node, NodeId, PowerPolicy, Screen,
+        ScreenBuilder, ShelfDownload, ShelfProgress, ShelfUpload, ShellError, ShellEvent,
+        ShellRequest, StandardState, StoreError, StoreRequest, StoreResult, WifiNetwork,
     };
 }
 
@@ -209,17 +215,12 @@ impl StandardState {
         match self {
             Self::Empty => Glyph::Circle,
             Self::Offline => Glyph::Wifi,
-            Self::PermissionDenied => Glyph::Person,
+            // A key, not a person. The commonest way to reach this state is an
+            // API key the reader has not installed, and a head and shoulders
+            // sends whoever is looking at it hunting for an account setting
+            // that does not exist.
+            Self::PermissionDenied => Glyph::Key,
             Self::Error => Glyph::Close,
-        }
-    }
-
-    const fn banner(self) -> Option<&'static str> {
-        match self {
-            Self::Empty => None,
-            Self::Offline => Some("No network connection"),
-            Self::PermissionDenied => Some("Access is not available"),
-            Self::Error => Some("The operation could not be completed"),
         }
     }
 }
@@ -273,6 +274,16 @@ impl Failure {
                 advice: "This application is not allowed to do that.",
                 retryable: false,
             },
+            // Names the supported way to fix it rather than a path. The path
+            // wrapped mid-directory on the panel, and pointing at a file tells
+            // whoever is holding the reader to go and edit one by hand when
+            // there is a command that does it over Wi-Fi.
+            TaskError::NoCredential => Self {
+                state: StandardState::PermissionDenied,
+                advice: "This reader has no API key for that service. \
+                         Install one with kobo secret set.",
+                retryable: false,
+            },
             TaskError::TooLarge => Self {
                 state: StandardState::Error,
                 advice: "The reply was too large to read on this device.",
@@ -290,6 +301,48 @@ impl Failure {
     #[must_use]
     pub const fn title(self) -> &'static str {
         self.state.title()
+    }
+}
+
+impl Failure {
+    /// Reads a shelf write failure the way a reader would.
+    ///
+    /// The companion to [`Failure::of`], for the other error type an
+    /// application can be handed. [`StoreError`]'s own `Display` is a
+    /// diagnostic fragment, so an application that puts it on screen shows a
+    /// sentence starting in lower case that names none of the things the
+    /// person could do about it.
+    ///
+    /// None of these is retryable. A full card and a rejected key are both the
+    /// same the second time, and the two that are not the application's fault
+    /// still need a human to clear space.
+    #[must_use]
+    pub const fn storing(error: StoreError) -> Self {
+        match error {
+            StoreError::NoRoom | StoreError::TooFull => Self {
+                state: StandardState::Error,
+                advice: "There is not enough room left on this reader. \
+                         Delete something and try again.",
+                retryable: false,
+            },
+            StoreError::Unwritable => Self {
+                state: StandardState::Error,
+                advice: "This reader would not save the file.",
+                retryable: false,
+            },
+            StoreError::Missing => Self {
+                state: StandardState::Empty,
+                advice: "That file is no longer on this reader.",
+                retryable: false,
+            },
+            // Reachable only from a name the application itself built, so it
+            // is a bug in the application rather than anything the reader did.
+            StoreError::BadKey => Self {
+                state: StandardState::Error,
+                advice: "This application asked for a file name the reader will not accept.",
+                retryable: false,
+            },
+        }
     }
 }
 
@@ -666,14 +719,16 @@ impl ScreenBuilder {
     /// of white beneath them: correct for reading, wrong for a page with six
     /// words on it. The splash centres itself in the room that is left after
     /// whatever is chained on, so a recovery button still lands under it.
+    ///
+    /// No banner. This used to raise one as well, which put two reports of one
+    /// event on the same empty page, the banner being the vaguer of the two:
+    /// "Access is not available" in a grey strip above "Permission needed" set
+    /// large in the middle. A banner is for a failure that has to sit over
+    /// content the reader is already looking at, and this is the case where
+    /// there is none.
     #[must_use]
     pub fn standard_state(self, state: StandardState, message: impl Into<String>) -> Self {
-        let builder = if let Some(banner) = state.banner() {
-            self.banner(BannerLevel::Attention, banner)
-        } else {
-            self
-        };
-        builder.splash(Some(state.glyph()), state.title(), message)
+        self.splash(Some(state.glyph()), state.title(), message)
     }
 
     #[must_use]
@@ -2385,8 +2440,14 @@ impl Context {
     ///
     /// There is no blocking equivalent anywhere in this API. A blocking fetch
     /// would freeze the screen and the back control along with it.
+    /// A task that cannot be put on the wire is refused the same way, because
+    /// the alternative is worse: the encoder rejects the frame, the transport
+    /// call returns the error, and the whole application ends with a protocol
+    /// name printed at a terminal nobody on a reader is looking at. A request
+    /// too large to send is the application's problem to show, not the
+    /// runtime's problem to die of.
     pub fn spawn(&mut self, work: Task) -> Option<TaskId> {
-        if self.in_flight >= MAX_TASKS_IN_FLIGHT {
+        if self.in_flight >= MAX_TASKS_IN_FLIGHT || !work.is_sendable() {
             return None;
         }
         self.next_task = self.next_task.saturating_add(1);
@@ -2644,6 +2705,149 @@ pub enum ShelfProgress {
     Failed(StoreError),
 }
 
+/// A clock for a screen that is waiting on something slow.
+///
+/// # Why an application needs one at all
+///
+/// Nothing else on this device ticks. The event loop is woken by taps, task
+/// results and device answers, so a screen showing "Writing the spoken script"
+/// against a request that takes a hundred seconds to send its first byte is
+/// not slow to update, it is not updating at all. It is pixel for pixel
+/// identical to the same application having crashed, and the only honest
+/// difference is that one of them will eventually change.
+///
+/// So this borrows the one thing the runtime already has that finishes on a
+/// schedule: a sleep task. Each nap that ends is a tick, and each tick is
+/// re-armed until somebody stops it.
+///
+/// # What to do with the tick
+///
+/// Show [`Self::waited`]. Not a made-up percentage that advances on a timer,
+/// which is a lie the moment the request finishes early or late, but the plain
+/// count of how long this has been going. It is the one number that is always
+/// true, and it is enough: a reader who can see the wait growing knows the
+/// reader is alive, and a reader who can see it has reached four minutes knows
+/// to press Cancel.
+///
+/// # What it costs
+///
+/// One partial refresh per tick. Five seconds is the default because it is
+/// slow enough that a two minute wait costs two dozen repaints rather than a
+/// hundred, and fast enough that the panel is never still for long enough to
+/// look dead.
+#[derive(Clone, Debug)]
+pub struct Heartbeat {
+    task: Option<TaskId>,
+    seconds: u32,
+    waited: u32,
+}
+
+/// How often a clock ticks when nobody says otherwise.
+pub const DEFAULT_HEARTBEAT_SECONDS: u32 = 5;
+
+/// Written out rather than derived, because a derived one would tick every
+/// zero seconds. That is not a slow clock, it is a spin: the runtime completes
+/// the nap immediately, the tick re-arms it, and the application asks for four
+/// hundred sleeps in the time one request takes. Every application that holds
+/// a clock in a `#[derive(Default)]` state struct gets it this way, so the
+/// default has to be the sensible cadence rather than the zero value.
+impl Default for Heartbeat {
+    fn default() -> Self {
+        Self::every(DEFAULT_HEARTBEAT_SECONDS)
+    }
+}
+
+impl Heartbeat {
+    /// A clock that ticks every `seconds`, not yet running.
+    #[must_use]
+    pub const fn every(seconds: u32) -> Self {
+        Self {
+            task: None,
+            seconds: if seconds == 0 { 1 } else { seconds },
+            waited: 0,
+        }
+    }
+
+    /// Starts ticking from zero. Starting one that is already running does
+    /// nothing, so this is safe to call on every stage change.
+    pub fn start(&mut self, context: &mut Context) {
+        if self.task.is_some() {
+            return;
+        }
+        self.waited = 0;
+        self.arm(context);
+    }
+
+    /// Stops ticking, and forgets the wait.
+    ///
+    /// The nap is cancelled rather than left to expire, because a tick that
+    /// arrives after the thing it was timing has finished would re-arm itself
+    /// against a screen nobody is waiting on.
+    pub fn stop(&mut self, context: &mut Context) {
+        if let Some(task) = self.task.take() {
+            context.cancel(task);
+        }
+        self.waited = 0;
+    }
+
+    /// Whether `task` was this clock's, re-arming it if so.
+    ///
+    /// Call it first in [`KoboApp::on_task`] and return early when it is
+    /// `true`: a tick is not the application's answer and must not be matched
+    /// against whatever the application is waiting for.
+    pub fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: &TaskOutcome) -> bool {
+        if self.task != Some(task) {
+            return false;
+        }
+        self.task = None;
+        if matches!(outcome, TaskOutcome::Cancelled) {
+            return true;
+        }
+        self.waited = self.waited.saturating_add(self.seconds);
+        self.arm(context);
+        true
+    }
+
+    /// How long this has been waiting, to the tick.
+    #[must_use]
+    pub const fn waited(&self) -> Duration {
+        Duration::from_secs(self.waited as u64)
+    }
+
+    /// Whether the clock is running.
+    #[must_use]
+    pub const fn is_running(&self) -> bool {
+        self.task.is_some()
+    }
+
+    /// The wait as words, for the line under an activity label.
+    ///
+    /// Empty until the first tick, so a screen that has only just appeared
+    /// does not flash "0 seconds" at somebody before it has waited for
+    /// anything at all.
+    #[must_use]
+    pub fn waited_words(&self) -> String {
+        match self.waited {
+            0 => String::new(),
+            seconds if seconds < 60 => format!("{seconds} seconds so far"),
+            seconds => {
+                let (minutes, rest) = (seconds / 60, seconds % 60);
+                if rest == 0 {
+                    format!("{minutes} min so far")
+                } else {
+                    format!("{minutes} min {rest} s so far")
+                }
+            }
+        }
+    }
+
+    fn arm(&mut self, context: &mut Context) {
+        self.task = context.spawn(Task::Sleep {
+            seconds: self.seconds.max(1),
+        });
+    }
+}
+
 /// Writes a blob to the shelf in as many pieces as it takes.
 ///
 /// # Why the runtime's answer drives the next request
@@ -2872,6 +3076,25 @@ impl Device<'_> {
         self.request(DeviceRequest::ReadBattery);
     }
 
+    /// Asks for everything the gauge publishes: health, wear, temperature,
+    /// voltage, current and time remaining.
+    ///
+    /// Ask this when a reader has opened a screen about the battery and is
+    /// looking at it. Every field comes back optional, because these are a
+    /// vendor driver's choice rather than a kernel guarantee, so show what
+    /// arrives rather than reserving space for what might.
+    pub fn read_battery_detail(&mut self) {
+        self.request(DeviceRequest::ReadBatteryDetail);
+    }
+
+    /// Asks where the magnet is now.
+    ///
+    /// Changes arrive on their own through [`KoboApp::on_cover_change`]. This
+    /// is for the screen that has just opened and has no state to change from.
+    pub fn read_cover(&mut self) {
+        self.request(DeviceRequest::ReadCover);
+    }
+
     /// Asks to keep Wi-Fi associated for at most `duration`.
     ///
     /// Use this for a dashboard that must stay reachable. It is the most
@@ -2927,9 +3150,172 @@ impl Device<'_> {
         self.request(DeviceRequest::ReadFrontlight);
     }
 
+    /// Asks whether Bluetooth is available and powered, including remembered
+    /// devices when the backend can enumerate them without scanning.
+    pub fn read_bluetooth(&mut self) {
+        self.request(DeviceRequest::ReadBluetooth);
+    }
+
+    /// Powers Bluetooth on or off.
+    pub fn set_bluetooth(&mut self, enabled: bool) {
+        self.request(DeviceRequest::SetBluetooth { enabled });
+    }
+
+    /// Starts a bounded discovery and returns the resulting device list.
+    pub fn scan_bluetooth(&mut self) {
+        self.request(DeviceRequest::ScanBluetooth);
+    }
+
+    /// Pairs with `address`. Returns `false` without queueing when the address
+    /// is not a canonical six-byte Bluetooth address.
+    pub fn pair_bluetooth(&mut self, address: impl Into<String>) -> bool {
+        self.bluetooth_address(address, |address| DeviceRequest::PairBluetooth { address })
+    }
+
+    /// Connects a Bluetooth device.
+    pub fn connect_bluetooth(&mut self, address: impl Into<String>) -> bool {
+        self.bluetooth_address(address, |address| DeviceRequest::ConnectBluetooth {
+            address,
+        })
+    }
+
+    /// Disconnects a Bluetooth device without forgetting the pairing.
+    pub fn disconnect_bluetooth(&mut self, address: impl Into<String>) -> bool {
+        self.bluetooth_address(address, |address| DeviceRequest::DisconnectBluetooth {
+            address,
+        })
+    }
+
+    /// Removes a remembered Bluetooth pairing.
+    pub fn forget_bluetooth(&mut self, address: impl Into<String>) -> bool {
+        self.bluetooth_address(address, |address| DeviceRequest::ForgetBluetooth {
+            address,
+        })
+    }
+
+    /// Asks for Wi-Fi power and association state.
+    pub fn read_wifi(&mut self) {
+        self.request(DeviceRequest::ReadWifi);
+    }
+
+    /// Powers the Wi-Fi interface on or off.
+    pub fn set_wifi(&mut self, enabled: bool) {
+        self.request(DeviceRequest::SetWifi { enabled });
+    }
+
+    /// Scans for nearby Wi-Fi networks.
+    pub fn scan_wifi(&mut self) {
+        self.request(DeviceRequest::ScanWifi);
+    }
+
+    /// Joins a Wi-Fi network. Pass an empty password for an open network.
+    /// Returns `false` without queueing malformed credentials.
+    pub fn join_wifi(&mut self, ssid: impl Into<String>, password: impl Into<String>) -> bool {
+        let ssid = ssid.into();
+        let password = password.into();
+        if ssid.is_empty()
+            || ssid.len() > 32
+            || !(password.is_empty() || (8..=63).contains(&password.len()))
+        {
+            return false;
+        }
+        self.request(DeviceRequest::JoinWifi { ssid, password });
+        true
+    }
+
+    /// Leaves the current network without powering Wi-Fi off.
+    pub fn disconnect_wifi(&mut self) {
+        self.request(DeviceRequest::DisconnectWifi);
+    }
+
+    /// Reads the active audio transport state and position.
+    pub fn read_audio(&mut self) {
+        self.request(DeviceRequest::ReadAudio);
+    }
+
+    /// Prepares an audio source without starting playback.
+    pub fn load_audio(&mut self, source: AudioSource) {
+        self.request(DeviceRequest::LoadAudio { source });
+    }
+
+    /// Prepares a file in this application's shelf.
+    ///
+    /// Returns `false` without queueing when `name` is not a valid shelf key.
+    pub fn load_shelf_audio(&mut self, name: impl Into<String>) -> bool {
+        let name = name.into();
+        if !kobo_protocol::is_valid_key(&name) {
+            return false;
+        }
+        self.load_audio(AudioSource::Shelf(name));
+        true
+    }
+
+    /// Prepares an unauthenticated HTTPS audio stream.
+    ///
+    /// Returns `false` without queueing for a malformed or oversized URL.
+    pub fn load_audio_stream(&mut self, url: impl Into<String>) -> bool {
+        let url = url.into();
+        if !url.starts_with("https://") || url.len() > MAX_URL_LEN {
+            return false;
+        }
+        self.load_audio(AudioSource::Stream(url));
+        true
+    }
+
+    /// Starts or resumes the prepared audio source.
+    pub fn play_audio(&mut self) {
+        self.request(DeviceRequest::PlayAudio);
+    }
+
+    /// Pauses playback at the current position.
+    pub fn pause_audio(&mut self) {
+        self.request(DeviceRequest::PauseAudio);
+    }
+
+    /// Seeks to an absolute position from the start of the source.
+    pub fn seek_audio(&mut self, position: Duration) {
+        let millis = position.as_millis();
+        self.request(DeviceRequest::SeekAudio {
+            position_ms: u32::try_from(millis).unwrap_or(u32::MAX),
+        });
+    }
+
+    /// Stops playback and returns the prepared source to its beginning.
+    pub fn stop_audio(&mut self) {
+        self.request(DeviceRequest::StopAudio);
+    }
+
+    /// Sets software playback volume, clamped to 0–100 percent.
+    pub fn set_audio_volume(&mut self, percent: u8) {
+        self.request(DeviceRequest::SetAudioVolume {
+            percent: percent.min(100),
+        });
+    }
+
+    fn bluetooth_address(
+        &mut self,
+        address: impl Into<String>,
+        request: impl FnOnce(String) -> DeviceRequest,
+    ) -> bool {
+        let address = address.into();
+        if !is_bluetooth_address(&address) {
+            return false;
+        }
+        self.request(request(address));
+        true
+    }
+
     fn request(&mut self, request: DeviceRequest) {
         self.context.commands.push(Command::Device(request));
     }
+}
+
+fn is_bluetooth_address(address: &str) -> bool {
+    let mut parts = address.split(':');
+    let valid = (&mut parts)
+        .take(6)
+        .all(|part| part.len() == 2 && part.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    valid && parts.next().is_none() && address.matches(':').count() == 5
 }
 
 /// Converts a duration to whole seconds without overflowing or rounding to zero.
@@ -2965,6 +3351,17 @@ pub trait KoboApp {
         _result: DeviceResult,
     ) {
     }
+
+    /// A magnet arrived at, or left, the reader's hall sensor.
+    ///
+    /// The sensor is behind one edge of the bezel and is what a sleep cover
+    /// closes against, but it cannot tell a cover from any other magnet, so
+    /// this reports what was measured rather than what it might mean.
+    ///
+    /// Only changes arrive, and only real ones: the sensor bounces while a
+    /// magnet is moved slowly past it, and the runtime settles that before
+    /// telling anyone. Ask [`Device::read_cover`] for the state to start from.
+    fn on_cover_change(&mut self, _context: &mut Context, _magnet_present: bool) {}
 
     /// Receives the outcome of exactly one earlier [`Context::spawn`].
     ///
@@ -3152,6 +3549,14 @@ impl<A: KoboApp> AppRunner<A> {
         self.dispatch(KoboApp::on_exit)
     }
 
+    /// Delivers one hall-sensor change.
+    ///
+    /// Unlike a device answer this is not matched to anything outstanding,
+    /// because nothing asked for it.
+    pub fn cover_changed(&mut self, magnet_present: bool) -> Vec<Command> {
+        self.dispatch(|app, context| app.on_cover_change(context, magnet_present))
+    }
+
     /// Delivers one device answer, matched to the request that produced it.
     ///
     /// Answers arrive in request order on a single ordered stream. An answer
@@ -3175,7 +3580,7 @@ impl<A: KoboApp> AppRunner<A> {
             if matches!(outcome, TaskOutcome::Cancelled) {
                 self.settled = true;
                 return self.dispatch(|app, context| {
-                    app.on_task(context, waiting_on, TaskOutcome::Cancelled)
+                    app.on_task(context, waiting_on, TaskOutcome::Cancelled);
                 });
             }
             let (again, command) = self.hand_over(work);
@@ -3329,7 +3734,7 @@ impl<A: KoboApp> AppRunner<A> {
         });
         for command in &commands {
             match command {
-                Command::Device(request) => self.pending.push_back(*request),
+                Command::Device(request) => self.pending.push_back(request.clone()),
                 Command::Store(_) => {
                     self.pending_stores = self.pending_stores.saturating_add(1);
                 }
@@ -3361,10 +3766,15 @@ impl<A: KoboApp> AppRunner<A> {
 pub enum ClientEvent {
     Action(ActionId),
     Device(DeviceResult),
-    Task { task: TaskId, outcome: TaskOutcome },
+    Task {
+        task: TaskId,
+        outcome: TaskOutcome,
+    },
     Store(StoreResult),
     Lifecycle(Lifecycle),
     Shell(ShellEvent),
+    /// A magnet arrived at, or left, the hall sensor. Unsolicited.
+    CoverChanged(bool),
     Exit,
 }
 
@@ -3545,6 +3955,9 @@ impl Client {
             Message::StoreResult(result) => Ok(ClientEvent::Store(result)),
             Message::Lifecycle(state) => Ok(ClientEvent::Lifecycle(state)),
             Message::ShellEvent(event) => Ok(ClientEvent::Shell(event)),
+            Message::CoverChanged { magnet_present } => {
+                Ok(ClientEvent::CoverChanged(magnet_present))
+            }
             Message::Exit => Ok(ClientEvent::Exit),
             _ => Err(ClientError::UnexpectedMessage),
         }
@@ -3729,6 +4142,81 @@ mod tests {
             metrics: DisplayMetrics::default(),
             retrying: Vec::new(),
         }
+    }
+
+    /// A tick is not the application's answer, and a stopped clock stops.
+    #[test]
+    fn a_heartbeat_re_arms_itself_until_it_is_stopped() {
+        let mut context = context();
+        let mut clock = Heartbeat::every(5);
+        assert!(!clock.is_running());
+        clock.start(&mut context);
+        let first = clock.task.expect("the clock armed a nap");
+        assert!(clock.waited_words().is_empty(), "nothing has been waited");
+
+        // Somebody else's task is left alone.
+        assert!(!clock.on_task(&mut context, TaskId(first.0 + 99), &TaskOutcome::Cancelled));
+
+        assert!(clock.on_task(&mut context, first, &TaskOutcome::Completed(Vec::new())));
+        assert_eq!(clock.waited(), Duration::from_secs(5));
+        let second = clock.task.expect("the clock re-armed");
+        assert_ne!(second, first);
+        assert!(clock.on_task(&mut context, second, &TaskOutcome::Completed(Vec::new())));
+        assert_eq!(clock.waited_words(), "10 seconds so far");
+
+        clock.stop(&mut context);
+        assert!(!clock.is_running());
+        assert_eq!(clock.waited(), Duration::ZERO);
+        assert!(context
+            .commands
+            .iter()
+            .any(|command| matches!(command, Command::Cancel(_))));
+    }
+
+    /// A cancelled nap is the runtime agreeing to stop, not a tick.
+    #[test]
+    fn a_cancelled_nap_does_not_re_arm_the_clock() {
+        let mut context = context();
+        let mut clock = Heartbeat::every(5);
+        clock.start(&mut context);
+        let task = clock.task.expect("the clock armed a nap");
+        assert!(clock.on_task(&mut context, task, &TaskOutcome::Cancelled));
+        assert!(!clock.is_running());
+    }
+
+    /// The default is the cadence, not the zero value.
+    ///
+    /// A clock left at `u32::default()` asks for a zero second sleep, which
+    /// the runtime completes at once, which re-arms it: four hundred and fifty
+    /// naps went out in the half minute this was live, and the application
+    /// that held the clock never showed a single tick.
+    #[test]
+    fn a_default_heartbeat_naps_for_a_sensible_time() {
+        let mut context = context();
+        let mut clock = Heartbeat::default();
+        clock.start(&mut context);
+        let napped = context
+            .commands
+            .iter()
+            .filter_map(|command| match command {
+                Command::Spawn {
+                    work: Task::Sleep { seconds },
+                    ..
+                } => Some(*seconds),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(napped, vec![DEFAULT_HEARTBEAT_SECONDS]);
+        const { assert!(DEFAULT_HEARTBEAT_SECONDS > 0) };
+    }
+
+    #[test]
+    fn a_long_wait_is_spelled_in_minutes() {
+        let mut clock = Heartbeat::every(5);
+        clock.waited = 60;
+        assert_eq!(clock.waited_words(), "1 min so far");
+        clock.waited = 135;
+        assert_eq!(clock.waited_words(), "2 min 15 s so far");
     }
 
     /// Runs a transfer against the real policy shelf until it stops.
@@ -4079,7 +4567,16 @@ mod tests {
             .offline_state("Reconnect, then try again.")
             .button("retry", "Try again")
             .build();
-        assert!(matches!(state.nodes.first(), Some(Node::Banner { .. })));
+        // A splash and nothing above it. A banner here would be a second,
+        // vaguer report of the event the splash already names.
+        assert!(matches!(state.nodes.first(), Some(Node::Splash { .. })));
+        assert!(
+            !state
+                .nodes
+                .iter()
+                .any(|node| matches!(node, Node::Banner { .. })),
+            "a whole-screen state reports once"
+        );
         // A splash rather than a heading: the title is centred in the room
         // that is left, and the button chained after it still lands under it.
         assert!(state
@@ -4643,6 +5140,9 @@ pub fn run_on<A: KoboApp>(name: &str, app: A, socket: &Path) -> Result<(), Clien
                 ClientEvent::Shell(event) => {
                     client.send_commands(runner.shell_event(event))?;
                 }
+                ClientEvent::CoverChanged(present) => {
+                    client.send_commands(runner.cover_changed(present))?;
+                }
                 ClientEvent::Action(_) | ClientEvent::Exit => break,
             }
         }
@@ -4658,6 +5158,7 @@ pub fn run_on<A: KoboApp>(name: &str, app: A, socket: &Path) -> Result<(), Clien
             ClientEvent::Store(result) => runner.store_result(result),
             ClientEvent::Lifecycle(state) => runner.lifecycle(state),
             ClientEvent::Shell(event) => runner.shell_event(event),
+            ClientEvent::CoverChanged(present) => runner.cover_changed(present),
             ClientEvent::Exit => {
                 // The runtime is taking the screen back. Give the application
                 // its exit callback, then go, rather than arguing about it.

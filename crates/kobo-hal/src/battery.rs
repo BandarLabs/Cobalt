@@ -70,6 +70,43 @@ fn find_battery(supplies: &Path) -> Option<PathBuf> {
     candidates.into_iter().next()
 }
 
+/// Everything the gauge publishes, defined once on the wire.
+///
+/// The screen that shows these numbers and the driver that reads them agree on
+/// one type rather than two that have to be kept in step by hand.
+pub use kobo_protocol::BatteryDetail as Detail;
+
+/// Reads everything the gauge publishes, or `None` with no battery at all.
+#[must_use]
+pub fn detail() -> Option<Detail> {
+    detail_from(Path::new(SUPPLIES))
+}
+
+/// The same, against an arbitrary root, so it is testable without a battery.
+#[must_use]
+pub fn detail_from(supplies: &Path) -> Option<Detail> {
+    let supply = find_battery(supplies)?;
+    let text = |name: &str| {
+        fs::read_to_string(supply.join(name))
+            .ok()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty() && value != "N/A")
+    };
+    let number = |name: &str| text(name).and_then(|value| value.parse::<i32>().ok());
+    Some(Detail {
+        percent: read_percent(&supply.join("capacity")),
+        status: text("status"),
+        health: text("health"),
+        technology: text("technology"),
+        decidegrees: number("temp"),
+        microvolts: number("voltage_now"),
+        microamps: number("current_now"),
+        charge_now: number("charge_now"),
+        charge_full: number("charge_full"),
+        charge_full_design: number("charge_full_design"),
+    })
+}
+
 /// A percentage, or `None` when the file is missing or not a number.
 ///
 /// Clamped rather than rejected above 100: some gauges report 101 briefly while

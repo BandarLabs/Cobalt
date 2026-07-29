@@ -42,8 +42,12 @@ pub enum Capability {
     BatteryRead,
     /// Change the front light brightness.
     FrontlightControl,
+    /// Power, discover, pair and connect Bluetooth devices.
+    BluetoothControl,
     /// Use the Bluetooth audio profile, for example for spoken content.
     BluetoothAudio,
+    /// Power, scan and join Wi-Fi networks.
+    WifiControl,
     /// Play audio through the active output.
     Audio,
     /// Draw the sleep screen.
@@ -52,6 +56,14 @@ pub enum Capability {
     Notifications,
     /// Read and write files in a shared, user-visible folder.
     SharedFiles,
+    /// Watch the hall sensor behind the bezel: whether a magnet is near it,
+    /// and when that changes.
+    ///
+    /// Cheap and passive, but still asked for, because a stream of edges from
+    /// this sensor is a record of every time the reader opened or closed the
+    /// cover. That is a use pattern, and an application should have to say it
+    /// wants one.
+    CoverSensor,
     /// Run a program on a terminal the runtime owns.
     ///
     /// This is the most dangerous capability in the system and is deliberately
@@ -78,11 +90,14 @@ impl Capability {
             Self::ScheduledWake => "scheduled-wake",
             Self::BatteryRead => "battery-read",
             Self::FrontlightControl => "frontlight-control",
+            Self::BluetoothControl => "bluetooth-control",
             Self::BluetoothAudio => "bluetooth-audio",
+            Self::WifiControl => "wifi-control",
             Self::Audio => "audio",
             Self::SleepScreen => "sleep-screen",
             Self::Notifications => "notifications",
             Self::SharedFiles => "shared-files",
+            Self::CoverSensor => "cover-sensor",
             Self::Shell => "shell",
         }
     }
@@ -98,7 +113,7 @@ impl Capability {
     }
 
     /// Every capability, in declaration order.
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 16] = [
         Self::Network,
         Self::BackgroundNetwork,
         Self::HoldWifi,
@@ -106,11 +121,14 @@ impl Capability {
         Self::ScheduledWake,
         Self::BatteryRead,
         Self::FrontlightControl,
+        Self::BluetoothControl,
         Self::BluetoothAudio,
+        Self::WifiControl,
         Self::Audio,
         Self::SleepScreen,
         Self::Notifications,
         Self::SharedFiles,
+        Self::CoverSensor,
         Self::Shell,
     ];
 
@@ -182,7 +200,9 @@ impl PowerPolicy {
                 | Capability::KeepAwake
                 | Capability::ScheduledWake
                 | Capability::BluetoothAudio
+                | Capability::BluetoothControl
                 | Capability::Audio
+                | Capability::WifiControl
         )
     }
 }

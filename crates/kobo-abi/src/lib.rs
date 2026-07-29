@@ -416,6 +416,45 @@ pub mod input {
     pub const EVIOCGABS_MT_POSITION_Y: u64 = eviocgabs(ABS_MT_POSITION_Y);
     pub const EVIOCGNAME_256: u64 = ior(b'E', 0x06, 256);
 
+    /// The sleep-cover magnet on this hardware, as `gpio-keys` reports it.
+    ///
+    /// The kernel calls this `SW_LID`'s key-event cousin; the Kobo ships it as
+    /// an `EV_KEY` on the `gpio-keys` node, and `KEY=8 0` in
+    /// `/proc/bus/input/devices` confirms bit 35 is the only key that node has.
+    /// A press means the magnet arrived, a release means it left.
+    pub const KEY_COVER: u16 = 35;
+
+    /// Builds an `EVIOCGKEY` query for a key bitmap of `bytes` bytes.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `bytes` cannot fit in the Linux ioctl size field.
+    #[must_use]
+    pub const fn eviocgkey(bytes: u32) -> u64 {
+        assert!(bytes <= 0x3fff);
+        ior(b'E', 0x18, bytes)
+    }
+
+    /// Reads whether one key is currently held down.
+    ///
+    /// This is how a listener starts from the truth instead of from whatever
+    /// edge happens to arrive first. Waking from suspend, or opening the node
+    /// after the magnet is already in place, both give no event at all: the
+    /// state changed while nobody was reading. Asking the kernel costs one
+    /// ioctl and removes the whole class of bug.
+    ///
+    /// # Errors
+    ///
+    /// Returns the kernel error from `EVIOCGKEY`.
+    pub fn key_is_pressed(file: &File, code: u16) -> io::Result<bool> {
+        // The bitmap is one bit per key code, little-endian bytes.
+        let mut bitmap = [0_u8; 96];
+        let size = u32::try_from(bitmap.len()).unwrap_or(0);
+        query_ioctl_bytes(file, eviocgkey(size), &mut bitmap)?;
+        let (byte, bit) = (usize::from(code) / 8, usize::from(code) % 8);
+        Ok(bitmap.get(byte).is_some_and(|byte| byte & (1 << bit) != 0))
+    }
+
     /// Queries one evdev absolute-axis descriptor.
     ///
     /// # Errors

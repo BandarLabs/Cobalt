@@ -1,8 +1,18 @@
 //! Safe Kobo hardware abstractions.
 
+/// Bounded MP3 playback through Kobo's firmware-owned A2DP audio HAL.
+#[cfg(feature = "device-write")]
+pub mod audio;
 /// Read-only battery observation. Not gated: it reads two text files and
 /// changes nothing.
 pub mod battery;
+/// Bluetooth control through the firmware-owned BlueZ service.
+#[cfg(feature = "device-write")]
+pub mod bluetooth;
+/// The sleep-cover hall sensor. Read-only and never grabbed, so unlike
+/// [`input`] it needs no write feature: watching a magnet takes nothing away
+/// from the stock reader.
+pub mod cover;
 #[cfg(feature = "device-write")]
 pub mod display;
 /// Exclusive touch ownership. Available only with `device-write`, because a
@@ -24,6 +34,9 @@ pub mod probe;
 #[cfg(feature = "device-write")]
 pub mod reader;
 pub mod refresh;
+/// Wi-Fi control through the firmware-owned supplicant.
+#[cfg(feature = "device-write")]
+pub mod wifi;
 /// Noticing that this process has been asked to stop, so that everything it
 /// took from the device is given back before it goes.
 pub use kobo_abi::stop;

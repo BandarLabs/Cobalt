@@ -25,6 +25,7 @@ members = [
     "crates/kobo-handoff",
     "crates/kobod",
     "examples/brief",
+    "examples/audiobook",
     "examples/chat",
     "examples/rss",
     "examples/todo",
@@ -34,6 +35,8 @@ members = [
     "examples/gutenbird",
     "examples/hn",
     "examples/launcher",
+    "examples/magnet",
+    "examples/settings",
 ]
 resolver = "2"
 

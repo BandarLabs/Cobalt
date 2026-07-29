@@ -40,6 +40,7 @@ const DEVICE_PACKAGES: &[&str] = &["kobo-doctor", "kobod", "kobo-todo", "kobo-te
 const INSTALLED_PACKAGES: &[(&str, Option<&str>)] = &[
     ("kobod", Some("device-write")),
     ("kobo-launcher", None),
+    ("kobo-audiobook", None),
     ("kobo-terminal", None),
     ("kobo-todo", None),
     ("kobo-brief", None),
@@ -47,8 +48,10 @@ const INSTALLED_PACKAGES: &[(&str, Option<&str>)] = &[
     ("kobo-gutenbird", None),
     ("kobo-gallery", None),
     ("kobo-tictactoe", None),
+    ("kobo-magnet", None),
     ("kobo-hn", None),
     ("kobo-rss", None),
+    ("kobo-settings", None),
 ];
 /// Proof that the daemon in the package can actually take the panel. The
 /// phrase only exists inside `present_on_panel`, which is behind
@@ -68,6 +71,29 @@ const START_SCRIPT: &str = "\
 # stock reader, so nothing here needs undoing by hand.
 set -e
 root=/mnt/onboard/.adds/cobalt
+# `kobo setup --enable-ssh` leaves only a public key here. The reader's
+# root-owned menu action can finish the step a USB volume cannot.
+staged_key=\"$root/bootstrap/authorized_key\"
+if [ -s \"$staged_key\" ]; then
+  umask 077
+  mkdir -p /root/.ssh
+  touch /root/.ssh/authorized_keys
+  chmod 700 /root/.ssh
+  chmod 600 /root/.ssh/authorized_keys
+  key=$(head -n 1 \"$staged_key\")
+  found=false
+  while IFS= read -r known; do
+    if [ \"$known\" = \"$key\" ]; then
+      found=true
+      break
+    fi
+  done < /root/.ssh/authorized_keys
+  if [ \"$found\" = false ]; then
+    printf '%s\\n' \"$key\" >> /root/.ssh/authorized_keys
+  fi
+  rm -f \"$staged_key\"
+  sync
+fi
 KOBO_PRESENT_UNLOCK=OWNER_ATTENDED_PANEL_SESSION \\
   exec \"$root/bin/kobod\" --present \"$root/bin/kobo-launcher\"
 ";
@@ -1909,12 +1935,15 @@ fn remote_session_failure(
 /// never touches whatever key somebody already uses for everything else.
 pub const DEVICE_KEY_NAME: &str = "kobo_cobalt";
 
-/// `kobo setup` does not create or install this key: firmware SSH is an
-/// explicit opt-in and its authentication must be configured by the owner.
+fn default_device_key_path() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME")?;
+    Some(PathBuf::from(home).join(".ssh").join(DEVICE_KEY_NAME))
+}
+
+/// The dedicated key used for reader connections, when it exists.
 #[must_use]
 pub fn device_key_path() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    let key = PathBuf::from(home).join(".ssh").join(DEVICE_KEY_NAME);
+    let key = default_device_key_path()?;
     key.is_file().then_some(key)
 }
 
@@ -1922,16 +1951,15 @@ pub fn device_key_path() -> Option<PathBuf> {
 ///
 /// Without `-i` this offered only the default identities, and the reader's key
 /// is deliberately not one of those, so every connection failed on a reader
-/// that was set up correctly, `kobo devices` reported the reader as some other
-/// host on the network. The key is added to the default identities rather than
-/// replacing them, so an agent or an `~/.ssh/config` entry still works.
+/// that was set up correctly. `IdentitiesOnly` prevents a busy SSH agent from
+/// exhausting the reader's authentication attempts before this key is tried.
 fn remote_shell_command(remote: &str) -> Command {
     let mut command = Command::new("ssh");
     command
         .args(["-T", "-o", "BatchMode=yes", "-o"])
         .arg(format!("ConnectTimeout={REMOTE_CONNECT_TIMEOUT_SECONDS}"));
     if let Some(key) = device_key_path() {
-        command.arg("-i").arg(key);
+        command.args(["-o", "IdentitiesOnly=yes", "-i"]).arg(key);
     }
     command.arg(remote);
     command
@@ -2588,7 +2616,7 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
         setup::INSTALL_FOLDER,
         if options.enable_ssh {
             format!(
-                "would enable the firmware's root SSH server by renaming {}; this is explicit because firmware authentication must be secured separately",
+                "would create or reuse ~/.ssh/{DEVICE_KEY_NAME}, stage only its public half for Cobalt to install on first launch, and enable the firmware's root SSH server by renaming {}",
                 setup::SSH_DISABLED
             )
         } else {
@@ -3845,7 +3873,7 @@ fn read_secret_file(path: &Path) -> Result<String, String> {
         ));
     }
     let value = String::from_utf8(bytes).map_err(|_| format!("{} is not text", path.display()))?;
-    let value = value.trim().to_owned();
+    let value = normalise_secret_value(value.trim());
     if value.is_empty() {
         return Err(format!("{} is empty", path.display()));
     }
@@ -3868,6 +3896,31 @@ fn read_secret_file(path: &Path) -> Result<String, String> {
         }
     }
     Ok(value)
+}
+
+/// Accepts both a raw key and the common one-line `NAME=value` dotfile shape.
+/// The name is discarded locally; only the value is ever installed.
+fn normalise_secret_value(value: &str) -> String {
+    let Some((name, assigned)) = value.split_once('=') else {
+        return value.to_owned();
+    };
+    let assignment = !name.is_empty()
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+        && !assigned.contains('\n');
+    if !assignment {
+        return value.to_owned();
+    }
+    let assigned = assigned.trim();
+    if assigned.len() >= 2
+        && ((assigned.starts_with('"') && assigned.ends_with('"'))
+            || (assigned.starts_with('\'') && assigned.ends_with('\'')))
+    {
+        assigned[1..assigned.len() - 1].to_owned()
+    } else {
+        assigned.to_owned()
+    }
 }
 
 fn parse_secret(arguments: &[String]) -> Result<(SecretAction, SecretTarget), String> {
@@ -4151,12 +4204,12 @@ mod tests {
 
     use super::package;
     use super::{
-        build_executables, canonical, is_device_flag, manifest_uses_sdk, parse_deploy,
-        parse_devices, parse_logs, parse_touch_probe, unreachable_device, valid_device_host,
-        valid_slug, verify_arm_elf, wait_for_remote_child, workspace_doctor_binary,
-        DevSessionGuard, RemoteArtifact, SimulationGuard, ALIASES, DEFAULT_TRACE_LINES,
-        DEPLOY_TIMEOUT, DEVICE_PACKAGES, GENERATED_APP_SOURCE, TOUCH_PROBE_DEFAULT_SECONDS,
-        TOUCH_PROBE_MAXIMUM_SECONDS,
+        build_executables, canonical, is_device_flag, manifest_uses_sdk, normalise_secret_value,
+        parse_deploy, parse_devices, parse_logs, parse_touch_probe, unreachable_device,
+        valid_device_host, valid_slug, verify_arm_elf, wait_for_remote_child,
+        workspace_doctor_binary, DevSessionGuard, RemoteArtifact, SimulationGuard, ALIASES,
+        DEFAULT_TRACE_LINES, DEPLOY_TIMEOUT, DEVICE_PACKAGES, GENERATED_APP_SOURCE,
+        TOUCH_PROBE_DEFAULT_SECONDS, TOUCH_PROBE_MAXIMUM_SECONDS,
     };
     #[cfg(feature = "device-write")]
     use super::{
@@ -4169,6 +4222,16 @@ mod tests {
     use std::path::PathBuf;
     use std::process::Command;
     use std::time::Duration;
+
+    #[test]
+    fn secret_files_accept_raw_and_assignment_forms() {
+        assert_eq!(normalise_secret_value("sk-secret"), "sk-secret");
+        assert_eq!(
+            normalise_secret_value("EXA_API_KEY='exa-secret'"),
+            "exa-secret"
+        );
+        assert_eq!(normalise_secret_value("token=still=raw"), "token=still=raw");
+    }
 
     #[test]
     fn a_log_request_reads_the_way_adb_logcat_does() {
@@ -4513,6 +4576,16 @@ mod tests {
     }
 
     #[test]
+    fn the_start_script_installs_the_staged_public_key_once() {
+        let script = super::START_SCRIPT;
+        assert!(script.contains("/root/.ssh/authorized_keys"));
+        assert!(script.contains("while IFS= read -r known"));
+        assert!(script.contains("if [ \"$known\" = \"$key\" ]"));
+        assert!(script.contains("printf '%s\\n' \"$key\" >> /root/.ssh/authorized_keys"));
+        assert!(script.contains("rm -f \"$staged_key\""));
+    }
+
+    #[test]
     fn package_options_are_parsed_and_unknown_ones_refused() {
         let (tarball, folder) = super::parse_package(&[]).expect("defaults");
         assert_eq!(tarball, PathBuf::from("target/KoboRoot.tgz"));
@@ -4833,11 +4906,11 @@ mod tests {
             &ssh_args[..5],
             ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
         );
-        assert!(matches!(ssh_args.len(), 6 | 8), "{ssh_args:?}");
-        if ssh_args.len() == 8 {
-            assert_eq!(ssh_args[5], "-i");
+        assert!(matches!(ssh_args.len(), 6 | 10), "{ssh_args:?}");
+        if ssh_args.len() == 10 {
+            assert_eq!(&ssh_args[5..8], ["-o", "IdentitiesOnly=yes", "-i"]);
             assert_eq!(
-                PathBuf::from(&ssh_args[6])
+                PathBuf::from(&ssh_args[8])
                     .file_name()
                     .and_then(|name| name.to_str()),
                 Some(super::DEVICE_KEY_NAME)

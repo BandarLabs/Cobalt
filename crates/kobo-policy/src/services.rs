@@ -10,7 +10,7 @@
 //!   is willing to pay for.
 
 use crate::{Capability, Declared, Grant, Grants, PowerPolicy};
-use kobo_protocol::{DenyReason, DeviceRequest, DeviceResult};
+use kobo_protocol::{AudioPlaybackState, DenyReason, DeviceError, DeviceRequest, DeviceResult};
 use std::collections::BTreeSet;
 use std::time::Duration;
 
@@ -61,6 +61,8 @@ pub struct DeviceState {
     pub battery_percent: u8,
     pub charging: bool,
     pub frontlight_percent: u8,
+    /// Whether a magnet is at the hall sensor.
+    pub magnet_present: bool,
 }
 
 impl Default for DeviceState {
@@ -69,6 +71,7 @@ impl Default for DeviceState {
             battery_percent: 72,
             charging: false,
             frontlight_percent: 20,
+            magnet_present: false,
         }
     }
 }
@@ -81,6 +84,13 @@ pub struct DeviceServices {
     wifi_held_for: Option<Duration>,
     awake_held_for: Option<Duration>,
     wake_scheduled_in: Option<Duration>,
+    bluetooth_enabled: bool,
+    wifi_enabled: bool,
+    connected_ssid: Option<String>,
+    audio_state: AudioPlaybackState,
+    audio_position_ms: u32,
+    audio_duration_ms: u32,
+    audio_volume: u8,
 }
 
 impl DeviceServices {
@@ -112,6 +122,13 @@ impl DeviceServices {
             wifi_held_for: None,
             awake_held_for: None,
             wake_scheduled_in: None,
+            bluetooth_enabled: false,
+            wifi_enabled: true,
+            connected_ssid: None,
+            audio_state: AudioPlaybackState::Idle,
+            audio_position_ms: 0,
+            audio_duration_ms: 0,
+            audio_volume: 70,
         }
     }
 
@@ -138,6 +155,18 @@ impl DeviceServices {
     /// so this is a reading rather than a memory of what was last asked for.
     pub fn observe_frontlight(&mut self, percent: u8) {
         self.state.frontlight_percent = percent.min(100);
+    }
+
+    /// Moves the simulated magnet, and says whether that was a change.
+    ///
+    /// There is no bezel to hold a magnet against in the simulator, so this is
+    /// how the two states are reached. It reports whether anything moved
+    /// because a restated state must not be delivered as an edge: an
+    /// application counting changes would count one that nobody made.
+    pub fn set_magnet(&mut self, present: bool) -> bool {
+        let changed = self.state.magnet_present != present;
+        self.state.magnet_present = present;
+        changed
     }
 
     /// The state applications currently observe.
@@ -168,6 +197,8 @@ impl DeviceServices {
     pub fn handle(&mut self, request: DeviceRequest) -> DeviceResult {
         match request {
             DeviceRequest::ReadBattery => self.read_battery(),
+            DeviceRequest::ReadBatteryDetail => self.read_battery_detail(),
+            DeviceRequest::ReadCover => self.read_cover(),
             DeviceRequest::HoldWifi { seconds } => self.hold_wifi(seconds),
             DeviceRequest::ReleaseWifi => {
                 self.wifi_held_for = None;
@@ -185,7 +216,71 @@ impl DeviceServices {
             }
             DeviceRequest::SetFrontlight { percent } => self.set_frontlight(percent),
             DeviceRequest::ReadFrontlight => self.read_frontlight(),
+            DeviceRequest::ReadBluetooth | DeviceRequest::ScanBluetooth => self.bluetooth_state(),
+            DeviceRequest::SetBluetooth { enabled } => {
+                if let Some(reason) = self.refusal(Capability::BluetoothControl) {
+                    DeviceResult::Denied(reason)
+                } else {
+                    self.bluetooth_enabled = enabled;
+                    self.bluetooth_state()
+                }
+            }
+            DeviceRequest::PairBluetooth { .. }
+            | DeviceRequest::ConnectBluetooth { .. }
+            | DeviceRequest::DisconnectBluetooth { .. }
+            | DeviceRequest::ForgetBluetooth { .. } => {
+                if let Some(reason) = self.refusal(Capability::BluetoothControl) {
+                    DeviceResult::Denied(reason)
+                } else if self.bluetooth_enabled {
+                    DeviceResult::Done
+                } else {
+                    DeviceResult::Failed(DeviceError::Unreachable)
+                }
+            }
+            DeviceRequest::ReadWifi | DeviceRequest::ScanWifi => self.wifi_state(),
+            DeviceRequest::SetWifi { enabled } => {
+                if let Some(reason) = self.refusal(Capability::WifiControl) {
+                    DeviceResult::Denied(reason)
+                } else {
+                    self.wifi_enabled = enabled;
+                    if !enabled {
+                        self.connected_ssid = None;
+                    }
+                    self.wifi_state()
+                }
+            }
+            DeviceRequest::JoinWifi { ssid, .. } => {
+                if let Some(reason) = self.refusal(Capability::WifiControl) {
+                    DeviceResult::Denied(reason)
+                } else {
+                    self.wifi_enabled = true;
+                    self.connected_ssid = Some(ssid);
+                    self.wifi_state()
+                }
+            }
+            DeviceRequest::DisconnectWifi => {
+                if let Some(reason) = self.refusal(Capability::WifiControl) {
+                    DeviceResult::Denied(reason)
+                } else {
+                    self.connected_ssid = None;
+                    self.wifi_state()
+                }
+            }
+            request @ (DeviceRequest::ReadAudio
+            | DeviceRequest::LoadAudio { .. }
+            | DeviceRequest::PlayAudio
+            | DeviceRequest::PauseAudio
+            | DeviceRequest::SeekAudio { .. }
+            | DeviceRequest::StopAudio
+            | DeviceRequest::SetAudioVolume { .. }) => self.handle_audio(&request),
         }
+    }
+
+    /// Returns the policy refusal for a request that a real hardware backend
+    /// wants to execute, or `None` when the backend may proceed.
+    #[must_use]
+    pub fn refusal_for(&self, request: &DeviceRequest) -> Option<DenyReason> {
+        self.refusal(request_capability(request))
     }
 
     /// Returns the refusal that applies to a capability, or `None` when the
@@ -217,6 +312,44 @@ impl DeviceServices {
         )
     }
 
+    /// The simulator has no gauge, so it publishes the fields it can derive
+    /// from the state it does hold and leaves the rest absent. That is the
+    /// same shape a reader with a thinner driver produces, which is the case
+    /// worth having a simulator for.
+    fn read_battery_detail(&self) -> DeviceResult {
+        self.refusal(Capability::BatteryRead).map_or_else(
+            || {
+                DeviceResult::BatteryDetail(kobo_protocol::BatteryDetail {
+                    percent: Some(self.state.battery_percent),
+                    status: Some(
+                        if self.state.charging {
+                            "Charging"
+                        } else {
+                            "Discharging"
+                        }
+                        .to_owned(),
+                    ),
+                    ..kobo_protocol::BatteryDetail::default()
+                })
+            },
+            DeviceResult::Denied,
+        )
+    }
+
+    /// The simulator has no bezel to hold a magnet against, so it reports a
+    /// sensor that is present and sees nothing. An application then exercises
+    /// the same path it will on hardware rather than a "no sensor" branch it
+    /// would never otherwise reach.
+    fn read_cover(&self) -> DeviceResult {
+        self.refusal(Capability::CoverSensor).map_or(
+            DeviceResult::Cover {
+                available: true,
+                magnet_present: self.state.magnet_present,
+            },
+            DeviceResult::Denied,
+        )
+    }
+
     fn read_frontlight(&self) -> DeviceResult {
         self.refusal(Capability::FrontlightControl).map_or(
             DeviceResult::Frontlight {
@@ -224,6 +357,81 @@ impl DeviceServices {
             },
             DeviceResult::Denied,
         )
+    }
+
+    fn bluetooth_state(&self) -> DeviceResult {
+        self.refusal(Capability::BluetoothControl).map_or_else(
+            || DeviceResult::Bluetooth {
+                available: true,
+                enabled: self.bluetooth_enabled,
+                devices: Vec::new(),
+            },
+            DeviceResult::Denied,
+        )
+    }
+
+    fn wifi_state(&self) -> DeviceResult {
+        self.refusal(Capability::WifiControl).map_or_else(
+            || DeviceResult::Wifi {
+                available: true,
+                enabled: self.wifi_enabled,
+                connected_ssid: self.connected_ssid.clone(),
+                networks: Vec::new(),
+            },
+            DeviceResult::Denied,
+        )
+    }
+
+    fn audio_state(&self) -> DeviceResult {
+        self.refusal(Capability::BluetoothAudio).map_or(
+            DeviceResult::Audio {
+                available: true,
+                state: self.audio_state,
+                position_ms: self.audio_position_ms,
+                duration_ms: self.audio_duration_ms,
+                volume: self.audio_volume,
+            },
+            DeviceResult::Denied,
+        )
+    }
+
+    fn handle_audio(&mut self, request: &DeviceRequest) -> DeviceResult {
+        if let Some(reason) = self.refusal(Capability::BluetoothAudio) {
+            return DeviceResult::Denied(reason);
+        }
+        match request {
+            DeviceRequest::ReadAudio => {}
+            DeviceRequest::LoadAudio { .. } => {
+                self.audio_state = AudioPlaybackState::Ready;
+                self.audio_position_ms = 0;
+                self.audio_duration_ms = 30 * 60 * 1_000;
+            }
+            DeviceRequest::PlayAudio | DeviceRequest::SeekAudio { .. }
+                if self.audio_state == AudioPlaybackState::Idle =>
+            {
+                return DeviceResult::Failed(DeviceError::NotFound);
+            }
+            DeviceRequest::PlayAudio => self.audio_state = AudioPlaybackState::Playing,
+            DeviceRequest::PauseAudio => {
+                if self.audio_state == AudioPlaybackState::Playing {
+                    self.audio_state = AudioPlaybackState::Paused;
+                }
+            }
+            DeviceRequest::SeekAudio { position_ms } => {
+                self.audio_position_ms = (*position_ms).min(self.audio_duration_ms);
+            }
+            DeviceRequest::StopAudio => {
+                self.audio_state = if self.audio_duration_ms == 0 {
+                    AudioPlaybackState::Idle
+                } else {
+                    AudioPlaybackState::Ready
+                };
+                self.audio_position_ms = 0;
+            }
+            DeviceRequest::SetAudioVolume { percent } => self.audio_volume = (*percent).min(100),
+            _ => return DeviceResult::Failed(DeviceError::InvalidInput),
+        }
+        self.audio_state()
     }
 
     fn set_frontlight(&mut self, percent: u8) -> DeviceResult {
@@ -280,6 +488,38 @@ impl DeviceServices {
         DeviceResult::Granted {
             seconds: clamp_seconds(granted),
         }
+    }
+}
+
+fn request_capability(request: &DeviceRequest) -> Capability {
+    match request {
+        DeviceRequest::ReadBattery | DeviceRequest::ReadBatteryDetail => Capability::BatteryRead,
+        DeviceRequest::ReadCover => Capability::CoverSensor,
+        DeviceRequest::HoldWifi { .. } | DeviceRequest::ReleaseWifi => Capability::HoldWifi,
+        DeviceRequest::KeepAwake { .. } | DeviceRequest::AllowSleep => Capability::KeepAwake,
+        DeviceRequest::ScheduleWake { .. } | DeviceRequest::CancelWake => Capability::ScheduledWake,
+        DeviceRequest::SetFrontlight { .. } | DeviceRequest::ReadFrontlight => {
+            Capability::FrontlightControl
+        }
+        DeviceRequest::ReadBluetooth
+        | DeviceRequest::SetBluetooth { .. }
+        | DeviceRequest::ScanBluetooth
+        | DeviceRequest::PairBluetooth { .. }
+        | DeviceRequest::ConnectBluetooth { .. }
+        | DeviceRequest::DisconnectBluetooth { .. }
+        | DeviceRequest::ForgetBluetooth { .. } => Capability::BluetoothControl,
+        DeviceRequest::ReadWifi
+        | DeviceRequest::SetWifi { .. }
+        | DeviceRequest::ScanWifi
+        | DeviceRequest::JoinWifi { .. }
+        | DeviceRequest::DisconnectWifi => Capability::WifiControl,
+        DeviceRequest::ReadAudio
+        | DeviceRequest::LoadAudio { .. }
+        | DeviceRequest::PlayAudio
+        | DeviceRequest::PauseAudio
+        | DeviceRequest::SeekAudio { .. }
+        | DeviceRequest::StopAudio
+        | DeviceRequest::SetAudioVolume { .. } => Capability::BluetoothAudio,
     }
 }
 
@@ -488,7 +728,7 @@ mod tests {
             DeviceRequest::ReadFrontlight,
         ] {
             assert_eq!(
-                services.handle(request),
+                services.handle(request.clone()),
                 DeviceResult::Denied(DenyReason::Unsupported),
                 "{request:?} must be refused without a backend"
             );
