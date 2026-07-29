@@ -10,7 +10,7 @@
 //!   is willing to pay for.
 
 use crate::{Capability, Declared, Grant, Grants, PowerPolicy};
-use kobo_protocol::{DenyReason, DeviceError, DeviceRequest, DeviceResult};
+use kobo_protocol::{AudioPlaybackState, DenyReason, DeviceError, DeviceRequest, DeviceResult};
 use std::collections::BTreeSet;
 use std::time::Duration;
 
@@ -84,6 +84,10 @@ pub struct DeviceServices {
     bluetooth_enabled: bool,
     wifi_enabled: bool,
     connected_ssid: Option<String>,
+    audio_state: AudioPlaybackState,
+    audio_position_ms: u32,
+    audio_duration_ms: u32,
+    audio_volume: u8,
 }
 
 impl DeviceServices {
@@ -118,6 +122,10 @@ impl DeviceServices {
             bluetooth_enabled: false,
             wifi_enabled: true,
             connected_ssid: None,
+            audio_state: AudioPlaybackState::Idle,
+            audio_position_ms: 0,
+            audio_duration_ms: 0,
+            audio_volume: 70,
         }
     }
 
@@ -241,6 +249,13 @@ impl DeviceServices {
                     self.wifi_state()
                 }
             }
+            request @ (DeviceRequest::ReadAudio
+            | DeviceRequest::LoadAudio { .. }
+            | DeviceRequest::PlayAudio
+            | DeviceRequest::PauseAudio
+            | DeviceRequest::SeekAudio { .. }
+            | DeviceRequest::StopAudio
+            | DeviceRequest::SetAudioVolume { .. }) => self.handle_audio(&request),
         }
     }
 
@@ -310,6 +325,58 @@ impl DeviceServices {
             },
             DeviceResult::Denied,
         )
+    }
+
+    fn audio_state(&self) -> DeviceResult {
+        self.refusal(Capability::BluetoothAudio).map_or(
+            DeviceResult::Audio {
+                available: true,
+                state: self.audio_state,
+                position_ms: self.audio_position_ms,
+                duration_ms: self.audio_duration_ms,
+                volume: self.audio_volume,
+            },
+            DeviceResult::Denied,
+        )
+    }
+
+    fn handle_audio(&mut self, request: &DeviceRequest) -> DeviceResult {
+        if let Some(reason) = self.refusal(Capability::BluetoothAudio) {
+            return DeviceResult::Denied(reason);
+        }
+        match request {
+            DeviceRequest::ReadAudio => {}
+            DeviceRequest::LoadAudio { .. } => {
+                self.audio_state = AudioPlaybackState::Ready;
+                self.audio_position_ms = 0;
+                self.audio_duration_ms = 30 * 60 * 1_000;
+            }
+            DeviceRequest::PlayAudio | DeviceRequest::SeekAudio { .. }
+                if self.audio_state == AudioPlaybackState::Idle =>
+            {
+                return DeviceResult::Failed(DeviceError::NotFound);
+            }
+            DeviceRequest::PlayAudio => self.audio_state = AudioPlaybackState::Playing,
+            DeviceRequest::PauseAudio => {
+                if self.audio_state == AudioPlaybackState::Playing {
+                    self.audio_state = AudioPlaybackState::Paused;
+                }
+            }
+            DeviceRequest::SeekAudio { position_ms } => {
+                self.audio_position_ms = (*position_ms).min(self.audio_duration_ms);
+            }
+            DeviceRequest::StopAudio => {
+                self.audio_state = if self.audio_duration_ms == 0 {
+                    AudioPlaybackState::Idle
+                } else {
+                    AudioPlaybackState::Ready
+                };
+                self.audio_position_ms = 0;
+            }
+            DeviceRequest::SetAudioVolume { percent } => self.audio_volume = (*percent).min(100),
+            _ => return DeviceResult::Failed(DeviceError::InvalidInput),
+        }
+        self.audio_state()
     }
 
     fn set_frontlight(&mut self, percent: u8) -> DeviceResult {
@@ -390,6 +457,13 @@ fn request_capability(request: &DeviceRequest) -> Capability {
         | DeviceRequest::ScanWifi
         | DeviceRequest::JoinWifi { .. }
         | DeviceRequest::DisconnectWifi => Capability::WifiControl,
+        DeviceRequest::ReadAudio
+        | DeviceRequest::LoadAudio { .. }
+        | DeviceRequest::PlayAudio
+        | DeviceRequest::PauseAudio
+        | DeviceRequest::SeekAudio { .. }
+        | DeviceRequest::StopAudio
+        | DeviceRequest::SetAudioVolume { .. } => Capability::BluetoothAudio,
     }
 }
 

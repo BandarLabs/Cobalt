@@ -17,7 +17,7 @@ cargo metadata --format-version 1 --all-features
 | Selected licence | Crates |
 | --- | --- |
 | Apache-2.0 | dependencies that offer Apache-2.0 as an alternative, including `image`, `http`, `rustls`, `libc`, `png`, `flate2`, `ttf-parser`, and their transitive dependencies |
-| MIT | `bytes`, `byteorder-lite`, `memchr`, `pulldown-cmark`, `simd-adler32`, `vt100` |
+| MIT | `bytes`, `byteorder-lite`, `memchr`, `minimp3`, `minimp3-sys`, `pulldown-cmark`, `simd-adler32`, `slice-ring-buffer`, `vt100` |
 | Apache-2.0 and ISC | `ring` |
 | ISC | `rustls-webpki`, `untrusted` |
 | BSD-3-Clause | `subtle` |

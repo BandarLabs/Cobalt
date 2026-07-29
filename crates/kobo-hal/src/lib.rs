@@ -1,5 +1,8 @@
 //! Safe Kobo hardware abstractions.
 
+/// Bounded MP3 playback through Kobo's firmware-owned A2DP audio HAL.
+#[cfg(feature = "device-write")]
+pub mod audio;
 /// Read-only battery observation. Not gated: it reads two text files and
 /// changes nothing.
 pub mod battery;

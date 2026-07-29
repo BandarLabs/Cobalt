@@ -51,10 +51,11 @@ Verified on the physical Clara BW unless stated otherwise.
 | UI | Bars, tiles, picture tiles, grids, rows, checklists, keyboard, terminal, prose pagination, skeletons, banners, dialogs |
 | Pictures | Chunked upload, an LRU cache, greyscale conversion, glyph fallback |
 | Network | HTTPS `Fetch` and `Post`, ranged downloads, a 24 MB transfer, named credentials the application never sees |
+| Audio | Bounded MP3/MP3Z decode, A2DP playback, shared album-art player, Bluetooth output handoff |
 | Storage | Per-application keyed state under its own directory |
 | Navigation | A runtime-owned Back the application may answer first (see below) |
 | Tooling | `devices`, `doctor`, `package`, `deploy`, `inspect`, `verify`, `session`, `wait`, `logs`, `touch-probe`, and a Clara BW simulator in the browser |
-| Applications | `launcher`, `hn`, `rss`, `gutenbird`, `chat`, `todo`, `terminal`, `tictactoe`, `gallery`, `brief` |
+| Applications | `launcher`, `audiobook`, `settings`, `hn`, `rss`, `gutenbird`, `chat`, `todo`, `terminal`, `tictactoe`, `gallery`, `brief` |
 
 **Not here yet, stated plainly**
 
@@ -121,8 +122,8 @@ crates/    kobo-sdk       what an application imports
            kobo-smoke     owner-attended display writes
            kobo-handoff   stopping and restarting the stock reader
            kobo-guard     screen capture and restore around a session
-examples/  launcher, terminal, todo, brief, chat, gutenbird, gallery,
-           tictactoe, hn, rss
+examples/  launcher, audiobook, settings, terminal, todo, brief, chat,
+           gutenbird, gallery, tictactoe, hn, rss
 ```
 
 External dependencies are kept behind narrow crates: `kobo-net` (HTTP and
@@ -857,6 +858,9 @@ simulator against the same renderer and the same policy the device applies.
 | `disconnect_bluetooth(address)` / `forget_bluetooth(address)` | Disconnect or remove a pairing |
 | `read_wifi()` / `set_wifi(on)` / `scan_wifi()` | Wi-Fi state, power and nearby networks |
 | `join_wifi(ssid, password)` / `disconnect_wifi()` | Join a WPA personal or open network, or disconnect |
+| `load_shelf_audio(name)` / `load_audio_stream(url)` | Prepare a bounded MP3 or Kobo MP3Z source |
+| `play_audio()` / `pause_audio()` / `stop_audio()` | Control the runtime-owned audio transport |
+| `seek_audio(position)` / `set_audio_volume(percent)` | Seek and adjust software playback volume |
 
 Every call produces exactly one `on_device_result`, so an application always
 learns what happened. A request can come back `Granted` for **less** time than
@@ -869,6 +873,12 @@ has a proven backend for; anything else is refused rather than pretended. The
 device runtime uses the existing firmware `wpa_supplicant` for Wi-Fi and the
 firmware's BlueZ-compatible D-Bus service for Bluetooth. It never starts a
 second supplicant, attaches HCI itself, or unloads the shared radio modules.
+Audio uses the firmware-owned AOSP A2DP HAL: the runtime decodes MP3, paces
+44.1 kHz stereo PCM into `btservice`, and keeps file paths and HTTPS transport
+inside the runtime. `kobo_sdk::audio::AudioPlayer` composes album art, position,
+seek, play/pause, volume and an audio-only Bluetooth picker. If Play has no
+connected output, the picker powers Bluetooth, scans, pairs and connects, then
+continues playback automatically.
 On MediaTek Clara devices, using Bluetooth requests a clean reboot when leaving
 Cobalt because restarting Nickel into an already-initialised driver can panic
 the vendor Wi-Fi module.
@@ -973,7 +983,7 @@ runtime is the only thing that can start, bound, or stop a program.
 | Application | What it is for |
 | --- | --- |
 | `launcher` | The home screen, and an ordinary SDK application like the rest |
-| `audiobook` | Research any topic with Exa, write it with OpenAI, narrate it with ElevenLabs, and save it to My Books |
+| `audiobook` | Research any topic with Exa, write it with OpenAI, narrate it with ElevenLabs, then show album art and play it over Bluetooth while also saving it to My Books |
 | `settings` | Toggle and join Wi-Fi; scan, pair and connect Bluetooth devices |
 | `terminal` | A shell, with keys that send a byte rather than collect a word |
 | `todo` | State that survives a restart, and a row that can be struck through |

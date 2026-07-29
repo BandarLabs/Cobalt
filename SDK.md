@@ -773,6 +773,9 @@ context.device().scan_bluetooth();
 context.device().pair_bluetooth("AA:BB:CC:DD:EE:FF");
 context.device().scan_wifi();
 context.device().join_wifi("Library", "eight-or-more");
+context.device().load_shelf_audio("chaptered-book.mp3z");
+context.device().play_audio();
+context.device().seek_audio(Duration::from_secs(30));
 ```
 
 Every one is a request, answered at `on_device_result` with a `DeviceResult`
@@ -792,6 +795,34 @@ an active Bluetooth stack makes the runtime reboot cleanly when the Cobalt
 session ends because handing the initialised vendor driver directly back to
 Nickel is not safe. **An invented reading is worse than a refusal**, because an
 application cannot tell one from the other and will act on it.
+
+For a complete playback screen, use the SDK component rather than rebuilding
+transport and pairing state:
+
+```rust
+use kobo_sdk::audio::{AudioMetadata, AudioPlayer};
+
+let mut player = AudioPlayer::shelf("chaptered-book.mp3z", "Night Sky")
+    .metadata(AudioMetadata::new("Night Sky").author("Ada Example"));
+player.start(context);
+
+// In on_action:
+if player.press(context, action) {
+    context.set_screen(player.screen());
+}
+
+// Forward on_device_result and on_task in the same way. The latter owns only
+// its scan-delay and five-second position-poll task IDs, so application tasks
+// remain distinguishable.
+```
+
+The component accepts an optional cached `TilePicture` cover. Its Play action
+uses an already-connected Bluetooth audio-class device; without one, it opens
+its embedded headphones/speaker picker, powers and scans Bluetooth if needed,
+pairs and connects the selected output, and resumes the pending Play action.
+Keyboard and remote connections do not count as audio outputs. Shelf paths are
+resolved within the calling application's shelf, and stream sources are
+unauthenticated HTTPS objects cached under a 64 MiB ceiling before playback.
 
 ---
 

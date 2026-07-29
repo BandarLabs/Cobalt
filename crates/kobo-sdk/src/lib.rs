@@ -6,13 +6,13 @@
 //! [`AppRunner::action`] from their platform event loop.
 
 pub use kobo_protocol::{
-    BluetoothDevice, BluetoothDeviceKind, Credential, DenyReason, DeviceError, DeviceRequest,
-    DeviceResult, Frame, Header, Lifecycle, LogLevel, Message, SecretHeader, ShellError,
-    ShellEvent, ShellRequest, StoreError, StoreRequest, StoreResult, StreamError, Task, TaskError,
-    TaskId, TaskOutcome, WifiNetwork, CACHE_PREFIX, MAX_CACHE_KEYS, MAX_HEADERS, MAX_HEADER_NAME,
-    MAX_HEADER_VALUE, MAX_INLINE_PICTURE_BYTES, MAX_PICTURE_BYTES, MAX_PICTURE_CHUNK_BYTES,
-    MAX_RADIO_DEVICES, MAX_RADIO_NAME, MAX_SHELF_CHUNK, MAX_SHELL_CHUNK, MAX_STORE_KEYS,
-    MAX_STORE_VALUE, MAX_TASK_BYTES, MAX_URL_LEN,
+    AudioPlaybackState, AudioSource, BluetoothDevice, BluetoothDeviceKind, Credential, DenyReason,
+    DeviceError, DeviceRequest, DeviceResult, Frame, Header, Lifecycle, LogLevel, Message,
+    SecretHeader, ShellError, ShellEvent, ShellRequest, StoreError, StoreRequest, StoreResult,
+    StreamError, Task, TaskError, TaskId, TaskOutcome, WifiNetwork, CACHE_PREFIX, MAX_CACHE_KEYS,
+    MAX_HEADERS, MAX_HEADER_NAME, MAX_HEADER_VALUE, MAX_INLINE_PICTURE_BYTES, MAX_PICTURE_BYTES,
+    MAX_PICTURE_CHUNK_BYTES, MAX_RADIO_DEVICES, MAX_RADIO_NAME, MAX_SHELF_CHUNK, MAX_SHELL_CHUNK,
+    MAX_STORE_KEYS, MAX_STORE_VALUE, MAX_TASK_BYTES, MAX_URL_LEN,
 };
 pub use kobo_ui::QuoteRole;
 pub use kobo_ui::{
@@ -36,18 +36,22 @@ pub use kobo_policy as permissions;
 
 pub use kobo_policy::{Capability, Declared, Grant, Grants, PowerPolicy};
 
+pub mod audio;
 /// Common application and builder types.
 pub mod keyboard;
 pub mod terminal;
 
+pub use audio::{AudioMetadata, AudioPlayer};
+
 pub mod prelude {
     pub use crate::{
         action_id, ActionId, AppIcon, AppMetadata, AppRunner, AppShelf, AppShell, AppStore,
-        BluetoothDevice, BluetoothDeviceKind, Capability, Client, ClientEvent, Command, Context,
-        ControlState, DenyReason, Device, DeviceError, DeviceRequest, DeviceResult, DialogAction,
-        Grant, Grants, KoboApp, Lifecycle, Navigator, Node, NodeId, PowerPolicy, Screen,
-        ScreenBuilder, ShelfDownload, ShelfProgress, ShelfUpload, ShellError, ShellEvent,
-        ShellRequest, StandardState, StoreError, StoreRequest, StoreResult, WifiNetwork,
+        AudioMetadata, AudioPlaybackState, AudioPlayer, AudioSource, BluetoothDevice,
+        BluetoothDeviceKind, Capability, Client, ClientEvent, Command, Context, ControlState,
+        DenyReason, Device, DeviceError, DeviceRequest, DeviceResult, DialogAction, Grant, Grants,
+        KoboApp, Lifecycle, Navigator, Node, NodeId, PowerPolicy, Screen, ScreenBuilder,
+        ShelfDownload, ShelfProgress, ShelfUpload, ShellError, ShellEvent, ShellRequest,
+        StandardState, StoreError, StoreRequest, StoreResult, WifiNetwork,
     };
 }
 
@@ -2903,6 +2907,70 @@ impl Device<'_> {
     /// Leaves the current network without powering Wi-Fi off.
     pub fn disconnect_wifi(&mut self) {
         self.request(DeviceRequest::DisconnectWifi);
+    }
+
+    /// Reads the active audio transport state and position.
+    pub fn read_audio(&mut self) {
+        self.request(DeviceRequest::ReadAudio);
+    }
+
+    /// Prepares an audio source without starting playback.
+    pub fn load_audio(&mut self, source: AudioSource) {
+        self.request(DeviceRequest::LoadAudio { source });
+    }
+
+    /// Prepares a file in this application's shelf.
+    ///
+    /// Returns `false` without queueing when `name` is not a valid shelf key.
+    pub fn load_shelf_audio(&mut self, name: impl Into<String>) -> bool {
+        let name = name.into();
+        if !kobo_protocol::is_valid_key(&name) {
+            return false;
+        }
+        self.load_audio(AudioSource::Shelf(name));
+        true
+    }
+
+    /// Prepares an unauthenticated HTTPS audio stream.
+    ///
+    /// Returns `false` without queueing for a malformed or oversized URL.
+    pub fn load_audio_stream(&mut self, url: impl Into<String>) -> bool {
+        let url = url.into();
+        if !url.starts_with("https://") || url.len() > MAX_URL_LEN {
+            return false;
+        }
+        self.load_audio(AudioSource::Stream(url));
+        true
+    }
+
+    /// Starts or resumes the prepared audio source.
+    pub fn play_audio(&mut self) {
+        self.request(DeviceRequest::PlayAudio);
+    }
+
+    /// Pauses playback at the current position.
+    pub fn pause_audio(&mut self) {
+        self.request(DeviceRequest::PauseAudio);
+    }
+
+    /// Seeks to an absolute position from the start of the source.
+    pub fn seek_audio(&mut self, position: Duration) {
+        let millis = position.as_millis();
+        self.request(DeviceRequest::SeekAudio {
+            position_ms: u32::try_from(millis).unwrap_or(u32::MAX),
+        });
+    }
+
+    /// Stops playback and returns the prepared source to its beginning.
+    pub fn stop_audio(&mut self) {
+        self.request(DeviceRequest::StopAudio);
+    }
+
+    /// Sets software playback volume, clamped to 0–100 percent.
+    pub fn set_audio_volume(&mut self, percent: u8) {
+        self.request(DeviceRequest::SetAudioVolume {
+            percent: percent.min(100),
+        });
     }
 
     fn bluetooth_address(

@@ -479,7 +479,8 @@ impl KoboApp for Settings {
             },
             DeviceResult::Granted { .. }
             | DeviceResult::Battery { .. }
-            | DeviceResult::Frontlight { .. } => {}
+            | DeviceResult::Frontlight { .. }
+            | DeviceResult::Audio { .. } => {}
         }
         self.show(context);
     }

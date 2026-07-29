@@ -737,6 +737,20 @@ pub enum DeviceRequest {
     JoinWifi { ssid: String, password: String },
     /// Leave the current Wi-Fi network without powering the radio off.
     DisconnectWifi,
+    /// Report the active audio source and transport state.
+    ReadAudio,
+    /// Prepare a shelf file or HTTPS stream for playback.
+    LoadAudio { source: AudioSource },
+    /// Start or resume the prepared source.
+    PlayAudio,
+    /// Pause without discarding the prepared source or position.
+    PauseAudio,
+    /// Seek to an absolute position in the prepared source.
+    SeekAudio { position_ms: u32 },
+    /// Stop playback and return to the beginning of the prepared source.
+    StopAudio,
+    /// Set software playback volume as a percentage.
+    SetAudioVolume { percent: u8 },
 }
 
 /// The runtime's answer to a device request.
@@ -763,10 +777,58 @@ pub enum DeviceResult {
         connected_ssid: Option<String>,
         networks: Vec<WifiNetwork>,
     },
+    /// Audio backend and transport state.
+    Audio {
+        available: bool,
+        state: AudioPlaybackState,
+        position_ms: u32,
+        duration_ms: u32,
+        volume: u8,
+    },
     /// The backend exists, but the requested operation failed.
     Failed(DeviceError),
     /// The request was refused, with the exact reason.
     Denied(DenyReason),
+}
+
+/// A source accepted by the runtime-owned audio player.
+///
+/// Shelf names are resolved inside the calling application's own shelf. A
+/// stream is always HTTPS and carries no credentials, so an application can
+/// neither escape its data root nor turn the player into a secret-bearing
+/// request primitive.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AudioSource {
+    Shelf(String),
+    Stream(String),
+}
+
+/// Observable state of the runtime-owned audio transport.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum AudioPlaybackState {
+    Idle = 1,
+    Loading = 2,
+    Ready = 3,
+    Playing = 4,
+    Paused = 5,
+    Finished = 6,
+}
+
+impl TryFrom<u8> for AudioPlaybackState {
+    type Error = ProtocolError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::Idle),
+            2 => Ok(Self::Loading),
+            3 => Ok(Self::Ready),
+            4 => Ok(Self::Playing),
+            5 => Ok(Self::Paused),
+            6 => Ok(Self::Finished),
+            _ => Err(ProtocolError::InvalidValue("audio playback state")),
+        }
+    }
 }
 
 /// A Bluetooth device discovered or remembered by the system controller.
@@ -1593,6 +1655,37 @@ fn encode_device_request(
             push_radio_string(output, password)?;
         }
         DeviceRequest::DisconnectWifi => output.push(21),
+        DeviceRequest::ReadAudio => output.push(22),
+        DeviceRequest::LoadAudio { source } => {
+            output.push(23);
+            match source {
+                AudioSource::Shelf(name) if is_valid_key(name) => {
+                    output.push(1);
+                    push_string(output, name)?;
+                }
+                AudioSource::Stream(url)
+                    if url.starts_with("https://") && url.len() <= MAX_URL_LEN =>
+                {
+                    output.push(2);
+                    push_string(output, url)?;
+                }
+                AudioSource::Shelf(_) | AudioSource::Stream(_) => {
+                    return Err(ProtocolError::InvalidValue("audio source"));
+                }
+            }
+        }
+        DeviceRequest::PlayAudio => output.push(24),
+        DeviceRequest::PauseAudio => output.push(25),
+        DeviceRequest::SeekAudio { position_ms } => {
+            fixed_device_request(output, 26, *position_ms);
+        }
+        DeviceRequest::StopAudio => output.push(27),
+        DeviceRequest::SetAudioVolume { percent } if *percent <= 100 => {
+            output.extend_from_slice(&[28, *percent]);
+        }
+        DeviceRequest::SetAudioVolume { .. } => {
+            return Err(ProtocolError::InvalidValue("audio volume"));
+        }
     }
     Ok(())
 }
@@ -1723,6 +1816,44 @@ fn decode_device_request(reader: &mut Reader<'_>) -> Result<DeviceRequest, Proto
             Ok(DeviceRequest::JoinWifi { ssid, password })
         }
         21 => Ok(DeviceRequest::DisconnectWifi),
+        22 => Ok(DeviceRequest::ReadAudio),
+        23 => match reader.u8()? {
+            1 => {
+                let name = reader.string()?;
+                if is_valid_key(&name) {
+                    Ok(DeviceRequest::LoadAudio {
+                        source: AudioSource::Shelf(name),
+                    })
+                } else {
+                    Err(ProtocolError::InvalidValue("audio source"))
+                }
+            }
+            2 => {
+                let url = reader.string()?;
+                if url.starts_with("https://") && url.len() <= MAX_URL_LEN {
+                    Ok(DeviceRequest::LoadAudio {
+                        source: AudioSource::Stream(url),
+                    })
+                } else {
+                    Err(ProtocolError::InvalidValue("audio source"))
+                }
+            }
+            _ => Err(ProtocolError::InvalidValue("audio source")),
+        },
+        24 => Ok(DeviceRequest::PlayAudio),
+        25 => Ok(DeviceRequest::PauseAudio),
+        26 => Ok(DeviceRequest::SeekAudio {
+            position_ms: reader.u32()?,
+        }),
+        27 => Ok(DeviceRequest::StopAudio),
+        28 => {
+            let percent = reader.u8()?;
+            if percent <= 100 {
+                Ok(DeviceRequest::SetAudioVolume { percent })
+            } else {
+                Err(ProtocolError::InvalidValue("audio volume"))
+            }
+        }
         _ => Err(ProtocolError::InvalidValue("device request")),
     }
 }
@@ -1804,6 +1935,21 @@ fn encode_device_result(output: &mut Vec<u8>, result: &DeviceResult) -> Result<(
         }
         DeviceResult::Failed(error) => {
             output.extend_from_slice(&[8, *error as u8]);
+        }
+        DeviceResult::Audio {
+            available,
+            state,
+            position_ms,
+            duration_ms,
+            volume,
+        } => {
+            if *volume > 100 {
+                return Err(ProtocolError::InvalidValue("audio volume"));
+            }
+            output.extend_from_slice(&[9, u8::from(*available), *state as u8]);
+            push_u32(output, *position_ms);
+            push_u32(output, *duration_ms);
+            output.push(*volume);
         }
     }
     Ok(())
@@ -1892,8 +2038,27 @@ fn decode_device_result(reader: &mut Reader<'_>) -> Result<DeviceResult, Protoco
             })
         }
         8 => Ok(DeviceResult::Failed(DeviceError::try_from(reader.u8()?)?)),
+        9 => decode_audio_result(reader),
         _ => Err(ProtocolError::InvalidValue("device result")),
     }
+}
+
+fn decode_audio_result(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
+    let available = read_boolean(reader, "audio available")?;
+    let state = AudioPlaybackState::try_from(reader.u8()?)?;
+    let position_ms = reader.u32()?;
+    let duration_ms = reader.u32()?;
+    let volume = reader.u8()?;
+    if volume > 100 || position_ms > duration_ms && duration_ms != 0 {
+        return Err(ProtocolError::InvalidValue("audio state"));
+    }
+    Ok(DeviceResult::Audio {
+        available,
+        state,
+        position_ms,
+        duration_ms,
+        volume,
+    })
 }
 
 fn encoded_screen_len(
@@ -4354,6 +4519,20 @@ mod tests {
                 password: "readmore".to_owned(),
             },
             DeviceRequest::DisconnectWifi,
+            DeviceRequest::ReadAudio,
+            DeviceRequest::LoadAudio {
+                source: AudioSource::Shelf("audiobook.mp3z".to_owned()),
+            },
+            DeviceRequest::LoadAudio {
+                source: AudioSource::Stream("https://example.com/book.mp3".to_owned()),
+            },
+            DeviceRequest::PlayAudio,
+            DeviceRequest::PauseAudio,
+            DeviceRequest::SeekAudio {
+                position_ms: 120_000,
+            },
+            DeviceRequest::StopAudio,
+            DeviceRequest::SetAudioVolume { percent: 65 },
         ];
         for request in requests {
             let frame = Frame {
@@ -4405,6 +4584,13 @@ mod tests {
                     secured: true,
                     connected: true,
                 }],
+            },
+            DeviceResult::Audio {
+                available: true,
+                state: AudioPlaybackState::Playing,
+                position_ms: 75_000,
+                duration_ms: 600_000,
+                volume: 70,
             },
             DeviceResult::Failed(DeviceError::Authentication),
         ];

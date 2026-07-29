@@ -828,6 +828,21 @@ fn host_applications(
     let wifi = kobo_hal::wifi::Wifi::open();
     if wifi.is_some() {
         backends.push(Capability::WifiControl);
+        backends.push(Capability::Network);
+    }
+    let audio_fetcher: kobo_hal::audio::StreamFetcher = Arc::new(|url, offset, max_bytes| {
+        kobo_net::fetch_from(url, offset, max_bytes).map_err(|error| match error {
+            kobo_protocol::TaskError::Unreachable => kobo_protocol::DeviceError::Unreachable,
+            kobo_protocol::TaskError::TimedOut => kobo_protocol::DeviceError::TimedOut,
+            kobo_protocol::TaskError::NotFound => kobo_protocol::DeviceError::NotFound,
+            kobo_protocol::TaskError::TooLarge => kobo_protocol::DeviceError::InvalidInput,
+            kobo_protocol::TaskError::Denied => kobo_protocol::DeviceError::Backend,
+        })
+    });
+    let audio = kobo_hal::audio::Audio::open(Some(audio_fetcher));
+    if audio.is_some() {
+        backends.push(Capability::Audio);
+        backends.push(Capability::BluetoothAudio);
     }
     let mut services = DeviceServices::new(
         Declared::all(),
@@ -1330,6 +1345,86 @@ fn host_applications(
                                                 kobo_protocol::DenyReason::Unsupported,
                                             ),
                                             kobo_hal::wifi::Wifi::disconnect,
+                                        )
+                                    }
+                                    kobo_protocol::DeviceRequest::ReadAudio => {
+                                        audio.as_ref().map_or(
+                                            kobo_protocol::DeviceResult::Denied(
+                                                kobo_protocol::DenyReason::Unsupported,
+                                            ),
+                                            kobo_hal::audio::Audio::state,
+                                        )
+                                    }
+                                    kobo_protocol::DeviceRequest::LoadAudio { source } => {
+                                        audio.as_ref().map_or(
+                                            kobo_protocol::DeviceResult::Denied(
+                                                kobo_protocol::DenyReason::Unsupported,
+                                            ),
+                                            |audio| match source {
+                                                kobo_protocol::AudioSource::Shelf(name) => {
+                                                    apps[index].shelf.published_path(name).map_or(
+                                                        kobo_protocol::DeviceResult::Failed(
+                                                            kobo_protocol::DeviceError::NotFound,
+                                                        ),
+                                                        |path| {
+                                                            audio.load(
+                                                                kobo_hal::audio::Source::File(path),
+                                                            )
+                                                        },
+                                                    )
+                                                }
+                                                kobo_protocol::AudioSource::Stream(url) => {
+                                                    if services.may(Capability::Network) {
+                                                        audio.load(kobo_hal::audio::Source::Stream(
+                                                            url.clone(),
+                                                        ))
+                                                    } else {
+                                                        kobo_protocol::DeviceResult::Denied(
+                                                            kobo_protocol::DenyReason::NotDeclared,
+                                                        )
+                                                    }
+                                                }
+                                            },
+                                        )
+                                    }
+                                    kobo_protocol::DeviceRequest::PlayAudio => {
+                                        audio.as_ref().map_or(
+                                            kobo_protocol::DeviceResult::Denied(
+                                                kobo_protocol::DenyReason::Unsupported,
+                                            ),
+                                            kobo_hal::audio::Audio::play,
+                                        )
+                                    }
+                                    kobo_protocol::DeviceRequest::PauseAudio => {
+                                        audio.as_ref().map_or(
+                                            kobo_protocol::DeviceResult::Denied(
+                                                kobo_protocol::DenyReason::Unsupported,
+                                            ),
+                                            kobo_hal::audio::Audio::pause,
+                                        )
+                                    }
+                                    kobo_protocol::DeviceRequest::SeekAudio { position_ms } => {
+                                        audio.as_ref().map_or(
+                                            kobo_protocol::DeviceResult::Denied(
+                                                kobo_protocol::DenyReason::Unsupported,
+                                            ),
+                                            |audio| audio.seek(*position_ms),
+                                        )
+                                    }
+                                    kobo_protocol::DeviceRequest::StopAudio => {
+                                        audio.as_ref().map_or(
+                                            kobo_protocol::DeviceResult::Denied(
+                                                kobo_protocol::DenyReason::Unsupported,
+                                            ),
+                                            kobo_hal::audio::Audio::stop,
+                                        )
+                                    }
+                                    kobo_protocol::DeviceRequest::SetAudioVolume { percent } => {
+                                        audio.as_ref().map_or(
+                                            kobo_protocol::DeviceResult::Denied(
+                                                kobo_protocol::DenyReason::Unsupported,
+                                            ),
+                                            |audio| audio.set_volume(*percent),
                                         )
                                     }
                                     _ => services.handle(request.clone()),

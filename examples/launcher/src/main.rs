@@ -48,8 +48,8 @@ const ENTRIES: &[Entry] = &[
         name: "audiobook",
         title: "Audiobook Studio",
         label: "Audiobooks",
-        summary: "Research and narrate an original audiobook about any topic.",
-        needs: "Uses Exa, OpenAI and ElevenLabs keys, plus the network.",
+        summary: "Research, narrate and play an original audiobook about any topic.",
+        needs: "Uses Exa, OpenAI and ElevenLabs keys, the network and Bluetooth audio.",
         glyph: Glyph::Download,
     },
     Entry {

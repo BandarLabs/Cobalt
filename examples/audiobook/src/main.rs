@@ -4,13 +4,14 @@ mod pipeline;
 
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, BannerLevel, Context, KoboApp, Screen, ScreenBuilder, ShelfProgress, ShelfUpload,
-    StoreResult, TaskId, TaskOutcome,
+    action_id,
+    audio::{AudioMetadata, AudioPlayer},
+    Context, DeviceRequest, DeviceResult, KoboApp, PictureHandle, Screen, ScreenBuilder,
+    ShelfProgress, ShelfUpload, StoreResult, TaskId, TaskOutcome,
 };
 use std::process::ExitCode;
 
 const AGAIN: &str = "again";
-const SETTINGS: &str = "settings";
 const CANCEL: &str = "cancel";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -22,7 +23,7 @@ enum Stage {
     Narrate,
     Package,
     Save,
-    Complete,
+    Player,
     Failed,
 }
 
@@ -41,6 +42,7 @@ struct Audiobook {
     saved: u32,
     total: u32,
     trouble: Option<String>,
+    player: Option<AudioPlayer>,
 }
 
 impl Audiobook {
@@ -57,14 +59,16 @@ impl Audiobook {
                 .typed(&self.topic, "Type any topic")
                 .keyboard(&self.topic, "Create")
                 .build(),
-            Stage::Complete => ScreenBuilder::new("audiobook-complete")
-                .top_bar("Audiobook ready")
-                .heading(&self.title)
-                .text(&self.summary)
-                .banner(BannerLevel::Info, format!("Saved as {}. Return to the Kobo reader to let it add the audiobook to My Books.", self.archive_name))
-                .button(SETTINGS, "Connect Bluetooth headphones")
-                .button(AGAIN, "Create another")
-                .build(),
+            Stage::Player => self.player.as_ref().map_or_else(
+                || {
+                    ScreenBuilder::new("audiobook-player-missing")
+                        .top_bar("Audiobook")
+                        .error_state("The player could not be prepared.")
+                        .button(AGAIN, "Create another")
+                        .build()
+                },
+                AudioPlayer::screen,
+            ),
             Stage::Failed => ScreenBuilder::new("audiobook-failed")
                 .top_bar("Could not create audiobook")
                 .error_state(self.trouble.as_deref().unwrap_or("The request failed."))
@@ -106,7 +110,7 @@ impl Audiobook {
             }
             Stage::Package => ("Packaging Kobo audiobook", 88),
             Stage::Save => ("Saving audiobook", 94),
-            Stage::Compose | Stage::Complete | Stage::Failed => ("Preparing", 0),
+            Stage::Compose | Stage::Player | Stage::Failed => ("Preparing", 0),
         }
     }
 
@@ -219,6 +223,15 @@ impl KoboApp for Audiobook {
     }
 
     fn on_action(&mut self, context: &mut Context, action: kobo_sdk::ActionId) {
+        if self.stage == Stage::Player
+            && self
+                .player
+                .as_mut()
+                .is_some_and(|player| player.press(context, action))
+        {
+            self.show(context);
+            return;
+        }
         if action == action_id(CANCEL) {
             if let Some(task) = self.task.take() {
                 context.cancel(task);
@@ -228,12 +241,11 @@ impl KoboApp for Audiobook {
             return;
         }
         if action == action_id(AGAIN) {
+            if self.player.is_some() {
+                context.device().stop_audio();
+            }
             self.reset();
             self.show(context);
-            return;
-        }
-        if action == action_id(SETTINGS) {
-            context.launch("settings");
             return;
         }
         if self.stage == Stage::Compose {
@@ -248,6 +260,14 @@ impl KoboApp for Audiobook {
     }
 
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
+        if self
+            .player
+            .as_mut()
+            .is_some_and(|player| player.on_task(context, task, &outcome))
+        {
+            self.show(context);
+            return;
+        }
         if self.task != Some(task) {
             return;
         }
@@ -279,13 +299,72 @@ impl KoboApp for Audiobook {
                 self.upload = None;
                 self.tracks.clear();
                 self.parts.clear();
-                self.stage = Stage::Complete;
+                let (width, height, grey) = cover_art(&self.title);
+                let cover = context.put_picture(PictureHandle(1), width, height, grey);
+                let mut player = AudioPlayer::shelf(&self.archive_name, &self.title)
+                    .metadata(
+                        AudioMetadata::new(&self.title)
+                            .author("Exa · OpenAI · ElevenLabs")
+                            .chapter("Generated on demand"),
+                    )
+                    .secondary_action(AGAIN, "Create another");
+                player.set_cover(cover);
+                player.start(context);
+                self.player = Some(player);
+                self.stage = Stage::Player;
             }
             ShelfProgress::Failed(error) => self.fail(error.to_string()),
             ShelfProgress::Elsewhere => return,
         }
         self.show(context);
     }
+
+    fn on_device_result(
+        &mut self,
+        context: &mut Context,
+        request: DeviceRequest,
+        result: DeviceResult,
+    ) {
+        if self
+            .player
+            .as_mut()
+            .is_some_and(|player| player.on_device_result(context, &request, &result))
+        {
+            self.show(context);
+        }
+    }
+}
+
+/// Deterministic monochrome cover art. It travels once through the SDK picture
+/// cache and remains visible while transport state and position redraw.
+fn cover_art(title: &str) -> (u32, u32, Vec<u8>) {
+    const WIDTH: u32 = 240;
+    const HEIGHT: u32 = 320;
+    let pixels = usize::try_from(WIDTH * HEIGHT).expect("the cover fits memory");
+    let mut grey = vec![240_u8; pixels];
+    let seed = title.bytes().fold(0x811c_9dc5_u32, |hash, byte| {
+        hash.rotate_left(5) ^ u32::from(byte)
+    });
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            let border = x < 8 || y < 8 || x >= WIDTH - 8 || y >= HEIGHT - 8;
+            let disc_x = i64::from(x) - i64::from(WIDTH) / 2;
+            let disc_y = i64::from(y) - 118;
+            let disc = disc_x * disc_x + disc_y * disc_y < 72 * 72;
+            let distance = u32::try_from(disc_x * disc_x + disc_y * disc_y)
+                .expect("a cover coordinate has a small square");
+            let groove = disc && (distance / 180 + seed) % 3 == 0;
+            let bar = (88..=232).contains(&y)
+                && (24..WIDTH - 24).contains(&x)
+                && (x / 12 + seed) % 5 < 2
+                && y > 205 - (x * 17 + seed) % 55;
+            let index = usize::try_from(y * WIDTH + x).expect("the cover index fits usize");
+            if border || groove || bar {
+                grey[index] = 24;
+            }
+        }
+    }
+    (WIDTH, HEIGHT, grey)
 }
 
 fn archive_name(title: &str) -> String {
@@ -332,12 +411,7 @@ mod tests {
     #[test]
     fn compose_progress_complete_and_failure_screens_fit_a_clara() {
         let mut app = Audiobook::default();
-        for stage in [
-            Stage::Compose,
-            Stage::Research,
-            Stage::Complete,
-            Stage::Failed,
-        ] {
+        for stage in [Stage::Compose, Stage::Research, Stage::Failed] {
             app.stage = stage;
             app.title = "A researched history of the night sky".to_owned();
             app.summary = "An original, source-grounded tour of how people learned to understand the Moon, planets, and stars.".to_owned();
