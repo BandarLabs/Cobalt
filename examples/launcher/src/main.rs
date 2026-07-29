@@ -49,7 +49,7 @@ const ENTRIES: &[Entry] = &[
         title: "Audiobook Studio",
         label: "Audiobooks",
         summary: "Research, narrate and play an original audiobook about any topic.",
-        needs: "Uses Exa, OpenAI and ElevenLabs keys, the network and Bluetooth audio.",
+        needs: "Needs the network and Bluetooth audio.",
         glyph: Glyph::Download,
     },
     Entry {
@@ -83,6 +83,14 @@ const ENTRIES: &[Entry] = &[
         summary: "Every UI primitive on real hardware, for checking by eye.",
         needs: "Runs entirely on the device.",
         glyph: Glyph::Chart,
+    },
+    Entry {
+        name: "magnet",
+        title: "Magnet",
+        label: "Magnet",
+        summary: "Find the hall sensor behind the bezel and watch it answer.",
+        needs: "Reads the cover sensor. Runs entirely on the device.",
+        glyph: Glyph::Magnet,
     },
     Entry {
         name: "tictactoe",

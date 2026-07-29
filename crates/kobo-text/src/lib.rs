@@ -727,6 +727,7 @@ mod tests {
             signal: kobo_ui::Signal::Strong,
             battery: Some(kobo_ui::Percent::new(74)),
             charging: false,
+            bluetooth: false,
         });
         let layout = screen.layout_with(&kobo_ui::CLARA_BW_METRICS, &chrome);
         let position = layout

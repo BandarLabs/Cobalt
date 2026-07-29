@@ -55,7 +55,7 @@ Verified on the physical Clara BW unless stated otherwise.
 | Storage | Per-application keyed state under its own directory |
 | Navigation | A runtime-owned Back the application may answer first (see below) |
 | Tooling | `devices`, `doctor`, `package`, `deploy`, `inspect`, `verify`, `session`, `wait`, `logs`, `touch-probe`, `record`, and a Clara BW simulator in the browser |
-| Applications | `launcher`, `audiobook`, `settings`, `hn`, `rss`, `gutenbird`, `chat`, `todo`, `terminal`, `tictactoe`, `gallery`, `brief` |
+| Applications | `launcher`, `audiobook`, `settings`, `hn`, `rss`, `gutenbird`, `chat`, `todo`, `terminal`, `tictactoe`, `magnet`, `gallery`, `brief` |
 
 **Not here yet, stated plainly**
 
@@ -1067,6 +1067,7 @@ runtime is the only thing that can start, bound, or stop a program.
 | `gutenbird` | Sixty thousand free books, downloaded and read on the panel |
 | `gallery` | Every UI primitive at once, for checking by eye on real hardware |
 | `tictactoe` | Two players, one panel, and partial repaints of single cells |
+| `magnet` | The hall sensor behind the bezel, and where to find it |
 | `hn` | Hacker News, with whole threads laid out by reply depth |
 | `rss` | Any site's feed, found by typing its address, read without a browser |
 

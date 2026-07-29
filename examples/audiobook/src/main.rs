@@ -6,8 +6,8 @@ use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
     action_id,
     audio::{AudioMetadata, AudioPlayer},
-    Context, DeviceRequest, DeviceResult, KoboApp, PictureHandle, Screen, ScreenBuilder,
-    ShelfProgress, ShelfUpload, StoreResult, TaskId, TaskOutcome,
+    Context, DeviceRequest, DeviceResult, Failure, KoboApp, PictureHandle, Screen, ScreenBuilder,
+    ShelfProgress, ShelfUpload, StandardState, StoreResult, TaskId, TaskOutcome,
 };
 use std::process::ExitCode;
 
@@ -41,7 +41,8 @@ struct Audiobook {
     upload: Option<ShelfUpload>,
     saved: u32,
     total: u32,
-    trouble: Option<String>,
+    trouble: Option<(StandardState, String)>,
+    hint: Option<&'static str>,
     player: Option<AudioPlayer>,
 }
 
@@ -52,13 +53,22 @@ impl Audiobook {
 
     fn screen(&self) -> Screen {
         match self.stage {
-            Stage::Compose => ScreenBuilder::new("audiobook-compose")
-                .top_bar("Create an audiobook")
-                .heading("What should it be about?")
-                .text("Exa researches it, OpenAI writes an original spoken script, and ElevenLabs narrates it.")
-                .typed(&self.topic, "Type any topic")
-                .keyboard(&self.topic, "Create")
-                .build(),
+            Stage::Compose => {
+                let mut screen = ScreenBuilder::new("audiobook-compose")
+                    .top_bar("Create an audiobook")
+                    .heading("What should it be about?")
+                    .text("It is researched from current sources, written as an original spoken script, and narrated aloud. The finished audiobook is saved to My Books.");
+                // Rendered where the person is looking when they are told
+                // to change it. Without this the Create button simply does
+                // nothing for a topic that is too short.
+                if let Some(hint) = self.hint {
+                    screen = screen.secondary(hint);
+                }
+                screen
+                    .typed(&self.topic, "Type any topic")
+                    .keyboard(&self.topic, "Create")
+                    .build()
+            }
             Stage::Player => self.player.as_ref().map_or_else(
                 || {
                     ScreenBuilder::new("audiobook-player-missing")
@@ -69,16 +79,29 @@ impl Audiobook {
                 },
                 AudioPlayer::screen,
             ),
-            Stage::Failed => ScreenBuilder::new("audiobook-failed")
-                .top_bar("Could not create audiobook")
-                .error_state(self.trouble.as_deref().unwrap_or("The request failed."))
-                .button(AGAIN, "Try another topic")
-                .build(),
+            Stage::Failed => {
+                // The state and the words both come from the failure, so a
+                // missing key reads as "Permission needed" and names the file,
+                // rather than every failure reading "Something went wrong".
+                let (state, advice) = self.trouble.as_ref().map_or(
+                    (StandardState::Error, "The request failed."),
+                    |(state, advice)| (*state, advice.as_str()),
+                );
+                ScreenBuilder::new("audiobook-failed")
+                    .top_bar("Could not create audiobook")
+                    .standard_state(state, advice)
+                    .button(AGAIN, "Try another topic")
+                    .build()
+            }
             _ => {
                 let (label, percent) = self.progress();
                 let mut screen = ScreenBuilder::new("audiobook-progress")
                     .top_bar("Creating audiobook")
-                    .heading(if self.title.is_empty() { "Working" } else { &self.title })
+                    .heading(if self.title.is_empty() {
+                        "Working"
+                    } else {
+                        &self.title
+                    })
                     .activity(label, Some(percent))
                     .cancellable(CANCEL, "Cancel");
                 if !self.summary.is_empty() {
@@ -98,15 +121,12 @@ impl Audiobook {
 
     fn progress(&self) -> (&'static str, u8) {
         match self.stage {
-            Stage::Research => ("Exa is researching the topic", 10),
-            Stage::Write => ("OpenAI is writing the spoken script", 30),
+            Stage::Research => ("Researching the topic", 10),
+            Stage::Write => ("Writing the spoken script", 30),
             Stage::Narrate => {
                 let total = self.parts.len().max(1);
                 let percent = 35 + (self.next_part.saturating_mul(50) / total).min(50);
-                (
-                    "ElevenLabs is narrating",
-                    u8::try_from(percent).unwrap_or(85),
-                )
+                ("Narrating the script", u8::try_from(percent).unwrap_or(85))
             }
             Stage::Package => ("Packaging Kobo audiobook", 88),
             Stage::Save => ("Saving audiobook", 94),
@@ -117,11 +137,12 @@ impl Audiobook {
     fn begin(&mut self, context: &mut Context) {
         let topic = self.topic.text().trim();
         if topic.len() < 3 {
-            self.trouble = Some("Type a more specific topic.".to_owned());
+            self.hint = Some("That is too short. Type a few words about the topic.");
             self.show(context);
             return;
         }
         self.stage = Stage::Research;
+        self.hint = None;
         self.trouble = None;
         self.task = context.spawn(pipeline::research(topic));
         if self.task.is_none() {
@@ -179,7 +200,7 @@ impl Audiobook {
 
     fn received_voice(&mut self, context: &mut Context, audio: Vec<u8>) {
         if audio.len() < 256 {
-            self.fail("ElevenLabs returned an empty audio segment.");
+            self.fail("The narration came back empty.");
             self.show(context);
             return;
         }
@@ -209,11 +230,23 @@ impl Audiobook {
         *self = Self::default();
     }
 
+    /// A failure this application described itself, in its own words.
     fn fail(&mut self, error: impl Into<String>) {
+        self.fail_as(StandardState::Error, error);
+    }
+
+    /// A failure the SDK described, carrying its state so the screen shows the
+    /// right mark and heading rather than "Something went wrong" for all of
+    /// them.
+    fn fail_with(&mut self, failure: Failure) {
+        self.fail_as(failure.state, failure.advice);
+    }
+
+    fn fail_as(&mut self, state: StandardState, error: impl Into<String>) {
         self.stage = Stage::Failed;
         self.task = None;
         self.upload = None;
-        self.trouble = Some(error.into());
+        self.trouble = Some((state, error.into()));
     }
 }
 
@@ -279,7 +312,7 @@ impl KoboApp for Audiobook {
                 Stage::Narrate => self.received_voice(context, bytes),
                 _ => self.fail("A provider answered at the wrong stage."),
             },
-            TaskOutcome::Failed(error) => self.fail(error.to_string()),
+            TaskOutcome::Failed(error) => self.fail_with(Failure::of(error)),
             TaskOutcome::Cancelled => self.reset(),
         }
         self.show(context);
@@ -304,7 +337,7 @@ impl KoboApp for Audiobook {
                 let mut player = AudioPlayer::shelf(&self.archive_name, &self.title)
                     .metadata(
                         AudioMetadata::new(&self.title)
-                            .author("Exa · OpenAI · ElevenLabs")
+                            .author("Researched, written and narrated on this reader")
                             .chapter("Generated on demand"),
                     )
                     .secondary_action(AGAIN, "Create another");
@@ -313,7 +346,7 @@ impl KoboApp for Audiobook {
                 self.player = Some(player);
                 self.stage = Stage::Player;
             }
-            ShelfProgress::Failed(error) => self.fail(error.to_string()),
+            ShelfProgress::Failed(error) => self.fail_with(Failure::storing(error)),
             ShelfProgress::Elsewhere => return,
         }
         self.show(context);
@@ -401,7 +434,7 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{archive_name, Audiobook, Stage};
-    use kobo_sdk::CLARA_BW_METRICS;
+    use kobo_sdk::{Failure, StandardState, CLARA_BW_METRICS};
 
     #[test]
     fn a_title_becomes_a_safe_kobo_filename() {
@@ -416,9 +449,43 @@ mod tests {
             app.title = "A researched history of the night sky".to_owned();
             app.summary = "An original, source-grounded tour of how people learned to understand the Moon, planets, and stars.".to_owned();
             app.archive_name = "history-of-the-night-sky.mp3z".to_owned();
-            app.trouble = Some("The provider could not complete this request.".to_owned());
+            app.trouble = Some((
+                StandardState::Error,
+                "The provider could not complete this request.".to_owned(),
+            ));
             let issues = app.screen().validate(&CLARA_BW_METRICS);
             assert!(issues.is_empty(), "{stage:?}: {issues:?}");
         }
+    }
+
+    /// The hint used to be written to a field the compose screen never drew,
+    /// so a topic under three characters made the Create button do nothing at
+    /// all. It has to reach the screen, and it has to still fit with a
+    /// keyboard already on the panel.
+    #[test]
+    fn a_short_topic_puts_a_visible_hint_on_the_compose_screen() {
+        let app = Audiobook {
+            hint: Some("That is too short. Type a few words about the topic."),
+            ..Audiobook::default()
+        };
+        let screen = app.screen();
+        let drawn = format!("{screen:?}");
+        assert!(drawn.contains("That is too short"), "{drawn}");
+        assert!(app.screen().validate(&CLARA_BW_METRICS).is_empty());
+    }
+
+    /// A missing API key is not a permission the application lacks, and the
+    /// screen has to say which thing is actually wrong.
+    #[test]
+    fn a_missing_key_names_the_key_rather_than_blaming_the_application() {
+        let mut app = Audiobook::default();
+        app.fail_with(Failure::of(kobo_sdk::TaskError::NoCredential));
+        let (state, advice) = app.trouble.clone().expect("a failure was recorded");
+        assert_eq!(state, StandardState::PermissionDenied);
+        assert!(advice.contains("kobo secret set"), "{advice}");
+        assert!(
+            !advice.contains("does not hold this permission"),
+            "{advice}"
+        );
     }
 }

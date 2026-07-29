@@ -790,6 +790,37 @@ pub fn shapes(glyph: Glyph) -> Vec<Shape> {
             Shape::Fill(Path::circle(500, 500, 95)),
             Shape::Fill(Path::circle(790, 500, 95)),
         ],
+        // The same mark as the status strip draws, so the row in Settings and
+        // the indicator in the bar are recognisably one thing.
+        Glyph::Bluetooth => bluetooth(),
+        // Bow to the left, blade to the right, two teeth on the underside.
+        // The bow is a ring rather than a disc so it stays a key and does not
+        // close up into a lollipop when it is rasterised small.
+        Glyph::Key => vec![
+            Shape::Stroke {
+                path: Path::circle(320, 500, 170),
+                width: 90,
+            },
+            stroke(Path::line(490, 500, 880, 500)),
+            stroke(Path::line(790, 500, 790, 660)),
+            stroke(Path::line(880, 500, 880, 620)),
+        ],
+        // A horseshoe, poles down, with the tips flared into solid blocks.
+        // The flare is what makes it a magnet rather than an arch: a plain
+        // stroked U at this weight reads as a horseshoe only if you already
+        // knew that is what it was.
+        Glyph::Magnet => vec![
+            stroke(
+                Path::new()
+                    .move_to(255, 690)
+                    .line_to(255, 470)
+                    .quad_to(255, 160, 500, 160)
+                    .quad_to(745, 160, 745, 470)
+                    .line_to(745, 690),
+            ),
+            Shape::Fill(Path::rounded(170, 750, 170, 130, 20)),
+            Shape::Fill(Path::rounded(660, 750, 170, 130, 20)),
+        ],
         Glyph::Rss => vec![
             Shape::Fill(Path::circle(280, 700, 95)),
             stroke(
@@ -915,6 +946,32 @@ pub fn wifi(strength: Signal) -> Vec<Shape> {
         shapes.push(stroke(arc));
     }
     shapes
+}
+
+/// The Bluetooth rune, drawn only when something is actually connected.
+///
+/// One continuous stroke: a vertical spine with two crossing arms that meet it
+/// at the quarter points. Drawn as a single path rather than a spine plus four
+/// arms so that the joins stay closed when it is rasterised at eight pixels,
+/// where four separate strokes come apart into a smudge.
+///
+/// There is no "on but not connected" mark. The reason to look at this strip
+/// is to know where the sound is about to come out, and a controller that is
+/// powered with nothing paired answers that question the same way as one that
+/// is switched off.
+#[must_use]
+pub fn bluetooth() -> Vec<Shape> {
+    const W: i32 = 70;
+    vec![Shape::Stroke {
+        path: Path::new()
+            .move_to(330, 330)
+            .line_to(670, 670)
+            .line_to(500, 840)
+            .line_to(500, 160)
+            .line_to(670, 330)
+            .line_to(330, 670),
+        width: W,
+    }]
 }
 
 #[cfg(test)]

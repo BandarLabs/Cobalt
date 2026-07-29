@@ -318,6 +318,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-magnet"
+version = "0.1.0"
+dependencies = [
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
 name = "kobo-net"
 version = "0.1.0"
 dependencies = [

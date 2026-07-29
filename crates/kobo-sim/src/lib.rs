@@ -1479,6 +1479,13 @@ fn read_app_messages(
     // The simulator owns no hardware, so it answers state queries from a
     // believable model and refuses everything that would change a real device.
     let mut services = DeviceServices::simulated();
+    // There is no bezel here to hold a magnet against, so the state the hall
+    // sensor reports is set on the way in. Without this the second half of
+    // every cover-aware screen is unreachable off hardware.
+    services.set_magnet(matches!(
+        std::env::var("KOBO_MAGNET").as_deref(),
+        Ok("1" | "present")
+    ));
     let tasks = Arc::new(Mutex::new(simulated_tasks()));
     // Drained on its own thread for the same reason terminal output is. The
     // message loop below blocks on the application's socket, so an outcome

@@ -9,6 +9,10 @@ pub mod battery;
 /// Bluetooth control through the firmware-owned BlueZ service.
 #[cfg(feature = "device-write")]
 pub mod bluetooth;
+/// The sleep-cover hall sensor. Read-only and never grabbed, so unlike
+/// [`input`] it needs no write feature: watching a magnet takes nothing away
+/// from the stock reader.
+pub mod cover;
 #[cfg(feature = "device-write")]
 pub mod display;
 /// Exclusive touch ownership. Available only with `device-write`, because a

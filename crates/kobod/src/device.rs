@@ -226,13 +226,21 @@ const BATTERY_INTERVAL: Duration = Duration::from_secs(30);
 /// The wireless interface every Kobo names the same thing.
 const WIFI_LINK: &str = "wlan0";
 
-/// How often the status band is allowed to change.
+/// How often the band is re-read.
 ///
-/// A minute, matching the finest thing the band shows. Faster would buy
-/// nothing a reader can see and would cost a panel update: the band is drawn
-/// with the rest of the screen, so a status that changed between two otherwise
-/// identical frames would make them different and force a repaint of a strip
-/// nobody was looking at.
+/// Separate from how often it is allowed to *change*, which is the mistake
+/// this pair of constants exists to undo. The band used to be re-read only
+/// when a frame was already being drawn, so unplugging the charger left the
+/// old mark on the panel until something else happened to redraw. Nothing was
+/// stale in the reading; the reading was simply never taken.
+///
+/// Looking is cheap: four small files the kernel publishes. Drawing is not, so
+/// the loop looks often and repaints only when the value it drew has actually
+/// changed.
+const STATUS_POLL: Duration = Duration::from_secs(2);
+
+/// How stale a status may be before a frame that is already being drawn takes
+/// a fresh one.
 const STATUS_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Reads the clock, the radio and the gauge, no more often than it needs to.
@@ -243,6 +251,19 @@ const STATUS_INTERVAL: Duration = Duration::from_secs(60);
 struct StatusSource {
     last: kobo_ui::Status,
     taken: Option<Instant>,
+    polled: Option<Instant>,
+    /// Whether something is connected over Bluetooth.
+    ///
+    /// Not polled with the rest. The controller on this device is the vendor
+    /// MTK stack behind D-Bus, where asking costs a round trip and, worse, has
+    /// side effects: reading the adapter marks the stack as used and commits
+    /// the session to the slow reboot on hand-back. So this is told rather
+    /// than asked, from the replies the daemon is already carrying.
+    ///
+    /// The cost is that headphones which wander out of range on their own are
+    /// noticed the next time something reads Bluetooth rather than within two
+    /// seconds. That is the right trade against making every session reboot.
+    bluetooth: bool,
 }
 
 impl StatusSource {
@@ -250,7 +271,46 @@ impl StatusSource {
         Self {
             last: kobo_ui::Status::default(),
             taken: None,
+            polled: None,
+            bluetooth: false,
         }
+    }
+
+    /// Records what the daemon just learned about Bluetooth.
+    ///
+    /// Returns whether this changed anything, so the caller can repaint on the
+    /// same footing as [`StatusSource::poll`] without a second code path.
+    fn observe_bluetooth(&mut self, connected: bool) -> bool {
+        if self.bluetooth == connected {
+            return false;
+        }
+        self.bluetooth = connected;
+        self.last.bluetooth = connected;
+        true
+    }
+
+    /// Takes a fresh reading, and says whether anything a reader can see moved.
+    ///
+    /// One comparison covers the clock, the radio, the gauge, the charging
+    /// mark and Bluetooth, because they are five fields of one value. Adding a
+    /// sixth mark to the band needs no change here at all, which is the point:
+    /// the alternative is five timers and five remembered previous values that
+    /// drift apart the first time one of them is forgotten.
+    fn poll(&mut self) -> bool {
+        if self
+            .polled
+            .is_some_and(|polled| polled.elapsed() < STATUS_POLL)
+        {
+            return false;
+        }
+        self.polled = Some(Instant::now());
+        let fresh = self.read();
+        if fresh == self.last {
+            return false;
+        }
+        self.last = fresh;
+        self.taken = Some(Instant::now());
+        true
     }
 
     /// The current status, re-read only when it has gone stale.
@@ -259,10 +319,17 @@ impl StatusSource {
             .taken
             .is_none_or(|taken| taken.elapsed() >= STATUS_INTERVAL);
         if stale {
-            self.last = read_status();
+            self.last = self.read();
             self.taken = Some(Instant::now());
         }
         &self.last
+    }
+
+    fn read(&self) -> kobo_ui::Status {
+        kobo_ui::Status {
+            bluetooth: self.bluetooth,
+            ..read_status()
+        }
     }
 }
 
@@ -297,6 +364,9 @@ fn read_status() -> kobo_ui::Status {
         },
         battery: battery.map(|battery| kobo_ui::Percent::new(battery.percent)),
         charging: battery.is_some_and(|battery| battery.charging),
+        // Filled in by the caller, which is the only layer holding what the
+        // daemon has been told about the controller.
+        bluetooth: false,
     }
 }
 
@@ -862,13 +932,37 @@ fn host_applications(
         backends.push(Capability::WifiControl);
         backends.push(Capability::Network);
     }
+    // Opened once for the whole session rather than per request, because the
+    // sensor's value is in the edges and a reader that is only open while
+    // somebody asks sees none of them.
+    let mut cover = match kobo_hal::cover::CoverSensor::open() {
+        Ok(cover) => {
+            backends.push(Capability::CoverSensor);
+            Some(cover)
+        }
+        Err(error) => {
+            println!("no cover sensor ({error}); cover reads will be refused");
+            None
+        }
+    };
     let audio_fetcher: kobo_hal::audio::StreamFetcher = Arc::new(|url, offset, max_bytes| {
         kobo_net::fetch_from(url, offset, max_bytes).map_err(|error| match error {
-            kobo_protocol::TaskError::Unreachable => kobo_protocol::DeviceError::Unreachable,
+            // A reader with no route and a service that will not answer are
+            // different things everywhere else, but `DeviceError` is the radio
+            // vocabulary and has one word for both. Unreachable is the honest
+            // one: from the player's point of view the bytes cannot be got.
+            kobo_protocol::TaskError::Offline | kobo_protocol::TaskError::Unreachable => {
+                kobo_protocol::DeviceError::Unreachable
+            }
             kobo_protocol::TaskError::TimedOut => kobo_protocol::DeviceError::TimedOut,
             kobo_protocol::TaskError::NotFound => kobo_protocol::DeviceError::NotFound,
             kobo_protocol::TaskError::TooLarge => kobo_protocol::DeviceError::InvalidInput,
             kobo_protocol::TaskError::Denied => kobo_protocol::DeviceError::Backend,
+            // Unreachable today: a plain fetch names no credential, so the
+            // runtime never has one to be missing. Spelled out rather than
+            // caught by a wildcard so that giving fetch a credential later
+            // fails here instead of quietly reporting the wrong thing.
+            kobo_protocol::TaskError::NoCredential => kobo_protocol::DeviceError::Authentication,
         })
     });
     let audio = kobo_hal::audio::Audio::open(Some(audio_fetcher));
@@ -931,6 +1025,35 @@ fn host_applications(
             // the runtime is still serving the panel rather than merely that
             // the process has not been reaped.
             watchdog.beat();
+            // The band is the only thing on the panel that changes without
+            // anybody touching it, so the loop has to notice it on its own.
+            // Repainting is conditional on the reading having moved, and the
+            // frame planner declines an identical frame anyway, so a session
+            // sitting still costs nothing beyond reading four small files.
+            if status.poll() {
+                repaint(
+                    &mut apps,
+                    front,
+                    display,
+                    whole_screen,
+                    &mut surface,
+                    &mut panel,
+                    &home,
+                    &mut status,
+                )?;
+            }
+            // Only the foreground application hears this. A magnet arriving
+            // is a thing that happened in front of the reader, and a
+            // background application has no standing to react to it.
+            if let Some(sensor) = cover.as_mut() {
+                if let Some(magnet) = sensor.poll() {
+                    if let Some(index) = index_of(&apps, front) {
+                        apps[index].send(kobo_protocol::Message::CoverChanged {
+                            magnet_present: magnet == kobo_hal::cover::Magnet::Present,
+                        })?;
+                    }
+                }
+            }
             if now >= ceiling {
                 return Ok(finish(
                     &apps,
@@ -980,6 +1103,9 @@ fn host_applications(
                 .saturating_duration_since(now)
                 .min(idle_at.saturating_duration_since(now))
                 .min(BEAT_INTERVAL)
+                // So a charger pulled out while nobody is touching the panel
+                // is noticed in seconds rather than at the next heartbeat.
+                .min(STATUS_POLL)
                 .min(back_offered.map_or(BEAT_INTERVAL, |(_, offered_at)| {
                     (offered_at + BACK_GRACE).saturating_duration_since(now)
                 }));
@@ -1459,9 +1585,62 @@ fn host_applications(
                                             |audio| audio.set_volume(*percent),
                                         )
                                     }
+                                    // The gauge is read straight through
+                                    // rather than from the cached percent the
+                                    // band uses, because this is asked once
+                                    // when somebody opens a battery screen
+                                    // and they want today's numbers. When
+                                    // there is no gauge to read, the policy's
+                                    // own answer stands, which is what the
+                                    // simulator runs on.
+                                    kobo_protocol::DeviceRequest::ReadBatteryDetail => {
+                                        kobo_hal::battery::detail().map_or_else(
+                                            || services.handle(request.clone()),
+                                            kobo_protocol::DeviceResult::BatteryDetail,
+                                        )
+                                    }
+                                    // Answered from the sensor opened for the
+                                    // session rather than by opening one here,
+                                    // so the answer and the changes that
+                                    // follow it come from the same reader and
+                                    // cannot disagree.
+                                    kobo_protocol::DeviceRequest::ReadCover => {
+                                        cover.as_ref().map_or_else(
+                                            || services.handle(request.clone()),
+                                            |sensor| kobo_protocol::DeviceResult::Cover {
+                                                available: true,
+                                                magnet_present: sensor.magnet()
+                                                    == kobo_hal::cover::Magnet::Present,
+                                            },
+                                        )
+                                    }
                                     _ => services.handle(request.clone()),
                                 }
                             };
+                            // Every Bluetooth reply passes through here, so
+                            // this is the one place that has to know the band
+                            // shows a Bluetooth mark. A reply that changes the
+                            // answer repaints on the spot rather than waiting
+                            // for the next screen.
+                            if let kobo_protocol::DeviceResult::Bluetooth {
+                                enabled, devices, ..
+                            } = &result
+                            {
+                                let connected =
+                                    *enabled && devices.iter().any(|device| device.connected);
+                                if status.observe_bluetooth(connected) {
+                                    repaint(
+                                        &mut apps,
+                                        front,
+                                        display,
+                                        whole_screen,
+                                        &mut surface,
+                                        &mut panel,
+                                        &home,
+                                        &mut status,
+                                    )?;
+                                }
+                            }
                             reply(
                                 &mut apps[index],
                                 frame.request_id,
@@ -1576,6 +1755,7 @@ fn host_applications(
                         | Message::Lifecycle(_)
                         | Message::DeviceResult(_)
                         | Message::StoreResult(_)
+                        | Message::CoverChanged { .. }
                         | Message::ShellEvent(_) => {
                             return Err(format!(
                                 "{} sent a runtime-only message",
@@ -1680,20 +1860,56 @@ fn switch_to(
     // application to draw itself again. An application with nothing drawn yet
     // is the only case where the panel keeps the previous image for a moment,
     // and that is a genuinely new application rather than a returning one.
-    if let Some(screen) = apps[index].screen.clone() {
-        let chrome = chrome_for(&screen, apps[index].path == home, status);
-        render_all(
-            &screen,
-            &metrics_for(&screen),
-            &chrome,
-            &apps[index].pictures,
-            surface,
-            None,
-        );
-        panel.paint(display, whole_screen, surface)?;
-        apps[index].painted += 1;
-    }
+    repaint(
+        apps,
+        wanted,
+        display,
+        whole_screen,
+        surface,
+        panel,
+        home,
+        status,
+    )?;
     Ok(wanted)
+}
+
+/// Draws whatever the application on the panel last drew, with fresh chrome.
+///
+/// Shared by the application switch and the status poll, which want the same
+/// thing for different reasons. Cheap when nothing moved: the frame planner
+/// compares the rendered surface against what is on the panel and declines to
+/// refresh an identical one, so a poll that finds a new battery reading
+/// repaints the strip it changed and a poll that finds the same reading costs
+/// one render and no panel update at all.
+#[allow(clippy::too_many_arguments)]
+fn repaint(
+    apps: &mut [Hosted],
+    id: u64,
+    display: &DisplaySession,
+    whole_screen: Rect,
+    surface: &mut Surface,
+    panel: &mut Painter,
+    home: &Path,
+    status: &mut StatusSource,
+) -> Result<(), String> {
+    let Some(index) = index_of(apps, id) else {
+        return Ok(());
+    };
+    let Some(screen) = apps[index].screen.clone() else {
+        return Ok(());
+    };
+    let chrome = chrome_for(&screen, apps[index].path == home, status);
+    render_all(
+        &screen,
+        &metrics_for(&screen),
+        &chrome,
+        &apps[index].pictures,
+        surface,
+        None,
+    );
+    panel.paint(display, whole_screen, surface)?;
+    apps[index].painted += 1;
+    Ok(())
 }
 
 /// Finds an application by name, starting it only if it is not already running.

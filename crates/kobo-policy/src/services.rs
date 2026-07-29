@@ -61,6 +61,8 @@ pub struct DeviceState {
     pub battery_percent: u8,
     pub charging: bool,
     pub frontlight_percent: u8,
+    /// Whether a magnet is at the hall sensor.
+    pub magnet_present: bool,
 }
 
 impl Default for DeviceState {
@@ -69,6 +71,7 @@ impl Default for DeviceState {
             battery_percent: 72,
             charging: false,
             frontlight_percent: 20,
+            magnet_present: false,
         }
     }
 }
@@ -154,6 +157,18 @@ impl DeviceServices {
         self.state.frontlight_percent = percent.min(100);
     }
 
+    /// Moves the simulated magnet, and says whether that was a change.
+    ///
+    /// There is no bezel to hold a magnet against in the simulator, so this is
+    /// how the two states are reached. It reports whether anything moved
+    /// because a restated state must not be delivered as an edge: an
+    /// application counting changes would count one that nobody made.
+    pub fn set_magnet(&mut self, present: bool) -> bool {
+        let changed = self.state.magnet_present != present;
+        self.state.magnet_present = present;
+        changed
+    }
+
     /// The state applications currently observe.
     #[must_use]
     pub const fn state(&self) -> DeviceState {
@@ -182,6 +197,8 @@ impl DeviceServices {
     pub fn handle(&mut self, request: DeviceRequest) -> DeviceResult {
         match request {
             DeviceRequest::ReadBattery => self.read_battery(),
+            DeviceRequest::ReadBatteryDetail => self.read_battery_detail(),
+            DeviceRequest::ReadCover => self.read_cover(),
             DeviceRequest::HoldWifi { seconds } => self.hold_wifi(seconds),
             DeviceRequest::ReleaseWifi => {
                 self.wifi_held_for = None;
@@ -290,6 +307,44 @@ impl DeviceServices {
             DeviceResult::Battery {
                 percent: self.state.battery_percent,
                 charging: self.state.charging,
+            },
+            DeviceResult::Denied,
+        )
+    }
+
+    /// The simulator has no gauge, so it publishes the fields it can derive
+    /// from the state it does hold and leaves the rest absent. That is the
+    /// same shape a reader with a thinner driver produces, which is the case
+    /// worth having a simulator for.
+    fn read_battery_detail(&self) -> DeviceResult {
+        self.refusal(Capability::BatteryRead).map_or_else(
+            || {
+                DeviceResult::BatteryDetail(kobo_protocol::BatteryDetail {
+                    percent: Some(self.state.battery_percent),
+                    status: Some(
+                        if self.state.charging {
+                            "Charging"
+                        } else {
+                            "Discharging"
+                        }
+                        .to_owned(),
+                    ),
+                    ..kobo_protocol::BatteryDetail::default()
+                })
+            },
+            DeviceResult::Denied,
+        )
+    }
+
+    /// The simulator has no bezel to hold a magnet against, so it reports a
+    /// sensor that is present and sees nothing. An application then exercises
+    /// the same path it will on hardware rather than a "no sensor" branch it
+    /// would never otherwise reach.
+    fn read_cover(&self) -> DeviceResult {
+        self.refusal(Capability::CoverSensor).map_or(
+            DeviceResult::Cover {
+                available: true,
+                magnet_present: self.state.magnet_present,
             },
             DeviceResult::Denied,
         )
@@ -438,7 +493,8 @@ impl DeviceServices {
 
 fn request_capability(request: &DeviceRequest) -> Capability {
     match request {
-        DeviceRequest::ReadBattery => Capability::BatteryRead,
+        DeviceRequest::ReadBattery | DeviceRequest::ReadBatteryDetail => Capability::BatteryRead,
+        DeviceRequest::ReadCover => Capability::CoverSensor,
         DeviceRequest::HoldWifi { .. } | DeviceRequest::ReleaseWifi => Capability::HoldWifi,
         DeviceRequest::KeepAwake { .. } | DeviceRequest::AllowSleep => Capability::KeepAwake,
         DeviceRequest::ScheduleWake { .. } | DeviceRequest::CancelWake => Capability::ScheduledWake,

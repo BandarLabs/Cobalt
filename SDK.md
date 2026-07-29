@@ -766,6 +766,8 @@ back, rather than sending one per chunk of progress.
 
 ```rust
 context.device().read_battery();
+context.device().read_battery_detail();
+context.device().read_cover();
 context.device().hold_wifi(Duration::from_secs(60));
 context.device().set_frontlight(40);
 context.device().set_bluetooth(true);
@@ -795,6 +797,38 @@ an active Bluetooth stack makes the runtime reboot cleanly when the Cobalt
 session ends because handing the initialised vendor driver directly back to
 Nickel is not safe. **An invented reading is worse than a refusal**, because an
 application cannot tell one from the other and will act on it.
+
+### The cover sensor
+
+There is a hall sensor behind one edge of the bezel. It is what a sleep cover
+closes against, but it cannot tell a cover from any other magnet, so the SDK
+reports what was measured and leaves the meaning to you.
+
+```rust
+fn on_start(&mut self, context: &mut Context) {
+    context.device().read_cover();
+}
+
+fn on_cover_change(&mut self, context: &mut Context, magnet_present: bool) {
+    self.present = magnet_present;
+    context.set_screen(self.screen());
+}
+```
+
+Two things follow from how the hardware works and both will bite an
+application that ignores them:
+
+- **Edges are not the state.** A magnet that was already there when your
+  application started produced no event and never will. Ask `read_cover` once
+  at the start; after that, changes arrive on their own.
+- **Only the foreground application hears it.** A magnet arriving is something
+  that happened in front of the reader, so a backgrounded application is not
+  told and must ask again when it returns.
+
+The runtime settles the sensor's bounce before telling anyone, so what arrives
+is movement rather than noise. `examples/magnet` is the whole surface on one
+screen, and doubles as the calibration screen: nothing on the case says where
+the sensor is, so you walk a magnet along the edges and watch for the answer.
 
 For a complete playback screen, use the SDK component rather than rebuilding
 transport and pairing state:

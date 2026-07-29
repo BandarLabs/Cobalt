@@ -11,7 +11,16 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-const WPA_TOOLS: [&str; 3] = ["/sbin/wpa_cli", "/usr/sbin/wpa_cli", "/usr/bin/wpa_cli"];
+/// Where the firmware might keep `wpa_cli`. The Clara BW puts it in `/bin`;
+/// the conventional places are checked too, because this list costs one
+/// `stat` each and being wrong about it makes Wi-Fi report itself missing on
+/// a reader that has it.
+const WPA_TOOLS: [&str; 4] = [
+    "/bin/wpa_cli",
+    "/sbin/wpa_cli",
+    "/usr/sbin/wpa_cli",
+    "/usr/bin/wpa_cli",
+];
 
 #[derive(Clone, Debug)]
 pub struct Wifi {

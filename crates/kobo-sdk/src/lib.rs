@@ -6,13 +6,14 @@
 //! [`AppRunner::action`] from their platform event loop.
 
 pub use kobo_protocol::{
-    AudioPlaybackState, AudioSource, BluetoothDevice, BluetoothDeviceKind, Credential, DenyReason,
-    DeviceError, DeviceRequest, DeviceResult, Frame, Header, Lifecycle, LogLevel, Message,
-    SecretHeader, ShellError, ShellEvent, ShellRequest, StoreError, StoreRequest, StoreResult,
-    StreamError, Task, TaskError, TaskId, TaskOutcome, WifiNetwork, CACHE_PREFIX, MAX_CACHE_KEYS,
-    MAX_HEADERS, MAX_HEADER_NAME, MAX_HEADER_VALUE, MAX_INLINE_PICTURE_BYTES, MAX_PICTURE_BYTES,
-    MAX_PICTURE_CHUNK_BYTES, MAX_RADIO_DEVICES, MAX_RADIO_NAME, MAX_SHELF_CHUNK, MAX_SHELL_CHUNK,
-    MAX_STORE_KEYS, MAX_STORE_VALUE, MAX_TASK_BYTES, MAX_URL_LEN,
+    AudioPlaybackState, AudioSource, BatteryDetail, BluetoothDevice, BluetoothDeviceKind,
+    Credential, DenyReason, DeviceError, DeviceRequest, DeviceResult, Frame, Header, Lifecycle,
+    LogLevel, Message, SecretHeader, ShellError, ShellEvent, ShellRequest, StoreError,
+    StoreRequest, StoreResult, StreamError, Task, TaskError, TaskId, TaskOutcome, WifiNetwork,
+    CACHE_PREFIX, MAX_CACHE_KEYS, MAX_HEADERS, MAX_HEADER_NAME, MAX_HEADER_VALUE,
+    MAX_INLINE_PICTURE_BYTES, MAX_PICTURE_BYTES, MAX_PICTURE_CHUNK_BYTES, MAX_RADIO_DEVICES,
+    MAX_RADIO_NAME, MAX_SHELF_CHUNK, MAX_SHELL_CHUNK, MAX_STORE_KEYS, MAX_STORE_VALUE,
+    MAX_TASK_BYTES, MAX_URL_LEN,
 };
 pub use kobo_ui::QuoteRole;
 pub use kobo_ui::{
@@ -214,17 +215,12 @@ impl StandardState {
         match self {
             Self::Empty => Glyph::Circle,
             Self::Offline => Glyph::Wifi,
-            Self::PermissionDenied => Glyph::Person,
+            // A key, not a person. The commonest way to reach this state is an
+            // API key the reader has not installed, and a head and shoulders
+            // sends whoever is looking at it hunting for an account setting
+            // that does not exist.
+            Self::PermissionDenied => Glyph::Key,
             Self::Error => Glyph::Close,
-        }
-    }
-
-    const fn banner(self) -> Option<&'static str> {
-        match self {
-            Self::Empty => None,
-            Self::Offline => Some("No network connection"),
-            Self::PermissionDenied => Some("Access is not available"),
-            Self::Error => Some("The operation could not be completed"),
         }
     }
 }
@@ -278,6 +274,16 @@ impl Failure {
                 advice: "This application is not allowed to do that.",
                 retryable: false,
             },
+            // Names the supported way to fix it rather than a path. The path
+            // wrapped mid-directory on the panel, and pointing at a file tells
+            // whoever is holding the reader to go and edit one by hand when
+            // there is a command that does it over Wi-Fi.
+            TaskError::NoCredential => Self {
+                state: StandardState::PermissionDenied,
+                advice: "This reader has no API key for that service. \
+                         Install one with kobo secret set.",
+                retryable: false,
+            },
             TaskError::TooLarge => Self {
                 state: StandardState::Error,
                 advice: "The reply was too large to read on this device.",
@@ -295,6 +301,48 @@ impl Failure {
     #[must_use]
     pub const fn title(self) -> &'static str {
         self.state.title()
+    }
+}
+
+impl Failure {
+    /// Reads a shelf write failure the way a reader would.
+    ///
+    /// The companion to [`Failure::of`], for the other error type an
+    /// application can be handed. [`StoreError`]'s own `Display` is a
+    /// diagnostic fragment, so an application that puts it on screen shows a
+    /// sentence starting in lower case that names none of the things the
+    /// person could do about it.
+    ///
+    /// None of these is retryable. A full card and a rejected key are both the
+    /// same the second time, and the two that are not the application's fault
+    /// still need a human to clear space.
+    #[must_use]
+    pub const fn storing(error: StoreError) -> Self {
+        match error {
+            StoreError::NoRoom | StoreError::TooFull => Self {
+                state: StandardState::Error,
+                advice: "There is not enough room left on this reader. \
+                         Delete something and try again.",
+                retryable: false,
+            },
+            StoreError::Unwritable => Self {
+                state: StandardState::Error,
+                advice: "This reader would not save the file.",
+                retryable: false,
+            },
+            StoreError::Missing => Self {
+                state: StandardState::Empty,
+                advice: "That file is no longer on this reader.",
+                retryable: false,
+            },
+            // Reachable only from a name the application itself built, so it
+            // is a bug in the application rather than anything the reader did.
+            StoreError::BadKey => Self {
+                state: StandardState::Error,
+                advice: "This application asked for a file name the reader will not accept.",
+                retryable: false,
+            },
+        }
     }
 }
 
@@ -671,14 +719,16 @@ impl ScreenBuilder {
     /// of white beneath them: correct for reading, wrong for a page with six
     /// words on it. The splash centres itself in the room that is left after
     /// whatever is chained on, so a recovery button still lands under it.
+    ///
+    /// No banner. This used to raise one as well, which put two reports of one
+    /// event on the same empty page, the banner being the vaguer of the two:
+    /// "Access is not available" in a grey strip above "Permission needed" set
+    /// large in the middle. A banner is for a failure that has to sit over
+    /// content the reader is already looking at, and this is the case where
+    /// there is none.
     #[must_use]
     pub fn standard_state(self, state: StandardState, message: impl Into<String>) -> Self {
-        let builder = if let Some(banner) = state.banner() {
-            self.banner(BannerLevel::Attention, banner)
-        } else {
-            self
-        };
-        builder.splash(Some(state.glyph()), state.title(), message)
+        self.splash(Some(state.glyph()), state.title(), message)
     }
 
     #[must_use]
@@ -2877,6 +2927,25 @@ impl Device<'_> {
         self.request(DeviceRequest::ReadBattery);
     }
 
+    /// Asks for everything the gauge publishes: health, wear, temperature,
+    /// voltage, current and time remaining.
+    ///
+    /// Ask this when a reader has opened a screen about the battery and is
+    /// looking at it. Every field comes back optional, because these are a
+    /// vendor driver's choice rather than a kernel guarantee, so show what
+    /// arrives rather than reserving space for what might.
+    pub fn read_battery_detail(&mut self) {
+        self.request(DeviceRequest::ReadBatteryDetail);
+    }
+
+    /// Asks where the magnet is now.
+    ///
+    /// Changes arrive on their own through [`KoboApp::on_cover_change`]. This
+    /// is for the screen that has just opened and has no state to change from.
+    pub fn read_cover(&mut self) {
+        self.request(DeviceRequest::ReadCover);
+    }
+
     /// Asks to keep Wi-Fi associated for at most `duration`.
     ///
     /// Use this for a dashboard that must stay reachable. It is the most
@@ -3134,6 +3203,17 @@ pub trait KoboApp {
     ) {
     }
 
+    /// A magnet arrived at, or left, the reader's hall sensor.
+    ///
+    /// The sensor is behind one edge of the bezel and is what a sleep cover
+    /// closes against, but it cannot tell a cover from any other magnet, so
+    /// this reports what was measured rather than what it might mean.
+    ///
+    /// Only changes arrive, and only real ones: the sensor bounces while a
+    /// magnet is moved slowly past it, and the runtime settles that before
+    /// telling anyone. Ask [`Device::read_cover`] for the state to start from.
+    fn on_cover_change(&mut self, _context: &mut Context, _magnet_present: bool) {}
+
     /// Receives the outcome of exactly one earlier [`Context::spawn`].
     ///
     /// Like device results, a task always reports back, including when it fails
@@ -3318,6 +3398,14 @@ impl<A: KoboApp> AppRunner<A> {
 
     pub fn exit(&mut self) -> Vec<Command> {
         self.dispatch(KoboApp::on_exit)
+    }
+
+    /// Delivers one hall-sensor change.
+    ///
+    /// Unlike a device answer this is not matched to anything outstanding,
+    /// because nothing asked for it.
+    pub fn cover_changed(&mut self, magnet_present: bool) -> Vec<Command> {
+        self.dispatch(|app, context| app.on_cover_change(context, magnet_present))
     }
 
     /// Delivers one device answer, matched to the request that produced it.
@@ -3529,10 +3617,15 @@ impl<A: KoboApp> AppRunner<A> {
 pub enum ClientEvent {
     Action(ActionId),
     Device(DeviceResult),
-    Task { task: TaskId, outcome: TaskOutcome },
+    Task {
+        task: TaskId,
+        outcome: TaskOutcome,
+    },
     Store(StoreResult),
     Lifecycle(Lifecycle),
     Shell(ShellEvent),
+    /// A magnet arrived at, or left, the hall sensor. Unsolicited.
+    CoverChanged(bool),
     Exit,
 }
 
@@ -3713,6 +3806,9 @@ impl Client {
             Message::StoreResult(result) => Ok(ClientEvent::Store(result)),
             Message::Lifecycle(state) => Ok(ClientEvent::Lifecycle(state)),
             Message::ShellEvent(event) => Ok(ClientEvent::Shell(event)),
+            Message::CoverChanged { magnet_present } => {
+                Ok(ClientEvent::CoverChanged(magnet_present))
+            }
             Message::Exit => Ok(ClientEvent::Exit),
             _ => Err(ClientError::UnexpectedMessage),
         }
@@ -4247,7 +4343,16 @@ mod tests {
             .offline_state("Reconnect, then try again.")
             .button("retry", "Try again")
             .build();
-        assert!(matches!(state.nodes.first(), Some(Node::Banner { .. })));
+        // A splash and nothing above it. A banner here would be a second,
+        // vaguer report of the event the splash already names.
+        assert!(matches!(state.nodes.first(), Some(Node::Splash { .. })));
+        assert!(
+            !state
+                .nodes
+                .iter()
+                .any(|node| matches!(node, Node::Banner { .. })),
+            "a whole-screen state reports once"
+        );
         // A splash rather than a heading: the title is centred in the room
         // that is left, and the button chained after it still lands under it.
         assert!(state
@@ -4811,6 +4916,9 @@ pub fn run_on<A: KoboApp>(name: &str, app: A, socket: &Path) -> Result<(), Clien
                 ClientEvent::Shell(event) => {
                     client.send_commands(runner.shell_event(event))?;
                 }
+                ClientEvent::CoverChanged(present) => {
+                    client.send_commands(runner.cover_changed(present))?;
+                }
                 ClientEvent::Action(_) | ClientEvent::Exit => break,
             }
         }
@@ -4826,6 +4934,7 @@ pub fn run_on<A: KoboApp>(name: &str, app: A, socket: &Path) -> Result<(), Clien
             ClientEvent::Store(result) => runner.store_result(result),
             ClientEvent::Lifecycle(state) => runner.lifecycle(state),
             ClientEvent::Shell(event) => runner.shell_event(event),
+            ClientEvent::CoverChanged(present) => runner.cover_changed(present),
             ClientEvent::Exit => {
                 // The runtime is taking the screen back. Give the application
                 // its exit callback, then go, rather than arguing about it.

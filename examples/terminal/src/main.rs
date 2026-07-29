@@ -432,6 +432,7 @@ mod tests {
             signal: kobo_ui::Signal::Fair,
             battery: Some(kobo_ui::Percent::new(41)),
             charging: false,
+            bluetooth: false,
         };
         let chrome = Chrome::with_back(true).with_status(status);
         let drawn = screen.layout_with(&CLARA_BW_METRICS, &chrome);

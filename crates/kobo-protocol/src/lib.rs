@@ -309,6 +309,18 @@ pub enum TaskOutcome {
 pub enum TaskError {
     /// The application does not hold the capability the task requires.
     Denied,
+    /// The task named a credential this reader has no key for.
+    ///
+    /// Separate from [`TaskError::Denied`] because the application is not at
+    /// fault and nothing it can do will fix it. It asked for the right key by
+    /// the right name and was allowed to; the key is simply not on the device
+    /// yet. The answer is to install one, which is a thing the person holding
+    /// the reader does once, not a thing the code retries.
+    ///
+    /// Kept apart from the capability refusal so that the two do not share a
+    /// sentence. "The application does not hold this permission" is actively
+    /// misleading when the truth is that a file is missing.
+    NoCredential,
     /// This reader has no network at all.
     ///
     /// Separate from [`TaskError::Unreachable`] because the two need opposite
@@ -340,7 +352,9 @@ impl TaskError {
     /// [`TaskError::Denied`] is not here because a permission does not appear
     /// on the second ask, and neither is [`TaskError::TooLarge`], because the
     /// response will be the same size next time. [`TaskError::NotFound`] is a
-    /// real answer from a host that is working.
+    /// real answer from a host that is working. [`TaskError::NoCredential`] is
+    /// not here for the same reason as `Denied`: a key does not install itself
+    /// between two attempts three seconds apart.
     #[must_use]
     pub const fn worth_retrying(self) -> bool {
         matches!(self, Self::Offline | Self::Unreachable | Self::TimedOut)
@@ -351,6 +365,7 @@ impl fmt::Display for TaskError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::Denied => "the application does not hold this permission",
+            Self::NoCredential => "this reader has no key for that service",
             Self::Offline => "this reader is not on a network",
             Self::Unreachable => "the host did not answer",
             Self::TooLarge => "the response was larger than the limit the task declared",
@@ -427,6 +442,20 @@ pub enum Message {
     ShellRequest(ShellRequest),
     /// The runtime reporting what the program on that terminal did.
     ShellEvent(ShellEvent),
+    /// The hall sensor changed: a magnet arrived, or left.
+    ///
+    /// Unsolicited, and therefore not a [`DeviceResult`]. Device answers are
+    /// matched to the request that produced them and one with nothing
+    /// outstanding is dropped, which is right for answers and wrong for
+    /// something the world did on its own. This is the same shape as
+    /// [`Message::Lifecycle`]: the runtime saying what changed, unprompted.
+    ///
+    /// Only changes are sent. The sensor bounces while a magnet is moved past
+    /// it slowly, and an application acting on every edge would act several
+    /// times for one deliberate gesture.
+    CoverChanged {
+        magnet_present: bool,
+    },
     /// Hands a decoded picture to the runtime, to be referred to afterwards by
     /// `handle`.
     ///
@@ -729,6 +758,20 @@ pub fn is_cache_key(key: &str) -> bool {
 pub enum DeviceRequest {
     /// Report battery percentage and whether the device is charging.
     ReadBattery,
+    /// Everything the gauge publishes, for a screen that shows it.
+    ///
+    /// Separate from [`DeviceRequest::ReadBattery`], which every session makes
+    /// for the mark in the status band and which policy consults before
+    /// granting expensive work. That one has to stay two numbers the kernel
+    /// answers instantly. This one reads ten files and is asked only when
+    /// somebody has opened a battery screen and is looking at it.
+    ReadBatteryDetail,
+    /// Asks where the magnet is now.
+    ///
+    /// An application is told about changes without asking, but a change is
+    /// only useful to something that knows the state it changed from. This is
+    /// how a screen that has just opened finds that out.
+    ReadCover,
     /// Keep Wi-Fi associated for at most this many seconds.
     HoldWifi { seconds: u32 },
     /// Release a Wi-Fi hold early.
@@ -785,6 +828,83 @@ pub enum DeviceRequest {
     SetAudioVolume { percent: u8 },
 }
 
+/// Everything the gauge publishes that is worth putting in front of a reader.
+///
+/// Separate from the two fields in [`DeviceResult::Battery`] because the two
+/// have different jobs. That one is read on every session for the mark in the
+/// status band and for the policy rule about expensive work on a low battery,
+/// so it stays what the kernel can answer instantly. This is read only when
+/// somebody has opened a battery screen and asked.
+///
+/// Every field is optional. These readings are a vendor driver's choice, not a
+/// kernel guarantee: the Clara BW publishes all of them and another reader may
+/// publish half. A field that is missing is left out of the screen rather than
+/// shown as zero, for the same reason an unreadable gauge draws no mark.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct BatteryDetail {
+    /// Charge remaining, 0 to 100.
+    pub percent: Option<u8>,
+    /// `Charging`, `Discharging`, `Full`, `Not charging`.
+    pub status: Option<String>,
+    /// The driver's own verdict: `Good`, `Overheat`, `Cold`, and so on.
+    pub health: Option<String>,
+    /// `Li-ion` and friends.
+    pub technology: Option<String>,
+    /// Tenths of a degree Celsius, as the kernel reports it.
+    pub decidegrees: Option<i32>,
+    /// Microvolts across the pack.
+    pub microvolts: Option<i32>,
+    /// Microamps. Negative while discharging, positive while charging.
+    pub microamps: Option<i32>,
+    /// Microamp-hours currently held.
+    pub charge_now: Option<i32>,
+    /// Microamp-hours the pack holds today when full.
+    pub charge_full: Option<i32>,
+    /// Microamp-hours it held when new. Together with `charge_full` this is
+    /// the only honest measure of how worn the battery is.
+    pub charge_full_design: Option<i32>,
+}
+
+impl BatteryDetail {
+    /// How much of the original capacity the pack still holds, 0 to 100.
+    ///
+    /// `None` when either figure is missing or the design capacity is zero,
+    /// rather than a percentage computed from a divisor nobody supplied.
+    #[must_use]
+    pub fn health_percent(&self) -> Option<u8> {
+        let (full, design) = (self.charge_full?, self.charge_full_design?);
+        if design <= 0 || full <= 0 {
+            return None;
+        }
+        let percent = i64::from(full) * 100 / i64::from(design);
+        Some(u8::try_from(percent.clamp(0, 100)).unwrap_or(0))
+    }
+
+    /// Whole minutes until empty at the current draw, or until full.
+    ///
+    /// `None` when the pack is idle or the current is not published, because
+    /// dividing by a current of zero gives an estimate of forever and showing
+    /// that is worse than showing nothing.
+    #[must_use]
+    pub fn minutes_remaining(&self) -> Option<u32> {
+        let current = self.microamps?;
+        if current == 0 {
+            return None;
+        }
+        let held = self.charge_now?;
+        let charge = if current > 0 {
+            i64::from(self.charge_full?.saturating_sub(held))
+        } else {
+            i64::from(held)
+        };
+        if charge <= 0 {
+            return None;
+        }
+        let minutes = charge * 60 / i64::from(current.abs());
+        u32::try_from(minutes).ok()
+    }
+}
+
 /// The runtime's answer to a device request.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DeviceResult {
@@ -794,6 +914,16 @@ pub enum DeviceResult {
     Granted { seconds: u32 },
     /// Battery state.
     Battery { percent: u8, charging: bool },
+    /// Everything the gauge publishes. See [`BatteryDetail`].
+    BatteryDetail(BatteryDetail),
+    /// Where the magnet is, and whether this reader can tell.
+    ///
+    /// `available` is false on a reader with no hall sensor, which is a
+    /// different answer from a sensor that reports no magnet.
+    Cover {
+        available: bool,
+        magnet_present: bool,
+    },
     /// Front light state.
     Frontlight { percent: u8 },
     /// Bluetooth controller state and the bounded set currently known.
@@ -1158,6 +1288,7 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
             Lifecycle::Foreground => 0,
             Lifecycle::Background => 1,
         }),
+        Message::CoverChanged { magnet_present } => payload.push(u8::from(*magnet_present)),
     }
     debug_assert_eq!(payload.len(), payload_len);
     let mut bytes = Vec::with_capacity(HEADER_LEN + payload.len());
@@ -1623,6 +1754,7 @@ fn encoded_message_layout(message: &Message) -> Result<(u8, usize), ProtocolErro
             Ok((21, 8 + grey.len()))
         }
         Message::CommitPicture { .. } => Ok((22, 4)),
+        Message::CoverChanged { .. } => Ok((23, 1)),
     }
 }
 
@@ -1639,6 +1771,8 @@ fn encode_device_request(
 ) -> Result<(), ProtocolError> {
     match request {
         DeviceRequest::ReadBattery => fixed_device_request(output, 1, 0),
+        DeviceRequest::ReadBatteryDetail => output.push(29),
+        DeviceRequest::ReadCover => output.push(30),
         DeviceRequest::HoldWifi { seconds } => fixed_device_request(output, 2, *seconds),
         DeviceRequest::ReleaseWifi => fixed_device_request(output, 3, 0),
         DeviceRequest::KeepAwake { seconds } => fixed_device_request(output, 4, *seconds),
@@ -1739,6 +1873,45 @@ fn device_result_len(result: &DeviceResult) -> Result<usize, ProtocolError> {
     Ok(encoded.len())
 }
 
+/// The gauge readings, written as a run of optional fields in a fixed order.
+/// Encoder and decoder sit next to each other so the order stays one fact.
+fn push_battery_detail(output: &mut Vec<u8>, detail: &BatteryDetail) -> Result<(), ProtocolError> {
+    push_optional_u8(output, detail.percent);
+    for text in [&detail.status, &detail.health, &detail.technology] {
+        push_optional_string(output, text.as_deref())?;
+    }
+    for value in [
+        detail.decidegrees,
+        detail.microvolts,
+        detail.microamps,
+        detail.charge_now,
+        detail.charge_full,
+        detail.charge_full_design,
+    ] {
+        push_optional_i32(output, value);
+    }
+    Ok(())
+}
+
+fn battery_detail(reader: &mut Reader<'_>) -> Result<BatteryDetail, ProtocolError> {
+    let percent = reader.optional_u8()?;
+    if percent.is_some_and(|percent| percent > 100) {
+        return Err(ProtocolError::InvalidValue("battery percent"));
+    }
+    Ok(BatteryDetail {
+        percent,
+        status: reader.optional_string()?,
+        health: reader.optional_string()?,
+        technology: reader.optional_string()?,
+        decidegrees: reader.optional_i32()?,
+        microvolts: reader.optional_i32()?,
+        microamps: reader.optional_i32()?,
+        charge_now: reader.optional_i32()?,
+        charge_full: reader.optional_i32()?,
+        charge_full_design: reader.optional_i32()?,
+    })
+}
+
 fn push_radio_string(output: &mut Vec<u8>, value: &str) -> Result<(), ProtocolError> {
     if value.len() > MAX_RADIO_NAME {
         return Err(ProtocolError::InvalidValue("radio string"));
@@ -1796,6 +1969,8 @@ fn decode_device_request(reader: &mut Reader<'_>) -> Result<DeviceRequest, Proto
     let tag = reader.u8()?;
     match tag {
         1 => fixed_argument(reader, 0).map(|()| DeviceRequest::ReadBattery),
+        29 => Ok(DeviceRequest::ReadBatteryDetail),
+        30 => Ok(DeviceRequest::ReadCover),
         2 => Ok(DeviceRequest::HoldWifi {
             seconds: reader.u32()?,
         }),
@@ -1910,6 +2085,14 @@ fn encode_device_result(output: &mut Vec<u8>, result: &DeviceResult) -> Result<(
             output.push(*percent);
             output.push(u8::from(*charging));
         }
+        DeviceResult::BatteryDetail(detail) => {
+            output.push(10);
+            push_battery_detail(output, detail)?;
+        }
+        DeviceResult::Cover {
+            available,
+            magnet_present,
+        } => output.extend_from_slice(&[11, u8::from(*available), u8::from(*magnet_present)]),
         DeviceResult::Frontlight { percent } => {
             output.push(4);
             output.push(*percent);
@@ -2005,6 +2188,11 @@ fn decode_device_result(reader: &mut Reader<'_>) -> Result<DeviceResult, Protoco
             };
             Ok(DeviceResult::Battery { percent, charging })
         }
+        10 => battery_detail(reader).map(DeviceResult::BatteryDetail),
+        11 => Ok(DeviceResult::Cover {
+            available: read_boolean(reader, "cover sensor available")?,
+            magnet_present: read_boolean(reader, "cover magnet present")?,
+        }),
         4 => {
             let percent = reader.u8()?;
             if percent > 100 {
@@ -2815,6 +3003,9 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
         22 => Message::CommitPicture {
             handle: PictureHandle(reader.u32()?),
         },
+        23 => Message::CoverChanged {
+            magnet_present: read_boolean(&mut reader, "cover magnet present")?,
+        },
         value => return Err(ProtocolError::UnknownMessageType(value)),
     };
     if !reader.is_finished() {
@@ -3624,6 +3815,9 @@ const fn encode_glyph(glyph: Glyph) -> u8 {
         Glyph::Globe => 26,
         Glyph::Refresh => 27,
         Glyph::More => 28,
+        Glyph::Bluetooth => 29,
+        Glyph::Key => 30,
+        Glyph::Magnet => 31,
     }
 }
 
@@ -3658,6 +3852,9 @@ const fn decode_glyph(tag: u8) -> Option<Glyph> {
         26 => Glyph::Globe,
         27 => Glyph::Refresh,
         28 => Glyph::More,
+        29 => Glyph::Bluetooth,
+        30 => Glyph::Key,
+        31 => Glyph::Magnet,
 
         _ => return None,
     })
@@ -4417,9 +4614,38 @@ fn push_u32(output: &mut Vec<u8>, value: u32) {
     output.extend_from_slice(&value.to_be_bytes());
 }
 
+/// A present flag then the value, which is how every optional field on the
+/// wire is written. Three small helpers rather than one generic one, because
+/// the alternative is a trait bound to read for the sake of nine call sites.
+fn push_optional_u8(output: &mut Vec<u8>, value: Option<u8>) {
+    output.push(u8::from(value.is_some()));
+    output.push(value.unwrap_or(0));
+}
+
+fn push_optional_i32(output: &mut Vec<u8>, value: Option<i32>) {
+    output.push(u8::from(value.is_some()));
+    output.extend_from_slice(&value.unwrap_or(0).to_be_bytes());
+}
+
+fn push_optional_string(output: &mut Vec<u8>, text: Option<&str>) -> Result<(), ProtocolError> {
+    match text {
+        None => {
+            output.push(0);
+            Ok(())
+        }
+        Some(text) => {
+            output.push(1);
+            push_string(output, text)
+        }
+    }
+}
+
 fn push_u64(output: &mut Vec<u8>, value: u64) {
     output.extend_from_slice(&value.to_be_bytes());
 }
+
+/// What a present flag is called when it decodes to something other than 0 or 1.
+const PRESENT: &str = "optional field flag";
 
 struct Reader<'a> {
     bytes: &'a [u8],
@@ -4456,6 +4682,27 @@ impl<'a> Reader<'a> {
     fn u32(&mut self) -> Result<u32, ProtocolError> {
         let bytes = self.take(4)?;
         Ok(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    }
+
+    fn optional_u8(&mut self) -> Result<Option<u8>, ProtocolError> {
+        let present = read_boolean(self, PRESENT)?;
+        let value = self.u8()?;
+        Ok(present.then_some(value))
+    }
+
+    fn optional_i32(&mut self) -> Result<Option<i32>, ProtocolError> {
+        let present = read_boolean(self, PRESENT)?;
+        let bytes = self.take(4)?;
+        let value = i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        Ok(present.then_some(value))
+    }
+
+    fn optional_string(&mut self) -> Result<Option<String>, ProtocolError> {
+        if read_boolean(self, PRESENT)? {
+            self.string().map(Some)
+        } else {
+            Ok(None)
+        }
     }
 
     fn u64(&mut self) -> Result<u64, ProtocolError> {
@@ -4565,6 +4812,8 @@ mod tests {
             },
             DeviceRequest::StopAudio,
             DeviceRequest::SetAudioVolume { percent: 65 },
+            DeviceRequest::ReadBatteryDetail,
+            DeviceRequest::ReadCover,
         ];
         for request in requests {
             let frame = Frame {
@@ -4625,6 +4874,27 @@ mod tests {
                 volume: 70,
             },
             DeviceResult::Failed(DeviceError::Authentication),
+            DeviceResult::BatteryDetail(BatteryDetail {
+                percent: Some(28),
+                status: Some("Discharging".to_owned()),
+                health: Some("Good".to_owned()),
+                technology: Some("Li-ion".to_owned()),
+                decidegrees: Some(290),
+                microvolts: Some(3_720_000),
+                microamps: Some(-180_000),
+                charge_now: Some(420_000),
+                charge_full: Some(1_480_000),
+                charge_full_design: Some(1_500_000),
+            }),
+            DeviceResult::BatteryDetail(BatteryDetail::default()),
+            DeviceResult::Cover {
+                available: true,
+                magnet_present: true,
+            },
+            DeviceResult::Cover {
+                available: false,
+                magnet_present: false,
+            },
         ];
         for result in results {
             let frame = Frame {
@@ -5650,6 +5920,12 @@ mod store_tests {
             Message::StoreResult(StoreResult::Denied(StoreError::BadKey)),
             Message::Lifecycle(Lifecycle::Foreground),
             Message::Lifecycle(Lifecycle::Background),
+            Message::CoverChanged {
+                magnet_present: true,
+            },
+            Message::CoverChanged {
+                magnet_present: false,
+            },
             Message::ShellRequest(ShellRequest::Open {
                 columns: 53,
                 rows: 20,
@@ -5852,6 +6128,7 @@ const fn encode_task_error(error: TaskError) -> u8 {
         // them would make a new daemon and an older app disagree about what
         // went wrong without either of them noticing.
         TaskError::Offline => 5,
+        TaskError::NoCredential => 6,
     }
 }
 
@@ -5863,6 +6140,7 @@ const fn decode_task_error(tag: u8) -> Result<TaskError, ProtocolError> {
         3 => TaskError::TimedOut,
         4 => TaskError::NotFound,
         5 => TaskError::Offline,
+        6 => TaskError::NoCredential,
         _ => return Err(ProtocolError::InvalidValue("task error")),
     })
 }
@@ -5874,6 +6152,7 @@ mod task_error_tests {
     /// Every variant, so that adding one without a tag fails here.
     const EVERY: &[TaskError] = &[
         TaskError::Denied,
+        TaskError::NoCredential,
         TaskError::Offline,
         TaskError::Unreachable,
         TaskError::TooLarge,
@@ -5910,12 +6189,26 @@ mod task_error_tests {
         assert_eq!(encode_task_error(TaskError::TooLarge), 2);
         assert_eq!(encode_task_error(TaskError::TimedOut), 3);
         assert_eq!(encode_task_error(TaskError::NotFound), 4);
+        assert_eq!(encode_task_error(TaskError::Offline), 5);
+        assert_eq!(encode_task_error(TaskError::NoCredential), 6);
+    }
+
+    /// The two refusals have to stay distinguishable in words as well as on
+    /// the wire. A missing key blamed on the application sends whoever is
+    /// holding the reader looking in entirely the wrong place.
+    #[test]
+    fn a_missing_key_and_a_refused_permission_do_not_share_a_sentence() {
+        let denied = TaskError::Denied.to_string();
+        let absent = TaskError::NoCredential.to_string();
+        assert_ne!(denied, absent);
+        assert!(absent.contains("key"), "{absent}");
+        assert!(!TaskError::NoCredential.worth_retrying());
     }
 
     #[test]
     fn a_tag_from_the_future_is_refused_rather_than_guessed() {
         assert_eq!(
-            decode_task_error(6),
+            decode_task_error(7),
             Err(ProtocolError::InvalidValue("task error"))
         );
         assert_eq!(

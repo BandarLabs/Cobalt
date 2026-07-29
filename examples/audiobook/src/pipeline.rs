@@ -168,10 +168,11 @@ pub fn speech(text: &str) -> Task {
 }
 
 pub fn parse_book(response: &[u8]) -> Result<Book, &'static str> {
-    let response = std::str::from_utf8(response).map_err(|_| "OpenAI returned non-text data")?;
-    let envelope = parse(response).map_err(|_| "OpenAI returned invalid JSON")?;
-    let text = response_text(&envelope).ok_or("OpenAI returned no script")?;
-    let script = parse(text).map_err(|_| "OpenAI returned an invalid script")?;
+    let response = std::str::from_utf8(response)
+        .map_err(|_| "The script came back in a form this reader cannot read.")?;
+    let envelope = parse(response).map_err(|_| "The script came back malformed.")?;
+    let text = response_text(&envelope).ok_or("No script came back for that topic.")?;
+    let script = parse(text).map_err(|_| "The script came back malformed.")?;
     let title = string(&script, "title")?;
     let summary = string(&script, "summary")?;
     let chapters = script
@@ -189,7 +190,7 @@ pub fn parse_book(response: &[u8]) -> Result<Book, &'static str> {
         .take(5)
         .collect::<Vec<_>>();
     if chapters.len() < 3 {
-        return Err("OpenAI returned too few usable chapters");
+        return Err("That topic did not yield enough material for an audiobook.");
     }
     Ok(Book {
         title,
@@ -208,11 +209,12 @@ pub fn narration_parts(book: &Book) -> Vec<String> {
 }
 
 fn research_context(response: &[u8]) -> Result<String, &'static str> {
-    let text = std::str::from_utf8(response).map_err(|_| "Exa returned non-text data")?;
-    let parsed = parse(text).map_err(|_| "Exa returned invalid JSON")?;
+    let text = std::str::from_utf8(response)
+        .map_err(|_| "The research came back in a form this reader cannot read.")?;
+    let parsed = parse(text).map_err(|_| "The research came back malformed.")?;
     let output = parsed
         .get("output")
-        .ok_or("Exa returned no research output")?;
+        .ok_or("No sources were found for that topic.")?;
     let mut context = output.to_json();
     if let Some(grounding) = parsed.get("results") {
         context.push_str("\nSearch results: ");

@@ -56,6 +56,14 @@ pub enum Capability {
     Notifications,
     /// Read and write files in a shared, user-visible folder.
     SharedFiles,
+    /// Watch the hall sensor behind the bezel: whether a magnet is near it,
+    /// and when that changes.
+    ///
+    /// Cheap and passive, but still asked for, because a stream of edges from
+    /// this sensor is a record of every time the reader opened or closed the
+    /// cover. That is a use pattern, and an application should have to say it
+    /// wants one.
+    CoverSensor,
     /// Run a program on a terminal the runtime owns.
     ///
     /// This is the most dangerous capability in the system and is deliberately
@@ -89,6 +97,7 @@ impl Capability {
             Self::SleepScreen => "sleep-screen",
             Self::Notifications => "notifications",
             Self::SharedFiles => "shared-files",
+            Self::CoverSensor => "cover-sensor",
             Self::Shell => "shell",
         }
     }
@@ -104,7 +113,7 @@ impl Capability {
     }
 
     /// Every capability, in declaration order.
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
         Self::Network,
         Self::BackgroundNetwork,
         Self::HoldWifi,
@@ -119,6 +128,7 @@ impl Capability {
         Self::SleepScreen,
         Self::Notifications,
         Self::SharedFiles,
+        Self::CoverSensor,
         Self::Shell,
     ];
 

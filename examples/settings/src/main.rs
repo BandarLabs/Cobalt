@@ -2,13 +2,14 @@
 
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, ActionId, BluetoothDevice, Context, DeviceRequest, DeviceResult, Glyph, KoboApp,
-    RowLead, Screen, ScreenBuilder, Task, TaskId, TaskOutcome, WifiNetwork,
+    action_id, ActionId, BatteryDetail, BluetoothDevice, Context, DeviceRequest, DeviceResult,
+    Glyph, KoboApp, RowLead, Screen, ScreenBuilder, Task, TaskId, TaskOutcome, WifiNetwork,
 };
 use std::process::ExitCode;
 
 const BLUETOOTH: &str = "bluetooth";
 const WIFI: &str = "wifi";
+const BATTERY: &str = "battery";
 const TOGGLE: &str = "toggle";
 const RESCAN: &str = "rescan";
 const MORE: &str = "more";
@@ -29,6 +30,7 @@ enum View {
     Bluetooth,
     Wifi,
     WifiPassword,
+    Battery,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -60,6 +62,40 @@ enum Pending {
     ConnectAfterPair(String),
 }
 
+/// Which row a failure belongs to.
+///
+/// One shared trouble string was the bug: a Wi-Fi read that failed raised a
+/// banner on every screen, so "not supported by this runtime on this hardware"
+/// appeared under the Battery row, and any later successful read cleared it.
+/// A failure is now shown by the thing that failed and by nothing else.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Topic {
+    Bluetooth,
+    Wifi,
+    Battery,
+}
+
+impl Topic {
+    fn of(request: &DeviceRequest) -> Option<Self> {
+        match request {
+            DeviceRequest::ReadBluetooth
+            | DeviceRequest::SetBluetooth { .. }
+            | DeviceRequest::ScanBluetooth
+            | DeviceRequest::PairBluetooth { .. }
+            | DeviceRequest::ConnectBluetooth { .. }
+            | DeviceRequest::DisconnectBluetooth { .. }
+            | DeviceRequest::ForgetBluetooth { .. } => Some(Self::Bluetooth),
+            DeviceRequest::ReadWifi
+            | DeviceRequest::SetWifi { .. }
+            | DeviceRequest::ScanWifi
+            | DeviceRequest::JoinWifi { .. }
+            | DeviceRequest::DisconnectWifi => Some(Self::Wifi),
+            DeviceRequest::ReadBattery | DeviceRequest::ReadBatteryDetail => Some(Self::Battery),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Default)]
 struct Settings {
     view: View,
@@ -72,9 +108,10 @@ struct Settings {
     wifi_page: usize,
     selected_ssid: Option<String>,
     password: Keyboard,
+    battery: Option<BatteryDetail>,
     pending: Option<Pending>,
     delayed: Option<TaskId>,
-    trouble: Option<String>,
+    trouble: Option<(Topic, String)>,
 }
 
 impl Settings {
@@ -84,6 +121,7 @@ impl Settings {
             View::Bluetooth => self.bluetooth(),
             View::Wifi => self.wifi(),
             View::WifiPassword => self.wifi_password(),
+            View::Battery => self.battery(),
         };
         context.set_screen(screen);
     }
@@ -107,7 +145,7 @@ impl Settings {
             (RadioState::On, None) => "On · Not connected".to_owned(),
             (RadioState::Off, _) => "Off".to_owned(),
         };
-        let mut screen = ScreenBuilder::new("settings")
+        let screen = ScreenBuilder::new("settings")
             .top_bar("Settings")
             .heading("Connections")
             .rows([
@@ -115,13 +153,17 @@ impl Settings {
                     BLUETOOTH,
                     "Bluetooth",
                     bluetooth,
-                    RowLead::from(Glyph::Settings),
+                    RowLead::from(Glyph::Bluetooth),
                 ),
                 (WIFI, "Wi-Fi", wifi, RowLead::from(Glyph::Wifi)),
-            ]);
-        if let Some(trouble) = &self.trouble {
-            screen = screen.banner(kobo_sdk::BannerLevel::Attention, trouble.clone());
-        }
+            ])
+            .section("Device")
+            .rows([(
+                BATTERY,
+                "Battery",
+                self.battery_summary(),
+                RowLead::from(Glyph::Battery),
+            )]);
         screen.build()
     }
 
@@ -145,8 +187,8 @@ impl Settings {
                     "Turn Bluetooth on"
                 },
             );
-        if let Some(trouble) = &self.trouble {
-            screen = screen.banner(kobo_sdk::BannerLevel::Attention, trouble.clone());
+        if let Some(trouble) = self.banner_for(Topic::Bluetooth) {
+            screen = screen.banner(kobo_sdk::BannerLevel::Attention, trouble);
         }
         if self.bluetooth_state.enabled() {
             if self.devices.is_empty() {
@@ -212,8 +254,8 @@ impl Settings {
                     "Turn Wi-Fi on"
                 },
             );
-        if let Some(trouble) = &self.trouble {
-            screen = screen.banner(kobo_sdk::BannerLevel::Attention, trouble.clone());
+        if let Some(trouble) = self.banner_for(Topic::Wifi) {
+            screen = screen.banner(kobo_sdk::BannerLevel::Attention, trouble);
         }
         if self.wifi_state.enabled() {
             if let Some(ssid) = &self.connected_ssid {
@@ -259,8 +301,8 @@ impl Settings {
 
     fn wifi_password(&self) -> Screen {
         let count = self.password.text().chars().count();
-        let guidance = if let Some(trouble) = &self.trouble {
-            trouble.clone()
+        let guidance = if let Some(trouble) = self.banner_for(Topic::Wifi) {
+            trouble
         } else if count == 0 {
             "Type the network password.".to_owned()
         } else {
@@ -280,9 +322,89 @@ impl Settings {
             .build()
     }
 
+    /// The banner for one topic, and nothing when the trouble belongs to
+    /// another row.
+    fn banner_for(&self, topic: Topic) -> Option<String> {
+        self.trouble
+            .as_ref()
+            .filter(|(owner, _)| *owner == topic)
+            .map(|(_, message)| message.clone())
+    }
+
+    fn battery_summary(&self) -> String {
+        let Some(detail) = &self.battery else {
+            return "Reading".to_owned();
+        };
+        let charge = detail
+            .percent
+            .map_or_else(|| "Unknown".to_owned(), |percent| format!("{percent}%"));
+        detail.status.as_ref().map_or(charge.clone(), |status| {
+            if detail.percent.is_some() {
+                format!("{charge} · {status}")
+            } else {
+                status.clone()
+            }
+        })
+    }
+
+    /// Only the readings this gauge actually publishes reach the screen. A
+    /// reader whose driver is thinner gets a shorter list, which is honest,
+    /// rather than a column of dashes.
+    fn battery(&self) -> Screen {
+        let mut screen = ScreenBuilder::new("settings-battery")
+            .top_bar("Battery")
+            .owns_back(true);
+        if let Some(trouble) = self.banner_for(Topic::Battery) {
+            screen = screen.banner(kobo_sdk::BannerLevel::Attention, trouble);
+        }
+        let Some(detail) = &self.battery else {
+            return screen.text("Reading the battery.").build();
+        };
+        if let Some(percent) = detail.percent {
+            screen = screen
+                .section_with_value("Charge", format!("{percent}%"))
+                .progress(percent);
+        }
+        let mut facts: Vec<(String, String)> = Vec::new();
+        let mut fact = |name: &str, value: Option<String>| {
+            if let Some(value) = value {
+                facts.push((name.to_owned(), value));
+            }
+        };
+        fact("Status", detail.status.clone());
+        fact(
+            "Time remaining",
+            detail.minutes_remaining().map(format_minutes),
+        );
+        fact("Health", detail.health.clone());
+        fact(
+            "Capacity",
+            detail
+                .health_percent()
+                .map(|percent| format!("{percent}% of new")),
+        );
+        fact("Chemistry", detail.technology.clone());
+        fact("Temperature", detail.decidegrees.map(format_temperature));
+        fact("Voltage", detail.microvolts.map(format_volts));
+        fact("Current", detail.microamps.map(format_amps));
+        fact("Charge held", detail.charge_now.map(format_charge));
+        fact("Charge when full", detail.charge_full.map(format_charge));
+        fact(
+            "Charge when new",
+            detail.charge_full_design.map(format_charge),
+        );
+        if facts.is_empty() {
+            screen = screen.text("This reader publishes nothing else about its battery.");
+        } else {
+            screen = screen.section("Details").facts(facts);
+        }
+        screen.button(RESCAN, "Read again").build()
+    }
+
     fn refresh(context: &mut Context) {
         context.device().read_bluetooth();
         context.device().read_wifi();
+        context.device().read_battery_detail();
     }
 
     fn delay_refresh(&mut self, context: &mut Context, pending: Pending) {
@@ -290,16 +412,30 @@ impl Settings {
         self.delayed = context.spawn(Task::Sleep { seconds: 3 });
     }
 
-    fn fail(&mut self, error: impl Into<String>) {
+    /// Records a failure against the row that caused it, so it is reported
+    /// once, where the reader was looking when they asked for it.
+    fn fail(&mut self, topic: Topic, error: impl Into<String>) {
         self.pending = None;
-        self.trouble = Some(error.into());
+        self.trouble = Some((topic, error.into()));
+    }
+
+    /// Clears a failure once the same row answers successfully. A Wi-Fi
+    /// success must not silence a Bluetooth failure.
+    fn settled(&mut self, topic: Topic) {
+        if self
+            .trouble
+            .as_ref()
+            .is_some_and(|(owner, _)| *owner == topic)
+        {
+            self.trouble = None;
+        }
     }
 
     fn choose_bluetooth(&mut self, context: &mut Context, index: usize) {
         let Some(device) = self.devices.get(index).cloned() else {
             return;
         };
-        self.trouble = None;
+        self.settled(Topic::Bluetooth);
         if device.connected {
             context.device().disconnect_bluetooth(device.address);
         } else if device.paired {
@@ -314,7 +450,7 @@ impl Settings {
         let Some(network) = self.networks.get(index).cloned() else {
             return;
         };
-        self.trouble = None;
+        self.settled(Topic::Wifi);
         if network.connected {
             return;
         }
@@ -350,13 +486,16 @@ impl KoboApp for Settings {
                         if let Some(ssid) = self.selected_ssid.take() {
                             context.device().join_wifi(ssid, password);
                         }
-                        self.trouble = None;
+                        self.settled(Topic::Wifi);
                         self.view = View::Wifi;
                     } else {
-                        self.trouble = Some("A Wi-Fi password must be 8–63 bytes.".to_owned());
+                        self.trouble = Some((
+                            Topic::Wifi,
+                            "A Wi-Fi password must be 8–63 bytes.".to_owned(),
+                        ));
                     }
                 } else {
-                    self.trouble = None;
+                    self.settled(Topic::Wifi);
                 }
                 self.show(context);
             }
@@ -364,7 +503,6 @@ impl KoboApp for Settings {
         }
         if action == ActionId::BACK {
             self.view = View::Home;
-            self.trouble = None;
             self.show(context);
         } else if action == action_id(BLUETOOTH) {
             self.view = View::Bluetooth;
@@ -374,13 +512,17 @@ impl KoboApp for Settings {
             self.view = View::Wifi;
             context.device().read_wifi();
             self.show(context);
+        } else if action == action_id(BATTERY) {
+            self.view = View::Battery;
+            context.device().read_battery_detail();
+            self.show(context);
         } else if action == action_id(TOGGLE) {
             match self.view {
                 View::Bluetooth => context
                     .device()
                     .set_bluetooth(!self.bluetooth_state.enabled()),
                 View::Wifi => context.device().set_wifi(!self.wifi_state.enabled()),
-                View::Home | View::WifiPassword => {}
+                View::Home | View::WifiPassword | View::Battery => {}
             }
         } else if action == action_id(RESCAN) {
             match self.view {
@@ -394,6 +536,7 @@ impl KoboApp for Settings {
                     context.device().scan_wifi();
                     self.delay_refresh(context, Pending::WifiRefresh);
                 }
+                View::Battery => context.device().read_battery_detail(),
                 View::Home | View::WifiPassword => {}
             }
             self.show(context);
@@ -406,7 +549,7 @@ impl KoboApp for Settings {
                 View::Wifi => {
                     self.wifi_page = (self.wifi_page + 1) % page_count(self.networks.len());
                 }
-                View::Home | View::WifiPassword => {}
+                View::Home | View::WifiPassword | View::Battery => {}
             }
             self.show(context);
         } else if action == action_id(DISCONNECT_WIFI) {
@@ -439,7 +582,7 @@ impl KoboApp for Settings {
                 self.bluetooth_state = RadioState::new(available, enabled);
                 self.devices = devices;
                 self.bluetooth_page %= page_count(self.devices.len());
-                self.trouble = None;
+                self.settled(Topic::Bluetooth);
                 if matches!(request, DeviceRequest::PairBluetooth { .. }) {
                     if let Some(Pending::ConnectAfterPair(address)) = self.pending.take() {
                         context.device().connect_bluetooth(address);
@@ -458,10 +601,25 @@ impl KoboApp for Settings {
                     self.networks = networks;
                     self.wifi_page %= page_count(self.networks.len());
                 }
-                self.trouble = None;
+                self.settled(Topic::Wifi);
             }
-            DeviceResult::Failed(error) => self.fail(error.to_string()),
-            DeviceResult::Denied(reason) => self.fail(reason.to_string()),
+            DeviceResult::BatteryDetail(detail) => {
+                self.battery = Some(detail);
+                self.settled(Topic::Battery);
+            }
+            // A failure belongs to whatever was asked for. When the request
+            // is not one of the three rows, there is nowhere honest to show it,
+            // so it is dropped rather than shown under an unrelated heading.
+            DeviceResult::Failed(error) => {
+                if let Some(topic) = Topic::of(&request) {
+                    self.fail(topic, error.to_string());
+                }
+            }
+            DeviceResult::Denied(reason) => {
+                if let Some(topic) = Topic::of(&request) {
+                    self.fail(topic, reason.to_string());
+                }
+            }
             DeviceResult::Done => match request {
                 DeviceRequest::ReadBluetooth
                 | DeviceRequest::SetBluetooth { .. }
@@ -480,6 +638,7 @@ impl KoboApp for Settings {
             DeviceResult::Granted { .. }
             | DeviceResult::Battery { .. }
             | DeviceResult::Frontlight { .. }
+            | DeviceResult::Cover { .. }
             | DeviceResult::Audio { .. } => {}
         }
         self.show(context);
@@ -496,7 +655,13 @@ impl KoboApp for Settings {
                 Some(Pending::WifiRefresh) => context.device().scan_wifi(),
                 Some(Pending::ConnectAfterPair(_)) | None => {}
             },
-            TaskOutcome::Failed(error) => self.fail(error.to_string()),
+            TaskOutcome::Failed(error) => {
+                let topic = match self.pending {
+                    Some(Pending::WifiRefresh) => Topic::Wifi,
+                    _ => Topic::Bluetooth,
+                };
+                self.fail(topic, error.to_string());
+            }
             TaskOutcome::Cancelled => {}
         }
         self.show(context);
@@ -505,6 +670,42 @@ impl KoboApp for Settings {
 
 fn page_count(items: usize) -> usize {
     items.div_ceil(PAGE_SIZE).max(1)
+}
+
+/// Hours and minutes, because "412 minutes" is arithmetic a reader should not
+/// have to do standing up.
+fn format_minutes(minutes: u32) -> String {
+    let (hours, rest) = (minutes / 60, minutes % 60);
+    match (hours, rest) {
+        (0, rest) => format!("{rest} min"),
+        (hours, 0) => format!("{hours} h"),
+        (hours, rest) => format!("{hours} h {rest} min"),
+    }
+}
+
+/// Tenths of a degree to one decimal place, without floating point: this
+/// codebase has none and a division plus a remainder says the same thing.
+fn format_temperature(decidegrees: i32) -> String {
+    format!("{}.{} °C", decidegrees / 10, (decidegrees % 10).abs())
+}
+
+fn format_volts(microvolts: i32) -> String {
+    let millivolts = microvolts / 1000;
+    format!(
+        "{}.{:02} V",
+        millivolts / 1000,
+        (millivolts % 1000).abs() / 10
+    )
+}
+
+/// Signed, because the sign is the reading: a negative current is the pack
+/// being drained and a positive one is it being filled.
+fn format_amps(microamps: i32) -> String {
+    format!("{} mA", microamps / 1000)
+}
+
+fn format_charge(microamp_hours: i32) -> String {
+    format!("{} mAh", microamp_hours / 1000)
 }
 
 fn main() -> ExitCode {
@@ -521,7 +722,8 @@ fn main() -> ExitCode {
 mod tests {
     use super::{RadioState, Settings, DEVICE_ACTIONS, MORE, NETWORK_ACTIONS, RESCAN};
     use kobo_sdk::{
-        action_id, BluetoothDevice, BluetoothDeviceKind, Chrome, WifiNetwork, CLARA_BW_METRICS,
+        action_id, BatteryDetail, BluetoothDevice, BluetoothDeviceKind, Chrome, WifiNetwork,
+        CLARA_BW_METRICS,
     };
 
     fn bluetooth_device(index: usize) -> BluetoothDevice {
@@ -579,10 +781,128 @@ mod tests {
         let settings = Settings {
             view: super::View::WifiPassword,
             selected_ssid: Some("A secured wireless network".to_owned()),
-            trouble: Some("A Wi-Fi password must be 8–63 bytes.".to_owned()),
+            trouble: Some((
+                super::Topic::Wifi,
+                "A Wi-Fi password must be 8–63 bytes.".to_owned(),
+            )),
             ..Settings::default()
         };
         let issues = settings.wifi_password().validate(&CLARA_BW_METRICS);
         assert!(issues.is_empty(), "{issues:?}");
+    }
+
+    #[test]
+    fn a_gauge_that_publishes_everything_still_fits_the_panel() {
+        let settings = Settings {
+            view: super::View::Battery,
+            battery: Some(BatteryDetail {
+                percent: Some(28),
+                status: Some("Discharging".to_owned()),
+                health: Some("Good".to_owned()),
+                technology: Some("Li-ion".to_owned()),
+                decidegrees: Some(290),
+                microvolts: Some(3_720_000),
+                microamps: Some(-180_000),
+                charge_now: Some(420_000),
+                charge_full: Some(1_480_000),
+                charge_full_design: Some(1_500_000),
+            }),
+            ..Settings::default()
+        };
+        let screen = settings.battery();
+        let issues = screen.validate(&CLARA_BW_METRICS);
+        assert!(issues.is_empty(), "{issues:?}");
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
+        assert!(layout.rect_of_action(action_id(RESCAN)).is_some());
+    }
+
+    /// A reader whose driver publishes almost nothing gets a short screen
+    /// rather than a column of dashes, and the button stays reachable.
+    #[test]
+    fn a_gauge_that_publishes_almost_nothing_says_so_rather_than_showing_zeroes() {
+        let settings = Settings {
+            view: super::View::Battery,
+            battery: Some(BatteryDetail {
+                percent: Some(64),
+                ..BatteryDetail::default()
+            }),
+            ..Settings::default()
+        };
+        let screen = settings.battery();
+        let issues = screen.validate(&CLARA_BW_METRICS);
+        assert!(issues.is_empty(), "{issues:?}");
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
+        assert!(layout.rect_of_action(action_id(RESCAN)).is_some());
+    }
+
+    #[test]
+    fn readings_are_formatted_the_way_somebody_standing_up_would_read_them() {
+        assert_eq!(super::format_minutes(412), "6 h 52 min");
+        assert_eq!(super::format_minutes(45), "45 min");
+        assert_eq!(super::format_minutes(120), "2 h");
+        assert_eq!(super::format_temperature(290), "29.0 °C");
+        assert_eq!(super::format_volts(3_720_000), "3.72 V");
+        assert_eq!(super::format_amps(-180_000), "-180 mA");
+        assert_eq!(super::format_charge(1_480_000), "1480 mAh");
+    }
+
+    /// Wear is the whole point of the screen, so the arithmetic behind it gets
+    /// its own test rather than being trusted because it looks right.
+    #[test]
+    fn wear_and_time_remaining_come_from_the_readings_and_not_from_guesses() {
+        let detail = BatteryDetail {
+            microamps: Some(-180_000),
+            charge_now: Some(420_000),
+            charge_full: Some(1_200_000),
+            charge_full_design: Some(1_500_000),
+            ..BatteryDetail::default()
+        };
+        assert_eq!(detail.health_percent(), Some(80));
+        assert_eq!(detail.minutes_remaining(), Some(140));
+        let idle = BatteryDetail {
+            microamps: Some(0),
+            charge_now: Some(420_000),
+            ..BatteryDetail::default()
+        };
+        assert_eq!(idle.minutes_remaining(), None);
+        assert_eq!(BatteryDetail::default().health_percent(), None);
+    }
+
+    /// The bug this pins: a Wi-Fi failure used to raise a banner on every
+    /// screen, so "not supported by this runtime on this hardware" appeared
+    /// under the Battery row, and any later successful read cleared it.
+    #[test]
+    fn a_failure_is_reported_by_the_row_that_caused_it_and_by_nothing_else() {
+        let mut settings = Settings::default();
+        settings.fail(super::Topic::Wifi, "not supported on this hardware");
+        assert!(settings.banner_for(super::Topic::Wifi).is_some());
+        assert!(settings.banner_for(super::Topic::Battery).is_none());
+        assert!(settings.banner_for(super::Topic::Bluetooth).is_none());
+
+        settings.settled(super::Topic::Battery);
+        assert!(
+            settings.banner_for(super::Topic::Wifi).is_some(),
+            "a battery read succeeding must not silence a Wi-Fi failure"
+        );
+        settings.settled(super::Topic::Wifi);
+        assert!(settings.banner_for(super::Topic::Wifi).is_none());
+    }
+
+    #[test]
+    fn a_failure_is_filed_under_the_request_that_produced_it() {
+        use kobo_sdk::DeviceRequest;
+        assert_eq!(
+            super::Topic::of(&DeviceRequest::ReadBatteryDetail),
+            Some(super::Topic::Battery)
+        );
+        assert_eq!(
+            super::Topic::of(&DeviceRequest::ScanWifi),
+            Some(super::Topic::Wifi)
+        );
+        assert_eq!(
+            super::Topic::of(&DeviceRequest::ScanBluetooth),
+            Some(super::Topic::Bluetooth)
+        );
+        assert_eq!(super::Topic::of(&DeviceRequest::ReadFrontlight), None);
     }
 }
