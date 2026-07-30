@@ -285,6 +285,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-hello"
+version = "0.1.0"
+dependencies = [
+ "kobo-sdk",
+]
+
+[[package]]
 name = "kobo-hn"
 version = "0.1.0"
 dependencies = [
