@@ -9077,16 +9077,10 @@ pub fn render_all(
                 clip,
             ),
             LayoutKind::BarGlyph(_, glyph) => {
-                let side = min(node.rect.width, node.rect.height) * 3 / 5;
                 draw_vector(
                     surface,
                     &vector::shapes(glyph),
-                    Rect {
-                        x: node.rect.x + (node.rect.width - side) / 2,
-                        y: node.rect.y + (node.rect.height - side) / 2,
-                        width: side,
-                        height: side,
-                    },
+                    bar_mark(node.rect),
                     clip,
                     tone::INK,
                 );
@@ -9502,15 +9496,30 @@ fn draw_nav_label(
 /// of the title beside it, which reads as a mistake rather than as a control.
 /// Four fifths keeps the mark in proportion to the words it sits next to while
 /// the tappable area stays exactly as large as it was.
+/// Drawn at the size every other mark in the bar is drawn at.
+///
+/// It used to fill four fifths of its touch target while a bar glyph filled
+/// three, so Back came out a third larger than the refresh mark beside it and
+/// the bar looked like two different sets of chrome.
 fn draw_back_arrow(surface: &mut Surface, rect: Rect, clip: Rect) {
-    let inset = min(rect.width, rect.height) / 10;
-    let mark = Rect {
-        x: rect.x + inset,
-        y: rect.y + inset,
-        width: rect.width - 2 * inset,
-        height: rect.height - 2 * inset,
-    };
-    draw_vector(surface, &vector::back_arrow(), mark, clip, tone::INK);
+    draw_vector(
+        surface,
+        &vector::back_arrow(),
+        bar_mark(rect),
+        clip,
+        tone::INK,
+    );
+}
+
+/// The square a mark occupies inside a bar control's touch target.
+fn bar_mark(rect: Rect) -> Rect {
+    let side = min(rect.width, rect.height) * 3 / 5;
+    Rect {
+        x: rect.x + (rect.width - side) / 2,
+        y: rect.y + (rect.height - side) / 2,
+        width: side,
+        height: side,
+    }
 }
 
 /// Draws whatever stands at the head of a row.

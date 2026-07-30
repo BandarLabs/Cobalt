@@ -536,14 +536,21 @@ pub fn shapes(glyph: Glyph) -> Vec<Shape> {
 /// to substitute this control by writing a character that looks like one. It
 /// lives here, in the same geometry as the icons, because the version drawn
 /// from rectangles was the fattest thing on the screen.
+///
+/// The geometry is Tabler's own `chevron-left`, transcribed rather than
+/// imported because it is not a [`Glyph`] and an application must not be able
+/// to ask for it. It used to be taller than that and drawn half again as
+/// heavy, which made the one control guaranteed to be on every screen the odd
+/// one out in its own bar: the back mark read as different chrome from the
+/// refresh mark sitting a centimetre away from it.
 #[must_use]
 pub fn back_arrow() -> Vec<Shape> {
     vec![Shape::Stroke {
         path: Path::new()
-            .move_to(640, 180)
-            .line_to(320, 500)
-            .line_to(640, 820),
-        width: 90,
+            .move_to(625, 250)
+            .line_to(375, 500)
+            .line_to(625, 750),
+        width: WEIGHT,
     }]
 }
 
@@ -797,12 +804,24 @@ mod tests {
     }
 
     #[test]
-    fn the_back_arrow_is_lighter_than_a_third_of_its_box() {
-        // It was drawn from rectangles and was the heaviest mark on the panel.
-        let coverage = render(&back_arrow(), 60);
+    fn the_back_arrow_is_cut_like_every_other_mark() {
+        // First it was drawn from rectangles and was the heaviest thing on the
+        // panel. Then it was a hand-cut stroke half again the weight the icon
+        // set uses, which made the one control guaranteed to be on every
+        // screen the odd one out in its own bar.
+        let shapes = back_arrow();
+        let Some(Shape::Stroke { width, .. }) = shapes.first() else {
+            panic!("the back mark is a stroke");
+        };
+        assert_eq!(
+            *width,
+            super::WEIGHT,
+            "the back mark is cut to its own weight"
+        );
+        let coverage = render(&shapes, 60);
         let inked = coverage.alpha.iter().filter(|&&value| value > 0).count();
         assert!(inked * 3 < 60 * 60, "the arrow still fills {inked} pixels");
-        assert!(inked > 200, "the arrow is too faint at {inked} pixels");
+        assert!(inked > 100, "the arrow is too faint at {inked} pixels");
     }
 
     #[test]
