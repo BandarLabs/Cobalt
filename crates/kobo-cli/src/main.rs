@@ -4106,6 +4106,17 @@ fn report_secret_names<'a>(names: impl Iterator<Item = &'a str>) {
 }
 
 fn print_help() {
+    // Two commands write to the panel and are compiled out without the
+    // feature, so they are named here only when they are really present.
+    // Advertising a command this binary would reject is worse than saying
+    // nothing, and it is the sort of drift a help string invites.
+    #[cfg(feature = "device-write")]
+    const WRITING: &str = "\n\nBuilt with --features device-write, so also:\n  \
+         tap --device IP X,Y    Tap the real panel through the real touch node\n  \
+         smoke-display --device IP --confirm ...  Attended display checks, one at a time";
+    #[cfg(not(feature = "device-write"))]
+    const WRITING: &str = "\n\nBuilt without --features device-write, so the commands that write \
+         to a panel\n(tap, smoke-display) are not in this binary.";
     println!(
         "Kobo application SDK\n\n\
          Usage: kobo <command>\n\n\
@@ -4114,6 +4125,7 @@ fn print_help() {
            dev [--builtin] [address]  Run this SDK app in the browser simulator\n\
            drive --script PATH    Drive a running simulator and save PNG screenshots\n\
            shot [--device HOST]   Save a PNG of the panel (device or simulator)\n\
+           record --device IP [--seconds N] [--fps F] [--out DIR]  Film the panel, read-only\n\
            present <app> --device IP [--seconds N]  Run one app on the panel\n\
            stop --device IP       Hand the panel back to the reader now\n\
            build [--device]       Build host workspace or ARM safe doctor, disabled kobod, and sample app\n\
@@ -4132,6 +4144,7 @@ fn print_help() {
            deploy --device IP [--package PATH]   Install over Wi-Fi, no reboot\n\
            secret set <name> [--from PATH] --device IP   Install a credential an app can name\n\
            secret list --device IP   Name the installed credentials, never their values\n\
+           secret remove <name> --device IP   Take one credential off the reader\n\
            inspect <package>       List a package and prove it writes nothing to the rootfs\n\
            verify <arm-binary>     Verify static ARM hard-float format\n\
            run --sim [--app NAME]  Run SDK, IPC, daemon and one app on host\n\
@@ -4140,7 +4153,7 @@ fn print_help() {
          Every command that takes --device also takes -s, and these names\n\
          work if they are the ones you already know:\n\
            logcat -> logs   install -> deploy   wait-for-device -> wait\n\
-           sim, simulator -> dev   init, create -> new"
+           sim, simulator -> dev   init, create -> new{WRITING}"
     );
 }
 
