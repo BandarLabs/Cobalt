@@ -1348,7 +1348,7 @@ fn device_build_command(package: &str, features: Option<&str>) -> Result<Command
     Ok(command)
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum RemoteProgram {
     Doctor,
     /// The same read-only doctor binary, additionally watching touch for the
@@ -1361,11 +1361,16 @@ enum RemoteProgram {
         seconds: u64,
         fps: u32,
     },
-    /// One synthetic tap at a point on the panel.
+    /// A run of synthetic taps, with the waits between them.
+    ///
+    /// One run rather than one per tap because each of these uploads the tap
+    /// binary, checksums it on the reader's own processor and removes it
+    /// again. Paying that per tap made driving an application slower than the
+    /// application, and put an SSH round trip inside every wait.
     #[cfg(feature = "device-write")]
     Tap {
-        x: u32,
-        y: u32,
+        sequence: String,
+        millis: u64,
     },
     #[cfg(feature = "device-write")]
     Smoke(SmokeStage),
@@ -1387,21 +1392,25 @@ impl RemoteArtifact {
     /// The host-side ceiling for this artifact, which must always exceed the
     /// device-side one so the device's own bound is what actually fires.
     fn timeout(&self) -> Duration {
-        match self.program {
+        match &self.program {
             RemoteProgram::TouchProbe(seconds) => {
-                Duration::from_secs(seconds) + TOUCH_PROBE_OVERHEAD
+                Duration::from_secs(*seconds) + TOUCH_PROBE_OVERHEAD
             }
             // The reading itself is bounded in the binary and again by
             // timeout, and the wait has to outlast the recording rather than
             // the usual single round trip.
             RemoteProgram::Record { seconds, .. } => {
-                Duration::from_secs(seconds) + TOUCH_PROBE_OVERHEAD
+                Duration::from_secs(*seconds) + TOUCH_PROBE_OVERHEAD
             }
             RemoteProgram::Doctor | RemoteProgram::Capture => REMOTE_COMMAND_TIMEOUT,
+            // A sequence sleeps on the device for as long as it was asked to,
+            // so the host has to outlast the sleeping as well as the transfer.
             #[cfg(feature = "device-write")]
-            RemoteProgram::Smoke(_) | RemoteProgram::Guard | RemoteProgram::Tap { .. } => {
-                REMOTE_COMMAND_TIMEOUT
+            RemoteProgram::Tap { millis, .. } => {
+                Duration::from_millis(*millis) + REMOTE_COMMAND_TIMEOUT
             }
+            #[cfg(feature = "device-write")]
+            RemoteProgram::Smoke(_) | RemoteProgram::Guard => REMOTE_COMMAND_TIMEOUT,
         }
     }
 }
@@ -1444,7 +1453,7 @@ impl RemoteArtifact {
     }
 
     #[cfg(feature = "device-write")]
-    fn tap(x: u32, y: u32) -> Self {
+    fn tap(sequence: String, millis: u64) -> Self {
         Self {
             label: "synthetic tap",
             directory_label: "kobo-tap",
@@ -1452,7 +1461,7 @@ impl RemoteArtifact {
             local_binary: workspace_device_binary("kobo-tap"),
             package: "kobo-tap",
             features: Some("device-write"),
-            program: RemoteProgram::Tap { x, y },
+            program: RemoteProgram::Tap { sequence, millis },
         }
     }
 
@@ -1532,7 +1541,7 @@ fn capture_remote_fixed_artifact(host: &str, artifact: &RemoteArtifact) -> Resul
     let remote = format!("root@{host}");
     let script = remote_fixed_artifact_script(
         &session,
-        artifact.program,
+        &artifact.program,
         &checksum,
         &base64_encode(&bytes),
     );
@@ -1627,7 +1636,7 @@ fn remote_owner_token() -> Result<String, String> {
 
 fn remote_fixed_artifact_script(
     session: &RemoteArtifactSession,
-    program: RemoteProgram,
+    program: &RemoteProgram,
     checksum: &str,
     encoded_artifact: &str,
 ) -> String {
@@ -1671,14 +1680,15 @@ fn remote_fixed_artifact_script(
             stage.device_unlock()
         ),
         #[cfg(feature = "device-write")]
-        RemoteProgram::Tap { x, y } => format!(
+        RemoteProgram::Tap { sequence, millis } => format!(
             "if [ -x /usr/bin/timeout ]; then\n\
-             \x20 KOBO_TAP_UNLOCK='OWNER_ATTENDED_SYNTHETIC_TOUCH' KOBO_TAP_POINT='{x},{y}' \
-             /usr/bin/timeout 20 \"$bin\"\n\
+             \x20 KOBO_TAP_UNLOCK='OWNER_ATTENDED_SYNTHETIC_TOUCH' KOBO_TAP_POINT='{sequence}' \
+             /usr/bin/timeout {} \"$bin\"\n\
              else\n\
              \x20 echo 'BusyBox timeout is unavailable; refusing synthetic tap' >&2\n\
              \x20 exit 1\n\
-             fi"
+             fi",
+            millis / 1000 + 30
         ),
         #[cfg(feature = "device-write")]
         RemoteProgram::Guard => format!(
@@ -3334,7 +3344,8 @@ fn drive_command(arguments: &[String]) -> Result<(), String> {
 #[cfg(feature = "device-write")]
 fn tap_command(arguments: &[String]) -> Result<(), String> {
     let mut host: Option<String> = None;
-    let mut point: Option<(u32, u32)> = None;
+    let mut steps: Vec<String> = Vec::new();
+    let mut millis = 0_u64;
     let mut index = 0;
     while index < arguments.len() {
         match arguments[index].as_str() {
@@ -3347,23 +3358,52 @@ fn tap_command(arguments: &[String]) -> Result<(), String> {
                 index += 1;
             }
             other => {
-                let (x, y) = other
-                    .split_once(',')
-                    .ok_or_else(|| format!("expected 'x,y', got '{other}'\n{TAP_USAGE}"))?;
-                let x = x.trim().parse().map_err(|_| TAP_USAGE.to_owned())?;
-                let y = y.trim().parse().map_err(|_| TAP_USAGE.to_owned())?;
-                point = Some((x, y));
+                millis = millis
+                    .checked_add(parse_tap_step(other)?)
+                    .ok_or("that sequence waits longer than any run will")?;
+                steps.push(other.to_owned());
             }
         }
         index += 1;
     }
     let host = host.ok_or_else(|| TAP_USAGE.to_owned())?;
-    let (x, y) = point.ok_or_else(|| TAP_USAGE.to_owned())?;
-    run_remote_fixed_artifact(&host, &RemoteArtifact::tap(x, y))
+    if steps.is_empty() {
+        return Err(TAP_USAGE.to_owned());
+    }
+    run_remote_fixed_artifact(&host, &RemoteArtifact::tap(steps.join(" "), millis))
+}
+
+/// Checks one step of a sequence and returns the wait it asks for.
+///
+/// The points are checked again on the device, against the profile that
+/// actually matched, which is the check that counts. This one exists so that a
+/// typo in a long sequence is a message here rather than a build, an upload and
+/// a checksum away.
+#[cfg(feature = "device-write")]
+fn parse_tap_step(step: &str) -> Result<u64, String> {
+    let (wait, point) = match step.split_once(':') {
+        Some((wait, point)) => (
+            wait.trim()
+                .parse::<u64>()
+                .map_err(|_| format!("'{step}' does not start with a wait in milliseconds"))?,
+            point,
+        ),
+        None => (0, step),
+    };
+    let (x, y) = point
+        .split_once(',')
+        .ok_or_else(|| format!("expected 'x,y' or 'wait:x,y', got '{step}'\n{TAP_USAGE}"))?;
+    x.trim()
+        .parse::<u32>()
+        .map_err(|_| TAP_USAGE.to_owned())
+        .and_then(|_| y.trim().parse::<u32>().map_err(|_| TAP_USAGE.to_owned()))?;
+    Ok(wait)
 }
 
 #[cfg(feature = "device-write")]
-const TAP_USAGE: &str = "usage: kobo tap --device HOST X,Y";
+const TAP_USAGE: &str = "usage: kobo tap --device HOST X,Y [MILLIS:X,Y ...]\n\
+                         a step is a point, or a wait in milliseconds and then a point.\n\
+                         several steps run in one upload, timed on the device.";
 
 /// Brings back a picture of whatever is on the panel right now.
 ///
@@ -4023,7 +4063,9 @@ fn print_help() {
     // nothing, and it is the sort of drift a help string invites.
     #[cfg(feature = "device-write")]
     const WRITING: &str = "\n\nBuilt with --features device-write, so also:\n  \
-         tap --device IP X,Y    Tap the real panel through the real touch node\n  \
+         tap --device IP X,Y [MS:X,Y ...]  Tap the real panel through the real touch node.\n  \
+         \x20                              Several steps run in one upload, timed on the\n  \
+         \x20                              device, which is how an application is driven.\n  \
          smoke-display --device IP --confirm ...  Attended display checks, one at a time";
     #[cfg(not(feature = "device-write"))]
     const WRITING: &str = "\n\nBuilt without --features device-write, so the commands that write \
@@ -4865,7 +4907,7 @@ mod tests {
         };
         let script = super::remote_fixed_artifact_script(
             &session,
-            RemoteProgram::Smoke(SmokeStage::DisplayOnly),
+            &RemoteProgram::Smoke(SmokeStage::DisplayOnly),
             &checksum,
             &encoded,
         );
@@ -4907,6 +4949,44 @@ mod tests {
         let token = super::remote_owner_token().expect("ownership token");
         assert_eq!(token.len(), 32);
         assert!(token.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    }
+
+    #[cfg(feature = "device-write")]
+    #[test]
+    fn a_whole_tap_sequence_travels_in_one_upload_and_outlasts_its_own_waits() {
+        // The point of the sequence. Every step must reach the device in one
+        // script, and both timeouts must outlast the sleeping the device is
+        // being asked to do, or the run is killed partway through a tour.
+        let session = RemoteArtifactSession {
+            directory: "/tmp/kobo-tap-123-456".to_owned(),
+            binary: "/tmp/kobo-tap-123-456/kobo-tap".to_owned(),
+            owner_file: "/tmp/kobo-tap-123-456/.kobo-tap-owner".to_owned(),
+            owner_token: "0123456789abcdef0123456789abcdef".to_owned(),
+        };
+        let sequence = "1500:536,400 2000:80,80 2500:400,1380";
+        let artifact = super::RemoteArtifact::tap(sequence.to_owned(), 6_000);
+        let script = super::remote_fixed_artifact_script(
+            &session,
+            &artifact.program,
+            &"a".repeat(64),
+            &super::base64_encode(b"tap"),
+        );
+        assert!(script.contains(&format!("KOBO_TAP_POINT='{sequence}'")));
+        assert!(script.contains("KOBO_TAP_UNLOCK='OWNER_ATTENDED_SYNTHETIC_TOUCH'"));
+        // 6s of waiting, so the device-side bound is 36 and the host's is 66.
+        assert!(script.contains("/usr/bin/timeout 36 \"$bin\""));
+        assert!(artifact.timeout() > Duration::from_secs(6));
+        assert!(artifact.timeout() > Duration::from_secs(36));
+    }
+
+    #[cfg(feature = "device-write")]
+    #[test]
+    fn a_step_is_checked_here_before_anything_is_built_or_uploaded() {
+        assert_eq!(super::parse_tap_step("536,400"), Ok(0));
+        assert_eq!(super::parse_tap_step("1500:536,400"), Ok(1500));
+        assert!(super::parse_tap_step("536").is_err());
+        assert!(super::parse_tap_step("soon:536,400").is_err());
+        assert!(super::parse_tap_step("536,-4").is_err());
     }
 
     #[test]
