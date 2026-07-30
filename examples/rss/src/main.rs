@@ -241,7 +241,10 @@ impl Feeds {
             self.pages = Vec::new();
             return;
         };
-        self.pages = context.paginate_reading(&article_text(item), true);
+        // No bar: a reading page carries nothing at its foot but the place it
+        // is at. Reserving one leaves a hand's width of white above the
+        // position and takes four lines off every page.
+        self.pages = context.paginate_reading(&article_text(item), false);
         self.page = 0;
     }
 
@@ -484,7 +487,9 @@ impl Feeds {
             .article
             .and_then(|index| self.items.get(index))
             .map_or_else(String::new, |item| item.title.clone());
-        let mut screen = ScreenBuilder::new("rss-reading").top_bar(title);
+        let mut screen = ScreenBuilder::new("rss-reading")
+            .top_bar(title)
+            .reading(true);
         if self.pages.is_empty() {
             return screen.empty_state("This article arrived empty.").build();
         }
@@ -1228,8 +1233,59 @@ mod tests {
     }
 
     #[test]
-    fn back_unwinds_this_application_before_it_leaves_it() {
+    fn a_page_of_an_article_is_as_full_as_the_page_it_is_drawn_on() {
+        // The reading screen carries nothing at its foot but the place it is
+        // at, and it sets its prose in the reading face. Measured with a
+        // bottom bar reserved and in the interface face, a page came back four
+        // lines short and the article stopped in a field of white. A page is
+        // full when one more line would not have fitted on it.
         let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            view: View::Items,
+            open: Some(0),
+            subscriptions: following(),
+            task: Some((TaskId(1), Awaiting::Feed)),
+            ..Feeds::default()
+        });
+        let long = "Some prose about the state of the world, at length. ".repeat(120);
+        let source = format!(
+            "<rss><channel><title>A Journal</title><item><title>Long</title>\
+             <description>{long}</description></item></channel></rss>"
+        );
+        runner.task_outcome(TaskId(1), TaskOutcome::Completed(source.into_bytes()));
+        runner.action(action_id("item-0"));
+        let total = runner.app_mut().pages.len();
+        assert!(total > 2, "too few pages to prove anything");
+
+        for page in 0..total - 1 {
+            runner.app_mut().page = page;
+            let layout = runner
+                .app_mut()
+                .reading()
+                .layout_with(&CLARA_BW_METRICS, &Chrome::default());
+            let bottom = layout
+                .nodes
+                .iter()
+                .filter(|node| matches!(node.kind, LayoutKind::Text))
+                .map(|node| node.rect.y + node.rect.height)
+                .max()
+                .unwrap_or(0);
+            // The runtime draws the status strip over the top of the panel and
+            // the layout engine takes the position band out before it places
+            // anything, so the page really ends above both.
+            let floor = layout.content.y + layout.content.height
+                - CLARA_BW_METRICS.status_band_height();
+            let line = kobo_ui::FontSize::Body.line_height_in(kobo_ui::Face::Reading);
+            assert!(bottom <= floor, "page {page} was set under the strip");
+            assert!(
+                bottom + line > floor,
+                "page {page} left a line of room: {bottom} + {line} against {floor}"
+            );
+        }
+    }
+
+    #[test]
+    fn back_unwinds_this_application_before_it_leaves_it() {        let mut runner = AppRunner::new(Feeds {
             loaded: true,
             view: View::Reading,
             open: Some(0),
