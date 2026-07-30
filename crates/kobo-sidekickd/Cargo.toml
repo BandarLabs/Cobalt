@@ -1,0 +1,19 @@
+[package]
+name = "kobo-sidekickd"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "kobo-sidekickd"
+path = "src/main.rs"
+
+[dependencies]
+kobo-json = { path = "../kobo-json" }
+kobo-net = { path = "../kobo-net" }
+
+[lints]
+workspace = true

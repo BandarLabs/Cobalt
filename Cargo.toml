@@ -17,6 +17,7 @@ members = [
     "crates/kobo-protocol",
     "crates/kobo-sdk",
     "crates/kobo-shell",
+    "crates/kobo-sidekickd",
     "crates/kobo-sim",
     "crates/kobo-smoke",
     "crates/kobo-tap",
@@ -38,6 +39,7 @@ members = [
     "examples/launcher",
     "examples/magnet",
     "examples/settings",
+    "examples/sidekick",
     "tools/icon-import",
 ]
 resolver = "2"

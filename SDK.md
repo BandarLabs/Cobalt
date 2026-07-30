@@ -826,6 +826,25 @@ credential, `Failure::naming(secret)` says which one: an application running
 against three providers that only says "install a key" leaves whoever is
 holding the reader to guess which of the three.
 
+### Owner trust roots
+
+Every request is HTTPS, verified against the public roots every browser
+carries. Those roots cannot vouch for a daemon on your own machine, on your
+own network, holding a certificate no public authority would sign for a
+private address. For that one case the runtime also reads owner-installed
+roots -- `/mnt/onboard/.adds/cobalt/trust` on the device,
+`~/.config/kobo/trust` for the host runtimes -- and verifies against them
+exactly as it verifies any public host, rather than offering a switch that
+turns verification off.
+
+```sh
+kobo trust set sidekick --device 192.168.1.5
+```
+
+The value travels over the same attended channel as a secret, but unlike a
+secret it is checked for being a PEM certificate before it goes, and listing
+installed roots is harmless. Roots are loaded once at session start.
+
 ---
 
 ## 6. Typing, where it is unavoidable

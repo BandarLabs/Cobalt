@@ -1772,6 +1772,22 @@ pub const OFFLINE: &str = "KOBO_SIM_OFFLINE";
 /// arranged to avoid. Network is granted here as the placeholder for a
 /// manifest, exactly as the device runtime grants it, so the two cannot drift.
 fn simulated_tasks(name: &str) -> TaskRunner {
+    // The same owner trust roots the device loads, from the host's own
+    // directory. Once per process: roots are process-wide and the TLS
+    // configuration refuses additions after it is first used.
+    static TRUST: std::sync::Once = std::sync::Once::new();
+    TRUST.call_once(|| {
+        let directory = std::env::var_os("HOME").map_or_else(
+            || std::path::PathBuf::from(".kobo-trust"),
+            |home| {
+                std::path::PathBuf::from(home)
+                    .join(".config")
+                    .join("kobo")
+                    .join("trust")
+            },
+        );
+        let _ = kobo_net::trust_owner_roots_from_dir(&directory);
+    });
     let runner = TaskRunner::simulated(std::env::temp_dir())
         .with_secrets(std::env::temp_dir().join(SIM_SECRETS));
     if std::env::var_os(OFFLINE).is_some() {

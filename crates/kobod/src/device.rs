@@ -66,6 +66,11 @@ pub const TOUCH_DEVICE: &str = "/dev/input/event1";
 /// reboot empties. An application names a secret; only the runtime reads one.
 const SECRETS: &str = "/mnt/onboard/.adds/cobalt/secrets";
 
+/// Where owner-installed TLS trust roots live, beside the credentials and for
+/// the same reasons. A certificate here lets the runtime verify a daemon on
+/// the owner's own network exactly as it verifies a public host.
+const TRUST: &str = "/mnt/onboard/.adds/cobalt/trust";
+
 /// Where each application's own keyed state lives, one directory per name.
 const STATE_ROOT: &str = "/mnt/onboard/.adds/cobalt/state";
 
@@ -460,6 +465,13 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
         ),
         Err(error) => format!("none ({error})"),
     };
+
+    // Owner-installed trust roots, before the first request could build the
+    // TLS configuration without them. Zero on almost every reader.
+    let trusted = kobo_net::trust_owner_roots_from_dir(Path::new(TRUST));
+    if trusted > 0 {
+        trace(&format!("trust: {trusted} owner root(s) installed"));
+    }
 
     // A pulse every couple of seconds, so a trace that simply stops tells us
     // the device died at that instant rather than merely that nothing was

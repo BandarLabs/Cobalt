@@ -24,12 +24,15 @@
 //! requests and Kobo-specific TLS roots stay visible, while Rustls uses its
 //! maintained ring provider instead of an experimental provider.
 
+pub mod pem;
+pub mod serve;
+
 use kobo_protocol::{Credential, SecretHeader, TaskError};
 use std::borrow::Cow;
 use std::fmt::Write as _;
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 /// How long opening a connection may take before the host is called
@@ -668,13 +671,92 @@ fn head(address: &Address, method: &Method<'_>, max_bytes: u32) -> String {
 /// around a fifth faster, on a machine far quicker than the reader.
 static TLS_CONFIG: OnceLock<Arc<rustls::ClientConfig>> = OnceLock::new();
 
+/// Roots the owner has installed beside the ones every browser carries.
+///
+/// Empty on almost every reader. It exists for the one case public roots
+/// cannot serve: a daemon on the owner's own machine, on the owner's own
+/// network, holding a certificate no public authority would sign for a
+/// private address. The owner installs that certificate once, over the same
+/// attended channel that installs a credential, and the runtime then verifies
+/// the daemon exactly as it verifies any public host -- rather than being
+/// handed a switch that turns verification off.
+///
+/// Held apart from [`TLS_CONFIG`] because installation happens once at
+/// runtime start, before any request; after the shared configuration is
+/// built, further installs are refused rather than silently ignored.
+static OWNER_ROOTS: Mutex<Vec<rustls::pki_types::CertificateDer<'static>>> = Mutex::new(Vec::new());
+
+/// Installs one DER certificate as a trust root for this process.
+///
+/// # Errors
+///
+/// Refuses a certificate the verifier cannot use as an anchor, and refuses
+/// every certificate once the TLS configuration has been built, because a
+/// root added after that point would appear installed while never being
+/// consulted.
+pub fn trust_owner_root(certificate: Vec<u8>) -> Result<(), TaskError> {
+    if TLS_CONFIG.get().is_some() {
+        return Err(TaskError::Denied);
+    }
+    let der = rustls::pki_types::CertificateDer::from(certificate);
+    // Proven usable as an anchor now, so a corrupt file fails at install
+    // time with a message, rather than at request time as `Unreachable`.
+    let mut probe = rustls::RootCertStore::empty();
+    probe.add(der.clone()).map_err(|_| TaskError::Denied)?;
+    let mut roots = OWNER_ROOTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    roots.push(der);
+    Ok(())
+}
+
+/// Installs every certificate found in a directory of `.pem` or `.der` files.
+///
+/// Returns how many roots were installed. A missing or empty directory is
+/// zero rather than an error: almost no reader has one, and the runtime
+/// calls this unconditionally at start.
+#[must_use]
+pub fn trust_owner_roots_from_dir(directory: &std::path::Path) -> usize {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return 0;
+    };
+    let mut installed = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        let ders = match path.extension().and_then(|extension| extension.to_str()) {
+            Some("pem") => pem::certificates(&String::from_utf8_lossy(&bytes)),
+            Some("der") => vec![bytes],
+            _ => continue,
+        };
+        for der in ders {
+            if trust_owner_root(der).is_ok() {
+                installed += 1;
+            }
+        }
+    }
+    installed
+}
+
 fn tls_config() -> Result<Arc<rustls::ClientConfig>, TaskError> {
     if let Some(config) = TLS_CONFIG.get() {
         return Ok(Arc::clone(config));
     }
-    let roots = rustls::RootCertStore {
+    let mut roots = rustls::RootCertStore {
         roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
     };
+    {
+        let owner = OWNER_ROOTS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for der in owner.iter() {
+            // Already proven addable at install time; a failure here would
+            // mean the certificate changed while held, which it cannot.
+            let _ = roots.add(der.clone());
+        }
+    }
     let config = rustls::ClientConfig::builder_with_provider(Arc::new(
         rustls::crypto::ring::default_provider(),
     ))
