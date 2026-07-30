@@ -12,6 +12,20 @@ use std::io::Read;
 use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+/// One answer the reader can give, drawn as its own button.
+///
+/// Both things an agent offers beyond yes and no arrive in this shape: the
+/// options of a multiple-choice question, and the "always allow" lines a
+/// permission dialog puts under its yes. The reader does not need to know
+/// which it is showing, so it is one type.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Choice {
+    /// What the button says, and what comes back when it is pressed.
+    pub label: String,
+    /// The line under it. Empty is fine.
+    pub description: String,
+}
+
 /// One question a coding agent is waiting on.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Ask {
@@ -22,10 +36,42 @@ pub struct Ask {
     pub tool: String,
     /// What it wants to do with it, usually the command line.
     pub detail: String,
+    /// The answers offered beyond allow and deny. Usually empty.
+    pub choices: Vec<Choice>,
+}
+
+/// A question on its way to the board: an [`Ask`] without the number, which
+/// is the board's to give.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Asking {
+    pub source: String,
+    pub tool: String,
+    pub detail: String,
+    pub choices: Vec<Choice>,
+}
+
+impl Asking {
+    /// A plain permission question, answered with allow, deny or neither.
+    #[must_use]
+    pub fn new(source: &str, tool: &str, detail: &str) -> Self {
+        Self {
+            source: source.to_owned(),
+            tool: tool.to_owned(),
+            detail: detail.to_owned(),
+            choices: Vec::new(),
+        }
+    }
+
+    /// The same question with its own answers offered instead.
+    #[must_use]
+    pub fn offering(mut self, choices: Vec<Choice>) -> Self {
+        self.choices = choices;
+        self
+    }
 }
 
 /// What the person on the reader decided.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Decision {
     Allow,
     Deny,
@@ -33,6 +79,9 @@ pub enum Decision {
     /// own terminal prompt. Also what a timeout or an ignored question
     /// becomes, so an absent reader never blocks anyone.
     Pass,
+    /// One of the question's own choices, by label. Never one of the three
+    /// above wearing a label, so a choice reading "Allow" is still a choice.
+    Chose(String),
 }
 
 struct Open {
@@ -69,7 +118,7 @@ impl Board {
     /// Posts a question and blocks until it is answered or `patience` runs
     /// out. The question is removed on the way out either way, so nothing
     /// lingers for the reader to answer into the void.
-    pub fn submit(&self, source: &str, tool: &str, detail: &str, patience: Duration) -> Decision {
+    pub fn submit(&self, asking: Asking, patience: Duration) -> Decision {
         let deadline = Instant::now() + patience;
         let mut inner = self.lock();
         let id = inner.next_id;
@@ -77,9 +126,10 @@ impl Board {
         inner.open.push(Open {
             ask: Ask {
                 id,
-                source: source.to_owned(),
-                tool: tool.to_owned(),
-                detail: detail.to_owned(),
+                source: asking.source,
+                tool: asking.tool,
+                detail: asking.detail,
+                choices: asking.choices,
             },
             decision: None,
         });
@@ -92,9 +142,9 @@ impl Board {
                 // Somebody else removed it; treat as undecided.
                 return Decision::Pass;
             };
-            if let Some(decision) = inner.open[position].decision {
-                inner.open.remove(position);
-                return decision;
+            if inner.open[position].decision.is_some() {
+                let open = inner.open.remove(position);
+                return open.decision.unwrap_or(Decision::Pass);
             }
             let now = Instant::now();
             if now >= deadline {
@@ -187,7 +237,7 @@ fn random_start() -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Board, Decision};
+    use super::{Asking, Board, Choice, Decision};
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -201,7 +251,10 @@ mod tests {
             assert_eq!(ask.detail, "rm -rf ./build");
             assert!(answering.answer(ask.id, Decision::Allow));
         });
-        let decision = board.submit("codex", "shell", "rm -rf ./build", Duration::from_secs(5));
+        let decision = board.submit(
+            Asking::new("codex", "shell", "rm -rf ./build"),
+            Duration::from_secs(5),
+        );
         assert_eq!(decision, Decision::Allow);
         answerer.join().expect("answerer finishes");
     }
@@ -209,7 +262,10 @@ mod tests {
     #[test]
     fn a_hook_nobody_answers_passes_when_its_patience_runs_out() {
         let board = Board::new();
-        let decision = board.submit("claude", "Bash", "ls", Duration::from_millis(50));
+        let decision = board.submit(
+            Asking::new("claude", "Bash", "ls"),
+            Duration::from_millis(50),
+        );
         assert_eq!(decision, Decision::Pass);
     }
 
@@ -222,7 +278,10 @@ mod tests {
     #[test]
     fn answering_a_question_that_timed_out_reports_the_tap_did_not_count() {
         let board = Board::new();
-        let _ = board.submit("codex", "shell", "ls", Duration::from_millis(10));
+        let _ = board.submit(
+            Asking::new("codex", "shell", "ls"),
+            Duration::from_millis(10),
+        );
         // The board is empty again, so no id can land, least of all this one.
         assert!(!board.answer(1, Decision::Allow));
     }
@@ -239,13 +298,19 @@ mod tests {
         let board = Arc::new(Board::new());
         let first = Arc::clone(&board);
         let hook_one = std::thread::spawn(move || {
-            first.submit("codex", "shell", "first", Duration::from_secs(5))
+            first.submit(
+                Asking::new("codex", "shell", "first"),
+                Duration::from_secs(5),
+            )
         });
         // The second question must arrive after the first is on the board.
         while board.next(Duration::from_millis(10)).is_none() {}
         let second = Arc::clone(&board);
         let hook_two = std::thread::spawn(move || {
-            second.submit("codex", "shell", "second", Duration::from_secs(5))
+            second.submit(
+                Asking::new("codex", "shell", "second"),
+                Duration::from_secs(5),
+            )
         });
         let shown = board.next(Duration::from_secs(5)).expect("a question");
         assert_eq!(shown.detail, "first");
@@ -257,5 +322,31 @@ mod tests {
         assert!(board.answer(shown.id, Decision::Allow));
         assert_eq!(hook_one.join().expect("first hook"), Decision::Deny);
         assert_eq!(hook_two.join().expect("second hook"), Decision::Allow);
+    }
+
+    #[test]
+    fn a_question_carries_its_own_answers_to_the_reader_and_back() {
+        let board = Arc::new(Board::new());
+        let answering = Arc::clone(&board);
+        let answerer = std::thread::spawn(move || {
+            let ask = answering.next(Duration::from_secs(5)).expect("a question");
+            assert_eq!(ask.choices.len(), 2);
+            assert_eq!(ask.choices[1].label, "Detailed");
+            assert_eq!(ask.choices[1].description, "Every step");
+            assert!(answering.answer(ask.id, Decision::Chose("Detailed".to_owned())));
+        });
+        let asking = Asking::new("claude", "AskUserQuestion", "How much detail?").offering(vec![
+            Choice {
+                label: "Summary".to_owned(),
+                description: "The short version".to_owned(),
+            },
+            Choice {
+                label: "Detailed".to_owned(),
+                description: "Every step".to_owned(),
+            },
+        ]);
+        let decision = board.submit(asking, Duration::from_secs(5));
+        assert_eq!(decision, Decision::Chose("Detailed".to_owned()));
+        answerer.join().expect("answerer finishes");
     }
 }

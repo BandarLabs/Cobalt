@@ -29,6 +29,16 @@ pub enum Wiring {
     Matcher,
 }
 
+/// One event this daemon wants to hear about, and which tools it wants it
+/// for.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Listen {
+    /// The event name as the agent spells it.
+    pub event: &'static str,
+    /// Which tools it fires for. `*` is all of them.
+    pub matcher: &'static str,
+}
+
 /// One coding agent, described once and used by detection, setup and the
 /// hook itself.
 #[derive(Debug)]
@@ -43,8 +53,8 @@ pub struct Agent {
     pub marker: &'static str,
     /// Executables that mean this agent is installed.
     pub binaries: &'static [&'static str],
-    /// The hook event that means "may I?".
-    pub event: &'static str,
+    /// The events to register, and what each one listens for.
+    pub events: &'static [Listen],
     /// How its configuration file is shaped.
     pub wiring: Wiring,
 }
@@ -57,7 +67,23 @@ pub const AGENTS: &[Agent] = &[
         config: ".claude/settings.json",
         marker: ".claude",
         binaries: &["claude"],
-        event: "PermissionRequest",
+        events: &[
+            // Fires only when it was about to ask, which is the whole
+            // question. PreToolUse fires before every tool call instead,
+            // so it would ring the reader for every grep.
+            Listen {
+                event: "PermissionRequest",
+                matcher: "*",
+            },
+            // A multiple-choice question is not a permission, so it never
+            // reaches PermissionRequest. It is answered by handing the tool
+            // its own input back, which only PreToolUse can do, and the
+            // matcher keeps that to this one tool.
+            Listen {
+                event: "PreToolUse",
+                matcher: "AskUserQuestion",
+            },
+        ],
         wiring: Wiring::Matcher,
     },
     Agent {
@@ -66,7 +92,10 @@ pub const AGENTS: &[Agent] = &[
         config: ".codex/hooks.json",
         marker: ".codex",
         binaries: &["codex"],
-        event: "PermissionRequest",
+        events: &[Listen {
+            event: "PermissionRequest",
+            matcher: "*",
+        }],
         wiring: Wiring::Matcher,
     },
 ];
@@ -128,7 +157,7 @@ pub enum Outcome {
 
 impl Agent {
     /// Our own registration, in this agent's dialect.
-    fn entry(&self, binary: &str) -> Value {
+    fn entry(&self, binary: &str, listen: &Listen) -> Value {
         let hook = kobo_json::ObjectBuilder::new()
             .set("type", "command")
             // One string. Codex refuses a list with "invalid type: sequence,
@@ -140,7 +169,7 @@ impl Agent {
             .build();
         match self.wiring {
             Wiring::Matcher => kobo_json::ObjectBuilder::new()
-                .set("matcher", "*")
+                .set("matcher", listen.matcher)
                 .set("hooks", Value::Array(vec![hook]))
                 .build(),
         }
@@ -172,24 +201,34 @@ impl Agent {
                 )
             })?,
         };
-        let hooks = root
+        let mut hooks = root
             .get("hooks")
             .cloned()
             .unwrap_or(Value::Object(Vec::new()));
-        let existing = hooks
-            .get(self.event)
-            .and_then(Value::as_array)
-            .map(<[Value]>::to_vec)
-            .unwrap_or_default();
-        if existing
-            .iter()
-            .any(|entry| mentions(entry, "kobo-sidekickd"))
-        {
+        let mut wrote = false;
+        for listen in self.events {
+            let existing = hooks
+                .get(listen.event)
+                .and_then(Value::as_array)
+                .map(<[Value]>::to_vec)
+                .unwrap_or_default();
+            // Each event is judged on its own, so an install from before a
+            // second event was wanted gains it rather than being left half
+            // registered forever.
+            if existing
+                .iter()
+                .any(|entry| mentions(entry, "kobo-sidekickd"))
+            {
+                continue;
+            }
+            let mut entries = existing;
+            entries.push(self.entry(binary, listen));
+            hooks = set_field(&hooks, listen.event, Value::Array(entries));
+            wrote = true;
+        }
+        if !wrote {
             return Ok(Outcome::AlreadyThere);
         }
-        let mut entries = existing;
-        entries.push(self.entry(binary));
-        let hooks = set_field(&hooks, self.event, Value::Array(entries));
         let root = set_field(&root, "hooks", hooks);
         Ok(Outcome::Write(root.to_json_pretty() + "\n"))
     }
@@ -434,5 +473,47 @@ mod tests {
             error.contains("claude") && error.contains("codex"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn claude_is_asked_about_permissions_broadly_and_questions_narrowly() {
+        let text = written("claude", None);
+        let root = kobo_json::parse(&text).expect("valid json");
+        let hooks = root.get("hooks").expect("hooks");
+        let matcher = |event: &str| {
+            hooks
+                .get(event)
+                .and_then(kobo_json::Value::as_array)
+                .and_then(<[kobo_json::Value]>::first)
+                .and_then(|entry| entry.get("matcher"))
+                .and_then(kobo_json::Value::as_str)
+                .unwrap_or("")
+                .to_owned()
+        };
+        // Every tool can want permission, so that one listens to all of them.
+        assert_eq!(matcher("PermissionRequest"), "*");
+        // PreToolUse fires before every tool call, so without the matcher
+        // this would ring the reader for every grep.
+        assert_eq!(matcher("PreToolUse"), "AskUserQuestion");
+    }
+
+    #[test]
+    fn an_older_registration_gains_the_event_it_was_missing() {
+        // What setup wrote before questions were handled at all.
+        let before = r#"{"hooks":{"PermissionRequest":[{"matcher":"*","hooks":[
+            {"type":"command","command":"/old/kobo-sidekickd hook claude"}]}]}}"#;
+        let text = written("claude", Some(before));
+        let root = kobo_json::parse(&text).expect("valid json");
+        let hooks = root.get("hooks").expect("hooks");
+        let count = |event: &str| {
+            hooks
+                .get(event)
+                .and_then(kobo_json::Value::as_array)
+                .map_or(0, <[kobo_json::Value]>::len)
+        };
+        // The one already there is left alone rather than written twice.
+        assert_eq!(count("PermissionRequest"), 1);
+        assert_eq!(count("PreToolUse"), 1);
+        assert!(text.contains("/old/kobo-sidekickd"), "{text}");
     }
 }

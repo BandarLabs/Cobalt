@@ -35,45 +35,276 @@ pub fn run_hook(agent: &str) -> Result<(), String> {
     if std::io::stdin().read_to_string(&mut input).is_err() {
         return Ok(());
     }
-    let (tool, detail) = summarise(&input);
-    let ask = ask_body(known.id, &tool, &detail);
-    let Ok(response) = post_local(state::HOOK_PORT, "/ask", &ask, HOOK_PATIENCE) else {
+    let Ok(event) = kobo_json::parse(&input) else {
         return Ok(());
     };
-    let decision = kobo_json::parse(&response)
-        .ok()
-        .and_then(|reply| {
-            reply
-                .get("decision")
-                .and_then(kobo_json::Value::as_str)
-                .map(str::to_owned)
-        })
-        .unwrap_or_else(|| "pass".to_owned());
-    if let Some(output) = decision_json(agent, &decision) {
-        println!("{output}");
+    if tool_name(&event) == "AskUserQuestion" {
+        answer_questions(known.id, &event);
+    } else {
+        decide_permission(known.id, &event);
     }
     Ok(())
 }
 
-/// The tool's name and the one line worth reading about it.
+/// The usual case: one thing the agent wants to do, and a yes or a no.
 ///
-/// Codex and Claude Code both send `tool_name` and a `tool_input` object;
-/// for a shell command the interesting part is `tool_input.command`, and for
-/// anything else the whole input serialised again is the honest summary.
+/// The "always allow" lines the terminal would have shown come across as
+/// extra buttons, so the reader offers exactly what the keyboard would.
+fn decide_permission(agent: &str, event: &kobo_json::Value) {
+    let tool = tool_name(event);
+    let detail = event.get("tool_input").map_or_else(String::new, describe);
+    let offered = suggestions(event);
+    let choices: Vec<kobo_json::Value> = offered
+        .iter()
+        .map(|(label, description, _)| {
+            kobo_json::ObjectBuilder::new()
+                .set("label", label.as_str())
+                .set("description", description.as_str())
+                .build()
+        })
+        .collect();
+    let Some((decision, label)) = ask_daemon(agent, &tool, &detail, choices) else {
+        return;
+    };
+    if decision == "chose" {
+        // An "always allow" was pressed. Echoing the suggestion back is
+        // documented as the same thing as picking it in the dialog.
+        if let Some((_, _, entry)) = offered.iter().find(|(name, _, _)| *name == label) {
+            println!("{}", always(entry.clone()));
+        }
+        return;
+    }
+    if let Some(output) = decision_json(agent, &decision) {
+        println!("{output}");
+    }
+}
+
+/// A multiple-choice question, put to the person one at a time.
+///
+/// The agent sends up to four questions in one call. The reader shows a
+/// screen at a time and this loop holds them together, so nothing further
+/// down needs a notion of "question three of four". If any question goes
+/// unanswered the whole call is left for the terminal, because a half
+/// answered set is worse than none.
+fn answer_questions(agent: &str, event: &kobo_json::Value) {
+    let Some(input) = event.get("tool_input") else {
+        return;
+    };
+    let Some(questions) = input.get("questions").and_then(kobo_json::Value::as_array) else {
+        return;
+    };
+    if questions.is_empty() {
+        return;
+    }
+    let mut answers = Vec::new();
+    for question in questions {
+        let text = string(question, "question");
+        let choices: Vec<kobo_json::Value> = question
+            .get("options")
+            .and_then(kobo_json::Value::as_array)
+            .map(<[kobo_json::Value]>::to_vec)
+            .unwrap_or_default();
+        if choices.is_empty() {
+            return;
+        }
+        // The header is a label of twelve characters at most, which is a
+        // byline; the question itself is the thing to read.
+        let header = string(question, "header");
+        let tool = if header.is_empty() {
+            "Question".to_owned()
+        } else {
+            header
+        };
+        let Some((decision, label)) = ask_daemon(agent, &tool, &text, choices) else {
+            return;
+        };
+        if decision != "chose" {
+            return;
+        }
+        answers.push((text, kobo_json::Value::String(label)));
+    }
+    let updated = kobo_json::ObjectBuilder::new()
+        // Passed through unchanged, which the tool requires.
+        .set("questions", kobo_json::Value::Array(questions.to_vec()))
+        .set("answers", kobo_json::Value::Object(answers))
+        .build();
+    println!("{}", answered(updated));
+}
+
+/// Puts one question to the daemon and waits. `None` when there is nobody
+/// to ask or nothing was decided, which is the silence the agent reads as
+/// "this hook has no opinion".
+fn ask_daemon(
+    agent: &str,
+    tool: &str,
+    detail: &str,
+    choices: Vec<kobo_json::Value>,
+) -> Option<(String, String)> {
+    let body = kobo_json::ObjectBuilder::new()
+        .set("source", agent)
+        .set("tool", tool)
+        .set("detail", detail)
+        .set("choices", kobo_json::Value::Array(choices))
+        .build()
+        .to_json();
+    let response = post_local(state::HOOK_PORT, "/ask", &body, HOOK_PATIENCE).ok()?;
+    let reply = kobo_json::parse(&response).ok()?;
+    let decision = string(&reply, "decision");
+    if decision.is_empty() || decision == "pass" {
+        return None;
+    }
+    Some((decision, string(&reply, "label")))
+}
+
+/// The "always allow" lines this request came with, each as a button and
+/// the entry to echo back if it is the one pressed.
+fn suggestions(event: &kobo_json::Value) -> Vec<(String, String, kobo_json::Value)> {
+    event
+        .get("permission_suggestions")
+        .and_then(kobo_json::Value::as_array)
+        .map(<[kobo_json::Value]>::to_vec)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|entry| {
+            let (label, description) = describe_suggestion(&entry)?;
+            Some((label, description, entry))
+        })
+        .collect()
+}
+
+/// What one "always allow" entry should say on a button.
+///
+/// These arrive as instructions rather than as words -- a rule to add, a
+/// mode to set -- so the button has to be written here. Anything with no
+/// sensible wording is dropped rather than drawn as a shrug.
+fn describe_suggestion(entry: &kobo_json::Value) -> Option<(String, String)> {
+    let scope = match string(entry, "destination").as_str() {
+        "session" => "for the rest of this session",
+        "localSettings" | "projectSettings" => "in this project",
+        "userSettings" => "everywhere",
+        _ => "",
+    };
+    let with_scope = |text: String| match (text.is_empty(), scope.is_empty()) {
+        (true, _) => scope.to_owned(),
+        (false, true) => text,
+        (false, false) => format!("{text}, {scope}"),
+    };
+    match string(entry, "type").as_str() {
+        "addRules" => {
+            let verb = match string(entry, "behavior").as_str() {
+                "deny" => "Always deny",
+                "ask" => "Always ask about",
+                _ => "Always allow",
+            };
+            let rules = entry
+                .get("rules")
+                .and_then(kobo_json::Value::as_array)
+                .map(<[kobo_json::Value]>::to_vec)
+                .unwrap_or_default();
+            let named: Vec<String> = rules
+                .iter()
+                .map(|rule| {
+                    let tool = string(rule, "toolName");
+                    let content = string(rule, "ruleContent");
+                    if content.is_empty() {
+                        tool
+                    } else {
+                        format!("{tool} {content}")
+                    }
+                })
+                .filter(|text| !text.is_empty())
+                .collect();
+            if named.is_empty() {
+                return None;
+            }
+            Some((verb.to_owned(), with_scope(named.join(", "))))
+        }
+        "setMode" => {
+            let mode = string(entry, "mode");
+            let words = match mode.as_str() {
+                "acceptEdits" => "Accept edits",
+                "auto" => "Decide automatically",
+                "dontAsk" => "Stop asking",
+                "bypassPermissions" => "Skip every permission",
+                "plan" => "Plan only",
+                _ => return None,
+            };
+            Some((words.to_owned(), with_scope(String::new())))
+        }
+        "addDirectories" => {
+            let directories = entry
+                .get("directories")
+                .and_then(kobo_json::Value::as_array)
+                .map(<[kobo_json::Value]>::to_vec)
+                .unwrap_or_default();
+            let named: Vec<String> = directories
+                .iter()
+                .filter_map(|path| path.as_str().map(str::to_owned))
+                .collect();
+            if named.is_empty() {
+                return None;
+            }
+            Some(("Add directory".to_owned(), with_scope(named.join(", "))))
+        }
+        _ => None,
+    }
+}
+
+/// The reply that grants this once and adopts the "always allow" pressed.
 #[must_use]
-pub fn summarise(event: &str) -> (String, String) {
-    let parsed = kobo_json::parse(event).ok();
-    let tool = parsed
-        .as_ref()
-        .and_then(|event| event.get("tool_name"))
+fn always(entry: kobo_json::Value) -> String {
+    let decision = kobo_json::ObjectBuilder::new()
+        .set("behavior", "allow")
+        .set("message", "Decided on the Kobo")
+        .set("updatedPermissions", kobo_json::Value::Array(vec![entry]))
+        .build();
+    kobo_json::ObjectBuilder::new()
+        .set(
+            "hookSpecificOutput",
+            kobo_json::ObjectBuilder::new()
+                .set("hookEventName", "PermissionRequest")
+                .set("decision", decision)
+                .build(),
+        )
+        .build()
+        .to_json()
+}
+
+/// The reply that carries the answers back as the tool's own result.
+///
+/// A multiple-choice question is not a permission to grant, so allowing it
+/// on its own would only make the terminal ask again. The answers ride back
+/// as the tool's input, which the tool reads as having been answered.
+#[must_use]
+fn answered(updated: kobo_json::Value) -> String {
+    kobo_json::ObjectBuilder::new()
+        .set(
+            "hookSpecificOutput",
+            kobo_json::ObjectBuilder::new()
+                .set("hookEventName", "PreToolUse")
+                .set("permissionDecision", "allow")
+                .set("updatedInput", updated)
+                .build(),
+        )
+        .build()
+        .to_json()
+}
+
+/// One string field, or the empty string.
+fn string(value: &kobo_json::Value, name: &str) -> String {
+    value
+        .get(name)
         .and_then(kobo_json::Value::as_str)
-        .unwrap_or("tool")
-        .to_owned();
-    let detail = parsed
-        .as_ref()
-        .and_then(|event| event.get("tool_input"))
-        .map_or_else(String::new, describe);
-    (tool, detail)
+        .unwrap_or("")
+        .to_owned()
+}
+
+/// Which tool the event is about.
+fn tool_name(event: &kobo_json::Value) -> String {
+    match string(event, "tool_name") {
+        name if name.is_empty() => "tool".to_owned(),
+        name => name,
+    }
 }
 
 /// The one line worth reading about a tool call.
@@ -97,16 +328,6 @@ fn describe(input: &kobo_json::Value) -> String {
         }
     }
     input.to_json()
-}
-
-/// The daemon's `/ask` body.
-fn ask_body(agent: &str, tool: &str, detail: &str) -> String {
-    kobo_json::ObjectBuilder::new()
-        .set("source", agent)
-        .set("tool", tool)
-        .set("detail", detail)
-        .build()
-        .to_json()
 }
 
 /// The decision as `PermissionRequest` hooks report it, or `None` for
@@ -220,53 +441,39 @@ pub fn list() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ask_body, decision_json, summarise};
+    use super::{
+        always, answered, decision_json, describe, describe_suggestion, string, tool_name,
+    };
 
-    fn ask_from_event(agent: &str, event: &str) -> String {
-        let (tool, detail) = summarise(event);
-        ask_body(agent, &tool, &detail)
+    /// What the reader would be shown for one event.
+    fn shown(event: &str) -> (String, String) {
+        let event = kobo_json::parse(event).expect("valid json");
+        let detail = event.get("tool_input").map_or_else(String::new, describe);
+        (tool_name(&event), detail)
     }
 
     #[test]
     fn a_codex_shell_request_becomes_an_ask_with_the_command_line() {
-        let event = r#"{"tool_name":"shell","tool_input":{"command":"rm -rf ./build"}}"#;
-        let ask = kobo_json::parse(&ask_from_event("codex", event)).expect("valid json");
-        assert_eq!(
-            ask.get("source").and_then(kobo_json::Value::as_str),
-            Some("codex")
-        );
-        assert_eq!(
-            ask.get("tool").and_then(kobo_json::Value::as_str),
-            Some("shell")
-        );
-        assert_eq!(
-            ask.get("detail").and_then(kobo_json::Value::as_str),
-            Some("rm -rf ./build")
-        );
+        let (tool, detail) =
+            shown(r#"{"tool_name":"shell","tool_input":{"command":"rm -rf ./build"}}"#);
+        assert_eq!(tool, "shell");
+        assert_eq!(detail, "rm -rf ./build");
     }
 
     #[test]
-    fn a_tool_without_a_command_shows_its_whole_input_instead() {
-        let event = r#"{"tool_name":"Write","tool_input":{"file_path":"/etc/hosts"}}"#;
-        let ask = kobo_json::parse(&ask_from_event("claude", event)).expect("valid json");
-        let detail = ask
-            .get("detail")
-            .and_then(kobo_json::Value::as_str)
-            .expect("detail");
-        assert!(detail.contains("/etc/hosts"), "{detail}");
+    fn an_edit_shows_the_file_it_touches_rather_than_a_screen_of_json() {
+        let event = r#"{"tool_name":"Edit","tool_input":{"file_path":"/etc/hosts",
+            "old_string":"a very long file","new_string":"an even longer one"}}"#;
+        let (tool, detail) = shown(event);
+        assert_eq!(tool, "Edit");
+        assert_eq!(detail, "/etc/hosts");
     }
 
     #[test]
-    fn garbage_on_stdin_still_produces_a_well_formed_ask() {
-        let ask = kobo_json::parse(&ask_from_event("codex", "not json")).expect("valid json");
-        assert_eq!(
-            ask.get("source").and_then(kobo_json::Value::as_str),
-            Some("codex")
-        );
-        assert_eq!(
-            ask.get("tool").and_then(kobo_json::Value::as_str),
-            Some("tool")
-        );
+    fn an_event_naming_no_tool_still_has_something_to_put_on_the_panel() {
+        let (tool, detail) = shown("{}");
+        assert_eq!(tool, "tool");
+        assert_eq!(detail, "");
     }
 
     #[test]
@@ -289,5 +496,91 @@ mod tests {
         assert_eq!(decision_json("codex", "pass"), None);
         assert_eq!(decision_json("claude", "pass"), None);
         assert_eq!(decision_json("codex", "gibberish"), None);
+    }
+
+    #[test]
+    fn an_always_allow_line_reads_as_words_rather_than_as_a_rule() {
+        let entry = kobo_json::parse(
+            r#"{"type":"addRules","rules":[{"toolName":"Bash","ruleContent":"rm -rf node_modules"}],
+                "behavior":"allow","destination":"localSettings"}"#,
+        )
+        .expect("valid json");
+        let (label, description) = describe_suggestion(&entry).expect("words");
+        assert_eq!(label, "Always allow");
+        assert_eq!(description, "Bash rm -rf node_modules, in this project");
+    }
+
+    #[test]
+    fn accepting_edits_for_the_session_says_so_in_those_words() {
+        let entry =
+            kobo_json::parse(r#"{"type":"setMode","mode":"acceptEdits","destination":"session"}"#)
+                .expect("valid json");
+        let (label, description) = describe_suggestion(&entry).expect("words");
+        assert_eq!(label, "Accept edits");
+        assert_eq!(description, "for the rest of this session");
+    }
+
+    #[test]
+    fn a_suggestion_with_no_sensible_wording_is_not_offered() {
+        for entry in [
+            r#"{"type":"addRules","rules":[],"behavior":"allow","destination":"session"}"#,
+            r#"{"type":"setMode","mode":"somethingNew","destination":"session"}"#,
+            r#"{"type":"aTypeInventedNextYear","destination":"session"}"#,
+        ] {
+            let entry = kobo_json::parse(entry).expect("valid json");
+            assert_eq!(describe_suggestion(&entry), None, "{entry:?}");
+        }
+    }
+
+    #[test]
+    fn pressing_an_always_allow_grants_this_one_and_adopts_the_rule() {
+        let entry =
+            kobo_json::parse(r#"{"type":"setMode","mode":"acceptEdits","destination":"session"}"#)
+                .expect("valid json");
+        let reply = always(entry);
+        assert!(reply.contains(r#""behavior":"allow""#), "{reply}");
+        assert!(
+            reply.contains(r#""updatedPermissions":[{"type":"setMode""#),
+            "{reply}"
+        );
+    }
+
+    #[test]
+    fn an_answered_question_goes_back_as_the_tools_own_input() {
+        let questions = kobo_json::parse(
+            r#"[{"question":"How much detail?","header":"Detail",
+                "options":[{"label":"Summary","description":"The short version"}],
+                "multiSelect":false}]"#,
+        )
+        .expect("valid json");
+        let updated = kobo_json::ObjectBuilder::new()
+            .set("questions", questions)
+            .set(
+                "answers",
+                kobo_json::Value::Object(vec![(
+                    "How much detail?".to_owned(),
+                    kobo_json::Value::String("Summary".to_owned()),
+                )]),
+            )
+            .build();
+        let reply = answered(updated);
+        // Allowing alone is documented as not enough for this tool: the
+        // answers have to ride back as the input.
+        assert!(reply.contains(r#""hookEventName":"PreToolUse""#), "{reply}");
+        assert!(reply.contains(r#""permissionDecision":"allow""#), "{reply}");
+        assert!(
+            reply.contains(r#""answers":{"How much detail?":"Summary"}"#),
+            "{reply}"
+        );
+        // The questions come back whole, which the tool requires.
+        assert!(reply.contains(r#""multiSelect":false"#), "{reply}");
+        assert!(reply.contains(r#""header":"Detail""#), "{reply}");
+    }
+
+    #[test]
+    fn a_missing_field_reads_as_empty_rather_than_as_the_word_null() {
+        let event = kobo_json::parse(r#"{"decision":"chose"}"#).expect("valid json");
+        assert_eq!(string(&event, "decision"), "chose");
+        assert_eq!(string(&event, "label"), "");
     }
 }

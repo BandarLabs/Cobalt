@@ -56,6 +56,13 @@ const NAP_SECONDS: u32 = 10;
 /// terminal anyway, and the tail is marked rather than silently missing.
 const MAX_DETAIL: usize = 600;
 
+/// One answer offered by name, drawn as a row of its own.
+#[derive(Clone, Debug, PartialEq)]
+struct Choice {
+    label: String,
+    description: String,
+}
+
 /// One question, as the daemon sent it.
 #[derive(Clone, Debug, PartialEq)]
 struct Ask {
@@ -63,6 +70,9 @@ struct Ask {
     source: String,
     tool: String,
     detail: String,
+    /// The answers this question brought with it. Empty is the usual case
+    /// and means allow, deny, or neither.
+    choices: Vec<Choice>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -190,7 +200,7 @@ impl Sidekick {
             .build()
     }
 
-    /// The question, whole, over three answers.
+    /// The question, whole, over its answers.
     fn asking(&self) -> Screen {
         let Some(ask) = &self.ask else {
             return self.watching();
@@ -203,10 +213,26 @@ impl Sidekick {
         if let Some(trouble) = &self.trouble {
             screen = screen.banner(BannerLevel::Attention, trouble.clone());
         }
+        screen = screen.spacer(Space::Small);
+        if ask.choices.is_empty() {
+            return screen
+                .button(ALLOW, "Allow")
+                .button(DENY, "Deny")
+                .button(IGNORE, "Leave it for the terminal")
+                .build();
+        }
+        // A named answer is a row rather than a button: it has a sentence
+        // under it, and a button that wraps to three lines is not a button.
         screen
+            .rows(ask.choices.iter().enumerate().map(|(index, choice)| {
+                (
+                    chosen_action(index),
+                    choice.label.clone(),
+                    choice.description.clone(),
+                    Glyph::Circle,
+                )
+            }))
             .spacer(Space::Small)
-            .button(ALLOW, "Allow")
-            .button(DENY, "Deny")
             .button(IGNORE, "Leave it for the terminal")
             .build()
     }
@@ -229,6 +255,16 @@ impl Sidekick {
 
     /// Sends the tapped decision back to the daemon.
     fn decide(&mut self, context: &mut Context, choice: &str) {
+        self.answer_daemon(context, choice, "");
+    }
+
+    /// Sends back one of the question's own answers, by the label it came
+    /// with. The daemon does not interpret it, and neither does this.
+    fn choose(&mut self, context: &mut Context, label: &str) {
+        self.answer_daemon(context, "", label);
+    }
+
+    fn answer_daemon(&mut self, context: &mut Context, choice: &str, label: &str) {
         let Some(ask) = &self.ask else {
             return;
         };
@@ -236,6 +272,7 @@ impl Sidekick {
             .set("token", self.code.as_str())
             .set("id", ask.id)
             .set("choice", choice)
+            .set("label", label)
             .build()
             .to_json();
         let work = Task::Post {
@@ -453,12 +490,42 @@ fn read_ask(bytes: &[u8]) -> Option<Ask> {
             .unwrap_or("")
             .to_owned()
     };
+    let choices = ask
+        .get("choices")
+        .and_then(kobo_json::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    let text = |name: &str| {
+                        item.get(name)
+                            .and_then(kobo_json::Value::as_str)
+                            .unwrap_or("")
+                            .to_owned()
+                    };
+                    let label = text("label");
+                    (!label.is_empty()).then(|| Choice {
+                        label,
+                        description: text("description"),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     Some(Ask {
         id,
         source: field("source"),
         tool: field("tool"),
         detail: field("detail"),
+        choices,
     })
+}
+
+/// The action name for the nth offered answer. Positional because a label
+/// is the agent's words and can be anything at all, including the name of
+/// a control this screen already has.
+fn chosen_action(index: usize) -> String {
+    format!("choice.{index}")
 }
 
 impl KoboApp for Sidekick {
@@ -521,6 +588,17 @@ impl KoboApp for Sidekick {
             for choice in [ALLOW, DENY, IGNORE] {
                 if action == action_id(choice) {
                     self.decide(context, choice);
+                    return;
+                }
+            }
+            let labels: Vec<String> = self
+                .ask
+                .iter()
+                .flat_map(|ask| ask.choices.iter().map(|choice| choice.label.clone()))
+                .collect();
+            for (index, label) in labels.iter().enumerate() {
+                if action == action_id(&chosen_action(index)) {
+                    self.choose(context, label);
                     return;
                 }
             }
@@ -650,6 +728,61 @@ mod tests {
             )
             .into_bytes(),
         )
+    }
+
+    /// A question that brought its own answers, as `AskUserQuestion` does.
+    fn multiple_choice(id: u32) -> TaskOutcome {
+        TaskOutcome::Completed(
+            format!(
+                r#"{{"ask":{{"id":{id},"source":"claude","tool":"Detail",
+                "detail":"How much detail do you want?","choices":[
+                {{"label":"Summary","description":"The short version"}},
+                {{"label":"Every step","description":"Nothing left out"}}]}}}}"#
+            )
+            .into_bytes(),
+        )
+    }
+
+    #[test]
+    fn a_question_with_its_own_answers_shows_them_instead_of_allow_and_deny() {
+        let (mut app, poll) = paired();
+        let mut context = Context::default();
+        app.on_task(&mut context, poll, multiple_choice(7));
+        let screen = painted(&context.take_commands()).expect("the question was painted");
+        let lines = shown(&screen);
+        for words in [
+            "How much detail do you want?",
+            "Summary",
+            "The short version",
+            "Every step",
+            "Nothing left out",
+            // Still offered, because nobody should be trapped on the panel.
+            "Leave it for the terminal",
+        ] {
+            assert!(
+                lines.iter().any(|line| line.contains(words)),
+                "no {words} on the panel: {lines:?}"
+            );
+        }
+        // Allowing a multiple-choice question would answer nothing.
+        for absent in ["Allow", "Deny"] {
+            assert!(
+                !lines.iter().any(|line| line.trim() == absent),
+                "{absent} offered for a question that is not a permission: {lines:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn tapping_an_answer_sends_the_label_it_was_given() {
+        let (mut app, poll) = paired();
+        let mut context = Context::default();
+        app.on_task(&mut context, poll, multiple_choice(7));
+        let _ = context.take_commands();
+        let commands = act(&mut app, action_id("choice.1"));
+        let (_, _, body) = posted(&commands).expect("the answer was sent");
+        assert!(body.contains(r#""label":"Every step""#), "{body}");
+        assert!(body.contains(r#""id":7"#), "{body}");
     }
 
     #[test]

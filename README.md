@@ -264,27 +264,11 @@ attended display tests are in **[docs/DEVICES.md](docs/DEVICES.md)**.
 
 ## Verified on the hardware
 
-The read-only doctor matches the physical N365:
-
-- Device tree `mediatek,mt8110`, `mediatek,mt8512`
-- Framebuffer `hwtcon`, 1072×1448, 32-bit RGBA, 4288-byte stride,
-  6,243,328-byte map, rotation 3
-- Touch `cyttsp5_mt` on `/dev/input/event1`, X 0–1447, Y 0–1071
-- `identity: model=N365 firmware=4.45.23697 kernel=4.9.77 device-code=391`
-
-The full serial number is deliberately never read past its four-character
-model prefix.
-
-Proven on the device, in order: a GC16 refresh that writes no pixel; a
-reversible pixel write restored and verified byte for byte; a whole-screen
-snapshot and restore; the DU waveform; the touch transform, against a physical
-touch; guardian restoration after a failed child; stopping and restarting the
-stock reader; an application rendered on the panel and taps reaching it; and
-HTTPS, including a 24 MB download.
-
-Update markers are random and at least `0x40000000`, because markers are a
-global namespace shared with the stock reader and a low fixed marker could be
-matched against another process's update.
+The read-only doctor matches the physical N365 on device tree, framebuffer
+identity, touch device and firmware/kernel/device-code identity; the exact
+report is in [docs/PORTING.md](docs/PORTING.md#how-to-get-the-numbers). What
+has been proven on the device, waveform by waveform, is under
+[Attended display smoke tests](docs/DEVICES.md#attended-display-smoke-tests).
 
 ## What the UI layer draws
 
@@ -306,216 +290,33 @@ application's own tests fail instead of the panel showing an empty box.
 ### Back belongs to the reader, and can be lent
 
 The Back control in the top bar is drawn by the runtime, on top of whatever the
-application asked for. It cannot be removed, cannot be forged (`ActionId::BACK`
-is refused if an application tries to bind it) and always ends at the launcher.
-That is what makes it the reliable way out of anything.
-
-It used to end there *immediately*, which was wrong in a way only the device
-showed: tapping Back inside a book left the whole application, and reopening it
-came back to the book rather than the shelf, because its retained screen had
-never changed. An application had no way to have any history at all.
-
-A screen may now ask for first refusal with `owns_back(true)`. The runtime
-delivers `ActionId::BACK` as an ordinary action instead of leaving, and starts a
-two second clock. If a screen arrives, the application went back inside itself.
-If none does, the launcher appears anyway. So an application can have history,
-and still cannot trap a reader: the guarantee is a deadline rather than a
-promise, which is the only kind an application cannot break.
+application asked for. It cannot be removed, cannot be forged, and always ends
+at the launcher, which is what makes it the reliable way out of anything. A
+screen may ask for first refusal instead with `owns_back(true)`, so an
+application can have its own history without ever being able to trap a reader
+in it; [SDK.md](SDK.md#3-building-a-screen) covers the mechanism and the
+two-second deadline behind it.
 
 Pictures are decoded by `kobo-image`, halftoned to the sixteen greys this panel
 resolves, and scaled to the cell they will occupy, including *up*, bounded, so
 a book cover published at 190 by 300 fills a tile on a 300 pixel-per-inch panel
 instead of sitting in the middle of it like a stamp.
 
-## Writing an application
-
-[SDK.md](SDK.md) is the full guide. In short: an application is a plain Rust
-struct. It owns its state, describes a screen,
-and reacts to events. It never opens a device, chooses a refresh waveform,
-writes a sysfs file, or talks to a radio.
-
-```rust
-use kobo_sdk::prelude::*;
-
-#[derive(Default)]
-struct Dashboard {
-    battery: Option<String>,
-}
-
-impl KoboApp for Dashboard {
-    fn on_start(&mut self, context: &mut Context) {
-        context.device().read_battery();
-        self.show(context);
-    }
-
-    fn on_action(&mut self, context: &mut Context, action: ActionId) {
-        if action == action_id("refresh") {
-            context.device().read_battery();
-        }
-    }
-
-    fn on_device_result(
-        &mut self,
-        context: &mut Context,
-        request: DeviceRequest,
-        result: DeviceResult,
-    ) {
-        if let DeviceResult::Battery { percent, .. } = result {
-            self.battery = Some(format!("{percent}%"));
-            self.show(context);
-        }
-        let _ = request;
-    }
-}
-```
-
-`kobo new` generates exactly this shape, and `kobo dev` runs it in the browser
-simulator against the same renderer and the same policy the device applies.
-
-### The hardware API
-
-`context.device()` is the whole hardware surface:
-
-| Call | Meaning |
-| --- | --- |
-| `read_battery()` | Percentage and charging state |
-| `hold_wifi(duration)` | Keep Wi-Fi associated, for an always-on view |
-| `release_wifi()` | Give it back early |
-| `keep_awake(duration)` | Stay out of suspend while in the foreground |
-| `allow_sleep()` | Give that back early |
-| `schedule_wake(delay)` | Be woken to refresh content |
-| `cancel_wake()` | Drop a pending wake |
-| `set_frontlight(percent)` / `read_frontlight()` | Front light |
-| `read_bluetooth()` / `set_bluetooth(on)` | Bluetooth availability and power |
-| `scan_bluetooth()` | Discover nearby devices |
-| `pair_bluetooth(address)` / `connect_bluetooth(address)` | Pair and connect headphones, speakers, keyboards, remotes and other input devices |
-| `disconnect_bluetooth(address)` / `forget_bluetooth(address)` | Disconnect or remove a pairing |
-| `read_wifi()` / `set_wifi(on)` / `scan_wifi()` | Wi-Fi state, power and nearby networks |
-| `join_wifi(ssid, password)` / `disconnect_wifi()` | Join a WPA personal or open network, or disconnect |
-| `load_shelf_audio(name)` / `load_audio_stream(url)` | Prepare a bounded MP3 or Kobo MP3Z source |
-| `play_audio()` / `pause_audio()` / `stop_audio()` | Control the runtime-owned audio transport |
-| `seek_audio(position)` / `set_audio_volume(percent)` | Seek and adjust software playback volume |
-
-Every call produces exactly one `on_device_result`, so an application always
-learns what happened. A request can come back `Granted` for **less** time than
-was asked for, or `Denied` with the exact reason: the capability was not
-declared, it was withheld because the battery is low, system policy refused it,
-another application holds it, or this runtime cannot do it on this hardware.
-
-That last reason is the safety rule made visible. A build only performs what it
-has a proven backend for; anything else is refused rather than pretended. The
-device runtime uses the existing firmware `wpa_supplicant` for Wi-Fi and the
-firmware's BlueZ-compatible D-Bus service for Bluetooth. It never starts a
-second supplicant, attaches HCI itself, or unloads the shared radio modules.
-Audio uses the firmware-owned AOSP A2DP HAL: the runtime decodes MP3, paces
-44.1 kHz stereo PCM into `btservice`, and keeps file paths and HTTPS transport
-inside the runtime. `kobo_sdk::audio::AudioPlayer` composes album art, position,
-seek, play/pause, volume and an audio-only Bluetooth picker. If Play has no
-connected output, the picker powers Bluetooth, scans, pairs and connects, then
-continues playback automatically.
-On Clara BW firmware 4.45.23697 the stable capability marker is
-`/usr/lib/libaudio.a2dp.default.so`; `btservice` owns
-`/tmp/audio.a2dp_ctrl` and creates `/tmp/audio.a2dp_data` after START. The
-runtime therefore detects the HAL before a headset connects and opens the live
-sockets only when playback begins.
-On MediaTek Clara devices, using Bluetooth requests a clean reboot when leaving
-Cobalt because restarting Nickel into an already-initialised driver can panic
-the vendor Wi-Fi module.
-
-### Refusing rather than inventing
-
-`schedule_wake` is the largest refusal and is listed under
-[what is not here](#what-is-here-and-what-is-not). The principle behind it
-applies to every backend:
-
-**An invented reading is worse than a refusal**, because an application cannot
-tell one from the other and will act on it. The battery backend finds the supply
-by reading each `type` file for `Battery` rather than hardcoding a device name,
-and an unparseable capacity returns nothing rather than zero: rounding towards
-"flat" is the dangerous direction.
-
 ## Credentials
 
-An application never holds a key. It names one:
-
-```rust
-Task::Post { credential: Some(Credential::bearer("openrouter")), .. }
-Task::Post { credential: Some(Credential::in_header("anthropic", "x-api-key")), .. }
-```
-
-The runtime reads `/mnt/onboard/.adds/cobalt/secrets/<name>` and attaches it,
-either as a bearer token or under the header the service expects, so a request
-goes straight to Anthropic or Gemini rather than through a proxy that would
-have to be trusted with the key. The value never enters the application's
-memory, its logs or its crash dump, and it is not replayed across a redirect.
-
-Getting a key onto the reader is a command, not an errand:
+An application never holds a key. It names one, and the runtime attaches it
+from `/mnt/onboard/.adds/cobalt/secrets/<name>` — as a bearer token or under
+the header the service expects — so a request goes straight to the provider
+rather than through a proxy that would have to be trusted with the key. The
+value never enters the application's memory, its logs or its crash dump.
 
 ```sh
 kobo secret set openai --from ~/.openai --device 192.168.1.5
-kobo secret set exa --from ~/.exa --device 192.168.1.5
-kobo secret set elevenlabs --from ~/.elevenlabs --device 192.168.1.5
 kobo secret list --device 192.168.1.5      # names only, never values
-kobo secret remove openai --device 192.168.1.5
 ```
 
-With no `--from`, the key is looked for in `$KOBO_SECRETS_DIR/<name>`,
-`~/.config/cobalt/secrets/<name>` and `~/.<name>`, in that order. The value is
-read on this machine and written straight to the reader: it is never passed as
-an argument, so it does not reach a process table or a shell history, and it is
-never printed. A one-line `NAME=value` file is accepted as well as a raw key;
-only the value is installed. `--volume` does the same thing over USB for a
-reader that is not yet on Wi-Fi.
-
-A key must never reach a commit. `tools/pre-commit` refuses one, and is enabled
-per clone with:
-
-```sh
-git config core.hooksPath tools
-```
-
-It scans staged lines for published credential shapes (OpenAI, Anthropic,
-GitHub, AWS, Google, Slack), for a PEM private key header, and for a shell
-assignment of something named like a key. It reports the shape it matched and
-never the match, because printing the key to a terminal or a CI log is the
-thing being prevented.
-
-## What applications may ask for
-
-Applications never touch hardware. They declare capabilities and the runtime
-grants a clamped subset:
-
-| Capability | Purpose |
-| --- | --- |
-| `network` | Reach the network in the foreground |
-| `background-network` | Reach the network from a scheduled wake |
-| `hold-wifi` | Keep Wi-Fi associated, for always-on dashboards |
-| `keep-awake` | Stay out of suspend in the foreground |
-| `scheduled-wake` | Be woken to refresh content |
-| `battery-read` | Read battery percentage and charging state |
-| `frontlight-control` | Change front light brightness |
-| `audio`, `bluetooth-audio` | Play audio, including to headphones |
-| `bluetooth-control` | Power, scan, pair and connect Bluetooth devices |
-| `wifi-control` | Power, scan, join and disconnect Wi-Fi |
-| `sleep-screen` | Draw the sleep screen |
-| `notifications` | Post notifications |
-| `shared-files` | Use a user-visible folder |
-| `shell` | Run a terminal, hosted by the runtime |
-
-Unknown names are rejected rather than ignored, dependencies are enforced
-(`hold-wifi` requires `network`, `background-network` requires
-`scheduled-wake`, `bluetooth-audio` requires `audio`), and a system
-`PowerPolicy` the application cannot raise imposes a minimum wake interval, a
-maximum Wi-Fi hold, and withdrawal of the expensive capabilities below fifteen
-percent battery unless the device is charging.
-
-`shell` is the one that is different in kind. Every other capability is undone
-by a reboot; a shell on this device is root on a writable root filesystem, so
-it is the first thing the platform hosts that a power cycle cannot repair. It
-is never implied by another capability, it is granted today only to the
-application named `terminal`, and the application never holds the
-pseudo-terminal: it sends what was typed and receives what was printed, so the
-runtime is the only thing that can start, bound, or stop a program.
+The full API, the CLI's lookup order, and how a key is kept out of git
+entirely are in [SDK.md's Credentials section](SDK.md#credentials).
 
 ## What runs on the panel
 

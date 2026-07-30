@@ -9,7 +9,7 @@
 //! Every connection is one request on one thread. The traffic is a person
 //! pressing buttons; there is nothing here worth an event loop.
 
-use crate::board::{Ask, Board, Decision};
+use crate::board::{Ask, Asking, Board, Choice, Decision};
 use crate::http::{read_request, respond_json, Request};
 use crate::state;
 use std::io::{Read, Write};
@@ -151,17 +151,52 @@ fn hook_route(board: &Board, request: &Request, stream: &mut (impl Read + Write)
             .unwrap_or("")
             .to_owned()
     };
-    let (source, tool, detail) = (field("source"), field("tool"), field("detail"));
-    let decision = board.submit(&source, &tool, &detail, state::ASK_PATIENCE);
-    let word = match decision {
-        Decision::Allow => "allow",
-        Decision::Deny => "deny",
-        Decision::Pass => "pass",
+    let asking = Asking::new(&field("source"), &field("tool"), &field("detail"))
+        .offering(read_choices(ask.get("choices")));
+    let reply = match board.submit(asking, state::ASK_PATIENCE) {
+        Decision::Allow => plain("allow"),
+        Decision::Deny => plain("deny"),
+        Decision::Pass => plain("pass"),
+        // The label goes back whole. A hook that offered choices knows what
+        // it offered, and nothing in between needs to understand them.
+        Decision::Chose(label) => kobo_json::ObjectBuilder::new()
+            .set("decision", "chose")
+            .set("label", label.as_str())
+            .build(),
     };
-    let reply = kobo_json::ObjectBuilder::new()
-        .set("decision", word)
-        .build();
     respond_json(stream, 200, "OK", &reply.to_json());
+}
+
+/// A decision with nothing to say beyond its own name.
+fn plain(word: &str) -> kobo_json::Value {
+    kobo_json::ObjectBuilder::new()
+        .set("decision", word)
+        .build()
+}
+
+/// The choices in an `/ask` body, if it offered any.
+fn read_choices(value: Option<&kobo_json::Value>) -> Vec<Choice> {
+    let Some(items) = value.and_then(kobo_json::Value::as_array) else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|item| {
+            let text = |name: &str| {
+                item.get(name)
+                    .and_then(kobo_json::Value::as_str)
+                    .unwrap_or("")
+                    .to_owned()
+            };
+            let label = text("label");
+            // A button with nothing written on it cannot be pressed for a
+            // reason, so it is dropped rather than drawn blank.
+            (!label.is_empty()).then(|| Choice {
+                label,
+                description: text("description"),
+            })
+        })
+        .collect()
 }
 
 /// `GET /pending` and `POST /answer` from the reader, behind the code.
@@ -199,12 +234,16 @@ fn reader_route(board: &Board, pairing: &str, request: &Request, stream: &mut (i
                 return;
             }
             let id = answer.get("id").and_then(kobo_json::Value::as_i64);
-            let choice = answer.get("choice").and_then(kobo_json::Value::as_str);
-            let decision = match choice {
-                Some("allow") => Some(Decision::Allow),
-                Some("deny") => Some(Decision::Deny),
-                Some("pass") => Some(Decision::Pass),
-                _ => None,
+            // A chosen option arrives under its own name, so a question
+            // offering a choice called "allow" still means the choice.
+            let decision = match answer.get("label").and_then(kobo_json::Value::as_str) {
+                Some(label) if !label.is_empty() => Some(Decision::Chose(label.to_owned())),
+                _ => match answer.get("choice").and_then(kobo_json::Value::as_str) {
+                    Some("allow") => Some(Decision::Allow),
+                    Some("deny") => Some(Decision::Deny),
+                    Some("pass") => Some(Decision::Pass),
+                    _ => None,
+                },
             };
             let landed = match (id, decision) {
                 (Some(id), Some(decision)) => {
@@ -221,11 +260,22 @@ fn reader_route(board: &Board, pairing: &str, request: &Request, stream: &mut (i
 
 /// The question as the reader sees it.
 fn ask_json(ask: &Ask) -> kobo_json::Value {
+    let choices = ask
+        .choices
+        .iter()
+        .map(|choice| {
+            kobo_json::ObjectBuilder::new()
+                .set("label", choice.label.as_str())
+                .set("description", choice.description.as_str())
+                .build()
+        })
+        .collect();
     kobo_json::ObjectBuilder::new()
         .set("id", ask.id)
         .set("source", ask.source.as_str())
         .set("tool", ask.tool.as_str())
         .set("detail", ask.detail.as_str())
+        .set("choices", kobo_json::Value::Array(choices))
         .build()
 }
 
