@@ -251,6 +251,8 @@ one cannot.
 | `disabled_button(name, label)` | A visible, outlined action that yields nothing and absorbs its tap. |
 | `rows([(name, title, summary, glyph), …])` | A list. Title, one line of detail, an icon. |
 | `checklist([(name, title, summary, done), …])` | The same list, where a finished row is struck through. |
+| `rows_with_menu([(name, title, summary, glyph, menu), …])` | The same list, where each row carries an overflow mark naming an action of its own. |
+| `row_overflow(anchor, open, [(name, label), …])` | The menu behind that mark. |
 | `tiles([(name, label, glyph), …])` | A grid of square destinations. |
 | `apps([metadata, …])` | Launcher tiles from `AppMetadata`, with picture-to-glyph fallback. |
 | `grid(columns, square, cells)` | A board. What tic-tac-toe is drawn with. |
@@ -315,6 +317,29 @@ with coverage antialiasing at whatever size the layout asks for, so they are
 crisp at every density. Applications cannot supply their own paths: arbitrary
 path data is untrusted input to a rasteriser, and an application must not be
 able to draw something indistinguishable from a system control.
+
+The artwork is [Tabler Icons](https://tabler.io/icons), which is MIT, converted
+once into checked-in Rust at `crates/kobo-ui/src/vector/tabler.rs`. Nothing at
+build time or run time reads an SVG or reaches the network, so the workspace
+keeps its no-dependency rule. It is a published set rather than forty
+hand-drawn ones because forty hand-drawn icons are forty separate judgements
+about how round a corner runs and how long a tail is, and a set drawn that way
+looks like a set only from across the room.
+
+Adding one is two lines and a command. Name the `Glyph`, put it in `Glyph::ALL`,
+add a row to `tools/icon-import/icons.txt` naming any of the five thousand
+icons in the upstream set, and run `scripts/import-icons.sh`. The lookup the
+importer generates is exhaustive, so a `Glyph` with no row in that file does
+not compile. Then draw it in the gallery, or the conformance test fails. Judge
+the result by eye rather than by test:
+
+```
+cargo test -p kobo-ui contact_sheet -- --ignored --nocapture
+```
+
+draws every glyph onto one sheet and says where it put it. The wire tag for a
+glyph is one byte, so the set can hold 256 and no more, which is the reason it
+is curated rather than wholesale.
 
 Three places take one: `rows` and `tiles`, where the icon leads a title, and
 `controls`, where it replaces one. There is deliberately no way to put a glyph
@@ -552,7 +577,37 @@ the full-width helpers measure it at a width it will never have: `clamped_row`
 lets a two-line title spill onto a third, and `paginate_rows` packs one row too
 many and the last one is drawn under the bottom bar. The trailing-aware pair is
 `clamped_row_beside(text, trailing, lines, nav_bar)` and
-`paginate_rows_with_trailing(&[(title, summary, trailing), …], nav_bar)`.
+`paginate_rows_with_trailing(&[(title, summary, trailing), …], nav_bar)`. A row
+built with `rows_with_menu` gives up a whole touch target to the mark, whatever
+its title says, and its pair is `one_line_row_with_menu(text, nav_bar)` and
+`paginate_rows_with_menu(&[(title, summary), …], nav_bar)`.
+
+### A second thing to do to a row
+
+A row has one obvious verb: open it. Everything else a reader might want to do
+to the thing it names -- stop following it, forget it, rename it -- has nowhere
+to live on a panel with no long press worth relying on and no room for a second
+button beside every entry.
+
+`rows_with_menu` puts a vertical three dot mark against the right edge of each
+row, naming an action of its own. It is hit-tested ahead of the row, so a tap
+on the dots is never also a tap on the row, and it is inverted on its own while
+it is held rather than lighting the whole row. An empty menu name means no mark
+on that row.
+
+`row_overflow(anchor, open, items)` hangs the menu off the mark, and is the
+same shape as `top_bar_overflow`: what is open is the application's state, not
+something the builder remembers. Two things to get right:
+
+- Pass `open` as false when the row is not on the page being drawn. A popover
+  anchored to a control that is not on the panel has nothing to point at.
+- A tap beside a popover arrives as `ActionId::BACK`. On a screen that would
+  otherwise let the runtime take Back, claim it with `with_own_back(true)`
+  while the menu is open, or putting the menu away closes the application.
+
+Feeds is the worked example: the mark on a feed offers to stop following it,
+which used to mean opening the feed first and fetching a feed you had already
+decided you did not want.
 
 ### What stands at the head of a row
 

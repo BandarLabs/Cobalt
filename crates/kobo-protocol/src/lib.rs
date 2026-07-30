@@ -24,7 +24,11 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// Went to 4 when the Bluetooth result gained `restart_on_exit`, for the same
 /// reason: a trailing byte on an existing tag, which an old application would
 /// have left in the buffer.
-pub const VERSION: u8 = 4;
+///
+/// Went to 5 when a row gained an optional overflow action. Same shape again:
+/// a flag byte inside the repeated part of tag 14, which an old runtime would
+/// have read as the next row's action.
+pub const VERSION: u8 = 5;
 pub const HEADER_LEN: usize = 14;
 pub const MAX_FRAME_LEN: usize = 1_048_576;
 /// The largest decoded picture accepted from one application.
@@ -2584,14 +2588,17 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
             }
             let mut length = 6;
             for row in rows {
-                // Four bytes of action, the fixed-width lead, one of state
-                // and one saying whether a trailing value follows, then the
-                // strings.
-                add_encoded_len(&mut length, 6 + ROW_LEAD_LEN)?;
+                // Four bytes of action, the fixed-width lead, one of state,
+                // one saying whether a trailing value follows and one saying
+                // whether an overflow action does, then the strings.
+                add_encoded_len(&mut length, 7 + ROW_LEAD_LEN)?;
                 add_encoded_len(&mut length, encoded_string_len(&row.title)?)?;
                 add_encoded_len(&mut length, encoded_string_len(&row.summary)?)?;
                 if let Some(trailing) = &row.trailing {
                     add_encoded_len(&mut length, encoded_string_len(trailing)?)?;
+                }
+                if row.menu.is_some() {
+                    add_encoded_len(&mut length, 4)?;
                 }
             }
             length
@@ -3576,6 +3583,10 @@ fn encode_node(
                 if let Some(trailing) = &row.trailing {
                     push_string(output, trailing)?;
                 }
+                output.push(u8::from(row.menu.is_some()));
+                if let Some(menu) = row.menu {
+                    push_u32(output, menu.0);
+                }
             }
         }
         Node::TileGrid { id, tiles, shape } => {
@@ -3908,6 +3919,8 @@ const fn encode_glyph(glyph: Glyph) -> u8 {
         Glyph::Forward30 => 35,
         Glyph::VolumeDown => 36,
         Glyph::VolumeUp => 37,
+        Glyph::MoreVertical => 38,
+        Glyph::Trash => 39,
     }
 }
 
@@ -3951,6 +3964,8 @@ const fn decode_glyph(tag: u8) -> Option<Glyph> {
         35 => Glyph::Forward30,
         36 => Glyph::VolumeDown,
         37 => Glyph::VolumeUp,
+        38 => Glyph::MoreVertical,
+        39 => Glyph::Trash,
 
         _ => return None,
     })
@@ -4620,6 +4635,15 @@ fn decode_node(
                 } else {
                     Some(reader.string()?)
                 };
+                let menu = if reader.u8()? == 0 {
+                    None
+                } else {
+                    let menu = ActionId(reader.u32()?);
+                    if menu.is_reserved() {
+                        return Err(ProtocolError::InvalidValue("reserved action id"));
+                    }
+                    Some(menu)
+                };
                 rows.push(Row {
                     action,
                     title,
@@ -4627,6 +4651,7 @@ fn decode_node(
                     lead,
                     state,
                     trailing,
+                    menu,
                 });
             }
             Ok(Node::Rows { id, rows })
@@ -5516,6 +5541,13 @@ mod node_coverage_tests {
                     // optional half is where a length mismatch hides.
                     Row::new(ActionId(9), "Great Expectations", "Dickens", Glyph::Book)
                         .with_trailing("18,204"),
+                    // An overflow action is the other optional half, and the
+                    // two together are where an ordering mistake hides.
+                    Row::new(ActionId(10), "Ars Technica", "arstechnica.com", Glyph::Rss)
+                        .with_menu(ActionId(11)),
+                    Row::new(ActionId(12), "Hacker News", "news.ycombinator.com", Glyph::News)
+                        .with_trailing("30")
+                        .with_menu(ActionId(13)),
                 ],
             },
             Node::Choice {

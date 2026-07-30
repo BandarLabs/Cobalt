@@ -1166,6 +1166,50 @@ impl ScreenBuilder {
         })
     }
 
+    /// The menu behind a row's overflow mark.
+    ///
+    /// The companion to [`Self::rows_with_menu`], and the same shape as
+    /// [`Self::top_bar_overflow`]: pass the mark's name, whether it is open,
+    /// and what it offers. `open` is a property of the application's state
+    /// rather than something this remembers, for the reason every overlay in
+    /// this SDK works that way -- the tap that closes a popover arrives as
+    /// `ActionId::BACK` from the scrim, and an application that has to notice
+    /// that tap itself is an application that sometimes forgets.
+    ///
+    /// One caution the bar's version does not need: pass `open` as false when
+    /// the row is not on the current page. A popover anchored to a control
+    /// that is not drawn has nothing to point at.
+    /// Each item is a name, a word and a mark, and is drawn as a row rather
+    /// than a button. A menu is a list of things to do to one entry, and a
+    /// stack of full-width outlined buttons reads as a form; a row also gives
+    /// the mark somewhere to stand, which is what lets a destructive item say
+    /// "Delete" beside a bin instead of spelling the whole verb out.
+    #[must_use]
+    pub fn row_overflow<I, N, L>(self, anchor: impl AsRef<str>, open: bool, items: I) -> Self
+    where
+        I: IntoIterator<Item = (N, L, Glyph)>,
+        N: AsRef<str>,
+        L: Into<String>,
+    {
+        if !open {
+            return self;
+        }
+        let items = items
+            .into_iter()
+            .map(|(name, label, glyph)| (name.as_ref().to_owned(), label.into(), glyph))
+            .collect::<Vec<_>>();
+        if items.is_empty() {
+            return self;
+        }
+        self.popover(anchor.as_ref(), move |builder| {
+            builder.rows(
+                items
+                    .into_iter()
+                    .map(|(name, label, glyph)| (name, label, String::new(), glyph)),
+            )
+        })
+    }
+
     /// Adds the fixed bottom bar.
     ///
     /// Note there is no back destination to add: back belongs to the runtime's
@@ -1553,6 +1597,46 @@ impl ScreenBuilder {
         let mut rows = Vec::new();
         for (name, title, summary, lead) in source.by_ref().take(MAX_ROWS) {
             rows.push(Row::new(self.register(name.as_ref()), title, summary, lead));
+        }
+        if source.next().is_some() {
+            self.warn_limit(id, "rows", MAX_ROWS);
+        }
+        self.nodes.push(Node::Rows { id, rows });
+        self
+    }
+
+    /// The same, with an overflow mark against the right edge of each row.
+    ///
+    /// The mark is a vertical three dot control naming an action of its own,
+    /// so a tap on it is not a tap on the row. Use it for the things a reader
+    /// might want to do *to* an entry rather than *with* it: stop following a
+    /// feed, forget a book, remove a key. What the action opens is the
+    /// application's business, and a popover is usually the right answer.
+    ///
+    /// An empty menu name means no mark on that row, exactly as an empty
+    /// trailing value means no value.
+    #[must_use]
+    pub fn rows_with_menu<I, N, T, S, L, M>(mut self, rows: I) -> Self
+    where
+        I: IntoIterator<Item = (N, T, S, L, M)>,
+        N: AsRef<str>,
+        T: Into<String>,
+        S: Into<String>,
+        L: Into<RowLead>,
+        M: AsRef<str>,
+    {
+        let id = self.next_id();
+        let mut source = rows.into_iter();
+        let mut rows = Vec::new();
+        for (name, title, summary, lead, menu) in source.by_ref().take(MAX_ROWS) {
+            let row = Row::new(self.register(name.as_ref()), title, summary, lead);
+            let menu = menu.as_ref();
+            rows.push(if menu.is_empty() {
+                row
+            } else {
+                let action = self.register(menu);
+                row.with_menu(action)
+            });
         }
         if source.next().is_some() {
             self.warn_limit(id, "rows", MAX_ROWS);
@@ -2277,9 +2361,24 @@ impl Context {
         let area = self.metrics.prose_area(true, nav_bar);
         kobo_ui::clamp_lines(
             text,
-            kobo_ui::row_title_width(&self.metrics, area, trailing),
+            kobo_ui::row_title_width(&self.metrics, area, trailing, false),
             kobo_ui::FontSize::Body,
             lines,
+        )
+    }
+
+    /// `text` cut to one line of a row that carries an overflow mark.
+    ///
+    /// The mark keeps a finger's width of the row whatever the title says, so
+    /// a title clamped at the full row width runs under the dots.
+    #[must_use]
+    pub fn one_line_row_with_menu(&self, text: &str, nav_bar: bool) -> String {
+        let area = self.metrics.prose_area(true, nav_bar);
+        kobo_ui::clamp_lines(
+            text,
+            kobo_ui::row_title_width(&self.metrics, area, "", true),
+            kobo_ui::FontSize::Body,
+            1,
         )
     }
 
@@ -2326,6 +2425,12 @@ impl Context {
         nav_bar: bool,
     ) -> Vec<Vec<usize>> {
         kobo_ui::paginate_rows_with_trailing(rows, &self.metrics, self.paged_area(nav_bar))
+    }
+
+    /// The same, for rows that carry an overflow mark against their right edge.
+    #[must_use]
+    pub fn paginate_rows_with_menu(&self, rows: &[(&str, &str)], nav_bar: bool) -> Vec<Vec<usize>> {
+        kobo_ui::paginate_rows_with_menu(rows, &self.metrics, self.paged_area(nav_bar))
     }
 
     /// The same, where some rows open a new section.

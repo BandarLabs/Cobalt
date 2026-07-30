@@ -30,6 +30,25 @@ notices in `licenses/LICENSE-Rust-dependencies.txt`. That includes `ring`'s
 Apache-2.0 and ISC terms and the CDLA-Permissive-2.0 agreement for the Mozilla
 CA data bundled by `webpki-roots`.
 
+## Icons
+
+The icon geometry every application draws comes from a published set rather
+than being drawn here.
+
+| Set | Licence | File |
+| --- | --- | --- |
+| Tabler Icons 3.46.0 | MIT | `licenses/LICENSE-Tabler.txt` |
+
+The artwork is converted once, offline, into checked-in Rust at
+`crates/kobo-ui/src/vector/tabler.rs`, so nothing at build time or run time
+reads an SVG or reaches the network. `scripts/import-icons.sh` reproduces that
+file from the upstream tag, and `tools/icon-import/icons.txt` records which
+icon stands behind which `Glyph`.
+
+MIT imposes no copyleft, so this geometry travels inside an AGPL binary
+without changing anything about it. What it does ask is that the notice
+travels too, which is what the file above is for.
+
 ## Fonts
 
 Two typefaces are embedded in the `kobo-text` crate and end up inside every

@@ -1,0 +1,50 @@
+# Which Tabler icon stands behind each Glyph.
+#
+# One line per glyph: the Rust variant, then the name of the file under
+# `icons/outline/` in the Tabler repository, without its extension.
+#
+# Glyphs absent from this file keep their hand-authored geometry. Two do, and
+# for the same reason: `Wifi` takes a signal strength and `Battery` takes a
+# percentage, so their artwork changes with their argument and no fixed icon
+# can express it.
+
+App                 apps
+Book                book
+Note                note
+Clock               clock
+Settings            settings
+Folder              folder
+Chart               chart-bar
+Search              search
+Reader              device-ipad
+Power               power
+Grid                layout-grid
+Circle              circle
+Check               check
+Terminal            terminal-2
+Chat                message-circle
+News                news
+Rss                 rss
+Light               bulb
+Close               x
+Download            download
+Bookmark            bookmark
+Filter              filter
+Person              user
+Tag                 tag
+Globe               world
+Refresh             refresh
+More                dots
+Bluetooth           bluetooth
+Key                 key
+Magnet              magnet
+Play                player-play
+Pause               player-pause
+Rewind30            rewind-backward-30
+Forward30           rewind-forward-30
+VolumeDown          volume-2
+VolumeUp            volume
+MoreVertical        dots-vertical
+Trash               trash
+Wifi                wifi
+Battery             battery

@@ -1,0 +1,14 @@
+[package]
+name = "icon-import"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "icon-import"
+path = "src/main.rs"
+
+[lints]
+workspace = true

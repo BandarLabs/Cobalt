@@ -38,6 +38,7 @@ members = [
     "examples/launcher",
     "examples/magnet",
     "examples/settings",
+    "tools/icon-import",
 ]
 resolver = "2"
 

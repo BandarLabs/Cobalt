@@ -158,6 +158,8 @@ enum Floating {
     Menu,
     Sheet,
     Confirm,
+    /// The menu behind one row's overflow mark, by position in the list.
+    RowMenu(usize),
 }
 
 struct Gallery {
@@ -654,6 +656,21 @@ impl Gallery {
                 "The three dots in the bar open a menu. Tapping anywhere else closes it, \
                  and the app is not told about that tap.",
             )
+            .row_overflow(
+                "menu-one-more",
+                self.floating == Some(Floating::RowMenu(0)),
+                [
+                    ("row-menu-rename", "Rename", Glyph::Note),
+                    ("row-menu-forget", "Delete", Glyph::Trash),
+                ],
+            )
+            .rows_with_menu([(
+                "menu-one",
+                "Ars Technica",
+                "a row with a menu of its own",
+                RowLead::from(Glyph::Rss),
+                "menu-one-more",
+            )])
             .button("open-sheet", "Open a modal");
         if self.floating == Some(Floating::Sheet) {
             screen.modal("Details", |sheet| {
@@ -752,6 +769,8 @@ impl Gallery {
     fn overlays(&mut self, context: &mut Context, action: ActionId) -> bool {
         let floating = if action == action_id("bar-more") {
             Some(Floating::Menu)
+        } else if action == action_id("menu-one-more") {
+            Some(Floating::RowMenu(0))
         } else if action == action_id("open-sheet") {
             Some(Floating::Sheet)
         } else if action == action_id("open-confirm") {
@@ -761,6 +780,8 @@ impl Gallery {
             || action == action_id("menu-delete")
             || action == action_id("confirm-yes")
             || action == action_id("confirm-no")
+            || action == action_id("row-menu-rename")
+            || action == action_id("row-menu-forget")
         {
             None
         } else {

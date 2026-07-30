@@ -31,12 +31,34 @@
 
 use crate::{Glyph, Percent, Signal};
 
+mod tabler;
+
 /// The side of the box every icon is designed in.
 ///
 /// A round number well above the pixel size of any panel, so an icon is
 /// authored in proportions rather than in pixels and the same definition is
 /// crisp on a 212 and a 300 pixel-per-inch screen.
 pub const UNITS: i32 = 1000;
+
+/// The stroke weight every icon is drawn at.
+///
+/// One weight for the whole set: a row of icons at mixed weights looks like a
+/// row from different sets.
+///
+/// One and a half source units in the source's twenty-four unit box, which is
+/// the lighter of the two weights the artwork is published at, rather than the
+/// two units it is drawn at by default. Measured against the type: at the size
+/// a list row draws a glyph, two units puts about twice as much ink in the
+/// stroke as there is in a text stem beside it, which is what makes an icon
+/// read as clip art next to a sentence. It is not the whole of that fault, and
+/// the rest of it cannot be fixed here: the stroke scales with the box, so an
+/// icon drawn far larger than the title it leads is heavy however thinly it is
+/// drawn. Making the icon the right size is a layout question.
+///
+/// Not thinner than this, tempting as the arithmetic is. The artwork was
+/// designed against a weight, and a corner radius authored for two units looks
+/// slack at one.
+const WEIGHT: i32 = 62;
 
 /// Sub-pixel precision for edge intersections.
 const FIXED: i64 = 256;
@@ -54,6 +76,12 @@ enum Cmd {
     Line(i32, i32),
     /// One control point and an end point.
     Quad(i32, i32, i32, i32),
+    /// Two control points and an end point.
+    ///
+    /// Here because imported artwork is authored in cubics. Nothing in this
+    /// file writes one by hand: a shape that needs a curve is easier to reason
+    /// about with a single control point.
+    Cubic(i32, i32, i32, i32, i32, i32),
     Close,
 }
 
@@ -91,6 +119,19 @@ impl Path {
     fn close(mut self) -> Self {
         self.commands.push(Cmd::Close);
         self
+    }
+
+    /// An outline that was authored somewhere else.
+    ///
+    /// The generated artwork in [`tabler`] is a flat `static` rather than a
+    /// run of builder calls, because a hundred icons written as method chains
+    /// is a megabyte of source for no gain: none of it is read by a person and
+    /// none of it is edited by hand.
+    #[must_use]
+    fn from_commands(commands: &[Cmd]) -> Self {
+        Self {
+            commands: commands.to_vec(),
+        }
     }
 
     /// A circle, as eight quadratic arcs.
@@ -268,6 +309,30 @@ fn flatten(path: &Path) -> Vec<Vec<(i32, i32)>> {
                 }
                 cursor = (x, y);
             }
+            Cmd::Cubic(ax, ay, bx, by, x, y) => {
+                let (x0, y0) = cursor;
+                for step in 1..=CURVE_STEPS {
+                    let t = f64::from(step) / f64::from(CURVE_STEPS);
+                    let inverse = 1.0 - t;
+                    let (w0, w1, w2, w3) = (
+                        inverse * inverse * inverse,
+                        3.0 * inverse * inverse * t,
+                        3.0 * inverse * t * t,
+                        t * t * t,
+                    );
+                    let at = |p0: i32, p1: i32, p2: i32, p3: i32| {
+                        w3.mul_add(
+                            f64::from(p3),
+                            w2.mul_add(
+                                f64::from(p2),
+                                w1.mul_add(f64::from(p1), w0 * f64::from(p0)),
+                            ),
+                        )
+                    };
+                    current.push((round(at(x0, ax, bx, x)), round(at(y0, ay, by, y))));
+                }
+                cursor = (x, y);
+            }
             Cmd::Close => {
                 if let Some(&first) = current.first() {
                     current.push(first);
@@ -441,503 +506,28 @@ fn add_span(accumulator: &mut [i64], from: i64, to: i64) {
     }
 }
 
-/// The numeral set inside the two skip arrows.
-///
-/// Drawn at a lighter weight than the arrow around it. At the icon's own
-/// weight the two digits closed up into a blot at the sizes a grid cell asks
-/// for, which is the failure mode a number inside a ring invites.
-const DIGIT_WEIGHT: i32 = 46;
-
-fn digit_three() -> Shape {
-    Shape::Stroke {
-        path: Path::new()
-            .move_to(348, 465)
-            .quad_to(453, 425, 453, 505)
-            .quad_to(453, 552, 383, 552)
-            .quad_to(453, 552, 453, 605)
-            .quad_to(453, 685, 348, 645),
-        width: DIGIT_WEIGHT,
-    }
-}
-
-fn digit_zero() -> Shape {
-    Shape::Stroke {
-        path: Path::new()
-            .move_to(593, 435)
-            .quad_to(658, 435, 658, 555)
-            .quad_to(658, 675, 593, 675)
-            .quad_to(528, 675, 528, 555)
-            .quad_to(580, 435, 593, 435),
-        width: DIGIT_WEIGHT,
-    }
-}
-
-/// The speaker cone both volume glyphs are built on.
-///
-/// Shared rather than duplicated so the two controls cannot drift apart: a
-/// louder button whose cone sits two units left of the quieter one reads as a
-/// rendering fault, not as a pair.
-fn speaker() -> Path {
-    Path::new()
-        .move_to(150, 390)
-        .line_to(290, 390)
-        .line_to(460, 210)
-        .line_to(460, 790)
-        .line_to(290, 610)
-        .line_to(150, 610)
-        .line_to(150, 390)
-}
-
 /// The geometry of one glyph.
 ///
-/// Designed as line art at a single stroke weight rather than as filled
-/// silhouettes, because a page of solid black icons on a reflective panel
-/// reads as heavier than the text it sits beside, and the icon is subordinate
-/// to the label next to it.
+/// Line art at a single stroke weight rather than filled silhouettes, because
+/// a page of solid black icons on a reflective panel reads as heavier than the
+/// text it sits beside, and the icon is subordinate to the label next to it.
+///
+/// The artwork is Tabler Icons, imported into [`tabler`] rather than drawn
+/// here. Forty hand-authored icons were forty separate judgements about how
+/// round a corner runs and how long a tail is, and a set drawn that way looks
+/// like a set only from across the room. A published set is one designer's
+/// judgement applied five thousand times, and it costs nothing to adopt: the
+/// source is stroked outlines at a single weight with round caps and joins in
+/// a square box, which is exactly what this rasteriser already draws.
 #[must_use]
-#[allow(clippy::too_many_lines)]
 pub fn shapes(glyph: Glyph) -> Vec<Shape> {
-    /// One weight for every icon. Anything else and a row of them looks like a
-    /// row from different sets.
-    const W: i32 = 70;
-    let stroke = |path: Path| Shape::Stroke { path, width: W };
-    match glyph {
-        Glyph::App => vec![
-            stroke(Path::rounded(150, 150, 300, 300, 60)),
-            stroke(Path::rounded(550, 150, 300, 300, 60)),
-            stroke(Path::rounded(150, 550, 300, 300, 60)),
-            stroke(Path::rounded(550, 550, 300, 300, 60)),
-        ],
-        // A book seen from above, open: two leaves meeting at a spine.
-        Glyph::Book => vec![
-            stroke(
-                Path::new()
-                    .move_to(500, 260)
-                    .quad_to(340, 160, 130, 190)
-                    .line_to(130, 780)
-                    .quad_to(340, 750, 500, 850),
-            ),
-            stroke(
-                Path::new()
-                    .move_to(500, 260)
-                    .quad_to(660, 160, 870, 190)
-                    .line_to(870, 780)
-                    .quad_to(660, 750, 500, 850),
-            ),
-            stroke(Path::line(500, 260, 500, 850)),
-        ],
-        // A page with a turned corner.
-        Glyph::Note => vec![
-            stroke(
-                Path::new()
-                    .move_to(600, 130)
-                    .line_to(230, 130)
-                    .line_to(230, 870)
-                    .line_to(770, 870)
-                    .line_to(770, 300)
-                    .close(),
-            ),
-            stroke(
-                Path::new()
-                    .move_to(600, 130)
-                    .line_to(600, 300)
-                    .line_to(770, 300),
-            ),
-        ],
-        Glyph::Clock => vec![
-            stroke(Path::circle(500, 500, 350)),
-            stroke(
-                Path::new()
-                    .move_to(500, 290)
-                    .line_to(500, 510)
-                    .line_to(680, 590),
-            ),
-        ],
-        // A dial: a ring with the marks around it, rather than a gear, whose
-        // teeth disappear at small sizes.
-        Glyph::Settings => {
-            let mut shapes = vec![stroke(Path::circle(500, 500, 220))];
-            for index in 0..8 {
-                let angle = std::f64::consts::TAU * f64::from(index) / 8.0;
-                let point = |radius: f64| {
-                    (
-                        500 + round(radius * angle.cos()),
-                        500 + round(radius * angle.sin()),
-                    )
-                };
-                let (x0, y0) = point(310.0);
-                let (x1, y1) = point(410.0);
-                shapes.push(stroke(Path::line(x0, y0, x1, y1)));
-            }
-            shapes
-        }
-        Glyph::Folder => vec![stroke(
-            Path::new()
-                .move_to(120, 300)
-                .line_to(120, 800)
-                .line_to(880, 800)
-                .line_to(880, 380)
-                .line_to(480, 380)
-                .line_to(390, 250)
-                .line_to(120, 250)
-                .close(),
-        )],
-        Glyph::Chart => vec![
-            stroke(
-                Path::new()
-                    .move_to(150, 130)
-                    .line_to(150, 850)
-                    .line_to(870, 850),
-            ),
-            stroke(Path::line(320, 850, 320, 600)),
-            stroke(Path::line(520, 850, 520, 400)),
-            stroke(Path::line(720, 850, 720, 230)),
-        ],
-        Glyph::Search => vec![
-            stroke(Path::circle(430, 430, 260)),
-            stroke(Path::line(620, 620, 850, 850)),
-        ],
-        // Three arcs and a dot.
-        Glyph::Wifi => vec![
-            stroke(Path::new().move_to(120, 400).quad_to(500, 100, 880, 400)),
-            stroke(Path::new().move_to(270, 560).quad_to(500, 380, 730, 560)),
-            stroke(Path::new().move_to(400, 710).quad_to(500, 630, 600, 710)),
-            Shape::Fill(Path::circle(500, 830, 60)),
-        ],
-        Glyph::Battery => vec![
-            stroke(Path::rounded(120, 330, 680, 340, 60)),
-            Shape::Fill(Path::rounded(830, 430, 70, 140, 30)),
-        ],
-        // A page of text: what "the reader" means, without being a book again.
-        Glyph::Reader => vec![
-            stroke(Path::rounded(180, 140, 640, 720, 60)),
-            stroke(Path::line(320, 330, 680, 330)),
-            stroke(Path::line(320, 500, 680, 500)),
-            stroke(Path::line(320, 670, 540, 670)),
-        ],
-        Glyph::Power => vec![
-            stroke(
-                Path::new()
-                    .move_to(300, 300)
-                    .quad_to(120, 500, 260, 720)
-                    .quad_to(500, 980, 740, 720)
-                    .quad_to(880, 500, 700, 300),
-            ),
-            stroke(Path::line(500, 130, 500, 480)),
-        ],
-        // Three by three, with a nought and a cross in it.
-        Glyph::Grid => vec![
-            stroke(Path::line(370, 120, 370, 880)),
-            stroke(Path::line(630, 120, 630, 880)),
-            stroke(Path::line(120, 370, 880, 370)),
-            stroke(Path::line(120, 630, 880, 630)),
-            stroke(Path::circle(245, 245, 80)),
-            stroke(Path::line(700, 700, 810, 810)),
-            stroke(Path::line(810, 700, 700, 810)),
-        ],
-        // An empty ring. Deliberately not a square box: a box at this stroke
-        // weight is hard to tell from the panel's own rules at a glance.
-        Glyph::Circle => vec![stroke(Path::circle(500, 500, 300))],
-        // The same ring with a tick in it, so a finished row differs from an
-        // unfinished one in shape as well as in weight. Shape survives being
-        // read at arm's length under a reading light; tone does not.
-        Glyph::Check => vec![
-            stroke(Path::circle(500, 500, 300)),
-            stroke(Path::line(350, 510, 460, 620)),
-            stroke(Path::line(460, 620, 670, 390)),
-        ],
-        // A prompt, not a screen: the chevron and the underscore are what a
-        // terminal looks like to anyone who has seen one, and a rectangle at
-        // this weight is already the launcher's own tile border.
-        Glyph::Terminal => vec![
-            stroke(
-                Path::new()
-                    .move_to(210, 300)
-                    .line_to(420, 500)
-                    .line_to(210, 700),
-            ),
-            stroke(Path::line(520, 700, 830, 700)),
-        ],
-        // A folded newspaper: a masthead rule, a column and a headline block.
-        // Distinct in silhouette from the bubble beside it in the launcher,
-        // which is the only property that matters at 24 pixels.
-        Glyph::News => vec![
-            stroke(Path::rounded(120, 220, 760, 560, 50)),
-            stroke(Path::line(220, 380, 620, 380)),
-            stroke(Path::line(220, 520, 460, 520)),
-            stroke(Path::line(220, 640, 460, 640)),
-            Shape::Fill(Path::rounded(560, 500, 220, 160, 30)),
-        ],
-        // A speech bubble with a tail: a conversation, a comment thread, a
-        // reply. Two lines inside rather than three, because at 24 pixels the
-        // third closes up into a smudge.
-        Glyph::Chat => vec![
-            stroke(Path::rounded(130, 180, 740, 500, 90)),
-            stroke(
-                Path::new()
-                    .move_to(300, 680)
-                    .line_to(300, 870)
-                    .line_to(470, 680),
-            ),
-            stroke(Path::line(280, 340, 720, 340)),
-            stroke(Path::line(280, 500, 580, 500)),
-        ],
-        // The feed mark: a dot at the corner with two arcs radiating from it.
-        // The one icon here that people read as a specific meaning rather than
-        // a category, so it is drawn as the mark itself and not as a metaphor
-        // for it.
-        //
-        // Each quarter is two quadratics rather than one, for the reason
-        // `circle` gives: a single quadratic per quarter sits about six percent
-        // proud of the radius at its midpoint, which at 24 pixels stops reading
-        // as a curve and starts reading as a corner.
-        // A disc with eight rays. The rays stop well short of the box so the
-        // whole mark still reads as round at 24 pixels: drawn to the edge, the
-        // gaps between them close up and it becomes a blob with a bite out of
-        // it. Four square and four diagonal, because seven or nine of them
-        // cannot be spaced evenly on a pixel grid this coarse.
-        // Two strokes through the middle, kept well inside the box: a cross
-        // that reaches the corners reads as a large X on the panel rather than
-        // as a small control.
-        Glyph::Close => vec![
-            stroke(Path::line(250, 250, 750, 750)),
-            stroke(Path::line(750, 250, 250, 750)),
-        ],
-        Glyph::Light => {
-            let mut shapes = vec![Shape::Fill(Path::circle(500, 500, 210))];
-            for (from, to) in [
-                ((500, 120), (500, 250)),
-                ((500, 750), (500, 880)),
-                ((120, 500), (250, 500)),
-                ((750, 500), (880, 500)),
-                ((232, 232), (324, 324)),
-                ((676, 676), (768, 768)),
-                ((232, 768), (324, 676)),
-                ((676, 324), (768, 232)),
-            ] {
-                shapes.push(stroke(Path::line(from.0, from.1, to.0, to.1)));
-            }
-            shapes
-        }
-        // An arrow down into a tray. The tray is open at the top rather than a
-        // closed box, so the arrow reads as going into something rather than
-        // as sitting on top of a rectangle.
-        Glyph::Download => vec![
-            stroke(Path::line(500, 130, 500, 590)),
-            stroke(
-                Path::new()
-                    .move_to(300, 410)
-                    .line_to(500, 610)
-                    .line_to(700, 410),
-            ),
-            stroke(
-                Path::new()
-                    .move_to(180, 640)
-                    .line_to(180, 850)
-                    .line_to(820, 850)
-                    .line_to(820, 640),
-            ),
-        ],
-        // A ribbon with a notch cut from its foot. Drawn as an outline rather
-        // than filled: a solid bookmark at this weight is the heaviest mark in
-        // the set and pulls the eye off the title it belongs to.
-        Glyph::Bookmark => vec![stroke(
-            Path::new()
-                .move_to(250, 130)
-                .line_to(750, 130)
-                .line_to(750, 870)
-                .line_to(500, 640)
-                .line_to(250, 870)
-                .close(),
-        )],
-        // A funnel. The stem is short and centred, because a long stem at this
-        // size reads as a wine glass.
-        Glyph::Filter => vec![stroke(
-            Path::new()
-                .move_to(150, 200)
-                .line_to(850, 200)
-                .line_to(580, 520)
-                .line_to(580, 830)
-                .line_to(420, 750)
-                .line_to(420, 520)
-                .close(),
-        )],
-        // A head and shoulders. The shoulders are an arc that stops at the box
-        // edge rather than a closed shape, so the mark does not turn into a
-        // filled semicircle when the stroke is rasterised small.
-        Glyph::Person => vec![
-            stroke(Path::circle(500, 330, 175)),
-            stroke(
-                Path::new()
-                    .move_to(180, 870)
-                    .quad_to(180, 600, 500, 600)
-                    .quad_to(820, 600, 820, 870),
-            ),
-        ],
-        // A label with a punched hole, leaning the way a luggage tag hangs.
-        Glyph::Tag => vec![
-            stroke(
-                Path::new()
-                    .move_to(520, 130)
-                    .line_to(870, 480)
-                    .line_to(480, 870)
-                    .line_to(130, 520)
-                    .line_to(130, 130)
-                    .close(),
-            ),
-            Shape::Fill(Path::circle(310, 310, 75)),
-        ],
-        // A sphere with one meridian and one parallel. Two lines rather than a
-        // graticule: at 24 pixels a third line closes the gaps and the mark
-        // fills in solid.
-        Glyph::Globe => vec![
-            stroke(Path::circle(500, 500, 370)),
-            stroke(Path::line(130, 500, 870, 500)),
-            stroke(
-                Path::new()
-                    .move_to(500, 130)
-                    .quad_to(280, 500, 500, 870)
-                    .quad_to(720, 500, 500, 130),
-            ),
-        ],
-        // Two arrows chasing each other round a circle. Each arm is three
-        // quarters of a turn with a head on it, and the two gaps sit opposite
-        // so the mark reads as rotation rather than as a broken ring.
-        Glyph::Refresh => vec![
-            stroke(
-                Path::new()
-                    .move_to(820, 500)
-                    .quad_to(820, 180, 500, 180)
-                    .quad_to(250, 180, 200, 380),
-            ),
-            stroke(
-                Path::new()
-                    .move_to(180, 130)
-                    .line_to(200, 400)
-                    .line_to(460, 350),
-            ),
-            stroke(
-                Path::new()
-                    .move_to(180, 500)
-                    .quad_to(180, 820, 500, 820)
-                    .quad_to(750, 820, 800, 620),
-            ),
-            stroke(
-                Path::new()
-                    .move_to(820, 870)
-                    .line_to(800, 600)
-                    .line_to(540, 650),
-            ),
-        ],
-        // Three dots. Filled rather than stroked rings, because a ring this
-        // small rasterises to a grey smudge and three grey smudges are not a
-        // control anybody will press.
-        Glyph::More => vec![
-            Shape::Fill(Path::circle(210, 500, 95)),
-            Shape::Fill(Path::circle(500, 500, 95)),
-            Shape::Fill(Path::circle(790, 500, 95)),
-        ],
-        // The same mark as the status strip draws, so the row in Settings and
-        // the indicator in the bar are recognisably one thing.
-        Glyph::Bluetooth => bluetooth(),
-        // Bow to the left, blade to the right, two teeth on the underside.
-        // The bow is a ring rather than a disc so it stays a key and does not
-        // close up into a lollipop when it is rasterised small.
-        Glyph::Key => vec![
-            Shape::Stroke {
-                path: Path::circle(320, 500, 170),
-                width: 90,
-            },
-            stroke(Path::line(490, 500, 880, 500)),
-            stroke(Path::line(790, 500, 790, 660)),
-            stroke(Path::line(880, 500, 880, 620)),
-        ],
-        // A horseshoe, poles down, with the tips flared into solid blocks.
-        // The flare is what makes it a magnet rather than an arch: a plain
-        // stroked U at this weight reads as a horseshoe only if you already
-        // knew that is what it was.
-        Glyph::Magnet => vec![
-            stroke(
-                Path::new()
-                    .move_to(255, 690)
-                    .line_to(255, 470)
-                    .quad_to(255, 160, 500, 160)
-                    .quad_to(745, 160, 745, 470)
-                    .line_to(745, 690),
-            ),
-            Shape::Fill(Path::rounded(170, 750, 170, 130, 20)),
-            Shape::Fill(Path::rounded(660, 750, 170, 130, 20)),
-        ],
-        Glyph::Rss => vec![
-            Shape::Fill(Path::circle(280, 700, 95)),
-            stroke(
-                Path::new()
-                    .move_to(180, 500)
-                    .quad_to(304, 500, 392, 588)
-                    .quad_to(480, 676, 480, 800),
-            ),
-            stroke(
-                Path::new()
-                    .move_to(180, 200)
-                    .quad_to(429, 200, 604, 376)
-                    .quad_to(780, 551, 780, 800),
-            ),
-        ],
-        Glyph::Play => vec![stroke(
-            Path::new()
-                .move_to(340, 230)
-                .line_to(780, 500)
-                .line_to(340, 770)
-                .line_to(340, 230),
-        )],
-        Glyph::Pause => vec![
-            stroke(Path::new().move_to(370, 230).line_to(370, 770)),
-            stroke(Path::new().move_to(630, 230).line_to(630, 770)),
-        ],
-        Glyph::Rewind30 => vec![
-            stroke(
-                Path::new()
-                    .move_to(500, 210)
-                    .quad_to(790, 210, 790, 520)
-                    .quad_to(790, 830, 500, 830)
-                    .quad_to(210, 830, 210, 520),
-            ),
-            stroke(
-                Path::new()
-                    .move_to(620, 110)
-                    .line_to(500, 210)
-                    .line_to(620, 310),
-            ),
-            digit_three(),
-            digit_zero(),
-        ],
-        Glyph::Forward30 => vec![
-            stroke(
-                Path::new()
-                    .move_to(500, 210)
-                    .quad_to(210, 210, 210, 520)
-                    .quad_to(210, 830, 500, 830)
-                    .quad_to(790, 830, 790, 520),
-            ),
-            stroke(
-                Path::new()
-                    .move_to(380, 110)
-                    .line_to(500, 210)
-                    .line_to(380, 310),
-            ),
-            digit_three(),
-            digit_zero(),
-        ],
-        Glyph::VolumeDown => vec![
-            stroke(speaker()),
-            stroke(Path::new().move_to(620, 500).line_to(880, 500)),
-        ],
-        Glyph::VolumeUp => vec![
-            stroke(speaker()),
-            stroke(Path::new().move_to(620, 500).line_to(880, 500)),
-            stroke(Path::new().move_to(750, 370).line_to(750, 630)),
-        ],
-    }
+    tabler::outline(glyph)
+        .iter()
+        .map(|commands| Shape::Stroke {
+            path: Path::from_commands(commands),
+            width: WEIGHT,
+        })
+        .collect()
 }
 
 /// The back control, drawn rather than typed.
@@ -1225,5 +815,45 @@ mod tests {
     fn the_design_box_is_the_one_the_geometry_uses() {
         // A guard on the constant: every icon above is authored against it.
         assert_eq!(UNITS, 1000);
+    }
+}
+
+#[cfg(test)]
+mod sheet {
+    use crate::Glyph;
+
+    /// Draws every glyph onto one sheet, for looking at.
+    ///
+    /// Not an assertion. Icon artwork is judged by eye and nothing else, and
+    /// the alternative to this is deploying to a reader and photographing it,
+    /// which is a slow way to find out that a corner radius is wrong. Run it
+    /// with `cargo test -p kobo-ui contact_sheet -- --ignored` and open the
+    /// file it names.
+    #[test]
+    #[ignore = "writes a sheet to look at rather than asserting anything"]
+    fn contact_sheet() {
+        const CELL: i32 = 96;
+        const COLUMNS: usize = 8;
+        let rows = Glyph::ALL.len().div_ceil(COLUMNS);
+        let width = CELL * i32::try_from(COLUMNS).unwrap();
+        let height = CELL * i32::try_from(rows).unwrap();
+        let mut pixels = vec![255u8; usize::try_from(width * height).unwrap()];
+        for (index, glyph) in Glyph::ALL.iter().enumerate() {
+            let coverage = super::render(&super::shapes(*glyph), CELL - 16);
+            let column = i32::try_from(index % COLUMNS).unwrap();
+            let row = i32::try_from(index / COLUMNS).unwrap();
+            for y in 0..coverage.size {
+                for x in 0..coverage.size {
+                    let at = (row * CELL + 8 + y) * width + column * CELL + 8 + x;
+                    let at = usize::try_from(at).unwrap();
+                    pixels[at] = pixels[at].saturating_sub(coverage.at(x, y));
+                }
+            }
+        }
+        let path = std::env::temp_dir().join("cobalt-glyph-sheet.pgm");
+        let mut out = format!("P5\n{width} {height}\n255\n").into_bytes();
+        out.extend_from_slice(&pixels);
+        std::fs::write(&path, out).unwrap();
+        println!("{} glyphs written to {}", Glyph::ALL.len(), path.display());
     }
 }

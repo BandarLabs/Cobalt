@@ -156,6 +156,10 @@ struct Feeds {
     /// The last task failure as the SDK read it. An empty article list wants
     /// the whole-screen version of it; a list with articles wants the banner.
     trouble: Option<Failure>,
+    /// Which feed's overflow menu is open, if any. An index into
+    /// `subscriptions` rather than a page position, so turning a page or
+    /// removing an earlier feed cannot leave it pointing at the wrong one.
+    menu_open: Option<usize>,
 }
 
 impl Feeds {
@@ -252,7 +256,9 @@ impl Feeds {
         // Every view except the shelf was reached from another one, so Back
         // unwinds this application first and leaves it only from the shelf.
         // Without this, Back out of an article lands at the launcher.
-        context.set_screen(screen.with_own_back(self.view != View::Shelf));
+        context.set_screen(
+            screen.with_own_back(self.view != View::Shelf || self.menu_open.is_some()),
+        );
     }
 
     fn shelf(&self, context: &Context) -> Screen {
@@ -277,26 +283,40 @@ impl Feeds {
                 .primary_button("add", "Add a feed")
                 .build();
         }
+        // Clamped against the narrower column the overflow mark leaves, or
+        // the longest titles run under the dots.
         let rows: Vec<(String, String)> = self
             .subscriptions
             .iter()
             .map(|feed| {
-                let title = context.one_line_row(&feed.title, true);
-                let summary = context.one_line_row(&pretty_host(&feed.site, &feed.url), true);
+                let title = context.one_line_row_with_menu(&feed.title, true);
+                let summary =
+                    context.one_line_row_with_menu(&pretty_host(&feed.site, &feed.url), true);
                 (title, summary)
             })
             .collect();
         let pages = page_groups(context, &rows);
         let page = self.list_page.min(pages.len().saturating_sub(1));
         let shown = pages.get(page).cloned().unwrap_or_default();
-        screen = screen.rows(shown.iter().map(|index| {
+        screen = screen.rows_with_menu(shown.iter().map(|index| {
             (
                 format!("feed-{index}"),
                 rows[*index].0.clone(),
                 rows[*index].1.clone(),
                 Glyph::Rss,
+                format!("feed-menu-{index}"),
             )
         }));
+        // The menu hangs off the mark that opened it, and only while that mark
+        // is on the panel: a page turn with one open would anchor a popover to
+        // a control that is no longer drawn.
+        if let Some(open) = self.menu_open.filter(|open| shown.contains(open)) {
+            screen = screen.row_overflow(
+                format!("feed-menu-{open}"),
+                true,
+                [("feed-forget", "Delete", Glyph::Trash)],
+            );
+        }
         if pages.len() <= 1 {
             return screen.bottom_action("add", "Add a feed").build();
         }
@@ -482,7 +502,7 @@ fn page_groups(context: &Context, rows: &[(String, String)]) -> Vec<Vec<usize>> 
         .iter()
         .map(|(title, summary)| (title.as_str(), summary.as_str()))
         .collect();
-    let pages = context.paginate_rows(&borrowed, true);
+    let pages = context.paginate_rows_with_menu(&borrowed, true);
     if pages.is_empty() {
         vec![Vec::new()]
     } else {
@@ -668,9 +688,19 @@ impl KoboApp for Feeds {
             }
         }
 
+        // An open menu takes Back before the view does: the scrim beside a
+        // popover sends Back, and on the shelf that would otherwise leave the
+        // application entirely.
+        if action == ActionId::BACK && self.menu_open.is_some() {
+            self.menu_open = None;
+            self.show(context);
+            return;
+        }
+
         if action == ActionId::BACK {
             self.problem = None;
             self.trouble = None;
+            self.menu_open = None;
             match self.view {
                 View::Shelf => {}
                 View::Search | View::Items => {
@@ -692,6 +722,25 @@ impl KoboApp for Feeds {
             self.problem = None;
             self.trouble = None;
             self.view = View::Search;
+            self.show(context);
+            return;
+        }
+
+        if action == action_id("feed-forget") {
+            if let Some(index) = self.menu_open.take() {
+                if index < self.subscriptions.len() {
+                    self.subscriptions.remove(index);
+                    self.save(context);
+                }
+                // The open feed is named by position, so removing one before
+                // it would leave it pointing at its neighbour.
+                self.open = match self.open {
+                    Some(open) if open == index => None,
+                    Some(open) if open > index => Some(open - 1),
+                    open => open,
+                };
+                self.list_page = 0;
+            }
             self.show(context);
             return;
         }
@@ -761,7 +810,13 @@ impl KoboApp for Feeds {
         }
 
         if self.view == View::Shelf {
+            if let Some(index) = indexed(action, "feed-menu", self.subscriptions.len()) {
+                self.menu_open = Some(index);
+                self.show(context);
+                return;
+            }
             if let Some(index) = indexed(action, "feed", self.subscriptions.len()) {
+                self.menu_open = None;
                 self.open = Some(index);
                 self.list_page = 0;
                 self.view = View::Items;
@@ -1000,6 +1055,103 @@ mod tests {
                 .count()
                 == 1,
             "refresh should be the glyph, leaving only Unfollow spelled out"
+        );
+    }
+
+    /// Removing a feed used to mean opening it first, which meant fetching a
+    /// feed you had already decided you did not want. The mark on the row is
+    /// the short way, and it must not be mistaken for the row itself.
+    #[test]
+    fn the_mark_on_a_feed_opens_a_menu_rather_than_the_feed() {
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            subscriptions: following(),
+            ..Feeds::default()
+        });
+        let commands = runner.action(action_id("feed-menu-0"));
+        let screen = screen_of(&commands);
+        assert!(
+            !commands
+                .iter()
+                .any(|command| matches!(command, Command::Spawn { .. })),
+            "the mark fetched the feed, so it was read as a tap on the row"
+        );
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        assert!(
+            layout
+                .nodes
+                .iter()
+                .any(|node| matches!(node.kind, LayoutKind::Scrim { .. })),
+            "no menu opened"
+        );
+        assert!(
+            text_of(&screen).iter().any(|line| line == "Delete"),
+            "the menu did not offer to remove the feed"
+        );
+    }
+
+    #[test]
+    fn stopping_following_removes_the_feed_and_writes_the_list_back() {
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            subscriptions: following(),
+            ..Feeds::default()
+        });
+        runner.action(action_id("feed-menu-0"));
+        let commands = runner.action(action_id("feed-forget"));
+        assert!(
+            commands.iter().any(|command| matches!(
+                command,
+                Command::Store(kobo_sdk::StoreRequest::Save { .. })
+            )),
+            "the shorter list was never written back"
+        );
+        let screen = screen_of(&commands);
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        assert!(
+            !layout
+                .nodes
+                .iter()
+                .any(|node| matches!(node.kind, LayoutKind::Scrim { .. })),
+            "the menu stayed open over a feed that no longer exists"
+        );
+        assert!(
+            text_of(&screen)
+                .iter()
+                .any(|line| line.contains("No feeds yet")),
+            "the last feed was removed and the shelf still listed it"
+        );
+    }
+
+    /// A popover is dismissed by a tap beside it, which arrives as Back. On
+    /// the shelf Back otherwise leaves the application, so an open menu has to
+    /// claim it first or putting the menu away closes Feeds.
+    #[test]
+    fn putting_the_menu_away_does_not_leave_the_application() {
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            subscriptions: following(),
+            ..Feeds::default()
+        });
+        let opened = screen_of(&runner.action(action_id("feed-menu-0")));
+        assert!(
+            opened.owns_back,
+            "the shelf did not claim Back while its menu was open, so the tap \
+             beside the menu would have left Feeds"
+        );
+        let commands = runner.action(kobo_sdk::ActionId::BACK);
+        let screen = screen_of(&commands);
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        assert!(
+            !layout
+                .nodes
+                .iter()
+                .any(|node| matches!(node.kind, LayoutKind::Scrim { .. })),
+            "the menu did not close"
+        );
+        assert!(
+            text_of(&screen).iter().any(|line| line.contains("A Journal")),
+            "closing the menu also removed the feed or left the shelf"
         );
     }
 

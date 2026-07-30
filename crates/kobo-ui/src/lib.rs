@@ -2714,6 +2714,16 @@ pub struct Row {
     /// The value is measured first and the title is clamped against what is
     /// left, never the other way round.
     pub trailing: Option<String>,
+    /// A second thing this row can be asked to do, drawn as a vertical three
+    /// dot mark against the right edge and hit-tested ahead of the row itself.
+    ///
+    /// A row has one obvious verb: open it. Everything else a reader might
+    /// want to do to the thing a row names -- remove it, rename it, stop
+    /// following it -- has nowhere to live on a panel with no long press worth
+    /// relying on and no room for a second button. This is that place, and it
+    /// is deliberately one action rather than a menu, because what opens is
+    /// the application's business: a popover, a confirmation, another screen.
+    pub menu: Option<ActionId>,
 }
 
 impl Row {
@@ -2731,6 +2741,7 @@ impl Row {
             lead: lead.into(),
             state: RowState::Open,
             trailing: None,
+            menu: None,
         }
     }
 
@@ -2738,6 +2749,16 @@ impl Row {
     #[must_use]
     pub fn with_trailing(mut self, value: impl Into<String>) -> Self {
         self.trailing = Some(value.into());
+        self
+    }
+
+    /// The same, with an overflow mark against the right edge naming `action`.
+    ///
+    /// The mark keeps a finger's width of the row to itself and the title
+    /// wraps into what is left, on the same reasoning as a trailing value.
+    #[must_use]
+    pub fn with_menu(mut self, action: ActionId) -> Self {
+        self.menu = Some(action);
         self
     }
 
@@ -2937,6 +2958,14 @@ pub enum Glyph {
     VolumeDown,
     /// A speaker cone with a plus: louder.
     VolumeUp,
+    /// The same three dots stood on end: what else can be done to the one
+    /// thing this row names. Distinct from [`Self::More`], which belongs to a
+    /// bar and speaks for the whole screen.
+    MoreVertical,
+    /// A bin: remove this, and mean it. Feeds spelled the same verb out in a
+    /// sentence before this existed, which made the one destructive thing in
+    /// the menu the longest line in it.
+    Trash,
 }
 
 impl Glyph {
@@ -2947,7 +2976,7 @@ impl Glyph {
     /// the set was twenty-one: `Light` and `Close` were authored, shipped, and
     /// covered by none of the tests that walk every glyph. A glyph nobody
     /// rasterises in a test is a blank space beside a label on the panel.
-    pub const ALL: [Self; 38] = [
+    pub const ALL: [Self; 40] = [
         Self::App,
         Self::Book,
         Self::Note,
@@ -2986,6 +3015,8 @@ impl Glyph {
         Self::Forward30,
         Self::VolumeDown,
         Self::VolumeUp,
+        Self::MoreVertical,
+        Self::Trash,
     ];
 }
 
@@ -3170,6 +3201,9 @@ pub enum LayoutKind {
     Band,
     /// A row's right-aligned value. Muted, and never part of the title.
     RowTrailing,
+    /// A row's overflow mark: a finger-wide target against the right edge,
+    /// hit-tested ahead of the row it sits in because it is pushed after it.
+    RowMenu(ActionId),
     /// A text field's border and its tap target.
     Field(ActionId),
     /// What is in the field, or its placeholder when it is empty. The bool is
@@ -3293,6 +3327,7 @@ impl LayoutKind {
             | Self::Chip(action, _)
             | Self::Tab(action, _)
             | Self::Row(action)
+            | Self::RowMenu(action)
             | Self::Cell(action)
             | Self::ChoiceOption(action, _)
             | Self::ChoiceFreeform(action)
@@ -3543,6 +3578,7 @@ impl Layout {
                         | LayoutKind::NavDestination(_)
                         | LayoutKind::NavDestinationSelected(_)
                         | LayoutKind::Row(_)
+                        | LayoutKind::RowMenu(_)
                         | LayoutKind::Cell(_)
                         | LayoutKind::Tile(_, ControlState::Enabled)
                         | LayoutKind::Field(_)
@@ -4679,7 +4715,7 @@ fn layout_node(
             let text_width = max(1, width - icon - padding * 2);
             let mut cursor = y;
             for (position, row) in rows.iter().take(MAX_ROWS).enumerate() {
-                if layout.nodes.len() + 5 > MAX_LAYOUT_NODES {
+                if layout.nodes.len() + 6 > MAX_LAYOUT_NODES {
                     break;
                 }
                 // Separators go between rows, never after the last one. A
@@ -4699,6 +4735,12 @@ fn layout_node(
                     });
                     cursor = cursor.saturating_add(gap);
                 }
+                // The overflow mark is measured before anything else, because
+                // it is the one part of a row whose width is fixed: the title,
+                // the summary and the value all wrap or clamp into what is
+                // left over, and none of them may run under it.
+                let menu_column = if row.menu.is_some() { icon } else { 0 };
+                let text_width = max(1, text_width - menu_column);
                 // Measured before the title is wrapped, so the value keeps its
                 // room and the title gives up its own instead.
                 let trailing =
@@ -4785,6 +4827,7 @@ fn layout_node(
                             // ends at, not the text column's.
                             x: x.saturating_add(width)
                                 .saturating_sub(padding)
+                                .saturating_sub(menu_column)
                                 .saturating_sub(measured),
                             y: text_y,
                             width: measured,
@@ -4792,6 +4835,22 @@ fn layout_node(
                         },
                         kind: LayoutKind::RowTrailing,
                         text_lines: vec![value],
+                    });
+                }
+                if let Some(action) = row.menu {
+                    // Pushed after the row's own target, so the backwards hit
+                    // test finds the mark first. A tap on the dots is not a
+                    // tap on the row, and the two must never both fire.
+                    layout.nodes.push(LayoutNode {
+                        id: *id,
+                        rect: Rect {
+                            x: x.saturating_add(width).saturating_sub(icon),
+                            y: cursor,
+                            width: icon,
+                            height,
+                        },
+                        kind: LayoutKind::RowMenu(action),
+                        text_lines: Vec::new(),
                     });
                 }
                 cursor = cursor.saturating_add(height).saturating_add(gap);
@@ -6284,7 +6343,7 @@ pub fn paginate_rows_in_sections(
     for (index, (section, title, summary)) in rows.iter().enumerate() {
         // The header and the row it introduces are measured as one block, so
         // the break can only ever fall before the header or after the row.
-        let height = measured_row_height(metrics, area, title, summary, "")
+        let height = measured_row_height(metrics, area, title, summary, "", false)
             + if section.is_some() { header } else { 0 };
         let spacing = if page.is_empty() { 0 } else { separator };
         if !page.is_empty() && used + spacing + height > area.height {
@@ -6305,15 +6364,23 @@ pub fn paginate_rows_in_sections(
     pages
 }
 
-/// How wide a row's title really is when a value sits at its trailing edge.
+/// How wide a row's title really is beside whatever shares its right edge.
 ///
-/// The value is measured first and keeps its column; the title wraps inside
-/// what is left. Anything that measures such a row -- paginating it, clamping
-/// its title -- has to use this, or it measures a width the row will never
-/// have and comes back one line short.
+/// The value and the overflow mark are measured first and keep their columns;
+/// the title wraps inside what is left. Anything that measures such a row --
+/// paginating it, clamping its title -- has to use this, or it measures a
+/// width the row will never have and comes back one line short.
 #[must_use]
-pub fn row_title_width(metrics: &DisplayMetrics, area: ProseArea, trailing: &str) -> i32 {
-    let width = row_text_width(metrics, area);
+pub fn row_title_width(
+    metrics: &DisplayMetrics,
+    area: ProseArea,
+    trailing: &str,
+    menu: bool,
+) -> i32 {
+    let mut width = row_text_width(metrics, area);
+    if menu {
+        width = max(1, width - metrics.touch_target_default());
+    }
     if trailing.is_empty() {
         return width;
     }
@@ -6378,19 +6445,20 @@ fn trailing_height(
 
 /// How tall one row comes out, measured the way the layout engine measures it.
 ///
-/// Including the column a trailing value keeps for itself. Pagination that
-/// ignores the trailing value wraps the title and the summary at a width the
-/// row will never have, comes back one row short per page, and the extra row
-/// is drawn under the bottom bar where it is clipped away.
+/// Including the columns a trailing value and an overflow mark keep for
+/// themselves. Pagination that ignores either wraps the title and the summary
+/// at a width the row will never have, comes back one row short per page, and
+/// the extra row is drawn under the bottom bar where it is clipped away.
 fn measured_row_height(
     metrics: &DisplayMetrics,
     area: ProseArea,
     title: &str,
     summary: &str,
     trailing: &str,
+    menu: bool,
 ) -> i32 {
     let padding = metrics.space(Space::Small);
-    let text_width = row_title_width(metrics, area, trailing);
+    let text_width = row_title_width(metrics, area, trailing, menu);
     let title_height =
         wrap_text(title, text_width, FontSize::Body).len() as i32 * FontSize::Body.line_height();
     let summary_height = if summary.is_empty() {
@@ -6418,6 +6486,34 @@ pub fn paginate_rows_with_trailing(
     metrics: &DisplayMetrics,
     area: ProseArea,
 ) -> Vec<Vec<usize>> {
+    paginate_rows_measured(rows, metrics, area, false)
+}
+
+/// The same, for rows that carry an overflow mark against their right edge.
+///
+/// A separate entry point for the same reason as
+/// [`paginate_rows_with_trailing`]: a screen paginates with the shape it
+/// draws with. The mark keeps a finger's width whatever the row says, so a
+/// list paginated without it fits one line more per row than it will get.
+#[must_use]
+pub fn paginate_rows_with_menu(
+    rows: &[(&str, &str)],
+    metrics: &DisplayMetrics,
+    area: ProseArea,
+) -> Vec<Vec<usize>> {
+    let rows: Vec<(&str, &str, &str)> = rows
+        .iter()
+        .map(|(title, summary)| (*title, *summary, ""))
+        .collect();
+    paginate_rows_measured(&rows, metrics, area, true)
+}
+
+fn paginate_rows_measured(
+    rows: &[(&str, &str, &str)],
+    metrics: &DisplayMetrics,
+    area: ProseArea,
+    menu: bool,
+) -> Vec<Vec<usize>> {
     // A gap, the divider drawn inside it, then another gap: the engine
     // advances by the row's height and a gap, then leaves a second gap after
     // the rule it draws before the next row. The rule's own thickness is not
@@ -6429,7 +6525,7 @@ pub fn paginate_rows_with_trailing(
     let mut page: Vec<usize> = Vec::new();
     let mut used = 0;
     for (index, (title, summary, trailing)) in rows.iter().enumerate() {
-        let height = measured_row_height(metrics, area, title, summary, trailing);
+        let height = measured_row_height(metrics, area, title, summary, trailing, menu);
         let spacing = if page.is_empty() { 0 } else { separator };
         if !page.is_empty() && used + spacing + height > area.height {
             pages.push(std::mem::take(&mut page));
@@ -6470,7 +6566,7 @@ pub fn paginate_rows(
     let mut used = 0;
 
     for (index, (title, summary)) in rows.iter().enumerate() {
-        let height = measured_row_height(metrics, area, title, summary, "");
+        let height = measured_row_height(metrics, area, title, summary, "", false);
         let spacing = if page.is_empty() { 0 } else { separator };
         if !page.is_empty() && used + spacing + height > area.height {
             pages.push(std::mem::take(&mut page));
@@ -7726,6 +7822,7 @@ const fn is_tappable(kind: LayoutKind) -> bool {
             | LayoutKind::NavDestination(_)
             | LayoutKind::NavDestinationSelected(_)
             | LayoutKind::Row(_)
+            | LayoutKind::RowMenu(_)
             | LayoutKind::Cell(_)
             | LayoutKind::Tile(..)
             | LayoutKind::Field(_)
@@ -8164,6 +8261,7 @@ pub fn render_all(
                         height: max_i32(1, node.rect.height - inset * 2),
                     },
                     clip,
+                    tone::INK,
                 );
             }
             // Inverted when on. With two usable tones there is no third state
@@ -8633,10 +8731,10 @@ pub fn render_all(
                 clip,
             ),
             LayoutKind::StatusSignal(strength) => {
-                draw_vector(surface, &vector::wifi(strength), node.rect, clip);
+                draw_vector(surface, &vector::wifi(strength), node.rect, clip, tone::INK);
             }
             LayoutKind::StatusBluetooth => {
-                draw_vector(surface, &vector::bluetooth(), node.rect, clip);
+                draw_vector(surface, &vector::bluetooth(), node.rect, clip, tone::INK);
             }
             LayoutKind::StatusBattery(level, charging) => {
                 // Nothing at all when it could not be read. An empty battery
@@ -8673,10 +8771,11 @@ pub fn render_all(
                         height: side,
                     },
                     clip,
+                    tone::INK,
                 );
             }
             LayoutKind::SplashGlyph(glyph) => {
-                draw_vector(surface, &vector::shapes(glyph), node.rect, clip);
+                draw_vector(surface, &vector::shapes(glyph), node.rect, clip, tone::INK);
             }
             LayoutKind::SplashTitle => draw_centered(
                 surface,
@@ -8708,6 +8807,7 @@ pub fn render_all(
                         height: side,
                     },
                     clip,
+                    tone::INK,
                 );
             }
             LayoutKind::BarAction(_) => draw_centered(
@@ -8762,6 +8862,23 @@ pub fn render_all(
                 clip,
             ),
             LayoutKind::RowLead(lead) => draw_row_lead(surface, lead, node.rect, pictures, clip),
+            // Inset from the finger-wide target it sits in, so the mark is the
+            // size of a mark and the thing you press is the size of a finger.
+            LayoutKind::RowMenu(_) => {
+                let inset = node.rect.width / 4;
+                draw_glyph_icon_in(
+                    surface,
+                    Glyph::MoreVertical,
+                    Rect {
+                        x: node.rect.x + inset,
+                        y: node.rect.y + (node.rect.height - node.rect.width) / 2 + inset,
+                        width: node.rect.width - inset * 2,
+                        height: node.rect.width - inset * 2,
+                    },
+                    clip,
+                    tone::MUTED,
+                );
+            }
             LayoutKind::TileGlyph(glyph) | LayoutKind::InlineGlyph(glyph) => {
                 draw_glyph_icon(surface, glyph, node.rect, clip);
             }
@@ -9112,7 +9229,7 @@ fn draw_back_arrow(surface: &mut Surface, rect: Rect, clip: Rect) {
         width: rect.width - 2 * inset,
         height: rect.height - 2 * inset,
     };
-    draw_vector(surface, &vector::back_arrow(), mark, clip);
+    draw_vector(surface, &vector::back_arrow(), mark, clip, tone::INK);
 }
 
 /// Draws whatever stands at the head of a row.
@@ -9159,7 +9276,16 @@ fn draw_row_lead(
 }
 
 fn draw_glyph_icon(surface: &mut Surface, glyph: Glyph, rect: Rect, clip: Rect) {
-    draw_vector(surface, &vector::shapes(glyph), rect, clip);
+    draw_vector(surface, &vector::shapes(glyph), rect, clip, tone::INK);
+}
+
+/// The same, in a chosen tone.
+///
+/// Only the muted tone has a second caller so far: a row's overflow mark is
+/// not what the row is about, and drawn in full ink beside a title it competes
+/// with the one thing the reader is looking for.
+fn draw_glyph_icon_in(surface: &mut Surface, glyph: Glyph, rect: Rect, clip: Rect, tone: u8) {
+    draw_vector(surface, &vector::shapes(glyph), rect, clip, tone);
 }
 
 /// Rasterises an icon into the largest square that fits `rect` and blends it.
@@ -9180,19 +9306,26 @@ fn draw_wide_vector(surface: &mut Surface, shapes: &[vector::Shape], rect: Rect,
     if rect.width <= 0 {
         return;
     }
-    blit_vector(surface, shapes, rect.width, rect, clip);
+    blit_vector(surface, shapes, rect.width, rect, clip, tone::INK);
 }
 
-fn draw_vector(surface: &mut Surface, shapes: &[vector::Shape], rect: Rect, clip: Rect) {
+fn draw_vector(surface: &mut Surface, shapes: &[vector::Shape], rect: Rect, clip: Rect, tone: u8) {
     let size = min(rect.width, rect.height);
     if size <= 0 {
         return;
     }
-    blit_vector(surface, shapes, size, rect, clip);
+    blit_vector(surface, shapes, size, rect, clip, tone);
 }
 
 /// Renders the design box at `size` and centres it on `rect`.
-fn blit_vector(surface: &mut Surface, shapes: &[vector::Shape], size: i32, rect: Rect, clip: Rect) {
+fn blit_vector(
+    surface: &mut Surface,
+    shapes: &[vector::Shape],
+    size: i32,
+    rect: Rect,
+    clip: Rect,
+    tone: u8,
+) {
     let coverage = vector::render(shapes, size);
     let origin_x = rect.x + (rect.width - size) / 2;
     let origin_y = rect.y + (rect.height - size) / 2;
@@ -9206,7 +9339,7 @@ fn blit_vector(surface: &mut Surface, shapes: &[vector::Shape], size: i32, rect:
             if x < clip.x || y < clip.y || x >= clip.x + clip.width || y >= clip.y + clip.height {
                 continue;
             }
-            surface.blend(x, y, tone::INK, alpha);
+            surface.blend(x, y, tone, alpha);
         }
     }
 }
@@ -13795,8 +13928,8 @@ mod prose_tests {
         // What the row will really be: the same measurement the layout engine
         // makes, which is the thing the old pagination disagreed with.
         assert!(
-            measured_row_height(&metrics, area, title, summary, "1,284 points")
-                > measured_row_height(&metrics, area, title, summary, ""),
+            measured_row_height(&metrics, area, title, summary, "1,284 points", false)
+                > measured_row_height(&metrics, area, title, summary, "", false),
             "a row with a value at its trailing edge measured no taller"
         );
     }
@@ -13870,6 +14003,168 @@ mod prose_tests {
                 .iter()
                 .any(|node| node.kind == LayoutKind::RowTrailing),
             "an empty trailing value still reserved a column"
+        );
+    }
+
+    /// A tap on the dots must never also be a tap on the row. The two are the
+    /// same rectangle otherwise, and opening a feed while asking to remove it
+    /// is the worst possible reading of one press.
+    #[test]
+    fn a_row_menu_takes_the_tap_before_the_row_it_sits_in() {
+        let screen = Screen::new(
+            1,
+            vec![Node::Rows {
+                id: NodeId(1),
+                rows: vec![
+                    Row::new(ActionId(1), "Ars Technica", "arstechnica.com", Glyph::Rss)
+                        .with_menu(ActionId(2)),
+                ],
+            }],
+        );
+        let layout = screen.layout();
+        let mark = layout
+            .nodes
+            .iter()
+            .find(|node| node.kind == LayoutKind::RowMenu(ActionId(2)))
+            .expect("an overflow mark");
+        let row = layout
+            .nodes
+            .iter()
+            .find(|node| node.kind == LayoutKind::Row(ActionId(1)))
+            .expect("a row");
+        assert_eq!(
+            layout.hit_test(
+                mark.rect.x + mark.rect.width / 2,
+                mark.rect.y + mark.rect.height / 2
+            ),
+            Some(ActionId(2)),
+            "the row swallowed a tap meant for its own overflow mark"
+        );
+        assert_eq!(
+            layout.hit_test(row.rect.x + 10, row.rect.y + row.rect.height / 2),
+            Some(ActionId(1)),
+            "the mark swallowed a tap on the row"
+        );
+        assert_eq!(
+            layout.pressed_control(
+                mark.rect.x + mark.rect.width / 2,
+                mark.rect.y + mark.rect.height / 2
+            ),
+            Some(mark.rect),
+            "pressing the mark inverted the whole row"
+        );
+    }
+
+    /// The mark keeps its column and the title wraps into what is left, on the
+    /// same reasoning as a trailing value: a title measured at the full row
+    /// width is drawn under the dots.
+    #[test]
+    fn a_row_menu_takes_its_room_from_the_title() {
+        let long = "A headline long enough that it has to wrap somewhere on this panel";
+        let laid_out = |menu: bool| {
+            let row = Row::new(ActionId(1), long, "", Glyph::Rss);
+            Screen::new(
+                1,
+                vec![Node::Rows {
+                    id: NodeId(1),
+                    rows: vec![if menu {
+                        row.with_menu(ActionId(2))
+                    } else {
+                        row
+                    }],
+                }],
+            )
+            .layout()
+        };
+        let title = |layout: &Layout| {
+            *layout
+                .nodes
+                .iter()
+                .find(|node| node.kind == LayoutKind::RowTitle)
+                .map(|node| &node.rect)
+                .expect("a title")
+        };
+        let with = laid_out(true);
+        assert!(
+            title(&with).width < title(&laid_out(false)).width,
+            "an overflow mark did not take any room from the title"
+        );
+        let mark = with
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::RowMenu(_)))
+            .expect("an overflow mark");
+        let title = title(&with);
+        assert!(
+            title.x + title.width <= mark.rect.x,
+            "the title ran underneath its own overflow mark"
+        );
+        assert!(
+            mark.rect.width >= CLARA_BW_METRICS.touch_target_default(),
+            "the overflow mark was smaller than a finger"
+        );
+    }
+
+    /// Pagination that measures a row at the full width fits one line more per
+    /// row than the row will get, which puts the last row under the bottom bar.
+    #[test]
+    fn pagination_reserves_the_overflow_column() {
+        let area = CLARA_BW_METRICS.prose_area(true, true);
+        let full = row_title_width(&CLARA_BW_METRICS, area, "", false);
+        assert_eq!(
+            row_title_width(&CLARA_BW_METRICS, area, "", true),
+            full - CLARA_BW_METRICS.touch_target_default(),
+            "the measured title width did not give up a finger to the mark"
+        );
+        // A title that fits one line at the full width and needs two beside a
+        // mark, found by measurement rather than picked by eye, so this stays
+        // true if the face or the panel changes.
+        let words = "feed ".repeat(40);
+        let title = (1..=words.len())
+            .filter(|end| words.is_char_boundary(*end))
+            .map(|end| words[..end].trim_end().to_owned())
+            .find(|candidate| {
+                wrap_text(candidate, full, FontSize::Body).len() == 1
+                    && wrap_text(
+                        candidate,
+                        full - CLARA_BW_METRICS.touch_target_default(),
+                        FontSize::Body,
+                    )
+                    .len()
+                        == 2
+            })
+            .expect("a title that wraps only once the mark takes its column");
+        assert!(
+            measured_row_height(&CLARA_BW_METRICS, area, &title, "a summary", "", true)
+                > measured_row_height(&CLARA_BW_METRICS, area, &title, "a summary", "", false),
+            "the overflow column cost the title nothing"
+        );
+        let summary = "a summary that is itself long enough to wrap onto a second line here";
+        let rows = vec![(&title[..], summary); 40];
+        let with = paginate_rows_with_menu(&rows, &CLARA_BW_METRICS, area);
+        let without = paginate_rows(&rows, &CLARA_BW_METRICS, area);
+        assert!(
+            with.first().map_or(0, Vec::len) < without.first().map_or(0, Vec::len),
+            "a list with overflow marks paginated as though it had none"
+        );
+    }
+
+    #[test]
+    fn a_row_without_a_menu_reserves_no_column_for_one() {
+        let screen = Screen::new(
+            1,
+            vec![Node::Rows {
+                id: NodeId(1),
+                rows: vec![Row::new(ActionId(1), "Counter", "", Glyph::Note)],
+            }],
+        );
+        assert!(
+            !screen
+                .layout()
+                .nodes
+                .iter()
+                .any(|node| matches!(node.kind, LayoutKind::RowMenu(_))),
+            "a row with no overflow action still drew one"
         );
     }
 
