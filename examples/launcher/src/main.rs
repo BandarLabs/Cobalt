@@ -49,7 +49,7 @@ const ENTRIES: &[Entry] = &[
         label: "Audiobooks",
         summary: "Research, narrate and play an original audiobook about any topic.",
         needs: "Needs the network and Bluetooth audio.",
-        glyph: Glyph::Download,
+        glyph: Glyph::Headphones,
     },
     Entry {
         name: "settings",
@@ -547,7 +547,9 @@ mod tests {
             .nodes
             .iter()
             .filter_map(|node| match node.kind {
-                LayoutKind::Button(action, ..) | LayoutKind::NavDestination(action, ..) => Some(action),
+                LayoutKind::Button(action, ..) | LayoutKind::NavDestination(action, ..) => {
+                    Some(action)
+                }
                 _ => None,
             })
             .collect()

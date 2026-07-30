@@ -3939,6 +3939,7 @@ const fn encode_glyph(glyph: Glyph) -> u8 {
         Glyph::Previous => 40,
         Glyph::Next => 41,
         Glyph::Plus => 42,
+        Glyph::Headphones => 43,
     }
 }
 
@@ -3987,6 +3988,7 @@ const fn decode_glyph(tag: u8) -> Option<Glyph> {
         40 => Glyph::Previous,
         41 => Glyph::Next,
         42 => Glyph::Plus,
+        43 => Glyph::Headphones,
 
         _ => return None,
     })

@@ -70,6 +70,7 @@ pub(super) fn outline(glyph: Glyph) -> &'static [&'static [Cmd]] {
         Glyph::Wifi => WIFI,
         Glyph::Battery => BATTERY,
         Glyph::Plus => PLUS,
+        Glyph::Headphones => HEADPHONES,
     }
 }
 
@@ -948,4 +949,37 @@ static BATTERY: &[&[Cmd]] = &[&[
 static PLUS: &[&[Cmd]] = &[
     &[Cmd::Move(500, 208), Cmd::Line(500, 792)],
     &[Cmd::Move(208, 500), Cmd::Line(792, 500)],
+];
+
+/// `headphones` from Tabler Icons.
+static HEADPHONES: &[&[Cmd]] = &[
+    &[
+        Cmd::Move(167, 625),
+        Cmd::Cubic(167, 579, 204, 542, 250, 542),
+        Cmd::Line(292, 542),
+        Cmd::Cubic(338, 542, 375, 579, 375, 625),
+        Cmd::Line(375, 750),
+        Cmd::Cubic(375, 796, 338, 833, 292, 833),
+        Cmd::Line(250, 833),
+        Cmd::Cubic(204, 833, 167, 796, 167, 750),
+        Cmd::Line(167, 625),
+    ],
+    &[
+        Cmd::Move(625, 625),
+        Cmd::Cubic(625, 579, 662, 542, 708, 542),
+        Cmd::Line(750, 542),
+        Cmd::Cubic(796, 542, 833, 579, 833, 625),
+        Cmd::Line(833, 750),
+        Cmd::Cubic(833, 796, 796, 833, 750, 833),
+        Cmd::Line(708, 833),
+        Cmd::Cubic(662, 833, 625, 796, 625, 750),
+        Cmd::Line(625, 625),
+    ],
+    &[
+        Cmd::Move(167, 625),
+        Cmd::Line(167, 500),
+        Cmd::Cubic(167, 316, 316, 167, 500, 167),
+        Cmd::Cubic(684, 167, 833, 316, 833, 500),
+        Cmd::Line(833, 625),
+    ],
 ];

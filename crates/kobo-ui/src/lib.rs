@@ -3125,6 +3125,10 @@ pub enum Glyph {
     /// read faster than the word, and the word for it differs by screen:
     /// "Add", "Add a feed", "New item".
     Plus,
+    /// A band over two cups: listening rather than reading. The audiobook
+    /// application wore [`Self::Download`] before this existed, which said
+    /// "fetch something" about the one place on the device that plays sound.
+    Headphones,
 }
 
 impl Glyph {
@@ -3135,7 +3139,7 @@ impl Glyph {
     /// the set was twenty-one: `Light` and `Close` were authored, shipped, and
     /// covered by none of the tests that walk every glyph. A glyph nobody
     /// rasterises in a test is a blank space beside a label on the panel.
-    pub const ALL: [Self; 43] = [
+    pub const ALL: [Self; 44] = [
         Self::App,
         Self::Book,
         Self::Note,
@@ -3179,6 +3183,7 @@ impl Glyph {
         Self::Previous,
         Self::Next,
         Self::Plus,
+        Self::Headphones,
     ];
 }
 
@@ -6774,8 +6779,15 @@ pub fn paginate_rows_in_sections(
     for (index, (section, title, summary)) in rows.iter().enumerate() {
         // The header and the row it introduces are measured as one block, so
         // the break can only ever fall before the header or after the row.
-        let height = measured_row_height(metrics, area, title, summary, "", false, row_mark_column(metrics))
-            + if section.is_some() { header } else { 0 };
+        let height = measured_row_height(
+            metrics,
+            area,
+            title,
+            summary,
+            "",
+            false,
+            row_mark_column(metrics),
+        ) + if section.is_some() { header } else { 0 };
         let spacing = if page.is_empty() { 0 } else { separator };
         if !page.is_empty() && used + spacing + height > area.height {
             pages.push(std::mem::take(&mut page));
@@ -6946,7 +6958,13 @@ pub fn paginate_ranked_rows_with_trailing(
     area: ProseArea,
     highest: u16,
 ) -> Vec<Vec<usize>> {
-    paginate_rows_measured(rows, metrics, area, false, row_rank_column(metrics, highest))
+    paginate_rows_measured(
+        rows,
+        metrics,
+        area,
+        false,
+        row_rank_column(metrics, highest),
+    )
 }
 
 /// The same, for rows that carry an overflow mark against their right edge.
@@ -7027,7 +7045,15 @@ pub fn paginate_rows(
     let mut used = 0;
 
     for (index, (title, summary)) in rows.iter().enumerate() {
-        let height = measured_row_height(metrics, area, title, summary, "", false, row_mark_column(metrics));
+        let height = measured_row_height(
+            metrics,
+            area,
+            title,
+            summary,
+            "",
+            false,
+            row_mark_column(metrics),
+        );
         let spacing = if page.is_empty() { 0 } else { separator };
         if !page.is_empty() && used + spacing + height > area.height {
             pages.push(std::mem::take(&mut page));
@@ -15142,7 +15168,15 @@ mod prose_tests {
                 "1,284 points and 312 comments",
                 false,
                 row_mark_column(&metrics)
-            ) > measured_row_height(&metrics, area, title, summary, "", false, row_mark_column(&metrics)),
+            ) > measured_row_height(
+                &metrics,
+                area,
+                title,
+                summary,
+                "",
+                false,
+                row_mark_column(&metrics)
+            ),
             "a row with a value at its trailing edge measured no taller"
         );
     }
@@ -16578,6 +16612,4 @@ mod press_feedback_tests {
             ranked_pages[0].len()
         );
     }
-
 }
-

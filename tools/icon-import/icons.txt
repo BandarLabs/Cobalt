@@ -51,3 +51,4 @@ Trash               trash
 Wifi                wifi
 Battery             battery
 Plus                plus
+Headphones          headphones

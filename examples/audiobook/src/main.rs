@@ -213,7 +213,7 @@ impl Audiobook {
                         play_action(*index),
                         book.title.clone(),
                         String::new(),
-                        Glyph::Book,
+                        Glyph::Headphones,
                         size_on_disk(book.bytes),
                     )
                 })
@@ -1011,4 +1011,3 @@ mod tests {
         }
     }
 }
-
