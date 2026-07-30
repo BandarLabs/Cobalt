@@ -3,7 +3,8 @@
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
     action_id, ActionId, BatteryDetail, BluetoothDevice, Context, DeviceRequest, DeviceResult,
-    Glyph, KoboApp, RowLead, Screen, ScreenBuilder, Task, TaskId, TaskOutcome, WifiNetwork,
+    Glyph, Heartbeat, KoboApp, RowLead, Screen, ScreenBuilder, Task, TaskId, TaskOutcome,
+    WifiNetwork,
 };
 use std::process::ExitCode;
 
@@ -13,7 +14,7 @@ const BATTERY: &str = "battery";
 const TOGGLE: &str = "toggle";
 const RESCAN: &str = "rescan";
 const MORE: &str = "more";
-const DISCONNECT_WIFI: &str = "wifi-disconnect";
+const PREVIOUS: &str = "previous";
 const PAGE_SIZE: usize = 4;
 const DEVICE_ACTIONS: [&str; 10] = [
     "bt-0", "bt-1", "bt-2", "bt-3", "bt-4", "bt-5", "bt-6", "bt-7", "bt-8", "bt-9",
@@ -107,6 +108,12 @@ struct Settings {
     connected_ssid: Option<String>,
     networks: Vec<WifiNetwork>,
     wifi_page: usize,
+    /// Ticks while the Wi-Fi screen is open, and each tick asks for another
+    /// scan. A list of networks goes stale the moment the reader carries the
+    /// device into another room, and asking them to press a button to find
+    /// that out is asking them to do the radio's job.
+    scan_clock: Heartbeat,
+    scanning: bool,
     selected_ssid: Option<String>,
     password: Keyboard,
     battery: Option<BatteryDetail>,
@@ -116,7 +123,8 @@ struct Settings {
 }
 
 impl Settings {
-    fn show(&self, context: &mut Context) {
+    fn show(&mut self, context: &mut Context) {
+        self.keep_scanning(context);
         let screen = match self.view {
             View::Home => self.home(),
             View::Bluetooth => self.bluetooth(),
@@ -125,6 +133,26 @@ impl Settings {
             View::Battery => self.battery(),
         };
         context.set_screen(screen);
+    }
+
+    /// Keeps the radio looking for as long as the Wi-Fi list is the thing on
+    /// the panel, and no longer.
+    ///
+    /// Every screen is drawn through `show`, so this is the one place that
+    /// knows what the reader is looking at now rather than what they tapped a
+    /// moment ago. A scan costs a repaint only when the answer differs: the
+    /// frame planner declines an identical frame, so a still list is free.
+    fn keep_scanning(&mut self, context: &mut Context) {
+        if self.view == View::Wifi && self.wifi_state.enabled() {
+            if !self.scan_clock.is_running() {
+                self.scan_clock.start(context);
+                self.scanning = true;
+                context.device().scan_wifi();
+            }
+        } else {
+            self.scan_clock.stop(context);
+            self.scanning = false;
+        }
     }
 
     fn home(&self) -> Screen {
@@ -237,12 +265,14 @@ impl Settings {
                                 )
                             }),
                     );
-                if pages > 1 {
-                    screen =
-                        screen.buttons([(MORE, "More devices"), (RESCAN, "Rescan for devices")]);
-                } else {
-                    screen = screen.button(RESCAN, "Rescan for devices");
-                }
+                screen = screen.controls(
+                    u8::try_from(paging(self.bluetooth_page, pages).len() + 1).unwrap_or(3),
+                    paging(self.bluetooth_page, pages).into_iter().chain([(
+                        RESCAN,
+                        "Rescan",
+                        Glyph::Refresh,
+                    )]),
+                );
             }
         }
         screen.build()
@@ -272,15 +302,25 @@ impl Settings {
             screen = screen.banner(kobo_sdk::BannerLevel::Attention, trouble);
         }
         if self.wifi_state.enabled() {
+            // Every verb on this screen is collected and drawn as one row.
+            // Stacked full-width outlines read as a form rather than as a
+            // choice, and this screen had three of them down the left margin.
             if let Some(ssid) = &self.connected_ssid {
-                screen = screen
-                    .section_with_value("Connected", ssid.as_str())
-                    .button(DISCONNECT_WIFI, "Disconnect");
+                // A fact rather than a section. A section is a heading over
+                // the rows that belong to it, and what is connected has no
+                // rows: it is one label and one value, which is the shape the
+                // battery screen uses for exactly this.
+                screen = screen.facts([("Connected", ssid.as_str())]);
             }
             if self.networks.is_empty() {
-                screen = screen
-                    .text("No networks found yet.")
-                    .button(RESCAN, "Scan for networks");
+                // This screen scans on its own, so "none found" is only true
+                // once a scan has come back with nothing. Before that it is a
+                // report on a question nobody has asked yet.
+                screen = screen.text(if self.scanning {
+                    "Looking for networks…"
+                } else {
+                    "No networks found."
+                });
             } else {
                 let pages = page_count(self.networks.len());
                 screen = screen
@@ -293,8 +333,16 @@ impl Settings {
                             .enumerate()
                             .map(|(index, network)| {
                                 let security = if network.secured { "Secured" } else { "Open" };
+                                // Leaving a network is done where joining one
+                                // is done, which is what the Bluetooth screen
+                                // beside it already says on every row. A verb
+                                // at the foot of the page was a second place
+                                // to look for the same switch.
                                 let summary = if network.connected {
-                                    format!("Connected · {security} · {} dBm", network.signal_dbm)
+                                    format!(
+                                        "Connected · Tap to disconnect · {} dBm",
+                                        network.signal_dbm
+                                    )
                                 } else {
                                     format!("{security} · {} dBm", network.signal_dbm)
                                 };
@@ -306,11 +354,9 @@ impl Settings {
                                 )
                             }),
                     );
-                if pages > 1 {
-                    screen =
-                        screen.buttons([(MORE, "More networks"), (RESCAN, "Scan for networks")]);
-                } else {
-                    screen = screen.button(RESCAN, "Scan for networks");
+                let turns = paging(self.wifi_page, pages);
+                if !turns.is_empty() {
+                    screen = screen.controls(u8::try_from(turns.len()).unwrap_or(2), turns);
                 }
             }
         }
@@ -449,6 +495,20 @@ impl Settings {
         }
     }
 
+    /// Moves the list on the panel one page, clamped at both ends.
+    fn turn_page(&mut self, forward: bool) {
+        let (page, pages) = match self.view {
+            View::Bluetooth => (&mut self.bluetooth_page, page_count(self.devices.len())),
+            View::Wifi => (&mut self.wifi_page, page_count(self.networks.len())),
+            View::Home | View::WifiPassword | View::Battery => return,
+        };
+        *page = if forward {
+            (*page + 1).min(pages - 1)
+        } else {
+            page.saturating_sub(1)
+        };
+    }
+
     fn choose_bluetooth(&mut self, context: &mut Context, index: usize) {
         let Some(device) = self.devices.get(index).cloned() else {
             return;
@@ -470,6 +530,7 @@ impl Settings {
         };
         self.settled(Topic::Wifi);
         if network.connected {
+            context.device().disconnect_wifi();
             return;
         }
         if network.secured {
@@ -559,19 +620,11 @@ impl KoboApp for Settings {
             }
             self.show(context);
         } else if action == action_id(MORE) {
-            match self.view {
-                View::Bluetooth => {
-                    self.bluetooth_page =
-                        (self.bluetooth_page + 1) % page_count(self.devices.len());
-                }
-                View::Wifi => {
-                    self.wifi_page = (self.wifi_page + 1) % page_count(self.networks.len());
-                }
-                View::Home | View::WifiPassword | View::Battery => {}
-            }
+            self.turn_page(true);
             self.show(context);
-        } else if action == action_id(DISCONNECT_WIFI) {
-            context.device().disconnect_wifi();
+        } else if action == action_id(PREVIOUS) {
+            self.turn_page(false);
+            self.show(context);
         } else if let Some(index) = DEVICE_ACTIONS
             .iter()
             .position(|name| action == action_id(name))
@@ -623,6 +676,9 @@ impl KoboApp for Settings {
                     self.networks = networks;
                     self.wifi_page %= page_count(self.networks.len());
                 }
+                if matches!(request, DeviceRequest::ScanWifi) {
+                    self.scanning = false;
+                }
                 self.settled(Topic::Wifi);
             }
             DeviceResult::BatteryDetail(detail) => {
@@ -667,6 +723,15 @@ impl KoboApp for Settings {
     }
 
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
+        // A tick is not an answer to anything the application asked for, so it
+        // is taken before the pending request is consulted.
+        if self.scan_clock.on_task(context, task, &outcome) {
+            if self.view == View::Wifi && self.wifi_state.enabled() {
+                self.scanning = true;
+                context.device().scan_wifi();
+            }
+            return;
+        }
         if self.delayed != Some(task) {
             return;
         }
@@ -688,6 +753,23 @@ impl KoboApp for Settings {
         }
         self.show(context);
     }
+}
+
+/// The page turns a paginated list should offer from where it is standing.
+///
+/// A list that wraps is a list that lies: on the last page "More" promised
+/// devices that were not there, and pressing it took the reader back to the
+/// first page as if that were forward. Each direction is offered only where
+/// there is a page on that side.
+fn paging(page: usize, pages: usize) -> Vec<(&'static str, &'static str, Glyph)> {
+    let mut turns = Vec::new();
+    if page > 0 {
+        turns.push((PREVIOUS, "Previous", Glyph::Previous));
+    }
+    if page + 1 < pages {
+        turns.push((MORE, "Next", Glyph::Next));
+    }
+    turns
 }
 
 fn page_count(items: usize) -> usize {
@@ -742,7 +824,7 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{RadioState, Settings, DEVICE_ACTIONS, MORE, NETWORK_ACTIONS, RESCAN};
+    use super::{RadioState, Settings, DEVICE_ACTIONS, MORE, NETWORK_ACTIONS, PREVIOUS, RESCAN};
     use kobo_sdk::{
         action_id, BatteryDetail, BluetoothDevice, BluetoothDeviceKind, Chrome, WifiNetwork,
         CLARA_BW_METRICS,
@@ -794,8 +876,72 @@ mod tests {
         let issues = screen.validate(&CLARA_BW_METRICS);
         assert!(issues.is_empty(), "{issues:?}");
         let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
-        assert!(layout.rect_of_action(action_id(RESCAN)).is_some());
         assert!(layout.rect_of_action(action_id(MORE)).is_some());
+        assert!(layout.rect_of_action(action_id(PREVIOUS)).is_none());
+    }
+
+    /// The bug this pins: the way on wrapped, so the last page of networks
+    /// offered a page that was not there and called going back to the first
+    /// one "More".
+    #[test]
+    fn the_last_page_of_networks_offers_only_the_way_back() {
+        let mut settings = Settings {
+            wifi_state: RadioState::On,
+            networks: NETWORK_ACTIONS
+                .iter()
+                .enumerate()
+                .map(|(index, _)| WifiNetwork {
+                    ssid: format!("Network {index}"),
+                    signal_dbm: -40,
+                    secured: true,
+                    connected: false,
+                })
+                .collect(),
+            ..Settings::default()
+        };
+        settings.wifi_page = super::page_count(settings.networks.len()) - 1;
+        let layout = settings
+            .wifi()
+            .layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
+        assert!(layout.rect_of_action(action_id(PREVIOUS)).is_some());
+        assert!(layout.rect_of_action(action_id(MORE)).is_none());
+    }
+
+    /// The bug this pins: an empty list said "No networks found yet" the
+    /// instant the screen opened, before the radio had been asked anything.
+    /// The screen scans on its own now, so it has to say which of the two
+    /// situations it is in.
+    #[test]
+    fn an_empty_wifi_list_says_whether_it_is_still_looking() {
+        let looking = Settings {
+            wifi_state: RadioState::On,
+            scanning: true,
+            ..Settings::default()
+        };
+        let settled = Settings {
+            wifi_state: RadioState::On,
+            ..Settings::default()
+        };
+        assert!(text_of(&looking.wifi()).contains("Looking for networks"));
+        assert!(text_of(&settled.wifi()).contains("No networks found."));
+        // And neither offers a Scan button, because pressing one would ask
+        // for what is already happening every five seconds.
+        let layout = looking
+            .wifi()
+            .layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
+        assert!(layout.rect_of_action(action_id(RESCAN)).is_none());
+    }
+
+    fn text_of(screen: &kobo_sdk::Screen) -> String {
+        screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                kobo_sdk::Node::Text { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
     #[test]
