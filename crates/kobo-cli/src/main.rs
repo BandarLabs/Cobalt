@@ -392,125 +392,36 @@ fn create_app(name: &str) -> Result<(), String> {
         ),
     )
     .map_err(|error| error.to_string())?;
-    fs::write(root.join("src/main.rs"), GENERATED_APP_SOURCE).map_err(|error| error.to_string())?;
+    fs::write(root.join("src/main.rs"), generated_app_source())
+        .map_err(|error| error.to_string())?;
     println!("created {}", root.display());
     println!("next: cd {name} && kobo dev");
     Ok(())
 }
 
-const GENERATED_APP_SOURCE: &str = r#"use kobo_sdk::prelude::*;
-use std::env;
-use std::process::ExitCode;
+/// The application `kobo new` writes, which is `examples/hello` verbatim.
+///
+/// Included from a real workspace member rather than held here as a string,
+/// so that `cargo build` compiles it and `cargo test` runs its tests. The
+/// template was a string constant once, guarded by a test that searched it for
+/// words it should contain. Every word was still there on the day the SDK's
+/// event enum grew two variants and every application `kobo new` produced
+/// stopped compiling. A template nothing builds is a template that rots.
+const TEMPLATE: &str = include_str!("../../../examples/hello/src/main.rs");
 
-#[derive(Default)]
-struct Hello {
-    battery: Option<String>,
+/// The template with its own front matter removed.
+///
+/// The `//!` block at the top of `examples/hello` explains that the file is a
+/// template, which is true where it lives and meaningless once it has been
+/// copied into somebody's new application.
+fn generated_app_source() -> String {
+    let body: String = TEMPLATE
+        .lines()
+        .skip_while(|line| line.starts_with("//!") || line.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("{body}\n")
 }
-
-impl Hello {
-    fn show(&self, context: &mut Context) {
-        context.set_screen(
-            ScreenBuilder::new("hello")
-                .heading("Hello, Kobo")
-                .text("Built with the Kobo SDK.")
-                .text(
-                    self.battery
-                        .clone()
-                        .unwrap_or_else(|| "Battery: asking...".into()),
-                )
-                .button("refresh", "Refresh")
-                .button("close", "Close")
-                .build(),
-        );
-    }
-}
-
-impl KoboApp for Hello {
-    fn on_start(&mut self, context: &mut Context) {
-        // Hardware is asked for, never touched directly. Every request gets
-        // exactly one answer in on_device_result, including a refusal.
-        context.device().read_battery();
-        self.show(context);
-    }
-
-    fn on_action(&mut self, context: &mut Context, action: ActionId) {
-        if action == action_id("close") {
-            context.exit();
-        } else if action == action_id("refresh") {
-            context.device().read_battery();
-        }
-    }
-
-    fn on_device_result(
-        &mut self,
-        context: &mut Context,
-        request: DeviceRequest,
-        result: DeviceResult,
-    ) {
-        if request != DeviceRequest::ReadBattery {
-            return;
-        }
-        self.battery = Some(match result {
-            DeviceResult::Battery { percent, charging } => {
-                let state = if charging { ", charging" } else { "" };
-                format!("Battery: {percent}%{state}")
-            }
-            DeviceResult::Denied(reason) => format!("Battery unavailable: {reason}"),
-            _ => "Battery: unexpected answer".into(),
-        });
-        self.show(context);
-    }
-}
-
-fn main() -> ExitCode {
-    let mut runner = AppRunner::new(Hello::default());
-    let initial_commands = runner.start();
-    let Some(socket) = env::var_os("KOBO_SOCKET") else {
-        println!("Kobo screen initialized; set KOBO_SOCKET to run in the simulator.");
-        return ExitCode::SUCCESS;
-    };
-    let mut client = match Client::connect(socket, env!("CARGO_PKG_NAME")) {
-        Ok(client) => client,
-        Err(error) => {
-            eprintln!("app: {error}");
-            return ExitCode::FAILURE;
-        }
-    };
-    if let Err(error) = client.send_commands(initial_commands) {
-        eprintln!("app: {error}");
-        return ExitCode::FAILURE;
-    }
-    loop {
-        match client.next_event() {
-            Ok(ClientEvent::Action(action)) => {
-                let commands = runner.action(action);
-                let exiting = commands.iter().any(|command| matches!(command, Command::Exit));
-                if let Err(error) = client.send_commands(commands) {
-                    eprintln!("app: {error}");
-                    return ExitCode::FAILURE;
-                }
-                if exiting {
-                    return ExitCode::SUCCESS;
-                }
-            }
-            Ok(ClientEvent::Device(result)) => {
-                if let Err(error) = client.send_commands(runner.device_result(result)) {
-                    eprintln!("app: {error}");
-                    return ExitCode::FAILURE;
-                }
-            }
-            Ok(ClientEvent::Exit) => {
-                let _ = client.send_commands(runner.exit());
-                return ExitCode::SUCCESS;
-            }
-            Err(error) => {
-                eprintln!("app: {error}");
-                return ExitCode::FAILURE;
-            }
-        }
-    }
-}
-"#;
 
 fn dev(arguments: &[String]) -> Result<(), String> {
     let (built_in, address) = match arguments {
@@ -4221,7 +4132,7 @@ mod tests {
         parse_deploy, parse_devices, parse_logs, parse_touch_probe, unreachable_device,
         valid_device_host, valid_slug, verify_arm_elf, wait_for_remote_child,
         workspace_doctor_binary, DevSessionGuard, RemoteArtifact, SimulationGuard, ALIASES,
-        DEFAULT_TRACE_LINES, DEPLOY_TIMEOUT, DEVICE_PACKAGES, GENERATED_APP_SOURCE,
+        DEFAULT_TRACE_LINES, DEPLOY_TIMEOUT, DEVICE_PACKAGES,
         TOUCH_PROBE_DEFAULT_SECONDS, TOUCH_PROBE_MAXIMUM_SECONDS,
     };
     #[cfg(feature = "device-write")]
@@ -4615,21 +4526,35 @@ mod tests {
         assert!(super::parse_package(&["--onto".to_owned()]).is_err());
     }
 
+    /// That the template compiles is settled by `examples/hello` being a
+    /// workspace member, which is the whole reason it is one. What is left to
+    /// check here is that it still teaches the right things and that the
+    /// front matter naming it a template does not follow it out the door.
     #[test]
-    fn generated_app_uses_the_sdk_event_loop() {
-        assert!(GENERATED_APP_SOURCE.contains("AppRunner::new(Hello::default())"));
-        assert!(GENERATED_APP_SOURCE.contains("Client::connect(socket"));
-        assert!(GENERATED_APP_SOURCE.contains("client.next_event()"));
-        assert!(GENERATED_APP_SOURCE.contains("runner.action(action)"));
-        // A generated app must show how hardware is asked for and how every
-        // answer, including a refusal, reaches the application.
-        assert!(GENERATED_APP_SOURCE.contains("context.device().read_battery()"));
-        assert!(GENERATED_APP_SOURCE.contains("fn on_device_result"));
-        assert!(GENERATED_APP_SOURCE.contains("runner.device_result(result)"));
-        assert!(GENERATED_APP_SOURCE.contains("DeviceResult::Denied(reason)"));
+    fn the_generated_app_teaches_the_contract_it_should() {
+        let source = super::generated_app_source();
+
+        // The loop belongs to the SDK. An application that hand-rolls one
+        // breaks the next time the event enum grows, which is how the
+        // previous template died.
+        assert!(source.contains("kobo_sdk::run("));
+        assert!(!source.contains("next_event"));
+
+        // Hardware is asked for, and every answer including a refusal is
+        // shown. Both halves are the point of the example.
+        assert!(source.contains("context.device().read_battery()"));
+        assert!(source.contains("fn on_device_result"));
+        assert!(source.contains("DeviceResult::Denied(reason)"));
+
         // It must never reach hardware itself.
-        assert!(!GENERATED_APP_SOURCE.contains("/dev/"));
-        assert!(!GENERATED_APP_SOURCE.contains("/sys/"));
+        assert!(!source.contains("/dev/"));
+        assert!(!source.contains("/sys/"));
+
+        // It arrives as somebody's own application, not as a copy of a file
+        // that describes itself as a template.
+        assert!(source.starts_with("use kobo_sdk::prelude::*;"), "{}", &source[..80]);
+        assert!(!source.contains("//!"));
+        assert!(source.ends_with('\n'));
     }
 
     #[test]

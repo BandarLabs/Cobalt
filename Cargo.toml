@@ -33,6 +33,7 @@ members = [
     "examples/terminal",
     "examples/gallery",
     "examples/gutenbird",
+    "examples/hello",
     "examples/hn",
     "examples/launcher",
     "examples/magnet",
