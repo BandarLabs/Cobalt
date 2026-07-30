@@ -64,6 +64,8 @@ pub(super) fn outline(glyph: Glyph) -> &'static [&'static [Cmd]] {
         Glyph::VolumeDown => VOLUME_DOWN,
         Glyph::VolumeUp => VOLUME_UP,
         Glyph::MoreVertical => MORE_VERTICAL,
+        Glyph::Previous => PREVIOUS,
+        Glyph::Next => NEXT,
         Glyph::Trash => TRASH,
         Glyph::Wifi => WIFI,
         Glyph::Battery => BATTERY,
@@ -866,6 +868,20 @@ static MORE_VERTICAL: &[&[Cmd]] = &[
         Cmd::Cubic(477, 167, 458, 185, 458, 208),
     ],
 ];
+
+/// `chevron-left` from Tabler Icons.
+static PREVIOUS: &[&[Cmd]] = &[&[
+    Cmd::Move(625, 250),
+    Cmd::Line(375, 500),
+    Cmd::Line(625, 750),
+]];
+
+/// `chevron-right` from Tabler Icons.
+static NEXT: &[&[Cmd]] = &[&[
+    Cmd::Move(375, 250),
+    Cmd::Line(625, 500),
+    Cmd::Line(375, 750),
+]];
 
 /// `trash` from Tabler Icons.
 static TRASH: &[&[Cmd]] = &[

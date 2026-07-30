@@ -332,14 +332,22 @@ impl DisplayMetrics {
 
     /// The border of a control that can be pressed.
     ///
-    /// Half again a rule, because a button's outline is not a rule: a rule
-    /// separates two things and wants to be quiet, an outline says where the
-    /// reader may put a finger and wants to be found. Drawn at the same weight
-    /// as the dividers around it a button reads as one more line on the page,
-    /// which is exactly how these controls came across.
+    /// The same thickness as a rule, and stronger than one anyway, because a
+    /// rule is drawn in grey and this is drawn in ink. That is the whole of
+    /// the difference a button's outline needs: a rule separates two things
+    /// and wants to be quiet, an outline says where the reader may put a
+    /// finger and wants to be found.
+    ///
+    /// It was half again a rule for a while, on the argument that a button
+    /// drawn at a divider's weight reads as one more line on the page. On the
+    /// panel that came out as half a millimetre of solid black around a slab
+    /// twelve millimetres tall and the width of the page, and it was the
+    /// loudest thing on every screen that had one: heavier than the headline
+    /// above it, which no button should ever be. The tone was already carrying
+    /// the argument and the thickness was carrying it twice.
     #[must_use]
     pub const fn button_border(&self) -> i32 {
-        self.tenth_mm(5)
+        self.rule_thickness()
     }
 
     /// The height of the fixed bar that carries the title and the way back.
@@ -498,8 +506,11 @@ const _: () = assert!(tone::RULE_LIGHT > tone::RULE);
 const _: () = assert!(tone::RULE_LIGHT < tone::PAPER);
 
 // A rule separates two things and wants to be quiet. A button's outline says
-// where a finger may go and wants to be found.
-const _: () = assert!(CLARA_BW_METRICS.button_border() > CLARA_BW_METRICS.rule_thickness());
+// where a finger may go and wants to be found. It does that with its tone
+// rather than its thickness: ink against grey is already the whole of the
+// difference, and adding weight on top of it made every button on the panel
+// louder than the headline above it.
+const _: () = assert!(CLARA_BW_METRICS.button_border() >= CLARA_BW_METRICS.rule_thickness());
 
 /// A whole percentage, clamped to a possible value on construction.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -3031,6 +3042,13 @@ pub enum Glyph {
     /// sentence before this existed, which made the one destructive thing in
     /// the menu the longest line in it.
     Trash,
+    /// A chevron pointing back the way the reader came: the page before this
+    /// one. The same mark the top bar's own Back is cut from, offered as a
+    /// glyph so that a list which pages can say which way it goes without
+    /// spending a bar on two words.
+    Previous,
+    /// The chevron the other way: the page after this one.
+    Next,
 }
 
 impl Glyph {
@@ -3041,7 +3059,7 @@ impl Glyph {
     /// the set was twenty-one: `Light` and `Close` were authored, shipped, and
     /// covered by none of the tests that walk every glyph. A glyph nobody
     /// rasterises in a test is a blank space beside a label on the panel.
-    pub const ALL: [Self; 40] = [
+    pub const ALL: [Self; 42] = [
         Self::App,
         Self::Book,
         Self::Note,
@@ -3082,6 +3100,8 @@ impl Glyph {
         Self::VolumeUp,
         Self::MoreVertical,
         Self::Trash,
+        Self::Previous,
+        Self::Next,
     ];
 }
 
@@ -3973,7 +3993,7 @@ fn intrinsic_width(node: &Node, available: i32, metrics: &DisplayMetrics, prose:
                 if row.menu.is_some() {
                     text = text.saturating_add(metrics.touch_target_default());
                 }
-                text.saturating_add(metrics.touch_target_default())
+                text.saturating_add(row_mark_column(metrics))
                     .saturating_add(2 * metrics.space(Space::Small))
             })
             .max()
@@ -4017,6 +4037,61 @@ fn intrinsic_width(node: &Node, available: i32, metrics: &DisplayMetrics, prose:
 /// the leading and would put the icon back where it started, and not its cap
 /// height either: the artwork only fills about three quarters of its own box,
 /// so a box the size of a capital letter draws an icon smaller than one.
+/// The gutter in front of a row's text.
+///
+/// It was a touch target wide, on the reasoning that a row should line up with
+/// every other tappable thing in the system. Nothing in that gutter is
+/// tappable: the target is the whole row, and the lead is a mark sitting
+/// inside it at the size the type sets it, about a third of the width. So a
+/// finger's width of empty paper ran down the left of every list in the
+/// system, and in front of a ranked list it was worse, because a rank is two
+/// characters of caption text. On a 1072 pixel panel that is a tenth of the
+/// measure spent on nothing, which is exactly what it looked like.
+///
+/// It is now sized to what actually sits in it, which is where `UIKit` and
+/// Material both put it: Material's list item leads with a 24dp icon and
+/// starts its text at 56dp, not at the 48dp touch target.
+///
+/// A cover is the exception, and one cover widens the column for the whole
+/// list. A cover is the content of its row rather than a label on it, and at
+/// the width of a mark it would be a postage stamp. Widening every row rather
+/// than only the ones with artwork is deliberate: a list where some titles
+/// start further left than others is worse than a wide gutter.
+fn row_lead_column(metrics: &DisplayMetrics, rows: &[Row]) -> i32 {
+    let target = metrics.touch_target_default();
+    let mut column = 0;
+    for row in rows.iter().take(MAX_ROWS) {
+        column = max(
+            column,
+            match row.lead {
+                RowLead::Picture(..) => target,
+                RowLead::Icon(_) => row_mark_column(metrics),
+                RowLead::Number(number) => measure_text(&number.to_string(), FontSize::Caption).0,
+            },
+        );
+    }
+    if column == 0 {
+        row_mark_column(metrics)
+    } else {
+        min(target, column)
+    }
+}
+
+/// The column a list of marks needs, and the one every measure outside the
+/// layout engine assumes.
+///
+/// A ranked list comes out narrower than this and a list with artwork comes
+/// out wider. Narrower is harmless: the real title has more room than it was
+/// paginated for, so a page under-fills rather than spilling. Wider is not,
+/// which is why nothing that paginates leads with a cover, and why the one
+/// application that does sets a fixed number of results per page.
+fn row_mark_column(metrics: &DisplayMetrics) -> i32 {
+    min(
+        metrics.touch_target_default(),
+        metrics.tenth_mm(FontSize::Body.tenth_mm() * 6 / 5),
+    )
+}
+
 /// The pitch of one stand-in row, which has to be the pitch of the real row it
 /// stands in for. Drawn as paragraph lines it was under half the height of the
 /// list it preceded, so every screen that showed one jumped when the content
@@ -4896,9 +4971,7 @@ fn layout_node(
         Node::Rows { id, rows } => {
             let padding = metrics.space(Space::Small);
             let gap = metrics.space(Space::Tight);
-            // The glyph column is a touch target's width so that rows line up
-            // with every other tappable thing in the system.
-            let icon = metrics.touch_target_default();
+            let icon = row_lead_column(metrics, rows);
             let text_x = x.saturating_add(icon).saturating_add(padding);
             let text_width = max(1, width - icon - padding * 2);
             let mut cursor = y;
@@ -4933,7 +5006,13 @@ fn layout_node(
                 // it is the one part of a row whose width is fixed: the title,
                 // the summary and the value all wrap or clamp into what is
                 // left over, and none of them may run under it.
-                let menu_column = if row.menu.is_some() { icon } else { 0 };
+                // The overflow mark is a target in its own right, so it keeps
+                // a finger's width whatever the lead column came out at.
+                let menu_column = if row.menu.is_some() {
+                    metrics.touch_target_default()
+                } else {
+                    0
+                };
                 let text_width = max(1, text_width - menu_column);
                 // Measured before the title is wrapped, so the value keeps its
                 // room and the title gives up its own instead.
@@ -5033,9 +5112,9 @@ fn layout_node(
                     layout.nodes.push(LayoutNode {
                         id: *id,
                         rect: Rect {
-                            x: x.saturating_add(width).saturating_sub(icon),
+                            x: x.saturating_add(width).saturating_sub(menu_column),
                             y: cursor,
-                            width: icon,
+                            width: menu_column,
                             height,
                         },
                         kind: LayoutKind::RowMenu(action),
@@ -6394,8 +6473,7 @@ pub fn quote_offsets(metrics: &DisplayMetrics, width: i32, depth: u8) -> (i32, i
 #[must_use]
 pub fn row_text_width(metrics: &DisplayMetrics, area: ProseArea) -> i32 {
     let padding = metrics.space(Space::Small);
-    let icon = metrics.touch_target_default();
-    max(1, area.width - icon - padding * 2)
+    max(1, area.width - row_mark_column(metrics) - padding * 2)
 }
 
 /// Sets a cover out of type when there is no artwork to show.
@@ -9396,7 +9474,7 @@ pub fn render_all(
                 // columns are the `Node::Rows` arm's own.
                 let padding = metrics.space(Space::Small);
                 let band = skeleton_band(metrics);
-                let icon = metrics.touch_target_default();
+                let icon = row_mark_column(metrics);
                 let text_x = node.rect.x + icon + padding;
                 let text_width = max(1, node.rect.width - icon - padding * 2);
                 let lead = min(icon, metrics.tenth_mm(FontSize::Body.tenth_mm() * 6 / 5));
@@ -13643,19 +13721,66 @@ mod prose_tests {
     }
 
     #[test]
-    fn a_smaller_icon_stays_in_the_middle_of_its_column() {
-        // Left where it was, the text margin would look right and the icons
-        // would look like a ragged column of different sized marks.
+    fn a_mark_fills_the_column_a_list_of_marks_is_given() {
+        // The column is sized to the mark rather than to a finger, so there is
+        // nothing left over to centre the mark in. What matters is that it
+        // starts at the margin: a gutter wider than its contents is a tenth of
+        // this panel spent on nothing, which is what it was.
         let icon = first_lead(&row_with(RowLead::Icon(Glyph::Rss)));
-        let column = CLARA_BW_METRICS.touch_target_default();
-        let margin = CLARA_BW_METRICS.screen_margin();
-        assert_eq!(icon.x - margin, (column - icon.width) / 2);
+        assert_eq!(icon.x, CLARA_BW_METRICS.screen_margin());
+        assert_eq!(icon.width, row_mark_column(&CLARA_BW_METRICS));
+        assert!(
+            icon.width < CLARA_BW_METRICS.touch_target_default(),
+            "a mark column of {} is still a finger wide",
+            icon.width
+        );
     }
 
     #[test]
-    fn shrinking_an_icon_does_not_move_the_text_beside_it() {
-        // The column stays a touch target wide whatever goes in it, because
-        // that is what keeps one text margin down a list of mixed rows.
+    fn a_list_with_a_cover_in_it_keeps_one_text_margin() {
+        // A cover needs the wide column and a mark does not, but a list where
+        // some titles start further left than others is worse than a wide
+        // gutter, so one cover widens the column for every row in the list.
+        let mixed = Screen::new(
+            1,
+            vec![Node::Rows {
+                id: NodeId(1),
+                rows: vec![
+                    Row::new(
+                        ActionId(1),
+                        "With a cover",
+                        "",
+                        RowLead::Picture(
+                            TilePicture {
+                                handle: PictureHandle(1),
+                                source: (60, 90),
+                            },
+                            Glyph::Book,
+                        ),
+                    ),
+                    Row::new(ActionId(2), "With a mark", "", RowLead::Icon(Glyph::Book)),
+                ],
+            }],
+        );
+        let starts: Vec<i32> = mixed
+            .layout_with(&CLARA_BW_METRICS, &Chrome::default())
+            .nodes
+            .iter()
+            .filter(|node| node.kind == LayoutKind::RowTitle)
+            .map(|node| node.rect.x)
+            .collect();
+        assert_eq!(starts.len(), 2);
+        assert_eq!(starts[0], starts[1]);
+        assert_eq!(
+            starts[0],
+            CLARA_BW_METRICS.screen_margin()
+                + CLARA_BW_METRICS.touch_target_default()
+                + CLARA_BW_METRICS.space(Space::Small)
+        );
+    }
+
+    #[test]
+    fn a_list_of_marks_starts_its_text_at_the_mark_column() {
         let with_icon = row_with(RowLead::Icon(Glyph::Rss));
         let title = |screen: &Screen| {
             screen
@@ -13667,7 +13792,7 @@ mod prose_tests {
                 .rect
         };
         let expected = CLARA_BW_METRICS.screen_margin()
-            + CLARA_BW_METRICS.touch_target_default()
+            + row_mark_column(&CLARA_BW_METRICS)
             + CLARA_BW_METRICS.space(Space::Small);
         assert_eq!(title(&with_icon).x, expected);
     }
@@ -14681,10 +14806,11 @@ mod prose_tests {
             gap: metrics.space(Space::Small),
             face: Face::Text,
         };
-        let title = "A long headline about a small program that reads the news slowly";
+        let title = "A long headline about a small program that reads the news slowly \
+                     and turns its pages by itself";
         let summary = "example.com, 4 hours ago, 12 comments";
         let plain = vec![(title, summary); 12];
-        let scored = vec![(title, summary, "1,284 points"); 12];
+        let scored = vec![(title, summary, "1,284 points and 312 comments"); 12];
         let without = paginate_rows(&plain, &metrics, area);
         let with = paginate_rows_with_trailing(&scored, &metrics, area);
         assert!(
@@ -14695,8 +14821,14 @@ mod prose_tests {
         // What the row will really be: the same measurement the layout engine
         // makes, which is the thing the old pagination disagreed with.
         assert!(
-            measured_row_height(&metrics, area, title, summary, "1,284 points", false)
-                > measured_row_height(&metrics, area, title, summary, "", false),
+            measured_row_height(
+                &metrics,
+                area,
+                title,
+                summary,
+                "1,284 points and 312 comments",
+                false
+            ) > measured_row_height(&metrics, area, title, summary, "", false),
             "a row with a value at its trailing edge measured no taller"
         );
     }

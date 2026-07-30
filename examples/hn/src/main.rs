@@ -32,8 +32,8 @@
 mod model;
 
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Failure, KoboApp, QuoteRole, Screen, ScreenBuilder,
-    Task, TaskId, TaskOutcome,
+    action_id, ActionId, BannerLevel, Context, Failure, Glyph, KoboApp, QuoteRole, Screen,
+    ScreenBuilder, Task, TaskId, TaskOutcome,
 };
 use model::{Comment, Story};
 use std::collections::HashSet;
@@ -366,19 +366,13 @@ impl Hn {
         // Kobo has always worked. The bottom bar is spent on the tabs (those
         // are places, and places outrank controls for that bar) so the visible
         // page control is the one action the top bar allows.
-        let mut turning = screen
+        // No page position under the list. Which page of how many is already
+        // in the top bar, next to the controls that change it, and a caption
+        // repeating it at the foot of the panel was a second answer to a
+        // question that had been answered once.
+        let turning = screen
             .rows_with_trailing(rows)
             .page_turns("list-back", "list-next");
-        if self.pages.len() > 1 {
-            // Which page of how many, so a turn that lands on a page the same
-            // length as the last one still says it moved. Withheld on a single
-            // page, where "1 of 1" is a caption answering a question nobody
-            // turning nothing could ask.
-            turning = turning.page_position(
-                u16::try_from(self.page + 1).unwrap_or(u16::MAX),
-                u16::try_from(self.pages.len()).unwrap_or(u16::MAX),
-            );
-        }
         self.with_tabs(turning).build()
     }
 
@@ -398,8 +392,23 @@ impl Hn {
     /// Adds the bottom bar, and the forward page control the bar has no room
     /// for.
     fn with_tabs(&self, screen: ScreenBuilder) -> ScreenBuilder {
-        let screen = if self.pages.len() > 1 {
-            screen.top_bar_action("list-next", "Next")
+        // Each direction is offered only where there is a page on that side.
+        // The bar used to say Next on every page including the last, where it
+        // promised stories that did not exist, and never said Previous at all,
+        // so the only way back was a side tap nothing on the panel mentions.
+        //
+        // Chevrons rather than words: this is the one pair of controls whose
+        // picture every reader already knows, and two words in a bar that also
+        // has to hold the title is most of the title gone. The labels are
+        // still set, because they are what the control is called everywhere
+        // that is not the panel.
+        let screen = if self.page > 0 {
+            screen.top_bar_glyph("list-back", "Previous", Glyph::Previous)
+        } else {
+            screen
+        };
+        let screen = if self.page + 1 < self.pages.len() {
+            screen.top_bar_glyph("list-next", "Next", Glyph::Next)
         } else {
             screen
         };

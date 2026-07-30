@@ -45,6 +45,8 @@ Forward30           rewind-forward-30
 VolumeDown          volume-2
 VolumeUp            volume
 MoreVertical        dots-vertical
+Previous            chevron-left
+Next                chevron-right
 Trash               trash
 Wifi                wifi
 Battery             battery

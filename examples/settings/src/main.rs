@@ -148,7 +148,11 @@ impl Settings {
         };
         let screen = ScreenBuilder::new("settings")
             .top_bar("Settings")
-            .heading("Connections")
+            // A section, like the "Device" group under it. As a heading it was
+            // set larger than the app's own name in the bar above, and one
+            // screen was labelling two groups of the same kind in two
+            // different ways.
+            .section("Connections")
             .rows([
                 (
                     BLUETOOTH,

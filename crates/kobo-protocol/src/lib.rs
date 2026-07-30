@@ -3921,6 +3921,8 @@ const fn encode_glyph(glyph: Glyph) -> u8 {
         Glyph::VolumeUp => 37,
         Glyph::MoreVertical => 38,
         Glyph::Trash => 39,
+        Glyph::Previous => 40,
+        Glyph::Next => 41,
     }
 }
 
@@ -3966,6 +3968,8 @@ const fn decode_glyph(tag: u8) -> Option<Glyph> {
         37 => Glyph::VolumeUp,
         38 => Glyph::MoreVertical,
         39 => Glyph::Trash,
+        40 => Glyph::Previous,
+        41 => Glyph::Next,
 
         _ => return None,
     })

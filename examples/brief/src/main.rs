@@ -221,7 +221,11 @@ impl Brief {
                 }));
         }
         if self.fetching == Fetching::Nothing {
-            screen = screen.spacer(Space::Medium).button(REFRESH, "Refresh");
+            // Pinned to the foot of the panel rather than set after the last
+            // story. Placed inline it was drawn wherever the list happened to
+            // end, and with a full brief that was past the bottom edge: the
+            // one control on the screen, off the screen.
+            screen = screen.bottom_action(REFRESH, "Refresh");
         } else {
             // A bar against a known total, not a spinner: the count of stories
             // is fixed, so an indeterminate animation would be claiming the end
