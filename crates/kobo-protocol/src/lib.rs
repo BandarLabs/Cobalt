@@ -5545,9 +5545,14 @@ mod node_coverage_tests {
                     // two together are where an ordering mistake hides.
                     Row::new(ActionId(10), "Ars Technica", "arstechnica.com", Glyph::Rss)
                         .with_menu(ActionId(11)),
-                    Row::new(ActionId(12), "Hacker News", "news.ycombinator.com", Glyph::News)
-                        .with_trailing("30")
-                        .with_menu(ActionId(13)),
+                    Row::new(
+                        ActionId(12),
+                        "Hacker News",
+                        "news.ycombinator.com",
+                        Glyph::News,
+                    )
+                    .with_trailing("30")
+                    .with_menu(ActionId(13)),
                 ],
             },
             Node::Choice {

@@ -4174,8 +4174,8 @@ mod tests {
         parse_deploy, parse_devices, parse_logs, parse_touch_probe, unreachable_device,
         valid_device_host, valid_slug, verify_arm_elf, wait_for_remote_child,
         workspace_doctor_binary, DevSessionGuard, RemoteArtifact, SimulationGuard, ALIASES,
-        DEFAULT_TRACE_LINES, DEPLOY_TIMEOUT, DEVICE_PACKAGES,
-        TOUCH_PROBE_DEFAULT_SECONDS, TOUCH_PROBE_MAXIMUM_SECONDS,
+        DEFAULT_TRACE_LINES, DEPLOY_TIMEOUT, DEVICE_PACKAGES, TOUCH_PROBE_DEFAULT_SECONDS,
+        TOUCH_PROBE_MAXIMUM_SECONDS,
     };
     #[cfg(feature = "device-write")]
     use super::{
@@ -4594,7 +4594,11 @@ mod tests {
 
         // It arrives as somebody's own application, not as a copy of a file
         // that describes itself as a template.
-        assert!(source.starts_with("use kobo_sdk::prelude::*;"), "{}", &source[..80]);
+        assert!(
+            source.starts_with("use kobo_sdk::prelude::*;"),
+            "{}",
+            &source[..80]
+        );
         assert!(!source.contains("//!"));
         assert!(source.ends_with('\n'));
     }

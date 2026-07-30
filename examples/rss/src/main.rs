@@ -256,9 +256,8 @@ impl Feeds {
         // Every view except the shelf was reached from another one, so Back
         // unwinds this application first and leaves it only from the shelf.
         // Without this, Back out of an article lands at the launcher.
-        context.set_screen(
-            screen.with_own_back(self.view != View::Shelf || self.menu_open.is_some()),
-        );
+        context
+            .set_screen(screen.with_own_back(self.view != View::Shelf || self.menu_open.is_some()));
     }
 
     fn shelf(&self, context: &Context) -> Screen {
@@ -1150,7 +1149,9 @@ mod tests {
             "the menu did not close"
         );
         assert!(
-            text_of(&screen).iter().any(|line| line.contains("A Journal")),
+            text_of(&screen)
+                .iter()
+                .any(|line| line.contains("A Journal")),
             "closing the menu also removed the feed or left the shelf"
         );
     }

@@ -593,9 +593,7 @@ impl AudioPlayer {
                 self.position_ms = *position_ms;
                 self.duration_ms = *duration_ms;
                 self.trouble = None;
-                if self.autoplay == PlayIntent::Autoplay
-                    && *state == AudioPlaybackState::Ready
-                {
+                if self.autoplay == PlayIntent::Autoplay && *state == AudioPlaybackState::Ready {
                     context.device().play_audio();
                 } else if poll_worthy(*state) {
                     if *state == AudioPlaybackState::Playing {
@@ -1009,10 +1007,7 @@ mod tests {
             context
                 .take_commands()
                 .iter()
-                .any(|command| matches!(
-                    command,
-                    crate::Command::Device(DeviceRequest::ReadAudio)
-                )),
+                .any(|command| matches!(command, crate::Command::Device(DeviceRequest::ReadAudio))),
             "a decoding player must keep asking or it never learns it is ready"
         );
     }
@@ -1036,10 +1031,10 @@ mod tests {
                 volume: 70,
             },
         );
-        assert!(context.take_commands().iter().any(|command| matches!(
-            command,
-            crate::Command::Device(DeviceRequest::PlayAudio)
-        )));
+        assert!(context
+            .take_commands()
+            .iter()
+            .any(|command| matches!(command, crate::Command::Device(DeviceRequest::PlayAudio))));
     }
 
     /// Opening a thirty second book straight after a ten minute one showed ten
@@ -1061,7 +1056,10 @@ mod tests {
             },
         );
 
-        assert_eq!(player.duration_ms, 0, "that duration belongs to another book");
+        assert_eq!(
+            player.duration_ms, 0,
+            "that duration belongs to another book"
+        );
         assert_eq!(player.position_ms, 0);
         assert_eq!(player.playback, AudioPlaybackState::Idle);
         // Volume and availability describe the device, not the book.
@@ -1071,7 +1069,8 @@ mod tests {
     }
 
     #[test]
-    fn only_the_players_own_sleep_is_consumed() {        let mut player = AudioPlayer::shelf("book.mp3z", "Book");
+    fn only_the_players_own_sleep_is_consumed() {
+        let mut player = AudioPlayer::shelf("book.mp3z", "Book");
         let mut context = crate::Context::default();
         assert!(!player.on_task(
             &mut context,

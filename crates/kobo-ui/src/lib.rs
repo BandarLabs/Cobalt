@@ -1426,7 +1426,33 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
     // indistinguishable from a new screen, which is the thing it exists not to
     // be: the reader has to be able to see that what they were looking at is
     // still there.
-    let width = min(metrics.width - 4 * margin, metrics.width * 5 / 6);
+    let widest = min(metrics.width - 4 * margin, metrics.width * 5 / 6);
+    // A modal takes all of that, because a modal is a dialogue and its prose
+    // wants the room. A popover takes what it needs, because a popover is
+    // usually a short menu: a box of that width holding the word "Delete" is a
+    // band across the panel that looks like the screen changed rather than
+    // like a mark was pressed. Bounded below so a one word menu is still a
+    // comfortable target and still has room for its caret.
+    let width = match overlay.kind {
+        OverlayKind::Modal => widest,
+        OverlayKind::Popover { .. } => {
+            let narrowest = min(widest, 3 * metrics.touch_target_default());
+            let title = if overlay.title.is_empty() {
+                0
+            } else {
+                measure_text(&overlay.title, FontSize::Title).0
+            };
+            overlay
+                .nodes
+                .iter()
+                .map(|node| intrinsic_width(node, widest - 2 * padding, metrics, prose))
+                .chain(std::iter::once(title))
+                .max()
+                .unwrap_or(widest)
+                .saturating_add(2 * padding)
+                .clamp(narrowest, widest)
+        }
+    };
     let inner = width - 2 * padding;
 
     // Measured first, placed second. Where a popover goes depends on how tall
@@ -3883,6 +3909,30 @@ fn intrinsic_width(node: &Node, available: i32, metrics: &DisplayMetrics, prose:
         Node::Button { label, .. } => measure_text(label, FontSize::Body)
             .0
             .saturating_add(2 * metrics.space(Space::Small)),
+        // A list knows exactly how wide it wants to be, and a menu is a list.
+        // The arithmetic is the inverse of `row_text_width`: a row always
+        // reserves the lead column whether or not it has a lead, so that a
+        // list of rows with mixed leads keeps one text margin.
+        Node::Rows { rows, .. } => rows
+            .iter()
+            .map(|row| {
+                let mut text = max(
+                    measure_text(&row.title, FontSize::Body).0,
+                    measure_text(&row.summary, FontSize::Caption).0,
+                );
+                if let Some(trailing) = &row.trailing {
+                    text = text
+                        .saturating_add(measure_text(trailing, FontSize::Caption).0)
+                        .saturating_add(metrics.space(Space::Small));
+                }
+                if row.menu.is_some() {
+                    text = text.saturating_add(metrics.touch_target_default());
+                }
+                text.saturating_add(metrics.touch_target_default())
+                    .saturating_add(2 * metrics.space(Space::Small))
+            })
+            .max()
+            .unwrap_or(available),
         Node::Picture {
             source,
             max_height_tenths_mm,
@@ -12955,6 +13005,96 @@ mod prose_tests {
                 emphasis: Emphasis::Primary,
             }],
         })
+    }
+
+    /// The width of the overlay card on a Clara.
+    fn overlay_width(screen: &Screen) -> i32 {
+        screen
+            .layout_with(&CLARA_BW_METRICS, &Chrome::default())
+            .nodes
+            .iter()
+            .find(|node| node.kind == LayoutKind::Overlay)
+            .expect("an overlay")
+            .rect
+            .width
+    }
+
+    /// A popover holding a menu of rows, anchored to the button underneath.
+    fn with_a_menu(items: &[&str]) -> Screen {
+        let mut screen = with_an_overlay(OverlayKind::Popover {
+            anchor: ActionId(5),
+        });
+        let overlay = screen.overlay.as_mut().expect("an overlay");
+        overlay.title = String::new();
+        overlay.nodes = vec![Node::Rows {
+            id: NodeId(41),
+            rows: items
+                .iter()
+                .enumerate()
+                .map(|(index, label)| Row {
+                    action: ActionId(6 + index as u32),
+                    title: (*label).to_owned(),
+                    summary: String::new(),
+                    lead: RowLead::Icon(Glyph::Trash),
+                    state: RowState::Open,
+                    trailing: None,
+                    menu: None,
+                })
+                .collect(),
+        }];
+        screen
+    }
+
+    #[test]
+    fn a_popover_is_only_as_wide_as_what_is_in_it() {
+        // A menu of one short word used to be given the same width as a
+        // dialogue, so pressing a three dot mark produced a band most of the
+        // way across the panel and read as the screen having changed.
+        let narrow = overlay_width(&with_a_menu(&["Delete"]));
+        let wide = overlay_width(&with_a_menu(&[
+            "Stop following this feed and forget everything it ever said",
+        ]));
+        assert!(
+            narrow < wide,
+            "a one word menu was as wide as a sentence: {narrow} against {wide}"
+        );
+        assert!(
+            narrow < CLARA_BW_METRICS.width / 2,
+            "a one word menu took half the panel: {narrow}"
+        );
+    }
+
+    #[test]
+    fn a_popover_never_gets_narrower_than_a_finger() {
+        let width = overlay_width(&with_a_menu(&["No"]));
+        assert!(
+            width >= 3 * CLARA_BW_METRICS.touch_target_default(),
+            "a two letter menu was {width}, too narrow to press or to carry a caret"
+        );
+    }
+
+    #[test]
+    fn a_popover_never_gets_wider_than_a_modal() {
+        let sentence = "Stop following this feed and forget everything it ever said, \
+                        including the parts nobody read, at once and for good";
+        let width = overlay_width(&with_a_menu(&[sentence]));
+        let modal = overlay_width(&with_an_overlay(OverlayKind::Modal));
+        assert_eq!(
+            width, modal,
+            "a long menu item pushed the popover past the width a modal is allowed"
+        );
+    }
+
+    #[test]
+    fn a_modal_still_takes_the_room_a_dialogue_needs() {
+        // Deliberately not measured from its contents. A dialogue asks a
+        // question in prose, and prose set in a box the width of its longest
+        // button is a column of two words.
+        let terse = overlay_width(&with_an_overlay(OverlayKind::Modal));
+        let mut wordy = with_an_overlay(OverlayKind::Modal);
+        wordy.overlay.as_mut().expect("an overlay").title =
+            "Delete this feed and everything in it?".to_owned();
+        assert_eq!(terse, overlay_width(&wordy));
     }
 
     #[test]

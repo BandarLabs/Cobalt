@@ -229,27 +229,25 @@ impl Launcher {
         } else {
             "Cobalt".to_owned()
         };
-        let screen = ScreenBuilder::new("launcher")
-            .top_bar(title)
-            .tile_grid(
-                TileShape::Square,
-                showing.iter().map(|&index| {
-                    let entry = &ENTRIES[index];
-                    let busy = self.working == Some(index);
-                    (
-                        opening(entry.name),
-                        entry.label,
-                        entry.glyph,
-                        move |tile: Tile| {
-                            if busy {
-                                tile.with_state(TileState::Busy)
-                            } else {
-                                tile
-                            }
-                        },
-                    )
-                }),
-            );
+        let screen = ScreenBuilder::new("launcher").top_bar(title).tile_grid(
+            TileShape::Square,
+            showing.iter().map(|&index| {
+                let entry = &ENTRIES[index];
+                let busy = self.working == Some(index);
+                (
+                    opening(entry.name),
+                    entry.label,
+                    entry.glyph,
+                    move |tile: Tile| {
+                        if busy {
+                            tile.with_state(TileState::Busy)
+                        } else {
+                            tile
+                        }
+                    },
+                )
+            }),
+        );
         // The way out is pinned to the panel rather than placed after the
         // list. Layout reserves the bar before any content, so however many
         // entries there are, the button that gives the device back is on the

@@ -484,7 +484,7 @@ fn container_xml() -> String {
          <rootfiles>\n    \
          <rootfile full-path=\"OEBPS/content.opf\" \
          media-type=\"application/oebps-package+xml\"/>\n  \
-         </rootfiles>\n</container>\n"
+         </rootfiles>\n</container>\n",
     )
 }
 

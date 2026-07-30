@@ -288,10 +288,10 @@ mod tests {
         encode, parse_point, parse_sequence, plan, press_and_lift, Step, LIFT_EVENTS,
         MAXIMUM_SEQUENCE_MILLIS, MAXIMUM_STEPS,
     };
-    use std::time::Duration;
     use kobo_abi::input;
     use kobo_hal::touch::{InputEvent32, TouchDecoder, TouchEvent};
     use kobo_profile::CLARA_BW_391;
+    use std::time::Duration;
 
     #[test]
     fn a_record_encodes_where_the_decoder_looks_for_it() {
