@@ -9,7 +9,7 @@
 //! The rules are the ones people actually play at a table: whoever is holding
 //! the device taps, and the mark alternates. Nought goes first.
 
-use kobo_sdk::{action_id, ActionId, Context, KoboApp, Screen, ScreenBuilder};
+use kobo_sdk::{action_id, ActionId, Context, Glyph, KoboApp, Screen, ScreenBuilder};
 use std::process::ExitCode;
 
 const SIZE: usize = 3;
@@ -45,6 +45,20 @@ impl Mark {
             Self::Empty => " ",
             Self::Nought => "O",
             Self::Cross => "X",
+        }
+    }
+
+    /// The mark itself, drawn at three fifths of the square.
+    ///
+    /// The letters are still the labels, because that is what the cell is
+    /// called out loud and in a test, but a board is read at a glance and a
+    /// letter set at label size in the middle of a square this large is not a
+    /// mark, it is a caption.
+    const fn glyph(self) -> Option<Glyph> {
+        match self {
+            Self::Empty => None,
+            Self::Nought => Some(Glyph::Circle),
+            Self::Cross => Some(Glyph::Close),
         }
     }
 
@@ -139,11 +153,11 @@ fn screen(game: &Game) -> Screen {
     let cells = NAMES
         .iter()
         .zip(game.board.iter())
-        .map(|(name, mark)| (*name, mark.label()));
+        .map(|(name, mark)| (*name, mark.label(), mark.glyph()));
     ScreenBuilder::new("tictactoe")
         .top_bar("Tic-tac-toe")
         .heading(game.status())
-        .grid(COLUMNS, true, cells)
+        .board(COLUMNS, cells)
         .button(
             "reset",
             if game.outcome == Outcome::Playing {

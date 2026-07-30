@@ -1923,6 +1923,45 @@ impl ScreenBuilder {
         self
     }
 
+    /// A square grid whose filled cells are drawn as marks rather than words.
+    ///
+    /// For a board. A letter set at label size in a cell a finger and a half
+    /// wide is a caption in the middle of an empty square, which is what a
+    /// tic-tac-toe board looked like: the "O" was smaller than the heading
+    /// above it. A mark is drawn at three fifths of the cell, so the board
+    /// reads as a board from arm's length.
+    ///
+    /// `None` leaves the cell empty and still tappable, because an unplayed
+    /// square is the one a reader is aiming at.
+    #[must_use]
+    pub fn board<I, N, L>(mut self, columns: u8, cells: I) -> Self
+    where
+        I: IntoIterator<Item = (N, L, Option<Glyph>)>,
+        N: AsRef<str>,
+        L: Into<String>,
+    {
+        let id = self.next_id();
+        let mut source = cells.into_iter();
+        let mut cells = Vec::new();
+        for (name, label, glyph) in source.by_ref().take(MAX_CELLS) {
+            let cell = Cell::new(self.register(name.as_ref()), label);
+            cells.push(match glyph {
+                Some(glyph) => cell.with_glyph(glyph),
+                None => cell,
+            });
+        }
+        if source.next().is_some() {
+            self.warn_limit(id, "grid cells", MAX_CELLS);
+        }
+        self.nodes.push(Node::Grid {
+            id,
+            columns: columns.clamp(1, MAX_COLUMNS),
+            square: true,
+            cells,
+        });
+        self
+    }
+
     /// A row of buttons that each have a picture as well as a word.
     ///
     /// For the handful of actions that have a drawing everybody already knows:
