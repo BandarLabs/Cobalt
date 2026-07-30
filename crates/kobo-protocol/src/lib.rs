@@ -2551,6 +2551,8 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
         // a raw i32, which over-reserved the frame by three bytes and tripped
         // the encoder's own length assertion in debug builds.
         Node::Spacer { .. } => 6,
+        // Tag and identifier and nothing else: a flex carries no value.
+        Node::Flex { .. } => 5,
         Node::Progress { .. } => 6,
         Node::PagedList { items, .. } => {
             if items.len() > MAX_NODES {
@@ -3523,6 +3525,10 @@ fn encode_node(
             output.push(5);
             push_u32(output, id.0);
         }
+        Node::Flex { id } => {
+            output.push(27);
+            push_u32(output, id.0);
+        }
         Node::Spacer { id, space } => {
             output.push(6);
             push_u32(output, id.0);
@@ -4364,6 +4370,7 @@ fn decode_node(
             Ok(Node::Band { id, align, slots })
         }
         5 => Ok(Node::Divider { id }),
+        27 => Ok(Node::Flex { id }),
         6 => Ok(Node::Spacer {
             id,
             space: match reader.u8()? {
@@ -5489,6 +5496,7 @@ mod node_coverage_tests {
                 title: "Popular".into(),
                 value: Some("32".into()),
             },
+            Node::Flex { id: NodeId(90) },
             Node::Spacer {
                 id: NodeId(7),
                 space: Space::Medium,

@@ -339,7 +339,14 @@ impl ScreenBuilder {
     #[must_use]
     pub fn keyboard(self, keyboard: &Keyboard, submit: &str) -> Self {
         let rows = keyboard.rows();
-        let mut screen = self;
+        // The keys go to the foot of the panel wherever they are added, which
+        // is where thumbs are and where every other platform puts them. In
+        // flow they landed wherever the prompt above them ended: the todo
+        // application's compose screen drew its keyboard across the middle of
+        // the panel with a third of a page of paper under it. A second `fill`
+        // above this one, as `terminal_keys` has, changes nothing, because a
+        // fill only ever pushes down.
+        let mut screen = self.fill();
         for (index, characters) in rows.iter().enumerate() {
             let mut cells = Vec::new();
             // Shift and backspace sit on the bottom letter row, where the
@@ -417,11 +424,40 @@ impl ScreenBuilder {
 #[cfg(test)]
 mod tests {
     use super::{Keyboard, Layer, Pressed, MAX_TEXT};
+    use super::TextEntry;
     use crate::{action_id, ScreenBuilder};
     use kobo_ui::{Chrome, LayoutKind, CLARA_BW_METRICS};
 
     fn tap(keyboard: &mut Keyboard, name: &str) -> Option<Pressed> {
         keyboard.press(action_id(name))
+    }
+
+    /// A keyboard belongs under the thumbs.
+    ///
+    /// It was placed in flow, so it started wherever the prompt above it
+    /// finished: two lines of text put the keys across the middle of the panel
+    /// with five hundred pixels of paper underneath them.
+    #[test]
+    fn a_keyboard_sits_at_the_foot_of_the_panel() {
+        let mut entry = TextEntry::new();
+        entry.open();
+        let screen = ScreenBuilder::new("todo")
+            .top_bar("Todo")
+            .text_entry(&entry, "New item", "Add")
+            .build();
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::measuring(true));
+        let bottom = layout
+            .nodes
+            .iter()
+            .map(|node| node.rect.y + node.rect.height)
+            .max()
+            .unwrap_or(0);
+        let content = layout.content;
+        let spare = content.y + content.height - bottom;
+        assert!(
+            (0..=CLARA_BW_METRICS.touch_target_default()).contains(&spare),
+            "a compose screen left {spare} pixels of paper under its keyboard"
+        );
     }
 
     #[test]

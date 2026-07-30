@@ -1038,6 +1038,23 @@ impl ScreenBuilder {
         self
     }
 
+    /// Pushes everything after it to the foot of the panel.
+    ///
+    /// The keyboard is what this is for. It is the tallest thing a screen
+    /// draws and it belongs under the thumbs, but it is placed in flow like
+    /// every other node, so a compose screen with a prompt and a line of typed
+    /// text put the keys across the middle of the panel with a third of a page
+    /// of paper underneath them.
+    ///
+    /// It only ever pushes down. A screen that is already full is laid out
+    /// exactly as it was.
+    #[must_use]
+    pub fn fill(mut self) -> Self {
+        let id = self.next_id();
+        self.nodes.push(Node::Flex { id });
+        self
+    }
+
     /// Adds a progress bar. Values above a hundred are clamped rather than
     /// rejected, because that is a caller mistake and not a reason to fail.
     #[must_use]

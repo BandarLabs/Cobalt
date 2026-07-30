@@ -1395,6 +1395,22 @@ impl Screen {
             // button follows it, which is the usual shape: the button is
             // pushed off the bottom. So the band stops short of whatever
             // comes after.
+            // Everything after this sits at the foot of the panel. Measured
+            // with the same function a splash uses to stop short of what
+            // follows it, and clamped so a full screen is not pulled upwards.
+            if matches!(node, Node::Flex { .. }) {
+                let trailing = trailing_height(
+                    &self.nodes[position + 1..],
+                    margin,
+                    metrics.width - 2 * margin,
+                    content_bottom,
+                    metrics,
+                    prose,
+                    gap,
+                );
+                cursor = max(cursor, content_bottom.saturating_sub(trailing));
+                continue;
+            }
             let bottom = if matches!(node, Node::Splash { .. }) {
                 content_bottom.saturating_sub(trailing_height(
                     &self.nodes[position + 1..],
@@ -2297,6 +2313,19 @@ pub enum Node {
         id: NodeId,
         space: Space,
     },
+    /// Every node after this one is pushed to the foot of the content area.
+    ///
+    /// The keyboard is why. It is the tallest thing any screen draws and it
+    /// belongs under the thumbs, but it is placed in flow like everything
+    /// else, so a compose screen with two lines above it put a keyboard in the
+    /// middle of the panel with five hundred pixels of paper below it. Both
+    /// phone platforms anchor it, and so does the stock reader.
+    ///
+    /// It fills rather than centres, so a screen that is already full is
+    /// unchanged: the nodes after it never move up, only down.
+    Flex {
+        id: NodeId,
+    },
     Progress {
         id: NodeId,
         /// Percentage complete. Clamped on construction so a screen can never
@@ -3163,6 +3192,7 @@ impl Node {
             | Self::Facts { id, .. }
             | Self::Divider { id }
             | Self::Spacer { id, .. }
+            | Self::Flex { id, .. }
             | Self::Progress { id, .. }
             | Self::Splash { id, .. }
             | Self::PagedList { id, .. }
@@ -4861,6 +4891,11 @@ fn layout_node(
             }
             cursor
         }
+        // Nothing is drawn and nothing is reserved. The screen loop has
+        // already moved the cursor down; anywhere else -- inside a card, an
+        // overlay, a band -- there is no foot to push anything to, so it is
+        // simply nothing.
+        Node::Flex { .. } => y,
         Node::Divider { id } => {
             let thickness = metrics.rule_thickness();
             let inset = metrics.space(Space::Tight);
@@ -5793,14 +5828,27 @@ pub fn terminal_grid_for(screen: &Screen, metrics: &DisplayMetrics) -> (u16, u16
         return (0, 0);
     };
     let bottom = content.y.saturating_add(content.height);
-    let used = layout
+    // The room between the top of the terminal and whatever is under it,
+    // rather than what is left at the bottom of the panel. Those were the same
+    // number until the keys were anchored to the foot: now the last thing on
+    // the screen always ends at the bottom edge, and measuring the remainder
+    // there says a terminal gets no rows at all.
+    let floor = layout
         .nodes
         .iter()
-        .filter(|node| node.rect.y >= content.y && node.rect.y < bottom)
-        .map(|node| node.rect.y.saturating_add(node.rect.height))
-        .max()
-        .unwrap_or(content.y);
-    terminal_grid(terminal.rect.width, bottom.saturating_sub(used))
+        .filter(|node| {
+            !matches!(
+                node.kind,
+                LayoutKind::TerminalGrid | LayoutKind::TerminalCursor
+            ) && node.rect.y >= terminal.rect.y.saturating_add(terminal.rect.height)
+        })
+        .map(|node| node.rect.y)
+        .min()
+        .unwrap_or(bottom);
+    terminal_grid(
+        terminal.rect.width,
+        min(floor, bottom).saturating_sub(terminal.rect.y),
+    )
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -8039,6 +8087,7 @@ fn validate_node(
         | Node::Band { .. }
         | Node::Divider { .. }
         | Node::Spacer { .. }
+        | Node::Flex { .. }
         | Node::Progress { .. }
         | Node::Skeleton { .. } => {}
         Node::PagedList { items, .. } => {
@@ -8202,7 +8251,10 @@ fn validate_content_bounds(
         let id = node.id();
         let laid_out = layout.nodes.iter().filter(|laid_out| laid_out.id == id);
         let rects = laid_out.map(|laid_out| laid_out.rect).collect::<Vec<_>>();
-        let expects_rect = !matches!(node, Node::Rows { rows, .. } if rows.is_empty());
+        // A flex draws nothing by design: it moves the cursor and leaves. So
+        // does an empty list. Neither is content that layout hid.
+        let expects_rect = !matches!(node, Node::Rows { rows, .. } if rows.is_empty())
+            && !matches!(node, Node::Flex { .. });
         if expects_rect
             && (rects.is_empty()
                 || rects

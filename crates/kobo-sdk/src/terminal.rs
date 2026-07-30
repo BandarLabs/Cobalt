@@ -140,7 +140,9 @@ impl ScreenBuilder {
     #[must_use]
     pub fn terminal_keys(self, keys: &TerminalKeys) -> Self {
         let control = if keys.is_control() { "CTRL" } else { "ctrl" };
-        self.grid(
+        // Before the specials, so the two grids travel to the foot of the
+        // panel as one block rather than the letters leaving without them.
+        self.fill().grid(
             7,
             false,
             [
@@ -317,3 +319,4 @@ mod tests {
         assert!(keys.keyboard().is_empty());
     }
 }
+

@@ -272,6 +272,7 @@ one cannot.
 | `cancellable(name, label)` | Adds a cancel control to the preceding activity. |
 | `skeleton(lines)` | Placeholder lines, occupying where content will land. |
 | `divider()` / `spacer(space)` | Rules and space, from the spacing scale. |
+| `fill()` | Pushes everything after it to the foot of the panel. |
 | `paged_list(page, items)` | A pre-paged list of plain strings. |
 | `keyboard(&keyboard, submit)` | The on-screen keys. Positional, so a layer change moves nothing. |
 | `text_entry(&entry, prompt, submit)` | A prompt, what has been typed, and the keys. |
@@ -395,6 +396,12 @@ both**: `nav_bar` answers "where am I", `action_bar` answers "what can I do
 here", and a bar that mixes them leaves a reader unable to predict what a tap
 costs. That conflation is why `nav_bar(None, …)` used to be written; it is a
 warning now, and `action_bar` is the answer.
+
+**A keyboard belongs at the foot of the panel.** `keyboard` puts a `fill` in
+front of itself, so the keys are under the thumbs wherever they were added and
+whatever is above them. Reach for `fill` directly for anything else that has to
+sit on the bottom edge with content above it; it only ever pushes down, so a
+screen that is already full is laid out exactly as it was.
 
 **A bar entry keeps its word.** `action_bar_marked` and `bottom_action_marked`
 draw the mark above or beside the label, never instead of it. A bar slot is a
