@@ -879,11 +879,14 @@ mod tests {
 
     #[test]
     fn body_text_is_a_readable_physical_size() {
-        // 3.6 mm at 300 pixels per inch is about 43 pixels. A body size far
-        // below this is the defect the built-in bitmap had.
+        // Bracketed by the two references the scale is set between: no smaller
+        // than a phone's body text (iOS 17pt, about 2.6 mm, 31 pixels here) and
+        // no larger than a printed paperback (about 3.7 mm, 44 pixels). Below
+        // the floor is the defect the built-in bitmap had; above the ceiling is
+        // an interface set larger than the books it sits next to.
         let pixels = CLARA.tenth_mm(FontSize::Body.tenth_mm());
         assert!(
-            (40..=46).contains(&pixels),
+            (31..=44).contains(&pixels),
             "body text resolved to {pixels} pixels"
         );
     }

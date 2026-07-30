@@ -5573,15 +5573,35 @@ impl FontSize {
     ///
     /// Type is specified physically for the same reason every other measurement
     /// in this layer is: Kobo panels run from about 212 to 300 pixels per inch,
-    /// so a pixel size would be a different physical size on every model. Body
-    /// text is 3.6 mm, which is close to a printed paperback.
+    /// so a pixel size would be a different physical size on every model.
+    ///
+    /// The scale used to be set against a printed paperback: body at 3.6 mm,
+    /// heading at 6.8 mm. That was the wrong reference. A paperback is a page of
+    /// running prose and nothing else; an interface is a page of labels, and
+    /// every mainstream platform sets its interface well under book size. iOS
+    /// body is 2.65 mm and its largest title 5.3 mm; Android's body-large is
+    /// 2.82 mm and its headline-small 4.23 mm. Against those a 6.8 mm heading is
+    /// not emphatic, it is a children's book, and it is the single loudest
+    /// reason these screens read as toys.
+    ///
+    /// The deciding argument is that a reader who wants larger type already has
+    /// it. [`TextScale`] offers 120% and 140%, so today's default *is* the large
+    /// setting, and the two settings above it were merely larger still. Coming
+    /// down restores the range: Large now lands where the default used to be.
+    ///
+    /// So the scale sits deliberately above iOS and Android rather than at them,
+    /// because a reflective panel has no subpixel antialiasing and less contrast
+    /// than glass, and then stops. The steps are tighter at the top than they
+    /// were, because size is currently the only thing carrying hierarchy and a
+    /// scale that can only shout compensates by shouting. When a bold cut ships
+    /// the top of the scale should come down further still, not go back up.
     #[must_use]
     pub const fn tenth_mm(self) -> i32 {
         match self {
-            Self::Caption => 28,
-            Self::Body => 36,
-            Self::Title => 52,
-            Self::Heading => 68,
+            Self::Caption => 24,
+            Self::Body => 31,
+            Self::Title => 42,
+            Self::Heading => 54,
         }
     }
 
@@ -13124,6 +13144,29 @@ mod prose_tests {
             "an icon {} tall leads a title {title} tall",
             icon.height
         );
+    }
+
+    #[test]
+    fn the_interface_is_not_set_larger_than_the_books_beside_it() {
+        // The scale is bracketed, because the failure it came from was a slow
+        // one: every size was individually defensible and the set of them read
+        // as a children's book. The ceiling is the largest title a mainstream
+        // platform ships, 5.3 mm on iOS. The floor is a phone's caption, 1.9 mm.
+        // A reader who wants more has TextScale, which is what it is for.
+        assert!(FontSize::Heading.tenth_mm() <= 55);
+        assert!(FontSize::Caption.tenth_mm() >= 19);
+        assert!(FontSize::Caption.tenth_mm() < FontSize::Body.tenth_mm());
+        assert!(FontSize::Body.tenth_mm() < FontSize::Title.tenth_mm());
+        assert!(FontSize::Title.tenth_mm() < FontSize::Heading.tenth_mm());
+    }
+
+    #[test]
+    fn the_large_text_setting_lands_where_the_default_used_to_be() {
+        // The point of coming down is that it restores the range above. If the
+        // default ever climbs back, Large stops being a step and starts being
+        // the only readable setting again.
+        let large = FontSize::Body.tenth_mm() * TextScale::Large.percent() / 100;
+        assert!((34..=38).contains(&large), "large body is {large} tenths");
     }
 
     #[test]
