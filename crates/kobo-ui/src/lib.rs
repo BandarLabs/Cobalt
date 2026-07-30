@@ -1801,7 +1801,16 @@ fn layout_status_band(status: &Status, metrics: &DisplayMetrics, layout: &mut La
             rect: Rect {
                 x: margin,
                 y: 0,
-                width: metrics.width / 3,
+                // As wide as the figure, not a third of the panel. The clock
+                // is redrawn every minute and the box it claims is the box
+                // that gets repainted, so a generous one costs a third of the
+                // band in ink each time. It can be sized exactly because the
+                // digits go on a fixed advance, so this width is the same at
+                // every minute of the day.
+                width: min(
+                    metrics.width / 3,
+                    figures_width(&status.clock, FontSize::Caption, Face::Text),
+                ),
                 height,
             },
             kind: LayoutKind::StatusClock,
@@ -9365,12 +9374,16 @@ pub fn render_all(
             // and a tinted strip across the top of every screen is a permanent
             // horizontal line the eye has to learn to ignore.
             LayoutKind::StatusBand => fill_clipped(surface, node.rect, tone::PAPER, clip),
-            LayoutKind::StatusClock => draw_lines(
+            // The one string on the panel that changes while its neighbours
+            // stay, so its digits go on a fixed advance and it counts without
+            // stepping sideways.
+            LayoutKind::StatusClock => draw_figures(
                 surface,
-                &node.text_lines,
+                node.text_lines.first().map_or("", String::as_str),
                 node.rect.x,
                 node.rect.y + (node.rect.height - FontSize::Caption.line_height()) / 2,
                 FontSize::Caption,
+                Face::Text,
                 tone::MUTED,
                 clip,
             ),
@@ -10374,6 +10387,83 @@ fn draw_text(
     clip: Rect,
 ) {
     draw_text_in(surface, text, x, y, size, Face::Text, tone, clip);
+}
+
+/// The advance every digit is given when a figure has to hold still.
+///
+/// The text face spaces its digits proportionally: at body size a one is
+/// fifteen pixels and a zero is twenty-four. That is right for a digit inside
+/// a sentence, and wrong for the clock, which is the only text on the panel
+/// that changes while everything around it stays. Going from 07:59 to 08:00
+/// makes the figure wider, so the colon and the minutes step sideways, and the
+/// panel repaints the whole field rather than the digits that actually
+/// changed.
+///
+/// The face carries no tabular set to switch to, so the cell is synthesised:
+/// the widest digit's advance, with each digit centred in it. Only figures
+/// that tick are drawn this way. A one padded to the width of a zero stands in
+/// a visible gap, which is a fair price for a clock that does not twitch and a
+/// bad one for a chapter number in a title.
+fn digit_cell(size: FontSize, face: Face) -> i32 {
+    ('0'..='9')
+        .map(|digit| measure_text_in(&digit.to_string(), size, face).0)
+        .max()
+        .unwrap_or(0)
+}
+
+/// The width `draw_figures` will take, which does not depend on which digits
+/// these are.
+fn figures_width(text: &str, size: FontSize, face: Face) -> i32 {
+    let cell = digit_cell(size, face);
+    text.chars().fold(0, |width, character| {
+        let advance = if character.is_ascii_digit() {
+            cell
+        } else {
+            measure_text_in(&character.to_string(), size, face).0
+        };
+        width.saturating_add(advance)
+    })
+}
+
+/// Draws a figure with its digits on a common advance, so that it counts
+/// without moving.
+///
+/// Everything that is not a digit keeps the width the face gave it, so a colon
+/// stays as tight as it was drawn to be.
+#[allow(clippy::too_many_arguments)]
+fn draw_figures(
+    surface: &mut Surface,
+    text: &str,
+    x: i32,
+    y: i32,
+    size: FontSize,
+    face: Face,
+    tone: u8,
+    clip: Rect,
+) {
+    let cell = digit_cell(size, face);
+    let mut pen = x;
+    let mut buffer = [0_u8; 4];
+    for character in text.chars() {
+        let glyph = &*character.encode_utf8(&mut buffer);
+        let natural = measure_text_in(glyph, size, face).0;
+        if character.is_ascii_digit() {
+            draw_text_in(
+                surface,
+                glyph,
+                pen + (cell - natural) / 2,
+                y,
+                size,
+                face,
+                tone,
+                clip,
+            );
+            pen = pen.saturating_add(cell);
+        } else {
+            draw_text_in(surface, glyph, pen, y, size, face, tone, clip);
+            pen = pen.saturating_add(natural);
+        }
+    }
 }
 
 /// Draws one run of text in a chosen face.
@@ -16616,6 +16706,111 @@ mod press_feedback_tests {
             ranked_pages[0].len() > marked_pages[0].len(),
             "the ranked page held no more: {} either way",
             ranked_pages[0].len()
+        );
+    }
+}
+
+#[cfg(test)]
+mod figure_tests {
+    use super::*;
+
+    /// The fallback bitmap face is fixed-pitch, so this only says anything
+    /// with a real typeface installed. Every test binary that draws installs
+    /// one; the guard is here so that one that does not still passes.
+    fn digits_are_proportional() -> bool {
+        digit_cell(FontSize::Caption, Face::Text)
+            > measure_text_in("1", FontSize::Caption, Face::Text).0
+    }
+
+    #[test]
+    fn a_clock_is_the_same_width_at_every_minute_of_the_day() {
+        let mut widths = std::collections::BTreeSet::new();
+        for hour in 0..24 {
+            for minute in 0..60 {
+                widths.insert(figures_width(
+                    &format!("{hour:02}:{minute:02}"),
+                    FontSize::Caption,
+                    Face::Text,
+                ));
+            }
+        }
+        assert_eq!(
+            widths.len(),
+            1,
+            "the clock takes {} different widths through a day: {widths:?}",
+            widths.len()
+        );
+    }
+
+    #[test]
+    fn a_figure_on_a_fixed_advance_is_wider_than_the_face_would_set_it() {
+        if !digits_are_proportional() {
+            return;
+        }
+        assert!(
+            figures_width("11:11", FontSize::Caption, Face::Text)
+                > measure_text_in("11:11", FontSize::Caption, Face::Text).0,
+            "the narrowest digits were not padded at all"
+        );
+        assert_eq!(
+            figures_width("00:00", FontSize::Caption, Face::Text),
+            measure_text_in("00:00", FontSize::Caption, Face::Text).0,
+            "the widest digits should need no padding"
+        );
+    }
+
+    #[test]
+    fn only_the_digits_are_put_on_a_cell() {
+        assert_eq!(
+            figures_width("of", FontSize::Caption, Face::Text),
+            measure_text_in("of", FontSize::Caption, Face::Text).0,
+            "text with no digits in it was respaced"
+        );
+    }
+
+    /// The layout, not just the arithmetic: the box the clock claims is the box
+    /// that gets repainted every minute, so it has to be the figure's width and
+    /// it has to be the same width whatever the time is.
+    #[test]
+    fn the_box_the_clock_claims_does_not_change_as_it_counts() {
+        let clock_rect = |time: &str| {
+            let chrome = Chrome {
+                back: false,
+                status: Some(Status {
+                    clock: time.to_owned(),
+                    signal: Signal::Strong,
+                    battery: Some(Percent::new(50)),
+                    charging: false,
+                    bluetooth: true,
+                }),
+            };
+            let screen = Screen::new(
+                1,
+                vec![Node::Text {
+                    id: NodeId(1),
+                    text: "body".into(),
+                }],
+            );
+            screen
+                .layout_with(&CLARA_BW_METRICS, &chrome)
+                .nodes
+                .iter()
+                .find(|node| matches!(node.kind, LayoutKind::StatusClock))
+                .expect("the band drew no clock")
+                .rect
+        };
+
+        let reference = clock_rect("00:00");
+        for time in ["07:59", "08:00", "11:11", "23:59", "10:38"] {
+            assert_eq!(
+                clock_rect(time).width,
+                reference.width,
+                "the clock claimed a different box at {time}"
+            );
+        }
+        assert!(
+            reference.width < CLARA_BW_METRICS.width / 3,
+            "the clock is claiming a third of the band it does not draw in"
         );
     }
 }
