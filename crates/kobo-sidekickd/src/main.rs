@@ -19,6 +19,7 @@
 //! installs with `kobo trust set`. A pairing code rides along as a token so
 //! a neighbour on the network cannot answer for you.
 
+mod agents;
 mod board;
 mod hooks;
 mod http;
@@ -29,8 +30,30 @@ use std::process::ExitCode;
 
 const USAGE: &str = "usage: kobo-sidekickd init [--host ADDRESS ...]\n\
                      \x20      kobo-sidekickd run\n\
-                     \x20      kobo-sidekickd hook (codex | claude)\n\
-                     \x20      kobo-sidekickd setup (codex | claude)";
+                     \x20      kobo-sidekickd setup [AGENT] [--dry-run]\n\
+                     \x20      kobo-sidekickd setup AGENT --print\n\
+                     \x20      kobo-sidekickd agents\n\
+                     \x20      kobo-sidekickd hook AGENT\n\
+                     \n\
+                     setup with no agent registers every one it finds.";
+
+/// `setup`, with an optional agent and an optional `--dry-run`, in either
+/// order, because nobody should have to remember which comes first.
+fn parse_setup(arguments: &[String]) -> Result<(), String> {
+    let mut agent = None;
+    let mut dry_run = false;
+    for argument in arguments {
+        match argument.as_str() {
+            "--dry-run" => dry_run = true,
+            other if other.starts_with('-') => {
+                return Err(format!("unknown option '{other}'\n{USAGE}"))
+            }
+            other if agent.is_none() => agent = Some(other),
+            other => return Err(format!("unexpected '{other}'\n{USAGE}")),
+        }
+    }
+    hooks::setup(agent, dry_run)
+}
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -39,7 +62,9 @@ fn main() -> ExitCode {
             ("init", extra) => state::init(extra),
             ("run", []) => server::run(),
             ("hook", [agent]) => hooks::run_hook(agent),
-            ("setup", [agent]) => hooks::setup(agent),
+            ("agents", []) => hooks::list(),
+            ("setup", [agent, flag]) if flag == "--print" => hooks::print_setup(agent),
+            ("setup", extra) => parse_setup(extra),
             _ => Err(USAGE.to_owned()),
         },
         None => Err(USAGE.to_owned()),

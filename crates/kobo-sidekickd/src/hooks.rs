@@ -13,6 +13,7 @@
 //! falls through to the terminal prompt the user already knows. Installing
 //! these hooks can therefore never make anything worse.
 
+use crate::agents;
 use crate::http::post_local;
 use crate::state;
 use std::io::Read;
@@ -29,14 +30,12 @@ const HOOK_PATIENCE: Duration = Duration::from_secs(330);
 /// Only for an agent this binary does not know. Everything downstream --
 /// unreadable stdin, absent daemon -- deliberately succeeds in silence.
 pub fn run_hook(agent: &str) -> Result<(), String> {
-    if agent != "codex" && agent != "claude" {
-        return Err(format!("unknown agent '{agent}'; expected codex or claude"));
-    }
+    let known = agents::find(agent)?;
     let mut input = String::new();
     if std::io::stdin().read_to_string(&mut input).is_err() {
         return Ok(());
     }
-    let ask = ask_from_event(agent, &input);
+    let ask = ask_from_event(known.id, &input);
     let Ok(response) = post_local(state::HOOK_PORT, "/ask", &ask, HOOK_PATIENCE) else {
         return Ok(());
     };
@@ -118,47 +117,81 @@ pub fn decision_json(agent: &str, decision: &str) -> Option<String> {
     Some(output.build().to_json())
 }
 
-/// Prints the configuration that registers the hook, ready to paste.
+/// Prints the registration, ready to paste, for anyone who would rather
+/// edit their own files.
 ///
 /// # Errors
 ///
 /// Only for an agent this binary does not know.
-pub fn setup(agent: &str) -> Result<(), String> {
-    let binary = std::env::current_exe()
-        .ok()
-        .and_then(|path| path.to_str().map(str::to_owned))
-        .unwrap_or_else(|| "kobo-sidekickd".to_owned());
-    match agent {
-        "codex" => {
-            println!("Add to ~/.codex/hooks.json (create it if absent):\n");
-            println!("{{");
-            println!("  \"hooks\": {{");
-            println!("    \"PermissionRequest\": [");
-            println!("      {{ \"hooks\": [ {{ \"type\": \"command\",");
-            println!("          \"command\": [\"{binary}\", \"hook\", \"codex\"],");
-            println!("          \"timeout\": 360 }} ] }}");
-            println!("    ]");
-            println!("  }}");
-            println!("}}");
-            println!("\nWorks for Codex CLI and the Codex desktop app alike:");
-            println!("both run the same core, which reads the same hooks.");
+pub fn print_setup(id: &str) -> Result<(), String> {
+    let agent = agents::find(id)?;
+    let binary = agents::own_path();
+    let agents::Outcome::Write(text) = agent.merge(None, &binary)? else {
+        unreachable!("an empty file has nothing registered in it");
+    };
+    println!("Add to ~/{}:\n", agent.config);
+    print!("{text}");
+    println!(
+        "\nOr let this write it for you:\n  {binary} setup {}",
+        agent.id
+    );
+    Ok(())
+}
+
+/// Registers the hook with one agent, or with every one that is installed.
+///
+/// # Errors
+///
+/// For an unknown agent, or a configuration file that cannot be read,
+/// parsed or written.
+pub fn setup(id: Option<&str>, dry_run: bool) -> Result<(), String> {
+    if let Some(id) = id {
+        agents::install(agents::find(id)?, dry_run)?;
+        return Ok(());
+    }
+    let installed: Vec<&agents::Agent> = agents::AGENTS
+        .iter()
+        .filter(|agent| agent.is_installed())
+        .collect();
+    if installed.is_empty() {
+        println!("No supported coding agent found here. Looked for:");
+        for agent in agents::AGENTS {
+            println!("  {:<12} ~/{}", agent.name, agent.config);
         }
-        "claude" => {
-            println!("Add to ~/.claude/settings.json under \"hooks\":\n");
-            println!("{{");
-            println!("  \"hooks\": {{");
-            println!("    \"PreToolUse\": [");
-            println!("      {{ \"matcher\": \"*\",");
-            println!("        \"hooks\": [ {{ \"type\": \"command\",");
-            println!("          \"command\": \"{binary} hook claude\",");
-            println!("          \"timeout\": 360 }} ] }}");
-            println!("    ]");
-            println!("  }}");
-            println!("}}");
-            println!("\nClaude Code shows its usual prompt whenever the hook");
-            println!("declines to decide, so nothing breaks without the daemon.");
-        }
-        _ => return Err(format!("unknown agent '{agent}'; expected codex or claude")),
+        return Ok(());
+    }
+    for agent in installed {
+        agents::install(agent, dry_run)?;
+    }
+    if dry_run {
+        println!("\nNothing was written. Run without --dry-run to do it.");
+    } else {
+        println!("\nStart the daemon with 'kobo-sidekickd run'.");
+    }
+    Ok(())
+}
+
+/// Says, for every supported agent, whether it is here and whether it asks
+/// us yet.
+///
+/// # Errors
+///
+/// Only when there is no home directory to look in.
+pub fn list() -> Result<(), String> {
+    let binary = agents::own_path();
+    for agent in agents::AGENTS {
+        let state = if agent.is_installed() {
+            let path = agent.config_path()?;
+            let current = std::fs::read_to_string(&path).ok();
+            match agent.merge(current.as_deref(), &binary) {
+                Ok(agents::Outcome::AlreadyThere) => "asks this Kobo".to_owned(),
+                Ok(agents::Outcome::Write(_)) => "installed, not registered yet".to_owned(),
+                Err(_) => format!("installed, but ~/{} does not parse", agent.config),
+            }
+        } else {
+            "not installed".to_owned()
+        };
+        println!("{:<12} {state}", agent.name);
     }
     Ok(())
 }
