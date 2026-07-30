@@ -571,9 +571,6 @@ impl AudioPlayer {
                 } else {
                     Availability::Unavailable
                 };
-                self.playback = *state;
-                self.position_ms = *position_ms;
-                self.duration_ms = *duration_ms;
                 self.volume = *volume;
                 if matches!(request, DeviceRequest::LoadAudio { .. }) {
                     self.loaded = if *state == AudioPlaybackState::Idle {
@@ -582,16 +579,25 @@ impl AudioPlayer {
                         LoadState::Loaded
                     };
                 }
+                // Position and duration describe whatever the backend last
+                // loaded, which before our own load is the previous book. A
+                // player that has not loaded anything yet must not adopt them,
+                // or opening a thirty second file straight after a ten minute
+                // one shows ten minutes until decoding finishes. Availability
+                // and volume are properties of the device rather than the
+                // book, so they are always ours to take.
+                if self.loaded == LoadState::Unloaded {
+                    return;
+                }
+                self.playback = *state;
+                self.position_ms = *position_ms;
+                self.duration_ms = *duration_ms;
                 self.trouble = None;
                 if self.autoplay == PlayIntent::Autoplay
                     && *state == AudioPlaybackState::Ready
-                    && self.loaded == LoadState::Loaded
                 {
                     context.device().play_audio();
-                } else if matches!(
-                    state,
-                    AudioPlaybackState::Loading | AudioPlaybackState::Playing
-                ) {
+                } else if poll_worthy(*state) {
                     if *state == AudioPlaybackState::Playing {
                         self.autoplay = PlayIntent::Manual;
                     }
@@ -701,7 +707,7 @@ impl AudioPlayer {
         }
         if self.poll == Some(task) {
             self.poll = None;
-            if self.playback == AudioPlaybackState::Playing {
+            if poll_worthy(self.playback) {
                 context.device().read_audio();
             }
             return true;
@@ -726,6 +732,23 @@ impl AudioPlayer {
     fn connected_output(&self) -> Option<&BluetoothDevice> {
         self.audio_devices().find(|device| device.connected)
     }
+}
+
+/// Whether this playback state is one the backend will move on from by
+/// itself, and so one worth asking about again.
+///
+/// Loading belongs here as much as Playing does. It was once missing, and the
+/// consequence was that the state which schedules a poll and the state which
+/// honours one had drifted apart: a player would arrange to ask again while
+/// decoding, then refuse its own question when the answer came due, and sit on
+/// "Loading…" forever. Pressing play a second time appeared to fix it, because
+/// that took the already-loaded path. Both sides ask this function now so they
+/// cannot disagree again.
+const fn poll_worthy(state: AudioPlaybackState) -> bool {
+    matches!(
+        state,
+        AudioPlaybackState::Loading | AudioPlaybackState::Playing
+    )
 }
 
 fn page_count(items: usize) -> usize {
@@ -954,9 +977,101 @@ mod tests {
         assert!(format!("{:?}", player.screen()).contains("restart itself"));
     }
 
+    /// Reported from the reader as "clicking play a second time started it".
+    /// The player asked to be woken while the file was decoding and then threw
+    /// its own wake-up away, so nothing ever asked the backend again and the
+    /// screen sat on "Loading…" until a second press took the loaded path.
     #[test]
-    fn only_the_players_own_sleep_is_consumed() {
+    fn a_book_that_is_still_decoding_is_asked_about_again() {
         let mut player = AudioPlayer::shelf("book.mp3z", "Book");
+        let mut context = crate::Context::default();
+
+        // The load is answered while decoding is still running.
+        player.on_device_result(
+            &mut context,
+            &DeviceRequest::LoadAudio {
+                source: crate::AudioSource::Shelf("book.mp3z".to_owned()),
+            },
+            &DeviceResult::Audio {
+                available: true,
+                state: AudioPlaybackState::Loading,
+                position_ms: 0,
+                duration_ms: 0,
+                volume: 70,
+            },
+        );
+        let poll = player.poll.expect("decoding should schedule a poll");
+        drop(context.take_commands());
+
+        // When that poll comes due the player must ask again, not go quiet.
+        assert!(player.on_task(&mut context, poll, &TaskOutcome::Completed(Vec::new())));
+        assert!(
+            context
+                .take_commands()
+                .iter()
+                .any(|command| matches!(
+                    command,
+                    crate::Command::Device(DeviceRequest::ReadAudio)
+                )),
+            "a decoding player must keep asking or it never learns it is ready"
+        );
+    }
+
+    /// The same press must also finish the job: once decoding lands, the play
+    /// the reader already asked for has to happen without a second press.
+    #[test]
+    fn the_press_that_started_a_load_still_plays_when_decoding_lands() {
+        let mut player = AudioPlayer::shelf("book.mp3z", "Book");
+        player.autoplay = super::PlayIntent::Autoplay;
+        player.loaded = super::LoadState::Loaded;
+        let mut context = crate::Context::default();
+        player.on_device_result(
+            &mut context,
+            &DeviceRequest::ReadAudio,
+            &DeviceResult::Audio {
+                available: true,
+                state: AudioPlaybackState::Ready,
+                position_ms: 0,
+                duration_ms: 30_000,
+                volume: 70,
+            },
+        );
+        assert!(context.take_commands().iter().any(|command| matches!(
+            command,
+            crate::Command::Device(DeviceRequest::PlayAudio)
+        )));
+    }
+
+    /// Opening a thirty second book straight after a ten minute one showed ten
+    /// minutes, because the backend still held the previous book's numbers and
+    /// the fresh player adopted them on its opening read.
+    #[test]
+    fn a_new_player_does_not_wear_the_last_books_duration() {
+        let mut player = AudioPlayer::shelf("short.mp3z", "Book");
+        let mut context = crate::Context::default();
+        player.on_device_result(
+            &mut context,
+            &DeviceRequest::ReadAudio,
+            &DeviceResult::Audio {
+                available: true,
+                state: AudioPlaybackState::Ready,
+                position_ms: 44_000,
+                duration_ms: 658_000,
+                volume: 55,
+            },
+        );
+
+        assert_eq!(player.duration_ms, 0, "that duration belongs to another book");
+        assert_eq!(player.position_ms, 0);
+        assert_eq!(player.playback, AudioPlaybackState::Idle);
+        // Volume and availability describe the device, not the book.
+        assert_eq!(player.volume, 55);
+        let drawn = format!("{:?}", player.screen());
+        assert!(!drawn.contains("10:58"), "{drawn}");
+    }
+
+    #[test]
+    fn only_the_players_own_sleep_is_consumed() {        let mut player = AudioPlayer::shelf("book.mp3z", "Book");
         let mut context = crate::Context::default();
         assert!(!player.on_task(
             &mut context,
