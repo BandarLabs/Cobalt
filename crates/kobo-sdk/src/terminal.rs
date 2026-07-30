@@ -232,6 +232,47 @@ mod tests {
         assert_eq!(tap(&mut keys, "kb.layer"), Some(Typed::Changed));
     }
 
+    /// The grid a terminal is given has to leave room for the keys under it.
+    ///
+    /// `terminal_grid_for` measured the leftover space with the layout engine,
+    /// which was right, but with the default chrome, which was not: an
+    /// application is never told the clock or the battery, and the status band
+    /// is drawn above everything. So the terminal came back two rows taller
+    /// than the panel could hold and the bottom key row -- space, enter, the
+    /// layer switch -- was drawn off the edge of the screen.
+    #[test]
+    fn the_keys_under_a_terminal_stay_on_the_panel() {
+        for metrics in [
+            kobo_ui::CLARA_BW_METRICS,
+            kobo_ui::DisplayMetrics::default(),
+        ] {
+            let keys = TerminalKeys::new();
+            let compose = |rows: Vec<String>| {
+                crate::ScreenBuilder::new("terminal")
+                    .top_bar("Terminal")
+                    .terminal(rows, None)
+                    .terminal_keys(&keys)
+                    .build()
+            };
+            let (columns, rows) = kobo_ui::terminal_grid_for(&compose(Vec::new()), &metrics);
+            assert!(columns > 0 && rows > 0, "a terminal was given no grid");
+            let full = compose(vec!["x".repeat(columns as usize); rows as usize]);
+            let layout = full.layout_with(&metrics, &kobo_ui::Chrome::measuring(true));
+            let overflow = layout
+                .nodes
+                .iter()
+                .map(|node| node.rect.y + node.rect.height)
+                .max()
+                .unwrap_or(0);
+            assert!(
+                overflow <= metrics.height,
+                "a full terminal pushed its keys {} past the bottom of a {} panel",
+                overflow - metrics.height,
+                metrics.height
+            );
+        }
+    }
+
     #[test]
     fn the_arrows_send_the_vt100_sequences_the_runtime_promised() {
         let mut keys = TerminalKeys::new();

@@ -523,7 +523,7 @@ mod tests {
                 .nodes
                 .iter()
                 .filter_map(|node| match node.kind {
-                    LayoutKind::Cell(action) => Some((action, node.rect)),
+                    LayoutKind::Cell(action, ..) => Some((action, node.rect)),
                     _ => None,
                 })
                 .collect::<Vec<_>>();

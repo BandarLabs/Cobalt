@@ -740,6 +740,20 @@ pub struct BarAction {
     pub glyph: Option<Glyph>,
 }
 
+/// What a grid cell is: part of a board, or a key.
+///
+/// A board is ruled squares, and the rules are the board. A keyboard is not:
+/// forty-five outlined boxes is the noisiest thing on any screen that has one,
+/// and none of the outlines carries information the position of the key does
+/// not already give. A key is a quiet filled field instead, which is what both
+/// phone platforms draw and what a printed keyboard looks like.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum CellStyle {
+    #[default]
+    Board,
+    Key,
+}
+
 /// Whether a control can currently be activated.
 ///
 /// Disabled is semantic state rather than a colour chosen by the application:
@@ -3378,7 +3392,7 @@ pub enum LayoutKind {
     NavDestination(ActionId, Option<Glyph>),
     NavDestinationSelected(ActionId, Option<Glyph>),
     Row(ActionId),
-    Cell(ActionId),
+    Cell(ActionId, CellStyle),
     CellLabel,
     RowTitle,
     /// A title whose work is finished: muted and struck through.
@@ -3457,7 +3471,7 @@ impl LayoutKind {
             | Self::Tab(action, _)
             | Self::Row(action)
             | Self::RowMenu(action)
-            | Self::Cell(action)
+            | Self::Cell(action, ..)
             | Self::ChoiceOption(action, _)
             | Self::ChoiceFreeform(action)
             | Self::QuoteFold(action, _)
@@ -3710,7 +3724,7 @@ impl Layout {
                         | LayoutKind::NavDestinationSelected(..)
                         | LayoutKind::Row(_)
                         | LayoutKind::RowMenu(_)
-                        | LayoutKind::Cell(_)
+                        | LayoutKind::Cell(..)
                         | LayoutKind::Tile(_, ControlState::Enabled)
                         | LayoutKind::Field(_)
                         | LayoutKind::FieldClear(_)
@@ -3894,7 +3908,7 @@ impl Layout {
                 | LayoutKind::Chip(candidate, _)
                 | LayoutKind::Tab(candidate, _)
                 | LayoutKind::ChoiceOption(candidate, _)
-                | LayoutKind::Cell(candidate)
+                | LayoutKind::Cell(candidate, ..)
                 | LayoutKind::ChoiceFreeform(candidate) => candidate == action,
                 _ => false,
             })
@@ -4931,10 +4945,10 @@ fn layout_node(
             // A square cell is what makes a board read as a board. A grid that
             // is not square is a keyboard, and there one row of touch target
             // is exactly right and anything taller wastes the panel.
-            let cell_height = if *square {
-                cell_width
+            let (cell_height, style) = if *square {
+                (cell_width, CellStyle::Board)
             } else {
-                metrics.touch_target_default()
+                (metrics.touch_target_default(), CellStyle::Key)
             };
             let index = layout.nodes.len();
             layout.nodes.push(LayoutNode {
@@ -4966,7 +4980,7 @@ fn layout_node(
                 layout.nodes.push(LayoutNode {
                     id: *id,
                     rect,
-                    kind: LayoutKind::Cell(cell.action),
+                    kind: LayoutKind::Cell(cell.action, style),
                     text_lines: Vec::new(),
                 });
                 // A cell with a picture is drawn as the picture alone. The
@@ -5762,7 +5776,14 @@ fn layout_node(
 /// Returns `(0, 0)` for a screen with no terminal on it.
 #[must_use]
 pub fn terminal_grid_for(screen: &Screen, metrics: &DisplayMetrics) -> (u16, u16) {
-    let layout = screen.layout_for(metrics);
+    // Measured with the status band in place, because it will be there when
+    // the screen is drawn. Without it the grid came back two rows too tall,
+    // and a terminal two rows too tall does not scroll: it pushes the keys it
+    // shares the screen with off the bottom of the panel, which is where the
+    // space bar went.
+    // Back is asked for because a top bar with a control in it is never
+    // shorter than one without, and only heights matter here.
+    let layout = screen.layout_with(metrics, &Chrome::measuring(true));
     let content = layout.content;
     let Some(terminal) = layout
         .nodes
@@ -8278,7 +8299,7 @@ const fn is_tappable(kind: LayoutKind) -> bool {
             | LayoutKind::NavDestinationSelected(..)
             | LayoutKind::Row(_)
             | LayoutKind::RowMenu(_)
-            | LayoutKind::Cell(_)
+            | LayoutKind::Cell(..)
             | LayoutKind::Tile(..)
             | LayoutKind::Field(_)
             | LayoutKind::FieldClear(_)
@@ -8974,15 +8995,25 @@ pub fn render_all(
                     clip,
                 );
             }
-            // The cell is outlined rather than filled, so a board reads as
+            // A board cell is outlined rather than filled, so a board reads as
             // ruled squares and an empty cell stays paper white. Filling would
             // make every move a full-cell change, which is slow on E Ink and
             // looks like a mistake.
-            LayoutKind::Cell(_) => stroke_clipped(
+            LayoutKind::Cell(_, CellStyle::Board) => stroke_clipped(
                 surface,
                 node.rect,
                 tone::RULE,
                 metrics.rule_thickness(),
+                clip,
+            ),
+            // A key is the field it is printed on, with no rule at all. The
+            // gaps between the keys separate them, which is how a keyboard has
+            // always been read, and it takes forty-five outlines off the panel.
+            LayoutKind::Cell(_, CellStyle::Key) => fill_rounded_clipped(
+                surface,
+                node.rect,
+                metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
+                tone::SURFACE,
                 clip,
             ),
             LayoutKind::CellLabel => {
@@ -10434,7 +10465,7 @@ mod tests {
         {
             assert!(
                 layout.nodes.iter().any(|other| {
-                    matches!(other.kind, LayoutKind::Cell(_) | LayoutKind::Button(..))
+                    matches!(other.kind, LayoutKind::Cell(..) | LayoutKind::Button(..))
                         && other.rect.intersection(node.rect) == Some(node.rect)
                 }),
                 "a glyph at {:?} sits outside every control",
@@ -12171,7 +12202,7 @@ mod loading_tests {
                 | LayoutKind::BarGlyph(action, _)
                 | LayoutKind::Tile(action, _)
                 | LayoutKind::Row(action)
-                | LayoutKind::Cell(action)
+                | LayoutKind::Cell(action, ..)
                 | LayoutKind::ChoiceOption(action, _)
                 | LayoutKind::ChoiceFreeform(action) => Some((action, node.rect)),
                 _ => None,
