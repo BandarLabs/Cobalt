@@ -4017,6 +4017,48 @@ fn intrinsic_width(node: &Node, available: i32, metrics: &DisplayMetrics, prose:
 /// the leading and would put the icon back where it started, and not its cap
 /// height either: the artwork only fills about three quarters of its own box,
 /// so a box the size of a capital letter draws an icon smaller than one.
+/// The pitch of one stand-in row, which has to be the pitch of the real row it
+/// stands in for. Drawn as paragraph lines it was under half the height of the
+/// list it preceded, so every screen that showed one jumped when the content
+/// arrived, which is the one thing a placeholder exists to prevent. The
+/// arithmetic is the `Node::Rows` arm's, and if that changes this must.
+fn skeleton_band(metrics: &DisplayMetrics) -> i32 {
+    max(
+        metrics.touch_target_default(),
+        FontSize::Body
+            .line_height()
+            .saturating_add(FontSize::Caption.line_height())
+            .saturating_add(metrics.space(Space::Small) * 2),
+    )
+}
+
+/// What sits between two stand-in rows, which is what sits between two real
+/// ones: a gap, the separator, and a gap again.
+fn skeleton_gap(metrics: &DisplayMetrics) -> i32 {
+    metrics.space(Space::Tight) * 2
+}
+
+/// How wide each stand-in title runs, as a percentage of the column. Real
+/// headlines do not all end in the same place; a stack of identical full width
+/// bars reads as a loading graphic rather than as the list that is coming. The
+/// pattern is fixed rather than random so that a placeholder redrawn mid-fetch
+/// does not shuffle under the reader.
+const SKELETON_TITLE_WIDTHS: [i32; 6] = [100, 84, 96, 72, 91, 79];
+
+/// The same for the line under it, which stands in for a source or a date and
+/// is always short.
+const SKELETON_UNDER_WIDTHS: [i32; 6] = [38, 27, 45, 31, 24, 41];
+
+/// A number keeps the whole column, and sits on the first line of the title
+/// rather than in the middle of the row. It is already type, set at caption
+/// size, so boxing it smaller would only risk a three digit rank running out of
+/// one; but centred against the row it floated beside a two line title while
+/// every other rank in the list sat beside a one line one, and a column of
+/// ranks at four different heights is what made a numbered list look
+/// unfinished. Bottom aligned to the title's first line rather than baseline
+/// aligned, because the two sizes' descenders are close enough at these sizes
+/// that the difference is under a pixel and the renderer has no ascent to ask
+/// for.
 fn lead_rect(
     metrics: &DisplayMetrics,
     lead: RowLead,
@@ -4024,11 +4066,20 @@ fn lead_rect(
     y: i32,
     column: i32,
     height: i32,
+    text_y: i32,
 ) -> Rect {
+    if let RowLead::Number(_) = lead {
+        let line = FontSize::Caption.line_height();
+        return Rect {
+            x,
+            y: text_y.saturating_add(FontSize::Body.line_height() - line),
+            width: column,
+            height: line,
+        };
+    }
     let side = match lead {
         // A cover is the content of its row and wants every pixel the column
-        // has. A number is already type, set at caption size, and centring it
-        // in a smaller box only risks a three digit rank running out of one.
+        // has.
         RowLead::Picture(..) | RowLead::Number(_) => column,
         RowLead::Icon(_) => min(column, metrics.tenth_mm(FontSize::Body.tenth_mm() * 6 / 5)),
     };
@@ -4923,13 +4974,13 @@ fn layout_node(
                     kind: LayoutKind::Row(row.action),
                     text_lines: Vec::new(),
                 });
+                let text_y = cursor.saturating_add((height - content) / 2);
                 layout.nodes.push(LayoutNode {
                     id: *id,
-                    rect: lead_rect(metrics, row.lead, x, cursor, icon, height),
+                    rect: lead_rect(metrics, row.lead, x, cursor, icon, height, text_y),
                     kind: LayoutKind::RowLead(row.lead),
                     text_lines: Vec::new(),
                 });
-                let text_y = cursor.saturating_add((height - content) / 2);
                 layout.nodes.push(LayoutNode {
                     id: *id,
                     rect: Rect {
@@ -5418,7 +5469,8 @@ fn layout_node(
         }
         Node::Skeleton { id, lines } => {
             let count = i32::from((*lines).clamp(1, 12));
-            let height = count * FontSize::Body.line_height();
+            let band = skeleton_band(metrics);
+            let height = count * band + (count - 1) * skeleton_gap(metrics);
             layout.nodes.push(LayoutNode {
                 id: *id,
                 rect: Rect {
@@ -9339,21 +9391,52 @@ pub fn render_all(
                     .first()
                     .and_then(|value| value.parse::<i32>().ok())
                     .unwrap_or(1);
-                let line_height = FontSize::Body.line_height();
+                // Drawn in the shape of the rows it stands in for: a mark in
+                // the glyph column, a title, and a shorter line under it. The
+                // columns are the `Node::Rows` arm's own.
+                let padding = metrics.space(Space::Small);
+                let band = skeleton_band(metrics);
+                let icon = metrics.touch_target_default();
+                let text_x = node.rect.x + icon + padding;
+                let text_width = max(1, node.rect.width - icon - padding * 2);
+                let lead = min(icon, metrics.tenth_mm(FontSize::Body.tenth_mm() * 6 / 5));
+                let title_line = FontSize::Body.line_height();
+                let under_line = FontSize::Caption.line_height();
+                let title_bar = max(1, title_line - metrics.tenth_mm(14));
+                let under_bar = max(1, under_line - metrics.tenth_mm(12));
                 for index in 0..count {
-                    // The last line is short, the way a real paragraph ends.
-                    let width = if index + 1 == count {
-                        node.rect.width * 3 / 5
-                    } else {
-                        node.rect.width
-                    };
+                    let top = node.rect.y + index * (band + skeleton_gap(metrics));
+                    let text_y = top + (band - title_line - under_line) / 2;
                     fill_clipped(
                         surface,
                         Rect {
-                            x: node.rect.x,
-                            y: node.rect.y + index * line_height,
-                            width,
-                            height: line_height - metrics.tenth_mm(20),
+                            x: node.rect.x + (icon - lead) / 2,
+                            y: top + (band - lead) / 2,
+                            width: lead,
+                            height: lead,
+                        },
+                        tone::SURFACE,
+                        clip,
+                    );
+                    let slot = index as usize % SKELETON_TITLE_WIDTHS.len();
+                    fill_clipped(
+                        surface,
+                        Rect {
+                            x: text_x,
+                            y: text_y,
+                            width: max(1, text_width * SKELETON_TITLE_WIDTHS[slot] / 100),
+                            height: title_bar,
+                        },
+                        tone::SURFACE,
+                        clip,
+                    );
+                    fill_clipped(
+                        surface,
+                        Rect {
+                            x: text_x,
+                            y: text_y + title_line,
+                            width: max(1, text_width * SKELETON_UNDER_WIDTHS[slot] / 100),
+                            height: under_bar,
                         },
                         tone::SURFACE,
                         clip,
@@ -9555,10 +9638,17 @@ fn draw_row_lead(
             None => draw_glyph_icon(surface, glyph, rect, clip),
         },
         RowLead::Number(number) => {
+            // Set against the right of its column rather than centred in it.
+            // The text face's digits are proportional, so a one is two thirds
+            // the width of a zero, and centring a mixed column of ranks left
+            // every units digit in a different place. Right aligned they line
+            // up whatever they are, which is what a tabular figure would have
+            // bought if the face had one and the rasteriser applied OpenType
+            // features. It has neither.
             let text = number.to_string();
             let size = FontSize::Caption;
             let (width, _) = measure_text(&text, size);
-            let x = rect.x + (rect.width - width) / 2;
+            let x = rect.x + max(0, rect.width - width);
             let y = rect.y + (rect.height - size.line_height()) / 2;
             draw_text(surface, &text, x, y, size, tone::MUTED, clip);
         }
@@ -11611,8 +11701,11 @@ mod loading_tests {
     }
 
     #[test]
-    fn a_skeleton_occupies_the_space_the_real_text_will() {
+    fn a_skeleton_occupies_the_space_the_real_rows_will() {
         // The point of a skeleton is that nothing moves when data arrives.
+        // Every caller in the tree stands one in front of a list, so the unit
+        // it counts is a row, not a line of prose. Set in paragraph lines it
+        // was under half the height of what followed it and the screen jumped.
         let lines = 5;
         let skeleton = Screen::new(
             1,
@@ -11620,21 +11713,35 @@ mod loading_tests {
                 id: NodeId(1),
                 lines,
             }],
-        );
+        )
+        .layout();
         let real = Screen::new(
             1,
-            vec![Node::Text {
+            vec![Node::Rows {
                 id: NodeId(1),
-                text: (0..lines)
-                    .map(|_| "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww")
-                    .collect::<Vec<_>>()
-                    .join(" "),
+                rows: (0..u32::from(lines))
+                    .map(|index| {
+                        Row::new(
+                            ActionId(index + 1),
+                            "A headline",
+                            "news.example.com",
+                            RowLead::Icon(Glyph::News),
+                        )
+                    })
+                    .collect(),
             }],
-        );
-        assert_eq!(
-            skeleton.layout().nodes[0].rect.height,
-            real.layout().nodes[0].rect.height
-        );
+        )
+        .layout();
+        let extent = |layout: &Layout| {
+            layout
+                .nodes
+                .iter()
+                .map(|node| node.rect.y + node.rect.height)
+                .max()
+                .unwrap_or(0)
+                - layout.nodes[0].rect.y
+        };
+        assert_eq!(extent(&skeleton), extent(&real));
     }
 
     #[test]
@@ -11649,7 +11756,7 @@ mod loading_tests {
         .layout();
         assert_eq!(
             layout.nodes[0].rect.height,
-            12 * FontSize::Body.line_height()
+            12 * skeleton_band(&CLARA_BW_METRICS) + 11 * skeleton_gap(&CLARA_BW_METRICS)
         );
     }
 
@@ -13469,6 +13576,57 @@ mod prose_tests {
         // the only readable setting again.
         let large = FontSize::Body.tenth_mm() * TextScale::Large.percent() / 100;
         assert!((34..=38).contains(&large), "large body is {large} tenths");
+    }
+
+    #[test]
+    fn a_rank_sits_on_the_first_line_of_its_title() {
+        // Centred against the row, a rank beside a two line title floated a
+        // whole line below the ranks either side of it, and a column of
+        // numbers at four different heights is what made a numbered list look
+        // unfinished.
+        let screen = Screen::new(
+            1,
+            vec![Node::Rows {
+                id: NodeId(1),
+                rows: vec![
+                    Row::new(
+                        ActionId(1),
+                        "A headline long enough that it has to wrap onto a second line \
+                         before it is done",
+                        "news.example.com",
+                        RowLead::Number(1),
+                    ),
+                    Row::new(ActionId(2), "Short", "news.example.com", RowLead::Number(2)),
+                ],
+            }],
+        );
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        let pairs: Vec<(i32, i32)> = layout
+            .nodes
+            .iter()
+            .filter_map(|node| match node.kind {
+                LayoutKind::RowLead(RowLead::Number(_)) => Some((node.rect.y, node.rect.height)),
+                _ => None,
+            })
+            .collect();
+        let titles: Vec<i32> = layout
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, LayoutKind::RowTitle))
+            .map(|node| node.rect.y)
+            .collect();
+        assert_eq!(pairs.len(), 2);
+        assert_eq!(titles.len(), 2);
+        for ((rank_y, rank_height), title_y) in pairs.into_iter().zip(titles) {
+            let bottom = rank_y + rank_height;
+            let first_line = title_y + FontSize::Body.line_height();
+            assert_eq!(
+                bottom,
+                first_line,
+                "a rank sat {} from the foot of its title's first line",
+                first_line - bottom
+            );
+        }
     }
 
     #[test]

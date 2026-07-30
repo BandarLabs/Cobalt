@@ -351,7 +351,7 @@ impl Gallery {
             .section_with_value("Determinate", "65%")
             .progress(65)
             .section("Not yet known")
-            .skeleton(3)
+            .skeleton(2)
             .page_position(3, 3)
     }
 
