@@ -3953,6 +3953,48 @@ fn intrinsic_width(node: &Node, available: i32, metrics: &DisplayMetrics, prose:
     }
 }
 
+/// Where a row's lead is drawn inside the column reserved for it.
+///
+/// The column is always a touch target wide, so that every row in the system
+/// keeps one text margin whatever leads it. What goes in the column is not.
+///
+/// A picture fills it: a cover is the content of its row and wants every pixel
+/// the column has. An icon does not. An icon is a label for the row, and drawn
+/// at the full width of the column it is roughly nine millimetres tall beside a
+/// three and a half millimetre title, which is what makes a list of icons read
+/// as clip art next to the text it belongs to. The stroke cannot fix that on
+/// its own, because the stroke scales with the box: however thinly it is drawn,
+/// an icon four times the height of the words beside it is the loudest thing on
+/// the row. So it is drawn at the size of the type instead, centred in the
+/// column it no longer fills.
+///
+/// A fifth again the title's em. Not the title's line height, which includes
+/// the leading and would put the icon back where it started, and not its cap
+/// height either: the artwork only fills about three quarters of its own box,
+/// so a box the size of a capital letter draws an icon smaller than one.
+fn lead_rect(
+    metrics: &DisplayMetrics,
+    lead: RowLead,
+    x: i32,
+    y: i32,
+    column: i32,
+    height: i32,
+) -> Rect {
+    let side = match lead {
+        // A cover is the content of its row and wants every pixel the column
+        // has. A number is already type, set at caption size, and centring it
+        // in a smaller box only risks a three digit rank running out of one.
+        RowLead::Picture(..) | RowLead::Number(_) => column,
+        RowLead::Icon(_) => min(column, metrics.tenth_mm(FontSize::Body.tenth_mm() * 6 / 5)),
+    };
+    Rect {
+        x: x.saturating_add((column - side) / 2),
+        y: y.saturating_add((height - side) / 2),
+        width: side,
+        height: side,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn layout_node(
     node: &Node,
@@ -4832,12 +4874,7 @@ fn layout_node(
                 });
                 layout.nodes.push(LayoutNode {
                     id: *id,
-                    rect: Rect {
-                        x,
-                        y: cursor.saturating_add((height - icon) / 2),
-                        width: icon,
-                        height: icon,
-                    },
+                    rect: lead_rect(metrics, row.lead, x, cursor, icon, height),
                     kind: LayoutKind::RowLead(row.lead),
                     text_lines: Vec::new(),
                 });
@@ -13043,6 +13080,93 @@ mod prose_tests {
                 .collect(),
         }];
         screen
+    }
+
+    /// The rect of the first row lead on a Clara.
+    fn first_lead(screen: &Screen) -> Rect {
+        screen
+            .layout_with(&CLARA_BW_METRICS, &Chrome::default())
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::RowLead(_)))
+            .expect("a row lead")
+            .rect
+    }
+
+    /// One row carrying the given lead.
+    fn row_with(lead: RowLead) -> Screen {
+        Screen::new(
+            1,
+            vec![Node::Rows {
+                id: NodeId(1),
+                rows: vec![Row {
+                    action: ActionId(2),
+                    title: "A title".to_owned(),
+                    summary: String::new(),
+                    lead,
+                    state: RowState::Open,
+                    trailing: None,
+                    menu: None,
+                }],
+            }],
+        )
+    }
+
+    #[test]
+    fn an_icon_leading_a_row_is_drawn_at_the_size_of_the_type() {
+        // Drawn at the full width of its column an icon is about nine
+        // millimetres tall beside a three and a half millimetre title, which
+        // is what made a list of icons read as clip art next to its own text.
+        let icon = first_lead(&row_with(RowLead::Icon(Glyph::Rss)));
+        let title = CLARA_BW_METRICS.tenth_mm(FontSize::Body.tenth_mm());
+        assert!(
+            icon.height <= title * 3 / 2,
+            "an icon {} tall leads a title {title} tall",
+            icon.height
+        );
+    }
+
+    #[test]
+    fn a_cover_still_fills_the_column_it_leads_with() {
+        // The size rule is about labels, not content. A cover is the row.
+        let cover = first_lead(&row_with(RowLead::Picture(
+            TilePicture {
+                handle: PictureHandle(1),
+                source: (60, 90),
+            },
+            Glyph::Book,
+        )));
+        assert_eq!(cover.width, CLARA_BW_METRICS.touch_target_default());
+    }
+
+    #[test]
+    fn a_smaller_icon_stays_in_the_middle_of_its_column() {
+        // Left where it was, the text margin would look right and the icons
+        // would look like a ragged column of different sized marks.
+        let icon = first_lead(&row_with(RowLead::Icon(Glyph::Rss)));
+        let column = CLARA_BW_METRICS.touch_target_default();
+        let margin = CLARA_BW_METRICS.screen_margin();
+        assert_eq!(icon.x - margin, (column - icon.width) / 2);
+    }
+
+    #[test]
+    fn shrinking_an_icon_does_not_move_the_text_beside_it() {
+        // The column stays a touch target wide whatever goes in it, because
+        // that is what keeps one text margin down a list of mixed rows.
+        let with_icon = row_with(RowLead::Icon(Glyph::Rss));
+        let title = |screen: &Screen| {
+            screen
+                .layout_with(&CLARA_BW_METRICS, &Chrome::default())
+                .nodes
+                .iter()
+                .find(|node| node.kind == LayoutKind::RowTitle)
+                .expect("a title")
+                .rect
+        };
+        let expected = CLARA_BW_METRICS.screen_margin()
+            + CLARA_BW_METRICS.touch_target_default()
+            + CLARA_BW_METRICS.space(Space::Small);
+        assert_eq!(title(&with_icon).x, expected);
     }
 
     #[test]
