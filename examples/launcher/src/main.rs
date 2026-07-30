@@ -225,7 +225,7 @@ impl Launcher {
         self.page = self.page.min(pages.len() - 1);
         let showing = &pages[self.page];
         let title = if pages.len() > 1 {
-            format!("Cobalt \u{2014} {} of {}", self.page + 1, pages.len())
+            format!("Cobalt {} of {}", self.page + 1, pages.len())
         } else {
             "Cobalt".to_owned()
         };
@@ -256,13 +256,25 @@ impl Launcher {
         // screen. Put at the end of the flow it would be the first thing a
         // long catalogue pushed off the bottom.
         if pages.len() > 1 {
-            screen
-                .action_bar([
-                    ("previous", "Previous"),
-                    ("reader", "Return to Kobo reader"),
-                    ("next", "More apps"),
-                ])
-                .build()
+            // A turn control is offered only when there is a page on that side
+            // of this one. The bar used to show both directions on every page
+            // and wrap at the ends, on the reasoning that an inert control
+            // reads as a missed tap. That reasoning holds for a control that
+            // is present and does nothing, and not for one that is absent.
+            // Wrapping bought it at a worse price: with the two pages this
+            // catalogue actually has, "Previous" and "More apps" were two
+            // labels for one destination, and on the last page "More apps"
+            // promised applications that were not there and jumped to the
+            // first page instead.
+            let mut actions = Vec::with_capacity(3);
+            if self.page > 0 {
+                actions.push(("previous", "Previous"));
+            }
+            actions.push(("reader", "Return to Kobo reader"));
+            if self.page + 1 < pages.len() {
+                actions.push(("next", "More apps"));
+            }
+            screen.action_bar(actions).build()
         } else {
             // One page, so there is nothing to turn and a bar would be two
             // thirds empty. The way out becomes the one pinned control
@@ -348,12 +360,14 @@ impl KoboApp for Launcher {
         if action == action_id("next") || action == action_id("previous") {
             let pages = Self::pages(context).len();
             self.page = if action == action_id("next") {
-                // Wrapping rather than stopping. With a bar that always shows
-                // both directions, a control that silently does nothing at the
-                // end reads as a missed tap on a panel this slow.
-                (self.page + 1) % pages
+                // Clamped rather than wrapped, to match a bar that only offers
+                // a direction there is a page in. Nothing dispatches this at
+                // the end any more, and if something did, standing still is
+                // the honest answer: the screen is unchanged, so the runner
+                // drops the repaint and the panel does not flash.
+                (self.page + 1).min(pages - 1)
             } else {
-                (self.page + pages - 1) % pages
+                self.page.saturating_sub(1)
             };
             self.show(context);
             return;
@@ -475,6 +489,65 @@ mod tests {
                 screen = painted(commands);
             }
         }
+    }
+
+    #[test]
+    fn a_page_turn_is_offered_only_where_there_is_a_page_to_turn_to() {
+        // Two labels for one destination is what this catches. With the two
+        // pages this catalogue actually has, a bar that showed both directions
+        // on every page sent "Previous" and "More apps" to the same screen,
+        // and on the last page "More apps" promised applications that were not
+        // there and jumped back to the first page instead.
+        for (name, metrics) in PANELS {
+            let mut runner = AppRunner::with_metrics(Launcher::default(), metrics);
+            let mut screen = painted(runner.start());
+            let mut page = 0;
+            loop {
+                let offered = bar_actions(&screen, &metrics);
+                assert_eq!(
+                    offered.contains(&action_id("previous")),
+                    page > 0,
+                    "{name}: page {page} offers the wrong backward control"
+                );
+                assert!(
+                    offered.contains(&action_id("reader")),
+                    "{name}: page {page} has no way back to the reader"
+                );
+                if !offered.contains(&action_id("next")) {
+                    break;
+                }
+                screen = repainted(runner.action(action_id("next"))).unwrap_or_else(|| {
+                    panic!("{name}: page {page} offered More apps and painted nothing")
+                });
+                page += 1;
+                assert!(page <= ENTRIES.len(), "{name}: the pages never ran out");
+            }
+            // And back down, which must arrive at the first page and stop
+            // offering to go further.
+            while page > 0 {
+                screen = repainted(runner.action(action_id("previous"))).unwrap_or_else(|| {
+                    panic!("{name}: page {page} offered Previous and painted nothing")
+                });
+                page -= 1;
+            }
+            assert!(
+                !bar_actions(&screen, &metrics).contains(&action_id("previous")),
+                "{name}: the first page still offers Previous"
+            );
+        }
+    }
+
+    /// Every action reachable from the pinned bottom band of a screen.
+    fn bar_actions(screen: &kobo_sdk::Screen, metrics: &DisplayMetrics) -> Vec<kobo_ui::ActionId> {
+        screen
+            .layout_with(metrics, &Chrome::with_back(false))
+            .nodes
+            .iter()
+            .filter_map(|node| match node.kind {
+                LayoutKind::Button(action, ..) | LayoutKind::NavDestination(action) => Some(action),
+                _ => None,
+            })
+            .collect()
     }
 
     #[test]
