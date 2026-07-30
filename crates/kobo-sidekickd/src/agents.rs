@@ -17,14 +17,16 @@ use kobo_json::Value;
 use std::path::PathBuf;
 
 /// How an agent spells a hook registration in its configuration file.
+///
+/// Claude Code and Codex landed on the same shape, so there is one variant
+/// for both. That is worth stating rather than assuming: Codex's `command`
+/// is a string and a list is refused outright, which the binary says in as
+/// many words when you hand it one.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Wiring {
-    /// Claude Code: entries carry a `matcher`, and the command is one string
-    /// that the agent splits itself.
-    Claude,
-    /// Codex: no matcher, and the command is a list, so no quoting question
-    /// ever arises for a path with a space in it.
-    Codex,
+    /// `{ "hooks": { EVENT: [ { "matcher": "*", "hooks": [ ... ] } ] } }`,
+    /// where each hook is a `type`, a `command` string and a `timeout`.
+    Matcher,
 }
 
 /// One coding agent, described once and used by detection, setup and the
@@ -56,7 +58,7 @@ pub const AGENTS: &[Agent] = &[
         marker: ".claude",
         binaries: &["claude"],
         event: "PreToolUse",
-        wiring: Wiring::Claude,
+        wiring: Wiring::Matcher,
     },
     Agent {
         id: "codex",
@@ -65,7 +67,7 @@ pub const AGENTS: &[Agent] = &[
         marker: ".codex",
         binaries: &["codex"],
         event: "PermissionRequest",
-        wiring: Wiring::Codex,
+        wiring: Wiring::Matcher,
     },
 ];
 
@@ -127,29 +129,21 @@ pub enum Outcome {
 impl Agent {
     /// Our own registration, in this agent's dialect.
     fn entry(&self, binary: &str) -> Value {
-        let command = match self.wiring {
-            // One string, split by the agent. A list would be safer but this
-            // is the shape Claude Code documents.
-            Wiring::Claude => Value::from(format!("{binary} hook {}", self.id)),
-            // A list, so a home directory with a space in it is not a bug.
-            Wiring::Codex => Value::Array(vec![
-                Value::from(binary),
-                Value::from("hook"),
-                Value::from(self.id),
-            ]),
-        };
         let hook = kobo_json::ObjectBuilder::new()
             .set("type", "command")
-            .set("command", command)
+            // One string. Codex refuses a list with "invalid type: sequence,
+            // expected a string", and Claude Code has never taken one.
+            .set("command", format!("{binary} hook {}", self.id))
             // Longer than the daemon holds a question, so the agent waits for
             // the person rather than giving up on them.
             .set("timeout", 360)
             .build();
-        let entry = match self.wiring {
-            Wiring::Claude => kobo_json::ObjectBuilder::new().set("matcher", "*"),
-            Wiring::Codex => kobo_json::ObjectBuilder::new(),
-        };
-        entry.set("hooks", Value::Array(vec![hook])).build()
+        match self.wiring {
+            Wiring::Matcher => kobo_json::ObjectBuilder::new()
+                .set("matcher", "*")
+                .set("hooks", Value::Array(vec![hook]))
+                .build(),
+        }
     }
 
     /// The configuration file's new text, or [`Outcome::AlreadyThere`].
@@ -292,7 +286,7 @@ pub fn install(agent: &Agent, dry_run: bool) -> Result<bool, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{find, Outcome, Wiring};
+    use super::{find, Outcome};
 
     /// The path an agent would be given, which is never the bare name.
     const BINARY: &str = "/opt/kobo-sidekickd";
@@ -331,10 +325,10 @@ mod tests {
         );
     }
 
-    /// Codex takes a list, so a home directory with a space in it is not a
-    /// quoting bug waiting to happen.
+    /// Codex refuses a list outright. Its own words, handed one: "invalid
+    /// type: sequence, expected a string".
     #[test]
-    fn codex_is_given_its_command_one_word_at_a_time() {
+    fn codex_is_given_its_command_as_one_string_because_a_list_is_refused() {
         let text = written("codex", None);
         let parsed = kobo_json::parse(&text).expect("what we write is JSON");
         let command = parsed
@@ -344,15 +338,13 @@ mod tests {
             .and_then(|entry| entry.get("hooks"))
             .and_then(|hooks| hooks.index(0))
             .and_then(|hook| hook.get("command"))
-            .and_then(kobo_json::Value::as_array)
-            .expect("a list")
-            .to_vec();
-        let words: Vec<&str> = command
-            .iter()
-            .filter_map(kobo_json::Value::as_str)
-            .collect();
-        assert_eq!(words, ["/opt/kobo-sidekickd", "hook", "codex"]);
-        assert_eq!(find("codex").expect("known").wiring, Wiring::Codex);
+            .expect("a command");
+        assert_eq!(
+            command.as_str(),
+            Some("/opt/kobo-sidekickd hook codex"),
+            "a sequence here is the one shape Codex rejects"
+        );
+        assert!(command.as_array().is_none(), "never a list");
     }
 
     #[test]
