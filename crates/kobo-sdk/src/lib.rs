@@ -2473,6 +2473,27 @@ impl Context {
         )
     }
 
+    /// The content area an application screen actually gets.
+    ///
+    /// Less the status band, which the runtime draws above everything else and
+    /// never tells the application about. `prose_area` describes the panel,
+    /// not the screen: it knows about the top bar and the bottom one because
+    /// the application asked for those, and nothing about the strip carrying
+    /// the clock, the signal and the battery. Every paginator measured against
+    /// the panel and came back with a page six millimetres taller than the one
+    /// that would be drawn.
+    ///
+    /// This is the same band [`Chrome::measuring`] puts back for anything that
+    /// measures a built screen, which is why the two disagreed.
+    fn screen_area(&self, nav_bar: bool) -> ProseArea {
+        let mut area = self.metrics.prose_area(true, nav_bar);
+        area.height = area
+            .height
+            .saturating_sub(self.metrics.status_band_height())
+            .max(1);
+        area
+    }
+
     /// Breaks a list of rows into pages that fit this panel.
     ///
     /// Returns the row indices belonging to each page. Nothing in this UI
@@ -2495,7 +2516,7 @@ impl Context {
     /// reserving one that is used costs the last row, drawn underneath the
     /// position and clipped by the bar.
     fn paged_area(&self, nav_bar: bool) -> ProseArea {
-        let mut area = self.metrics.prose_area(true, nav_bar);
+        let mut area = self.screen_area(nav_bar);
         area.height = area
             .height
             .saturating_sub(self.metrics.page_position_band())
@@ -2544,9 +2565,23 @@ impl Context {
     /// panel holds is a measurement, not a constant: a Clara fits two columns
     /// and a Sage three, so an application that picked a number would silently
     /// lose its last entries on every panel but the one it was written on.
+    ///
+    /// Unlike a list, a grid is measured against the whole area rather than
+    /// the area less the page position's strip. A grid clamps itself: cells
+    /// are a fixed set on a panel that does not scroll, so when the room is
+    /// short the layout shrinks the body rather than drawing past the bottom,
+    /// and a row is never lost to a strip that was reserved and not used.
+    /// Reserving it here is what cost the launcher a whole row of
+    /// applications, because a grid's granularity is a third of the panel
+    /// where a list's is one line.
     #[must_use]
     pub fn paginate_tiles(&self, count: usize, shape: TileShape, nav_bar: bool) -> Vec<Vec<usize>> {
-        kobo_ui::paginate_tiles(count, &self.metrics, shape, self.paged_area(nav_bar))
+        kobo_ui::paginate_tiles(
+            count,
+            &self.metrics,
+            shape,
+            self.screen_area(nav_bar),
+        )
     }
 
     /// Breaks a grid of tiles into pages that fit *under* what is already there.
@@ -2567,7 +2602,7 @@ impl Context {
         let used = placed
             .layout_with(&self.metrics, &Chrome::measuring(true))
             .content_used();
-        let mut area = self.paged_area(nav_bar);
+        let mut area = self.screen_area(nav_bar);
         area.height = area
             .height
             .saturating_sub(used.saturating_add(area.gap))
@@ -4456,6 +4491,41 @@ mod tests {
             metrics: DisplayMetrics::default(),
             retrying: Vec::new(),
         }
+    }
+
+    #[test]
+    fn a_grid_fills_every_row_the_panel_can_draw() {
+        // The launcher holds twelve applications and a Clara draws three rows
+        // of three. It shipped showing six, with four hundred pixels of paper
+        // under them and the other six on a second page, for two reasons that
+        // both came down to reserving room nobody was going to use: the row
+        // gap was measured with the wider column gutter, and the page
+        // position's strip was subtracted from a screen that draws no page
+        // position.
+        let context = context();
+        let pages = context.paginate_tiles(12, TileShape::Square, true);
+        assert_eq!(
+            pages[0].len(),
+            9,
+            "a Clara's grid came back holding {} of its nine cells",
+            pages[0].len()
+        );
+
+        // And the promise is kept: every cell of the page is drawn.
+        let mut screen = ScreenBuilder::new("launcher").top_bar("Cobalt 1 of 2");
+        screen = screen.tiles(
+            pages[0]
+                .iter()
+                .map(|index| (format!("open-{index}"), format!("App {index}"), Glyph::App)),
+        );
+        let drawn = screen
+            .build()
+            .layout_with(&context.metrics, &Chrome::measuring(true))
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, kobo_ui::LayoutKind::Tile(..)))
+            .count();
+        assert_eq!(drawn, pages[0].len(), "the grid dropped what it was given");
     }
 
     /// A tick is not the application's answer, and a stopped clock stops.

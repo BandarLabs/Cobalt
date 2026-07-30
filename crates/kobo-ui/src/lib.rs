@@ -6936,13 +6936,19 @@ pub fn paginate_tiles(
 ) -> Vec<Vec<usize>> {
     let columns = max(1, metrics.grid_columns(shape));
     let gutter = metrics.space(Space::Small);
+    // Rows are set on the tight step and columns on the small one, which is
+    // what the grid itself does: a cell is much taller than the mark inside
+    // it, so an equal gap on both axes reads as twice the air between rows.
+    // Measuring here with the column gutter and drawing with the tight one is
+    // a disagreement of a whole row on a six inch panel.
+    let row_gap = metrics.space(Space::Tight);
     let cell = (area.width - gutter * (columns as i32 - 1)) / columns as i32;
     let body = cell * shape.eighths() / 8;
     let label_band = FontSize::Caption.line_height() + metrics.space(Space::Tight);
     let cell_height = max(1, body.saturating_add(label_band));
     // At least one row, however short the area is. A page that holds nothing
     // is a catalogue that can never be read.
-    let rows = max(1, (area.height + gutter) / (cell_height + gutter));
+    let rows = max(1, (area.height + row_gap) / (cell_height + row_gap));
     let per_page = columns * rows as usize;
     if count == 0 {
         return vec![Vec::new()];
