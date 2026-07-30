@@ -5910,9 +5910,15 @@ impl FontSize {
     /// So the scale sits deliberately above iOS and Android rather than at them,
     /// because a reflective panel has no subpixel antialiasing and less contrast
     /// than glass, and then stops. The steps are tighter at the top than they
-    /// were, because size is currently the only thing carrying hierarchy and a
-    /// scale that can only shout compensates by shouting. When a bold cut ships
-    /// the top of the scale should come down further still, not go back up.
+    /// were, because the top of a scale is where shouting starts.
+    ///
+    /// Title and Heading are now set in a bold cut, so weight rather than size
+    /// says which of two lines is the heading. That is what lets these two
+    /// numbers stay where they are instead of climbing again: a heavier
+    /// heading at 5.4 mm separates from body far more clearly than a regular
+    /// one did at 6.8 mm, and takes a third less of the panel doing it. The
+    /// weight is chosen inside the typesetter from the size, so nothing here
+    /// and nothing in an application asks for it.
     #[must_use]
     pub const fn tenth_mm(self) -> i32 {
         match self {

@@ -75,6 +75,28 @@ pub const DEVICE_FONT_CANDIDATES: &[&str] = &[
 /// present, because that one is exact by definition.
 pub const TEXT_FONT: &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Regular.ttf");
 
+/// The bold cut of the same face, for the two sizes that head a screen.
+///
+/// Hierarchy was carried by size alone while there was only one weight, so a
+/// heading could only be told from a label by being large, and a scale that
+/// can only shout compensates by shouting: at 6.8 mm a settings header was
+/// bigger than the book titles the reader's own software sets. Weight says the
+/// same thing without taking the room, which is what let the top of the scale
+/// come down.
+///
+/// Compiled in rather than looked for. The device carries the regular cut and
+/// not this one, so a search would find nothing and quietly leave every screen
+/// with the flat hierarchy this exists to fix.
+///
+/// Same family, same licence, same file as the regular travels under; see
+/// `fonts/LICENSE-AtkinsonHyperlegible.txt`.
+pub const DISPLAY_FONT: &[u8] = include_bytes!("../fonts/AtkinsonHyperlegible-Bold.ttf");
+
+/// Bold is looked for on the device first, so a firmware that carries the cut
+/// is used rather than the compiled-in copy, exactly as the regular is.
+pub const DEVICE_DISPLAY_FONT_CANDIDATES: &[&str] =
+    &["/usr/local/Trolltech/QtEmbedded-4.6.2-arm/lib/fonts/AtkinsonHyperlegible-Bold.ttf"];
+
 /// Faces to look for for prose, best first.
 ///
 /// A different job from the interface, so a different list. The interface face
@@ -193,6 +215,29 @@ impl Typeface {
             }
         }
         Self::from_bytes(TEXT_FONT, "AtkinsonHyperlegible-Regular.ttf", metrics)
+    }
+
+    /// Loads the bold cut of the interface face.
+    ///
+    /// Deliberately does not honour [`FONT_OVERRIDE`]. That variable names one
+    /// file, and pointing both weights at it would set a heading in the same
+    /// weight as the label beneath it, which is the thing this cut exists to
+    /// stop.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error only when the compiled-in cut cannot be parsed, which
+    /// is only reachable if it is removed.
+    pub fn discover_display(metrics: DisplayMetrics) -> Result<Self, Error> {
+        for candidate in DEVICE_DISPLAY_FONT_CANDIDATES {
+            let path = Path::new(candidate);
+            if path.exists() {
+                if let Ok(face) = Self::load(path, metrics) {
+                    return Ok(face);
+                }
+            }
+        }
+        Self::from_bytes(DISPLAY_FONT, "AtkinsonHyperlegible-Bold.ttf", metrics)
     }
 
     /// Loads the device's own face for prose, falling back to the interface
@@ -471,6 +516,7 @@ impl Typeface {
 /// screen that overlaps itself.
 pub struct SystemFonts {
     text: Typeface,
+    display: Typeface,
     mono: Typeface,
     reading: Typeface,
 }
@@ -498,6 +544,11 @@ impl SystemFonts {
         };
         Ok(Self {
             text,
+            // Same reasoning as prose: a bold cut that will not load means
+            // headings are set in the regular weight, which is the interface
+            // as it was last week. It must not cost the whole set.
+            display: Typeface::discover_display(metrics)
+                .or_else(|_| Typeface::discover(metrics))?,
             mono: Typeface::from_bytes(MONO_FONT, "DejaVuSansMono.ttf", metrics)?,
             reading,
         })
@@ -517,6 +568,25 @@ impl SystemFonts {
         }
     }
 
+    /// The face a size is really set in.
+    ///
+    /// The weight is decided here rather than by the caller, and that is the
+    /// whole trick: `Face` says which job the words are doing and the size
+    /// says how loudly, so nothing that measures or draws has to be told about
+    /// weight, and no call site can measure in one cut and draw in the other.
+    /// A bold heading is 4% wider than a regular one, which is a wrapped line
+    /// where it matters, and threading a weight through the several dozen
+    /// places that measure a word is exactly how one of them gets missed.
+    ///
+    /// Only the interface face has two cuts. A book is one weight throughout,
+    /// and a terminal has no headings.
+    fn cut(&self, size: FontSize, face: Face) -> &Typeface {
+        match (face, size) {
+            (Face::Text, FontSize::Title | FontSize::Heading) => &self.display,
+            _ => self.face(face),
+        }
+    }
+
     /// The fixed cell a face lays out on, if it lays out on one.
     fn cell(&self, size: FontSize, face: Face) -> Option<i32> {
         match face {
@@ -528,12 +598,12 @@ impl SystemFonts {
 
 impl Typesetter for SystemFonts {
     fn measure(&self, text: &str, size: FontSize, face: Face) -> (i32, i32) {
-        self.face(face)
+        self.cut(size, face)
             .measure_run(text, size, self.cell(size, face))
     }
 
     fn line_height(&self, size: FontSize, face: Face) -> i32 {
-        let natural = self.face(face).height(size);
+        let natural = self.cut(size, face).height(size);
         match face {
             // A font's own line height is set for a paragraph in a document,
             // not for a page of a novel. Typesetters have always opened books
@@ -556,7 +626,7 @@ impl Typesetter for SystemFonts {
         face: Face,
         plot: &mut dyn FnMut(i32, i32, u8),
     ) {
-        self.face(face)
+        self.cut(size, face)
             .draw_run(text, x, y, size, self.cell(size, face), plot);
     }
 
@@ -1458,6 +1528,34 @@ mod tests {
                     "the title drew ink at {x},{y}, past its own right edge at {right}"
                 );
             }
+        }
+    }
+
+    /// A heading is heavier than the words under it, not merely larger.
+    ///
+    /// Weight is chosen by the size rather than asked for, so this is the only
+    /// thing standing between "the bold cut is installed" and "the bold cut is
+    /// used". It also holds the two cuts apart: were the fallback ever to hand
+    /// back the regular face, the heading would weigh exactly what a label
+    /// weighs and every screen would quietly flatten again.
+    #[test]
+    fn the_two_sizes_that_head_a_screen_are_set_in_the_heavier_cut() {
+        let fonts = SystemFonts::discover(CLARA).expect("fonts");
+        let regular = Typeface::from_bytes(TEXT_FONT, "regular", CLARA).expect("regular");
+        for size in [FontSize::Title, FontSize::Heading] {
+            let (bold_width, _) = fonts.measure("Connections", size, Face::Text);
+            let (plain_width, _) = regular.measure_run("Connections", size, None);
+            assert!(
+                bold_width > plain_width,
+                "{size:?} was set no wider than the regular cut: {bold_width} against {plain_width}"
+            );
+        }
+        // And the sizes read at are left alone. A body label set bold would be
+        // a screen shouting every word of itself.
+        for size in [FontSize::Caption, FontSize::Body] {
+            let (through, _) = fonts.measure("Connections", size, Face::Text);
+            let (plain, _) = regular.measure_run("Connections", size, None);
+            assert_eq!(through, plain, "{size:?} was not set in the regular cut");
         }
     }
 }

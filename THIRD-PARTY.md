@@ -52,11 +52,12 @@ travels too, which is what the file above is for.
 ## Fonts
 
 Two typefaces are embedded in the `kobo-text` crate and end up inside every
-binary. Their licences ship beside them.
+binary. Atkinson Hyperlegible is embedded in two weights, which the one licence
+below covers. Their licences ship beside them.
 
 | Font | Licence | File |
 | --- | --- | --- |
-| Atkinson Hyperlegible | SIL Open Font License 1.1 | `crates/kobo-text/fonts/LICENSE-AtkinsonHyperlegible.txt` |
+| Atkinson Hyperlegible (Regular and Bold) | SIL Open Font License 1.1 | `crates/kobo-text/fonts/LICENSE-AtkinsonHyperlegible.txt` |
 | DejaVu Sans | Bitstream Vera and Arev fonts licence | `crates/kobo-text/fonts/LICENSE-DejaVu.txt` |
 
 Both permit embedding and redistribution. The OFL forbids selling the font on
