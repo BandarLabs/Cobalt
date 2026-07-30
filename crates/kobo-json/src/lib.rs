@@ -244,6 +244,107 @@ enum Step<'a> {
     Literal(&'static str),
 }
 
+/// One pending piece of output in the indenting serialiser, which needs to
+/// remember how deep it was when it queued the step.
+enum Pretty<'a> {
+    Value(&'a Value, usize),
+    Key(&'a str, usize),
+    /// A newline and indent with no key after it, for an array element.
+    Line(usize),
+    Close(char, usize),
+    Comma,
+}
+
+impl Value {
+    /// The same JSON, indented two spaces per level and one field to a line.
+    ///
+    /// [`to_json`] is for a request body, where nothing human reads it and the
+    /// shortest form wins. This is for a file somebody keeps: rewriting a
+    /// configuration file somebody hand-formatted as a single long line is a
+    /// rude way to edit it, even when the bytes mean the same thing.
+    ///
+    /// Empty objects and arrays stay on one line, because `{}` spread over
+    /// three lines is noise.
+    ///
+    /// [`to_json`]: Value::to_json
+    #[must_use]
+    pub fn to_json_pretty(&self) -> String {
+        let mut out = String::new();
+        self.write_pretty(&mut out);
+        out
+    }
+
+    /// Appends the indented JSON form to an existing string.
+    ///
+    /// No trailing newline: whoever writes the file decides that.
+    pub fn write_pretty(&self, out: &mut String) {
+        // An explicit stack for the same reason `write_json` uses one: `Value`
+        // is public, so an application can build one deeper than the parser
+        // would ever have accepted, and recursion would meet the real stack.
+        let mut stack = vec![Pretty::Value(self, 0)];
+        while let Some(step) = stack.pop() {
+            match step {
+                Pretty::Comma => out.push(','),
+                Pretty::Key(key, depth) => {
+                    out.push('\n');
+                    indent_into(depth, out);
+                    escape_into(key, out);
+                    out.push_str(": ");
+                }
+                Pretty::Line(depth) => {
+                    out.push('\n');
+                    indent_into(depth, out);
+                }
+                Pretty::Close(bracket, depth) => {
+                    out.push('\n');
+                    indent_into(depth, out);
+                    out.push(bracket);
+                }
+                Pretty::Value(Self::Array(items), _) if items.is_empty() => {
+                    out.push_str("[]");
+                }
+                Pretty::Value(Self::Object(fields), _) if fields.is_empty() => {
+                    out.push_str("{}");
+                }
+                Pretty::Value(Self::Array(items), depth) => {
+                    out.push('[');
+                    stack.push(Pretty::Close(']', depth));
+                    for (position, item) in items.iter().enumerate().rev() {
+                        stack.push(Pretty::Value(item, depth + 1));
+                        // An array element has no key to carry its newline, so
+                        // it queues its own.
+                        stack.push(Pretty::Line(depth + 1));
+                        if position > 0 {
+                            stack.push(Pretty::Comma);
+                        }
+                    }
+                }
+                Pretty::Value(Self::Object(fields), depth) => {
+                    out.push('{');
+                    stack.push(Pretty::Close('}', depth));
+                    for (position, (key, value)) in fields.iter().enumerate().rev() {
+                        stack.push(Pretty::Value(value, depth + 1));
+                        stack.push(Pretty::Key(key, depth + 1));
+                        if position > 0 {
+                            stack.push(Pretty::Comma);
+                        }
+                    }
+                }
+                // Scalars are identical in both forms, so there is one
+                // implementation of them and it is `write_json`'s.
+                Pretty::Value(scalar, _) => scalar.write_json(out),
+            }
+        }
+    }
+}
+
+/// Two spaces per level of nesting.
+fn indent_into(depth: usize, out: &mut String) {
+    for _ in 0..depth {
+        out.push_str("  ");
+    }
+}
+
 impl From<bool> for Value {
     fn from(value: bool) -> Self {
         Self::Bool(value)
@@ -1373,5 +1474,48 @@ mod tests {
         let mut buffer = String::from("body=");
         Value::from(vec![Value::Null, Value::Bool(true)]).write_json(&mut buffer);
         assert_eq!(buffer, "body=[null,true]");
+    }
+
+    #[test]
+    fn an_indented_object_puts_one_field_on_each_line() {
+        let value = parse(r#"{"a":1,"b":{"c":[1,2]}}"#).expect("parses");
+        assert_eq!(
+            value.to_json_pretty(),
+            "{\n  \"a\": 1,\n  \"b\": {\n    \"c\": [\n      1,\n      2\n    ]\n  }\n}"
+        );
+    }
+
+    #[test]
+    fn nothing_inside_a_container_keeps_it_on_one_line() {
+        let value = parse(r#"{"none":{},"empty":[],"deep":[[]]}"#).expect("parses");
+        assert_eq!(
+            value.to_json_pretty(),
+            "{\n  \"none\": {},\n  \"empty\": [],\n  \"deep\": [\n    []\n  ]\n}"
+        );
+    }
+
+    /// The property that matters when this rewrites somebody's settings file:
+    /// indenting must change the whitespace and nothing else.
+    #[test]
+    fn indenting_a_document_does_not_change_what_it_says() {
+        let value = parse(CATALOGUE).expect("parses");
+        let reparsed = parse(&value.to_json_pretty()).expect("indented form parses");
+        assert_eq!(reparsed, value);
+        assert_eq!(reparsed.to_json(), value.to_json());
+    }
+
+    #[test]
+    fn an_indented_scalar_stands_alone() {
+        assert_eq!(Value::from("hi").to_json_pretty(), "\"hi\"");
+        assert_eq!(Value::Null.to_json_pretty(), "null");
+    }
+
+    #[test]
+    fn indenting_appends_to_what_the_caller_already_had() {
+        let mut buffer = String::from("config = ");
+        parse(r#"{"on":true}"#)
+            .expect("parses")
+            .write_pretty(&mut buffer);
+        assert_eq!(buffer, "config = {\n  \"on\": true\n}");
     }
 }
