@@ -80,13 +80,19 @@ steps_for() {
         # A shelf, the player it opens, and back to the shelf.
         audiobook)
             echo "5:530,250 8:$TAP_BACK" ;;
+        # No bar and no list to open, so the default route taps dead space
+        # three times and records a screen that never moves. Open the compose
+        # screen and come back instead, which changes nothing on the device.
+        todo)
+            echo "5:536,755 9:$TAP_BACK" ;;
         # Nothing to tap. The screen only moves when a magnet does, so this
         # records whatever the sensor says for the length of the run.
         magnet)
             echo "" ;;
-        # Tiles, then the second page of them.
+        # Tiles, then the second page of them. The bar has two controls on the
+        # first page, not three, so "More apps" sits where it does below.
         launcher)
-            echo "5:869,880 6:$TAP_BACK 4:890,1380" ;;
+            echo "5:869,880 6:$TAP_BACK 4:800,1380" ;;
         *)
             echo "6:$TAP_CONTENT 5:$TAP_BACK 4:$TAP_BAR" ;;
     esac
@@ -115,10 +121,19 @@ for app in $APPS; do
     # The application is given longer than the recording, so it is still on the
     # panel when the last frame is taken rather than handing it back early and
     # recording the home screen.
+    # Given two goes. A reader that has just handed the panel back is
+    # restarting, and a start that arrives during that restart is refused
+    # through no fault of the application. That is how the launcher, which
+    # happened to be first in the list, missed the only run of this script
+    # that had ever been made.
     if ! "$KOBO" present "$app" --device "$DEVICE" --seconds $((SECONDS_EACH + 20)); then
-        echo "could not start $app; moving on" >&2
-        FAILED="$FAILED $app"
-        continue
+        echo "could not start $app; waiting for the reader and trying once more" >&2
+        sleep 15
+        if ! "$KOBO" present "$app" --device "$DEVICE" --seconds $((SECONDS_EACH + 20)); then
+            echo "could not start $app; moving on" >&2
+            FAILED="$FAILED $app"
+            continue
+        fi
     fi
     sleep 3
 
