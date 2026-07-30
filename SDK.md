@@ -51,12 +51,30 @@ write is gated on an exact hardware match, so another reader is refused rather
 than guessed at, but nobody can promise your device will be fine. Do not run it
 on a reader you cannot afford to lose. If you want to add another model, that
 is a pull request this project would genuinely welcome; open an issue first so
-the profile shape can be agreed.
+the profile shape can be agreed. [Porting to another
+Kobo](README.md#porting-to-another-kobo) sets out what is actually involved.
 
 Six steps from nothing to a tile on the reader's launcher.
 
-**1. Make the crate.** Applications live in `examples/`. Copy the smallest one
-as a starting point:
+**1. Make the crate.** There are two starting points, and which you want
+depends on where it is going.
+
+To try something quickly, outside the workspace, install the CLI once and use
+it from anywhere:
+
+```sh
+cargo install --path crates/kobo-cli
+kobo new my-app && cd my-app && kobo dev
+```
+
+That writes `examples/hello` verbatim: a working application with a screen,
+two buttons, a battery reading and two passing tests. It runs in the simulator
+immediately. It cannot be packaged or given a launcher tile, because it is not
+a workspace member. (`cargo run -p kobo-cli` only works from inside this
+repository, which is why the CLI goes on your PATH for this route.)
+
+For something you intend to put on a reader, start in `examples/` instead.
+Copy the smallest application as a base:
 
 ```sh
 cp -r examples/todo examples/myapp
