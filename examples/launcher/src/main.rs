@@ -16,8 +16,7 @@
 //! exactly where the reliability is wanted.
 
 use kobo_sdk::{
-    action_id, ActionId, Context, Glyph, KoboApp, PictureHandle, RowLead, ScreenBuilder, Tile,
-    TilePicture, TileShape, TileState,
+    action_id, ActionId, Context, Glyph, KoboApp, ScreenBuilder, Tile, TileShape, TileState,
 };
 use std::process::ExitCode;
 
@@ -162,11 +161,6 @@ fn opening(name: &str) -> String {
     format!("open-{name}")
 }
 
-/// The way back into the book, as opposed to the utilitarian control that also
-/// returns to the reader. Kept apart from that control's action so the picture
-/// row and the pinned bar cannot be mistaken for each other by a rename.
-const CONTINUE: &str = "continue";
-
 #[derive(Default)]
 struct Launcher {
     view: View,
@@ -201,39 +195,12 @@ impl Launcher {
     /// a Sage, and an application that picked a number would be wrong on every
     /// panel but one.
     fn pages(context: &Context) -> Vec<Vec<usize>> {
-        // Measured under the "Continue reading" band rather than guessed at.
-        // The band is one finger-high row and a cell is a square several times
-        // taller, so the obvious guess -- surrender a whole grid row -- threw
-        // away three applications and left a hand's breadth of blank panel
-        // under the grid.
-        let pages =
-            context.paginate_tiles_under(ENTRIES.len(), TileShape::Square, true, &Self::band());
+        let pages = context.paginate_tiles(ENTRIES.len(), TileShape::Square, true);
         if pages.is_empty() {
             vec![Vec::new()]
         } else {
             pages
         }
-    }
-
-    /// The way back into the book, on its own, so it can be measured.
-    fn band() -> kobo_sdk::Screen {
-        ScreenBuilder::new("launcher")
-            .rows([Self::continue_row()])
-            .build()
-    }
-
-    /// A cover would belong here, but the launcher is not the reader and has
-    /// no cover to show, so the lead falls back to a book mark -- honest about
-    /// not knowing the title rather than inventing one. It hands the panel
-    /// back to the reader, which is the only thing on this device that knows
-    /// where the owner stopped.
-    fn continue_row() -> (&'static str, &'static str, &'static str, RowLead) {
-        (
-            CONTINUE,
-            "Continue reading",
-            "Pick up where you left off in the Kobo reader.",
-            RowLead::Picture(TilePicture::new(PictureHandle(0), 1, 1), Glyph::Book),
-        )
     }
 
     /// The home screen: a grid of icons and names, and nothing else.
@@ -264,8 +231,6 @@ impl Launcher {
         };
         let screen = ScreenBuilder::new("launcher")
             .top_bar(title)
-            // The way back into the book, above the catalogue rather than in it.
-            .rows([Self::continue_row()])
             .tile_grid(
                 TileShape::Square,
                 showing.iter().map(|&index| {
@@ -393,7 +358,7 @@ impl KoboApp for Launcher {
             self.show(context);
             return;
         }
-        if action == action_id("reader") || action == action_id(CONTINUE) {
+        if action == action_id("reader") {
             self.view = View::Leaving;
             // The screen is painted before leaving so the panel explains the
             // wait. E Ink holds the last image at zero power, so this costs one
@@ -433,7 +398,7 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{opening, Launcher, View, CONTINUE, ENTRIES};
+    use super::{opening, Launcher, View, ENTRIES};
     use kobo_sdk::{action_id, AppRunner, Command, Lifecycle};
     use kobo_ui::{
         Chrome, DisplayMetrics, LayoutKind, Node, TextScale, TileState, CLARA_BW_METRICS,
@@ -721,31 +686,6 @@ mod tests {
                 .iter()
                 .any(|node| matches!(node, Node::TileGrid { .. })),
             "the list came back without any entries on it"
-        );
-    }
-
-    /// The defect this test exists for shipped: the way back to the reader was
-    /// drawn from y=1335 to y=1453 on a panel 1448 pixels tall, so its bottom
-    /// five pixels (and any descender in the label) were clipped by the edge
-    /// of the screen. Nothing failed; the renderer simply stops at the panel.
-    /// The way back into the book sits above the catalogue and, like the
-    /// pinned control, hands the panel to the reader -- the only thing on the
-    /// device that remembers the page. It is a separate action from that
-    /// control so a rename of one cannot silently repoint the other.
-    #[test]
-    fn continue_reading_returns_to_the_reader() {
-        let mut runner = AppRunner::new(Launcher::default());
-        runner.start();
-        let commands = runner.action(action_id(CONTINUE));
-        assert!(
-            matches!(runner.app().view, View::Leaving),
-            "continue reading did not begin leaving for the reader"
-        );
-        assert!(
-            commands
-                .iter()
-                .any(|command| matches!(command, Command::Exit)),
-            "continue reading did not hand the session back"
         );
     }
 
