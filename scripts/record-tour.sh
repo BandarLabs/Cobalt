@@ -1,41 +1,59 @@
 #!/bin/sh
 #
-# Records a walk through every application, driven from the launcher the way
+# Records one continuous tour of Cobalt, driven from the launcher the way
 # somebody holding the reader would drive it.
 #
-# The companion to `record-apps.sh`, which starts each application on its own.
-# This one never does that. It presents the launcher once and then taps its way
-# in and out of every tile, so what comes out is the thing that actually has to
-# work: the launcher, the application, the way back, and the launcher again.
-# A tap that lands on the wrong tile, a back control that is missing, or a
-# screen that flashes through a wrong state on the way home all show up here
-# and in none of the still screenshots.
+# usage: scripts/record-tour.sh --device IP [--out DIR] [--seconds N]
+#                               [--fps F] [--speed X]
 #
-# Two kinds of output, because both are wanted. Each application gets its own
-# clip under its own name, and they are concatenated into one tour at the end.
+# # Why one recording rather than one clip per application
 #
-# Read-only on the device. `kobo record` opens the framebuffer for reading and
-# never grabs, refreshes or writes it. The taps are real, so the applications
-# do move; nothing else on the reader is touched.
+# This used to take the panel for each application in turn. That meant a reader
+# restart between every one of them, and the reader spent longer restarting
+# than running anything. It also cut out the part worth showing: applications
+# are started from the launcher and come back to it, and a set of clips with
+# the launcher removed shows a pile of unrelated programs rather than a system.
 #
-# usage: scripts/record-tour.sh --device IP [--out DIR] [--fps F]
+# The launcher is the title card, too. A tour that announces each application
+# on a slide before showing it is a slide deck. A tour that shows a finger
+# landing on a tile and the application opening is the thing itself.
+#
+# # Why the order is what it is
+#
+# Impressive first, because this is watched by somebody deciding whether to
+# keep watching. A reader that researches a subject, writes a book about it and
+# reads it aloud is the strongest thing here, so it opens. Then sixty thousand
+# books with their covers, then the news. The applications that exist to prove
+# one narrow point are at the end, where they belong.
+#
+# # Why the taps are one invocation
+#
+# `kobo tap` takes a whole sequence and times it on the device. Sent one at a
+# time, each tap costs a cross-compile, an upload of the tap binary and a
+# checksum on the reader's own processor, so every wait was the wait asked for
+# plus however long that took, and a tap meant to land while a screen was up
+# landed after it had gone.
+#
+# Read-only apart from the taps themselves. `kobo record` opens the framebuffer
+# for reading and never grabs, refreshes or writes it.
 
 set -eu
 
 DEVICE=""
 OUT=""
+SECONDS_TOTAL=300
 FPS=2
+SPEED=3
 
-usage() {
-    sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'
-    exit 2
-}
+usage() { sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --device) DEVICE="${2:?--device needs an address}"; shift 2 ;;
         --out) OUT="${2:?--out needs a directory}"; shift 2 ;;
+        --seconds) SECONDS_TOTAL="${2:?--seconds needs a count}"; shift 2 ;;
         --fps) FPS="${2:?--fps needs a rate}"; shift 2 ;;
+        --speed) SPEED="${2:?--speed needs a multiplier}"; shift 2 ;;
         -h|--help) usage ;;
         *) echo "unknown option '$1'" >&2; usage ;;
     esac
@@ -46,63 +64,48 @@ done
 cd "$(dirname "$0")/.."
 [ -n "$OUT" ] || OUT="target/tour/$(date +%Y-%m-%d-%H%M%S)"
 
-# The panel is 1072x1448. Tiles sit on a three by two grid and the launcher
-# pages between two screens of them.
-BACK="96,110"
-NEXT_PAGE="890,1380"
-PREV_PAGE="177,1380"
+# Every point below was read off a screenshot of this panel at 1072x1448.
+# The launcher pages nine tiles then three, and offers a direction only where
+# there is a page in it, so the bottom bar has two controls on each page and
+# not three. All of these moved when the "Continue reading" band came out.
+L_AUDIOBOOKS="201,352";  L_SETTINGS="536,352";   L_GUTENBIRD="869,352"
+L_TERMINAL="201,727";    L_COMPONENTS="536,727"; L_MAGNET="869,727"
+L_TICTACTOE="201,1102";  L_BRIEF="536,1102";     L_TODO="869,1102"
+L_MORE="800,1376";       L_PREVIOUS="267,1376"
+L_CHAT="201,352";        L_HN="536,352";         L_FEEDS="869,352"
 
-# Page one, then page two.
-T_AUDIOBOOK="202,510"; T_SETTINGS="536,510"; T_GUTENBIRD="869,510"
-T_TERMINAL="202,880";  T_GALLERY="536,880";  T_MAGNET="869,880"
-T_TICTACTOE="202,510"; T_BRIEF="536,510";    T_TODO="869,510"
-T_CHAT="202,880";      T_HN="536,880";       T_RSS="869,880"
+# The way out of an application, which is the way back into the launcher.
+BACK="95,110"
 
-# What to do once inside, as "delay:x,y" pairs. The delay is seconds to wait
-# before the tap, counted from the previous one, which leaves room for a fetch
-# to come back before the next tap lands on a screen that has moved underneath.
-# Every sequence ends back at the launcher so the next one can start there.
-steps_for() {
-    case "$1" in
-        settings)   echo "4:536,770 5:$BACK 3:536,525 5:$BACK 3:$BACK" ;;
-        audiobook)  echo "4:530,250 7:$BACK 3:$BACK" ;;
-        magnet)     echo "12:$BACK" ;;
-        gallery)    echo "4:536,400 4:536,1380 4:$BACK 3:$BACK" ;;
-        terminal)   echo "5:400,1380 3:300,1100 3:500,1100 4:$BACK 3:$BACK" ;;
-        chat)       echo "5:400,1380 3:300,1100 3:500,1100 4:$BACK 3:$BACK" ;;
-        tictactoe)  echo "4:536,400 3:400,700 3:670,700 3:536,900 4:$BACK" ;;
-        hn|rss|brief|gutenbird|todo)
-                    echo "7:536,400 7:$BACK 4:$BACK" ;;
-        *)          echo "6:536,400 5:$BACK 3:$BACK" ;;
-    esac
-}
+# Waits are milliseconds before each tap. An e-ink refresh is most of a second,
+# so these are tight where the reader is only drawing and generous at the two
+# places where it talks to the internet.
+TOUR="
+2500:$L_AUDIOBOOKS 3000:530,250 4000:536,884 7000:866,884 3000:536,884
+3000:$BACK 2500:$BACK
 
-# How long each clip runs. Long enough to cover its own taps plus the fetch
-# they are waiting on, and no longer, because a tour nobody watches to the end
-# proves nothing.
-seconds_for() {
-    case "$1" in
-        hn|rss|brief|gutenbird) echo 26 ;;
-        settings|terminal|chat) echo 24 ;;
-        audiobook|gallery)      echo 20 ;;
-        magnet)                 echo 16 ;;
-        *)                      echo 18 ;;
-    esac
-}
+3000:$L_GUTENBIRD 7000:201,400 6000:536,1376 4000:$BACK 2500:$BACK
 
-tile_for() {
-    case "$1" in
-        audiobook) echo "$T_AUDIOBOOK" ;; settings) echo "$T_SETTINGS" ;;
-        gutenbird) echo "$T_GUTENBIRD" ;; terminal) echo "$T_TERMINAL" ;;
-        gallery)   echo "$T_GALLERY" ;;   magnet)   echo "$T_MAGNET" ;;
-        tictactoe) echo "$T_TICTACTOE" ;; brief)    echo "$T_BRIEF" ;;
-        todo)      echo "$T_TODO" ;;      chat)     echo "$T_CHAT" ;;
-        hn)        echo "$T_HN" ;;        rss)      echo "$T_RSS" ;;
-    esac
-}
+2500:$L_MORE
 
-PAGE_ONE="settings gutenbird terminal gallery magnet audiobook"
-PAGE_TWO="tictactoe brief todo chat hn rss"
+2500:$L_HN 8000:536,300 7000:$BACK 3000:$BACK
+
+2500:$L_FEEDS 5000:536,300 6000:536,300 5000:$BACK 3000:$BACK 2500:$BACK
+
+2500:$L_PREVIOUS
+
+2500:$L_SETTINGS 3000:536,770 4000:$BACK 3000:536,525 4000:$BACK 2500:$BACK
+
+2500:$L_TERMINAL 3000:400,1380 3000:300,1100 2000:500,1100 3000:$BACK
+
+2500:$L_COMPONENTS 3000:536,300 3000:800,300 3000:$BACK
+
+2500:$L_BRIEF 8000:$BACK
+
+2500:$L_TODO 3000:536,755 3000:$BACK 2500:$BACK
+
+2500:$L_TICTACTOE 2000:400,700 2000:670,700 2000:536,900 2500:$BACK
+"
 
 echo "building the CLI with device-write, for taps"
 cargo build --release -q -p kobo-cli --features device-write
@@ -116,80 +119,42 @@ echo "holding $DEVICE awake"
 
 mkdir -p "$OUT"
 
-# One launcher for the whole tour. Everything below is a tap inside it.
+# One launcher for the whole tour, given longer than the recording so it is
+# still what is on the panel when the last frame is taken.
 echo "presenting the launcher"
-"$KOBO" present launcher --device "$DEVICE" --seconds 1800 >/dev/null
+if ! "$KOBO" present launcher --device "$DEVICE" --seconds $((SECONDS_TOTAL + 60)) >/dev/null; then
+    echo "the reader is probably still restarting; trying once more" >&2
+    sleep 15
+    "$KOBO" present launcher --device "$DEVICE" --seconds $((SECONDS_TOTAL + 60)) >/dev/null
+fi
 sleep 4
 
-CLIPS=""
-FAILED=""
+echo "recording ${SECONDS_TOTAL}s at ${FPS}fps while the tour runs"
+"$KOBO" record --device "$DEVICE" --seconds "$SECONDS_TOTAL" --fps "$FPS" --out "$OUT/tour" &
+recorder=$!
 
-record_one() {
-    name="$1"; tile="$2"; secs="$3"
-    echo
-    echo "=== $name ==="
-    "$KOBO" record --device "$DEVICE" --seconds "$secs" --fps "$FPS" \
-        --out "$OUT/$name" >/dev/null 2>&1 &
-    recorder=$!
-    sleep 2
-    "$KOBO" tap --device "$DEVICE" "$tile" >/dev/null 2>&1 || true
-    for step in $(steps_for "$name"); do
-        sleep "${step%%:*}"
-        "$KOBO" tap --device "$DEVICE" "${step#*:}" >/dev/null 2>&1 || true
-    done
-    if wait "$recorder" && [ -f "$OUT/$name/recording.mp4" ]; then
-        CLIPS="$CLIPS $name"
-    else
-        echo "recording $name failed" >&2
-        FAILED="$FAILED $name"
-    fi
-}
+# One upload for the whole tour. The waits are honoured on the device, so this
+# returns only once the last tap has been made.
+# shellcheck disable=SC2086
+"$KOBO" tap --device "$DEVICE" $TOUR ||
+    echo "the tour stopped early; what was recorded is still worth looking at" >&2
 
-# The launcher itself first, paging between its two screens, so the tour opens
-# on the thing every other clip starts from.
-record_one launcher "$NEXT_PAGE" 14
-"$KOBO" tap --device "$DEVICE" "$PREV_PAGE" >/dev/null 2>&1 || true
-sleep 3
-
-for app in $PAGE_ONE; do
-    record_one "$app" "$(tile_for "$app")" "$(seconds_for "$app")"
-    sleep 2
-done
-
-echo
-echo "turning to the second page of tiles"
-"$KOBO" tap --device "$DEVICE" "$NEXT_PAGE" >/dev/null 2>&1 || true
-sleep 3
-
-for app in $PAGE_TWO; do
-    record_one "$app" "$(tile_for "$app")" "$(seconds_for "$app")"
-    "$KOBO" tap --device "$DEVICE" "$NEXT_PAGE" >/dev/null 2>&1 || true
-    sleep 2
-done
+wait "$recorder" || { echo "the recording failed" >&2; exit 1; }
+"$KOBO" stop --device "$DEVICE" >/dev/null 2>&1 || true
 
 # Handed back deliberately. A reader left with a wake lock does not sleep, and
 # the owner finds a flat battery in the morning.
-echo
 echo "releasing the wake lock"
-"$KOBO" stop --device "$DEVICE" >/dev/null 2>&1 || true
 "$KOBO" session --device "$DEVICE" --keep-awake off >/dev/null 2>&1 || true
 
-# The combined cut. Concatenating the encoded clips rather than re-encoding
-# from frames keeps this fast and lossless, and every clip came out of the same
-# encoder at the same size so the streams are compatible.
-if command -v ffmpeg >/dev/null 2>&1 && [ -n "$CLIPS" ]; then
-    echo "assembling the combined tour"
-    : > "$OUT/clips.txt"
-    for name in $CLIPS; do
-        echo "file '$(cd "$OUT/$name" && pwd)/recording.mp4'" >> "$OUT/clips.txt"
-    done
-    ffmpeg -nostdin -y -loglevel error -f concat -safe 0 -i "$OUT/clips.txt" \
-        -c copy "$OUT/cobalt-tour.mp4" && echo "tour: $OUT/cobalt-tour.mp4"
-fi
-
 echo
-echo "clips are in $OUT"
-if [ -n "$FAILED" ]; then
-    echo "these did not record:$FAILED" >&2
-    exit 1
+echo "the tour is in $OUT/tour"
+if [ "$SPEED" != "1" ] && command -v ffmpeg >/dev/null 2>&1 && [ -f "$OUT/tour/recording.mp4" ]; then
+    # E-ink is honestly slow and honest footage of it is slow to watch. Every
+    # frame and its order are real; only the clock is compressed.
+    ffmpeg -nostdin -y -loglevel error -i "$OUT/tour/recording.mp4" \
+        -filter:v "setpts=PTS/$SPEED" -an "$OUT/cobalt-tour.mp4"
+    echo "and at ${SPEED}x in $OUT/cobalt-tour.mp4"
+    ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$OUT/cobalt-tour.mp4" |
+        awk '{printf "it runs for %d:%02d\n", $1/60, $1%60}'
 fi
