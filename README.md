@@ -85,7 +85,12 @@ the device, and nothing written outside the partition your books live on.
 
 - A **Kobo Clara BW**, charged. The reader's own installer is gated on battery
   level and fails silently, so charge it first.
-- A **USB cable**, and the reader showing *Connected* when you plug it in.
+- A **USB cable** that carries data. Charge-only cables are common and they
+  look identical; if the reader charges but never offers to connect, suspect
+  the cable before anything else.
+- **An internet connection**, and **`curl`** on your path. Setup downloads
+  NickelMenu v0.6.0 (the one piece that cannot live on the book partition) and
+  checks it against a recorded SHA-256.
 - [**Rust**](https://rustup.rs), stable.
 - An **ARM cross-compiler**, because the TLS stack carries C and assembly that
   is built from source. Everything else is linked by `rust-lld`, which the Rust
@@ -109,9 +114,22 @@ cd Cobalt
 rustup target add armv7-unknown-linux-musleabihf
 ```
 
-### 2. Plug the reader in and run setup
+### 2. Connect the reader over USB
 
-Wait for the reader to say *Connected*, then:
+This is the step people get stuck on, so in full:
+
+1. Plug the reader into your computer.
+2. **The reader asks. Answer it.** A prompt appears on the reader's own screen
+   offering to connect to the computer. Tap **Connect**. Until you do, the
+   reader charges and nothing is mounted, and setup will report that it cannot
+   find a volume.
+3. Wait for a volume named **`KOBOeReader`** to appear on your computer. That
+   volume is the reader's book partition, and it is the only thing Cobalt
+   writes to.
+
+Leave it mounted. Setup ejects it for you when it is finished.
+
+### 3. Run setup
 
 ```sh
 cargo run -p kobo-cli -- setup
@@ -120,9 +138,11 @@ cargo run -p kobo-cli -- setup
 That one command builds every device-side program, finds the mounted reader,
 copies Cobalt into `.adds/cobalt`, reads every file back to prove it arrived
 intact, sets the reader's own `ForceWifiOn` and `AutoSleepMinutes` settings,
-adds a **Cobalt** entry to the reader's menu, and ejects. It builds before it
-writes anything, so a build that fails leaves the reader untouched. It leaves
-the firmware's root SSH server disabled.
+stages the **Cobalt** menu entry, and ejects. It builds before it writes
+anything, so a build that fails leaves the reader untouched. It leaves the
+firmware's root SSH server disabled.
+
+The first run takes a while, because it builds the whole workspace for ARM.
 
 The binaries are statically linked, so nothing has to be installed on the
 reader to support them.
@@ -130,26 +150,46 @@ reader to support them.
 Not sure? Add `--dry-run` and it prints every step it would take and touches
 nothing.
 
-### 3. Restart the reader
+### 4. Restart the reader
 
 Hold the power button until it powers off, then turn it back on. This is the
 one step that has to happen on the device, and it is needed because the menu
 entry is loaded at startup.
 
-### 4. Open Cobalt
+**Then leave it alone for a minute.** NickelMenu moves its own plugin aside
+before it hooks anything and only puts it back once it has started cleanly, so
+a reader restarted again immediately comes up with the menu entry gone. This is
+its failsafe working as designed, and it is the reason the entry cannot leave
+you with an unbootable reader.
 
-Tap the menu on the reader's home screen and choose **Cobalt**. The launcher
-appears, and every application ships with it.
+### 5. Open Cobalt
 
-To leave, use the way back at the bottom of the launcher. The stock reader
-comes back. So does a reboot, always, from anywhere.
+On this firmware the entry is in the menu at the **bottom right** of the home
+screen. (NickelMenu puts its items in the top-left menu on old firmware and in
+the bottom-right one from 4.23.15505 onward, and the Clara BW is well past
+that.) Tap it and choose **Cobalt**.
+
+The launcher appears, and every application ships with it.
+
+To leave, use **Return to Kobo reader** at the bottom of the launcher. The
+stock reader comes back. So does a reboot, always, from anywhere.
 
 ### If something goes wrong
 
-- **There is no Cobalt entry after the restart.** The menu entry is the one
-  piece that arrives through the reader's own installer, and that installer is
-  gated on battery level and fails silently. Charge the reader properly and
-  restart it again. Cobalt itself is already on the device either way.
+- **Setup says it cannot find a reader.** The reader is plugged in but not
+  connected. Look at the reader's screen and tap **Connect**, or try a
+  different cable.
+- **There is no Cobalt entry after the restart, the first time.** The menu
+  entry is the one piece that arrives through the reader's own installer, and
+  that installer is gated on battery level and fails silently. Charge the
+  reader properly and restart it again. Cobalt itself is already on the device
+  either way.
+- **The Cobalt entry was there and then vanished.** That is NickelMenu's
+  failsafe, which reads any unexpected restart of the reader software as a
+  crash and disables itself rather than risk a boot loop. You can confirm it:
+  the plugin is left beside itself as `libnm.so.failsafe`. Run
+  `cargo run -p kobo-cli -- setup` again and restart, and this time let the
+  reader sit on its home screen for a minute before touching it.
 - **Setup refused to do something.** Read what it printed. It refuses rather
   than guesses, and it names the reason: an unrecognised volume, a menu slot
   another mod is already using, or a file that did not read back byte for byte.
