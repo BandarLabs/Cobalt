@@ -28,6 +28,7 @@
 //! Only a file with no readable text at all is refused.
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 
 use kobo_html::{attribute, decode_entities, element_name};
 
@@ -392,6 +393,225 @@ fn text_of(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
+/// One chapter to write, as a title and its prose.
+///
+/// The body is plain text in which a blank line starts a new paragraph, which
+/// is how prose arrives from a person typing and from a language model, and
+/// spares every caller from having to hand-write XHTML.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Chapter {
+    pub title: String,
+    pub body: String,
+}
+
+/// Writes an EPUB.
+///
+/// The layout is deliberately the plainest one that is still a real EPUB:
+/// EPUB 2 with an NCX, because that is what the widest range of readers will
+/// open, including the firmware's own. A generated book has no cover image, no
+/// stylesheet and no scripts, and inventing them would only add files that
+/// could be wrong.
+///
+/// Two details of the container format are not optional and are easy to get
+/// wrong. `mimetype` must be the archive's first member and must be stored
+/// rather than deflated, which is why it is pushed first and why
+/// [`zip::stored`] is the right writer: it stores every member and preserves
+/// the order it is given.
+///
+/// The identifier is derived from the title rather than randomly generated, so
+/// that writing the same book twice produces the same bytes. A reproducible
+/// output is worth more here than a globally unique one, and no random source
+/// is available to this crate anyway.
+///
+/// # Errors
+///
+/// Returns [`zip::Fault`] when the archive cannot be represented, which for a
+/// book of text means it is far past four gigabytes.
+pub fn write(
+    title: &str,
+    author: Option<&str>,
+    chapters: &[Chapter],
+) -> Result<Vec<u8>, zip::Fault> {
+    let identifier = format!("urn:cobalt:{}", slug(title));
+    let mut manifest = String::new();
+    let mut spine = String::new();
+    let mut nav = String::new();
+    let mut files: Vec<(String, Vec<u8>)> = Vec::with_capacity(chapters.len());
+    for (index, chapter) in chapters.iter().enumerate() {
+        let id = format!("ch{}", index + 1);
+        let href = format!("{id}.xhtml");
+        let _ = writeln!(
+            manifest,
+            "    <item id=\"{id}\" href=\"{href}\" media-type=\"application/xhtml+xml\"/>"
+        );
+        let _ = writeln!(spine, "    <itemref idref=\"{id}\"/>");
+        let _ = write!(
+            nav,
+            "    <navPoint id=\"nav-{id}\" playOrder=\"{}\">\n      \
+             <navLabel><text>{}</text></navLabel>\n      \
+             <content src=\"{href}\"/>\n    </navPoint>\n",
+            index + 1,
+            escape(&chapter.title),
+        );
+        files.push((
+            format!("OEBPS/{href}"),
+            chapter_xhtml(&chapter.title, &chapter.body).into_bytes(),
+        ));
+    }
+
+    // mimetype first, and stored, or it is not an EPUB whatever else is right.
+    let mut members = vec![
+        ("mimetype".to_owned(), b"application/epub+zip".to_vec()),
+        (CONTAINER.to_owned(), container_xml().into_bytes()),
+        (
+            "OEBPS/content.opf".to_owned(),
+            package_opf(title, author, &identifier, &manifest, &spine).into_bytes(),
+        ),
+        (
+            "OEBPS/toc.ncx".to_owned(),
+            toc_ncx(title, &identifier, &nav).into_bytes(),
+        ),
+    ];
+    members.append(&mut files);
+    zip::stored(&members)
+}
+
+fn container_xml() -> String {
+    String::from(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         <container version=\"1.0\" \
+         xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\">\n  \
+         <rootfiles>\n    \
+         <rootfile full-path=\"OEBPS/content.opf\" \
+         media-type=\"application/oebps-package+xml\"/>\n  \
+         </rootfiles>\n</container>\n"
+    )
+}
+
+fn package_opf(
+    title: &str,
+    author: Option<&str>,
+    identifier: &str,
+    manifest: &str,
+    spine: &str,
+) -> String {
+    let creator = author.map_or_else(String::new, |author| {
+        format!(
+            "    <dc:creator opf:role=\"aut\">{}</dc:creator>\n",
+            escape(author)
+        )
+    });
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         <package xmlns=\"http://www.idpf.org/2007/opf\" version=\"2.0\" \
+         unique-identifier=\"bookid\">\n  \
+         <metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\" \
+         xmlns:opf=\"http://www.idpf.org/2007/opf\">\n    \
+         <dc:title>{}</dc:title>\n{creator}    \
+         <dc:language>en</dc:language>\n    \
+         <dc:identifier id=\"bookid\">{}</dc:identifier>\n  \
+         </metadata>\n  <manifest>\n    \
+         <item id=\"ncx\" href=\"toc.ncx\" media-type=\"application/x-dtbncx+xml\"/>\n\
+         {manifest}  </manifest>\n  <spine toc=\"ncx\">\n{spine}  </spine>\n</package>\n",
+        escape(title),
+        escape(identifier),
+    )
+}
+
+fn toc_ncx(title: &str, identifier: &str, nav: &str) -> String {
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         <ncx xmlns=\"http://www.daisy.org/z3986/2005/ncx/\" version=\"2005-1\">\n  \
+         <head>\n    <meta name=\"dtb:uid\" content=\"{}\"/>\n    \
+         <meta name=\"dtb:depth\" content=\"1\"/>\n    \
+         <meta name=\"dtb:totalPageCount\" content=\"0\"/>\n    \
+         <meta name=\"dtb:maxPageNumber\" content=\"0\"/>\n  </head>\n  \
+         <docTitle><text>{}</text></docTitle>\n  <navMap>\n{nav}  </navMap>\n</ncx>\n",
+        escape(identifier),
+        escape(title),
+    )
+}
+
+fn chapter_xhtml(title: &str, body: &str) -> String {
+    let mut prose = String::new();
+    for paragraph in paragraphs(body) {
+        let _ = writeln!(prose, "<p>{}</p>", escape(&paragraph));
+    }
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         <!DOCTYPE html>\n\
+         <html xmlns=\"http://www.w3.org/1999/xhtml\">\n\
+         <head><title>{0}</title></head>\n\
+         <body>\n<h1>{0}</h1>\n{prose}</body>\n</html>\n",
+        escape(title),
+    )
+}
+
+/// Splits prose into paragraphs on blank lines.
+fn paragraphs(body: &str) -> Vec<String> {
+    let normalised = crate::normalise_breaks(body);
+    let mut out = Vec::new();
+    let mut current = String::new();
+    for line in normalised.split('\n') {
+        if line.trim().is_empty() {
+            if !current.trim().is_empty() {
+                out.push(current.trim().to_owned());
+            }
+            current.clear();
+        } else {
+            if !current.is_empty() {
+                current.push(' ');
+            }
+            current.push_str(line.trim());
+        }
+    }
+    if !current.trim().is_empty() {
+        out.push(current.trim().to_owned());
+    }
+    out
+}
+
+/// Escapes text for use in XML content or in a double-quoted attribute.
+///
+/// All five characters are escaped regardless of position so that one function
+/// is safe in both places. Control characters that XML forbids outright are
+/// dropped rather than escaped, because there is no spelling of them that a
+/// conforming parser will accept.
+fn escape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for character in text.chars() {
+        match character {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            '\t' | '\n' => out.push(character),
+            control if control < ' ' || control == '\u{7f}' => {}
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// A lowercase identifier safe to put in a URN.
+fn slug(title: &str) -> String {
+    let mut out = String::new();
+    for character in title.chars() {
+        if character.is_ascii_alphanumeric() {
+            out.extend(character.to_lowercase());
+        } else if !out.ends_with('-') && !out.is_empty() {
+            out.push('-');
+        }
+    }
+    let trimmed = out.trim_end_matches('-');
+    if trimmed.is_empty() {
+        "book".to_owned()
+    } else {
+        trimmed.to_owned()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -724,5 +944,108 @@ mod tests {
             let _ = root_file(xml);
             let _ = read_package(xml);
         }
+    }
+
+    fn chapters() -> Vec<Chapter> {
+        vec![
+            Chapter {
+                title: "The Sea & the Sky".to_owned(),
+                body: "First paragraph.\n\nSecond <paragraph>.".to_owned(),
+            },
+            Chapter {
+                title: "Tides".to_owned(),
+                body: "Only one here.".to_owned(),
+            },
+        ]
+    }
+
+    /// The whole point of the writer: what it produces, the parser beside it
+    /// must be able to read. A writer verified only against its own expected
+    /// bytes can be confidently, consistently wrong.
+    #[test]
+    fn a_written_book_reads_back_as_the_same_book() {
+        let bytes = write("A History of the Moon", Some("Cobalt Audio"), &chapters())
+            .expect("a small book fits a zip");
+        let document = parse(&bytes).expect("what we wrote must parse");
+
+        assert_eq!(document.title.as_deref(), Some("A History of the Moon"));
+        assert_eq!(document.author.as_deref(), Some("Cobalt Audio"));
+
+        // Both chapter titles survive as headings that "next chapter" can find.
+        let titles: Vec<&str> = document
+            .parts()
+            .iter()
+            .filter_map(|start| document.part_title(*start))
+            .collect();
+        assert_eq!(titles, ["The Sea & the Sky", "Tides"]);
+
+        // And the prose, with the markup-looking text intact rather than eaten.
+        let prose: Vec<&str> = document
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                Block::Paragraph(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            prose,
+            ["First paragraph.", "Second <paragraph>.", "Only one here."]
+        );
+    }
+
+    /// Sniffing decides which parser runs, so a written book must be
+    /// recognisable as an EPUB from its bytes and not only from its name.
+    #[test]
+    fn a_written_book_is_recognised_as_an_epub() {
+        let bytes = write("Book", None, &chapters()).expect("a small book fits a zip");
+        assert_eq!(crate::sniff("book.epub", &bytes), crate::Format::Epub);
+        assert_eq!(crate::sniff("unnamed", &bytes), crate::Format::Epub);
+        assert!(crate::read("book.epub", &bytes).is_ok());
+    }
+
+    /// `mimetype` must be the first member and stored uncompressed. Readers
+    /// that check this refuse the file outright, and the check is invisible in
+    /// any test that only round-trips through our own parser.
+    #[test]
+    fn the_mimetype_is_first_and_stored() {
+        let bytes = write("Book", None, &chapters()).expect("a small book fits a zip");
+        assert!(
+            bytes[30..].starts_with(b"mimetypeapplication/epub+zip"),
+            "mimetype must be the first member, named and stored with no extras"
+        );
+        // Offset 8 of a local header is the compression method. 0 is stored.
+        assert_eq!(u16::from_le_bytes([bytes[8], bytes[9]]), 0);
+        let archive = Archive::open(&bytes).expect("a readable archive");
+        assert_eq!(
+            archive.read("mimetype").as_deref(),
+            Ok(&b"application/epub+zip"[..])
+        );
+    }
+
+    /// A book with no author must not claim one, and must still parse.
+    #[test]
+    fn an_author_is_left_out_rather_than_left_empty() {
+        let bytes = write("Book", None, &chapters()).expect("a small book fits a zip");
+        let document = parse(&bytes).expect("what we wrote must parse");
+        assert_eq!(document.author, None);
+    }
+
+    #[test]
+    fn a_title_that_is_all_punctuation_still_gets_an_identifier() {
+        assert_eq!(slug("Moon: Past & Future"), "moon-past-future");
+        assert_eq!(slug("???"), "book");
+        assert_eq!(slug(""), "book");
+    }
+
+    /// Prose arrives as plain text, so blank lines are the only paragraph
+    /// mark there is, and a single newline inside a paragraph is a wrap.
+    #[test]
+    fn blank_lines_separate_paragraphs_and_single_ones_do_not() {
+        assert_eq!(
+            paragraphs("one\nstill one\r\n\r\ntwo\n\n\n\nthree\n"),
+            ["one still one", "two", "three"]
+        );
+        assert!(paragraphs("   \n\n  ").is_empty());
     }
 }
