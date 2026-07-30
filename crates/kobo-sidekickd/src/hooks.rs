@@ -15,6 +15,7 @@
 
 use crate::agents;
 use crate::http::post_local;
+use crate::quiet;
 use crate::state;
 use std::io::Read;
 use std::time::Duration;
@@ -35,7 +36,14 @@ pub fn run_hook(agent: &str) -> Result<(), String> {
     if std::io::stdin().read_to_string(&mut input).is_err() {
         return Ok(());
     }
-    let ask = ask_from_event(known.id, &input);
+    let (tool, detail) = summarise(&input);
+    // A hook that fires before every tool call would otherwise ring the
+    // reader for every grep and wc the agent runs. Saying nothing leaves the
+    // agent exactly the policy it had before this was installed.
+    if known.every_tool && quiet::is_harmless(&tool, &detail) {
+        return Ok(());
+    }
+    let ask = ask_body(known.id, &tool, &detail);
     let Ok(response) = post_local(state::HOOK_PORT, "/ask", &ask, HOOK_PATIENCE) else {
         return Ok(());
     };
@@ -54,13 +62,13 @@ pub fn run_hook(agent: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Normalises either agent's event into the daemon's `/ask` body.
+/// The tool's name and the one line worth reading about it.
 ///
 /// Codex and Claude Code both send `tool_name` and a `tool_input` object;
 /// for a shell command the interesting part is `tool_input.command`, and for
 /// anything else the whole input serialised again is the honest summary.
 #[must_use]
-pub fn ask_from_event(agent: &str, event: &str) -> String {
+pub fn summarise(event: &str) -> (String, String) {
     let parsed = kobo_json::parse(event).ok();
     let tool = parsed
         .as_ref()
@@ -77,6 +85,11 @@ pub fn ask_from_event(agent: &str, event: &str) -> String {
                 .and_then(kobo_json::Value::as_str)
                 .map_or_else(|| input.to_json(), str::to_owned)
         });
+    (tool, detail)
+}
+
+/// The daemon's `/ask` body.
+fn ask_body(agent: &str, tool: &str, detail: &str) -> String {
     kobo_json::ObjectBuilder::new()
         .set("source", agent)
         .set("tool", tool)
@@ -198,7 +211,12 @@ pub fn list() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ask_from_event, decision_json};
+    use super::{ask_body, decision_json, summarise};
+
+    fn ask_from_event(agent: &str, event: &str) -> String {
+        let (tool, detail) = summarise(event);
+        ask_body(agent, &tool, &detail)
+    }
 
     #[test]
     fn a_codex_shell_request_becomes_an_ask_with_the_command_line() {

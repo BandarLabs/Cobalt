@@ -45,6 +45,16 @@ pub struct Agent {
     pub binaries: &'static [&'static str],
     /// The hook event that means "may I?".
     pub event: &'static str,
+    /// Whether that event fires before every tool call rather than only when
+    /// the agent actually wants permission.
+    ///
+    /// Claude Code's `PreToolUse` fires for everything, so a hook that
+    /// forwarded all of it would ring the reader for every `grep` and
+    /// `wc -l` the agent ran, including the ones it was never going to ask
+    /// about. Codex's `PermissionRequest` fires only when it has a real
+    /// question, so nothing needs filtering there and filtering would in
+    /// fact throw away questions that were meant for us.
+    pub every_tool: bool,
     /// How its configuration file is shaped.
     pub wiring: Wiring,
 }
@@ -58,6 +68,7 @@ pub const AGENTS: &[Agent] = &[
         marker: ".claude",
         binaries: &["claude"],
         event: "PreToolUse",
+        every_tool: true,
         wiring: Wiring::Matcher,
     },
     Agent {
@@ -67,6 +78,7 @@ pub const AGENTS: &[Agent] = &[
         marker: ".codex",
         binaries: &["codex"],
         event: "PermissionRequest",
+        every_tool: false,
         wiring: Wiring::Matcher,
     },
 ];

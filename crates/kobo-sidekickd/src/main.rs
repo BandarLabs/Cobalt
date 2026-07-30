@@ -23,6 +23,7 @@ mod agents;
 mod board;
 mod hooks;
 mod http;
+mod quiet;
 mod server;
 mod state;
 
