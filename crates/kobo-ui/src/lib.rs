@@ -4197,11 +4197,16 @@ fn row_lead_column(metrics: &DisplayMetrics, rows: &[Row]) -> i32 {
 /// gutter was sized to what sits in it. Anything measuring a ranked row has to
 /// ask for it too, or it hands every title less width than it will be drawn
 /// with and wraps headlines that would have fitted on one line.
+///
+/// Measured on the fixed digit advance the ranks are drawn on rather than on
+/// what the face would set them at, because a column measured for a
+/// proportional eleven is nearly twenty pixels too narrow for a tabular one
+/// and the rank spills into the title.
 #[must_use]
 pub fn row_rank_column(metrics: &DisplayMetrics, highest: u16) -> i32 {
     min(
         metrics.touch_target_default(),
-        measure_text(&highest.to_string(), FontSize::Caption).0,
+        figures_width(&highest.to_string(), FontSize::Caption, Face::Text),
     )
 }
 
@@ -10015,19 +10020,17 @@ fn draw_row_lead(
             None => draw_glyph_icon(surface, glyph, rect, clip),
         },
         RowLead::Number(number) => {
-            // Set against the right of its column rather than centred in it.
-            // The text face's digits are proportional, so a one is two thirds
-            // the width of a zero, and centring a mixed column of ranks left
-            // every units digit in a different place. Right aligned they line
-            // up whatever they are, which is what a tabular figure would have
-            // bought if the face had one and the rasteriser applied OpenType
-            // features. It has neither.
+            // Set against the right of its column rather than centred in it,
+            // so that a nine and a ten put their units digit in the same
+            // place. The digits go on the same fixed advance the clock uses,
+            // which is what keeps a column of ranks square down both edges
+            // rather than only the right one.
             let text = number.to_string();
             let size = FontSize::Caption;
-            let (width, _) = measure_text(&text, size);
+            let width = figures_width(&text, size, Face::Text);
             let x = rect.x + max(0, rect.width - width);
             let y = rect.y + (rect.height - size.line_height()) / 2;
-            draw_text(surface, &text, x, y, size, tone::MUTED, clip);
+            draw_figures(surface, &text, x, y, size, Face::Text, tone::MUTED, clip);
         }
     }
 }
@@ -16768,8 +16771,7 @@ mod figure_tests {
         );
     }
 
-    /// The layout, not just the arithmetic: the box the clock claims is the box
-    /// that gets repainted every minute, so it has to be the figure's width and
+    /// The layout, not just the arithmetic: the box the clock claims is the box    /// that gets repainted every minute, so it has to be the figure's width and
     /// it has to be the same width whatever the time is.
     #[test]
     fn the_box_the_clock_claims_does_not_change_as_it_counts() {
@@ -16812,5 +16814,22 @@ mod figure_tests {
             reference.width < CLARA_BW_METRICS.width / 3,
             "the clock is claiming a third of the band it does not draw in"
         );
+    }
+
+    /// A rank is drawn on the fixed advance and measured on it too. Measured
+    /// on the face's own spacing instead, a column sized for a proportional
+    /// eleven is far too narrow for the tabular one that gets drawn, and the
+    /// digits back out of their column into the title beside them.
+    #[test]
+    fn no_rank_is_wider_than_the_column_it_was_measured_for() {
+        for highest in [1_u16, 6, 9, 10, 11, 30, 99, 100, 111] {
+            let column = row_rank_column(&CLARA_BW_METRICS, highest);
+            for rank in 1..=highest {
+                assert!(
+                    figures_width(&rank.to_string(), FontSize::Caption, Face::Text) <= column,
+                    "rank {rank} does not fit the column measured for {highest}"
+                );
+            }
+        }
     }
 }

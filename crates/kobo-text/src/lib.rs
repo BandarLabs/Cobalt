@@ -1531,6 +1531,155 @@ mod tests {
         }
     }
 
+    /// The clock is the only string on the panel that changes while its
+    /// neighbours stay, so the pixel it starts each digit at must not depend
+    /// on what the time is.
+    ///
+    /// Asserted in ink, and here rather than in `kobo-ui`, because the whole
+    /// point is the real face: its digits are proportional (a one is fifteen
+    /// pixels at body size and a zero is twenty-four) and the built-in bitmap
+    /// fallback is fixed pitch, so this test cannot fail there however wrong
+    /// the drawing is.
+    #[test]
+    fn a_clock_starts_its_digits_in_the_same_place_at_every_minute() {
+        let fonts = SystemFonts::discover(CLARA).expect("fonts");
+        let _ = kobo_ui::install_typesetter(Box::new(fonts));
+
+        let metrics = CLARA;
+        let width = usize::try_from(metrics.width).expect("a positive panel width");
+        let height = usize::try_from(metrics.height).expect("a positive panel height");
+        // The columns any ink at all fell in, across the band, on the half of
+        // the panel the clock has to itself.
+        let inked = |clock: &str| {
+            let chrome = kobo_ui::Chrome {
+                back: false,
+                status: Some(kobo_ui::Status {
+                    clock: clock.to_owned(),
+                    signal: kobo_ui::Signal::Strong,
+                    battery: Some(kobo_ui::Percent::new(50)),
+                    charging: false,
+                    bluetooth: true,
+                }),
+            };
+            let screen = kobo_ui::Screen::new(
+                1,
+                vec![kobo_ui::Node::Text {
+                    id: kobo_ui::NodeId(1),
+                    text: "a page".into(),
+                }],
+            );
+            let mut surface = kobo_ui::Surface::new(width, height);
+            kobo_ui::render_all(&screen, &metrics, &chrome, &(), &mut surface, None);
+            let band = usize::try_from(metrics.status_band_height().max(0))
+                .expect("a positive band height")
+                .min(height);
+            let half = width / 2;
+            (0..half)
+                .filter(|x| (0..band).any(|y| surface.pixels[y * width + x] < kobo_ui::tone::PAPER))
+                .collect::<Vec<_>>()
+        };
+
+        // The columns are grouped into marks: four digits and a colon, in that
+        // order with the colon in the middle. The ink inside a cell does move
+        // by a pixel or two, because a one is narrower than a zero and is
+        // centred in the cell it was given. The colon is the thing that must
+        // not move: it sits after two digit cells, so it lands where it lands
+        // only if both of those cells were the same width whatever they said.
+        let marks = |columns: &[usize]| {
+            let mut runs: Vec<(usize, usize)> = Vec::new();
+            for column in columns {
+                match runs.last_mut() {
+                    Some(run) if *column == run.1 + 1 => run.1 = *column,
+                    _ => runs.push((*column, *column)),
+                }
+            }
+            runs
+        };
+
+        let reference = marks(&inked("00:00"));
+        assert_eq!(
+            reference.len(),
+            5,
+            "expected four digits and a colon, found {reference:?}"
+        );
+        for clock in ["07:59", "08:00", "11:11", "23:59", "10:38"] {
+            let runs = marks(&inked(clock));
+            assert_eq!(
+                runs.len(),
+                reference.len(),
+                "the clock drew a different number of marks at {clock}: {runs:?}"
+            );
+            assert_eq!(
+                runs[2], reference[2],
+                "the colon moved at {clock}: {runs:?} against {reference:?}"
+            );
+        }
+    }
+
+    /// A rank is measured on the same fixed advance it is drawn on.
+    ///
+    /// Measured on the face's own spacing instead, the column sized for a
+    /// proportional eleven is nearly twenty pixels narrower than the tabular
+    /// one that gets drawn, and the rank backs out of its column into the
+    /// title beside it. Only the real face can show that; the fallback is
+    /// fixed pitch and the two measures agree there.
+    #[test]
+    fn a_rank_leaves_no_ink_in_the_column_the_title_was_given() {
+        let fonts = SystemFonts::discover(CLARA).expect("fonts");
+        let _ = kobo_ui::install_typesetter(Box::new(fonts));
+
+        let metrics = CLARA;
+        let width = usize::try_from(metrics.width).expect("a positive panel width");
+        let height = usize::try_from(metrics.height).expect("a positive panel height");
+        let rows = (1..=11_u16)
+            .map(|rank| {
+                kobo_ui::Row::new(
+                    kobo_ui::ActionId(u32::from(rank)),
+                    "A headline of an ordinary length",
+                    "",
+                    kobo_ui::RowLead::Number(rank),
+                )
+            })
+            .collect::<Vec<_>>();
+        let screen = kobo_ui::Screen::new(
+            1,
+            vec![kobo_ui::Node::Rows {
+                id: kobo_ui::NodeId(1),
+                rows,
+            }],
+        );
+        let chrome = kobo_ui::Chrome::default();
+        let layout = screen.layout_with(&metrics, &chrome);
+        let mut surface = kobo_ui::Surface::new(width, height);
+        kobo_ui::render_all(&screen, &metrics, &chrome, &(), &mut surface, None);
+
+        for node in &layout.nodes {
+            let kobo_ui::LayoutKind::RowLead(kobo_ui::RowLead::Number(rank)) = node.kind else {
+                continue;
+            };
+            let right = node.rect.x.saturating_add(node.rect.width);
+            let top = usize::try_from(node.rect.y.max(0)).expect("a rank inside the panel");
+            let bottom = usize::try_from(node.rect.y.saturating_add(node.rect.height).max(0))
+                .expect("a rank inside the panel")
+                .min(height);
+            let from = usize::try_from(right.max(0))
+                .expect("a right edge inside the panel")
+                .min(width);
+            // Only as far as the title's own column starts, so this measures
+            // the rank and not the headline beside it.
+            let until = from.saturating_add(4).min(width);
+            for y in top..bottom {
+                for x in from..until {
+                    assert_eq!(
+                        surface.pixels[y * width + x],
+                        kobo_ui::tone::PAPER,
+                        "rank {rank} drew ink at {x},{y}, past its column ending at {right}"
+                    );
+                }
+            }
+        }
+    }
+
     /// A heading is heavier than the words under it, not merely larger.
     ///
     /// Weight is chosen by the size rather than asked for, so this is the only
