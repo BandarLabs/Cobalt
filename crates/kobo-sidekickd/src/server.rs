@@ -14,6 +14,7 @@ use crate::http::{read_request, respond_json, Request};
 use crate::state;
 use std::io::{Read, Write};
 use std::net::TcpListener;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -21,6 +22,23 @@ use std::time::Duration;
 /// three minutes; staying well inside means the reader's poll always ends
 /// with an answer rather than a timeout it has to explain.
 const LONGEST_POLL: Duration = Duration::from_secs(25);
+
+/// The most connections each listener serves at once. Admission is decided
+/// before a thread is spawned and before any TLS work, so a flood of
+/// connections -- paired or not -- costs the flooder a handshake apiece and
+/// this process a bounded number of threads. Hooks legitimately sit in
+/// `/ask` for minutes each, so they get the deeper bench.
+const MOST_HOOKS: usize = 64;
+const MOST_READERS: usize = 16;
+
+/// How long a connection gets to deliver its request. A request here is a
+/// few hundred bytes from the same machine or the same room; a sender that
+/// needs longer than this is not one worth holding a thread for.
+const READ_PATIENCE: Duration = Duration::from_secs(10);
+
+/// How long a response write may sit unaccepted before the thread is taken
+/// back.
+const WRITE_PATIENCE: Duration = Duration::from_secs(30);
 
 /// Loads the identity and serves until killed.
 ///
@@ -43,10 +61,17 @@ pub fn run() -> Result<(), String> {
     );
     let hook_board = Arc::clone(&board);
     std::thread::spawn(move || {
+        let crowd = Crowd::new(MOST_HOOKS);
         for stream in hooks.incoming().flatten() {
+            // Refusal is closing the connection: the hook errors out, prints
+            // nothing, and its agent falls back to the terminal prompt.
+            let Some(seat) = crowd.admit() else { continue };
             let board = Arc::clone(&hook_board);
             std::thread::spawn(move || {
+                let _seat = seat;
                 let mut stream = stream;
+                let _ = stream.set_read_timeout(Some(READ_PATIENCE));
+                let _ = stream.set_write_timeout(Some(WRITE_PATIENCE));
                 if let Ok(request) = read_request(&mut stream) {
                     hook_route(&board, &request, &mut stream);
                 }
@@ -55,12 +80,16 @@ pub fn run() -> Result<(), String> {
     });
     let pairing = Arc::new(identity.pairing);
     let tls = Arc::new(tls);
+    let crowd = Crowd::new(MOST_READERS);
     for stream in reader.incoming().flatten() {
+        let Some(seat) = crowd.admit() else { continue };
         let board = Arc::clone(&board);
         let pairing = Arc::clone(&pairing);
         let tls = Arc::clone(&tls);
         std::thread::spawn(move || {
-            let _ = stream.set_read_timeout(Some(Duration::from_secs(60)));
+            let _seat = seat;
+            let _ = stream.set_read_timeout(Some(READ_PATIENCE));
+            let _ = stream.set_write_timeout(Some(WRITE_PATIENCE));
             if let Ok(mut stream) = tls.accept(stream) {
                 if let Ok(request) = read_request(&mut stream) {
                     reader_route(&board, &pairing, &request, &mut stream);
@@ -69,6 +98,40 @@ pub fn run() -> Result<(), String> {
         });
     }
     Ok(())
+}
+
+/// Admission to one listener: a count of live connection threads, bounded.
+struct Crowd {
+    live: Arc<AtomicUsize>,
+    most: usize,
+}
+
+impl Crowd {
+    fn new(most: usize) -> Self {
+        Self {
+            live: Arc::new(AtomicUsize::new(0)),
+            most,
+        }
+    }
+
+    /// A seat if the room is not full, `None` to say "hang up". The seat
+    /// frees itself when dropped, however its connection thread ends.
+    fn admit(&self) -> Option<Seat> {
+        self.live
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |live| {
+                (live < self.most).then_some(live + 1)
+            })
+            .ok()
+            .map(|_| Seat(Arc::clone(&self.live)))
+    }
+}
+
+struct Seat(Arc<AtomicUsize>);
+
+impl Drop for Seat {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 /// `POST /ask` from a hook: put the question up, wait for the person.
@@ -197,6 +260,18 @@ mod tests {
         body.to_owned()
     }
 
+    /// The id inside a `/pending` body, which no test may guess: ids start
+    /// somewhere random precisely so that nothing can.
+    fn id_of(pending: &str) -> u32 {
+        let body = kobo_json::parse(pending).expect("a JSON body");
+        let id = body
+            .get("ask")
+            .and_then(|ask| ask.get("id"))
+            .and_then(kobo_json::Value::as_i64)
+            .expect("an ask with an id");
+        u32::try_from(id).expect("an id that fits")
+    }
+
     #[test]
     fn a_question_travels_from_hook_to_reader_and_the_tap_travels_back() {
         let board = Arc::new(Board::new());
@@ -222,12 +297,15 @@ mod tests {
         );
         let pending = body_of(&wire.into_inner());
         assert!(pending.contains("\"detail\":\"cargo test\""), "{pending}");
-        assert!(pending.contains("\"id\":1"), "{pending}");
+        let id = id_of(&pending);
         let mut wire = Cursor::new(Vec::new());
         reader_route(
             &board,
             "code",
-            &post("/answer", r#"{"token":"code","id":1,"choice":"allow"}"#),
+            &post(
+                "/answer",
+                &format!(r#"{{"token":"code","id":{id},"choice":"allow"}}"#),
+            ),
             &mut wire,
         );
         assert!(body_of(&wire.into_inner()).contains("\"ok\":true"));
@@ -300,13 +378,29 @@ mod tests {
             body_of(&wire.into_inner())
         });
         while board.next(Duration::from_millis(10)).is_none() {}
+        let ask = board.next(Duration::from_millis(10)).expect("the question");
         let mut wire = Cursor::new(Vec::new());
         reader_route(
             &board,
             "code",
-            &post("/answer", r#"{"token":"code","id":1,"choice":"pass"}"#),
+            &post(
+                "/answer",
+                &format!(r#"{{"token":"code","id":{},"choice":"pass"}}"#, ask.id),
+            ),
             &mut wire,
         );
         assert!(hook.join().expect("hook").contains("\"decision\":\"pass\""));
+    }
+
+    #[test]
+    fn a_full_room_turns_connections_away_until_a_seat_frees() {
+        let crowd = super::Crowd::new(2);
+        let first = crowd.admit().expect("an empty room has a seat");
+        let second = crowd.admit().expect("a second seat");
+        assert!(crowd.admit().is_none(), "a full room admitted a third");
+        drop(first);
+        let third = crowd.admit().expect("a freed seat can be taken");
+        drop(second);
+        drop(third);
     }
 }

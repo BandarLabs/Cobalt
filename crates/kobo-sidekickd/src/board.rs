@@ -7,8 +7,10 @@
 //! [`Board::answer`] joins the two. One mutex, two condvars, no channels:
 //! the state is small enough to look at whole.
 
+use std::fs::File;
+use std::io::Read;
 use std::sync::{Condvar, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// One question a coding agent is waiting on.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -56,7 +58,7 @@ impl Board {
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(Inner {
-                next_id: 1,
+                next_id: random_start(),
                 open: Vec::new(),
             }),
             asked: Condvar::new(),
@@ -71,7 +73,7 @@ impl Board {
         let deadline = Instant::now() + patience;
         let mut inner = self.lock();
         let id = inner.next_id;
-        inner.next_id += 1;
+        inner.next_id = inner.next_id.wrapping_add(1);
         inner.open.push(Open {
             ask: Ask {
                 id,
@@ -161,6 +163,28 @@ impl Default for Board {
     }
 }
 
+/// Where this run's question numbers start.
+///
+/// A number is all an answer names, so if every run counted from one, a
+/// prompt still on somebody's panel across a daemon restart would name a
+/// fresh question it was never about. Starting each run somewhere random
+/// makes a stale answer miss -- and be reported as missed -- instead of
+/// landing on the wrong question.
+fn random_start() -> u32 {
+    let mut bytes = [0_u8; 4];
+    if let Ok(mut urandom) = File::open("/dev/urandom") {
+        if urandom.read_exact(&mut bytes).is_ok() {
+            return u32::from_le_bytes(bytes);
+        }
+    }
+    // No urandom to be had: the clock's nanoseconds still miss any earlier
+    // run that answered even one question a whole second before this.
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.subsec_nanos());
+    nanos ^ std::process::id()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Board, Decision};
@@ -199,7 +223,15 @@ mod tests {
     fn answering_a_question_that_timed_out_reports_the_tap_did_not_count() {
         let board = Board::new();
         let _ = board.submit("codex", "shell", "ls", Duration::from_millis(10));
+        // The board is empty again, so no id can land, least of all this one.
         assert!(!board.answer(1, Decision::Allow));
+    }
+
+    #[test]
+    fn two_runs_do_not_hand_out_the_same_numbers() {
+        // One chance in four billion of a false failure; a stale answer
+        // landing on a fresh question after a restart is worth the ticket.
+        assert_ne!(super::random_start(), super::random_start());
     }
 
     #[test]

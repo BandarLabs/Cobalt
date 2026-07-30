@@ -265,6 +265,12 @@ impl Sidekick {
 
     /// What came back from a poll.
     fn on_poll(&mut self, context: &mut Context, outcome: TaskOutcome) {
+        if self.view != View::Watching {
+            // The pairing screens are up mid-poll. Nothing is shown over the
+            // typing and nothing spins the loop; a question stays queued on
+            // its daemon, for the next poll of whatever pairing wins.
+            return;
+        }
         match outcome {
             TaskOutcome::Completed(bytes) => {
                 let repaint = self.trouble.take().is_some();
@@ -296,7 +302,13 @@ impl Sidekick {
     /// What came back from posting an answer.
     fn on_answer(&mut self, context: &mut Context, outcome: &TaskOutcome) {
         match outcome {
-            TaskOutcome::Completed(_) => {
+            TaskOutcome::Completed(bytes) => {
+                if !answer_landed(bytes) {
+                    // The daemon said no: the question was gone -- timed out
+                    // or already collected -- before the tap arrived. Saying
+                    // "Allowed" now would be claiming a decision nobody got.
+                    self.last = Some("That question was gone before the answer arrived.".into());
+                }
                 self.ask = None;
                 self.view = View::Watching;
                 self.trouble = None;
@@ -372,6 +384,10 @@ impl Sidekick {
                     context.store().save(PAIRED, record.into_bytes());
                     self.view = View::Watching;
                     self.trouble = None;
+                    // A poll still in flight belongs to the old pairing.
+                    // Forgetting its id makes whatever it brings back land on
+                    // nothing, and clears the way for this pairing's poll.
+                    self.poll = None;
                     self.show(context);
                     self.poll(context);
                 }
@@ -413,6 +429,16 @@ fn trimmed_to(detail: &str, most: usize) -> String {
     let mut kept: String = detail.chars().take(most).collect();
     kept.push('…');
     kept
+}
+
+/// Whether the daemon said the tap landed on a live question. Anything but
+/// a clear yes is a no: an unreadable reply gets the same caution.
+fn answer_landed(bytes: &[u8]) -> bool {
+    std::str::from_utf8(bytes)
+        .ok()
+        .and_then(|text| kobo_json::parse(text).ok())
+        .and_then(|body| body.get("ok").and_then(kobo_json::Value::as_bool))
+        == Some(true)
 }
 
 /// The question in a poll's body, if the body carries one.
@@ -769,7 +795,11 @@ mod tests {
         assert!(body.contains(r#""choice":"allow""#), "{body}");
         assert!(body.contains(r#""token":"abc123""#), "{body}");
         let mut context = Context::default();
-        app.on_task(&mut context, task, TaskOutcome::Completed(Vec::new()));
+        app.on_task(
+            &mut context,
+            task,
+            TaskOutcome::Completed(br#"{"ok":true}"#.to_vec()),
+        );
         let commands = context.take_commands();
         assert!(fetched(&commands).is_some(), "watching never resumed");
         let lines = shown(&painted(&commands).expect("back to watching"));
@@ -872,6 +902,73 @@ mod tests {
     }
 
     #[test]
+    fn an_answer_the_daemon_rejects_is_not_reported_as_decided() {
+        let (mut app, poll) = paired();
+        let mut context = Context::default();
+        app.on_task(&mut context, poll, question(4, "cargo publish"));
+        let _ = context.take_commands();
+        let commands = act(&mut app, action_id(ALLOW));
+        let (task, _, _) = posted(&commands).expect("the answer was sent");
+        let mut context = Context::default();
+        app.on_task(
+            &mut context,
+            task,
+            TaskOutcome::Completed(br#"{"ok":false}"#.to_vec()),
+        );
+        let commands = context.take_commands();
+        assert!(fetched(&commands).is_some(), "watching never resumed");
+        let lines = shown(&painted(&commands).expect("a repaint"));
+        assert!(
+            !lines.iter().any(|line| line.contains("Allowed")),
+            "claimed a decision that never landed: {lines:?}"
+        );
+        assert!(
+            lines.iter().any(|line| line.contains("gone before")),
+            "the miss is not stated: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn a_question_arriving_mid_repair_does_not_take_the_typing_screen() {
+        let (mut app, poll) = paired();
+        let _ = act(&mut app, action_id(REPAIR));
+        assert_eq!(app.view, View::Address);
+        let mut context = Context::default();
+        app.on_task(&mut context, poll, question(6, "cargo run"));
+        let commands = context.take_commands();
+        assert_eq!(app.view, View::Address, "a question took the typing screen");
+        assert!(fetched(&commands).is_none(), "polled while re-pairing");
+    }
+
+    #[test]
+    fn a_poll_from_the_old_pairing_cannot_answer_into_the_new() {
+        let (mut app, old_poll) = paired();
+        let _ = act(&mut app, action_id(REPAIR));
+        app.keyboard = Keyboard::with_text("192.168.1.77");
+        let _ = act(&mut app, action_id("kb.enter"));
+        app.keyboard = Keyboard::with_text("zzzzzz");
+        let mut context = Context::default();
+        // Real task numbers never repeat; a fresh test context restarts
+        // them, so spend a few keeping the new poll's id off the old one's.
+        for _ in 0..3 {
+            let _ = context.spawn(Task::Sleep { seconds: 1 });
+        }
+        app.on_action(&mut context, action_id("kb.enter"));
+        let commands = context.take_commands();
+        let (new_poll, url) = fetched(&commands).expect("the new pairing polls");
+        assert_ne!(new_poll, old_poll, "the old poll still speaks");
+        assert!(url.contains("192.168.1.77"), "{url}");
+        assert!(url.contains("token=zzzzzz"), "{url}");
+        // The old poll comes back bearing a question: it lands on nothing.
+        let mut context = Context::default();
+        app.on_task(&mut context, old_poll, question(4, "rm -rf /"));
+        let commands = context.take_commands();
+        assert_eq!(app.view, View::Watching, "a stale poll took the panel");
+        assert!(app.ask.is_none(), "a stale question was kept");
+        assert!(fetched(&commands).is_none(), "a stale poll spun the loop");
+    }
+
+    #[test]
     fn ignoring_a_question_says_so_without_claiming_a_decision() {
         let (mut app, poll) = paired();
         let mut context = Context::default();
@@ -881,7 +978,11 @@ mod tests {
         let (task, _, body) = posted(&commands).expect("ignoring still answers");
         assert!(body.contains(r#""choice":"pass""#), "{body}");
         let mut context = Context::default();
-        app.on_task(&mut context, task, TaskOutcome::Completed(Vec::new()));
+        app.on_task(
+            &mut context,
+            task,
+            TaskOutcome::Completed(br#"{"ok":true}"#.to_vec()),
+        );
         let lines = shown(&painted(&context.take_commands()).expect("watching again"));
         assert!(
             lines
