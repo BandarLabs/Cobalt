@@ -460,12 +460,7 @@ impl Gutenbird {
             // invitation to search. Saying "Search for an author" to a reader
             // who is offline sends them to type into a box that cannot answer.
             if let Some(failure) = self.trouble {
-                let screen = screen.standard_state(failure.state, failure.advice);
-                return if failure.retryable {
-                    screen.primary_button("catalogue", "Try again").build()
-                } else {
-                    screen.build()
-                };
+                return screen.failure_state(failure, "catalogue").build();
             }
             // The one screen where a full-width button belongs, because it is
             // the only thing on it and the only thing to do.

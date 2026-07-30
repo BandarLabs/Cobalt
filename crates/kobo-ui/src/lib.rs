@@ -1420,22 +1420,48 @@ impl Screen {
         // without thinking, and a mistimed page turn there would be maddening.
         layout.page_turns = self.page_turns;
         layout.hold = self.hold;
-        if let Some((page, of)) = self
+        if let Some((turns, (page, of))) = self
             .page_turns
             .filter(|_| position_band > 0)
-            .and_then(PageTurns::drawable_position)
+            .and_then(|turns| turns.drawable_position().map(|shown| (turns, shown)))
         {
+            let band = Rect {
+                x: margin,
+                y: content_bottom,
+                width: metrics.width - 2 * margin,
+                height: position_band,
+            };
             layout.nodes.push(LayoutNode {
                 id: NodeId(0),
-                rect: Rect {
-                    x: margin,
-                    y: content_bottom,
-                    width: metrics.width - 2 * margin,
-                    height: position_band,
-                },
+                rect: band,
                 kind: LayoutKind::PagePosition,
                 text_lines: vec![format!("{page} of {of}")],
             });
+            // Each chevron is offered only where there is a page on that side.
+            // A control that promises a page which does not exist is worse
+            // than no control: it answers a tap by doing nothing, and the
+            // reader concludes the screen is stuck rather than finished.
+            let side = min(metrics.touch_target_default(), band.width / 3);
+            if page > 1 {
+                layout.nodes.push(LayoutNode {
+                    id: NodeId(0),
+                    rect: Rect { width: side, ..band },
+                    kind: LayoutKind::PagePrevious(turns.previous),
+                    text_lines: Vec::new(),
+                });
+            }
+            if page < of {
+                layout.nodes.push(LayoutNode {
+                    id: NodeId(0),
+                    rect: Rect {
+                        x: band.x + band.width - side,
+                        width: side,
+                        ..band
+                    },
+                    kind: LayoutKind::PageNext(turns.next),
+                    text_lines: Vec::new(),
+                });
+            }
         }
         layout.content = Rect {
             x: 0,
@@ -3309,6 +3335,15 @@ pub enum LayoutKind {
     /// "4 of 12", centred under the content. Muted: it answers a question the
     /// reader only asks occasionally and must not compete with the page.
     PagePosition,
+    /// The chevrons either side of the position, and the only visible sign a
+    /// screen turns at all.
+    ///
+    /// The side-tap zones are how a Kobo has always turned a page, but nothing
+    /// on the panel says so, and a paginated screen that shows only "1 of 6"
+    /// asks the reader to guess. Drawn only in the direction a page exists, so
+    /// the last page never offers to go forward into nothing.
+    PagePrevious(ActionId),
+    PageNext(ActionId),
     /// What a fact is called. Muted, and set in the shared left column.
     FactLabel,
     /// What the fact is. Ink, and wrapped in whatever the label column leaves.
@@ -3422,7 +3457,9 @@ impl LayoutKind {
             | Self::Cell(action)
             | Self::ChoiceOption(action, _)
             | Self::ChoiceFreeform(action)
-            | Self::QuoteFold(action, _) => Some(action),
+            | Self::QuoteFold(action, _)
+            | Self::PagePrevious(action)
+            | Self::PageNext(action) => Some(action),
             Self::Back | Self::OverlayClose => Some(ActionId::BACK),
             _ => None,
         }
@@ -6203,9 +6240,16 @@ impl DisplayMetrics {
     /// measuring what will fit has to subtract it too. Pagination that does
     /// not comes back one row too many, and the row it added is drawn under
     /// the position and clipped by the bar.
+    ///
+    /// A touch target tall, because the band holds the chevrons that turn the
+    /// page as well as the words that say which page it is. It was a caption
+    /// line, and a caption line is not a control.
     #[must_use]
     pub fn page_position_band(&self) -> i32 {
-        FontSize::Caption.line_height() + self.space(Space::Tight)
+        max(
+            FontSize::Caption.line_height() + self.space(Space::Tight),
+            self.touch_target_minimum(),
+        )
     }
 
     /// The same area, to be set in a named face.
@@ -8233,6 +8277,8 @@ const fn is_tappable(kind: LayoutKind) -> bool {
             | LayoutKind::Tab(_, _)
             | LayoutKind::ChoiceOption(_, _)
             | LayoutKind::ChoiceFreeform(_)
+            | LayoutKind::PagePrevious(_)
+            | LayoutKind::PageNext(_)
     )
 }
 
@@ -8735,6 +8781,12 @@ pub fn render_all(
                 tone::MUTED,
                 clip,
             ),
+            LayoutKind::PagePrevious(_) => {
+                draw_glyph_icon(surface, Glyph::Previous, bar_mark(node.rect), clip);
+            }
+            LayoutKind::PageNext(_) => {
+                draw_glyph_icon(surface, Glyph::Next, bar_mark(node.rect), clip);
+            }
             LayoutKind::RowTrailing => draw_lines(
                 surface,
                 &node.text_lines,
@@ -14422,6 +14474,68 @@ mod prose_tests {
         assert!(
             shown.rect.y >= with.content.y + with.content.height,
             "the position was drawn inside the page-turn zone it describes"
+        );
+    }
+
+    #[test]
+    fn each_page_turn_is_offered_only_where_there_is_a_page_to_turn_to() {
+        // The side-tap zones are invisible, so a paginated screen used to say
+        // which page it was on and nothing about how to leave it.
+        let turns = |page: u16| {
+            let mut screen = Screen::new(
+                1,
+                vec![Node::Text {
+                    id: NodeId(1),
+                    text: "A page of prose.".into(),
+                }],
+            )
+            .with_page_turns(ActionId(7), ActionId(9));
+            screen.page_turns = screen.page_turns.map(|turns| turns.with_position(page, 3));
+            let layout = screen.layout();
+            let seen: Vec<LayoutKind> = layout
+                .nodes
+                .iter()
+                .map(|node| node.kind)
+                .filter(|kind| {
+                    matches!(
+                        kind,
+                        LayoutKind::PagePrevious(_) | LayoutKind::PageNext(_)
+                    )
+                })
+                .collect();
+            (layout, seen)
+        };
+        let (_, first) = turns(1);
+        assert_eq!(first, vec![LayoutKind::PageNext(ActionId(9))]);
+        let (middle_layout, middle) = turns(2);
+        assert_eq!(
+            middle,
+            vec![
+                LayoutKind::PagePrevious(ActionId(7)),
+                LayoutKind::PageNext(ActionId(9))
+            ]
+        );
+        let (_, last) = turns(3);
+        assert_eq!(last, vec![LayoutKind::PagePrevious(ActionId(7))]);
+
+        // And they are controls, not decoration: a tap lands on the action
+        // rather than falling through to the zone underneath.
+        let previous = middle_layout
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::PagePrevious(_)))
+            .expect("a previous control");
+        assert_eq!(
+            middle_layout.hit_test(
+                previous.rect.x + previous.rect.width / 2,
+                previous.rect.y + previous.rect.height / 2,
+            ),
+            Some(ActionId(7))
+        );
+        assert!(
+            previous.rect.height >= DisplayMetrics::default().touch_target_minimum(),
+            "the page controls are too small to hit: {:?}",
+            previous.rect
         );
     }
 

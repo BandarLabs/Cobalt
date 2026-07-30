@@ -729,10 +729,15 @@ impl Gallery {
     }
 
     /// The same, for a shelf that is only empty because the radio is off.
+    ///
+    /// Built through `failure_state` rather than by hand, because being
+    /// offline is the one failure the reader can fix without leaving the
+    /// device and the SDK adds the route to the Wi-Fi screen itself.
     fn offline_page(screen: ScreenBuilder) -> ScreenBuilder {
-        screen
-            .offline_state("No wifi. The shelf is what arrived last time.")
-            .button("state-retry", "Try again")
+        screen.failure_state(
+            kobo_sdk::Failure::of(kobo_sdk::TaskError::Offline),
+            "state-retry",
+        )
     }
 
     /// A state nobody can recover from by tapping, so nothing is chained on.

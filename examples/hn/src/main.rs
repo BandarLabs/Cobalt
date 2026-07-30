@@ -324,12 +324,7 @@ impl Hn {
             if let Some(failure) = self.trouble {
                 let screen = ScreenBuilder::new("hn")
                     .top_bar(self.list_title())
-                    .standard_state(failure.state, failure.advice);
-                let screen = if failure.retryable {
-                    screen.primary_button("retry", "Try again")
-                } else {
-                    screen
-                };
+                    .failure_state(failure, "retry");
                 return self.with_tabs(screen).build();
             }
             return self

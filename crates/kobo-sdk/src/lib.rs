@@ -225,6 +225,25 @@ impl StandardState {
     }
 }
 
+/// The application the reader is sent to when a failure is a missing network.
+const NETWORK_SETTINGS_APP: &str = "settings";
+
+/// The reserved action that takes a reader from a failure to the Wi-Fi screen.
+///
+/// Handled by [`AppRunner`] before the application sees it, so an application
+/// gets the route by naming the action and never writes a line about it. The
+/// name is prefixed because it is the SDK's, not the application's, and an
+/// application that happens to call something "wifi" must not collide with it.
+///
+/// This exists because the advice for [`TaskError::Offline`] ends "Join Wi-Fi
+/// and try again" and there was no way to do the first half of that. Every
+/// networked application in the tree told the reader to join a network and
+/// then offered a single control that retried the thing that had just failed.
+/// Getting to Wi-Fi meant leaving for the Kobo reader, coming back through the
+/// launcher and into Settings, which is four screens to answer a sentence the
+/// application itself put on the panel.
+pub const JOIN_WIFI: &str = "kobo.join-wifi";
+
 /// What to put in front of a reader when a task failed.
 ///
 /// One mapping, here, rather than a `match` on [`TaskError`] copied into every
@@ -773,6 +792,33 @@ impl ScreenBuilder {
     #[must_use]
     pub fn error_state(self, message: impl Into<String>) -> Self {
         self.standard_state(StandardState::Error, message)
+    }
+
+    /// A failed task's whole-screen presentation, with the way out of it.
+    ///
+    /// Chain this instead of writing [`Self::standard_state`] and a recovery
+    /// button by hand, so that every application recovers from a failure the
+    /// same way and gains a new route the day the SDK does.
+    ///
+    /// Being offline is the one failure the reader can fix on the device, and
+    /// the only one that gets a second control: [`JOIN_WIFI`], which
+    /// [`AppRunner`] answers by opening Settings on the Wi-Fi screen. The two
+    /// controls sit side by side because they are alternatives, and joining is
+    /// the primary of the pair because retrying a request on a reader with no
+    /// network will fail the same way it just did.
+    ///
+    /// A failure that is not retryable gets no control at all, rather than a
+    /// Try again that is known in advance to fail.
+    #[must_use]
+    pub fn failure_state(self, failure: Failure, retry: impl AsRef<str>) -> Self {
+        let screen = self.standard_state(failure.state, failure.advice);
+        match (failure.state, failure.retryable) {
+            (StandardState::Offline, _) => {
+                screen.buttons([(JOIN_WIFI, "Join Wi-Fi"), (retry.as_ref(), "Try again")])
+            }
+            (_, true) => screen.primary_button(retry, "Try again"),
+            (_, false) => screen,
+        }
     }
 
     /// Builds a sparse, full-screen confirmation using standard controls.
@@ -3741,6 +3787,13 @@ impl<A: KoboApp> AppRunner<A> {
     }
 
     pub fn action(&mut self, action: ActionId) -> Vec<Command> {
+        // Answered here rather than passed on, so that no application has to
+        // know the name of the settings application or that it is the thing
+        // that owns the radio. An application that never offers the control
+        // never sees the action, because nothing on its screen raises it.
+        if action == action_id(JOIN_WIFI) {
+            return self.dispatch(|_, context| context.launch(NETWORK_SETTINGS_APP));
+        }
         self.dispatch(|app, context| app.on_action(context, action))
     }
 
@@ -5232,6 +5285,76 @@ mod task_tests {
         let after = runner.task_outcome(TaskId(2), TaskOutcome::Cancelled);
         assert!(spawned_work(&after).is_empty(), "retried a cancelled fetch");
         assert_eq!(runner.app().outcomes, vec![(held, TaskOutcome::Cancelled)]);
+    }
+
+    #[test]
+    fn joining_wifi_opens_settings_without_troubling_the_application() {
+        // The application never sees the action and never names the settings
+        // application, which is the whole point of the reserved name.
+        let mut runner = AppRunner::new(Spawner {
+            spawn_on_action: true,
+            ..Spawner::default()
+        });
+        runner.start();
+        let commands = runner.action(action_id(JOIN_WIFI));
+        assert!(
+            commands
+                .iter()
+                .any(|command| matches!(command, Command::Launch(name) if name == "settings")),
+            "join Wi-Fi did not open settings: {commands:?}"
+        );
+        assert!(
+            spawned(&commands).is_empty(),
+            "the application was handed an action it should never see"
+        );
+    }
+
+    #[test]
+    fn an_offline_failure_offers_the_radio_as_well_as_a_retry() {
+        let screen = ScreenBuilder::new("t")
+            .failure_state(Failure::of(TaskError::Offline), "refresh")
+            .build();
+        let names: Vec<ActionId> = button_actions(&screen);
+        assert!(names.contains(&action_id(JOIN_WIFI)), "{names:?}");
+        assert!(names.contains(&action_id("refresh")), "{names:?}");
+    }
+
+    #[test]
+    fn a_failure_that_will_not_come_right_offers_nothing() {
+        // Denied is not retryable, so a Try again would fail identically and a
+        // control that cannot help is worse than no control.
+        let screen = ScreenBuilder::new("t")
+            .failure_state(Failure::of(TaskError::Denied), "refresh")
+            .build();
+        assert!(button_actions(&screen).is_empty());
+    }
+
+    #[test]
+    fn a_retryable_failure_that_is_not_the_network_offers_only_a_retry() {
+        let screen = ScreenBuilder::new("t")
+            .failure_state(Failure::of(TaskError::TimedOut), "refresh")
+            .build();
+        assert_eq!(button_actions(&screen), vec![action_id("refresh")]);
+    }
+
+    /// Every button on a screen, however deeply a band has nested it.
+    fn button_actions(screen: &Screen) -> Vec<ActionId> {
+        fn walk(nodes: &[Node], found: &mut Vec<ActionId>) {
+            for node in nodes {
+                match node {
+                    Node::Button { action, .. } => found.push(*action),
+                    Node::Band { slots, .. } => {
+                        for slot in slots {
+                            walk(&slot.nodes, found);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let mut found = Vec::new();
+        walk(&screen.nodes, &mut found);
+        found
     }
 
     #[test]

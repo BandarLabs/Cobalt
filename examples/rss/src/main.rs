@@ -431,12 +431,7 @@ impl Feeds {
             // same thing, and saying "Nothing published yet" about a reader who
             // is simply offline is a lie the SDK can avoid.
             if let Some(failure) = self.trouble {
-                let screen = screen.standard_state(failure.state, failure.advice);
-                return if failure.retryable {
-                    screen.primary_button("refresh", "Check again").build()
-                } else {
-                    screen.build()
-                };
+                return screen.failure_state(failure, "refresh").build();
             }
             return screen
                 .empty_state("Nothing published yet.")
