@@ -415,7 +415,7 @@ impl Feeds {
             .map_or_else(|| "Feed".to_owned(), |feed| feed.title.clone());
         let mut screen = ScreenBuilder::new("rss-items")
             .top_bar(context.one_line_row(&title, false))
-            .top_bar_action("remove", "Unfollow")
+            .top_bar_glyph("remove", "Unfollow", Glyph::Trash)
             // Fetching again is the one thing done here often enough to earn a
             // glyph rather than a word: the feed is read on demand, so a reader
             // catching up taps this on every feed they open. The two arrows say
@@ -1058,7 +1058,7 @@ mod tests {
     }
 
     #[test]
-    fn refreshing_a_feed_is_a_glyph_in_the_bar_not_a_word_in_a_button() {
+    fn the_verbs_over_a_feed_are_marks_in_the_bar_rather_than_words() {
         // The verb used to be a caption, "Refresh", spelled into a bottom
         // button that shared its bar with the two page turns -- three controls
         // that read as three things to do when two of them were only how to
@@ -1084,14 +1084,23 @@ mod tests {
             Some(action_id("refresh")),
             "the feed's refresh verb was not drawn as its glyph"
         );
+        let unfollow = layout.nodes.iter().find_map(|node| match node.kind {
+            LayoutKind::BarGlyph(id, Glyph::Trash) => Some(id),
+            _ => None,
+        });
+        assert_eq!(
+            unfollow,
+            Some(action_id("remove")),
+            "unfollowing a feed was not drawn as the bin the shelf uses for it"
+        );
         assert!(
             layout
                 .nodes
                 .iter()
                 .filter(|node| matches!(node.kind, LayoutKind::BarAction(_)))
                 .count()
-                == 1,
-            "refresh should be the glyph, leaving only Unfollow spelled out"
+                == 0,
+            "both verbs in this bar have a picture, so neither should be a word"
         );
     }
 

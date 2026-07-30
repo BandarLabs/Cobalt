@@ -102,7 +102,7 @@ impl Audiobook {
                 let mut screen =
                     ScreenBuilder::new("audiobook-compose").top_bar("Create an audiobook");
                 if self.has_books() {
-                    screen = screen.top_bar_action(SHELF, "Audiobooks");
+                    screen = screen.top_bar_glyph(SHELF, "Audiobooks", Glyph::Headphones);
                 }
                 let mut screen = screen
                     .heading("What should it be about?")
@@ -204,7 +204,7 @@ impl Audiobook {
         }
         // The bottom of the panel is spent on page turns, so the way to the
         // composer is the one action the top bar allows.
-        let screen = screen.top_bar_action(NEW, "Create");
+        let screen = screen.top_bar_glyph(NEW, "Create", Glyph::Plus);
         let showing = self.pages.get(self.page).map_or(&[][..], Vec::as_slice);
         let mut turning = screen
             .rows_with_trailing(showing.iter().filter_map(|index| {
@@ -325,7 +325,7 @@ impl Audiobook {
                     .author("Researched, written and narrated on this reader")
                     .chapter("Saved on this reader"),
             )
-            .secondary_action(AGAIN, "Create another")
+            .secondary_action(AGAIN, "Create another", Glyph::Plus)
             .owns_back(true);
         player.set_cover(cover);
         player.start(context);

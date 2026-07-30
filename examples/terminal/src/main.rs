@@ -113,7 +113,7 @@ impl App {
     fn compose(&self, rows: Vec<String>, cursor: Option<Caret>) -> Screen {
         let mut builder = ScreenBuilder::new("terminal").top_bar(self.status.title());
         if self.status.finished() {
-            builder = builder.top_bar_action(RESTART, "restart");
+            builder = builder.top_bar_glyph(RESTART, "restart", kobo_sdk::Glyph::Refresh);
         }
         builder
             .terminal(rows, cursor)

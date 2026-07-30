@@ -119,7 +119,7 @@ pub struct AudioPlayer {
     poll: Option<TaskId>,
     autoplay: PlayIntent,
     trouble: Option<String>,
-    secondary_action: Option<(String, String)>,
+    secondary_action: Option<(String, String, Glyph)>,
     owns_back: bool,
 }
 
@@ -195,9 +195,17 @@ impl AudioPlayer {
     /// Adds one application-owned action beside the output picker. The player
     /// deliberately does not consume it; the embedding application receives
     /// the action normally.
+    ///
+    /// The mark is required rather than optional because the bar it lands in
+    /// draws one: an action beside a marked one is the odd word out.
     #[must_use]
-    pub fn secondary_action(mut self, name: impl Into<String>, label: impl Into<String>) -> Self {
-        self.secondary_action = Some((name.into(), label.into()));
+    pub fn secondary_action(
+        mut self,
+        name: impl Into<String>,
+        label: impl Into<String>,
+        glyph: Glyph,
+    ) -> Self {
+        self.secondary_action = Some((name.into(), label.into(), glyph));
         self
     }
 
@@ -307,12 +315,19 @@ impl AudioPlayer {
                     (VOLUME_UP, "Louder", Glyph::VolumeUp),
                 ],
             );
+        // Marked, because these are the two verbs a player screen offers and
+        // both have a picture everyone already reads. The words stay: they are
+        // what the control is called in a test, a log and a preview.
         screen = match &self.secondary_action {
-            Some((name, label)) => screen.action_bar([
-                (OUTPUT.to_owned(), "Bluetooth output".to_owned()),
-                (name.clone(), label.clone()),
+            Some((name, label, glyph)) => screen.action_bar_marked([
+                (
+                    OUTPUT.to_owned(),
+                    "Bluetooth output".to_owned(),
+                    Some(Glyph::Bluetooth),
+                ),
+                (name.clone(), label.clone(), Some(*glyph)),
             ]),
-            None => screen.bottom_action(OUTPUT, "Bluetooth audio output"),
+            None => screen.bottom_action_marked(OUTPUT, "Bluetooth audio output", Glyph::Bluetooth),
         };
         if self.audio_available == Availability::Unavailable {
             screen = screen.banner(
@@ -879,7 +894,7 @@ mod tests {
         let mut player = AudioPlayer::shelf("book.mp3z", "A History of the Moon")
             .metadata(AudioMetadata::new("A History of the Moon").author("Cobalt Audio"))
             .cover(TilePicture::new(PictureHandle(1), 240, 320))
-            .secondary_action("another", "Create another");
+            .secondary_action("another", "Create another", crate::Glyph::Plus);
         player.playback = AudioPlaybackState::Playing;
         player.position_ms = 75_000;
         player.duration_ms = 600_000;
