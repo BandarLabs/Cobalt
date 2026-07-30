@@ -52,6 +52,7 @@ const INSTALLED_PACKAGES: &[(&str, Option<&str>)] = &[
     ("kobo-hn", None),
     ("kobo-rss", None),
     ("kobo-settings", None),
+    ("kobo-sidekick", None),
 ];
 /// Proof that the daemon in the package can actually take the panel. The
 /// phrase only exists inside `present_on_panel`, which is behind
@@ -346,6 +347,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "setup" => setup_device(&arguments[1..]),
         "deploy" => deploy_package(&arguments[1..]),
         "secret" => secret_command(&arguments[1..]),
+        "trust" => trust_command(&arguments[1..]),
         "inspect" => inspect_package(&arguments[1..]),
         "verify" => verify_command(&arguments[1..]),
         "run" if arguments.get(1).is_some_and(|value| value == "--sim") => {
@@ -1634,6 +1636,7 @@ fn remote_owner_token() -> Result<String, String> {
     Ok(token)
 }
 
+#[allow(clippy::too_many_lines)]
 fn remote_fixed_artifact_script(
     session: &RemoteArtifactSession,
     program: &RemoteProgram,
@@ -3635,11 +3638,10 @@ fn write_recording(
         let path = directory.join(format!("frame-{index:04}.png"));
         fs::write(&path, png).map_err(|error| format!("write {}: {error}", path.display()))?;
     }
-    let timings = frames
-        .iter()
-        .enumerate()
-        .map(|(index, frame)| format!("frame-{index:04}.png {}\n", frame.millis))
-        .collect::<String>();
+    let mut timings = String::new();
+    for (index, frame) in frames.iter().enumerate() {
+        timings.push_str(&format!("frame-{index:04}.png {}\n", frame.millis));
+    }
     let index_path = directory.join("timings.txt");
     fs::write(&index_path, timings)
         .map_err(|error| format!("write {}: {error}", index_path.display()))?;
@@ -4056,6 +4058,246 @@ fn report_secret_names<'a>(names: impl Iterator<Item = &'a str>) {
     }
 }
 
+/// Where the runtime reads owner-installed TLS trust roots, from `kobod`.
+const DEVICE_TRUST_DIRECTORY: &str = "/mnt/onboard/.adds/cobalt/trust";
+
+const TRUST_USAGE: &str =
+    "usage: kobo trust set <name> --from PATH (--device IP | --volume PATH)\n\
+                           \x20      kobo trust list (--device IP | --volume PATH)\n\
+                           \x20      kobo trust remove <name> (--device IP | --volume PATH)";
+
+/// Installs, lists or removes owner TLS trust roots on a reader.
+///
+/// The same shape as `kobo secret`, because it is the same act: an owner,
+/// attended, putting a file where only the runtime reads it. The value is a
+/// PEM certificate rather than a credential, so unlike a secret it is checked
+/// for being one before it travels, and listing it is harmless.
+fn trust_command(arguments: &[String]) -> Result<(), String> {
+    let (action, target) = parse_trust(arguments)?;
+    match (action, target) {
+        (SecretAction::Set { name, source }, target) => trust_set(&name, &source, &target),
+        (SecretAction::Remove { name }, target) => trust_remove(&name, &target),
+        (SecretAction::List, target) => trust_list(&target),
+    }
+}
+
+/// Reads, checks and installs one PEM certificate as an owner trust root.
+fn trust_set(name: &str, source: &Path, target: &SecretTarget) -> Result<(), String> {
+    let text = std::fs::read_to_string(source)
+        .map_err(|error| format!("read {}: {error}", source.display()))?;
+    let found = kobo_net::pem::certificates(&text).len();
+    if found == 0 {
+        return Err(format!(
+            "{} holds no CERTIFICATE block; expected a PEM certificate",
+            source.display()
+        ));
+    }
+    if text.lines().any(|line| line.trim() == SECRET_DELIMITER) {
+        return Err("that file cannot travel over the install script".to_owned());
+    }
+    match target {
+        SecretTarget::Device(host) => {
+            let script = format!(
+                "set -e\n\
+                 mkdir -p {DEVICE_TRUST_DIRECTORY}\n\
+                 cat > {DEVICE_TRUST_DIRECTORY}/{name}.pem <<'{SECRET_DELIMITER}'\n\
+                 {text}\n\
+                 {SECRET_DELIMITER}\n"
+            );
+            let output = run_remote_shell(&format!("root@{host}"), &script, DEVICE_PROBE_TIMEOUT)?;
+            if !output.status.success() {
+                return Err(remote_shell_error(
+                    format!("install the '{name}' trust root"),
+                    &output.stdout,
+                    &output.stderr,
+                ));
+            }
+            println!("Installed trust root '{name}' ({found} certificate(s)) on {host}.");
+        }
+        SecretTarget::Volume(volume) => {
+            let directory = volume.join(".adds").join("cobalt").join("trust");
+            std::fs::create_dir_all(&directory)
+                .map_err(|error| format!("create {}: {error}", directory.display()))?;
+            let path = directory.join(format!("{name}.pem"));
+            std::fs::write(&path, &text)
+                .map_err(|error| format!("write {}: {error}", path.display()))?;
+            println!("Installed trust root '{name}' at {}.", path.display());
+        }
+    }
+    println!(
+        "The runtime now verifies TLS hosts against it, beside the public roots. \
+         It takes effect at the next session."
+    );
+    Ok(())
+}
+
+fn trust_remove(name: &str, target: &SecretTarget) -> Result<(), String> {
+    match target {
+        SecretTarget::Device(host) => {
+            let script = format!("rm -f {DEVICE_TRUST_DIRECTORY}/{name}.pem\n");
+            let output = run_remote_shell(&format!("root@{host}"), &script, DEVICE_PROBE_TIMEOUT)?;
+            if !output.status.success() {
+                return Err(remote_shell_error(
+                    format!("remove the '{name}' trust root"),
+                    &output.stdout,
+                    &output.stderr,
+                ));
+            }
+            println!("Removed trust root '{name}' from {host}.");
+        }
+        SecretTarget::Volume(volume) => {
+            let path = volume
+                .join(".adds")
+                .join("cobalt")
+                .join("trust")
+                .join(format!("{name}.pem"));
+            match std::fs::remove_file(&path) {
+                Ok(()) => println!("Removed {}.", path.display()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    println!("No '{name}' trust root was installed.");
+                }
+                Err(error) => return Err(format!("remove {}: {error}", path.display())),
+            }
+        }
+    }
+    Ok(())
+}
+
+fn trust_list(target: &SecretTarget) -> Result<(), String> {
+    match target {
+        SecretTarget::Device(host) => {
+            let script = format!("ls -1 {DEVICE_TRUST_DIRECTORY} 2>/dev/null || true\n");
+            let output = run_remote_shell(&format!("root@{host}"), &script, DEVICE_PROBE_TIMEOUT)?;
+            if !output.status.success() {
+                return Err(remote_shell_error(
+                    "list trust roots".to_owned(),
+                    &output.stdout,
+                    &output.stderr,
+                ));
+            }
+            report_trust_names(String::from_utf8_lossy(&output.stdout).lines());
+        }
+        SecretTarget::Volume(volume) => {
+            let directory = volume.join(".adds").join("cobalt").join("trust");
+            let mut names = Vec::new();
+            if let Ok(entries) = std::fs::read_dir(&directory) {
+                for entry in entries.flatten() {
+                    names.push(entry.file_name().to_string_lossy().into_owned());
+                }
+            }
+            names.sort();
+            report_trust_names(names.iter().map(String::as_str));
+        }
+    }
+    Ok(())
+}
+
+/// The trust grammar, reusing the secret shapes: the verbs, targets and name
+/// rule are identical, and a second copy of the parser would only drift.
+fn parse_trust(arguments: &[String]) -> Result<(SecretAction, SecretTarget), String> {
+    let (verb, rest) = arguments
+        .split_first()
+        .ok_or_else(|| TRUST_USAGE.to_owned())?;
+    let (name, rest) = match verb.as_str() {
+        "set" | "remove" => {
+            let (name, rest) = rest.split_first().ok_or_else(|| TRUST_USAGE.to_owned())?;
+            if !valid_secret_name(name) {
+                return Err(
+                    "a trust root name is letters, digits, '-' and '_', up to 64 characters"
+                        .to_owned(),
+                );
+            }
+            (Some(name.clone()), rest)
+        }
+        "list" => (None, rest),
+        _ => return Err(TRUST_USAGE.to_owned()),
+    };
+    let mut target = None;
+    let mut source = None;
+    let mut index = 0;
+    while index < rest.len() {
+        let flag = rest[index].as_str();
+        let value = || {
+            rest.get(index + 1)
+                .cloned()
+                .ok_or_else(|| TRUST_USAGE.to_owned())
+        };
+        match flag {
+            flag if is_device_flag(flag) => {
+                let host = value()?;
+                if !valid_device_host(&host) {
+                    return Err("device host contains unsupported characters".to_owned());
+                }
+                target = Some(SecretTarget::Device(host));
+                index += 2;
+            }
+            "--volume" => {
+                target = Some(SecretTarget::Volume(PathBuf::from(value()?)));
+                index += 2;
+            }
+            "--from" => {
+                source = Some(PathBuf::from(value()?));
+                index += 2;
+            }
+            _ => return Err(TRUST_USAGE.to_owned()),
+        }
+    }
+    let target = target.ok_or_else(|| TRUST_USAGE.to_owned())?;
+    let action = match verb.as_str() {
+        "set" => {
+            let name = name.expect("set parsed a name");
+            let source = match source {
+                Some(path) => path,
+                None => trust_source(&name)?,
+            };
+            SecretAction::Set { name, source }
+        }
+        "remove" => SecretAction::Remove {
+            name: name.expect("remove parsed a name"),
+        },
+        _ => SecretAction::List,
+    };
+    Ok((action, target))
+}
+
+/// Where a trust root is looked for when `--from` is not given: the host
+/// trust directory every host runtime already reads, which is where
+/// `kobo-sidekick init` writes its certificate.
+fn trust_source(name: &str) -> Result<PathBuf, String> {
+    let Some(home) = std::env::var_os("HOME") else {
+        return Err(format!(
+            "no HOME to look in; pass --from PATH\n{TRUST_USAGE}"
+        ));
+    };
+    let candidate = PathBuf::from(home)
+        .join(".config")
+        .join("kobo")
+        .join("trust")
+        .join(format!("{name}.pem"));
+    if candidate.is_file() {
+        return Ok(candidate);
+    }
+    Err(format!(
+        "no certificate at {}; pass --from PATH",
+        candidate.display()
+    ))
+}
+
+fn report_trust_names<'a>(names: impl Iterator<Item = &'a str>) {
+    let names: Vec<&str> = names
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .collect();
+    if names.is_empty() {
+        println!("No trust roots are installed.");
+        return;
+    }
+    println!("Installed trust roots:");
+    for name in names {
+        println!("  {name}");
+    }
+}
+
 fn print_help() {
     // Two commands write to the panel and are compiled out without the
     // feature, so they are named here only when they are really present.
@@ -4098,6 +4340,9 @@ fn print_help() {
            secret set <name> [--from PATH] --device IP   Install a credential an app can name\n\
            secret list --device IP   Name the installed credentials, never their values\n\
            secret remove <name> --device IP   Take one credential off the reader\n\
+           trust set <name> [--from PATH] --device IP   Install an owner TLS root the runtime verifies against\n\
+           trust list --device IP   Name the installed trust roots\n\
+           trust remove <name> --device IP   Take one trust root off the reader\n\
            inspect <package>       List a package and prove it writes nothing to the rootfs\n\
            verify <arm-binary>     Verify static ARM hard-float format\n\
            run --sim [--app NAME]  Run SDK, IPC, daemon and one app on host\n\

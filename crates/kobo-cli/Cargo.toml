@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 kobo-sim = { path = "../kobo-sim" }
 kobo-image = { path = "../kobo-image" }
+kobo-net = { path = "../kobo-net" }
 
 [features]
 default = []

@@ -319,6 +319,7 @@ fn quadratic(from: (f64, f64), control: (f64, f64), to: (f64, f64)) -> Step {
 /// turn or less. A quarter turn is where the cubic approximation of a circular
 /// arc stays within about one part in ten thousand of the true curve, which at
 /// a thousand units is a hundredth of a unit.
+#[allow(clippy::similar_names)]
 fn arc(
     from: (f64, f64),
     radii: (f64, f64),

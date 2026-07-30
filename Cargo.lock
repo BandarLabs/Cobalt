@@ -223,6 +223,7 @@ name = "kobo-cli"
 version = "0.1.0"
 dependencies = [
  "kobo-image",
+ "kobo-net",
  "kobo-sim",
 ]
 
@@ -409,6 +410,23 @@ dependencies = [
  "kobo-abi",
  "kobo-policy",
  "kobo-protocol",
+]
+
+[[package]]
+name = "kobo-sidekick"
+version = "0.1.0"
+dependencies = [
+ "kobo-json",
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
+name = "kobo-sidekickd"
+version = "0.1.0"
+dependencies = [
+ "kobo-json",
+ "kobo-net",
 ]
 
 [[package]]

@@ -266,6 +266,13 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
     // worse than none, because it is believed.
     let metrics = display_metrics_from_env();
     let _ = kobo_text::install(metrics);
+    // The same owner trust roots the device loads, from the host's own
+    // directory, so an application developed against a local daemon works
+    // here before it is ever staged on a reader.
+    let trusted = kobo_net::trust_owner_roots_from_dir(&host_trust_directory());
+    if trusted > 0 {
+        println!("owner trust roots installed: {trusted}");
+    }
     if socket_path.exists() {
         return Err(format!("socket already exists: {}", socket_path.display()).into());
     }
@@ -293,6 +300,23 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
         },
     )?;
     serve_application(&mut stream, frame_path, &name)
+}
+
+/// Where a host runtime looks for owner-installed TLS trust roots.
+///
+/// One fixed place, `~/.config/kobo/trust`, mirroring where the CLI keeps
+/// host-side credentials, so `kobo-sidekick init` can drop a certificate in
+/// and every host runtime finds it without being told.
+fn host_trust_directory() -> PathBuf {
+    env::var_os("HOME").map_or_else(
+        || PathBuf::from(".kobo-trust"),
+        |home| {
+            PathBuf::from(home)
+                .join(".config")
+                .join("kobo")
+                .join("trust")
+        },
+    )
 }
 
 #[allow(
