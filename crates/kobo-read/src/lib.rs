@@ -1434,7 +1434,8 @@ mod tests {
                 .filter(|node| node.rect.y + node.rect.height > band.y)
                 .count();
             assert_eq!(
-                spilling, 0,
+                spilling,
+                0,
                 "page {} set {spilling} things under the strip",
                 page + 1
             );

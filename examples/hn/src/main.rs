@@ -111,7 +111,6 @@ const SKELETON_ROWS: u8 = 6;
 /// indices into a list capped far below it, so this can never be one of them.
 const FACT_TAG: u32 = u32::MAX;
 
-
 /// The bottom bar. Fixed, in this order, on every screen that has a list.
 const TABS: [(&str, &str); 4] = [
     ("tab-top", "Top"),
@@ -1676,7 +1675,10 @@ mod tests {
             })
             .collect();
         application.repaginate_list(&context);
-        assert!(application.pages.len() > 2, "too few pages to prove anything");
+        assert!(
+            application.pages.len() > 2,
+            "too few pages to prove anything"
+        );
 
         let drawn = |page: usize| {
             let mut showing = Hn {
@@ -1874,8 +1876,8 @@ mod tests {
             // that starts above the fold and lets the rest of it run under the
             // bar, so a page can hold every paragraph it was measured for and
             // still cut the last one off mid-sentence.
-            let floor = layout.content.y + layout.content.height
-                - CLARA_BW_METRICS.status_band_height();
+            let floor =
+                layout.content.y + layout.content.height - CLARA_BW_METRICS.status_band_height();
             let spilling = layout
                 .nodes
                 .iter()
@@ -1926,8 +1928,7 @@ mod tests {
             );
             let mut reachable = Vec::new();
             for node in &layout.nodes {
-                if let LayoutKind::PagePrevious(action) | LayoutKind::PageNext(action) = node.kind
-                {
+                if let LayoutKind::PagePrevious(action) | LayoutKind::PageNext(action) = node.kind {
                     let hit = layout.hit_test(
                         node.rect.x + node.rect.width / 2,
                         node.rect.y + node.rect.height / 2,
@@ -2391,4 +2392,3 @@ mod tests {
         }
     }
 }
-

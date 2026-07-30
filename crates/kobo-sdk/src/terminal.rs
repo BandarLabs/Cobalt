@@ -142,20 +142,21 @@ impl ScreenBuilder {
         let control = if keys.is_control() { "CTRL" } else { "ctrl" };
         // Before the specials, so the two grids travel to the foot of the
         // panel as one block rather than the letters leaving without them.
-        self.fill().grid(
-            7,
-            false,
-            [
-                ("term.esc".to_string(), "esc".to_string()),
-                ("term.tab".to_string(), "tab".to_string()),
-                (CONTROL.to_string(), control.to_string()),
-                ("term.up".to_string(), "up".to_string()),
-                ("term.down".to_string(), "down".to_string()),
-                ("term.left".to_string(), "left".to_string()),
-                ("term.right".to_string(), "right".to_string()),
-            ],
-        )
-        .keyboard(keys.keyboard(), "enter")
+        self.fill()
+            .grid(
+                7,
+                false,
+                [
+                    ("term.esc".to_string(), "esc".to_string()),
+                    ("term.tab".to_string(), "tab".to_string()),
+                    (CONTROL.to_string(), control.to_string()),
+                    ("term.up".to_string(), "up".to_string()),
+                    ("term.down".to_string(), "down".to_string()),
+                    ("term.left".to_string(), "left".to_string()),
+                    ("term.right".to_string(), "right".to_string()),
+                ],
+            )
+            .keyboard(keys.keyboard(), "enter")
     }
 }
 
@@ -319,4 +320,3 @@ mod tests {
         assert!(keys.keyboard().is_empty());
     }
 }
-

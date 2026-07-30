@@ -423,8 +423,8 @@ impl ScreenBuilder {
 
 #[cfg(test)]
 mod tests {
-    use super::{Keyboard, Layer, Pressed, MAX_TEXT};
     use super::TextEntry;
+    use super::{Keyboard, Layer, Pressed, MAX_TEXT};
     use crate::{action_id, ScreenBuilder};
     use kobo_ui::{Chrome, LayoutKind, CLARA_BW_METRICS};
 

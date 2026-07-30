@@ -2733,12 +2733,7 @@ impl Context {
     /// where a list's is one line.
     #[must_use]
     pub fn paginate_tiles(&self, count: usize, shape: TileShape, nav_bar: bool) -> Vec<Vec<usize>> {
-        kobo_ui::paginate_tiles(
-            count,
-            &self.metrics,
-            shape,
-            self.screen_area(nav_bar),
-        )
+        kobo_ui::paginate_tiles(count, &self.metrics, shape, self.screen_area(nav_bar))
     }
 
     /// Breaks a grid of tiles into pages that fit *under* what is already there.
@@ -5816,4 +5811,3 @@ pub fn run_on<A: KoboApp>(name: &str, app: A, socket: &Path) -> Result<(), Clien
         }
     }
 }
-

@@ -1273,8 +1273,8 @@ mod tests {
             // The runtime draws the status strip over the top of the panel and
             // the layout engine takes the position band out before it places
             // anything, so the page really ends above both.
-            let floor = layout.content.y + layout.content.height
-                - CLARA_BW_METRICS.status_band_height();
+            let floor =
+                layout.content.y + layout.content.height - CLARA_BW_METRICS.status_band_height();
             let line = kobo_ui::FontSize::Body.line_height_in(kobo_ui::Face::Reading);
             assert!(bottom <= floor, "page {page} was set under the strip");
             assert!(
@@ -1285,7 +1285,8 @@ mod tests {
     }
 
     #[test]
-    fn back_unwinds_this_application_before_it_leaves_it() {        let mut runner = AppRunner::new(Feeds {
+    fn back_unwinds_this_application_before_it_leaves_it() {
+        let mut runner = AppRunner::new(Feeds {
             loaded: true,
             view: View::Reading,
             open: Some(0),
