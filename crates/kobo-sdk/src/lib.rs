@@ -5750,3 +5750,4 @@ pub fn run_on<A: KoboApp>(name: &str, app: A, socket: &Path) -> Result<(), Clien
         }
     }
 }
+

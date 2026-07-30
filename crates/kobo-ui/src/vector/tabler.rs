@@ -69,6 +69,7 @@ pub(super) fn outline(glyph: Glyph) -> &'static [&'static [Cmd]] {
         Glyph::Trash => TRASH,
         Glyph::Wifi => WIFI,
         Glyph::Battery => BATTERY,
+        Glyph::Plus => PLUS,
     }
 }
 
@@ -942,3 +943,9 @@ static BATTERY: &[&[Cmd]] = &[&[
     Cmd::Line(167, 375),
     Cmd::Cubic(167, 329, 204, 292, 250, 292),
 ]];
+
+/// `plus` from Tabler Icons.
+static PLUS: &[&[Cmd]] = &[
+    &[Cmd::Move(500, 208), Cmd::Line(500, 792)],
+    &[Cmd::Move(208, 500), Cmd::Line(792, 500)],
+];

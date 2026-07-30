@@ -225,7 +225,7 @@ impl Brief {
             // story. Placed inline it was drawn wherever the list happened to
             // end, and with a full brief that was past the bottom edge: the
             // one control on the screen, off the screen.
-            screen = screen.bottom_action(REFRESH, "Refresh");
+            screen = screen.bottom_action_marked(REFRESH, "Refresh", Glyph::Refresh);
         } else {
             // A bar against a known total, not a spinner: the count of stories
             // is fixed, so an indeterminate animation would be claiming the end

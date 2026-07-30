@@ -50,3 +50,4 @@ Next                chevron-right
 Trash               trash
 Wifi                wifi
 Battery             battery
+Plus                plus

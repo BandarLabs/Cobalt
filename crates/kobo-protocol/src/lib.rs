@@ -3938,6 +3938,7 @@ const fn encode_glyph(glyph: Glyph) -> u8 {
         Glyph::Trash => 39,
         Glyph::Previous => 40,
         Glyph::Next => 41,
+        Glyph::Plus => 42,
     }
 }
 
@@ -3985,6 +3986,7 @@ const fn decode_glyph(tag: u8) -> Option<Glyph> {
         39 => Glyph::Trash,
         40 => Glyph::Previous,
         41 => Glyph::Next,
+        42 => Glyph::Plus,
 
         _ => return None,
     })

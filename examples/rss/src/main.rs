@@ -294,7 +294,7 @@ impl Feeds {
                 (title, summary)
             })
             .collect();
-        let pages = page_groups(context, &rows);
+        let pages = page_groups(context, &rows, true, true);
         let page = self.list_page.min(pages.len().saturating_sub(1));
         let shown = pages.get(page).cloned().unwrap_or_default();
         screen = screen.rows_with_menu(shown.iter().map(|index| {
@@ -317,7 +317,9 @@ impl Feeds {
             );
         }
         if pages.len() <= 1 {
-            return screen.bottom_action("add", "Add a feed").build();
+            return screen
+                .bottom_action_marked("add", "Add a feed", Glyph::Plus)
+                .build();
         }
         // Adding a feed is the verb; the page turns are the sides of the panel,
         // not two more buttons beside it. They rode in an action bar together
@@ -325,7 +327,8 @@ impl Feeds {
         // to do it and the other two were only how to reach the rest of it.
         screen
             .page_turns("list-back", "list-next")
-            .bottom_action("add", "Add a feed")
+            .page_position(page_number(page), page_total(pages.len()))
+            .bottom_action_marked("add", "Add a feed", Glyph::Plus)
             .build()
     }
 
@@ -378,7 +381,7 @@ impl Feeds {
                 )
             })
             .collect();
-        let pages = page_groups(context, &rows);
+        let pages = page_groups(context, &rows, false, true);
         let page = self.list_page.min(pages.len().saturating_sub(1));
         let shown = pages.get(page).cloned().unwrap_or_default();
         screen = screen.rows(shown.iter().map(|index| {
@@ -392,13 +395,13 @@ impl Feeds {
         if pages.len() <= 1 {
             return screen.build();
         }
+        // The page turns are the sides of the panel, and the bar carries the
+        // one verb: a bar reading Back, Search, More was two page turns
+        // dressed as somewhere to go.
         screen
             .page_turns("list-back", "list-next")
-            .action_bar([
-                ("list-back", "Back"),
-                ("add", "Search"),
-                ("list-next", "More"),
-            ])
+            .page_position(page_number(page), page_total(pages.len()))
+            .bottom_action_marked("add", "Search", Glyph::Search)
             .build()
     }
 
@@ -448,7 +451,7 @@ impl Feeds {
                 )
             })
             .collect();
-        let pages = page_groups(context, &rows);
+        let pages = page_groups(context, &rows, false, false);
         let page = self.list_page.min(pages.len().saturating_sub(1));
         let shown = pages.get(page).cloned().unwrap_or_default();
         screen = screen.rows(shown.iter().map(|index| {
@@ -470,7 +473,10 @@ impl Feeds {
         // turns wearing an action bar's clothes -- which is the confusion this
         // application was asked to stop making, a bar of verbs is not a bar of
         // somewhere-to-go.
-        screen.page_turns("list-back", "list-next").build()
+        screen
+            .page_turns("list-back", "list-next")
+            .page_position(page_number(page), page_total(pages.len()))
+            .build()
     }
 
     fn reading(&self) -> Screen {
@@ -486,17 +492,49 @@ impl Feeds {
         for paragraph in &self.pages[page] {
             screen = screen.text(paragraph.clone());
         }
-        screen.page_turns("page-back", "page-next").build()
+        screen
+            .page_turns("page-back", "page-next")
+            .page_position(page_number(page), page_total(self.pages.len()))
+            .build()
     }
 }
 
-/// How a feed's articles are grouped into pages of rows.
-fn page_groups(context: &Context, rows: &[(String, String)]) -> Vec<Vec<usize>> {
+/// A page number the position band can carry, one based and clamped.
+fn page_number(page: usize) -> u16 {
+    u16::try_from(page.saturating_add(1)).unwrap_or(u16::MAX)
+}
+
+/// How many pages there are, clamped. Not `page_number`: a count is already
+/// one based, and putting a page through the wrong one of these says "1 of 3"
+/// about a list of two pages.
+fn page_total(pages: usize) -> u16 {
+    u16::try_from(pages).unwrap_or(u16::MAX)
+}
+
+/// How a list of rows is grouped into pages.
+///
+/// `menu` and `nav_bar` have to say what the screen actually draws. Measuring
+/// a list of plain rows as though every one of them carried an overflow mark
+/// takes a finger's width off the title column, which wraps titles that would
+/// not have wrapped and makes every row taller than the one drawn: the article
+/// list came back four rows to a page with a third of the panel left white
+/// under them. Reserving a bottom bar that is not there costs another row the
+/// same way.
+fn page_groups(
+    context: &Context,
+    rows: &[(String, String)],
+    menu: bool,
+    nav_bar: bool,
+) -> Vec<Vec<usize>> {
     let borrowed: Vec<(&str, &str)> = rows
         .iter()
         .map(|(title, summary)| (title.as_str(), summary.as_str()))
         .collect();
-    let pages = context.paginate_rows_with_menu(&borrowed, true);
+    let pages = if menu {
+        context.paginate_rows_with_menu(&borrowed, nav_bar)
+    } else {
+        context.paginate_rows(&borrowed, nav_bar)
+    };
     if pages.is_empty() {
         vec![Vec::new()]
     } else {

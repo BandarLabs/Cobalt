@@ -1475,7 +1475,10 @@ impl Screen {
             if page > 1 {
                 layout.nodes.push(LayoutNode {
                     id: NodeId(0),
-                    rect: Rect { width: side, ..band },
+                    rect: Rect {
+                        width: side,
+                        ..band
+                    },
                     kind: LayoutKind::PagePrevious(turns.previous),
                     text_lines: Vec::new(),
                 });
@@ -3118,6 +3121,10 @@ pub enum Glyph {
     Previous,
     /// The chevron the other way: the page after this one.
     Next,
+    /// Add. The one verb on this device drawn often enough that the mark is
+    /// read faster than the word, and the word for it differs by screen:
+    /// "Add", "Add a feed", "New item".
+    Plus,
 }
 
 impl Glyph {
@@ -3128,7 +3135,7 @@ impl Glyph {
     /// the set was twenty-one: `Light` and `Close` were authored, shipped, and
     /// covered by none of the tests that walk every glyph. A glyph nobody
     /// rasterises in a test is a blank space beside a label on the panel.
-    pub const ALL: [Self; 42] = [
+    pub const ALL: [Self; 43] = [
         Self::App,
         Self::Book,
         Self::Note,
@@ -3171,6 +3178,7 @@ impl Glyph {
         Self::Trash,
         Self::Previous,
         Self::Next,
+        Self::Plus,
     ];
 }
 
@@ -14642,10 +14650,7 @@ mod prose_tests {
                 .iter()
                 .map(|node| node.kind)
                 .filter(|kind| {
-                    matches!(
-                        kind,
-                        LayoutKind::PagePrevious(_) | LayoutKind::PageNext(_)
-                    )
+                    matches!(kind, LayoutKind::PagePrevious(_) | LayoutKind::PageNext(_))
                 })
                 .collect();
             (layout, seen)
@@ -16452,3 +16457,4 @@ mod press_feedback_tests {
         );
     }
 }
+
