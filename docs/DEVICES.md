@@ -259,7 +259,25 @@ kobo session --device <address> --status     # power and network state
 kobo logs    --device <address>              # follow the runtime trace
 kobo logs    --device <address> --dump -t 50 # the last 50 lines, then exit
 kobo logs    --device <address> --clear      # empty it before a test run
+kobo shell   --device <address> dmesg | tail # run one command and read it back
+kobo shell   --device <address>              # or open a session on the reader
 ```
+
+`kobo shell` exists because the obvious spelling does not work. Running
+`ssh root@<address> 'uname -a'` returns nothing at all on this firmware: the
+login shell ignores the command it was handed, so the command has to arrive on
+standard input with the terminal turned off instead. Every other verb here has
+always done that internally, and there was simply no way to ask for it, so
+everybody who tried the obvious thing concluded the reader was broken.
+
+The words after the address are joined with spaces and sent as one line of
+shell, the way `ssh` and `adb shell` both do, so a pipeline or a redirection
+needs quoting for the local shell as well as the device. Given no command at
+all it opens an ordinary session with a terminal, line editing and a prompt.
+Either way it exits with whatever the reader exited with, so it can be tested
+for in a script. It retries a connection the same way the rest of the CLI does,
+because a reader that has been idle for a minute refuses the first knock while
+its radio wakes up.
 
 `kobo logs` reads `/mnt/onboard/.kobo-blackbox.log`, which is where the runtime
 writes every tap, every screen and every task result. It is the only view into

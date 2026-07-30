@@ -57,9 +57,9 @@ const STOP_TIMEOUT: Duration = Duration::from_secs(75);
 const SHUTDOWN_SECONDS: u64 = 45;
 
 /// How many times a command will try to reach a reader before giving up.
-const CONNECT_ATTEMPTS: u32 = 4;
+pub(crate) const CONNECT_ATTEMPTS: u32 = 4;
 /// How long to leave the radio to come back between attempts.
-const WAKE_INTERVAL: Duration = Duration::from_secs(4);
+pub(crate) const WAKE_INTERVAL: Duration = Duration::from_secs(4);
 
 /// How long the reader is given to settle after a session ends.
 ///
@@ -184,7 +184,7 @@ fn installed_list() -> String {
 ///
 /// Only a failure to reach the device is retried. A script that ran and said
 /// no is an answer, and repeating it would turn one clear refusal into three.
-fn run_remote_shell_waking(
+pub(crate) fn run_remote_shell_waking(
     remote: &str,
     script: &str,
     timeout: Duration,
@@ -221,7 +221,7 @@ fn run_remote_shell_waking(
 ///
 /// Host key verification is deliberately absent: it is a real answer from a
 /// real device, and retrying it three times only delays the same message.
-fn is_unreachable(message: &str) -> bool {
+pub(crate) fn is_unreachable(message: &str) -> bool {
     const SIGNS: &[&str] = &[
         "Operation timed out",
         "Connection refused",

@@ -255,6 +255,19 @@ impl SmokeStage {
 
 fn main() -> ExitCode {
     let arguments = env::args().skip(1).collect::<Vec<_>>();
+    // One verb decides its own exit code. Every other command either worked or
+    // did not, and flattening the reader's status to "something failed" would
+    // make `kobo shell` the one thing here that cannot be tested for in a
+    // script.
+    if arguments.first().map(|command| canonical(command)) == Some("shell") {
+        return match shell_command(&arguments[1..]) {
+            Ok(code) => code,
+            Err(error) => {
+                eprintln!("kobo: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     match run(&arguments) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -274,6 +287,7 @@ fn main() -> ExitCode {
 /// duplicating it, so there is still one implementation and one help entry.
 const ALIASES: &[(&str, &str)] = &[
     ("logcat", "logs"),
+    ("sh", "shell"),
     ("install", "deploy"),
     ("wait-for-device", "wait"),
     ("simulator", "dev"),
@@ -326,6 +340,10 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "session" => dev_session(&arguments[1..]),
         "wait" => wait_for_device(&arguments[1..]),
         "logs" => device_logs(&arguments[1..]),
+        // Reached only when something other than main dispatches, which today
+        // is the tests. main takes this verb first so that the reader's own
+        // exit code survives.
+        "shell" => shell_command(&arguments[1..]).map(|_| ()),
         "touch-probe" => touch_probe(&arguments[1..]),
         "record" => record_command(&arguments[1..]),
         #[cfg(feature = "device-write")]
@@ -1102,6 +1120,126 @@ fn device_logs(arguments: &[String]) -> Result<(), String> {
     }
 }
 
+/// How long a one-off command is given before the connection is abandoned.
+///
+/// Far longer than a probe, because the point of the verb is the command
+/// nothing else runs: `dmesg`, a `find` across the card, reading a sysfs tree.
+/// Six seconds is right for asking a device what it is and wrong for asking it
+/// to do something.
+const SHELL_TIMEOUT: Duration = Duration::from_secs(120);
+
+#[derive(Debug)]
+struct ShellRequest<'a> {
+    host: &'a str,
+    /// The words after the host, joined back into one line of shell. `None`
+    /// means nobody gave a command, which is the request for a session.
+    command: Option<String>,
+}
+
+fn parse_shell(arguments: &[String]) -> Result<ShellRequest<'_>, String> {
+    const USAGE: &str = "usage: kobo shell --device <host> [command ...]";
+    let (host, rest) = match arguments {
+        [device, host, rest @ ..] if is_device_flag(device) => (host.as_str(), rest),
+        _ => return Err(USAGE.to_owned()),
+    };
+    if !valid_device_host(host) {
+        return Err("device host contains unsupported characters".to_owned());
+    }
+    // Joined with spaces and sent as one line, which is what ssh and adb both
+    // do and therefore what anybody typing this expects. It also means the
+    // quoting the device sees is the quoting that survived the local shell,
+    // so a command with spaces in an argument wants quoting for both.
+    let command = if rest.is_empty() {
+        None
+    } else {
+        Some(rest.join(" "))
+    };
+    Ok(ShellRequest { host, command })
+}
+
+/// Runs one command on the reader, or opens a session on it.
+///
+/// This exists because the obvious thing does not work. `ssh root@reader 'cmd'`
+/// returns nothing at all on this firmware: the login shell ignores the command
+/// it was handed, so the command has to arrive on standard input with the
+/// terminal turned off instead. Everything in this CLI that touches a device
+/// has always done that internally; there was simply no way to ask for it, and
+/// every developer who tried the obvious spelling concluded the reader was
+/// broken.
+///
+/// A command is buffered rather than streamed, because classifying "the radio
+/// was dozing" apart from "the command failed" means reading what the device
+/// said before deciding whether to ask again, and that retry is worth more
+/// than live output for the things this verb is for. Something that prints as
+/// it goes wants `kobo logs --follow`, which streams for exactly that reason.
+///
+/// The remote's own exit status is returned rather than flattened, because a
+/// shell that always exits 0 or 1 cannot be put in a script, and putting it in
+/// a script is most of the point.
+fn shell_command(arguments: &[String]) -> Result<ExitCode, String> {
+    let request = parse_shell(arguments)?;
+    let remote = format!("root@{}", request.host);
+    let Some(command) = request.command else {
+        return interactive_shell(&remote);
+    };
+    // A trailing newline, because the device reads this as a script and a last
+    // line with no newline on it is a last line some shells decline to run.
+    let script = format!(
+        "{command}
+"
+    );
+    let output = panel::run_remote_shell_waking(&remote, &script, SHELL_TIMEOUT)?;
+    std::io::stdout()
+        .write_all(&output.stdout)
+        .map_err(|error| format!("write command output: {error}"))?;
+    std::io::stderr()
+        .write_all(&output.stderr)
+        .map_err(|error| format!("write command errors: {error}"))?;
+    Ok(exit_code_of(output.status))
+}
+
+/// Hands the session to the person at the keyboard.
+///
+/// Inherited streams and a terminal, so this is an ordinary login: line
+/// editing, job control and a prompt all work, and nothing here reads or
+/// rewrites what passes through. No waking retry either, because a retry that
+/// silently reopens a session somebody was typing into is worse than being
+/// told to try again.
+fn interactive_shell(remote: &str) -> Result<ExitCode, String> {
+    eprintln!("opening a session on {remote}; exit or Ctrl-D to leave");
+    let status = remote_ssh_command(remote, Tty::Yes)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .map_err(|error| format!("start remote session: {error}"))?;
+    Ok(exit_code_of(status))
+}
+
+/// The process's status as an exit code this process can return.
+///
+/// A command killed by a signal has no exit code of its own. It reports as 128
+/// plus the signal, which is what every shell reports for the same thing, so a
+/// script reading this sees what it would have seen running the command
+/// locally.
+fn exit_code_of(status: ExitStatus) -> ExitCode {
+    match status.code() {
+        Some(code) => ExitCode::from(u8::try_from(code & 0xff).unwrap_or(1)),
+        None => ExitCode::from(128_u8.saturating_add(signal_of(status))),
+    }
+}
+
+#[cfg(unix)]
+fn signal_of(status: ExitStatus) -> u8 {
+    use std::os::unix::process::ExitStatusExt;
+    u8::try_from(status.signal().unwrap_or(0)).unwrap_or(0)
+}
+
+#[cfg(not(unix))]
+fn signal_of(_status: ExitStatus) -> u8 {
+    0
+}
+
 fn parse_logs(arguments: &[String]) -> Result<LogRequest<'_>, String> {
     const USAGE: &str =
         "usage: kobo logs --device <host> [--follow|-f] [--dump|-d] [--lines|-t <count>] \
@@ -1875,9 +2013,30 @@ pub fn device_key_path() -> Option<PathBuf> {
 /// that was set up correctly. `IdentitiesOnly` prevents a busy SSH agent from
 /// exhausting the reader's authentication attempts before this key is tried.
 fn remote_shell_command(remote: &str) -> Command {
+    remote_ssh_command(remote, Tty::No)
+}
+
+/// Whether the reader should be given a terminal.
+///
+/// Every other caller wants `No`: a script is piped in and read back, and a
+/// terminal would echo the script into the output. `Yes` exists for the one
+/// verb that hands the session to a person, where line editing, job control
+/// and a prompt are the whole point.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Tty {
+    No,
+    Yes,
+}
+
+fn remote_ssh_command(remote: &str, tty: Tty) -> Command {
     let mut command = Command::new("ssh");
     command
-        .args(["-T", "-o", "BatchMode=yes", "-o"])
+        .args([
+            if tty == Tty::Yes { "-t" } else { "-T" },
+            "-o",
+            "BatchMode=yes",
+            "-o",
+        ])
         .arg(format!("ConnectTimeout={REMOTE_CONNECT_TIMEOUT_SECONDS}"));
     if let Some(key) = device_key_path() {
         command.args(["-o", "IdentitiesOnly=yes", "-i"]).arg(key);
@@ -4088,6 +4247,9 @@ fn print_help() {
            session --device IP --hold [minutes]  Keep it reachable for unattended testing\n\
            wait --device IP       Block until a device answers again\n\
            logs --device IP [--follow] [--lines N]  Read the runtime trace from the device\n\
+           shell --device IP [command ...]  Run one command on the reader, or open a\n\
+           \x20                             session when no command is given. Exits with\n\
+           \x20                             whatever the reader exited with\n\
            touch-probe --device IP [--seconds N]  Watch touch read-only to check the transform\n\
            guard-test --device IP --confirm ...   Prove the guardian restores the screen\n\
            package [--out PATH] [--folder PATH]  Build the KoboRoot.tgz an owner copies\n\
@@ -4122,6 +4284,66 @@ mod tests {
             raw.extend(std::iter::repeat_n(*fill, (width * height) as usize));
         }
         raw
+    }
+
+    /// A session is what somebody asked for by not asking for anything else.
+    #[test]
+    fn a_shell_with_no_command_is_a_request_for_a_session() {
+        let arguments = ["--device".to_owned(), "192.168.1.2".to_owned()];
+        let request =
+            super::parse_shell(&arguments).expect("a host and nothing else is a valid request");
+        assert_eq!(request.host, "192.168.1.2");
+        assert!(request.command.is_none());
+    }
+
+    /// The words after the host are one line of shell, not a list of
+    /// arguments. Somebody typing a pipeline or a redirection means it.
+    #[test]
+    fn the_words_after_the_host_become_one_line_of_shell() {
+        let arguments = [
+            "-s".to_owned(),
+            "192.168.1.2".to_owned(),
+            "dmesg".to_owned(),
+            "|".to_owned(),
+            "tail".to_owned(),
+            "-n".to_owned(),
+            "5".to_owned(),
+        ];
+        let request = super::parse_shell(&arguments).expect("a command is a valid request");
+        assert_eq!(request.command.as_deref(), Some("dmesg | tail -n 5"));
+    }
+
+    /// The host goes into an ssh argument, so anything that could be read as
+    /// something else has to be refused before it gets there.
+    #[test]
+    fn a_shell_refuses_a_host_that_is_not_one() {
+        for host in ["a;rm -rf /", "1.2.3.4 -oProxyCommand=x", "$(whoami)"] {
+            let arguments = ["--device".to_owned(), host.to_owned(), "uname".to_owned()];
+            assert!(
+                super::parse_shell(&arguments).is_err(),
+                "{host} was accepted as a device"
+            );
+        }
+    }
+
+    /// Missing the device entirely is the usage message, not a panic on an
+    /// empty slice.
+    #[test]
+    fn a_shell_without_a_device_says_how_to_spell_it() {
+        for arguments in [
+            Vec::new(),
+            vec!["uname".to_owned()],
+            vec!["192.168.1.2".to_owned()],
+        ] {
+            let error = super::parse_shell(&arguments).expect_err("no device was named");
+            assert!(error.starts_with("usage: kobo shell"), "{error}");
+        }
+    }
+
+    /// `sh` is what a shell is called by the people most likely to want one.
+    #[test]
+    fn sh_is_another_name_for_shell() {
+        assert_eq!(super::canonical("sh"), "shell");
     }
 
     #[test]
