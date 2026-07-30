@@ -32,8 +32,8 @@
 mod model;
 
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Failure, Glyph, KoboApp, QuoteRole, Screen,
-    ScreenBuilder, Task, TaskId, TaskOutcome,
+    action_id, ActionId, BannerLevel, Context, Failure, Glyph, KoboApp, Position, QuoteRole,
+    Screen, ScreenBuilder, Task, TaskId, TaskOutcome,
 };
 use model::{Comment, Story};
 use std::collections::HashSet;
@@ -111,13 +111,6 @@ const SKELETON_ROWS: u8 = 6;
 /// indices into a list capped far below it, so this can never be one of them.
 const FACT_TAG: u32 = u32::MAX;
 
-/// The bottom bar on a thread. Identical while the comments are arriving and
-/// after they have, so nothing under the reader's finger moves.
-const THREAD_BAR: [(&str, &str); 3] = [
-    ("thread-back", "Back"),
-    ("stories", "Stories"),
-    ("thread-next", "Next"),
-];
 
 /// The bottom bar. Fixed, in this order, on every screen that has a list.
 const TABS: [(&str, &str); 4] = [
@@ -417,15 +410,11 @@ impl Hn {
         };
         let mut screen = ScreenBuilder::new("hn-thread").top_bar(story.title.clone());
         if !self.lanes.is_empty() && self.comments.is_empty() {
-            // The same bar as the loaded thread, rather than a smaller one
-            // that grows when the comments land: a control that moves out from
-            // under a finger on a panel this slow is a tap the reader watches
-            // miss. A bar of one destination is also refused by the wire,
-            // which is how this was found.
+            // No bar, which is what the loaded thread has too: nothing under
+            // the reader's finger moves when the comments land.
             return screen
                 .activity("Fetching the comments", None)
                 .skeleton(SKELETON_ROWS)
-                .action_bar(THREAD_BAR)
                 .build();
         }
         // A byline is only made foldable once, on the page where its comment
@@ -470,13 +459,19 @@ impl Hn {
         if let Some(problem) = &self.problem {
             screen = screen.banner(BannerLevel::Attention, problem.clone());
         }
-        // Pinned rather than at the end of the flow: content stops at the bar,
-        // so a page that runs long loses its last sentence instead of the only
-        // way off the page.
-        screen
-            .page_turns("thread-back", "thread-next")
-            .action_bar(THREAD_BAR)
-            .build()
+        // No bottom bar. It said "Back / Stories / Next", of which Stories is
+        // the chevron already in the top bar and the other two are the page
+        // turns the position strip draws for a third of the room. The bar was
+        // three labels for two things the reader already had.
+        let mut turning = screen.page_turns("thread-back", "thread-next");
+        let pages = self.thread_pages.len();
+        if pages > 1 {
+            turning = turning.page_position(
+                u16::try_from(self.thread_page + 1).unwrap_or(u16::MAX),
+                u16::try_from(pages).unwrap_or(u16::MAX),
+            );
+        }
+        turning.build()
     }
 
     /// Everything the thread screen draws, as paragraphs carrying their depth.
@@ -873,7 +868,13 @@ impl Hn {
             .zip(&scores)
             .map(|((title, summary), score)| (title.as_str(), summary.as_str(), score.as_str()))
             .collect::<Vec<_>>();
-        self.pages = context.paginate_rows_with_trailing(&rows, true);
+        // The count is in the top bar beside the controls that change it, so
+        // no strip is reserved under the list and the page keeps the row that
+        // strip was holding. Ranked, because the digits down the left are
+        // narrower than the mark column every other list pays for.
+        let highest = u16::try_from(rows.len()).unwrap_or(u16::MAX);
+        self.pages =
+            context.paginate_ranked_rows_with_trailing(&rows, true, highest, Position::Elsewhere);
         self.page = self.page.min(self.pages.len().saturating_sub(1));
     }
 
@@ -924,7 +925,7 @@ impl Hn {
             .iter()
             .map(|(tag, depth, role, text)| (*tag, *depth, *role, text.as_str()))
             .collect::<Vec<_>>();
-        self.thread_pages = context.paginate_tagged(&borrowed, true);
+        self.thread_pages = context.paginate_tagged(&borrowed, false);
         self.thread_page = self
             .thread_page
             .min(self.thread_pages.len().saturating_sub(1));
@@ -1648,6 +1649,81 @@ mod tests {
     }
 
     #[test]
+    fn a_ranked_list_that_counts_itself_in_the_bar_fills_the_page_it_is_drawn_on() {
+        // Two measures were wrong in the same direction and both cost whole
+        // rows: the page position lives in the top bar, so the strip under the
+        // list is never reserved, and the rows lead with digits, which are
+        // narrower than the mark column every other list pays for. Measured as
+        // a marked list with a strip, the white under the last story was a
+        // story's worth. A page is full when the first story of the next one
+        // would not have fitted on it.
+        let runner = loaded();
+        let context = runner.context();
+        let mut application = Hn::default();
+        application.now = runner.app().now;
+        // Short headlines on purpose: a list of one-line rows is where a row's
+        // worth of white at the foot of the page is unmistakable.
+        application.stories = (0..30)
+            .map(|index| model::Story {
+                id: index.to_string(),
+                title: format!("A short headline number {index}"),
+                author: "someone".into(),
+                points: 40 + index,
+                comments: 7,
+                created: application.now - 3600,
+                text: None,
+                site: Some("example.com".into()),
+            })
+            .collect();
+        application.repaginate_list(&context);
+        assert!(application.pages.len() > 2, "too few pages to prove anything");
+
+        let drawn = |page: usize| {
+            let mut showing = Hn {
+                page,
+                ..Hn::default()
+            };
+            showing.stories.clone_from(&application.stories);
+            showing.titles.clone_from(&application.titles);
+            showing.pages.clone_from(&application.pages);
+            let layout = showing
+                .list()
+                .layout_with(&CLARA_BW_METRICS, &Chrome::default());
+            let rows = layout
+                .nodes
+                .iter()
+                .filter(|node| matches!(node.kind, LayoutKind::Row(_)))
+                .map(|node| (node.rect.y, node.rect.height))
+                .collect::<Vec<_>>();
+            (layout.content, rows)
+        };
+
+        for page in 0..application.pages.len() - 1 {
+            let (bounds, rows) = drawn(page);
+            assert_eq!(
+                rows.len(),
+                application.pages[page].len(),
+                "page {page} measured {} rows and drew {}",
+                application.pages[page].len(),
+                rows.len()
+            );
+            let bottom = rows.last().map_or(0, |(y, height)| y + height);
+            // The runtime draws the status strip over the top of the panel and
+            // never tells the application, so the page really ends there.
+            let floor = bounds.y + bounds.height - CLARA_BW_METRICS.status_band_height();
+            let (_, next) = drawn(page + 1);
+            let following = next.first().map_or(0, |(_, height)| *height);
+            let gap = CLARA_BW_METRICS.space(kobo_ui::Space::Tight) * 2;
+            assert!(
+                bottom + gap + following > floor,
+                "page {page} left room for the story that starts page {}: \
+                 {bottom} + {gap} + {following} against {floor}",
+                page + 1
+            );
+        }
+    }
+
+    #[test]
     fn a_headline_gets_two_lines_and_no_more() {
         // Rows used to be cut to one line so the list was a stack of equal
         // bands. Against real headlines that meant most of them stopped
@@ -1793,30 +1869,86 @@ mod tests {
                 "thread page {page} measured as {} paragraphs but drew {drawn}",
                 application.thread_pages[page].len()
             );
+
+            // Drawn is not the same as read. The engine places a paragraph
+            // that starts above the fold and lets the rest of it run under the
+            // bar, so a page can hold every paragraph it was measured for and
+            // still cut the last one off mid-sentence.
+            let floor = layout.content.y + layout.content.height
+                - CLARA_BW_METRICS.status_band_height();
+            let spilling = layout
+                .nodes
+                .iter()
+                .filter(|node| matches!(node.kind, LayoutKind::Quote(..) | LayoutKind::FactValue))
+                .filter(|node| node.rect.y + node.rect.height > floor)
+                .count();
+            assert_eq!(
+                spilling, 0,
+                "thread page {page} ran {spilling} paragraphs under the bar"
+            );
         }
     }
 
     #[test]
-    fn the_page_controls_on_a_thread_are_reachable_at_their_centres() {
-        // They are the pinned bar rather than the end of the flow, so a long
-        // page loses its final sentence rather than its way forward.
+    fn a_thread_turns_its_pages_from_the_strip_that_says_which_one_it_is_on() {
+        // The bar said "Back / Stories / Next": Stories is the chevron already
+        // in the top bar, and the other two are the page turns. Three labels
+        // for two things the reader had, across a bar's worth of the page.
         let (runner, _) = opened_thread();
-        let layout = runner
-            .app()
-            .thread()
-            .layout_with(&CLARA_BW_METRICS, &Chrome::default());
-        let controls = layout
-            .nodes
-            .iter()
-            .filter_map(|node| match node.kind {
-                LayoutKind::NavDestination(action, ..) => Some((action, node.rect)),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(controls.len(), 3);
-        for (action, rect) in controls {
-            let hit = layout.hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2);
-            assert_eq!(hit, Some(action));
+        let mut application = Hn::default();
+        application.stories.clone_from(&runner.app().stories);
+        application
+            .thread_pages
+            .clone_from(&runner.app().thread_pages);
+        application.open = runner.app().open;
+        assert!(
+            application.thread_pages.len() > 1,
+            "a whole thread fitted one page, so this proves nothing"
+        );
+
+        let controls = |page: usize| {
+            let showing = Hn {
+                thread_page: page,
+                open: application.open,
+                stories: application.stories.clone(),
+                thread_pages: application.thread_pages.clone(),
+                ..Hn::default()
+            };
+            let layout = showing
+                .thread()
+                .layout_with(&CLARA_BW_METRICS, &Chrome::default());
+            assert!(
+                !layout
+                    .nodes
+                    .iter()
+                    .any(|node| matches!(node.kind, LayoutKind::NavDestination(..))),
+                "the thread grew a bottom bar again"
+            );
+            let mut reachable = Vec::new();
+            for node in &layout.nodes {
+                if let LayoutKind::PagePrevious(action) | LayoutKind::PageNext(action) = node.kind
+                {
+                    let hit = layout.hit_test(
+                        node.rect.x + node.rect.width / 2,
+                        node.rect.y + node.rect.height / 2,
+                    );
+                    assert_eq!(hit, Some(action), "a page turn missed its own centre");
+                    reachable.push(action);
+                }
+            }
+            reachable
+        };
+
+        // The first page offers only the way forward, the last only the way
+        // back, and every page in between offers both.
+        let last = application.thread_pages.len() - 1;
+        assert_eq!(controls(0), vec![action_id("thread-next")]);
+        assert_eq!(controls(last), vec![action_id("thread-back")]);
+        if last > 1 {
+            assert_eq!(
+                controls(1),
+                vec![action_id("thread-back"), action_id("thread-next")]
+            );
         }
     }
 
@@ -2259,3 +2391,4 @@ mod tests {
         }
     }
 }
+

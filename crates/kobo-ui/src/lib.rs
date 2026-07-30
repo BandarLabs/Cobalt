@@ -4158,7 +4158,7 @@ fn row_lead_column(metrics: &DisplayMetrics, rows: &[Row]) -> i32 {
             match row.lead {
                 RowLead::Picture(..) => target,
                 RowLead::Icon(_) => row_mark_column(metrics),
-                RowLead::Number(number) => measure_text(&number.to_string(), FontSize::Caption).0,
+                RowLead::Number(number) => row_rank_column(metrics, number),
             },
         );
     }
@@ -4177,6 +4177,20 @@ fn row_lead_column(metrics: &DisplayMetrics, rows: &[Row]) -> i32 {
 /// paginated for, so a page under-fills rather than spilling. Wider is not,
 /// which is why nothing that paginates leads with a cover, and why the one
 /// application that does sets a fixed number of results per page.
+/// The column the digits of a ranked list need.
+///
+/// Narrower than a mark, and the layout engine has drawn it that way since the
+/// gutter was sized to what sits in it. Anything measuring a ranked row has to
+/// ask for it too, or it hands every title less width than it will be drawn
+/// with and wraps headlines that would have fitted on one line.
+#[must_use]
+pub fn row_rank_column(metrics: &DisplayMetrics, highest: u16) -> i32 {
+    min(
+        metrics.touch_target_default(),
+        measure_text(&highest.to_string(), FontSize::Caption).0,
+    )
+}
+
 fn row_mark_column(metrics: &DisplayMetrics) -> i32 {
     min(
         metrics.touch_target_default(),
@@ -6596,8 +6610,13 @@ pub fn quote_offsets(metrics: &DisplayMetrics, width: i32, depth: u8) -> (i32, i
 /// list ends up with one row in ten wrapping anyway.
 #[must_use]
 pub fn row_text_width(metrics: &DisplayMetrics, area: ProseArea) -> i32 {
+    row_text_width_beside(metrics, area, row_mark_column(metrics))
+}
+
+/// The same, for a list whose lead column is not a mark's.
+fn row_text_width_beside(metrics: &DisplayMetrics, area: ProseArea, lead: i32) -> i32 {
     let padding = metrics.space(Space::Small);
-    max(1, area.width - row_mark_column(metrics) - padding * 2)
+    max(1, area.width - lead - padding * 2)
 }
 
 /// Sets a cover out of type when there is no artwork to show.
@@ -6755,7 +6774,7 @@ pub fn paginate_rows_in_sections(
     for (index, (section, title, summary)) in rows.iter().enumerate() {
         // The header and the row it introduces are measured as one block, so
         // the break can only ever fall before the header or after the row.
-        let height = measured_row_height(metrics, area, title, summary, "", false)
+        let height = measured_row_height(metrics, area, title, summary, "", false, row_mark_column(metrics))
             + if section.is_some() { header } else { 0 };
         let spacing = if page.is_empty() { 0 } else { separator };
         if !page.is_empty() && used + spacing + height > area.height {
@@ -6789,7 +6808,18 @@ pub fn row_title_width(
     trailing: &str,
     menu: bool,
 ) -> i32 {
-    let mut width = row_text_width(metrics, area);
+    row_title_width_beside(metrics, area, trailing, menu, row_mark_column(metrics))
+}
+
+/// The same, for a list whose lead column is not a mark's.
+fn row_title_width_beside(
+    metrics: &DisplayMetrics,
+    area: ProseArea,
+    trailing: &str,
+    menu: bool,
+    lead: i32,
+) -> i32 {
+    let mut width = row_text_width_beside(metrics, area, lead);
     if menu {
         width = max(1, width - metrics.touch_target_default());
     }
@@ -6868,9 +6898,10 @@ fn measured_row_height(
     summary: &str,
     trailing: &str,
     menu: bool,
+    lead: i32,
 ) -> i32 {
     let padding = metrics.space(Space::Small);
-    let text_width = row_title_width(metrics, area, trailing, menu);
+    let text_width = row_title_width_beside(metrics, area, trailing, menu, lead);
     let title_height =
         wrap_text(title, text_width, FontSize::Body).len() as i32 * FontSize::Body.line_height();
     let summary_height = if summary.is_empty() {
@@ -6898,7 +6929,24 @@ pub fn paginate_rows_with_trailing(
     metrics: &DisplayMetrics,
     area: ProseArea,
 ) -> Vec<Vec<usize>> {
-    paginate_rows_measured(rows, metrics, area, false)
+    paginate_rows_measured(rows, metrics, area, false, row_mark_column(metrics))
+}
+
+/// The same, for a ranked list, whose rows lead with digits rather than a mark.
+///
+/// `highest` is the largest rank the list will show, because the column is as
+/// wide as the widest number in it. Measured against a mark instead, every
+/// title loses the difference and a headline that is drawn on one line is
+/// paginated as two, so the page comes back a row short and the white at the
+/// foot of it is a row's worth.
+#[must_use]
+pub fn paginate_ranked_rows_with_trailing(
+    rows: &[(&str, &str, &str)],
+    metrics: &DisplayMetrics,
+    area: ProseArea,
+    highest: u16,
+) -> Vec<Vec<usize>> {
+    paginate_rows_measured(rows, metrics, area, false, row_rank_column(metrics, highest))
 }
 
 /// The same, for rows that carry an overflow mark against their right edge.
@@ -6917,7 +6965,7 @@ pub fn paginate_rows_with_menu(
         .iter()
         .map(|(title, summary)| (*title, *summary, ""))
         .collect();
-    paginate_rows_measured(&rows, metrics, area, true)
+    paginate_rows_measured(&rows, metrics, area, true, row_mark_column(metrics))
 }
 
 fn paginate_rows_measured(
@@ -6925,6 +6973,7 @@ fn paginate_rows_measured(
     metrics: &DisplayMetrics,
     area: ProseArea,
     menu: bool,
+    lead: i32,
 ) -> Vec<Vec<usize>> {
     // A gap, the divider drawn inside it, then another gap: the engine
     // advances by the row's height and a gap, then leaves a second gap after
@@ -6937,7 +6986,7 @@ fn paginate_rows_measured(
     let mut page: Vec<usize> = Vec::new();
     let mut used = 0;
     for (index, (title, summary, trailing)) in rows.iter().enumerate() {
-        let height = measured_row_height(metrics, area, title, summary, trailing, menu);
+        let height = measured_row_height(metrics, area, title, summary, trailing, menu, lead);
         let spacing = if page.is_empty() { 0 } else { separator };
         if !page.is_empty() && used + spacing + height > area.height {
             pages.push(std::mem::take(&mut page));
@@ -6978,7 +7027,7 @@ pub fn paginate_rows(
     let mut used = 0;
 
     for (index, (title, summary)) in rows.iter().enumerate() {
-        let height = measured_row_height(metrics, area, title, summary, "", false);
+        let height = measured_row_height(metrics, area, title, summary, "", false, row_mark_column(metrics));
         let spacing = if page.is_empty() { 0 } else { separator };
         if !page.is_empty() && used + spacing + height > area.height {
             pages.push(std::mem::take(&mut page));
@@ -15091,8 +15140,9 @@ mod prose_tests {
                 title,
                 summary,
                 "1,284 points and 312 comments",
-                false
-            ) > measured_row_height(&metrics, area, title, summary, "", false),
+                false,
+                row_mark_column(&metrics)
+            ) > measured_row_height(&metrics, area, title, summary, "", false, row_mark_column(&metrics)),
             "a row with a value at its trailing edge measured no taller"
         );
     }
@@ -15298,8 +15348,23 @@ mod prose_tests {
             })
             .expect("a title that wraps only once the mark takes its column");
         assert!(
-            measured_row_height(&CLARA_BW_METRICS, area, &title, "a summary", "", true)
-                > measured_row_height(&CLARA_BW_METRICS, area, &title, "a summary", "", false),
+            measured_row_height(
+                &CLARA_BW_METRICS,
+                area,
+                &title,
+                "a summary",
+                "",
+                true,
+                row_mark_column(&CLARA_BW_METRICS)
+            ) > measured_row_height(
+                &CLARA_BW_METRICS,
+                area,
+                &title,
+                "a summary",
+                "",
+                false,
+                row_mark_column(&CLARA_BW_METRICS)
+            ),
             "the overflow column cost the title nothing"
         );
         let summary = "a summary that is itself long enough to wrap onto a second line here";
@@ -16456,5 +16521,63 @@ mod press_feedback_tests {
             vec!["The connection was reset".to_string()]
         );
     }
+
+    #[test]
+    fn a_ranked_list_pages_with_the_column_its_digits_really_take() {
+        // The layout engine sizes the lead column to what sits in it, so a
+        // ranked row's title is wider than a marked row's by the difference
+        // between digits and a mark. Paginated against a mark, a headline that
+        // is drawn on one line is measured as one line too many, and the page
+        // comes back a row short with a row's worth of white under it.
+        let metrics = CLARA_BW_METRICS;
+        let area = metrics.prose_area(true, true);
+        assert!(
+            row_rank_column(&metrics, 30) < row_mark_column(&metrics),
+            "digits took at least as much room as a mark"
+        );
+
+        let marked = row_title_width_beside(
+            &metrics,
+            area,
+            "40 points",
+            false,
+            row_mark_column(&metrics),
+        );
+        let ranked = row_title_width_beside(
+            &metrics,
+            area,
+            "40 points",
+            false,
+            row_rank_column(&metrics, 30),
+        );
+        assert!(ranked > marked, "a ranked title was no wider");
+
+        // A headline that straddles the two measures: it wraps one line
+        // further beside a mark than beside digits. Built out of single
+        // letters so the wrap can land between them, and long enough that the
+        // row is taller than the finger-sized floor either way, which is what
+        // makes the difference show up in the paging rather than be absorbed.
+        let title = (1..)
+            .map(|words| (0..words).map(|_| "n ").collect::<String>())
+            .take(400)
+            .find(|title| {
+                let ranked_lines = wrap_text(title, ranked, FontSize::Body).len();
+                let marked_lines = wrap_text(title, marked, FontSize::Body).len();
+                ranked_lines >= 4 && marked_lines > ranked_lines
+            })
+            .expect("no headline straddled the two measures");
+
+        let rows = (0..40)
+            .map(|_| (title.as_str(), "someone, an hour ago", "40 points"))
+            .collect::<Vec<_>>();
+        let ranked_pages = paginate_ranked_rows_with_trailing(&rows, &metrics, area, 30);
+        let marked_pages = paginate_rows_with_trailing(&rows, &metrics, area);
+        assert!(
+            ranked_pages[0].len() > marked_pages[0].len(),
+            "the ranked page held no more: {} either way",
+            ranked_pages[0].len()
+        );
+    }
+
 }
 

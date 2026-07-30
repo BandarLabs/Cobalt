@@ -2437,7 +2437,7 @@ impl Context {
     /// thing a long page pushes off the panel.
     #[must_use]
     pub fn paginate(&self, text: &str, nav_bar: bool) -> Vec<Vec<String>> {
-        kobo_ui::paginate(text, self.metrics.prose_area(true, nav_bar))
+        kobo_ui::paginate(text, self.paged_area(nav_bar))
     }
 
     /// Breaks a book into pages, measured in the reading face.
@@ -2449,11 +2449,7 @@ impl Context {
     /// panel to say so.
     #[must_use]
     pub fn paginate_reading(&self, text: &str, nav_bar: bool) -> Vec<Vec<String>> {
-        kobo_ui::paginate(
-            text,
-            self.metrics
-                .prose_area_in(true, nav_bar, kobo_ui::Face::Reading),
-        )
+        kobo_ui::paginate(text, self.paged_area_in(nav_bar, kobo_ui::Face::Reading))
     }
 
     /// The same, at a text size other than the reader's own.
@@ -2471,11 +2467,14 @@ impl Context {
         // were, which is how a page comes out measured for one size and drawn
         // at another.
         kobo_ui::with_text_scale(scale, || {
-            kobo_ui::paginate(
-                text,
-                self.metrics_at(scale)
-                    .prose_area_in(true, nav_bar, kobo_ui::Face::Reading),
-            )
+            let metrics = self.metrics_at(scale);
+            let mut area = metrics.prose_area_in(true, nav_bar, kobo_ui::Face::Reading);
+            area.height = area
+                .height
+                .saturating_sub(metrics.status_band_height())
+                .saturating_sub(metrics.page_position_band())
+                .max(1);
+            kobo_ui::paginate(text, area)
         })
     }
 
@@ -2491,11 +2490,7 @@ impl Context {
         paragraphs: &[(u8, QuoteRole, &str)],
         nav_bar: bool,
     ) -> Vec<Vec<(u8, QuoteRole, String)>> {
-        kobo_ui::paginate_quoted(
-            paragraphs,
-            &self.metrics,
-            self.metrics.prose_area(true, nav_bar),
-        )
+        kobo_ui::paginate_quoted(paragraphs, &self.metrics, self.paged_area(nav_bar))
     }
 
     /// The same, carrying a number of the application's choosing through the
@@ -2507,11 +2502,7 @@ impl Context {
         paragraphs: &[(u32, u8, QuoteRole, &str)],
         nav_bar: bool,
     ) -> Vec<Vec<(u32, u8, QuoteRole, String)>> {
-        kobo_ui::paginate_tagged(
-            paragraphs,
-            &self.metrics,
-            self.metrics.prose_area(true, nav_bar),
-        )
+        kobo_ui::paginate_tagged(paragraphs, &self.metrics, self.paged_area(nav_bar))
     }
 
     /// `text` cut to the single line a list row can show, ellipsised if it
@@ -2593,7 +2584,14 @@ impl Context {
     /// This is the same band [`Chrome::measuring`] puts back for anything that
     /// measures a built screen, which is why the two disagreed.
     fn screen_area(&self, nav_bar: bool) -> ProseArea {
-        let mut area = self.metrics.prose_area(true, nav_bar);
+        self.screen_area_in(nav_bar, kobo_ui::Face::Text)
+    }
+
+    /// The same, in one face. A serif sets the same words on more generous
+    /// lines, so a book measured in the interface face runs past the bottom of
+    /// the page it is drawn on.
+    fn screen_area_in(&self, nav_bar: bool, face: kobo_ui::Face) -> ProseArea {
+        let mut area = self.metrics.prose_area_in(true, nav_bar, face);
         area.height = area
             .height
             .saturating_sub(self.metrics.status_band_height())
@@ -2623,7 +2621,12 @@ impl Context {
     /// reserving one that is used costs the last row, drawn underneath the
     /// position and clipped by the bar.
     fn paged_area(&self, nav_bar: bool) -> ProseArea {
-        let mut area = self.screen_area(nav_bar);
+        self.paged_area_in(nav_bar, kobo_ui::Face::Text)
+    }
+
+    /// The same, in one face.
+    fn paged_area_in(&self, nav_bar: bool, face: kobo_ui::Face) -> ProseArea {
+        let mut area = self.screen_area_in(nav_bar, face);
         area.height = area
             .height
             .saturating_sub(self.metrics.page_position_band())
@@ -2643,7 +2646,54 @@ impl Context {
         rows: &[(&str, &str, &str)],
         nav_bar: bool,
     ) -> Vec<Vec<usize>> {
-        kobo_ui::paginate_rows_with_trailing(rows, &self.metrics, self.paged_area(nav_bar))
+        self.paginate_rows_with_trailing_at(rows, nav_bar, Position::AtTheFoot)
+    }
+
+    /// The same, for a ranked list, whose rows lead with digits.
+    ///
+    /// `highest` is the largest rank on show. Digits are narrower than a
+    /// mark, and the layout engine draws the column at what sits in it, so a
+    /// ranked list measured against a mark gives every title away and comes
+    /// back a row short.
+    #[must_use]
+    pub fn paginate_ranked_rows_with_trailing(
+        &self,
+        rows: &[(&str, &str, &str)],
+        nav_bar: bool,
+        highest: u16,
+        position: Position,
+    ) -> Vec<Vec<usize>> {
+        kobo_ui::paginate_ranked_rows_with_trailing(
+            rows,
+            &self.metrics,
+            self.area_for(nav_bar, position),
+            highest,
+        )
+    }
+
+    /// The same, for a screen that says which page it is on somewhere else.
+    ///
+    /// The layout engine reserves the position strip only when there is a
+    /// position to draw in it, so a screen that carries the count in its top
+    /// bar and paginates as though the strip were there is handed a shorter
+    /// page than it will be drawn on, and gives up the last row for a strip
+    /// nobody reserved.
+    #[must_use]
+    pub fn paginate_rows_with_trailing_at(
+        &self,
+        rows: &[(&str, &str, &str)],
+        nav_bar: bool,
+        position: Position,
+    ) -> Vec<Vec<usize>> {
+        kobo_ui::paginate_rows_with_trailing(rows, &self.metrics, self.area_for(nav_bar, position))
+    }
+
+    /// The page a list gets, given where it says which page that is.
+    fn area_for(&self, nav_bar: bool, position: Position) -> kobo_ui::ProseArea {
+        match position {
+            Position::AtTheFoot => self.paged_area(nav_bar),
+            Position::Elsewhere => self.screen_area(nav_bar),
+        }
     }
 
     /// The same, for rows that carry an overflow mark against their right edge.
@@ -3143,6 +3193,22 @@ pub struct Heartbeat {
 
 /// How often a clock ticks when nobody says otherwise.
 pub const DEFAULT_HEARTBEAT_SECONDS: u32 = 5;
+
+/// Where a paginated screen tells the reader which page they are on.
+///
+/// The default is the foot of the list, which is the strip the layout engine
+/// reserves and draws the turns' chevrons in. A screen that has already said
+/// it in its top bar wants [`Position::Elsewhere`]: saying it twice is two
+/// answers to one question, and paying for the strip anyway costs the list a
+/// row.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Position {
+    /// In the strip under the list.
+    #[default]
+    AtTheFoot,
+    /// Anywhere but there, so no strip is reserved.
+    Elsewhere,
+}
 
 /// Written out rather than derived, because a derived one would tick every
 /// zero seconds. That is not a slow clock, it is a spin: the runtime completes

@@ -8,7 +8,7 @@ finger that is already reaching for it.
 
 | The stories | A thread |
 | --- | --- |
-| ![Numbered stories with scores down the right, and a page position](screenshots/stories.png) | ![A comment thread, nested, with the story above it](screenshots/thread.png) |
+| ![Numbered stories with scores down the right, and the page count in the top bar](screenshots/stories.png) | ![A comment thread, nested, with the story's facts above it and the page count at the foot](screenshots/thread.png) |
 
 *Captured from a Kobo Clara BW over Wi-Fi with `kobo shot --device`.*
 

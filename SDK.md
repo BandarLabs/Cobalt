@@ -606,6 +606,22 @@ built with `rows_with_menu` gives up a whole touch target to the mark, whatever
 its title says, and its pair is `one_line_row_with_menu(text, nav_bar)` and
 `paginate_rows_with_menu(&[(title, summary), …], nav_bar)`.
 
+Two other things a page's measure has to be told, because both cost whole rows
+rather than a few pixels:
+
+- **Where the page position goes.** A screen that pages gets a strip under the
+  list for "3 of 10", and the layout engine reserves it before it places
+  anything. It reserves nothing when there is nothing to draw there, so a
+  screen that has already said which page it is on in its top bar wants
+  `paginate_rows_with_trailing_at(rows, nav_bar, Position::Elsewhere)` and gets
+  the row that strip was holding. The default is `Position::AtTheFoot`.
+- **What the rows lead with.** The lead column is as wide as what sits in it,
+  and a rank is narrower than a mark. A ranked list measured as a marked one
+  hands every title less width than it is drawn with, wraps headlines that
+  would have fitted, and comes back short:
+  `paginate_ranked_rows_with_trailing(rows, nav_bar, highest, position)`, where
+  `highest` is the largest rank the list will show.
+
 ### A second thing to do to a row
 
 A row has one obvious verb: open it. Everything else a reader might want to do
