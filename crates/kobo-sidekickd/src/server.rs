@@ -151,8 +151,12 @@ fn hook_route(board: &Board, request: &Request, stream: &mut (impl Read + Write)
             .unwrap_or("")
             .to_owned()
     };
-    let asking = Asking::new(&field("source"), &field("tool"), &field("detail"))
+    let mut asking = Asking::new(&field("source"), &field("tool"), &field("detail"))
         .offering(read_choices(ask.get("choices")));
+    // Absent means a permission, which is what almost every ask is.
+    if ask.get("permission").and_then(kobo_json::Value::as_bool) == Some(false) {
+        asking = asking.multiple_choice();
+    }
     let reply = match board.submit(asking, state::ASK_PATIENCE) {
         Decision::Allow => plain("allow"),
         Decision::Deny => plain("deny"),
@@ -276,6 +280,7 @@ fn ask_json(ask: &Ask) -> kobo_json::Value {
         .set("tool", ask.tool.as_str())
         .set("detail", ask.detail.as_str())
         .set("choices", kobo_json::Value::Array(choices))
+        .set("permission", ask.permission)
         .build()
 }
 

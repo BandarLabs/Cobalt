@@ -63,7 +63,7 @@ fn decide_permission(agent: &str, event: &kobo_json::Value) {
                 .build()
         })
         .collect();
-    let Some((decision, label)) = ask_daemon(agent, &tool, &detail, choices) else {
+    let Some((decision, label)) = ask_daemon(agent, &tool, &detail, choices, true) else {
         return;
     };
     if decision == "chose" {
@@ -115,7 +115,7 @@ fn answer_questions(agent: &str, event: &kobo_json::Value) {
         } else {
             header
         };
-        let Some((decision, label)) = ask_daemon(agent, &tool, &text, choices) else {
+        let Some((decision, label)) = ask_daemon(agent, &tool, &text, choices, false) else {
             return;
         };
         if decision != "chose" {
@@ -139,12 +139,14 @@ fn ask_daemon(
     tool: &str,
     detail: &str,
     choices: Vec<kobo_json::Value>,
+    permission: bool,
 ) -> Option<(String, String)> {
     let body = kobo_json::ObjectBuilder::new()
         .set("source", agent)
         .set("tool", tool)
         .set("detail", detail)
         .set("choices", kobo_json::Value::Array(choices))
+        .set("permission", permission)
         .build()
         .to_json();
     let response = post_local(state::HOOK_PORT, "/ask", &body, HOOK_PATIENCE).ok()?;

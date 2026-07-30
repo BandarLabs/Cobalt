@@ -38,6 +38,10 @@ pub struct Ask {
     pub detail: String,
     /// The answers offered beyond allow and deny. Usually empty.
     pub choices: Vec<Choice>,
+    /// Whether allow and deny mean anything here. False for a question,
+    /// where allowing would answer nothing and only make the agent ask
+    /// again at the keyboard.
+    pub permission: bool,
 }
 
 /// A question on its way to the board: an [`Ask`] without the number, which
@@ -48,6 +52,7 @@ pub struct Asking {
     pub tool: String,
     pub detail: String,
     pub choices: Vec<Choice>,
+    pub permission: bool,
 }
 
 impl Asking {
@@ -59,13 +64,22 @@ impl Asking {
             tool: tool.to_owned(),
             detail: detail.to_owned(),
             choices: Vec::new(),
+            permission: true,
         }
     }
 
-    /// The same question with its own answers offered instead.
+    /// The same question with its own answers offered as well.
     #[must_use]
     pub fn offering(mut self, choices: Vec<Choice>) -> Self {
         self.choices = choices;
+        self
+    }
+
+    /// A question rather than a permission: its own answers are the only
+    /// ones that mean anything.
+    #[must_use]
+    pub fn multiple_choice(mut self) -> Self {
+        self.permission = false;
         self
     }
 }
@@ -130,6 +144,7 @@ impl Board {
                 tool: asking.tool,
                 detail: asking.detail,
                 choices: asking.choices,
+                permission: asking.permission,
             },
             decision: None,
         });
@@ -335,16 +350,18 @@ mod tests {
             assert_eq!(ask.choices[1].description, "Every step");
             assert!(answering.answer(ask.id, Decision::Chose("Detailed".to_owned())));
         });
-        let asking = Asking::new("claude", "AskUserQuestion", "How much detail?").offering(vec![
-            Choice {
-                label: "Summary".to_owned(),
-                description: "The short version".to_owned(),
-            },
-            Choice {
-                label: "Detailed".to_owned(),
-                description: "Every step".to_owned(),
-            },
-        ]);
+        let asking = Asking::new("claude", "AskUserQuestion", "How much detail?")
+            .multiple_choice()
+            .offering(vec![
+                Choice {
+                    label: "Summary".to_owned(),
+                    description: "The short version".to_owned(),
+                },
+                Choice {
+                    label: "Detailed".to_owned(),
+                    description: "Every step".to_owned(),
+                },
+            ]);
         let decision = board.submit(asking, Duration::from_secs(5));
         assert_eq!(decision, Decision::Chose("Detailed".to_owned()));
         answerer.join().expect("answerer finishes");

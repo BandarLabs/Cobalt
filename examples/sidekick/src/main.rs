@@ -70,9 +70,11 @@ struct Ask {
     source: String,
     tool: String,
     detail: String,
-    /// The answers this question brought with it. Empty is the usual case
-    /// and means allow, deny, or neither.
+    /// The answers this question brought with it. Empty is the usual case.
     choices: Vec<Choice>,
+    /// Whether allow and deny mean anything here. A multiple-choice
+    /// question is not a permission, so allowing it would answer nothing.
+    permission: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -214,27 +216,27 @@ impl Sidekick {
             screen = screen.banner(BannerLevel::Attention, trouble.clone());
         }
         screen = screen.spacer(Space::Small);
-        if ask.choices.is_empty() {
-            return screen
-                .button(ALLOW, "Allow")
-                .button(DENY, "Deny")
-                .button(IGNORE, "Leave it for the terminal")
-                .build();
+        if !ask.choices.is_empty() {
+            // A named answer is a row rather than a button: it has a
+            // sentence under it, and a button that wraps to three lines is
+            // not a button.
+            screen = screen
+                .rows(ask.choices.iter().enumerate().map(|(index, choice)| {
+                    (
+                        chosen_action(index),
+                        choice.label.clone(),
+                        choice.description.clone(),
+                        Glyph::Circle,
+                    )
+                }))
+                .spacer(Space::Small);
         }
-        // A named answer is a row rather than a button: it has a sentence
-        // under it, and a button that wraps to three lines is not a button.
-        screen
-            .rows(ask.choices.iter().enumerate().map(|(index, choice)| {
-                (
-                    chosen_action(index),
-                    choice.label.clone(),
-                    choice.description.clone(),
-                    Glyph::Circle,
-                )
-            }))
-            .spacer(Space::Small)
-            .button(IGNORE, "Leave it for the terminal")
-            .build()
+        if ask.permission {
+            // Offered even when the request came with "always allow" lines,
+            // because deciding once is the answer most questions want.
+            screen = screen.button(ALLOW, "Allow").button(DENY, "Deny");
+        }
+        screen.button(IGNORE, "Leave it for the terminal").build()
     }
 
     /// Starts the next long poll. One in flight at a time, always.
@@ -518,6 +520,8 @@ fn read_ask(bytes: &[u8]) -> Option<Ask> {
         tool: field("tool"),
         detail: field("detail"),
         choices,
+        // Absent means a permission, which is what almost every ask is.
+        permission: ask.get("permission").and_then(kobo_json::Value::as_bool) != Some(false),
     })
 }
 
@@ -735,7 +739,7 @@ mod tests {
         TaskOutcome::Completed(
             format!(
                 r#"{{"ask":{{"id":{id},"source":"claude","tool":"Detail",
-                "detail":"How much detail do you want?","choices":[
+                "detail":"How much detail do you want?","permission":false,"choices":[
                 {{"label":"Summary","description":"The short version"}},
                 {{"label":"Every step","description":"Nothing left out"}}]}}}}"#
             )
@@ -769,6 +773,30 @@ mod tests {
             assert!(
                 !lines.iter().any(|line| line.trim() == absent),
                 "{absent} offered for a question that is not a permission: {lines:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_permission_offering_always_allow_still_offers_deciding_once() {
+        let (mut app, poll) = paired();
+        let mut context = Context::default();
+        app.on_task(
+            &mut context,
+            poll,
+            TaskOutcome::Completed(
+                br#"{"ask":{"id":9,"source":"claude","tool":"Edit","detail":"/tmp/README.md",
+                "permission":true,"choices":[
+                {"label":"Accept edits","description":"for the rest of this session"}]}}"#
+                    .to_vec(),
+            ),
+        );
+        let screen = painted(&context.take_commands()).expect("the question was painted");
+        let lines = shown(&screen);
+        for words in ["Accept edits", "Allow", "Deny", "Leave it for the terminal"] {
+            assert!(
+                lines.iter().any(|line| line.contains(words)),
+                "no {words} on the panel: {lines:?}"
             );
         }
     }
