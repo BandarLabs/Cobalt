@@ -138,10 +138,12 @@ impl Audiobook {
                 );
                 let mut screen = ScreenBuilder::new("audiobook-failed")
                     .top_bar("Could not create audiobook")
-                    .standard_state(state, advice)
-                    .button(AGAIN, "Try another topic");
+                    .standard_state(state, advice);
                 if self.has_books() {
-                    screen = screen.button(SHELF, "Your audiobooks");
+                    screen =
+                        screen.buttons([(AGAIN, "Try another topic"), (SHELF, "Your audiobooks")]);
+                } else {
+                    screen = screen.button(AGAIN, "Try another topic");
                 }
                 screen.build()
             }

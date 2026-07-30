@@ -37,8 +37,7 @@ impl Hello {
                         .clone()
                         .unwrap_or_else(|| "Battery: asking...".to_owned()),
                 )
-                .button("refresh", "Refresh")
-                .button("close", "Close")
+                .buttons([("refresh", "Refresh"), ("close", "Close")])
                 .build(),
         );
     }

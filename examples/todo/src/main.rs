@@ -222,9 +222,13 @@ impl Todo {
                 }
             }
         }
-        screen = screen.spacer(Space::Medium).button(ADD, "Add");
+        screen = screen.spacer(Space::Medium);
+        // Side by side, because stacked they were two full-width bars saying
+        // one word each at the bottom of a list.
         if self.items.iter().any(|item| item.done) {
-            screen = screen.button(CLEAR_DONE, "Clear finished");
+            screen = screen.buttons([(ADD, "Add"), (CLEAR_DONE, "Clear finished")]);
+        } else {
+            screen = screen.button(ADD, "Add");
         }
         screen.build()
     }

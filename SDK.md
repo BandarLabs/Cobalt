@@ -248,6 +248,7 @@ one cannot.
 | `heading(text)` | One line of display type. |
 | `text(text)` | A paragraph. Wraps by measured glyph width and Unicode line-break rules. |
 | `button(name, label)` | A full-width action. |
+| `buttons([(name, label), …])` | Two or three secondary actions on one line. |
 | `disabled_button(name, label)` | A visible, outlined action that yields nothing and absorbs its tap. |
 | `rows([(name, title, summary, glyph), …])` | A list. Title, one line of detail, an icon. |
 | `checklist([(name, title, summary, done), …])` | The same list, where a finished row is struck through. |
@@ -378,6 +379,12 @@ not been separated yet. Below it, at most one `primary_button`, the thing the
 reader came here to do, and at most one region of supporting detail. If two
 actions are equally important, neither is primary and both are ordinary
 buttons.
+
+**Two secondary actions go side by side, not stacked.** Use `buttons`. Stacked,
+each one takes the full width of the panel to say a single word and the bottom
+of the screen reads as a form. `buttons` is `band` underneath, so a narrow
+panel still stacks them by itself rather than squeezing three words into a
+third of a screen each. Past three, it is a menu: use `row_overflow`.
 
 **Chrome belongs to the runtime.** The top bar carries the title, Back and at
 most two trailing controls; anything further goes behind

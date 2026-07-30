@@ -909,6 +909,51 @@ impl ScreenBuilder {
         self.button_with_state(name, label, ControlState::Disabled)
     }
 
+    /// Puts two or three secondary actions on one line.
+    ///
+    /// Stacked, each of them takes the full width of the panel to say one
+    /// word, and a screen that ends in three of those reads as a form rather
+    /// than as a page with some things you can do to it. Side by side they are
+    /// as wide as they need to be and the reader can see at a glance that they
+    /// belong together. Both platforms do this: a `UIStackView` of secondary
+    /// buttons on iOS, a `Row` of `OutlinedButton`s on Android.
+    ///
+    /// This is [`ScreenBuilder::band`] with a slot per action, not a new kind
+    /// of thing, so a narrow panel still stacks them by itself rather than
+    /// squeezing three words into a third of a screen each.
+    ///
+    /// Anything past the third is dropped, which is what a band does anyway. A
+    /// row of four controls is a menu, and the overflow menu is what that is
+    /// for.
+    #[must_use]
+    pub fn buttons<I, N, L>(self, actions: I) -> Self
+    where
+        I: IntoIterator<Item = (N, L)>,
+        N: AsRef<str>,
+        L: Into<String>,
+    {
+        let actions: Vec<(String, String)> = actions
+            .into_iter()
+            .take(MAX_BAND_SLOTS)
+            .map(|(name, label)| (name.as_ref().to_owned(), label.into()))
+            .collect();
+        match actions.len() {
+            0 => self,
+            // One action side by side with nothing is a button, and going
+            // through a band would only cost a node and read the same.
+            1 => {
+                let (name, label) = actions.into_iter().next().expect("one action");
+                self.button(name, label)
+            }
+            _ => self.band(
+                BandAlign::Middle,
+                actions.into_iter().map(|(name, label)| {
+                    (SlotWidth::Fill, move |slot: Self| slot.button(name, label))
+                }),
+            ),
+        }
+    }
+
     /// Adds a button with explicit semantic enabled state.
     #[must_use]
     pub fn button_with_state(
@@ -4224,6 +4269,56 @@ mod tests {
             "nothing should sit beside a cover that never arrived: {:?}",
             screen.nodes
         );
+    }
+
+    #[test]
+    fn two_secondary_actions_share_one_line() {
+        // Stacked, each took the full width of the panel to say one word.
+        let screen = ScreenBuilder::new("todo")
+            .buttons([("add", "Add"), ("clear", "Clear finished")])
+            .build();
+        let Some(Node::Band { slots, .. }) = screen.nodes.first() else {
+            panic!("a pair of actions is a band: {:?}", screen.nodes);
+        };
+        assert_eq!(slots.len(), 2);
+        assert!(
+            slots
+                .iter()
+                .all(|slot| matches!(slot.nodes.as_slice(), [Node::Button { .. }])),
+            "a slot holds one button and nothing else"
+        );
+    }
+
+    #[test]
+    fn one_action_beside_nothing_is_just_a_button() {
+        // A band of one costs a node and reads the same.
+        let screen = ScreenBuilder::new("todo").buttons([("add", "Add")]).build();
+        assert!(
+            matches!(screen.nodes.as_slice(), [Node::Button { .. }]),
+            "{:?}",
+            screen.nodes
+        );
+    }
+
+    #[test]
+    fn paired_actions_are_still_separately_addressable() {
+        // The failure this guards: a band that registered one action for the
+        // whole row would make the second button do the first one's job.
+        let screen = ScreenBuilder::new("todo")
+            .buttons([("add", "Add"), ("clear", "Clear finished")])
+            .build();
+        let Some(Node::Band { slots, .. }) = screen.nodes.first() else {
+            panic!("a pair of actions is a band");
+        };
+        let actions: Vec<ActionId> = slots
+            .iter()
+            .filter_map(|slot| match slot.nodes.as_slice() {
+                [Node::Button { action, .. }] => Some(*action),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(actions.len(), 2);
+        assert_ne!(actions[0], actions[1], "both buttons sent the same action");
     }
 
     #[test]

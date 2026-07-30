@@ -198,9 +198,11 @@ impl Settings {
         }
         if self.bluetooth_state.enabled() {
             if self.devices.is_empty() {
-                screen = screen.text(
-                    "No devices found. Put headphones or a keyboard in pairing mode, then rescan.",
-                );
+                screen = screen
+                    .text(
+                        "No devices found. Put headphones or a keyboard in pairing mode, then rescan.",
+                    )
+                    .button(RESCAN, "Rescan for devices");
             } else {
                 let pages = page_count(self.devices.len());
                 screen = screen
@@ -232,10 +234,12 @@ impl Settings {
                             }),
                     );
                 if pages > 1 {
-                    screen = screen.button(MORE, "More devices");
+                    screen =
+                        screen.buttons([(MORE, "More devices"), (RESCAN, "Rescan for devices")]);
+                } else {
+                    screen = screen.button(RESCAN, "Rescan for devices");
                 }
             }
-            screen = screen.button(RESCAN, "Rescan for devices");
         }
         screen.build()
     }
@@ -270,7 +274,9 @@ impl Settings {
                     .button(DISCONNECT_WIFI, "Disconnect");
             }
             if self.networks.is_empty() {
-                screen = screen.text("No networks found yet.");
+                screen = screen
+                    .text("No networks found yet.")
+                    .button(RESCAN, "Scan for networks");
             } else {
                 let pages = page_count(self.networks.len());
                 screen = screen
@@ -297,10 +303,12 @@ impl Settings {
                             }),
                     );
                 if pages > 1 {
-                    screen = screen.button(MORE, "More networks");
+                    screen =
+                        screen.buttons([(MORE, "More networks"), (RESCAN, "Scan for networks")]);
+                } else {
+                    screen = screen.button(RESCAN, "Scan for networks");
                 }
             }
-            screen = screen.button(RESCAN, "Scan for networks");
         }
         screen.build()
     }

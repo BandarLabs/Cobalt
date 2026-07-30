@@ -330,6 +330,18 @@ impl DisplayMetrics {
         self.tenth_mm(3)
     }
 
+    /// The border of a control that can be pressed.
+    ///
+    /// Half again a rule, because a button's outline is not a rule: a rule
+    /// separates two things and wants to be quiet, an outline says where the
+    /// reader may put a finger and wants to be found. Drawn at the same weight
+    /// as the dividers around it a button reads as one more line on the page,
+    /// which is exactly how these controls came across.
+    #[must_use]
+    pub const fn button_border(&self) -> i32 {
+        self.tenth_mm(5)
+    }
+
     /// The height of the fixed bar that carries the title and the way back.
     ///
     /// Eleven millimetres to start with, which was a millimetre more than the
@@ -459,8 +471,35 @@ pub mod tone {
     pub const INK: u8 = 0;
     pub const MUTED: u8 = 96;
     pub const RULE: u8 = 160;
+    /// The weaker of the two hairlines, for separating rows of a list from one
+    /// another.
+    ///
+    /// This is the one place the palette carries the same role at two
+    /// strengths, and it is deliberate rather than an oversight of the rule
+    /// above. A line that divides a section from the next section and a line
+    /// that divides one row from the row below it are not doing the same job,
+    /// and drawn at the same weight the screen has no structure at all: a list
+    /// of six entries under a top bar came out as seven identical rules and
+    /// read as ruled notebook paper. Both platforms make the same split, iOS
+    /// with `separator` against `opaqueSeparator` and Material with
+    /// `outlineVariant` against `outline`.
+    ///
+    /// It does not count against [`MAX_TONES_PER_SCREEN`], because that limit
+    /// is about how many *meanings* a screen asks the reader to tell apart, and
+    /// these two mean the same thing.
+    pub const RULE_LIGHT: u8 = 200;
     pub const FOCUS: u8 = 0;
 }
+
+// Same weight, no hierarchy: the line closing the top bar has to read as
+// structural and the ones between entries as incidental. Asserted at compile
+// time because both are constants and a test could only restate them.
+const _: () = assert!(tone::RULE_LIGHT > tone::RULE);
+const _: () = assert!(tone::RULE_LIGHT < tone::PAPER);
+
+// A rule separates two things and wants to be quiet. A button's outline says
+// where a finger may go and wants to be found.
+const _: () = assert!(CLARA_BW_METRICS.button_border() > CLARA_BW_METRICS.rule_thickness());
 
 /// A whole percentage, clamped to a possible value on construction.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -3255,6 +3294,12 @@ pub enum LayoutKind {
     /// What the fact is. Ink, and wrapped in whatever the label column leaves.
     FactValue,
     Divider,
+    /// The weaker hairline between two rows of a list.
+    ///
+    /// Separate from [`LayoutKind::Divider`] because it is drawn lighter and
+    /// starts at the text margin rather than the screen margin, which is what
+    /// stops a list reading as ruled notebook paper.
+    RowRule,
     Spacer,
     Progress,
     PagedList,
@@ -4813,16 +4858,22 @@ fn layout_node(
                 // Separators go between rows, never after the last one. A
                 // trailing rule collides with whatever the screen puts next and
                 // reads as a mistake, which it was.
+                //
+                // Inset to the text margin and drawn at the weaker hairline,
+                // because a line between two rows is not doing the same job as
+                // the line under the top bar. Run full width at full weight
+                // they came out as one more identical rule per row and the
+                // screen read as ruled paper.
                 if position > 0 {
                     layout.nodes.push(LayoutNode {
                         id: *id,
                         rect: Rect {
-                            x,
+                            x: text_x,
                             y: cursor,
-                            width,
+                            width: max(1, width - icon - padding),
                             height: metrics.rule_thickness(),
                         },
-                        kind: LayoutKind::Divider,
+                        kind: LayoutKind::RowRule,
                         text_lines: Vec::new(),
                     });
                     cursor = cursor.saturating_add(gap);
@@ -6870,6 +6921,13 @@ fn force_grapheme_break(
     })
 }
 
+/// The corner radius of a button, in tenths of a millimetre.
+///
+/// Square corners on a full-width outlined rectangle is what an HTML form
+/// looked like in 1996, and it is most of why these controls read as
+/// wireframes rather than as buttons.
+pub const BUTTON_RADIUS_TENTH_MM: i32 = 10;
+
 /// How far a press mark sits inside the control it acknowledges, in tenths of
 /// a millimetre. Enough to clear a row separator and the screen margin, not so
 /// much that the mark stops covering the thing that was touched.
@@ -7621,7 +7679,12 @@ fn tones_used(layout: &Layout) -> usize {
     let mut ink = false;
     for node in &layout.nodes {
         match node.kind {
-            LayoutKind::Divider | LayoutKind::TabRule | LayoutKind::Section => hairline = true,
+            LayoutKind::Divider
+            | LayoutKind::RowRule
+            | LayoutKind::TabRule
+            | LayoutKind::Section => {
+                hairline = true;
+            }
             LayoutKind::Secondary
             | LayoutKind::TileSubtitle
             | LayoutKind::RowSummary
@@ -8662,7 +8725,13 @@ pub fn render_all(
             // the loudest thing this panel can draw and the slowest to clear,
             // so it is spent on the action the screen exists for.
             LayoutKind::Button(_, ControlState::Enabled, Emphasis::Primary) => {
-                fill_clipped(surface, node.rect, tone::INK, clip);
+                fill_rounded_clipped(
+                    surface,
+                    node.rect,
+                    metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
+                    tone::INK,
+                    clip,
+                );
                 draw_centered(
                     surface,
                     &node.text_lines,
@@ -8679,11 +8748,12 @@ pub fn render_all(
             // both of which are visible without a second control to compare
             // against.
             LayoutKind::Button(_, ControlState::Enabled, Emphasis::Normal) => {
-                stroke_clipped(
+                stroke_rounded_clipped(
                     surface,
                     node.rect,
+                    metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
                     tone::INK,
-                    metrics.rule_thickness(),
+                    metrics.button_border(),
                     clip,
                 );
                 draw_centered(
@@ -8696,11 +8766,12 @@ pub fn render_all(
                 );
             }
             LayoutKind::Button(_, ControlState::Disabled, _) => {
-                stroke_clipped(
+                stroke_rounded_clipped(
                     surface,
                     node.rect,
+                    metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
                     tone::RULE,
-                    metrics.rule_thickness(),
+                    metrics.button_border(),
                     clip,
                 );
                 draw_centered(
@@ -8748,6 +8819,7 @@ pub fn render_all(
                 draw_centered(surface, &node.text_lines, node.rect, size, tone::INK, clip);
             }
             LayoutKind::Divider => fill_clipped(surface, node.rect, tone::RULE, clip),
+            LayoutKind::RowRule => fill_clipped(surface, node.rect, tone::RULE_LIGHT, clip),
             LayoutKind::Progress => {
                 stroke_clipped(
                     surface,
@@ -9677,6 +9749,88 @@ fn stroke_clipped(surface: &mut Surface, rect: Rect, tone: u8, thickness: i32, c
     }
 }
 
+/// The horizontal run of a rounded rectangle on one of its rows, as a rect one
+/// pixel tall, or `None` for a row outside the shape.
+fn rounded_row(rect: Rect, radius: i32, row: i32) -> Option<Rect> {
+    if row < 0 || row >= rect.height || rect.width <= 0 {
+        return None;
+    }
+    let radius = radius.clamp(0, min(rect.width, rect.height) / 2);
+    let inset = corner_inset(radius, min(row, rect.height - 1 - row));
+    let width = rect.width - inset * 2;
+    (width > 0).then(|| Rect {
+        x: rect.x.saturating_add(inset),
+        y: rect.y.saturating_add(row),
+        width,
+        height: 1,
+    })
+}
+
+/// Fills a rectangle whose corners have been taken off.
+fn fill_rounded_clipped(surface: &mut Surface, rect: Rect, radius: i32, tone: u8, clip: Rect) {
+    for row in 0..rect.height {
+        if let Some(span) = rounded_row(rect, radius, row) {
+            fill_clipped(surface, span, tone, clip);
+        }
+    }
+}
+
+/// Outlines a rectangle whose corners have been taken off.
+///
+/// The border is the difference between the shape and the same shape inset by
+/// the thickness, so it keeps its width around the curve instead of thickening
+/// at the corners the way a per-row inset would. Only the ring is painted, so
+/// whatever is inside the control is left alone.
+fn stroke_rounded_clipped(
+    surface: &mut Surface,
+    rect: Rect,
+    radius: i32,
+    tone: u8,
+    thickness: i32,
+    clip: Rect,
+) {
+    let thickness = thickness
+        .max(1)
+        .min(rect.width.max(1) / 2)
+        .min(rect.height.max(1) / 2);
+    let inner = Rect {
+        x: rect.x.saturating_add(thickness),
+        y: rect.y.saturating_add(thickness),
+        width: rect.width - thickness * 2,
+        height: rect.height - thickness * 2,
+    };
+    for row in 0..rect.height {
+        let Some(outer) = rounded_row(rect, radius, row) else {
+            continue;
+        };
+        match rounded_row(inner, radius - thickness, row - thickness) {
+            Some(hole) => {
+                fill_clipped(
+                    surface,
+                    Rect {
+                        width: hole.x - outer.x,
+                        ..outer
+                    },
+                    tone,
+                    clip,
+                );
+                let right = hole.x.saturating_add(hole.width);
+                fill_clipped(
+                    surface,
+                    Rect {
+                        x: right,
+                        width: outer.x + outer.width - right,
+                        ..outer
+                    },
+                    tone,
+                    clip,
+                );
+            }
+            None => fill_clipped(surface, outer, tone, clip),
+        }
+    }
+}
+
 fn draw_lines(
     surface: &mut Surface,
     lines: &[String],
@@ -10309,18 +10463,30 @@ mod tests {
         );
         let mut surface = Surface::new(128, 128);
         surface.clear(77);
+        // On the button's left edge, halfway down it: the corners are rounded
+        // now, so a point near one is outside the shape and would prove
+        // nothing either way.
+        let rect = screen
+            .layout()
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::Button(..)))
+            .expect("a button")
+            .rect;
+        let (x, y) = (rect.x, rect.y + rect.height / 2);
         render(
             &screen,
             &mut surface,
             Some(Rect {
-                x: 48,
-                y: 48,
+                x,
+                y,
                 width: 1,
                 height: 1,
             }),
         );
-        assert_eq!(surface.pixels[48 * 128 + 48], tone::INK);
-        assert_eq!(surface.pixels[48 * 128 + 50], 77);
+        let at = |x: i32, y: i32| surface.pixels[usize::try_from(y * 128 + x).expect("inside")];
+        assert_eq!(at(x, y), tone::INK);
+        assert_eq!(at(x + 20, y), 77);
     }
 
     #[test]
@@ -11005,9 +11171,34 @@ mod row_tests {
         let rules = layout
             .nodes
             .iter()
-            .filter(|node| matches!(node.kind, LayoutKind::Divider))
+            .filter(|node| matches!(node.kind, LayoutKind::RowRule))
             .count();
         assert_eq!(rules, 2, "three rows need two separators");
+    }
+
+    #[test]
+    fn a_rule_between_rows_starts_where_the_text_does() {
+        // Full width they were one more identical line per row, indexed to the
+        // panel rather than to the list, and the screen read as ruled paper.
+        let layout = list(3, "Summary.").layout_for(&CLARA_BW_METRICS);
+        let rule = layout
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::RowRule))
+            .expect("a separator");
+        let title = layout
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::RowTitle))
+            .expect("a title");
+        assert_eq!(
+            rule.rect.x, title.rect.x,
+            "the separator did not skip the lead column"
+        );
+        assert!(
+            rule.rect.x + rule.rect.width <= CLARA_BW_METRICS.width,
+            "the separator ran off the panel"
+        );
     }
 
     #[test]
@@ -14962,6 +15153,158 @@ mod press_feedback_tests {
             layout.pressed_control(text.x + text.width / 2, text.y + text.height / 2),
             None
         );
+    }
+
+    /// A screen with one outlined button, rendered, and the button's rect.
+    fn rendered_button(emphasis: Emphasis) -> (Surface, Rect) {
+        let screen = Screen::new(
+            1,
+            vec![Node::Button {
+                id: NodeId(1),
+                action: ActionId(1),
+                label: "Add".to_owned(),
+                state: ControlState::Enabled,
+                emphasis,
+            }],
+        );
+        let rect = screen
+            .layout_for(&CLARA_BW_METRICS)
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::Button(..)))
+            .expect("a button")
+            .rect;
+        let mut surface = Surface::new(
+            usize::try_from(CLARA_BW_METRICS.width).expect("a panel"),
+            usize::try_from(CLARA_BW_METRICS.height).expect("a panel"),
+        );
+        surface.fill_rect(
+            Rect {
+                x: 0,
+                y: 0,
+                width: CLARA_BW_METRICS.width,
+                height: CLARA_BW_METRICS.height,
+            },
+            tone::PAPER,
+        );
+        render(&screen, &mut surface, None);
+        (surface, rect)
+    }
+
+    /// A dev aid: renders a shelf and a pair of buttons to a PGM so the
+    /// weights can be looked at without a reader on the desk. Run with
+    /// `cargo test -p kobo-ui control_sheet -- --ignored`.
+    #[test]
+    #[ignore = "writes a sheet to look at rather than asserting anything"]
+    fn control_sheet() {
+        let screen = Screen::new(
+            1,
+            vec![
+                Node::Rows {
+                    id: NodeId(1),
+                    rows: vec![
+                        Row::new(ActionId(1), "Scroll.in", "feeds.feedburner.com", Glyph::Rss),
+                        Row::new(
+                            ActionId(2),
+                            "Humor, Satire, and Cartoons",
+                            "newyorker.com",
+                            Glyph::Rss,
+                        ),
+                        Row::new(
+                            ActionId(3),
+                            "Culture: TV, Movies, Music",
+                            "newyorker.com",
+                            Glyph::Rss,
+                        ),
+                    ],
+                },
+                Node::Spacer {
+                    id: NodeId(2),
+                    space: Space::Medium,
+                },
+                Node::Button {
+                    id: NodeId(3),
+                    action: ActionId(4),
+                    label: "Add a feed".to_owned(),
+                    state: ControlState::Enabled,
+                    emphasis: Emphasis::Normal,
+                },
+                Node::Button {
+                    id: NodeId(4),
+                    action: ActionId(5),
+                    label: "Save".to_owned(),
+                    state: ControlState::Enabled,
+                    emphasis: Emphasis::Primary,
+                },
+            ],
+        );
+        let width = CLARA_BW_METRICS.width;
+        let height = 700;
+        let mut surface = Surface::new(
+            usize::try_from(width).unwrap(),
+            usize::try_from(height).unwrap(),
+        );
+        surface.clear(tone::PAPER);
+        render(&screen, &mut surface, None);
+        let path = std::env::temp_dir().join("cobalt-control-sheet.pgm");
+        let mut out = format!("P5\n{width} {height}\n255\n").into_bytes();
+        out.extend_from_slice(&surface.pixels);
+        std::fs::write(&path, out).unwrap();
+        println!("written to {}", path.display());
+    }
+
+    #[test]
+    fn a_button_has_its_corners_taken_off() {
+        // Square corners on a full-width outlined rectangle is what an HTML
+        // form looked like in 1996, and it is most of why these read as
+        // wireframes rather than as controls.
+        for emphasis in [Emphasis::Normal, Emphasis::Primary] {
+            let (surface, rect) = rendered_button(emphasis);
+            let at = |x: i32, y: i32| {
+                surface.pixels[usize::try_from(y * CLARA_BW_METRICS.width + x).expect("inside")]
+            };
+            assert_eq!(
+                at(rect.x, rect.y),
+                tone::PAPER,
+                "{emphasis:?} kept a square corner"
+            );
+            assert_ne!(
+                at(rect.x + rect.width / 2, rect.y),
+                tone::PAPER,
+                "{emphasis:?} has no top edge"
+            );
+        }
+    }
+
+    #[test]
+    fn a_buttons_outline_is_heavier_than_a_rule() {
+        // A rule separates two things and wants to be quiet. An outline says
+        // where a finger may go and wants to be found. At the same weight the
+        // button read as one more line on the page.
+        let (surface, rect) = rendered_button(Emphasis::Normal);
+        let column = rect.x + rect.width / 2;
+        let ink = (rect.y..rect.y + rect.height)
+            .take_while(|y| {
+                surface.pixels
+                    [usize::try_from(y * CLARA_BW_METRICS.width + column).expect("inside")]
+                    != tone::PAPER
+            })
+            .count();
+        let expected = usize::try_from(CLARA_BW_METRICS.button_border()).expect("a border");
+        assert_eq!(ink, expected, "the top edge is {ink} pixels");
+    }
+
+    #[test]
+    fn an_outlined_button_is_not_filled_in() {
+        // The border is the difference between the shape and the same shape
+        // inset, so it must leave the middle of the control alone.
+        let (surface, rect) = rendered_button(Emphasis::Normal);
+        let middle = rect.y + rect.height / 2;
+        let at = |x: i32| {
+            surface.pixels[usize::try_from(middle * CLARA_BW_METRICS.width + x).expect("inside")]
+        };
+        assert_eq!(at(rect.x + rect.width / 4), tone::PAPER);
+        assert_ne!(at(rect.x), tone::PAPER, "the left edge went missing");
     }
 
     #[test]
