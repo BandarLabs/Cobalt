@@ -264,15 +264,20 @@ impl Launcher {
             // labels for one destination, and on the last page "More apps"
             // promised applications that were not there and jumped to the
             // first page instead.
+            //
+            // Each entry carries its mark. A bar slot is a third of the panel,
+            // and "Return to Kobo reader" set across it in caption size is a
+            // sentence where a picture would do. The word stays under the mark
+            // rather than being replaced by it.
             let mut actions = Vec::with_capacity(3);
             if self.page > 0 {
-                actions.push(("previous", "Previous"));
+                actions.push(("previous", "Previous", Some(Glyph::Previous)));
             }
-            actions.push(("reader", "Return to Kobo reader"));
+            actions.push(("reader", "Kobo reader", Some(Glyph::Reader)));
             if self.page + 1 < pages.len() {
-                actions.push(("next", "More apps"));
+                actions.push(("next", "More apps", Some(Glyph::Next)));
             }
-            screen.action_bar(actions).build()
+            screen.action_bar_marked(actions).build()
         } else {
             // One page, so there is nothing to turn and a bar would be two
             // thirds empty. The way out becomes the one pinned control
@@ -282,7 +287,7 @@ impl Launcher {
             // difference went over the bottom edge of the panel, where the
             // renderer clipped it in silence.
             screen
-                .bottom_action("reader", "Return to Kobo reader")
+                .bottom_action_marked("reader", "Return to Kobo reader", Glyph::Reader)
                 .build()
         }
     }
@@ -471,7 +476,7 @@ mod tests {
                 let found = layout.nodes.iter().any(|node| {
                     matches!(
                         node.kind,
-                        LayoutKind::Button(action, ..) | LayoutKind::NavDestination(action)
+                        LayoutKind::Button(action, ..) | LayoutKind::NavDestination(action, ..)
                         if action == reader
                     )
                 });
@@ -542,7 +547,7 @@ mod tests {
             .nodes
             .iter()
             .filter_map(|node| match node.kind {
-                LayoutKind::Button(action, ..) | LayoutKind::NavDestination(action) => Some(action),
+                LayoutKind::Button(action, ..) | LayoutKind::NavDestination(action, ..) => Some(action),
                 _ => None,
             })
             .collect()

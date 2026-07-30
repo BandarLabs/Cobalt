@@ -2370,13 +2370,7 @@ fn encoded_screen_len(
         add_encoded_len(&mut length, 5)?;
         add_encoded_len(&mut length, encoded_string_len(&top_bar.title)?)?;
         for action in &top_bar.actions {
-            // Four for the identifier, one flag for whether it is drawn as a
-            // picture, and one more carrying which picture.
-            add_encoded_len(&mut length, 5)?;
-            if action.glyph.is_some() {
-                add_encoded_len(&mut length, 1)?;
-            }
-            add_encoded_len(&mut length, encoded_string_len(&action.label)?)?;
+            add_encoded_len(&mut length, encoded_bar_action_len(action)?)?;
         }
     }
     // One flag byte, plus two action identifiers when the screen asked for
@@ -2409,8 +2403,7 @@ fn encoded_screen_len(
         }
         add_encoded_len(&mut length, 6)?;
         for destination in &nav_bar.destinations {
-            add_encoded_len(&mut length, 4)?;
-            add_encoded_len(&mut length, encoded_string_len(&destination.label)?)?;
+            add_encoded_len(&mut length, encoded_bar_action_len(destination)?)?;
         }
     }
     // One flag byte for the pinned control, plus its node, action and label
@@ -2418,8 +2411,8 @@ fn encoded_screen_len(
     add_encoded_len(&mut length, 1)?;
     if let Some(bottom) = &screen.bottom_action {
         if screen.nav_bar.is_none() {
-            add_encoded_len(&mut length, 8)?;
-            add_encoded_len(&mut length, encoded_string_len(&bottom.action.label)?)?;
+            add_encoded_len(&mut length, 4)?;
+            add_encoded_len(&mut length, encoded_bar_action_len(&bottom.action)?)?;
         }
     }
     for node in &screen.nodes {
@@ -2632,8 +2625,7 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
             let mut length = 8;
             add_encoded_len(&mut length, encoded_string_len(prompt)?)?;
             for option in options {
-                add_encoded_len(&mut length, 4)?;
-                add_encoded_len(&mut length, encoded_string_len(&option.label)?)?;
+                add_encoded_len(&mut length, encoded_bar_action_len(option)?)?;
             }
             if let Some(freeform) = freeform {
                 add_encoded_len(&mut length, 4)?;
@@ -2688,8 +2680,7 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
                 add_encoded_len(&mut length, encoded_string_len(&failure.reason)?)?;
             }
             if let Some(cancel) = cancel {
-                add_encoded_len(&mut length, 4)?;
-                add_encoded_len(&mut length, encoded_string_len(&cancel.label)?)?;
+                add_encoded_len(&mut length, encoded_bar_action_len(cancel)?)?;
             }
             length
         }
@@ -3156,16 +3147,6 @@ fn encode_top_bar(output: &mut Vec<u8>, top_bar: Option<&TopBar>) -> Result<(), 
     output.push(u8::try_from(actions.len()).unwrap_or(0));
     for action in actions {
         encode_bar_action(output, action)?;
-        // Only a top bar carries pictures. Everywhere else a bar action is a
-        // word, and putting the flag in the shared encoder would have moved
-        // four other fields on the wire for a field none of them can use.
-        match action.glyph {
-            None => output.push(0),
-            Some(glyph) => {
-                output.push(1);
-                output.push(encode_glyph(glyph));
-            }
-        }
     }
     Ok(())
 }
@@ -3307,7 +3288,30 @@ fn encode_screen(
 
 fn encode_bar_action(output: &mut Vec<u8>, action: &BarAction) -> Result<(), ProtocolError> {
     push_u32(output, action.action.0);
+    // The mark travels with every bar action rather than only the top bar's.
+    // It used to be encoded beside the top bar alone, on the reasoning that a
+    // word is what a control is everywhere else; the bottom band disagreed as
+    // soon as it had to say "Return to Kobo reader" in a slot a third of a
+    // panel wide.
+    match action.glyph {
+        None => output.push(0),
+        Some(glyph) => {
+            output.push(1);
+            output.push(encode_glyph(glyph));
+        }
+    }
     push_string(output, &action.label)
+}
+
+/// Four for the identifier, one flag for whether it carries a mark, one more
+/// naming the mark, and the label.
+fn encoded_bar_action_len(action: &BarAction) -> Result<usize, ProtocolError> {
+    let mut length = 5;
+    if action.glyph.is_some() {
+        add_encoded_len(&mut length, 1)?;
+    }
+    add_encoded_len(&mut length, encoded_string_len(&action.label)?)?;
+    Ok(length)
 }
 
 fn decode_bar_action(reader: &mut Reader<'_>) -> Result<BarAction, ProtocolError> {
@@ -3318,10 +3322,15 @@ fn decode_bar_action(reader: &mut Reader<'_>) -> Result<BarAction, ProtocolError
     if action.is_reserved() {
         return Err(ProtocolError::InvalidValue("reserved action id"));
     }
+    let glyph = match reader.u8()? {
+        0 => None,
+        1 => Some(decode_glyph(reader.u8()?).ok_or(ProtocolError::InvalidValue("bar glyph"))?),
+        _ => return Err(ProtocolError::InvalidValue("bar glyph flag")),
+    };
     Ok(BarAction {
         action,
         label: reader.string()?,
-        glyph: None,
+        glyph,
     })
 }
 
@@ -3993,16 +4002,7 @@ fn decode_screen(
             }
             let mut actions = Vec::with_capacity(count);
             for _ in 0..count {
-                let action = decode_bar_action(reader)?;
-                let glyph = match reader.u8()? {
-                    0 => None,
-                    1 => Some(
-                        decode_glyph(reader.u8()?)
-                            .ok_or(ProtocolError::InvalidValue("bar glyph"))?,
-                    ),
-                    _ => return Err(ProtocolError::InvalidValue("bar glyph flag")),
-                };
-                actions.push(BarAction { glyph, ..action });
+                actions.push(decode_bar_action(reader)?);
             }
             Some(TopBar {
                 id: bar_id,
@@ -5809,6 +5809,50 @@ mod node_coverage_tests {
             decode(&bytes),
             Err(ProtocolError::InvalidValue("reserved action id"))
         ));
+    }
+
+    /// A mark on a bar entry used to be a top bar privilege.
+    ///
+    /// The flag was encoded beside the top bar rather than inside the shared
+    /// bar action, so a bottom bar could hold a glyph in memory, encode it,
+    /// and arrive on the panel as a word. The launcher is where it showed:
+    /// "Return to Kobo reader" in a slot a third of a panel wide.
+    #[test]
+    fn a_mark_on_any_bar_entry_survives_the_wire() {
+        let screen = Screen::new(1, Vec::new())
+            .with_nav_bar(NavBar::actions(
+                NodeId(1),
+                vec![
+                    BarAction::new(ActionId(1), "Previous").with_glyph(Glyph::Previous),
+                    BarAction::new(ActionId(2), "Reader"),
+                    BarAction::new(ActionId(3), "More apps").with_glyph(Glyph::Next),
+                ],
+            ))
+            .with_top_bar(TopBar::new(NodeId(2), "Cobalt"));
+        let frame = Frame {
+            request_id: 1,
+            message: Message::SetScreen(screen.clone()),
+        };
+        let bytes = encode(&frame).expect("encode");
+        // The reserved length and the encoder have to agree, and a mark that
+        // is written but not counted is exactly how they stop agreeing.
+        let counted = encoded_screen_len(&screen, 0, &mut 0).expect("length");
+        assert_eq!(bytes.len(), HEADER_LEN + counted);
+        let Message::SetScreen(back) = decode(&bytes).expect("decode").message else {
+            panic!("expected a screen");
+        };
+        let marks = back
+            .nav_bar
+            .expect("nav bar")
+            .destinations
+            .iter()
+            .map(|destination| destination.glyph)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            marks,
+            vec![Some(Glyph::Previous), None, Some(Glyph::Next)],
+            "a bar entry came back without the mark it was given"
+        );
     }
 
     /// A one-destination bar is refused by both halves, and the encoder

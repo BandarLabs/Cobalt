@@ -1432,6 +1432,37 @@ impl ScreenBuilder {
         self
     }
 
+    /// The same, with a mark on each entry that has one.
+    ///
+    /// A bar slot is a third of a panel wide and a bar entry is a verb, so the
+    /// ones with a picture everyone already knows should show it: a chevron
+    /// for a page turn, a house for the way out. The mark is drawn above the
+    /// word rather than instead of it, because this band is frequently the
+    /// only way off a screen and is the last place to make somebody guess.
+    #[must_use]
+    pub fn action_bar_marked<I, N, L>(mut self, actions: I) -> Self
+    where
+        I: IntoIterator<Item = (N, L, Option<kobo_ui::Glyph>)>,
+        N: AsRef<str>,
+        L: Into<String>,
+    {
+        let id = self.next_id();
+        let actions = actions
+            .into_iter()
+            .map(|(name, label, glyph)| {
+                let action = BarAction::new(self.register(name.as_ref()), label);
+                match glyph {
+                    Some(glyph) => action.with_glyph(glyph),
+                    None => action,
+                }
+            })
+            .collect::<Vec<_>>();
+        self.warn_second_bottom_bar(id);
+        self.nav_bar = Some(NavBar::actions(id, actions));
+        self.bottom_action = None;
+        self
+    }
+
     /// Pins one control to the bottom of the panel, where a bar would go.
     ///
     /// For a screen with a single way off it. Prefer this to a button at the
@@ -1447,6 +1478,26 @@ impl ScreenBuilder {
     pub fn bottom_action(mut self, name: impl AsRef<str>, label: impl Into<String>) -> Self {
         let id = self.next_id();
         let action = BarAction::new(self.register(name.as_ref()), label);
+        self.warn_second_bottom_bar(id);
+        self.bottom_action = Some(BottomAction::new(id, action));
+        self.nav_bar = None;
+        self
+    }
+
+    /// The same, with a mark beside the word.
+    ///
+    /// The mark sits next to the label rather than replacing it: one pinned
+    /// control has the width for both, and this is the band a reader uses to
+    /// leave.
+    #[must_use]
+    pub fn bottom_action_marked(
+        mut self,
+        name: impl AsRef<str>,
+        label: impl Into<String>,
+        glyph: kobo_ui::Glyph,
+    ) -> Self {
+        let id = self.next_id();
+        let action = BarAction::new(self.register(name.as_ref()), label).with_glyph(glyph);
         self.warn_second_bottom_bar(id);
         self.bottom_action = Some(BottomAction::new(id, action));
         self.nav_bar = None;

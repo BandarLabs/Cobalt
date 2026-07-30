@@ -1434,7 +1434,7 @@ mod tests {
             .filter(|node| {
                 matches!(
                     node.kind,
-                    LayoutKind::NavDestination(_) | LayoutKind::NavDestinationSelected(_)
+                    LayoutKind::NavDestination(..) | LayoutKind::NavDestinationSelected(..)
                 )
             })
             .map(|node| node.rect)
@@ -1809,7 +1809,7 @@ mod tests {
             .nodes
             .iter()
             .filter_map(|node| match node.kind {
-                LayoutKind::NavDestination(action) => Some((action, node.rect)),
+                LayoutKind::NavDestination(action, ..) => Some((action, node.rect)),
                 _ => None,
             })
             .collect::<Vec<_>>();

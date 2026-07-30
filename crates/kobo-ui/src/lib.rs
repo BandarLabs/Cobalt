@@ -2098,9 +2098,9 @@ fn layout_nav_bar(nav_bar: &NavBar, metrics: &DisplayMetrics, layout: &mut Layou
                 height,
             },
             kind: if nav_bar.style == BarStyle::Navigation && nav_bar.selected == Some(index) {
-                LayoutKind::NavDestinationSelected(destination.action)
+                LayoutKind::NavDestinationSelected(destination.action, destination.glyph)
             } else {
-                LayoutKind::NavDestination(destination.action)
+                LayoutKind::NavDestination(destination.action, destination.glyph)
             },
             text_lines: vec![destination.label.clone()],
         });
@@ -3372,8 +3372,11 @@ pub enum LayoutKind {
     /// A splash's sentence, set centred under its name.
     SplashText,
     NavBar,
-    NavDestination(ActionId),
-    NavDestinationSelected(ActionId),
+    /// An entry in the bottom bar. The mark is optional and drawn above the
+    /// word, never in place of it: a bar entry is often the only way off a
+    /// screen.
+    NavDestination(ActionId, Option<Glyph>),
+    NavDestinationSelected(ActionId, Option<Glyph>),
     Row(ActionId),
     Cell(ActionId),
     CellLabel,
@@ -3445,8 +3448,8 @@ impl LayoutKind {
             Self::Button(action, _, _)
             | Self::BarAction(action)
             | Self::BarGlyph(action, _)
-            | Self::NavDestination(action)
-            | Self::NavDestinationSelected(action)
+            | Self::NavDestination(action, ..)
+            | Self::NavDestinationSelected(action, ..)
             | Self::Tile(action, ControlState::Enabled)
             | Self::Field(action)
             | Self::FieldClear(action)
@@ -3703,8 +3706,8 @@ impl Layout {
                         | LayoutKind::Back
                         | LayoutKind::BarAction(_)
                         | LayoutKind::BarGlyph(..)
-                        | LayoutKind::NavDestination(_)
-                        | LayoutKind::NavDestinationSelected(_)
+                        | LayoutKind::NavDestination(..)
+                        | LayoutKind::NavDestinationSelected(..)
                         | LayoutKind::Row(_)
                         | LayoutKind::RowMenu(_)
                         | LayoutKind::Cell(_)
@@ -3883,8 +3886,8 @@ impl Layout {
                 LayoutKind::Button(candidate, ControlState::Enabled, _)
                 | LayoutKind::BarAction(candidate)
                 | LayoutKind::BarGlyph(candidate, _)
-                | LayoutKind::NavDestination(candidate)
-                | LayoutKind::NavDestinationSelected(candidate)
+                | LayoutKind::NavDestination(candidate, ..)
+                | LayoutKind::NavDestinationSelected(candidate, ..)
                 | LayoutKind::Tile(candidate, ControlState::Enabled)
                 | LayoutKind::Field(candidate)
                 | LayoutKind::FieldClear(candidate)
@@ -8271,8 +8274,8 @@ const fn is_tappable(kind: LayoutKind) -> bool {
             | LayoutKind::Back
             | LayoutKind::BarAction(_)
             | LayoutKind::BarGlyph(..)
-            | LayoutKind::NavDestination(_)
-            | LayoutKind::NavDestinationSelected(_)
+            | LayoutKind::NavDestination(..)
+            | LayoutKind::NavDestinationSelected(..)
             | LayoutKind::Row(_)
             | LayoutKind::RowMenu(_)
             | LayoutKind::Cell(_)
@@ -8314,8 +8317,8 @@ fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
         | LayoutKind::PagePosition
         | LayoutKind::ActivityBytes
         | LayoutKind::ActivityFailure
-        | LayoutKind::NavDestination(_)
-        | LayoutKind::NavDestinationSelected(_) => FontSize::Caption,
+        | LayoutKind::NavDestination(..)
+        | LayoutKind::NavDestinationSelected(..) => FontSize::Caption,
         LayoutKind::Text
         | LayoutKind::FieldValue(_)
         | LayoutKind::FactValue
@@ -9281,11 +9284,27 @@ pub fn render_all(
                 tone::INK,
                 clip,
             ),
-            LayoutKind::NavDestination(_) => {
-                draw_nav_label(surface, &node.text_lines, node.rect, metrics, false, clip);
+            LayoutKind::NavDestination(_, glyph) => {
+                draw_nav_label(
+                    surface,
+                    &node.text_lines,
+                    node.rect,
+                    metrics,
+                    false,
+                    glyph,
+                    clip,
+                );
             }
-            LayoutKind::NavDestinationSelected(_) => {
-                draw_nav_label(surface, &node.text_lines, node.rect, metrics, true, clip);
+            LayoutKind::NavDestinationSelected(_, glyph) => {
+                draw_nav_label(
+                    surface,
+                    &node.text_lines,
+                    node.rect,
+                    metrics,
+                    true,
+                    glyph,
+                    clip,
+                );
             }
             LayoutKind::Tile(..) => stroke_clipped(
                 surface,
@@ -9685,9 +9704,46 @@ fn draw_nav_label(
     rect: Rect,
     metrics: &DisplayMetrics,
     selected: bool,
+    glyph: Option<Glyph>,
     clip: Rect,
 ) {
-    draw_centered(surface, lines, rect, FontSize::Caption, tone::INK, clip);
+    // A mark sits above the word rather than instead of it. This band is a
+    // finger wide and has the room, and it is often the only way off a screen,
+    // so it is the last place to make somebody guess. The word drops to the
+    // foot of the slot to make space, which is the shape both phone platforms
+    // draw a bottom bar in.
+    let mut text = rect;
+    if let Some(glyph) = glyph {
+        let line = FontSize::Caption.line_height();
+        let gap = metrics.space(Space::Tight);
+        let side = min(
+            metrics.touch_target_minimum() / 2,
+            max(0, rect.height - line - gap * 2),
+        );
+        if side > 0 {
+            let block = side + gap + line;
+            let top = rect.y + max(0, rect.height - block) / 2;
+            draw_vector(
+                surface,
+                &vector::shapes(glyph),
+                Rect {
+                    x: rect.x + (rect.width - side) / 2,
+                    y: top,
+                    width: side,
+                    height: side,
+                },
+                clip,
+                tone::INK,
+            );
+            text = Rect {
+                x: rect.x,
+                y: top + side + gap,
+                width: rect.width,
+                height: line,
+            };
+        }
+    }
+    draw_centered(surface, lines, text, FontSize::Caption, tone::INK, clip);
     // Selection is marked with a bar rather than a fill. An inverted
     // destination would be the largest black area on the screen and would
     // dominate the content it is meant to be subordinate to.
@@ -11202,7 +11258,7 @@ mod chrome_tests {
                 .filter(|node| {
                     matches!(
                         node.kind,
-                        LayoutKind::NavDestination(_) | LayoutKind::NavDestinationSelected(_)
+                        LayoutKind::NavDestination(..) | LayoutKind::NavDestinationSelected(..)
                     )
                 })
                 .collect::<Vec<_>>();
@@ -11236,7 +11292,7 @@ mod chrome_tests {
             for node in &layout.nodes {
                 if matches!(
                     node.kind,
-                    LayoutKind::NavDestination(_) | LayoutKind::NavDestinationSelected(_)
+                    LayoutKind::NavDestination(..) | LayoutKind::NavDestinationSelected(..)
                 ) {
                     assert!(
                         node.rect.width >= metrics.touch_target_minimum(),
@@ -11284,7 +11340,7 @@ mod chrome_tests {
         let selected = layout
             .nodes
             .iter()
-            .filter(|node| matches!(node.kind, LayoutKind::NavDestinationSelected(_)))
+            .filter(|node| matches!(node.kind, LayoutKind::NavDestinationSelected(..)))
             .count();
         assert_eq!(selected, 1);
     }
@@ -15941,7 +15997,7 @@ mod press_feedback_tests {
             !layout
                 .nodes
                 .iter()
-                .any(|node| matches!(node.kind, LayoutKind::NavDestinationSelected(_))),
+                .any(|node| matches!(node.kind, LayoutKind::NavDestinationSelected(..))),
             "none of these is a place the reader could be standing"
         );
         assert!(

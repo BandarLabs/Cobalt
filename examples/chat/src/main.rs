@@ -1143,7 +1143,7 @@ mod tests {
                 .filter(|node| {
                     matches!(
                         node.kind,
-                        LayoutKind::NavDestination(_) | LayoutKind::NavDestinationSelected(_)
+                        LayoutKind::NavDestination(..) | LayoutKind::NavDestinationSelected(..)
                     )
                 })
                 .map(|node| node.rect)

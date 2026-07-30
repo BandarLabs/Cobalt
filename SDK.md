@@ -236,6 +236,8 @@ one cannot.
 | `owns_back(bool)` | Ask for Back as an action before it leaves the app. |
 | `nav_bar(selected, [(name, label), …])` | The pinned bottom bar of *destinations*. At least two. |
 | `action_bar(name, [(name, label), …])` | The same slot, carrying *verbs* instead. At most three. |
+| `action_bar_marked([(name, label, glyph), …])` | The same, with a mark drawn above each word that has one. |
+| `bottom_action_marked(name, label, glyph)` | One pinned control with its mark beside the word. |
 | `top_bar_overflow(name, open, [(name, label), …])` | Three dots that open a menu when `open`, and close on a tap anywhere else. |
 | `page_turns(previous, next)` | Tap the left of the page to go back, the rest to go on. |
 | `page_position(page, total)` | A footer line saying where in the list this is. |
@@ -393,6 +395,14 @@ both**: `nav_bar` answers "where am I", `action_bar` answers "what can I do
 here", and a bar that mixes them leaves a reader unable to predict what a tap
 costs. That conflation is why `nav_bar(None, …)` used to be written; it is a
 warning now, and `action_bar` is the answer.
+
+**A bar entry keeps its word.** `action_bar_marked` and `bottom_action_marked`
+draw the mark above or beside the label, never instead of it. A bar slot is a
+third of the panel wide, so "Return to Kobo reader" set across one is a
+sentence where a chevron or a house would do; but this band is often the only
+way off a screen, which makes it the last place to make somebody guess. The
+top bar is the one place a mark does replace the word, because it has no room
+for both.
 
 **A screen has exactly one bottom band.** `nav_bar`, `action_bar` and
 `bottom_action` all claim it, and the last one called silently wins. A screen

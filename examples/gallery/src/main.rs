@@ -424,7 +424,13 @@ impl Gallery {
                  rather than closing the app.",
             )
             .facts([("Kind", "Row"), ("Section", "A section with its own rows")])
-            .action_bar([("grp-save", "Save"), ("grp-share", "Share")])
+            // Marked, and deliberately only half marked: a bar where one verb
+            // has a picture everyone knows and the other does not is the case
+            // that has to keep lining up.
+            .action_bar_marked([
+                ("grp-save", "Save", Some(Glyph::Bookmark)),
+                ("grp-share", "Share", None),
+            ])
             .build()
     }
 
