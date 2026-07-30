@@ -340,14 +340,37 @@ impl Reader {
         metrics.text_scale = self.memory.scale;
         // No bar is ever reserved: a reading page has nothing at its foot,
         // and the controls are drawn over it rather than under it.
-        let area = metrics.prose_area_in(true, false, Face::Reading);
+        //
+        // The strip that says which page this is, though, is drawn there, and
+        // the layout engine takes it out of the content before it places
+        // anything. Measured without it, the last two lines of every page were
+        // set underneath "22 of 226" and the chevrons beside it.
+        let full = metrics.prose_area_in(true, false, Face::Reading);
+        let mut area = full;
+        area.height = area
+            .height
+            .saturating_sub(metrics.page_position_band())
+            .max(1);
         // Measured with the type at the size the screen will ask for. The
         // scale has to be ambient while this runs, because the wrapper and the
         // line height both read it -- and the screen carries the same value,
         // so what was measured here is what gets drawn.
-        let (pages, capped) = kobo_ui::with_text_scale(self.memory.scale, || {
+        let (mut pages, mut capped) = kobo_ui::with_text_scale(self.memory.scale, || {
             paginate(&self.document, &self.memory.highlights, &metrics, area)
         });
+        // A book of one page says nothing about where it is, so no strip is
+        // drawn and the room it was holding belongs to the words. Deciding it
+        // this way round rather than the other cannot oscillate: more room
+        // never turns one page into two.
+        if pages.len() <= 1 {
+            let (whole, cut) = kobo_ui::with_text_scale(self.memory.scale, || {
+                paginate(&self.document, &self.memory.highlights, &metrics, full)
+            });
+            if whole.len() <= 1 {
+                pages = whole;
+                capped = cut;
+            }
+        }
         self.pages = pages;
         self.cut = capped || self.document.truncated;
         self.page = self.page_holding(self.memory.at);
@@ -1379,6 +1402,43 @@ mod tests {
                 .and_then(|turns| turns.position),
             None
         );
+    }
+
+    /// The strip at the foot is taken out of the page before the words are
+    /// set, or the words are set underneath it. Every page of a real book ran
+    /// its last two lines under "22 of 226" and the chevrons beside it, which
+    /// is a page of a novel with two lines missing and nothing to say so.
+    #[test]
+    fn no_line_of_a_page_is_set_under_the_strip_that_says_where_it_is() {
+        let mut reader = reader(40);
+        assert!(reader.page_count() > 1, "one page proves nothing here");
+        let panel = panel();
+        for page in 0..reader.page_count() {
+            while reader.page_number() < page + 1 {
+                assert!(reader.forward());
+            }
+            let layout = reader
+                .screen("Pride and Prejudice")
+                .layout_with(&panel, &kobo_ui::Chrome::with_back(true));
+            let band = layout
+                .nodes
+                .iter()
+                .find(|node| node.kind == kobo_ui::LayoutKind::PagePosition)
+                .expect("a book of many pages says which one this is")
+                .rect;
+            let spilling = layout
+                .nodes
+                .iter()
+                .filter(|node| !node.text_lines.is_empty())
+                .filter(|node| node.kind != kobo_ui::LayoutKind::PagePosition)
+                .filter(|node| node.rect.y + node.rect.height > band.y)
+                .count();
+            assert_eq!(
+                spilling, 0,
+                "page {} set {spilling} things under the strip",
+                page + 1
+            );
+        }
     }
 
     /// The front light is judged against the page, so it has a control of its
