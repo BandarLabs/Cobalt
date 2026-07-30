@@ -45,16 +45,6 @@ pub struct Agent {
     pub binaries: &'static [&'static str],
     /// The hook event that means "may I?".
     pub event: &'static str,
-    /// Whether that event fires before every tool call rather than only when
-    /// the agent actually wants permission.
-    ///
-    /// Claude Code's `PreToolUse` fires for everything, so a hook that
-    /// forwarded all of it would ring the reader for every `grep` and
-    /// `wc -l` the agent ran, including the ones it was never going to ask
-    /// about. Codex's `PermissionRequest` fires only when it has a real
-    /// question, so nothing needs filtering there and filtering would in
-    /// fact throw away questions that were meant for us.
-    pub every_tool: bool,
     /// How its configuration file is shaped.
     pub wiring: Wiring,
 }
@@ -67,8 +57,7 @@ pub const AGENTS: &[Agent] = &[
         config: ".claude/settings.json",
         marker: ".claude",
         binaries: &["claude"],
-        event: "PreToolUse",
-        every_tool: true,
+        event: "PermissionRequest",
         wiring: Wiring::Matcher,
     },
     Agent {
@@ -78,7 +67,6 @@ pub const AGENTS: &[Agent] = &[
         marker: ".codex",
         binaries: &["codex"],
         event: "PermissionRequest",
-        every_tool: false,
         wiring: Wiring::Matcher,
     },
 ];
@@ -316,7 +304,7 @@ mod tests {
         let parsed = kobo_json::parse(&text).expect("what we write is JSON");
         let entry = parsed
             .get("hooks")
-            .and_then(|hooks| hooks.get("PreToolUse"))
+            .and_then(|hooks| hooks.get("PermissionRequest"))
             .and_then(|event| event.index(0))
             .expect("one registration");
         assert_eq!(
@@ -376,11 +364,11 @@ mod tests {
     /// Somebody else's hook is not ours to remove.
     #[test]
     fn another_tools_hook_is_joined_rather_than_replaced() {
-        let before = r#"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/usr/bin/other"}]}],"Stop":[{"hooks":[]}]}}"#;
+        let before = r#"{"hooks":{"PermissionRequest":[{"matcher":"Bash","hooks":[{"type":"command","command":"/usr/bin/other"}]}],"Stop":[{"hooks":[]}]}}"#;
         let after = kobo_json::parse(&written("claude", Some(before))).expect("JSON");
         let event = after
             .get("hooks")
-            .and_then(|hooks| hooks.get("PreToolUse"))
+            .and_then(|hooks| hooks.get("PermissionRequest"))
             .and_then(kobo_json::Value::as_array)
             .expect("an array");
         assert_eq!(event.len(), 2, "the other tool kept its place");

@@ -15,7 +15,6 @@
 
 use crate::agents;
 use crate::http::post_local;
-use crate::quiet;
 use crate::state;
 use std::io::Read;
 use std::time::Duration;
@@ -37,12 +36,6 @@ pub fn run_hook(agent: &str) -> Result<(), String> {
         return Ok(());
     }
     let (tool, detail) = summarise(&input);
-    // A hook that fires before every tool call would otherwise ring the
-    // reader for every grep and wc the agent runs. Saying nothing leaves the
-    // agent exactly the policy it had before this was installed.
-    if known.every_tool && quiet::is_harmless(&tool, &detail) {
-        return Ok(());
-    }
     let ask = ask_body(known.id, &tool, &detail);
     let Ok(response) = post_local(state::HOOK_PORT, "/ask", &ask, HOOK_PATIENCE) else {
         return Ok(());
@@ -79,13 +72,31 @@ pub fn summarise(event: &str) -> (String, String) {
     let detail = parsed
         .as_ref()
         .and_then(|event| event.get("tool_input"))
-        .map_or_else(String::new, |input| {
-            input
-                .get("command")
-                .and_then(kobo_json::Value::as_str)
-                .map_or_else(|| input.to_json(), str::to_owned)
-        });
+        .map_or_else(String::new, describe);
     (tool, detail)
+}
+
+/// The one line worth reading about a tool call.
+///
+/// A command line if there is one, otherwise whichever field actually says
+/// what the tool is about to touch. Serialising the whole input is the last
+/// resort rather than the first: an Edit carries the entire old and new text
+/// of a file, and a screen of JSON tells the person across the room nothing
+/// they can decide on.
+fn describe(input: &kobo_json::Value) -> String {
+    for name in [
+        "command",
+        "file_path",
+        "path",
+        "url",
+        "pattern",
+        "notebook_path",
+    ] {
+        if let Some(text) = input.get(name).and_then(kobo_json::Value::as_str) {
+            return text.to_owned();
+        }
+    }
+    input.to_json()
 }
 
 /// The daemon's `/ask` body.
@@ -98,36 +109,34 @@ fn ask_body(agent: &str, tool: &str, detail: &str) -> String {
         .to_json()
 }
 
-/// The decision in the dialect the asking agent expects, or `None` for
+/// The decision as `PermissionRequest` hooks report it, or `None` for
 /// "print nothing and let the terminal prompt have it".
+///
+/// Claude Code and Codex document the same event and the same reply, so
+/// there is one shape rather than a dialect each. `message` is only read on
+/// a denial, and saying where the answer came from is worth the two words
+/// wherever it is shown.
 #[must_use]
-pub fn decision_json(agent: &str, decision: &str) -> Option<String> {
+pub fn decision_json(_agent: &str, decision: &str) -> Option<String> {
     if decision != "allow" && decision != "deny" {
         return None;
     }
-    let output = if agent == "codex" {
-        let verdict = kobo_json::ObjectBuilder::new()
-            .set("behavior", decision)
-            .set("message", "Decided on the Kobo")
-            .build();
-        kobo_json::ObjectBuilder::new().set(
-            "hookSpecificOutput",
-            kobo_json::ObjectBuilder::new()
-                .set("hookEventName", "PermissionRequest")
-                .set("decision", verdict)
-                .build(),
-        )
-    } else {
-        kobo_json::ObjectBuilder::new().set(
-            "hookSpecificOutput",
-            kobo_json::ObjectBuilder::new()
-                .set("hookEventName", "PreToolUse")
-                .set("permissionDecision", decision)
-                .set("permissionDecisionReason", "Decided on the Kobo")
-                .build(),
-        )
-    };
-    Some(output.build().to_json())
+    let verdict = kobo_json::ObjectBuilder::new()
+        .set("behavior", decision)
+        .set("message", "Decided on the Kobo")
+        .build();
+    Some(
+        kobo_json::ObjectBuilder::new()
+            .set(
+                "hookSpecificOutput",
+                kobo_json::ObjectBuilder::new()
+                    .set("hookEventName", "PermissionRequest")
+                    .set("decision", verdict)
+                    .build(),
+            )
+            .build()
+            .to_json(),
+    )
 }
 
 /// Prints the registration, ready to paste, for anyone who would rather
@@ -261,22 +270,18 @@ mod tests {
     }
 
     #[test]
-    fn an_allow_speaks_each_agents_dialect() {
-        let codex = decision_json("codex", "allow").expect("a decision");
-        assert!(
-            codex.contains("\"hookEventName\":\"PermissionRequest\""),
-            "{codex}"
-        );
-        assert!(codex.contains("\"behavior\":\"allow\""), "{codex}");
-        let claude = decision_json("claude", "allow").expect("a decision");
-        assert!(
-            claude.contains("\"hookEventName\":\"PreToolUse\""),
-            "{claude}"
-        );
-        assert!(
-            claude.contains("\"permissionDecision\":\"allow\""),
-            "{claude}"
-        );
+    fn both_agents_are_answered_in_the_one_shape_they_share() {
+        for agent in ["codex", "claude"] {
+            let reply = decision_json(agent, "allow").expect("a decision");
+            assert!(
+                reply.contains("\"hookEventName\":\"PermissionRequest\""),
+                "{reply}"
+            );
+            assert!(reply.contains("\"behavior\":\"allow\""), "{reply}");
+        }
+        let denied = decision_json("claude", "deny").expect("a decision");
+        assert!(denied.contains("\"behavior\":\"deny\""), "{denied}");
+        assert!(denied.contains("Decided on the Kobo"), "{denied}");
     }
 
     #[test]

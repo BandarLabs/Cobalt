@@ -826,6 +826,24 @@ credential, `Failure::naming(secret)` says which one: an application running
 against three providers that only says "install a key" leaves whoever is
 holding the reader to guess which of the three.
 
+Getting a key onto the reader is a command, not an errand:
+
+```sh
+kobo secret set openai --from ~/.openai --device 192.168.1.5
+kobo secret set exa --from ~/.exa --device 192.168.1.5
+kobo secret set elevenlabs --from ~/.elevenlabs --device 192.168.1.5
+kobo secret list --device 192.168.1.5      # names only, never values
+kobo secret remove openai --device 192.168.1.5
+```
+
+With no `--from`, the key is looked for in `$KOBO_SECRETS_DIR/<name>`,
+`~/.config/cobalt/secrets/<name>` and `~/.<name>`, in that order. The value is
+read on this machine and written straight to the reader: it is never passed as
+an argument, so it does not reach a process table or a shell history, and it is
+never printed. A one-line `NAME=value` file is accepted as well as a raw key;
+only the value is installed. `--volume` does the same thing over USB for a
+reader that is not yet on Wi-Fi.
+
 ### Owner trust roots
 
 Every request is HTTPS, verified against the public roots every browser
@@ -989,6 +1007,43 @@ an active Bluetooth stack makes the runtime reboot cleanly when the Cobalt
 session ends because handing the initialised vendor driver directly back to
 Nickel is not safe. **An invented reading is worse than a refusal**, because an
 application cannot tell one from the other and will act on it.
+
+### Declaring capabilities
+
+`context.device()` only grants what the manifest declares, and the runtime
+clamps even that:
+
+| Capability | Purpose |
+| --- | --- |
+| `network` | Reach the network in the foreground |
+| `background-network` | Reach the network from a scheduled wake |
+| `hold-wifi` | Keep Wi-Fi associated, for always-on dashboards |
+| `keep-awake` | Stay out of suspend in the foreground |
+| `scheduled-wake` | Be woken to refresh content |
+| `battery-read` | Read battery percentage and charging state |
+| `frontlight-control` | Change front light brightness |
+| `audio`, `bluetooth-audio` | Play audio, including to headphones |
+| `bluetooth-control` | Power, scan, pair and connect Bluetooth devices |
+| `wifi-control` | Power, scan, join and disconnect Wi-Fi |
+| `sleep-screen` | Draw the sleep screen |
+| `notifications` | Post notifications |
+| `shared-files` | Use a user-visible folder |
+| `shell` | Run a terminal, hosted by the runtime |
+
+Unknown names are rejected rather than ignored, dependencies are enforced
+(`hold-wifi` requires `network`, `background-network` requires
+`scheduled-wake`, `bluetooth-audio` requires `audio`), and a system
+`PowerPolicy` the application cannot raise imposes a minimum wake interval, a
+maximum Wi-Fi hold, and withdrawal of the expensive capabilities below fifteen
+percent battery unless the device is charging.
+
+`shell` is the one that is different in kind. Every other capability is undone
+by a reboot; a shell on this device is root on a writable root filesystem, so
+it is the first thing the platform hosts that a power cycle cannot repair. It
+is never implied by another capability, it is granted today only to the
+application named `terminal`, and the application never holds the
+pseudo-terminal: it sends what was typed and receives what was printed, so the
+runtime is the only thing that can start, bound, or stop a program.
 
 ### The cover sensor
 

@@ -2,7 +2,7 @@
 //!
 //! Coding agents stop mid-task to ask "may I run this?", and the asking is
 //! wherever the terminal is. This daemon catches those questions through the
-//! agents' own hook systems -- Claude Code's `PreToolUse`, Codex's
+//! agents' own hook systems -- both Claude Code and Codex call the event
 //! `PermissionRequest` -- and holds them for a Kobo across the room, where
 //! the sidekick application shows the command and three buttons. The answer
 //! travels back and the hook returns it as if the person had been at the
@@ -23,7 +23,6 @@ mod agents;
 mod board;
 mod hooks;
 mod http;
-mod quiet;
 mod server;
 mod state;
 

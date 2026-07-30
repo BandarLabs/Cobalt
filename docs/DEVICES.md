@@ -446,6 +446,17 @@ whatever the runtime draws, the reader's own screen can always be put back
 exactly. Even a whole-screen update is submitted in partial mode, because full
 mode is an untested code path on this controller.
 
+Proven on the physical N365, in order: a GC16 refresh that writes no pixel; a
+reversible pixel write restored and verified byte for byte; a whole-screen
+snapshot and restore; the DU waveform; the touch transform, against a physical
+touch; guardian restoration after a failed child; stopping and restarting the
+stock reader; an application rendered on the panel and taps reaching it; and
+HTTPS, including a 24 MB download.
+
+Update markers are random and at least `0x40000000`, because markers are a
+global namespace shared with the stock reader and a low fixed marker could be
+matched against another process's update.
+
 ## Keeping a device reachable while developing
 
 A device drops off Wi-Fi within a few minutes of inactivity, which makes

@@ -111,7 +111,22 @@ cargo run -p kobo-cli -- build --device
 ```
 
 The cross-compiler the TLS stack needs is listed under
-[What you need](../README.md#what-you-need); `build --device` finds it under any of its
+[What you need](INSTALL.md#what-you-need); `build --device` finds it under any of its
 usual names and names the package to install when there is none. Rust code is
 linked by `rust-lld`, which ships with the toolchain. The resulting binaries
 are statically linked and need no library installed on the reader.
+
+## Before you commit a credential by accident
+
+A key must never reach a commit. `tools/pre-commit` refuses one, and is
+enabled per clone with:
+
+```sh
+git config core.hooksPath tools
+```
+
+It scans staged lines for published credential shapes (OpenAI, Anthropic,
+GitHub, AWS, Google, Slack), for a PEM private key header, and for a shell
+assignment of something named like a key. It reports the shape it matched and
+never the match, because printing the key to a terminal or a CI log is the
+thing being prevented.

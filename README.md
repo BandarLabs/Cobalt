@@ -36,7 +36,6 @@ finish an application before you ever plug a reader in.
 
 - [Before you install](#before-you-install)
 - [Install it on your Kobo](#install-it-on-your-kobo)
-- [Removing it](#removing-it)
 - [What is here, and what is not](#what-is-here-and-what-is-not)
 - [What runs on the panel](#what-runs-on-the-panel)
 
@@ -45,13 +44,11 @@ finish an application before you ever plug a reader in.
 - [The governing rule](#the-governing-rule)
 - [Why Cobalt itself is not a `KoboRoot.tgz`](docs/DEVICES.md#why-cobalt-itself-is-not-a-koboroottgz)
 - [Credentials](#credentials)
-- [What applications may ask for](#what-applications-may-ask-for)
-- [Verified on the hardware](#verified-on-the-hardware)
+- [Verified on the hardware](docs/PORTING.md#how-to-get-the-numbers)
 
 **Building on it**
 
 - [Build your first application](#build-your-first-application)
-- [Writing an application](#writing-an-application)
 - [What the UI layer draws](#what-the-ui-layer-draws)
 - [Development](docs/DEVELOPING.md)
 - [Layout](#layout)
@@ -96,208 +93,49 @@ This is the whole of it: one command over USB, one restart, and a **Cobalt**
 entry appears on the reader's own menu. No SSH, no IP address, no terminal on
 the device, and nothing written outside the partition your books live on.
 
-### What you need
-
-- A **Kobo Clara BW**, charged. The reader's own installer is gated on battery
-  level and fails silently, so charge it first.
-- A **USB cable** that carries data. Charge-only cables are common and they
-  look identical; if the reader charges but never offers to connect, suspect
-  the cable before anything else.
-- **An internet connection**, and **`curl`** on your path. Setup downloads
-  NickelMenu v0.6.0 (the one piece that cannot live on the book partition) and
-  checks it against a recorded SHA-256.
-- [**Rust**](https://rustup.rs), stable.
-- An **ARM cross-compiler**, because the TLS stack carries C and assembly that
-  is built from source. Everything else is linked by `rust-lld`, which the Rust
-  toolchain already ships.
-
-  ```sh
-  # macOS
-  brew install messense/macos-cross-toolchains/armv7-unknown-linux-musleabihf
-  # Debian or Ubuntu
-  sudo apt-get install gcc-arm-linux-gnueabihf
-  ```
-
-  Cobalt finds it under any of its usual names, and tells you which package to
-  install if it is missing.
-
-### 1. Get the code and the cross-compilation target
-
 ```sh
 git clone https://github.com/BandarLabs/Cobalt
 cd Cobalt
 rustup target add armv7-unknown-linux-musleabihf
-```
-
-### 2. Connect the reader over USB
-
-This is the step people get stuck on, so in full:
-
-1. Plug the reader into your computer.
-2. **The reader asks. Answer it.** A prompt appears on the reader's own screen
-   offering to connect to the computer. Tap **Connect**. Until you do, the
-   reader charges and nothing is mounted, and setup will report that it cannot
-   find a volume.
-3. Wait for a volume named **`KOBOeReader`** to appear on your computer. That
-   volume is the reader's book partition, and it is the only thing Cobalt
-   writes to.
-
-Leave it mounted. Setup ejects it for you when it is finished.
-
-### 3. Run setup
-
-```sh
 cargo run -p kobo-cli -- setup
 ```
 
-That one command builds every device-side program, finds the mounted reader,
-copies Cobalt into `.adds/cobalt`, reads every file back to prove it arrived
-intact, sets the reader's own `ForceWifiOn` and `AutoSleepMinutes` settings,
-stages the **Cobalt** menu entry, and ejects. It builds before it writes
-anything, so a build that fails leaves the reader untouched. It leaves the
-firmware's root SSH server disabled.
+You need a charged Kobo Clara BW, a USB cable that carries data, an internet
+connection, [Rust](https://rustup.rs) and an ARM cross-compiler. Setup builds
+before it writes anything, so a failed build leaves the reader untouched, and
+`--dry-run` shows every step without touching anything. Restart the reader
+once setup finishes, wait a minute, then find **Cobalt** in the menu at the
+bottom right of the home screen.
 
-The first run takes a while, because it builds the whole workspace for ARM.
+Removing it is deleting a folder: `cargo run -p kobo-cli -- setup --undo`, or
+plug the reader in and delete `.adds/cobalt` from it directly.
 
-The binaries are statically linked, so nothing has to be installed on the
-reader to support them.
-
-Not sure? Add `--dry-run` and it prints every step it would take and touches
-nothing.
-
-### 4. Restart the reader
-
-Hold the power button until it powers off, then turn it back on. This is the
-one step that has to happen on the device, and it is needed because the menu
-entry is loaded at startup.
-
-**Then leave it alone for a minute.** NickelMenu moves its own plugin aside
-before it hooks anything and only puts it back once it has started cleanly, so
-a reader restarted again immediately comes up with the menu entry gone. This is
-its failsafe working as designed, and it is the reason the entry cannot leave
-you with an unbootable reader.
-
-### 5. Open Cobalt
-
-On this firmware the entry is in the menu at the **bottom right** of the home
-screen. (NickelMenu puts its items in the top-left menu on old firmware and in
-the bottom-right one from 4.23.15505 onward, and the Clara BW is well past
-that.) Tap it and choose **Cobalt**.
-
-The launcher appears, and every application ships with it.
-
-To leave, use **Return to Kobo reader** at the bottom of the launcher. The
-stock reader comes back. So does a reboot, always, from anywhere.
-
-### If something goes wrong
-
-- **Setup says it cannot find a reader.** The reader is plugged in but not
-  connected. Look at the reader's screen and tap **Connect**, or try a
-  different cable.
-- **There is no Cobalt entry after the restart, the first time.** The menu
-  entry is the one piece that arrives through the reader's own installer, and
-  that installer is gated on battery level and fails silently. Charge the
-  reader properly and restart it again. Cobalt itself is already on the device
-  either way.
-- **The Cobalt entry was there and then vanished.** That is NickelMenu's
-  failsafe, which reads any unexpected restart of the reader software as a
-  crash and disables itself rather than risk a boot loop. You can confirm it:
-  the plugin is left beside itself as `libnm.so.failsafe`. Run
-  `cargo run -p kobo-cli -- setup` again and restart, and this time let the
-  reader sit on its home screen for a minute before touching it.
-- **Setup refused to do something.** Read what it printed. It refuses rather
-  than guesses, and it names the reason: an unrecognised volume, a menu slot
-  another mod is already using, or a file that did not read back byte for byte.
-- **The screen looks wrong, or nothing draws.** Cobalt declines to write to a
-  panel it does not recognise exactly. Hold the power button to reboot, and you
-  are back in the stock reader with nothing to undo.
-
-### Deploying over Wi-Fi instead
-
-If you are developing rather than reading, `kobo setup --enable-ssh` turns on
-the firmware's own SSH server so that `kobo deploy` can install without a
-reboot. That is a developer path with its own trade-offs, and it is described
-under [Connecting a device](docs/DEVICES.md#connecting-a-device).
-
-## Removing it
-
-Cobalt never writes to the root filesystem, the bootloader, the kernel, a
-partition table or any startup script, so removing it is deleting a folder:
-
-```sh
-cargo run -p kobo-cli -- setup --undo
-```
-
-Or, with no tooling at all, plug the reader in and delete `.adds/cobalt` from
-it. That is the entire uninstall. If you used `--enable-ssh`, `--undo` also
-switches the SSH server back off.
+**The full walkthrough, what to do if a step doesn't go as described, and
+deploying over Wi-Fi instead of USB are in
+[docs/INSTALL.md](docs/INSTALL.md).**
 
 ## Build your first application
 
 An application is an ordinary Rust binary. It describes whole screens and
 receives named actions back. It never opens the framebuffer, the touch device,
 a socket or a credential, so there is nothing you can do here that damages a
-reader.
-
-**You do not need a device for any of this.** The simulator runs the same
-layout engine, typeface and refresh planner the panel uses.
-
-### 1. Put the CLI on your PATH
-
-Your application lives outside this repository, so `cargo run -p kobo-cli`
-will not reach the tool from there. Install it once:
+reader, and **you do not need a device for any of this**: the simulator runs
+the same layout engine, typeface and refresh planner the panel uses.
 
 ```sh
-cargo install --path crates/kobo-cli
+cargo install --path crates/kobo-cli   # once, so `kobo` is on your PATH
+kobo new my-app && cd my-app
+kobo dev                               # opens the browser simulator
 ```
 
-Every command below is then just `kobo`.
+That writes a working application, the same file as `examples/hello`, which
+the workspace compiles and tests so it is never stale: a screen, two buttons,
+and a battery reading that shows how hardware is asked for and how every
+answer, including a refusal, comes back.
 
-### 2. Make it
-
-```sh
-kobo new my-app
-cd my-app
-```
-
-That writes a working application: a screen, two buttons, and a battery
-reading that shows how hardware is asked for and how every answer, including a
-refusal, comes back. It is the same file as `examples/hello`, which the
-workspace compiles and tests, so it is never stale.
-
-### 3. Run it
-
-```sh
-kobo dev
-```
-
-Open the address it prints. The diagnostics panel reports content past the
-fold, clipping, undersized touch targets and text overflow, which is where
-most first drafts fail.
-
-### 4. Change it
-
-Everything happens in `src/main.rs`. There are exactly three things to know,
-and [SDK.md](SDK.md) covers the rest:
-
-- **`fn show`** builds a screen and hands it over. Nothing is drawn here; a
-  screen is a description and the runtime decides when it reaches the panel.
-- **`on_action`** receives a named action when something is tapped.
-- **`on_device_result`** receives the one answer owed to every hardware
-  request. A refusal is a value, not a crash, and has to be shown.
-
-Run `cargo test` as you go. The generated application ships with two tests: one
-proves the screen fits the panel, the other proves a refusal is shown rather
-than swallowed.
-
-### 5. Put it on a reader
-
-`kobo new` makes a standalone crate, which is the fastest way to start but
-cannot be packaged or given a launcher tile. When you want it on the device,
-move it into `examples/` and add it to `members` in the root `Cargo.toml`. Two
-further one-line registrations give it a tile and put it in the package;
-[section 0 of SDK.md](SDK.md) lists them and covers deployment over both Wi-Fi
-and USB.
+**[SDK.md](SDK.md) walks the whole thing end to end**, from editing
+`src/main.rs` through to a tile on the reader's own launcher, over Wi-Fi or
+USB.
 
 ## Porting to another Kobo
 
