@@ -1033,7 +1033,10 @@ fn host_applications(
         // set when its grace expires, the launcher is shown regardless.
         let mut back_offered: Option<(u64, Instant)> = None;
         // The rectangle currently drawn inverted because a finger is on it.
-        let mut pressed: Option<kobo_ui::Rect> = None;
+        // The rectangle a finger is resting on, with the metrics its mark was
+        // drawn against. Both, because the mark is undone by drawing it again
+        // and that is only exact if nothing about it is recomputed.
+        let mut pressed: Option<(kobo_ui::Rect, kobo_ui::DisplayMetrics)> = None;
         // When and where the finger landed, for telling a tap from a hold.
         let mut landed: Option<(Instant, i32, i32)> = None;
 
@@ -1195,9 +1198,10 @@ fn host_applications(
                     // answer (which for anything that reaches the network is
                     // seconds) and the reader, given no evidence their finger
                     // landed, reasonably concludes it did not and taps again.
-                    // Drawn by inverting the finished surface, so the planner
-                    // sees a change of pure black and white in one small
-                    // rectangle and picks the fast waveform for it.
+                    // Drawn by inverting an inset, round-cornered patch of
+                    // the finished surface, so the planner sees a change of
+                    // pure black and white in one small rectangle and picks
+                    // the fast waveform for it.
                     if let Some(current) = screen.as_ref() {
                         match event {
                             TouchEvent::Down { x, y } => {
@@ -1207,9 +1211,10 @@ fn host_applications(
                                         .layout_with(&metrics_for(current), &chrome)
                                         .pressed_control(x, y)
                                     {
-                                        surface.invert_rect(rect);
+                                        let metrics = metrics_for(current);
+                                        surface.invert_press(rect, &metrics);
                                         panel.paint(display, whole_screen, &surface)?;
-                                        pressed = Some(rect);
+                                        pressed = Some((rect, metrics));
                                     }
                                 }
                             }
@@ -1218,8 +1223,8 @@ fn host_applications(
                                 // that an application which repaints does so
                                 // over a control in its resting state rather
                                 // than over an inverted one.
-                                if let Some(rect) = pressed.take() {
-                                    surface.invert_rect(rect);
+                                if let Some((rect, metrics)) = pressed.take() {
+                                    surface.invert_press(rect, &metrics);
                                     panel.paint(display, whole_screen, &surface)?;
                                 }
                             }
@@ -1241,14 +1246,14 @@ fn host_applications(
                                 // way every other platform does, so the reader
                                 // can see that letting go here will do nothing.
                                 let off = match (i32::try_from(x), i32::try_from(y)) {
-                                    (Ok(x), Ok(y)) => {
-                                        pressed.is_some_and(|rect| !rect.contains(x, y))
-                                    }
+                                    (Ok(x), Ok(y)) => pressed
+                                        .as_ref()
+                                        .is_some_and(|(rect, _)| !rect.contains(x, y)),
                                     _ => true,
                                 };
                                 if off {
-                                    if let Some(rect) = pressed.take() {
-                                        surface.invert_rect(rect);
+                                    if let Some((rect, metrics)) = pressed.take() {
+                                        surface.invert_press(rect, &metrics);
                                         panel.paint(display, whole_screen, &surface)?;
                                     }
                                 }

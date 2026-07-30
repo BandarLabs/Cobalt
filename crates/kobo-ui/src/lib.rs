@@ -6870,6 +6870,30 @@ fn force_grapheme_break(
     })
 }
 
+/// How far a press mark sits inside the control it acknowledges, in tenths of
+/// a millimetre. Enough to clear a row separator and the screen margin, not so
+/// much that the mark stops covering the thing that was touched.
+pub const PRESS_INSET_TENTH_MM: i32 = 12;
+
+/// The corner radius of a press mark, in tenths of a millimetre.
+pub const PRESS_RADIUS_TENTH_MM: i32 = 12;
+
+/// How far a rounded rectangle's edge is pulled in on one row.
+///
+/// `from_edge` is the row's distance from the nearer horizontal edge, so the
+/// same arithmetic serves the top corners and the bottom ones. Measured from
+/// the middle of the pixel, in half units throughout, which is why everything
+/// is doubled: a circle sampled at pixel corners is visibly flat on its axes.
+fn corner_inset(radius: i32, from_edge: i32) -> i32 {
+    if radius <= 0 || from_edge >= radius {
+        return 0;
+    }
+    let reach = radius * 2;
+    let rise = reach - from_edge * 2 - 1;
+    let run = (reach * reach - rise * rise).max(0).isqrt();
+    radius - (run + 1) / 2
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Surface {
     pub width: usize,
@@ -6913,10 +6937,11 @@ impl Surface {
 
     /// Turns every pixel in `rect` to its opposite tone.
     ///
-    /// This is what a control being touched looks like. It is done to the
-    /// finished surface rather than by drawing the control differently, so it
-    /// costs nothing to lay out, applies to every kind of control including the
-    /// ones drawn from vectors, and reverses exactly by being done again.
+    /// Done to the finished surface rather than by drawing the control
+    /// differently, so it costs nothing to lay out, applies to every kind of
+    /// control including the ones drawn from vectors, and reverses exactly by
+    /// being done again. [`Surface::invert_press`] is what a touched control
+    /// uses; this is the square, full-bleed form.
     pub fn invert_rect(&mut self, rect: Rect) {
         let bounds = Rect {
             x: 0,
@@ -6935,6 +6960,83 @@ impl Surface {
                 }
             }
         }
+    }
+
+    /// Turns every pixel inside a rounded `rect` to its opposite tone.
+    ///
+    /// The shape is derived from `rect` and `radius` alone, so this reverses
+    /// exactly by being done again, which is the whole reason the press state
+    /// is drawn by inverting a finished surface rather than by laying the
+    /// control out twice.
+    pub fn invert_rounded(&mut self, rect: Rect, radius: i32) {
+        let bounds = Rect {
+            x: 0,
+            y: 0,
+            width: i32::try_from(self.width).unwrap_or(i32::MAX),
+            height: i32::try_from(self.height).unwrap_or(i32::MAX),
+        };
+        let radius = radius.clamp(0, min(rect.width, rect.height) / 2);
+        for row in 0..rect.height {
+            let inset = corner_inset(radius, min(row, rect.height - 1 - row));
+            let span = Rect {
+                x: rect.x.saturating_add(inset),
+                y: rect.y.saturating_add(row),
+                width: rect.width.saturating_sub(inset * 2),
+                height: 1,
+            };
+            let Some(clipped) = span.intersection(bounds) else {
+                continue;
+            };
+            let start = usize::try_from(clipped.y)
+                .unwrap_or(0)
+                .saturating_mul(self.width);
+            for x in clipped.x..clipped.x + clipped.width {
+                let index = start.saturating_add(usize::try_from(x).unwrap_or(0));
+                if let Some(pixel) = self.pixels.get_mut(index) {
+                    *pixel = u8::MAX - *pixel;
+                }
+            }
+        }
+    }
+
+    /// Draws `rect` as a control the reader's finger is resting on.
+    ///
+    /// Inverting the control's whole hit rectangle was the obvious thing and
+    /// the wrong one. A list row's rectangle is the full width of the panel and
+    /// most of a centimetre tall, so a tap turned an eighth of the page solid
+    /// black, edge to edge, between the rules above and below it. On a
+    /// reflective panel that is not feedback, it is a flash, and it made a list
+    /// that is otherwise quiet feel like a toy every time it was touched.
+    ///
+    /// So the mark is inset and its corners are taken off. It reads as
+    /// something laid on the row rather than the row itself changing state, it
+    /// leaves the separators and the screen margin alone, and it is the same
+    /// shape whether the control is a row, a button or a tile.
+    ///
+    /// Still an inversion, not a grey fill: the refresh planner sees pure black
+    /// and white in one small rectangle and picks the fast waveform, where a
+    /// mid tone would need the slow one and take longer to appear than the tap
+    /// it is acknowledging.
+    ///
+    /// The inset is capped at an eighth of the shorter side and the radius at a
+    /// quarter of the inset shape, so that a control smaller than the inset
+    /// itself, a checkbox say, is still plainly marked rather than reduced to a
+    /// dot. A press nobody can see is the state this whole mechanism exists to
+    /// avoid.
+    pub fn invert_press(&mut self, rect: Rect, metrics: &DisplayMetrics) {
+        let short = min(rect.width, rect.height);
+        let inset = min(metrics.tenth_mm(PRESS_INSET_TENTH_MM), short / 8);
+        let inner = Rect {
+            x: rect.x.saturating_add(inset),
+            y: rect.y.saturating_add(inset),
+            width: rect.width.saturating_sub(inset * 2),
+            height: rect.height.saturating_sub(inset * 2),
+        };
+        let radius = min(
+            metrics.tenth_mm(PRESS_RADIUS_TENTH_MM),
+            min(inner.width, inner.height) / 4,
+        );
+        self.invert_rounded(inner, radius);
     }
 
     /// Mixes `value` into one pixel by `coverage`, where 0 leaves the pixel
@@ -14888,6 +14990,113 @@ mod press_feedback_tests {
         assert_eq!(
             surface.pixels, before,
             "releasing a control must restore it exactly"
+        );
+    }
+
+    #[test]
+    fn a_press_mark_stays_inside_the_control_it_marks() {
+        // The failure this replaced: a row's hit rectangle is the full width of
+        // the panel, so a tap turned an eighth of the page solid black between
+        // the rules above and below it.
+        let metrics = CLARA_BW_METRICS;
+        let mut surface = Surface::new(200, 60);
+        let before = surface.pixels.clone();
+        let rect = Rect {
+            x: 0,
+            y: 10,
+            width: 200,
+            height: 40,
+        };
+        surface.invert_press(rect, &metrics);
+
+        let marked = |x: usize, y: usize| surface.pixels[y * 200 + x] != before[y * 200 + x];
+        assert!(!marked(0, 10), "the mark reached the corner of the row");
+        assert!(!marked(100, 10), "the mark reached the top edge of the row");
+        assert!(!marked(0, 30), "the mark reached the side of the panel");
+        assert!(marked(100, 30), "the mark did not cover what was touched");
+    }
+
+    #[test]
+    fn a_press_mark_has_its_corners_taken_off() {
+        // Asserted by measuring the mark rather than by predicting where its
+        // corner lands: the inset and the radius are both clamped against the
+        // control's own size, so a test that guessed a coordinate would be
+        // testing its own arithmetic.
+        let metrics = CLARA_BW_METRICS;
+        let mut surface = Surface::new(200, 60);
+        let before = surface.pixels.clone();
+        surface.invert_press(
+            Rect {
+                x: 0,
+                y: 0,
+                width: 200,
+                height: 60,
+            },
+            &metrics,
+        );
+        let run = |y: usize| {
+            (0..200)
+                .filter(|x| surface.pixels[y * 200 + x] != before[y * 200 + x])
+                .count()
+        };
+        let rows: Vec<usize> = (0..60).map(run).collect();
+        let first = rows.iter().position(|&n| n > 0).expect("a mark");
+        assert!(
+            rows[first] < rows[30],
+            "the mark's first row is {} wide against {} in the middle, so its \
+             corners are square",
+            rows[first],
+            rows[30]
+        );
+        assert!(rows[first] > 0, "the mark has no top edge at all");
+    }
+
+    #[test]
+    fn a_press_mark_undoes_itself_exactly() {
+        // The mark is removed by drawing it again, which is only true if its
+        // shape comes from the rectangle and the metrics and nothing else.
+        let metrics = CLARA_BW_METRICS;
+        let mut surface = Surface::new(200, 60);
+        for (i, pixel) in surface.pixels.iter_mut().enumerate() {
+            *pixel = u8::try_from(i % 251).unwrap_or(0);
+        }
+        let before = surface.pixels.clone();
+        let rect = Rect {
+            x: 3,
+            y: 4,
+            width: 150,
+            height: 44,
+        };
+        surface.invert_press(rect, &metrics);
+        assert_ne!(surface.pixels, before, "the press was never drawn");
+        surface.invert_press(rect, &metrics);
+        assert_eq!(surface.pixels, before, "releasing left the row marked");
+    }
+
+    #[test]
+    fn a_small_control_still_shows_it_was_touched() {
+        // A checkbox is smaller than twice the inset. Taken literally the mark
+        // would be nothing at all, which is the state this whole mechanism
+        // exists to avoid.
+        let metrics = CLARA_BW_METRICS;
+        let mut surface = Surface::new(40, 40);
+        let rect = Rect {
+            x: 8,
+            y: 8,
+            width: 24,
+            height: 24,
+        };
+        let before = surface.pixels.clone();
+        surface.invert_press(rect, &metrics);
+        let marked = surface
+            .pixels
+            .iter()
+            .zip(&before)
+            .filter(|(now, then)| now != then)
+            .count();
+        assert!(
+            marked >= 24 * 24 / 4,
+            "a small control's press mark covered only {marked} pixels"
         );
     }
 
