@@ -1018,6 +1018,13 @@ pub fn battery(percent: Percent, charging: bool) -> Vec<Shape> {
 /// and a strong one is a dot and three. An unlit arc is left out rather than
 /// drawn faintly: this panel has no colour to spare and a ghosted arc at eight
 /// pixels is indistinguishable from a lit one.
+///
+/// The geometry is placed so that the *full* three-arc mark is centred in the
+/// design box, which is what puts it on the same line as the Bluetooth mark
+/// beside it. Centring each strength on its own would be worse: the dot would
+/// then jump up the strip every time the signal dropped an arc, and a status
+/// icon that moves when the news changes is harder to read than one that is
+/// slightly light at the top.
 #[must_use]
 pub fn wifi(strength: Signal) -> Vec<Shape> {
     const W: i32 = 70;
@@ -1031,11 +1038,11 @@ pub fn wifi(strength: Signal) -> Vec<Shape> {
             stroke(Path::line(180, 180, 820, 820)),
         ];
     }
-    let mut shapes = vec![Shape::Fill(Path::circle(500, 830, 60))];
+    let mut shapes = vec![Shape::Fill(Path::circle(500, 780, 60))];
     let arcs = [
-        Path::new().move_to(400, 710).quad_to(500, 630, 600, 710),
-        Path::new().move_to(270, 560).quad_to(500, 380, 730, 560),
-        Path::new().move_to(120, 400).quad_to(500, 100, 880, 400),
+        Path::new().move_to(400, 660).quad_to(500, 580, 600, 660),
+        Path::new().move_to(270, 510).quad_to(500, 330, 730, 510),
+        Path::new().move_to(120, 350).quad_to(500, 50, 880, 350),
     ];
     let lit = match strength {
         Signal::Off => 0,
@@ -1078,7 +1085,7 @@ pub fn bluetooth() -> Vec<Shape> {
 #[cfg(test)]
 mod tests {
     use super::{back_arrow, render, shapes, Path, Shape, UNITS};
-    use crate::Glyph;
+    use crate::{Glyph, Signal};
 
     const EVERY: [Glyph; Glyph::ALL.len()] = Glyph::ALL;
 
@@ -1088,6 +1095,49 @@ mod tests {
             .iter()
             .filter(|&&value| value > 0)
             .count()
+    }
+
+    /// The vertical extent of the ink, in design units.
+    fn ink_band(shapes: &[Shape]) -> (i32, i32) {
+        const SIZE: i32 = 200;
+        let coverage = render(shapes, SIZE);
+        let (mut top, mut bottom) = (i32::MAX, i32::MIN);
+        for row in 0..SIZE {
+            for column in 0..SIZE {
+                if coverage.at(column, row) > 0 {
+                    top = top.min(row);
+                    bottom = bottom.max(row);
+                }
+            }
+        }
+        let to_units = |value: i32| value * UNITS / SIZE;
+        (to_units(top), to_units(bottom))
+    }
+
+    #[test]
+    fn the_status_marks_sit_on_one_line() {
+        // These are drawn side by side in a strip eight pixels tall, where a
+        // mark hung fifty units low out of a thousand is plainly crooked to
+        // the eye but invisible to a test that only asks whether the glyph
+        // drew anything. The wifi mark was exactly that for a long time: its
+        // dot was pinned to the bottom of the box and the arcs grew upward
+        // from there, so the whole mark sat low beside the Bluetooth rune.
+        let marks = [
+            ("bluetooth", super::bluetooth()),
+            ("wifi", super::wifi(Signal::Strong)),
+            ("wifi off", super::wifi(Signal::Off)),
+        ];
+        for (name, shapes) in marks {
+            let (top, bottom) = ink_band(&shapes);
+            let centre = (top + bottom) / 2;
+            let drift = (centre - UNITS / 2).abs();
+            assert!(
+                drift <= 20,
+                "the {name} mark centres at {centre} rather than {}, which reads as crooked \
+                 beside the marks either side of it",
+                UNITS / 2
+            );
+        }
     }
 
     #[test]
