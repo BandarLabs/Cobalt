@@ -596,9 +596,16 @@ impl KoboApp for Sidekick {
             .as_deref()
             .and_then(|bytes| std::str::from_utf8(bytes).ok())
             .and_then(|text| {
+                // Both halves are trimmed. A pairing written by hand, or by any
+                // editor that ends a file with a newline, otherwise carries that
+                // newline into the code, and every poll comes back refused. The
+                // daemon answers a wrong code with 403, kobo-net reads any 4xx
+                // as nothing found, and the panel says the service had nothing
+                // to return: an invisible whitespace reads as an idle server.
                 let (address, code) = text.split_once('\n')?;
-                Some((address.to_owned(), code.to_owned()))
-            });
+                Some((address.trim().to_owned(), code.trim().to_owned()))
+            })
+            .filter(|(address, code)| !address.is_empty() && !code.is_empty());
         if let Some((address, code)) = remembered {
             self.address = address;
             self.code = code;
@@ -1019,6 +1026,42 @@ mod tests {
         let (_, url) = fetched(&commands).expect("watching starts a poll");
         assert_eq!(url, "https://192.168.1.5:9331/pending?token=abc123&wait=25");
         assert_eq!(app.view, View::Watching);
+    }
+
+    #[test]
+    fn a_pairing_written_with_a_trailing_newline_still_polls_with_the_right_token() {
+        let mut app = Sidekick::default();
+        let mut context = Context::default();
+        app.on_start(&mut context);
+        let _ = context.take_commands();
+        app.on_store(
+            &mut context,
+            StoreResult::Loaded {
+                key: PAIRED.to_owned(),
+                value: Some(b"192.168.1.5:9331\nabc123\n".to_vec()),
+            },
+        );
+        let commands = context.take_commands();
+        let (_, url) = fetched(&commands).expect("watching starts a poll");
+        assert_eq!(url, "https://192.168.1.5:9331/pending?token=abc123&wait=25");
+    }
+
+    #[test]
+    fn a_pairing_with_nothing_after_the_newline_asks_to_be_paired_again() {
+        let mut app = Sidekick::default();
+        let mut context = Context::default();
+        app.on_start(&mut context);
+        let _ = context.take_commands();
+        app.on_store(
+            &mut context,
+            StoreResult::Loaded {
+                key: PAIRED.to_owned(),
+                value: Some(b"192.168.1.5:9331\n  \n".to_vec()),
+            },
+        );
+        let commands = context.take_commands();
+        assert!(fetched(&commands).is_none(), "polled without a code");
+        assert_eq!(app.view, View::Address);
     }
 
     #[test]
