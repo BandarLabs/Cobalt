@@ -6,7 +6,7 @@ This replaced the hello example, which showed that a button could be tapped and
 nothing else. A terminal is the opposite: it is the hardest thing this platform
 can host, and every part of it is a claim that has to be true.
 
-![A real /bin/sh listing the Kobo root filesystem in three columns, above a
+![A real /bin/sh listing the Kobo root filesystem in four columns, above a
 keyboard with esc, tab, ctrl and arrow keys](screenshots/shell.png)
 
 *Captured from a Kobo Clara BW over Wi-Fi with `kobo shot --device`. That is
