@@ -1973,7 +1973,10 @@ fn open_application(
 /// Never the one on the panel, and never the last one: the alternative to
 /// stopping something is refusing to open anything, which is worse.
 fn evict(apps: &mut Vec<Hosted>, front: u64) {
-    let seen: Vec<(u64, Instant)> = apps.iter().map(|app| (app.id, app.used)).collect();
+    let seen: Vec<(u64, Instant, bool)> = apps
+        .iter()
+        .map(|app| (app.id, app.used, app.tasks.in_flight() > 0))
+        .collect();
     let Some(index) = coldest(&seen, front) else {
         return;
     };
@@ -1987,11 +1990,19 @@ fn evict(apps: &mut Vec<Hosted>, front: u64) {
 /// Separated from the eviction itself so the rule can be tested without
 /// starting four processes: the one on the panel is never a candidate, and
 /// neither is an empty list.
-fn coldest(seen: &[(u64, Instant)], front: u64) -> Option<usize> {
+///
+/// An application with work in flight is not cold, however long ago it was
+/// last on the panel. Somebody who starts a three minute audiobook and reads
+/// the news while it writes has not abandoned it, and stopping it would throw
+/// away minutes of work that was proceeding correctly, silently, and with
+/// nothing on the panel to say so. Such an application is stopped only when
+/// every other candidate is busy too, because refusing to open anything is
+/// worse still.
+fn coldest(seen: &[(u64, Instant, bool)], front: u64) -> Option<usize> {
     seen.iter()
         .enumerate()
-        .filter(|(_, (id, _))| *id != front)
-        .min_by_key(|(_, (_, used))| *used)
+        .filter(|(_, (id, _, _))| *id != front)
+        .min_by_key(|(_, (_, used, busy))| (*busy, *used))
         .map(|(index, _)| index)
 }
 
@@ -2961,6 +2972,10 @@ mod hosting_tests {
     use super::coldest;
     use std::time::{Duration, Instant};
 
+    /// Reads better than a bare bool at every call site below.
+    const BUSY: bool = true;
+    const IDLE: bool = false;
+
     fn ago(seconds: u64) -> Instant {
         Instant::now()
             .checked_sub(Duration::from_secs(seconds))
@@ -2969,7 +2984,7 @@ mod hosting_tests {
 
     #[test]
     fn the_application_left_alone_longest_is_the_one_that_goes() {
-        let seen = [(1, ago(30)), (2, ago(300)), (3, ago(5))];
+        let seen = [(1, ago(30), IDLE), (2, ago(300), IDLE), (3, ago(5), IDLE)];
         assert_eq!(coldest(&seen, 3), Some(1));
     }
 
@@ -2979,13 +2994,37 @@ mod hosting_tests {
         // `used` records when it was last brought forward rather than when it
         // was last touched. Stopping it would close what the reader is looking
         // at in order to open something else.
-        let seen = [(1, ago(900)), (2, ago(10))];
+        let seen = [(1, ago(900), IDLE), (2, ago(10), IDLE)];
         assert_eq!(coldest(&seen, 1), Some(1));
     }
 
     #[test]
     fn nothing_is_stopped_when_the_only_application_is_the_front_one() {
-        let seen = [(7, ago(60))];
+        let seen = [(7, ago(60), IDLE)];
         assert_eq!(coldest(&seen, 7), None);
+    }
+
+    #[test]
+    fn an_application_still_working_is_passed_over_for_a_newer_idle_one() {
+        // The shape this exists for: an audiobook was started, took minutes to
+        // write, and the owner read the news while it did. It is the oldest by
+        // a long way and the only one with anything to lose, so the idle
+        // application touched moments ago goes instead.
+        let seen = [(1, ago(600), BUSY), (2, ago(20), IDLE), (3, ago(2), IDLE)];
+        assert_eq!(coldest(&seen, 3), Some(1));
+    }
+
+    #[test]
+    fn work_in_flight_outweighs_any_amount_of_idleness() {
+        let seen = [(1, ago(86_400), BUSY), (2, ago(1), IDLE)];
+        assert_eq!(coldest(&seen, 9), Some(1));
+    }
+
+    #[test]
+    fn a_working_application_is_stopped_when_every_candidate_is_working() {
+        // Refusing to open anything is worse than stopping something, so when
+        // there is no idle candidate the oldest busy one still goes.
+        let seen = [(1, ago(30), BUSY), (2, ago(300), BUSY), (3, ago(5), IDLE)];
+        assert_eq!(coldest(&seen, 3), Some(1));
     }
 }
