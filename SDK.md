@@ -773,6 +773,30 @@ Show that something is happening. `activity(label, None)` plus `skeleton(n)`
 puts a placeholder where the content will land, which reads far better on a
 slow panel than an empty screen that suddenly fills.
 
+### What the runtime does with a request
+
+The application says what it wants. Everything below is the runtime's, and
+none of it can be set from a manifest or a header, because getting any of it
+wrong is a way to be slow or to be unsafe.
+
+- **Replies arrive compressed.** The runtime asks for gzip and expands what
+  comes back, so a feed search that is 153 KB of JSON crosses the radio as
+  15 KB. `max_bytes` is measured against the **expanded** size, which is the
+  size the application has to hold, and is also what stops a small reply
+  expanding into a large one.
+- **A ranged read is the exception.** `offset` names bytes as the server
+  stores them, and a window into a compressed stream cannot be expanded on its
+  own, so a piece of a document is asked for uncompressed. The bytes counted
+  are the bytes asked for.
+- **The connection is kept.** A screen of Hacker News comments is two dozen
+  requests to one host, and each used to pay for its own TCP connection and
+  TLS handshake. The runtime holds the last connection open and asks the next
+  question on it, which on a slow link roughly halves the time to fill that
+  screen. Only a `Fetch` does this: a `Post` may have been acted on by the far
+  end, so it is never the request that gets repeated.
+
+None of this changes what `on_task` receives. It is the same bytes, sooner.
+
 ### Work that takes minutes
 
 A bar that sits at thirty percent for ninety seconds is indistinguishable from

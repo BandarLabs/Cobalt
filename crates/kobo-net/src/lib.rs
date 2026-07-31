@@ -24,6 +24,7 @@
 //! requests and Kobo-specific TLS roots stay visible, while Rustls uses its
 //! maintained ring provider instead of an experimental provider.
 
+pub mod gzip;
 pub mod pem;
 pub mod serve;
 
@@ -33,7 +34,7 @@ use std::fmt::Write as _;
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// How long opening a connection may take before the host is called
 /// unreachable.
@@ -255,7 +256,7 @@ pub enum Response<'a> {
 ///
 /// Returns [`TaskError::Unreachable`] if the response is not recognisable
 /// HTTP, and [`TaskError::NotFound`] for a 4xx or 5xx status.
-pub fn split_response(response: &[u8]) -> Result<Response<'_>, TaskError> {
+pub fn split_response(response: &[u8], max_bytes: u32) -> Result<Response<'_>, TaskError> {
     let mut headers = [httparse::EMPTY_HEADER; MAX_RESPONSE_HEADERS];
     let mut parsed = httparse::Response::new(&mut headers);
     let head_end = match parsed.parse(response) {
@@ -279,16 +280,21 @@ pub fn split_response(response: &[u8]) -> Result<Response<'_>, TaskError> {
             if chunked && length.is_some() {
                 return Err(TaskError::Unreachable);
             }
-            if chunked {
-                Ok(Response::Body(Cow::Owned(decode_chunked(body)?)))
+            let framed = if chunked {
+                Cow::Owned(decode_chunked(body)?)
             } else if let Some(length) = length {
                 if body.len() != length {
                     return Err(TaskError::Unreachable);
                 }
-                Ok(Response::Body(Cow::Borrowed(body)))
+                Cow::Borrowed(body)
             } else {
-                Ok(Response::Body(Cow::Borrowed(body)))
-            }
+                Cow::Borrowed(body)
+            };
+            // Framing first, then encoding. A chunked gzip reply is two
+            // separate wrappers in a fixed order, and every large CDN sends
+            // exactly that: the chunks are how the body was sent, the gzip is
+            // what the body is.
+            Ok(Response::Body(expanded(headers, framed, max_bytes)?))
         }
         // The range started past the end of the document, which is what asking
         // for the next piece of a book that has just ended looks like. An
@@ -302,6 +308,29 @@ pub fn split_response(response: &[u8]) -> Result<Response<'_>, TaskError> {
         400..=599 => Err(TaskError::NotFound),
         _ => Err(TaskError::Unreachable),
     }
+}
+
+/// Undoes the content coding the server applied, if it applied one.
+///
+/// A body with no `Content-Encoding`, or one that says `identity`, is handed
+/// straight back and never copied. Anything other than gzip is a coding the
+/// runtime never offered to read: rather than hand a caller bytes that look
+/// like a truncated document, it is refused the way any unreadable reply is.
+fn expanded<'a>(
+    headers: &[httparse::Header<'_>],
+    body: Cow<'a, [u8]>,
+    max_bytes: u32,
+) -> Result<Cow<'a, [u8]>, TaskError> {
+    let Some(encoding) = header(headers, "content-encoding") else {
+        return Ok(body);
+    };
+    if gzip::is_identity(encoding) {
+        return Ok(body);
+    }
+    if !gzip::is_gzip(encoding) {
+        return Err(TaskError::Unreachable);
+    }
+    gzip::expand(&body, max_bytes).map(Cow::Owned)
 }
 
 /// Reads one ASCII header value, matching the name case insensitively.
@@ -486,7 +515,7 @@ fn get(url: &str, offset: Option<u32>, max_bytes: u32) -> Result<Vec<u8>, TaskEr
     for _ in 0..=MAX_REDIRECTS {
         let address = parse(&target)?;
         let response = request(&address, &Method::Get { offset }, max_bytes)?;
-        match split_response(&response)? {
+        match split_response(&response, max_bytes)? {
             Response::Body(body) => {
                 return if body.len() > max_bytes as usize {
                     Err(TaskError::TooLarge)
@@ -586,7 +615,7 @@ pub fn post(
         },
         max_bytes,
     )?;
-    match split_response(&response)? {
+    match split_response(&response, max_bytes)? {
         Response::Body(body) => {
             if body.len() > max_bytes as usize {
                 Err(TaskError::TooLarge)
@@ -610,8 +639,27 @@ fn head(address: &Address, method: &Method<'_>, max_bytes: u32) -> String {
         address.path.as_str(),
         address.authority.as_str(),
     );
+    // A range is a range of the bytes the server sends, so a ranged request
+    // that is answered compressed asks for a window into a deflate stream and
+    // gets a fragment that cannot be expanded on its own. Every caller reading
+    // a document in pieces is counting the bytes it asked for, too. So the
+    // reader that pages through a book keeps asking for the bytes as written,
+    // and everything else, which is every JSON API here, takes the fifth of
+    // the bytes that gzip costs instead.
+    let encoding = match method {
+        Method::Get { offset: Some(_) } => "identity",
+        Method::Get { offset: None } | Method::Post { .. } => "gzip",
+    };
+    // A POST hangs up after its answer; a GET does not. HTTP/1.1 is
+    // persistent by default, so the difference is whether `close` is said at
+    // all. Only a GET is ever replayed on a connection the far end had quietly
+    // dropped, so only a GET is allowed to hold one open.
+    let connection = match method {
+        Method::Get { .. } => "keep-alive",
+        Method::Post { .. } => "close",
+    };
     let mut head = format!(
-        "{verb} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nAccept-Encoding: identity\r\nUser-Agent: kobo-runtime\r\n"
+        "{verb} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: {connection}\r\nAccept-Encoding: {encoding}\r\nUser-Agent: kobo-runtime\r\n"
     );
     match method {
         Method::Get { offset: None } => {}
@@ -769,14 +817,130 @@ fn tls_config() -> Result<Arc<rustls::ClientConfig>, TaskError> {
     Ok(Arc::clone(TLS_CONFIG.get_or_init(|| Arc::new(config))))
 }
 
+/// One open connection to one origin, TLS session and socket together.
+///
+/// The two cannot be separated: a rustls session is the encryption state of
+/// exactly one socket, and either one alone is useless.
+struct Held {
+    connection: rustls::ClientConnection,
+    socket: TcpStream,
+}
+
+/// Connections that finished a request cleanly and could carry another.
+///
+/// # Why this exists
+///
+/// Every request used to open a socket, complete a TLS handshake, ask one
+/// question and hang up. Hacker News is read one item at a time because that
+/// is the only shape its API has, so a screen of comments was two dozen
+/// handshakes; a shelf of book covers and a round of feeds are the same. On
+/// this reader a handshake is the expensive part by a wide margin: the radio
+/// has to be awake for a round trip it did not need, and the signature
+/// arithmetic runs on a processor from 2013.
+///
+/// # Why it is this small
+///
+/// One connection per origin, not a pool of them. These applications ask one
+/// question at a time, so a second connection to the same host would sit idle;
+/// what matters is that the second question does not pay for a second
+/// handshake, and one is enough for that.
+static IDLE: Mutex<Option<Kept>> = Mutex::new(None);
+
+/// The one held connection, and what it would have to match to be used.
+struct Kept {
+    host: String,
+    port: u16,
+    held: Held,
+    since: Instant,
+}
+
+/// How long a connection nobody used is still worth trying.
+///
+/// Servers close idle connections on their own schedule and are under no
+/// obligation to say so, so this is a guess either way and a stale one costs
+/// only the reconnection it was trying to avoid. Kept well under the shortest
+/// keep-alive any large host advertises.
+const IDLE_LIMIT: Duration = Duration::from_secs(20);
+
+/// Takes the kept connection if it is to this origin and still fresh.
+fn take_idle(address: &Address) -> Option<Held> {
+    let mut idle = IDLE.lock().ok()?;
+    let kept = idle.as_ref()?;
+    if kept.host != address.host || kept.port != address.port || kept.since.elapsed() > IDLE_LIMIT {
+        return None;
+    }
+    idle.take().map(|kept| kept.held)
+}
+
+/// Keeps a connection for the next request, displacing any other.
+fn keep_idle(address: &Address, held: Held) {
+    if let Ok(mut idle) = IDLE.lock() {
+        *idle = Some(Kept {
+            host: address.host.clone(),
+            port: address.port,
+            held,
+            since: Instant::now(),
+        });
+    }
+}
+
+/// Why an exchange did not produce a response.
+enum Failed {
+    /// The far end had already closed a connection this borrowed from the
+    /// pool. Nothing was said, so it can be said again on a new socket.
+    Stale,
+    /// Something that would have happened on a new connection too.
+    Real(TaskError),
+}
+
 fn request(address: &Address, method: &Method<'_>, max_bytes: u32) -> Result<Vec<u8>, TaskError> {
+    // Only a GET is replayed. A POST that failed after leaving this machine
+    // may have been acted on by the far end, and asking a model to answer
+    // twice or a daemon to run a command twice is a worse failure than the one
+    // being recovered from.
+    let reusable = matches!(method, Method::Get { .. });
+    if reusable {
+        if let Some(mut held) = take_idle(address) {
+            match exchange(&mut held, address, method, max_bytes) {
+                Ok((response, again)) => {
+                    if again {
+                        keep_idle(address, held);
+                    }
+                    return Ok(response);
+                }
+                Err(Failed::Stale) => {}
+                Err(Failed::Real(error)) => return Err(error),
+            }
+        }
+    }
+    let mut held = connect(address)?;
+    match exchange(&mut held, address, method, max_bytes) {
+        Ok((response, again)) => {
+            if reusable && again {
+                keep_idle(address, held);
+            }
+            Ok(response)
+        }
+        // A fresh connection that ended before it said anything is a host
+        // that will not talk, not a connection to try again.
+        Err(Failed::Stale) => Err(TaskError::Unreachable),
+        Err(Failed::Real(error)) => Err(error),
+    }
+}
+
+/// Opens a socket to `address` and completes a TLS handshake on it.
+fn connect(address: &Address) -> Result<Held, TaskError> {
     let config = tls_config()?;
     let name = address
         .host
         .clone()
         .try_into()
         .map_err(|_| TaskError::NotFound)?;
-    let mut connection =
+    // The session cache lives on the shared configuration, so a second
+    // connection to a host this reader has already met resumes rather than
+    // doing the full handshake again. That is why the configuration is built
+    // once and cloned rather than built per request.
+    let connection =
         rustls::ClientConnection::new(config, name).map_err(|_| TaskError::Unreachable)?;
     // The two places a request fails before anything has been said. Both are
     // asked which kind of failure it was, because a name that will not resolve
@@ -785,46 +949,183 @@ fn request(address: &Address, method: &Method<'_>, max_bytes: u32) -> Result<Vec
     let mut addresses = (address.host.as_str(), address.port)
         .to_socket_addrs()
         .map_err(|_| could_not_connect())?;
-    let mut socket = addresses
+    let socket = addresses
         .find_map(|address| TcpStream::connect_timeout(&address, CONNECT_TIMEOUT).ok())
         .ok_or_else(could_not_connect)?;
     socket
         .set_read_timeout(Some(RESPONSE_TIMEOUT))
         .and_then(|()| socket.set_write_timeout(Some(RESPONSE_TIMEOUT)))
         .map_err(|_| TaskError::Unreachable)?;
-    let mut tls = rustls::Stream::new(&mut connection, &mut socket);
+    // Nagle's algorithm holds a small write back waiting for company. A
+    // request head is exactly that write, and there is no company coming.
+    let _ = socket.set_nodelay(true);
+    Ok(Held { connection, socket })
+}
+
+/// Sends one request on `held` and reads exactly one response back.
+///
+/// Returns the response bytes and whether the connection may carry another.
+fn exchange(
+    held: &mut Held,
+    address: &Address,
+    method: &Method<'_>,
+    max_bytes: u32,
+) -> Result<(Vec<u8>, bool), Failed> {
+    let mut tls = rustls::Stream::new(&mut held.connection, &mut held.socket);
+    // A write failure here is the ordinary way a pooled connection reports
+    // that the far end closed it while it was idle, so it is not fatal on its
+    // own; the caller decides, knowing whether this socket was reused.
     tls.write_all(head(address, method, max_bytes).as_bytes())
-        .map_err(|_| TaskError::Unreachable)?;
+        .map_err(|_| Failed::Stale)?;
     if let Method::Post { body, .. } = method {
-        tls.write_all(body).map_err(|_| TaskError::Unreachable)?;
+        tls.write_all(body).map_err(|_| Failed::Stale)?;
     }
-    tls.flush().map_err(|_| TaskError::Unreachable)?;
+    tls.flush().map_err(|_| Failed::Stale)?;
 
     // The ceiling is applied to the whole response as it arrives, so a server
     // that never stops sending cannot fill memory before the body is examined.
-    let ceiling = max_bytes as usize;
+    let ceiling = (max_bytes as usize).saturating_add(MAX_HEADER_BYTES);
     let mut response = Vec::new();
     let mut buffer = [0_u8; 8192];
     loop {
+        // Asked before each read rather than after, so a response that is
+        // already complete never waits on a socket that has nothing more to
+        // send. Reading to the end of the socket is what made every request
+        // need its own connection.
+        match message_end(&response) {
+            Ok(Some(end)) => {
+                response.truncate(end);
+                let again = stays_open(&response);
+                return Ok((response, again));
+            }
+            Ok(None) => {}
+            Err(error) => return Err(Failed::Real(error)),
+        }
         match tls.read(&mut buffer) {
-            Ok(0) => break,
+            // The far end hung up. If it had already sent a whole response
+            // the loop above would have returned, so this is either a
+            // response framed by the close itself or nothing at all.
+            Ok(0) => {
+                return if response.is_empty() {
+                    Err(Failed::Stale)
+                } else {
+                    Ok((response, false))
+                }
+            }
             Ok(read) => {
                 response.extend_from_slice(&buffer[..read]);
-                if response.len() > ceiling.saturating_add(MAX_HEADER_BYTES) {
-                    return Err(TaskError::TooLarge);
+                if response.len() > ceiling {
+                    return Err(Failed::Real(TaskError::TooLarge));
                 }
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                return Err(TaskError::TimedOut)
+                return Err(Failed::Real(TaskError::TimedOut))
             }
-            Err(_) => break,
+            Err(_) if response.is_empty() => return Err(Failed::Stale),
+            Err(_) => return Ok((response, false)),
         }
     }
-    Ok(response)
+}
+
+/// Where this response ends, if enough of it has arrived to say.
+///
+/// `Ok(None)` means the answer is not yet knowable and more bytes are needed.
+/// A response the server frames by closing the connection is never knowable,
+/// so it stays `Ok(None)` until the socket ends, which is the old behaviour
+/// kept for the servers that still do that.
+fn message_end(response: &[u8]) -> Result<Option<usize>, TaskError> {
+    let mut headers = [httparse::EMPTY_HEADER; MAX_RESPONSE_HEADERS];
+    let mut parsed = httparse::Response::new(&mut headers);
+    let head_end = match parsed.parse(response) {
+        Ok(httparse::Status::Complete(end)) if end <= MAX_HEADER_BYTES => end,
+        Ok(httparse::Status::Partial) => return Ok(None),
+        Ok(httparse::Status::Complete(_)) | Err(_) => return Err(TaskError::Unreachable),
+    };
+    let status = parsed.code.ok_or(TaskError::Unreachable)?;
+    // Two statuses are defined to carry no body at all, whatever their headers
+    // say. Waiting for one is waiting for something nobody is sending.
+    if matches!(status, 204 | 304) {
+        return Ok(Some(head_end));
+    }
+    let body = &response[head_end..];
+    if transfer_is_chunked(parsed.headers)? {
+        return Ok(chunked_end(body)?.map(|end| head_end + end));
+    }
+    match content_length(parsed.headers)? {
+        Some(length) => Ok(head_end
+            .checked_add(length)
+            .filter(|end| *end <= response.len())),
+        None => Ok(None),
+    }
+}
+
+/// Where a chunked body ends, if its last chunk has arrived.
+///
+/// This walks the same framing [`decode_chunked`] walks, without copying any
+/// of it. Anything incomplete is `None` rather than an error: a body arrives a
+/// packet at a time, and every one of those packets ends mid-chunk.
+fn chunked_end(body: &[u8]) -> Result<Option<usize>, TaskError> {
+    let mut at = 0_usize;
+    loop {
+        let rest = body.get(at..).ok_or(TaskError::Unreachable)?;
+        let (line_end, size) = match httparse::parse_chunk_size(rest) {
+            Ok(httparse::Status::Complete(parsed)) => parsed,
+            Ok(httparse::Status::Partial) => return Ok(None),
+            Err(_) => return Err(TaskError::Unreachable),
+        };
+        let size = usize::try_from(size).map_err(|_| TaskError::Unreachable)?;
+        at = at.checked_add(line_end).ok_or(TaskError::Unreachable)?;
+        if size == 0 {
+            let rest = body.get(at..).ok_or(TaskError::Unreachable)?;
+            let mut trailers = [httparse::EMPTY_HEADER; MAX_RESPONSE_HEADERS];
+            return match httparse::parse_headers(rest, &mut trailers) {
+                Ok(httparse::Status::Complete((end, _))) => Ok(Some(at + end)),
+                Ok(httparse::Status::Partial) => Ok(None),
+                Err(_) => Err(TaskError::Unreachable),
+            };
+        }
+        at = at
+            .checked_add(size)
+            .and_then(|at| at.checked_add(2))
+            .ok_or(TaskError::Unreachable)?;
+        if at > body.len() {
+            return Ok(None);
+        }
+    }
+}
+
+/// Whether the server is willing to answer again on this connection.
+///
+/// HTTP/1.1 is persistent unless somebody says otherwise, and HTTP/1.0 is the
+/// reverse. Both are honoured, because a connection kept against a server that
+/// has already decided to close it is a guaranteed retry on the next request.
+fn stays_open(response: &[u8]) -> bool {
+    let mut headers = [httparse::EMPTY_HEADER; MAX_RESPONSE_HEADERS];
+    let mut parsed = httparse::Response::new(&mut headers);
+    if !matches!(parsed.parse(response), Ok(httparse::Status::Complete(_))) {
+        return false;
+    }
+    let said = header(parsed.headers, "connection").unwrap_or_default();
+    if said
+        .split(',')
+        .any(|token| token.trim().eq_ignore_ascii_case("close"))
+    {
+        return false;
+    }
+    match parsed.version {
+        Some(0) => said
+            .split(',')
+            .any(|token| token.trim().eq_ignore_ascii_case("keep-alive")),
+        _ => true,
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    /// A ceiling for tests that are about framing rather than size. Large
+    /// enough that nothing in this module ever reaches it.
+    const CEILING: u32 = 64 * 1024;
+
     /// The policy is one function for both runtimes, so the tests that pin
     /// it live beside it rather than in whichever runtime happened to own it
     /// first. In the device runtime they only ran under a feature flag.
@@ -949,8 +1250,139 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_reply_is_not_finished_until_its_content_length_has_arrived() {
+        let head = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n";
+        assert_eq!(message_end(b"HTTP/1.1 200 OK\r\nContent-Len"), Ok(None));
+        assert_eq!(message_end(head), Ok(None));
+        assert_eq!(message_end(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhel"), Ok(None));
+        let whole = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello";
+        assert_eq!(message_end(whole), Ok(Some(whole.len())));
+    }
+
+    #[test]
+    fn a_reply_ends_where_it_said_it_would_and_not_where_the_socket_does() {
+        // The bug this stops: a kept connection carrying the front of the
+        // next answer, or a server that pads, silently becoming part of a
+        // body an application then tries to parse.
+        let response = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhelloHTTP/1.1 200 OK\r\n";
+        let end = message_end(response)
+            .expect("a framed reply")
+            .expect("a complete reply");
+        assert_eq!(&response[..end], b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello");
+    }
+
+    #[test]
+    fn the_two_statuses_that_carry_no_body_are_not_waited_on() {
+        for response in [
+            &b"HTTP/1.1 204 No Content\r\nContent-Length: 9\r\n\r\n"[..],
+            &b"HTTP/1.1 304 Not Modified\r\nContent-Length: 9\r\n\r\n"[..],
+        ] {
+            assert_eq!(
+                message_end(response),
+                Ok(Some(response.len())),
+                "a bodiless status must not be read as owing a body"
+            );
+        }
+    }
+
+    #[test]
+    fn a_reply_with_no_framing_at_all_ends_only_when_the_socket_does() {
+        let response = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nhello";
+        assert_eq!(
+            message_end(response),
+            Ok(None),
+            "without a length or chunking the close is the framing, so the read must go on"
+        );
+    }
+
+    #[test]
+    fn a_chunked_reply_is_finished_by_its_terminator_and_not_before() {
+        let head = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n";
+        let mut response = head.to_vec();
+        assert_eq!(message_end(&response), Ok(None));
+        response.extend_from_slice(b"5\r\nhello\r\n");
+        assert_eq!(message_end(&response), Ok(None));
+        response.extend_from_slice(b"0\r\n");
+        assert_eq!(
+            message_end(&response),
+            Ok(None),
+            "a last chunk still owes its trailer terminator"
+        );
+        response.extend_from_slice(b"\r\n");
+        assert_eq!(message_end(&response), Ok(Some(response.len())));
+    }
+
+    #[test]
+    fn a_chunked_reply_carries_its_trailers_to_the_end() {
+        let response =
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\nDigest: x\r\n\r\n";
+        assert_eq!(message_end(response), Ok(Some(response.len())));
+    }
+
+    #[test]
+    fn a_reply_that_cannot_be_parsed_is_refused_rather_than_waited_on() {
+        assert_eq!(
+            message_end(b"nonsense\r\n\r\n"),
+            Err(TaskError::Unreachable)
+        );
+        assert_eq!(
+            message_end(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n"),
+            Err(TaskError::Unreachable)
+        );
+    }
+
+    #[test]
+    fn a_connection_is_kept_only_where_the_server_agrees_to_it() {
+        // HTTP/1.1 is persistent unless the server says otherwise; 1.0 is the
+        // reverse. Keeping one the server has already closed costs a whole
+        // extra round trip on the next request, so both are honoured.
+        assert!(stays_open(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"));
+        assert!(!stays_open(
+            b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+        ));
+        assert!(!stays_open(
+            b"HTTP/1.1 200 OK\r\nConnection: keep-alive, close\r\nContent-Length: 0\r\n\r\n"
+        ));
+        assert!(!stays_open(b"HTTP/1.0 200 OK\r\nContent-Length: 0\r\n\r\n"));
+        assert!(stays_open(
+            b"HTTP/1.0 200 OK\r\nConnection: Keep-Alive\r\nContent-Length: 0\r\n\r\n"
+        ));
+    }
+
+    #[test]
+    fn only_a_get_offers_to_hold_its_connection_open() {
+        // A POST replayed on a connection the far end had dropped could ask a
+        // model to answer twice or a daemon to run a command twice, so it
+        // hangs up rather than risk being the request that gets repeated.
+        let address = book();
+        assert!(
+            head(&address, &Method::Get { offset: None }, 1024).contains("Connection: keep-alive")
+        );
+        assert!(head(
+            &address,
+            &Method::Get {
+                offset: Some(1024)
+            },
+            1024
+        )
+        .contains("Connection: keep-alive"));
+        assert!(head(
+            &address,
+            &Method::Post {
+                body: b"{}",
+                content_type: "application/json",
+                credential: None,
+                headers: &[],
+            },
+            1024
+        )
+        .contains("Connection: close"));
+    }
+
     use super::{
-        fetch, head, parse, post, resolve_redirect, split_response, Address, Cow, Method, Response,
+        fetch, head, message_end, parse, post, resolve_redirect, split_response, stays_open,
+        Address, Cow, Method, Response,
     };
     use kobo_protocol::TaskError;
 
@@ -1007,7 +1439,7 @@ mod tests {
         // the end of every book that happens to divide evenly.
         let response = b"HTTP/1.1 416 Range Not Satisfiable\r\nContent-Length: 0\r\n\r\n";
         assert_eq!(
-            split_response(response),
+            split_response(response, CEILING),
             Ok(Response::Body(Cow::Borrowed(&[])))
         );
     }
@@ -1016,7 +1448,7 @@ mod tests {
     fn a_partial_answer_is_a_success_rather_than_something_to_retry() {
         let response = b"HTTP/1.1 206 Partial Content\r\nContent-Length: 5\r\n\r\nCHAP1";
         assert_eq!(
-            split_response(response),
+            split_response(response, CEILING),
             Ok(Response::Body(Cow::Borrowed(b"CHAP1")))
         );
     }
@@ -1098,7 +1530,7 @@ mod tests {
     fn a_body_is_separated_from_its_headers() {
         let response = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello";
         assert_eq!(
-            split_response(response),
+            split_response(response, CEILING),
             Ok(Response::Body(Cow::Borrowed(&b"hello"[..])))
         );
     }
@@ -1106,19 +1538,19 @@ mod tests {
     #[test]
     fn a_server_refusal_is_reported_as_such() {
         let response = b"HTTP/1.1 404 Not Found\r\n\r\nmissing";
-        assert_eq!(split_response(response), Err(TaskError::NotFound));
+        assert_eq!(split_response(response, CEILING), Err(TaskError::NotFound));
     }
 
     #[test]
     fn a_reply_that_is_not_http_is_unreachable_rather_than_parsed() {
-        assert_eq!(split_response(b"garbage"), Err(TaskError::Unreachable));
+        assert_eq!(split_response(b"garbage", CEILING), Err(TaskError::Unreachable));
     }
 
     #[test]
     fn a_redirect_is_reported_with_its_target() {
         let response = b"HTTP/1.1 302 Found\r\nLocation: https://elsewhere.test/book.epub\r\n\r\n";
         assert_eq!(
-            split_response(response),
+            split_response(response, CEILING),
             Ok(Response::Redirect(
                 "https://elsewhere.test/book.epub".into()
             ))
@@ -1130,7 +1562,7 @@ mod tests {
     fn the_location_header_is_matched_whatever_its_case() {
         let response = b"HTTP/1.1 301 Moved\r\nlocation: https://a.test/x\r\n\r\n";
         assert_eq!(
-            split_response(response),
+            split_response(response, CEILING),
             Ok(Response::Redirect("https://a.test/x".into()))
         );
     }
@@ -1139,7 +1571,7 @@ mod tests {
     #[test]
     fn a_redirect_without_a_location_is_an_error() {
         assert_eq!(
-            split_response(b"HTTP/1.1 302 Found\r\nX: y\r\n\r\n"),
+            split_response(b"HTTP/1.1 302 Found\r\nX: y\r\n\r\n", CEILING),
             Err(TaskError::Unreachable)
         );
     }
@@ -1209,6 +1641,131 @@ mod tests {
         assert_eq!(fetch("http://example.com", 10), Err(TaskError::NotFound));
     }
 
+    /// A gzip member carrying `content`, as a server would send one.
+    fn gzipped(content: &[u8]) -> Vec<u8> {
+        let mut out = vec![0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 0xff];
+        out.extend_from_slice(&miniz_oxide::deflate::compress_to_vec(content, 6));
+        out.extend_from_slice(&[0; 8]);
+        out
+    }
+
+    #[test]
+    fn a_json_api_is_asked_for_its_reply_compressed() {
+        let address = parse("https://feedsearch.dev/api/v1/search?url=nytimes.com").expect("a url");
+        let request = head(&address, &Method::Get { offset: None }, 512 * 1024);
+        assert!(
+            request.contains("\r\nAccept-Encoding: gzip\r\n"),
+            "a plain fetch did not ask for gzip: {request}"
+        );
+
+        let posted = head(
+            &address,
+            &Method::Post {
+                body: b"{}",
+                content_type: "application/json",
+                credential: None,
+                headers: &[],
+            },
+            512 * 1024,
+        );
+        assert!(
+            posted.contains("\r\nAccept-Encoding: gzip\r\n"),
+            "a post did not ask for gzip: {posted}"
+        );
+    }
+
+    #[test]
+    fn a_piece_of_a_document_is_still_asked_for_as_it_was_written() {
+        let address = parse("https://gutenberg.org/files/2701/2701-0.txt").expect("a url");
+        let request = head(
+            &address,
+            &Method::Get {
+                offset: Some(262_144),
+            },
+            262_144,
+        );
+        // A range names bytes the server sends. Compressed, those bytes are a
+        // window into a deflate stream, which is not a document and cannot be
+        // expanded without the ones before it.
+        assert!(
+            request.contains("\r\nAccept-Encoding: identity\r\n"),
+            "a ranged request asked for gzip: {request}"
+        );
+    }
+
+    #[test]
+    fn a_compressed_reply_reaches_the_caller_as_the_document_it_is() {
+        let content = b"{\"feeds\":[{\"url\":\"https://rss.nytimes.com/HomePage.xml\"}]}";
+        let body = gzipped(content);
+        let mut response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\n\r\n",
+            body.len()
+        )
+        .into_bytes();
+        response.extend_from_slice(&body);
+        assert_eq!(
+            split_response(&response, CEILING),
+            Ok(Response::Body(Cow::Owned(content.to_vec())))
+        );
+    }
+
+    #[test]
+    fn a_reply_that_is_both_chunked_and_compressed_is_unwrapped_in_that_order() {
+        // What every large CDN actually sends. The chunks are how it was sent
+        // and the gzip is what it is, so the framing has to come off first.
+        let content = b"a body that arrived in pieces and compressed";
+        let body = gzipped(content);
+        let mut response =
+            b"HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nTransfer-Encoding: chunked\r\n\r\n"
+                .to_vec();
+        for piece in body.chunks(7) {
+            response.extend_from_slice(format!("{:x}\r\n", piece.len()).as_bytes());
+            response.extend_from_slice(piece);
+            response.extend_from_slice(b"\r\n");
+        }
+        response.extend_from_slice(b"0\r\n\r\n");
+        assert_eq!(
+            split_response(&response, CEILING),
+            Ok(Response::Body(Cow::Owned(content.to_vec())))
+        );
+    }
+
+    #[test]
+    fn a_reply_in_a_coding_that_was_never_asked_for_is_not_handed_on_as_a_body() {
+        // Brotli, which some servers send whatever they were offered. Half a
+        // brotli stream read as text is worse than an honest failure.
+        let response = b"HTTP/1.1 200 OK\r\nContent-Encoding: br\r\nContent-Length: 3\r\n\r\nabc";
+        assert_eq!(
+            split_response(response, CEILING),
+            Err(TaskError::Unreachable)
+        );
+    }
+
+    #[test]
+    fn a_reply_that_says_identity_is_the_body_itself() {
+        let response =
+            b"HTTP/1.1 200 OK\r\nContent-Encoding: identity\r\nContent-Length: 3\r\n\r\nabc";
+        assert_eq!(
+            split_response(response, CEILING),
+            Ok(Response::Body(Cow::Borrowed(b"abc")))
+        );
+    }
+
+    #[test]
+    fn a_compressed_reply_is_measured_after_it_expands_and_not_before() {
+        // Two hundred kilobytes of one letter is a few hundred bytes on the
+        // wire. The ceiling the task declared is about what the reader holds.
+        let body = gzipped(&vec![b'a'; 200_000]);
+        let mut response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\n\r\n",
+            body.len()
+        )
+        .into_bytes();
+        response.extend_from_slice(&body);
+        assert!(body.len() < CEILING as usize, "the wire body was not small");
+        assert_eq!(split_response(&response, CEILING), Err(TaskError::TooLarge));
+    }
+
     #[test]
     fn a_chunked_body_is_reassembled() {
         // Exactly the framing api.openai.com uses over HTTP/1.1. Without this
@@ -1219,7 +1776,7 @@ mod tests {
             12\r\n{\"content\":\"h\"}}]}\r\n\
             0\r\n\r\n";
         assert_eq!(
-            split_response(response),
+            split_response(response, CEILING),
             Ok(Response::Body(Cow::Owned(
                 br#"{"choices":[{"message":{"content":"h"}}]}"#.to_vec()
             )))
@@ -1231,7 +1788,7 @@ mod tests {
         let response =
             b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5;a=b\r\nhello\r\n0\r\n\r\n";
         assert_eq!(
-            split_response(response),
+            split_response(response, CEILING),
             Ok(Response::Body(Cow::Owned(b"hello".to_vec())))
         );
     }
@@ -1241,38 +1798,38 @@ mod tests {
         // Returning what arrived would present half a book, or half a reply,
         // as the whole of it.
         let response = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n10\r\nshort";
-        assert_eq!(split_response(response), Err(TaskError::Unreachable));
+        assert_eq!(split_response(response, CEILING), Err(TaskError::Unreachable));
     }
 
     #[test]
     fn a_chunked_body_requires_its_final_header_terminator() {
         let response = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n";
-        assert_eq!(split_response(response), Err(TaskError::Unreachable));
+        assert_eq!(split_response(response, CEILING), Err(TaskError::Unreachable));
     }
 
     #[test]
     fn conflicting_lengths_are_refused() {
         let response = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Length: 4\r\n\r\nhello";
-        assert_eq!(split_response(response), Err(TaskError::Unreachable));
+        assert_eq!(split_response(response, CEILING), Err(TaskError::Unreachable));
     }
 
     #[test]
     fn transfer_encoding_and_content_length_cannot_disagree() {
         let response = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\n5\r\nhello\r\n0\r\n\r\n";
-        assert_eq!(split_response(response), Err(TaskError::Unreachable));
+        assert_eq!(split_response(response, CEILING), Err(TaskError::Unreachable));
     }
 
     #[test]
     fn a_length_framed_body_must_arrive_whole() {
         let response = b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nhello";
-        assert_eq!(split_response(response), Err(TaskError::Unreachable));
+        assert_eq!(split_response(response, CEILING), Err(TaskError::Unreachable));
     }
 
     #[test]
     fn a_length_framed_body_is_still_borrowed_rather_than_copied() {
         let response = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello";
         assert!(matches!(
-            split_response(response),
+            split_response(response, CEILING),
             Ok(Response::Body(Cow::Borrowed(b"hello")))
         ));
     }

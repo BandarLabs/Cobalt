@@ -59,9 +59,16 @@ const FEEDS: &str = "feeds";
 
 /// How much of a search answer to accept.
 ///
-/// A domain with a dozen feeds answers in about twenty kilobytes. The rest is
-/// headroom for a site that publishes one feed per category.
-const SEARCH_BYTES: u32 = 128 * 1024;
+/// This was set at a dozen feeds and twenty kilobytes, which is what a blog
+/// or a magazine answers with. A national newspaper is not that shape: the
+/// New York Times publishes a feed per section and answers in a hundred and
+/// fifty kilobytes across two hundred of them, so the cap refused the one
+/// site most people would try first.
+///
+/// So it is the runtime's own ceiling now, the same one a feed itself gets.
+/// There is nothing to be gained by refusing an answer the runtime was
+/// willing to carry.
+const SEARCH_BYTES: u32 = 512 * 1024;
 
 /// How much of a feed to accept.
 ///

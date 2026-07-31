@@ -14,6 +14,9 @@ repository.workspace = true
 [dependencies]
 http = "1.3"
 httparse = "1.10"
+# Raw deflate, which is the hard half of reading a gzip-encoded reply. Already
+# in this workspace for reading EPUBs, and pinned to the same version.
+miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 webpki-roots = "1"
 kobo-protocol = { path = "../kobo-protocol" }

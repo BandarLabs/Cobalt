@@ -344,6 +344,7 @@ dependencies = [
  "http",
  "httparse",
  "kobo-protocol",
+ "miniz_oxide 0.9.1",
  "rustls",
  "webpki-roots",
 ]
