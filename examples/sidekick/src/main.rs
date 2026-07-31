@@ -20,8 +20,8 @@
 
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Failure, Glyph, KoboApp, Screen, ScreenBuilder,
-    Space, StoreResult, Task, TaskId, TaskOutcome,
+    action_id, ActionId, BannerLevel, Context, ControlState, Failure, Glyph, KoboApp, Screen,
+    ScreenBuilder, Space, StoreResult, Task, TaskId, TaskOutcome,
 };
 use std::process::ExitCode;
 
@@ -32,6 +32,8 @@ const PAIRED: &str = "paired";
 const ALLOW: &str = "allow";
 const DENY: &str = "deny";
 const IGNORE: &str = "pass";
+/// Sends the ticked answers to a question that takes more than one.
+const SEND: &str = "send";
 const REPAIR: &str = "repair";
 
 /// The port `kobo-sidekick run` listens on, filled in when the owner types a
@@ -75,6 +77,9 @@ struct Ask {
     /// Whether allow and deny mean anything here. A multiple-choice
     /// question is not a permission, so allowing it would answer nothing.
     permission: bool,
+    /// Whether more than one choice may be taken. A tap ticks rather than
+    /// answers, and the answer is sent by a button of its own.
+    multi: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -104,6 +109,9 @@ struct Sidekick {
     code: String,
     /// The question on the panel, while there is one.
     ask: Option<Ask>,
+    /// Which choices are ticked, for a question that takes more than one.
+    /// Cleared with every new question rather than carried between them.
+    ticked: Vec<bool>,
     poll: Option<TaskId>,
     answer: Option<TaskId>,
     nap: Option<TaskId>,
@@ -226,10 +234,28 @@ impl Sidekick {
                         chosen_action(index),
                         choice.label.clone(),
                         choice.description.clone(),
-                        Glyph::Circle,
+                        // A tick reads as taken and a circle as free, which
+                        // is the only sign a question taking several
+                        // answers gives that a tap landed.
+                        if self.is_ticked(index) {
+                            Glyph::Check
+                        } else {
+                            Glyph::Circle
+                        },
                     )
                 }))
                 .spacer(Space::Small);
+        }
+        if ask.multi {
+            // Nothing ticked is not an answer, so the button says so by
+            // being there and not working, rather than by vanishing and
+            // moving everything under it.
+            let state = if self.ticked.iter().any(|ticked| *ticked) {
+                ControlState::Enabled
+            } else {
+                ControlState::Disabled
+            };
+            screen = screen.button_with_state(SEND, "Send these answers", state);
         }
         if ask.permission {
             // Offered even when the request came with "always allow" lines,
@@ -257,16 +283,32 @@ impl Sidekick {
 
     /// Sends the tapped decision back to the daemon.
     fn decide(&mut self, context: &mut Context, choice: &str) {
-        self.answer_daemon(context, choice, "");
+        self.answer_daemon(context, choice, Vec::new());
     }
 
-    /// Sends back one of the question's own answers, by the label it came
-    /// with. The daemon does not interpret it, and neither does this.
-    fn choose(&mut self, context: &mut Context, label: &str) {
-        self.answer_daemon(context, "", label);
+    /// Sends back the question's own answers, by the labels they came with.
+    /// The daemon does not interpret them, and neither does this.
+    fn choose(&mut self, context: &mut Context, labels: Vec<String>) {
+        self.answer_daemon(context, "", labels);
     }
 
-    fn answer_daemon(&mut self, context: &mut Context, choice: &str, label: &str) {
+    /// Whether the choice at `index` has been ticked.
+    fn is_ticked(&self, index: usize) -> bool {
+        self.ticked.get(index).copied().unwrap_or(false)
+    }
+
+    /// Every ticked label, in the order the agent offered them.
+    fn ticked_labels(&self) -> Vec<String> {
+        self.ask
+            .iter()
+            .flat_map(|ask| ask.choices.iter())
+            .enumerate()
+            .filter(|(index, _)| self.is_ticked(*index))
+            .map(|(_, choice)| choice.label.clone())
+            .collect()
+    }
+
+    fn answer_daemon(&mut self, context: &mut Context, choice: &str, labels: Vec<String>) {
         let Some(ask) = &self.ask else {
             return;
         };
@@ -274,7 +316,10 @@ impl Sidekick {
             .set("token", self.code.as_str())
             .set("id", ask.id)
             .set("choice", choice)
-            .set("label", label)
+            .set(
+                "labels",
+                kobo_json::Value::Array(labels.into_iter().map(kobo_json::Value::String).collect()),
+            )
             .build()
             .to_json();
         let work = Task::Post {
@@ -314,6 +359,7 @@ impl Sidekick {
             TaskOutcome::Completed(bytes) => {
                 let repaint = self.trouble.take().is_some();
                 if let Some(ask) = read_ask(&bytes) {
+                    self.ticked = vec![false; ask.choices.len()];
                     self.ask = Some(ask);
                     self.view = View::Asking;
                     self.show(context);
@@ -522,6 +568,7 @@ fn read_ask(bytes: &[u8]) -> Option<Ask> {
         choices,
         // Absent means a permission, which is what almost every ask is.
         permission: ask.get("permission").and_then(kobo_json::Value::as_bool) != Some(false),
+        multi: ask.get("multi").and_then(kobo_json::Value::as_bool) == Some(true),
     })
 }
 
@@ -595,16 +642,34 @@ impl KoboApp for Sidekick {
                     return;
                 }
             }
+            if action == action_id(SEND) {
+                let ticked = self.ticked_labels();
+                if !ticked.is_empty() {
+                    self.choose(context, ticked);
+                }
+                return;
+            }
             let labels: Vec<String> = self
                 .ask
                 .iter()
                 .flat_map(|ask| ask.choices.iter().map(|choice| choice.label.clone()))
                 .collect();
+            let multi = self.ask.as_ref().is_some_and(|ask| ask.multi);
             for (index, label) in labels.iter().enumerate() {
-                if action == action_id(&chosen_action(index)) {
-                    self.choose(context, label);
-                    return;
+                if action != action_id(&chosen_action(index)) {
+                    continue;
                 }
+                if multi {
+                    // A tick is a change worth a repaint: without it there
+                    // is no sign on the panel that the tap landed.
+                    if let Some(slot) = self.ticked.get_mut(index) {
+                        *slot = !*slot;
+                    }
+                    self.show(context);
+                } else {
+                    self.choose(context, vec![label.clone()]);
+                }
+                return;
             }
         }
     }
@@ -645,7 +710,7 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{Sidekick, View, ALLOW, DENY, IGNORE, PAIRED, REPAIR};
+    use super::{Sidekick, View, ALLOW, DENY, IGNORE, PAIRED, REPAIR, SEND};
     use kobo_sdk::keyboard::Keyboard;
     use kobo_sdk::{
         action_id, ActionId, Command, Context, KoboApp, Screen, StoreRequest, StoreResult, Task,
@@ -777,6 +842,106 @@ mod tests {
         }
     }
 
+    /// A question that takes more than one answer, as `multiSelect` does.
+    fn multi_select(id: u32) -> TaskOutcome {
+        TaskOutcome::Completed(
+            format!(
+                r#"{{"ask":{{"id":{id},"source":"claude","tool":"Sections",
+                "detail":"Which sections should I include?","permission":false,"multi":true,
+                "choices":[
+                {{"label":"Introduction","description":"Opening context"}},
+                {{"label":"Middle","description":"The argument"}},
+                {{"label":"Conclusion","description":"Final summary"}}]}}}}"#
+            )
+            .into_bytes(),
+        )
+    }
+
+    #[test]
+    fn a_question_taking_several_answers_ticks_rather_than_sending_at_a_tap() {
+        let (mut app, poll) = paired();
+        let mut context = Context::default();
+        app.on_task(&mut context, poll, multi_select(3));
+        let _ = context.take_commands();
+        // The first tap ticks and paints. It must not answer: there may be
+        // more to say.
+        let commands = act(&mut app, action_id("choice.0"));
+        assert!(
+            posted(&commands).is_none(),
+            "a tick answered the question on its own"
+        );
+        assert!(
+            painted(&commands).is_some(),
+            "a tick left the panel with no sign the tap landed"
+        );
+        let commands = act(&mut app, action_id("choice.2"));
+        assert!(posted(&commands).is_none(), "a second tick answered");
+        // Now send both, in the order they were offered rather than tapped.
+        let commands = act(&mut app, action_id(SEND));
+        let (_, _, body) = posted(&commands).expect("the answers were sent");
+        assert!(
+            body.contains(r#""labels":["Introduction","Conclusion"]"#),
+            "{body}"
+        );
+    }
+
+    #[test]
+    fn a_tick_taken_back_is_not_sent() {
+        let (mut app, poll) = paired();
+        let mut context = Context::default();
+        app.on_task(&mut context, poll, multi_select(3));
+        let _ = context.take_commands();
+        let _ = act(&mut app, action_id("choice.1"));
+        let _ = act(&mut app, action_id("choice.0"));
+        // Second tap on the same row unticks it.
+        let _ = act(&mut app, action_id("choice.1"));
+        let commands = act(&mut app, action_id(SEND));
+        let (_, _, body) = posted(&commands).expect("the answers were sent");
+        assert!(body.contains(r#""labels":["Introduction"]"#), "{body}");
+    }
+
+    #[test]
+    fn sending_nothing_is_not_an_answer() {
+        let (mut app, poll) = paired();
+        let mut context = Context::default();
+        app.on_task(&mut context, poll, multi_select(3));
+        let _ = context.take_commands();
+        let commands = act(&mut app, action_id(SEND));
+        assert!(
+            posted(&commands).is_none(),
+            "an empty answer went to the daemon"
+        );
+    }
+
+    #[test]
+    fn ticks_do_not_carry_from_one_question_to_the_next() {
+        let (mut app, poll) = paired();
+        let mut context = Context::default();
+        app.on_task(&mut context, poll, multi_select(3));
+        let _ = context.take_commands();
+        let _ = act(&mut app, action_id("choice.0"));
+        let commands = act(&mut app, action_id(SEND));
+        let (task, _, _) = posted(&commands).expect("the answers were sent");
+        let mut context = Context::default();
+        app.on_task(
+            &mut context,
+            task,
+            TaskOutcome::Completed(br#"{"ok":true}"#.to_vec()),
+        );
+        let poll = fetched(&context.take_commands())
+            .expect("polling resumed")
+            .0;
+        let mut context = Context::default();
+        app.on_task(&mut context, poll, multi_select(4));
+        let _ = context.take_commands();
+        // Nothing is ticked, so there is nothing to send yet.
+        let commands = act(&mut app, action_id(SEND));
+        assert!(
+            posted(&commands).is_none(),
+            "a tick survived into the next question"
+        );
+    }
+
     #[test]
     fn a_permission_offering_always_allow_still_offers_deciding_once() {
         let (mut app, poll) = paired();
@@ -809,7 +974,7 @@ mod tests {
         let _ = context.take_commands();
         let commands = act(&mut app, action_id("choice.1"));
         let (_, _, body) = posted(&commands).expect("the answer was sent");
-        assert!(body.contains(r#""label":"Every step""#), "{body}");
+        assert!(body.contains(r#""labels":["Every step"]"#), "{body}");
         assert!(body.contains(r#""id":7"#), "{body}");
     }
 

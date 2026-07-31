@@ -42,6 +42,9 @@ pub struct Ask {
     /// where allowing would answer nothing and only make the agent ask
     /// again at the keyboard.
     pub permission: bool,
+    /// Whether more than one choice may be taken. The reader ticks rather
+    /// than answers when this is set.
+    pub multi: bool,
 }
 
 /// A question on its way to the board: an [`Ask`] without the number, which
@@ -53,6 +56,7 @@ pub struct Asking {
     pub detail: String,
     pub choices: Vec<Choice>,
     pub permission: bool,
+    pub multi: bool,
 }
 
 impl Asking {
@@ -65,6 +69,7 @@ impl Asking {
             detail: detail.to_owned(),
             choices: Vec::new(),
             permission: true,
+            multi: false,
         }
     }
 
@@ -76,10 +81,11 @@ impl Asking {
     }
 
     /// A question rather than a permission: its own answers are the only
-    /// ones that mean anything.
+    /// ones that mean anything. `multi` allows more than one of them.
     #[must_use]
-    pub fn multiple_choice(mut self) -> Self {
+    pub fn multiple_choice(mut self, multi: bool) -> Self {
         self.permission = false;
+        self.multi = multi;
         self
     }
 }
@@ -93,9 +99,10 @@ pub enum Decision {
     /// own terminal prompt. Also what a timeout or an ignored question
     /// becomes, so an absent reader never blocks anyone.
     Pass,
-    /// One of the question's own choices, by label. Never one of the three
-    /// above wearing a label, so a choice reading "Allow" is still a choice.
-    Chose(String),
+    /// The question's own choices, by label. More than one only when the
+    /// question allowed it. Never one of the three above wearing a label,
+    /// so a choice reading "Allow" is still a choice.
+    Chose(Vec<String>),
 }
 
 struct Open {
@@ -145,6 +152,7 @@ impl Board {
                 detail: asking.detail,
                 choices: asking.choices,
                 permission: asking.permission,
+                multi: asking.multi,
             },
             decision: None,
         });
@@ -348,10 +356,10 @@ mod tests {
             assert_eq!(ask.choices.len(), 2);
             assert_eq!(ask.choices[1].label, "Detailed");
             assert_eq!(ask.choices[1].description, "Every step");
-            assert!(answering.answer(ask.id, Decision::Chose("Detailed".to_owned())));
+            assert!(answering.answer(ask.id, Decision::Chose(vec!["Detailed".to_owned()])));
         });
         let asking = Asking::new("claude", "AskUserQuestion", "How much detail?")
-            .multiple_choice()
+            .multiple_choice(false)
             .offering(vec![
                 Choice {
                     label: "Summary".to_owned(),
@@ -363,7 +371,7 @@ mod tests {
                 },
             ]);
         let decision = board.submit(asking, Duration::from_secs(5));
-        assert_eq!(decision, Decision::Chose("Detailed".to_owned()));
+        assert_eq!(decision, Decision::Chose(vec!["Detailed".to_owned()]));
         answerer.join().expect("answerer finishes");
     }
 }

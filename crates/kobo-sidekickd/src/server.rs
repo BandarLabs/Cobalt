@@ -155,17 +155,21 @@ fn hook_route(board: &Board, request: &Request, stream: &mut (impl Read + Write)
         .offering(read_choices(ask.get("choices")));
     // Absent means a permission, which is what almost every ask is.
     if ask.get("permission").and_then(kobo_json::Value::as_bool) == Some(false) {
-        asking = asking.multiple_choice();
+        let multi = ask.get("multi").and_then(kobo_json::Value::as_bool) == Some(true);
+        asking = asking.multiple_choice(multi);
     }
     let reply = match board.submit(asking, state::ASK_PATIENCE) {
         Decision::Allow => plain("allow"),
         Decision::Deny => plain("deny"),
         Decision::Pass => plain("pass"),
-        // The label goes back whole. A hook that offered choices knows what
+        // The labels go back whole. A hook that offered choices knows what
         // it offered, and nothing in between needs to understand them.
-        Decision::Chose(label) => kobo_json::ObjectBuilder::new()
+        Decision::Chose(labels) => kobo_json::ObjectBuilder::new()
             .set("decision", "chose")
-            .set("label", label.as_str())
+            .set(
+                "labels",
+                kobo_json::Value::Array(labels.into_iter().map(kobo_json::Value::String).collect()),
+            )
             .build(),
     };
     respond_json(stream, 200, "OK", &reply.to_json());
@@ -238,16 +242,26 @@ fn reader_route(board: &Board, pairing: &str, request: &Request, stream: &mut (i
                 return;
             }
             let id = answer.get("id").and_then(kobo_json::Value::as_i64);
-            // A chosen option arrives under its own name, so a question
+            // Chosen options arrive under their own name, so a question
             // offering a choice called "allow" still means the choice.
-            let decision = match answer.get("label").and_then(kobo_json::Value::as_str) {
-                Some(label) if !label.is_empty() => Some(Decision::Chose(label.to_owned())),
-                _ => match answer.get("choice").and_then(kobo_json::Value::as_str) {
+            let chosen: Vec<String> = answer
+                .get("labels")
+                .and_then(kobo_json::Value::as_array)
+                .map(<[kobo_json::Value]>::to_vec)
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|label| label.as_str().map(str::to_owned))
+                .filter(|label| !label.is_empty())
+                .collect();
+            let decision = if chosen.is_empty() {
+                match answer.get("choice").and_then(kobo_json::Value::as_str) {
                     Some("allow") => Some(Decision::Allow),
                     Some("deny") => Some(Decision::Deny),
                     Some("pass") => Some(Decision::Pass),
                     _ => None,
-                },
+                }
+            } else {
+                Some(Decision::Chose(chosen))
             };
             let landed = match (id, decision) {
                 (Some(id), Some(decision)) => {
@@ -281,6 +295,7 @@ fn ask_json(ask: &Ask) -> kobo_json::Value {
         .set("detail", ask.detail.as_str())
         .set("choices", kobo_json::Value::Array(choices))
         .set("permission", ask.permission)
+        .set("multi", ask.multi)
         .build()
 }
 

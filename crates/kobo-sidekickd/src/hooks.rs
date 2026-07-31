@@ -63,13 +63,15 @@ fn decide_permission(agent: &str, event: &kobo_json::Value) {
                 .build()
         })
         .collect();
-    let Some((decision, label)) = ask_daemon(agent, &tool, &detail, choices, true) else {
+    let Some((decision, labels)) = ask_daemon(agent, &tool, &detail, choices, Wants::permission())
+    else {
         return;
     };
     if decision == "chose" {
         // An "always allow" was pressed. Echoing the suggestion back is
         // documented as the same thing as picking it in the dialog.
-        if let Some((_, _, entry)) = offered.iter().find(|(name, _, _)| *name == label) {
+        let pressed = labels.first().map_or("", String::as_str);
+        if let Some((_, _, entry)) = offered.iter().find(|(name, _, _)| name == pressed) {
             println!("{}", always(entry.clone()));
         }
         return;
@@ -115,13 +117,26 @@ fn answer_questions(agent: &str, event: &kobo_json::Value) {
         } else {
             header
         };
-        let Some((decision, label)) = ask_daemon(agent, &tool, &text, choices, false) else {
+        // Claude Code documents an array for a multi-select answer and a
+        // plain string for a single one, so each is sent as it is written.
+        let multi = question
+            .get("multiSelect")
+            .and_then(kobo_json::Value::as_bool)
+            == Some(true);
+        let Some((decision, labels)) =
+            ask_daemon(agent, &tool, &text, choices, Wants::question(multi))
+        else {
             return;
         };
-        if decision != "chose" {
+        if decision != "chose" || labels.is_empty() {
             return;
         }
-        answers.push((text, kobo_json::Value::String(label)));
+        let answer = if multi {
+            kobo_json::Value::Array(labels.into_iter().map(kobo_json::Value::String).collect())
+        } else {
+            kobo_json::Value::String(labels.into_iter().next().unwrap_or_default())
+        };
+        answers.push((text, answer));
     }
     let updated = kobo_json::ObjectBuilder::new()
         // Passed through unchanged, which the tool requires.
@@ -139,14 +154,15 @@ fn ask_daemon(
     tool: &str,
     detail: &str,
     choices: Vec<kobo_json::Value>,
-    permission: bool,
-) -> Option<(String, String)> {
+    wants: Wants,
+) -> Option<(String, Vec<String>)> {
     let body = kobo_json::ObjectBuilder::new()
         .set("source", agent)
         .set("tool", tool)
         .set("detail", detail)
         .set("choices", kobo_json::Value::Array(choices))
-        .set("permission", permission)
+        .set("permission", wants.permission)
+        .set("multi", wants.multi)
         .build()
         .to_json();
     let response = post_local(state::HOOK_PORT, "/ask", &body, HOOK_PATIENCE).ok()?;
@@ -155,7 +171,40 @@ fn ask_daemon(
     if decision.is_empty() || decision == "pass" {
         return None;
     }
-    Some((decision, string(&reply, "label")))
+    let labels = reply
+        .get("labels")
+        .and_then(kobo_json::Value::as_array)
+        .map(<[kobo_json::Value]>::to_vec)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|label| label.as_str().map(str::to_owned))
+        .collect();
+    Some((decision, labels))
+}
+
+/// What kind of answer a question will take.
+#[derive(Clone, Copy)]
+struct Wants {
+    /// Whether allow and deny mean anything.
+    permission: bool,
+    /// Whether more than one choice may be taken.
+    multi: bool,
+}
+
+impl Wants {
+    const fn permission() -> Self {
+        Self {
+            permission: true,
+            multi: false,
+        }
+    }
+
+    const fn question(multi: bool) -> Self {
+        Self {
+            permission: false,
+            multi,
+        }
+    }
 }
 
 /// The "always allow" lines this request came with, each as a button and
@@ -584,5 +633,32 @@ mod tests {
         let event = kobo_json::parse(r#"{"decision":"chose"}"#).expect("valid json");
         assert_eq!(string(&event, "decision"), "chose");
         assert_eq!(string(&event, "label"), "");
+    }
+
+    #[test]
+    fn a_multi_select_answer_is_a_list_and_a_single_one_is_not() {
+        // Claude Code documents an array for multiSelect and a plain string
+        // otherwise, so both are written the way they are documented.
+        let one = kobo_json::Value::String("Summary".to_owned());
+        let many = kobo_json::Value::Array(vec![
+            kobo_json::Value::String("Introduction".to_owned()),
+            kobo_json::Value::String("Conclusion".to_owned()),
+        ]);
+        let updated = kobo_json::ObjectBuilder::new()
+            .set("questions", kobo_json::Value::Array(Vec::new()))
+            .set(
+                "answers",
+                kobo_json::Value::Object(vec![
+                    ("How much detail?".to_owned(), one),
+                    ("Which sections?".to_owned(), many),
+                ]),
+            )
+            .build();
+        let reply = answered(updated);
+        assert!(reply.contains(r#""How much detail?":"Summary""#), "{reply}");
+        assert!(
+            reply.contains(r#""Which sections?":["Introduction","Conclusion"]"#),
+            "{reply}"
+        );
     }
 }
