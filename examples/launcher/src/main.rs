@@ -129,7 +129,7 @@ const ENTRIES: &[Entry] = &[
         label: "Sidekick",
         summary: "Approve or deny what your coding agents ask to run, from here.",
         needs: "Needs the network, a sidekick daemon on your computer, and its trust root installed.",
-        glyph: Glyph::Terminal,
+        glyph: Glyph::Key,
     },
     Entry {
         name: "hn",
