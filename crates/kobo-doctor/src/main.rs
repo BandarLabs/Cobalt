@@ -49,9 +49,15 @@ const DEFAULT_RECORD_PATH: &str = "/mnt/onboard/.kobo-record.bin";
 /// afterwards, when nothing is waiting.
 const RECORD_MAGIC: &[u8; 8] = b"KOBOCST1";
 
-/// The ceiling on a recording, matching the touch probe's: a tool that watches
-/// the device must always stop on its own.
-const MAXIMUM_RECORD_SECONDS: u64 = 300;
+/// The ceiling on a recording: a tool that watches the device must always stop
+/// on its own.
+///
+/// Five minutes was the touch probe's number, borrowed. It turned out to be
+/// the length of the tour rather than a bound on it, and a recording that
+/// stops in the middle of the thing it was filming is worth nothing. Only
+/// changed frames are kept, so ten minutes of a panel that mostly sits still
+/// is not twice the file five minutes was.
+const MAXIMUM_RECORD_SECONDS: u64 = 600;
 
 /// Bounds on the sampling rate. E-ink settles in about a fifth of a second, so
 /// past five frames a second there is nothing new to see and the loop only
