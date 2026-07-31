@@ -4283,9 +4283,22 @@ fn lead_rect(
         RowLead::Picture(..) | RowLead::Number(_) => column,
         RowLead::Icon(_) => min(column, metrics.tenth_mm(FontSize::Body.tenth_mm() * 6 / 5)),
     };
+    let top = match lead {
+        // A cover is the row's content rather than a label on it, so it sits
+        // against the whole row the way a picture beside a paragraph does.
+        RowLead::Picture(..) => y.saturating_add((height - side) / 2),
+        // A mark labels the row, and what it labels is the title. Centred on
+        // the row instead it sinks the moment a summary wraps to a second
+        // line, until it sits against the summary and reads as a mark on
+        // that. A rank has always been set against the title for the same
+        // reason; this is the rest of the marks agreeing with it.
+        RowLead::Icon(_) | RowLead::Number(_) => {
+            text_y.saturating_add((FontSize::Body.line_height() - side) / 2)
+        }
+    };
     Rect {
         x: x.saturating_add((column - side) / 2),
-        y: y.saturating_add((height - side) / 2),
+        y: top,
         width: side,
         height: side,
     }
@@ -13996,6 +14009,88 @@ mod prose_tests {
                 }],
             }],
         )
+    }
+
+    /// One row whose summary is long enough to wrap, so the row is taller
+    /// than the title it leads.
+    fn row_with_wrapping_summary(lead: RowLead) -> Screen {
+        Screen::new(
+            1,
+            vec![Node::Rows {
+                id: NodeId(1),
+                rows: vec![Row {
+                    action: ActionId(2),
+                    title: "A title".to_owned(),
+                    summary: "A sentence with quite enough words in it to run \
+                              past the end of one line and onto a second, and \
+                              very probably onto a third as well."
+                        .to_owned(),
+                    lead,
+                    state: RowState::Open,
+                    trailing: None,
+                    menu: None,
+                }],
+            }],
+        )
+    }
+
+    #[test]
+    fn a_row_mark_sits_against_the_title_it_marks() {
+        for lead in [RowLead::Icon(Glyph::Circle), RowLead::Number(3)] {
+            let screen = row_with_wrapping_summary(lead);
+            let laid = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+            let mark = laid
+                .nodes
+                .iter()
+                .find(|node| matches!(node.kind, LayoutKind::RowLead(_)))
+                .expect("a row lead")
+                .rect;
+            let title = laid
+                .nodes
+                .iter()
+                .find(|node| matches!(node.kind, LayoutKind::RowTitle))
+                .expect("a row title")
+                .rect;
+            let middle = mark.y + mark.height / 2;
+            // The summary runs to more than one line, so a mark centred on
+            // the whole row would sink past the title and sit against the
+            // sentence instead, reading as a mark on that.
+            assert!(
+                middle >= title.y && middle <= title.y + title.height,
+                "{lead:?} sits at {middle}, outside the title at {} to {}",
+                title.y,
+                title.y + title.height
+            );
+        }
+    }
+
+    #[test]
+    fn a_cover_stays_centred_on_the_row_because_it_is_the_row() {
+        let lead = RowLead::Picture(TilePicture::new(PictureHandle(7), 19, 30), Glyph::Book);
+        let screen = row_with_wrapping_summary(lead);
+        let laid = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        let cover = laid
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::RowLead(_)))
+            .expect("a row lead")
+            .rect;
+        let row = laid
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::Row(_)))
+            .expect("a row")
+            .rect;
+        // A cover is the row's content rather than a label on its title, so
+        // it keeps the whole row's middle.
+        let slack = (i64::from(row.height) - i64::from(cover.height)).abs() / 2 + 2;
+        assert!(
+            (i64::from(cover.y) - i64::from(row.y)).abs() <= slack,
+            "a cover at {} is not centred on a row at {} of {}",
+            cover.y,
+            row.y,
+            row.height
+        );
     }
 
     #[test]
