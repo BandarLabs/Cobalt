@@ -33,6 +33,9 @@ jobs:
         run: cargo run -p kobo-cli -- package --out dist/KoboRoot.tgz
         env:
           CC_armv7_unknown_linux_musleabihf: arm-linux-gnueabihf-gcc
+          # Ubuntu's gcc enables _FORTIFY_SOURCE by default, which emits
+          # glibc-only *_chk symbols that musl does not carry.
+          CFLAGS_armv7_unknown_linux_musleabihf: -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0
       - name: Name the assets and write checksums
         run: |
           version="${GITHUB_REF_NAME#v}"
