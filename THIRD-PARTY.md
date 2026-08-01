@@ -25,6 +25,10 @@ cargo metadata --format-version 1 --all-features
 | CDLA-Permissive-2.0 | `webpki-roots` |
 | Zlib | `foldhash` |
 
+Proc-macro and build-script crates (`unicode-ident` and its dependents, `cc`,
+and similar) run at compile time only; no code from them ships in a binary, so
+their terms do not attach to the distribution.
+
 The release archive contains the complete selected terms and package-specific
 notices in `licenses/LICENSE-Rust-dependencies.txt`. That includes `ring`'s
 Apache-2.0 and ISC terms and the CDLA-Permissive-2.0 agreement for the Mozilla
