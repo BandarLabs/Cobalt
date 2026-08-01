@@ -9,9 +9,12 @@ the Bluetooth chip and the battery.
 
 | Wi-Fi | Bluetooth |
 | --- | --- |
-| ![Wi-Fi on, connected to a named network, with a scan button](screenshots/wifi.png) | ![A paired pair of AirPods listed by name and shown as connected](screenshots/bluetooth.png) |
+| ![Wi-Fi on, one connected network and three more from a scan, each with its signal strength](screenshots/wifi.png) | ![A paired pair of AirPods listed by name and shown as connected](screenshots/bluetooth.png) |
 
-*Captured from a Kobo Clara BW over Wi-Fi with `kobo shot --device`.*
+*Captured from a Kobo Clara BW over Wi-Fi with `kobo shot --device`. The black
+bars are network names, painted out by `scripts/redact-ssids.py`: these two
+screens are by their nature a list of what the neighbours call their routers,
+and that is nobody's business here.*
 
 ## Why the front screen states everything
 

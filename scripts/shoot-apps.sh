@@ -172,6 +172,21 @@ for app in $APPS; do
         if "$KOBO" shot --device "$DEVICE" --out "$out" >/dev/null; then
             echo "  $out"
             TAKEN=$((TAKEN + 1))
+            # Two of the settings screens are a list of the names of the
+            # networks around whoever ran this, which is fine on a desk and
+            # not fine in a public repository. Painted out here rather than
+            # afterwards, so a re-shoot cannot quietly put them back: this
+            # script is the only thing that writes these files, and the last
+            # sweep did put them back.
+            case "$app/$name" in
+            settings/connections)
+                python3 scripts/redact-ssids.py "$out" --line 499 ||
+                    FAILED="$FAILED $app/$name(unredacted)" ;;
+            settings/wifi)
+                python3 scripts/redact-ssids.py "$out" \
+                    --line 410 --line 588 --line 740 --line 894 --line 1047 ||
+                    FAILED="$FAILED $app/$name(unredacted)" ;;
+            esac
         else
             echo "could not shoot $out" >&2
             FAILED="$FAILED $app/$name"
@@ -183,7 +198,6 @@ for app in $APPS; do
     # `present` that arrives during that restart is refused.
     sleep 8
 done
-
 # Handed back deliberately. A reader left with a wake lock does not sleep, and
 # the owner finds a flat battery in the morning.
 echo
