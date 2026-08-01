@@ -2,6 +2,16 @@
 
 **Real applications on a Kobo E Ink reader, without ever owning the boot.**
 
+<p align="center">
+  <img src="docs/tour.gif" height="460" alt="An E Ink panel running, in order: an audiobook being written from a typed topic, Project Gutenberg with covers, the battery, a shell, the components gallery, Hacker News, a coding agent asking permission, a question answered by OpenAI, the New York Times found by typing its address, a game of tic-tac-toe played to a win, and the finished audiobook back on the shelf">
+</p>
+
+<p align="center">
+  <em>One recording, six times faster than it happened, nothing staged and nothing
+  redrawn.<br><a href="docs/cobalt-tour.mp4">The same four minutes at full size and
+  real speed.</a></em>
+</p>
+
 An SDK, a declarative UI layer, a runtime that takes the hardware for the
 length of a session and always gives it back, a browser simulator, and a CLI.
 
@@ -320,25 +330,46 @@ entirely are in [SDK.md's Credentials section](SDK.md#credentials).
 
 ## What runs on the panel
 
-| Application | What it is for |
-| --- | --- |
-| `launcher` | The home screen, and an ordinary SDK application like the rest |
-| `audiobook` | Research any topic with Exa, write it with OpenAI, narrate it with ElevenLabs, then show album art and play it over Bluetooth while also saving it to My Books |
-| `settings` | Toggle and join Wi-Fi; scan, pair and connect Bluetooth devices |
-| `terminal` | A shell, with keys that send a byte rather than collect a word |
-| `todo` | State that survives a restart, and a row that can be struck through |
-| `brief` | Background work: stories collected while the reader is elsewhere |
-| `chat` | An answer that can be tapped rather than typed |
-| `gutenbird` | Sixty thousand free books, downloaded and read on the panel |
-| `gallery` | Every UI primitive at once, for checking by eye on real hardware |
-| `tictactoe` | Two players, one panel, and partial repaints of single cells |
-| `magnet` | The hall sensor behind the bezel, and where to find it |
-| `hn` | Hacker News, with whole threads laid out by reply depth |
-| `rss` | Any site's feed, found by typing its address, read without a browser |
+Fourteen applications, every one an ordinary Rust binary against the same SDK.
+Each picture is a real capture from a Kobo Clara BW, and each one links to that
+application's own notes on why it is built the way it is.
+
+<table>
+<tr>
+<td width="33%" valign="top"><a href="examples/launcher/README.md"><img width="230" src="examples/launcher/screenshots/home.png" alt="Nine application tiles in a three by three grid, with a pinned way back to the reader"></a><br><b><a href="examples/launcher/README.md">Launcher</a></b><br>The home screen, and an ordinary SDK application like the rest.</td>
+<td width="33%" valign="top"><a href="examples/audiobook/README.md"><img width="230" src="examples/audiobook/screenshots/player.png" alt="An audiobook player with generated album art, a position bar and transport controls"></a><br><b><a href="examples/audiobook/README.md">Audiobooks</a></b><br>Research any topic with Exa, write it with OpenAI, narrate it with ElevenLabs, then play it over Bluetooth.</td>
+<td width="33%" valign="top"><a href="examples/gutenbird/README.md"><img width="230" src="examples/gutenbird/screenshots/shelf.png" alt="A grid of six book covers, each with its title and author underneath"></a><br><b><a href="examples/gutenbird/README.md">Gutenbird</a></b><br>Sixty thousand free books, downloaded and read on the panel.</td>
+</tr>
+<tr>
+<td valign="top"><a href="examples/hn/README.md"><img width="230" src="examples/hn/screenshots/stories.png" alt="A ranked list of Hacker News stories with their points and comment counts"></a><br><b><a href="examples/hn/README.md">Hacker News</a></b><br>Top, New, Ask and Show, with whole threads laid out by reply depth.</td>
+<td valign="top"><a href="examples/rss/README.md"><img width="230" src="examples/rss/screenshots/articles.png" alt="Three subscribed feeds listed by name with their addresses underneath"></a><br><b><a href="examples/rss/README.md">Feeds</a></b><br>Any site's feed, found by typing its address, read without a browser.</td>
+<td valign="top"><a href="examples/brief/README.md"><img width="230" src="examples/brief/screenshots/brief.png" alt="A numbered list of the day's stories, each with its source, over a Refresh button"></a><br><b><a href="examples/brief/README.md">Daily Brief</a></b><br>Background work: stories collected while the reader is elsewhere.</td>
+</tr>
+<tr>
+<td valign="top"><a href="examples/chat/README.md"><img width="230" src="examples/chat/screenshots/answer.png" alt="The question how does e ink hold an image, and a full answer from OpenAI beneath it"></a><br><b><a href="examples/chat/README.md">AI Chat</a></b><br>An answer that can be tapped rather than typed.</td>
+<td valign="top"><a href="examples/sidekick/README.md"><img width="230" src="examples/sidekick/screenshots/question.png" alt="A question from a coding agent with three tappable answers and a way to leave it for the terminal"></a><br><b><a href="examples/sidekick/README.md">Sidekick</a></b><br>Your coding agent stops to ask; the reader on the desk answers.</td>
+<td valign="top"><a href="examples/terminal/README.md"><img width="230" src="examples/terminal/screenshots/shell.png" alt="A shell listing the device root in four columns, over a keyboard with esc, tab and arrow keys"></a><br><b><a href="examples/terminal/README.md">Terminal</a></b><br>A shell, with keys that send a byte rather than collect a word.</td>
+</tr>
+<tr>
+<td valign="top"><a href="examples/gallery/README.md"><img width="230" src="examples/gallery/screenshots/text.png" alt="A type specimen: a heading, body copy, a section title and a table of facts"></a><br><b><a href="examples/gallery/README.md">Components</a></b><br>Every UI primitive at once, for checking by eye on real hardware.</td>
+<td valign="top"><a href="examples/settings/README.md"><img width="230" src="examples/settings/screenshots/battery.png" alt="A charge bar over eleven battery facts, from health to charge when new"></a><br><b><a href="examples/settings/README.md">Settings</a></b><br>Join Wi-Fi, pair Bluetooth, and read eleven facts off the fuel gauge.</td>
+<td valign="top"><a href="examples/todo/README.md"><img width="230" src="examples/todo/screenshots/list.png" alt="A to-do list with one item left and one struck through under a Done heading"></a><br><b><a href="examples/todo/README.md">Todo</a></b><br>State that survives a restart, and a row that can be struck through.</td>
+</tr>
+<tr>
+<td valign="top"><a href="examples/tictactoe/README.md"><img width="230" src="examples/tictactoe/screenshots/game.png" alt="A finished game of tic-tac-toe reading O wins, over a Play again button"></a><br><b><a href="examples/tictactoe/README.md">Tic-tac-toe</a></b><br>Two players, one panel, and partial repaints of single cells.</td>
+<td valign="top"><a href="examples/magnet/README.md"><img width="230" src="examples/magnet/screenshots/counting.png" alt="A screen counting how many times the hall sensor has changed as a magnet passes the bezel"></a><br><b><a href="examples/magnet/README.md">Magnet</a></b><br>The hall sensor behind the bezel, and where to find it.</td>
+<td valign="top"></td>
+</tr>
+</table>
 
 Leaving an application does not end it. It is put behind the launcher rather
 than stopped, so a download or a build that was running keeps running and
 coming back is a repaint rather than a restart.
+
+That is what the recording at the top is arranged around: the audiobook is
+started in its first minute and left, everything else happens while it is being
+researched, written and narrated, and the last thing on screen is the finished
+book on the shelf.
 
 ### Feeds and Feedsearch
 

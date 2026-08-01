@@ -12,15 +12,16 @@ remark with a menu is a form.
 
 | A real answer, over the radio | Choosing the service |
 | --- | --- |
-| ![A question and OpenAI's reply on the panel](screenshots/conversation.png) | ![OpenAI, Anthropic and Google Gemini, with OpenAI selected](screenshots/service.png) |
+| ![The question "how does e ink hold an image" and OpenAI's reply, on an E Ink panel](screenshots/answer.png) | ![OpenAI, Anthropic and Google Gemini, with OpenAI selected](screenshots/service.png) |
 
 | Nothing said yet | The keyboard |
 | --- | --- |
 | ![The empty state, centred on the panel](screenshots/start.png) | ![A four-row keyboard with a Send key](screenshots/type.png) |
 
-*Captured from a Kobo Clara BW over Wi-Fi with `kobo shot --device`. The reply
-is a real one: the key was installed with `kobo secret set openai`, and this
-application never saw it.*
+*Captured from a Kobo Clara BW over Wi-Fi with `kobo shot --device`, except the
+answer, which is a frame of the recorded tour: the question was typed on the
+panel with the keyboard above it. The reply is a real one either way. The key
+was installed with `kobo secret set openai`, and this application never saw it.*
 
 ## The key
 
