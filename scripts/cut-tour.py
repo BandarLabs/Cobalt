@@ -118,7 +118,7 @@ def main() -> int:
     gif = root / "tour.gif"
     subprocess.run(
         ["ffmpeg", "-nostdin", "-y", "-loglevel", "error", "-i", str(video),
-         "-vf", "setpts=PTS/6,scale=330:-1:flags=lanczos,fps=12,split[a][b];"
+         "-vf", "setpts=PTS/4,scale=330:-1:flags=lanczos,fps=12,split[a][b];"
                 "[a]palettegen=max_colors=32[p];[b][p]paletteuse=dither=bayer:bayer_scale=3",
          str(gif)],
         check=True,

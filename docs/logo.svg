@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 120" width="96" height="120" role="img" aria-label="Cobalt: a pixel letter C with one loose pixel inside it">
+  <style>
+    rect { fill: #000; }
+    @media (prefers-color-scheme: dark) { rect { fill: #fff; } }
+  </style>
+  <rect x="24" y="0" width="72" height="24"/>
+  <rect x="0" y="24" width="24" height="72"/>
+  <rect x="24" y="96" width="72" height="24"/>
+  <rect x="72" y="48" width="24" height="24"/>
+</svg>

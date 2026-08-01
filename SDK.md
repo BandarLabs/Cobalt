@@ -52,7 +52,7 @@ than guessed at, but nobody can promise your device will be fine. Do not run it
 on a reader you cannot afford to lose. If you want to add another model, that
 is a pull request this project would genuinely welcome; open an issue first so
 the profile shape can be agreed. [Porting to another
-Kobo](README.md#porting-to-another-kobo) sets out what is actually involved.
+Kobo](docs/PORTING.md) sets out what is actually involved.
 
 Six steps from nothing to a tile on the reader's launcher.
 
