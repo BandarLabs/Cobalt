@@ -16,6 +16,8 @@ jobs:
         with:
           toolchain: 1.85.0
           components: clippy, rustfmt
+      - name: Install the ARM cross-compiler the packaging tests look for
+        run: sudo apt-get update && sudo apt-get install --yes gcc-arm-linux-gnueabihf
       - run: cargo fmt --all -- --check
       - run: cargo test --workspace --all-targets --all-features
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
