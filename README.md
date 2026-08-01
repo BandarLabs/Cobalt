@@ -6,12 +6,6 @@
   <img src="docs/tour.gif" height="460" alt="An E Ink panel running, in order: an audiobook being written from a typed topic, Project Gutenberg with covers, the battery, a shell, the components gallery, Hacker News, a coding agent asking permission, a question answered by OpenAI, the New York Times found by typing its address, a game of tic-tac-toe played to a win, and the finished audiobook back on the shelf">
 </p>
 
-<p align="center">
-  <em>One recording, six times faster than it happened, nothing staged and nothing
-  redrawn.<br><a href="docs/cobalt-tour.mp4">The same four minutes at full size and
-  real speed.</a></em>
-</p>
-
 An SDK, a declarative UI layer, a runtime that takes the hardware for the
 length of a session and always gives it back, a browser simulator, and a CLI.
 
