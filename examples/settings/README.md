@@ -62,7 +62,9 @@ step with the first is worse than none.
 
 ---
 
-Built with the [Cobalt SDK](../../README.md). The other apps:
+Built with the [Cobalt SDK](../../README.md), which
+[installs on a Kobo](../../README.md#install-it-on-your-kobo) with one
+command over USB. The other apps:
 [Launcher](../launcher/README.md) ·
 [Audiobook Studio](../audiobook/README.md) ·
 [Gutenbird](../gutenbird/README.md) ·
