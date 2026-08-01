@@ -1,16 +1,62 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="Cobalt: a pixel letter C dithering out at its tips, with one loose pixel inside">
-  <g fill="#0047AB">
-    <rect x="20" y="0" width="60" height="20"/>
-    <rect x="0" y="20" width="20" height="80"/>
-    <rect x="20" y="100" width="60" height="20"/>
-    <rect x="60" y="50" width="20" height="20"/>
-  </g>
-  <g fill="#6E93D6">
-    <rect x="80" y="0" width="20" height="20"/>
-    <rect x="80" y="100" width="20" height="20"/>
-  </g>
-  <g fill="#B7CBEC">
-    <rect x="100" y="20" width="20" height="20"/>
-    <rect x="100" y="80" width="20" height="20"/>
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 264 116" width="264" height="116" shape-rendering="crispEdges" role="img" aria-label="Cobalt: the element tile Co, atomic number 27, in blue on white, and balt in white on blue, all in pixel lettering">
+<rect x="0" y="0" width="264" height="116" fill="#6E93D6"/>
+<rect x="0" y="0" width="112" height="116" fill="#ffffff"/>
+<rect x="16" y="16" width="12" height="4" fill="#6E93D6"/>
+<rect x="24" y="20" width="4" height="4" fill="#6E93D6"/>
+<rect x="16" y="24" width="12" height="4" fill="#6E93D6"/>
+<rect x="16" y="28" width="4" height="4" fill="#6E93D6"/>
+<rect x="16" y="32" width="12" height="4" fill="#6E93D6"/>
+<rect x="32" y="16" width="12" height="4" fill="#6E93D6"/>
+<rect x="40" y="20" width="4" height="4" fill="#6E93D6"/>
+<rect x="40" y="24" width="4" height="4" fill="#6E93D6"/>
+<rect x="40" y="28" width="4" height="4" fill="#6E93D6"/>
+<rect x="40" y="32" width="4" height="4" fill="#6E93D6"/>
+<rect x="24" y="44" width="24" height="8" fill="#6E93D6"/>
+<rect x="16" y="52" width="8" height="8" fill="#6E93D6"/>
+<rect x="48" y="52" width="8" height="8" fill="#6E93D6"/>
+<rect x="16" y="60" width="8" height="8" fill="#6E93D6"/>
+<rect x="16" y="68" width="8" height="8" fill="#6E93D6"/>
+<rect x="16" y="76" width="8" height="8" fill="#6E93D6"/>
+<rect x="16" y="84" width="8" height="8" fill="#6E93D6"/>
+<rect x="48" y="84" width="8" height="8" fill="#6E93D6"/>
+<rect x="24" y="92" width="24" height="8" fill="#6E93D6"/>
+<rect x="72" y="60" width="16" height="8" fill="#6E93D6"/>
+<rect x="64" y="68" width="8" height="8" fill="#6E93D6"/>
+<rect x="88" y="68" width="8" height="8" fill="#6E93D6"/>
+<rect x="64" y="76" width="8" height="8" fill="#6E93D6"/>
+<rect x="88" y="76" width="8" height="8" fill="#6E93D6"/>
+<rect x="64" y="84" width="8" height="8" fill="#6E93D6"/>
+<rect x="88" y="84" width="8" height="8" fill="#6E93D6"/>
+<rect x="72" y="92" width="16" height="8" fill="#6E93D6"/>
+<rect x="128" y="44" width="8" height="8" fill="#ffffff"/>
+<rect x="128" y="52" width="8" height="8" fill="#ffffff"/>
+<rect x="128" y="60" width="24" height="8" fill="#ffffff"/>
+<rect x="128" y="68" width="8" height="8" fill="#ffffff"/>
+<rect x="152" y="68" width="8" height="8" fill="#ffffff"/>
+<rect x="128" y="76" width="8" height="8" fill="#ffffff"/>
+<rect x="152" y="76" width="8" height="8" fill="#ffffff"/>
+<rect x="128" y="84" width="8" height="8" fill="#ffffff"/>
+<rect x="152" y="84" width="8" height="8" fill="#ffffff"/>
+<rect x="128" y="92" width="24" height="8" fill="#ffffff"/>
+<rect x="168" y="60" width="24" height="8" fill="#ffffff"/>
+<rect x="192" y="68" width="8" height="8" fill="#ffffff"/>
+<rect x="168" y="76" width="32" height="8" fill="#ffffff"/>
+<rect x="168" y="84" width="8" height="8" fill="#ffffff"/>
+<rect x="192" y="84" width="8" height="8" fill="#ffffff"/>
+<rect x="168" y="92" width="32" height="8" fill="#ffffff"/>
+<rect x="208" y="44" width="8" height="8" fill="#ffffff"/>
+<rect x="208" y="52" width="8" height="8" fill="#ffffff"/>
+<rect x="208" y="60" width="8" height="8" fill="#ffffff"/>
+<rect x="208" y="68" width="8" height="8" fill="#ffffff"/>
+<rect x="208" y="76" width="8" height="8" fill="#ffffff"/>
+<rect x="208" y="84" width="8" height="8" fill="#ffffff"/>
+<rect x="208" y="92" width="8" height="8" fill="#ffffff"/>
+<rect x="232" y="44" width="8" height="8" fill="#ffffff"/>
+<rect x="232" y="52" width="8" height="8" fill="#ffffff"/>
+<rect x="224" y="60" width="24" height="8" fill="#ffffff"/>
+<rect x="232" y="68" width="8" height="8" fill="#ffffff"/>
+<rect x="232" y="76" width="8" height="8" fill="#ffffff"/>
+<rect x="232" y="84" width="8" height="8" fill="#ffffff"/>
+<rect x="232" y="92" width="16" height="8" fill="#ffffff"/>
+<rect x="2" y="2" width="260" height="112" fill="none" stroke="#6E93D6" stroke-width="4"/>
 </svg>

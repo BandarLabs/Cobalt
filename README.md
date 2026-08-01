@@ -1,61 +1,60 @@
 <p align="center">
-  <img src="docs/logo.svg" width="72" alt="Cobalt">
+  <img src="docs/logo.svg" width="220" alt="Cobalt">
 </p>
 
-<h1 align="center">Cobalt</h1>
-
-<p align="center"><b>Real applications on a Kobo E Ink reader, without ever owning the boot.</b></p>
+<p align="center"><b>An SDK for building real apps on your Kobo.</b></p>
 
 <p align="center">
   <img src="docs/tour.gif" height="460" alt="An E Ink panel running, in order: an audiobook being written from a typed topic, Project Gutenberg with covers, the battery, a shell, the components gallery, Hacker News, a coding agent asking permission, a question answered by OpenAI, the New York Times found by typing its address, a game of tic-tac-toe played to a win, and the finished audiobook back on the shelf">
 </p>
 
-An SDK, a declarative UI layer, a runtime that takes the hardware for the
-length of a session and always gives it back, a browser simulator, and a CLI.
+Cobalt is an SDK, a declarative UI layer, a runtime that borrows the hardware
+for the length of a session and always gives it back, a browser simulator, and
+a CLI.
 
 Applications are ordinary Rust binaries. They describe whole screens and
 receive named actions. They never open the framebuffer, the touch device, a
 network socket or a credential; everything else is a request the runtime may
 refuse, and a refusal is a value rather than a crash.
 
-**[SDK.md](SDK.md) is the developer guide.** You can write and finish an
-application in the browser simulator before you ever plug a reader in — it
-runs the same layout engine, typeface and refresh planner the panel does.
+**[SDK.md](SDK.md) is the developer guide.** The browser simulator runs the
+same layout engine, typeface and refresh planner the panel does, so you can
+write and finish an application before you ever plug a reader in.
 
 This is an independent, unofficial project. It is not affiliated with,
 endorsed by, or sponsored by Rakuten Kobo Inc. “Kobo” and related product
 names are trademarks of their respective owners.
 
-## What runs on the panel
+## Some apps built with the SDK
 
-Fourteen applications, every one an ordinary Rust binary against the same SDK.
-Each picture is a real capture from a Kobo Clara BW, and each one links to that
+Fourteen applications, each an ordinary Rust binary against the same SDK.
+Every picture is a real capture from a Kobo Clara BW and links to that
 application's own notes on why it is built the way it is.
 
 <table>
 <tr>
-<td width="33%" valign="top"><a href="examples/launcher/README.md"><img width="230" vspace="8" hspace="4" src="examples/launcher/screenshots/home.png" alt="Nine application tiles in a three by three grid, with a pinned way back to the reader"></a><br><b><a href="examples/launcher/README.md">Launcher</a></b><br>The home screen, and an ordinary SDK application like the rest.</td>
-<td width="33%" valign="top"><a href="examples/audiobook/README.md"><img width="230" vspace="8" hspace="4" src="examples/audiobook/screenshots/player.png" alt="An audiobook player with generated album art, a position bar and transport controls"></a><br><b><a href="examples/audiobook/README.md">Audiobooks</a></b><br>Research any topic with Exa, write it with OpenAI, narrate it with ElevenLabs, then play it over Bluetooth.</td>
-<td width="33%" valign="top"><a href="examples/gutenbird/README.md"><img width="230" vspace="8" hspace="4" src="examples/gutenbird/screenshots/shelf.png" alt="A grid of six book covers, each with its title and author underneath"></a><br><b><a href="examples/gutenbird/README.md">Gutenbird</a></b><br>Sixty thousand free books, downloaded and read on the panel.</td>
+<td width="33%" valign="top"><a href="examples/launcher/README.md"><img width="230" vspace="16" hspace="4" src="examples/launcher/screenshots/home.png" alt="Nine application tiles in a three by three grid, with a pinned way back to the reader"></a><br><b><a href="examples/launcher/README.md">Launcher</a></b><br>The home screen, and an ordinary SDK application like the rest.</td>
+<td width="33%" valign="top"><a href="examples/audiobook/README.md"><img width="230" vspace="16" hspace="4" src="examples/audiobook/screenshots/player.png" alt="An audiobook player with generated album art, a position bar and transport controls"></a><br><b><a href="examples/audiobook/README.md">Audiobooks</a></b><br>Research any topic with Exa, write it with OpenAI, narrate it with ElevenLabs, then play it over Bluetooth.</td>
+<td width="33%" valign="top"><a href="examples/gutenbird/README.md"><img width="230" vspace="16" hspace="4" src="examples/gutenbird/screenshots/shelf.png" alt="A grid of six book covers, each with its title and author underneath"></a><br><b><a href="examples/gutenbird/README.md">Gutenbird</a></b><br>Sixty thousand free books, downloaded and read on the panel.</td>
 </tr>
 <tr>
-<td valign="top"><a href="examples/hn/README.md"><img width="230" vspace="8" hspace="4" src="examples/hn/screenshots/stories.png" alt="A ranked list of Hacker News stories with their points and comment counts"></a><br><b><a href="examples/hn/README.md">Hacker News</a></b><br>Top, New, Ask and Show, with whole threads laid out by reply depth.</td>
-<td valign="top"><a href="examples/rss/README.md"><img width="230" vspace="8" hspace="4" src="examples/rss/screenshots/articles.png" alt="Three subscribed feeds listed by name with their addresses underneath"></a><br><b><a href="examples/rss/README.md">Feeds</a></b><br>Any site's feed, found by typing its address, read without a browser.</td>
-<td valign="top"><a href="examples/brief/README.md"><img width="230" vspace="8" hspace="4" src="examples/brief/screenshots/brief.png" alt="A numbered list of the day's stories, each with its source, over a Refresh button"></a><br><b><a href="examples/brief/README.md">Daily Brief</a></b><br>Background work: stories collected while the reader is elsewhere.</td>
+<td valign="top"><a href="examples/hn/README.md"><img width="230" vspace="16" hspace="4" src="examples/hn/screenshots/stories.png" alt="A ranked list of Hacker News stories with their points and comment counts"></a><br><b><a href="examples/hn/README.md">Hacker News</a></b><br>Top, New, Ask and Show, with whole threads laid out by reply depth.</td>
+<td valign="top"><a href="examples/rss/README.md"><img width="230" vspace="16" hspace="4" src="examples/rss/screenshots/articles.png" alt="Three subscribed feeds listed by name with their addresses underneath"></a><br><b><a href="examples/rss/README.md">Feeds</a></b><br>Any site's feed, found by typing its address, read without a browser.</td>
+<td valign="top"><a href="examples/brief/README.md"><img width="230" vspace="16" hspace="4" src="examples/brief/screenshots/brief.png" alt="A numbered list of the day's stories, each with its source, over a Refresh button"></a><br><b><a href="examples/brief/README.md">Daily Brief</a></b><br>Background work: stories collected while the reader is elsewhere.</td>
 </tr>
 <tr>
-<td valign="top"><a href="examples/chat/README.md"><img width="230" vspace="8" hspace="4" src="examples/chat/screenshots/answer.png" alt="The question how does e ink hold an image, and a full answer from OpenAI beneath it"></a><br><b><a href="examples/chat/README.md">AI Chat</a></b><br>An answer that can be tapped rather than typed.</td>
-<td valign="top"><a href="examples/sidekick/README.md"><img width="230" vspace="8" hspace="4" src="examples/sidekick/screenshots/question.png" alt="A question from a coding agent with three tappable answers and a way to leave it for the terminal"></a><br><b><a href="examples/sidekick/README.md">Sidekick</a></b><br>Your coding agent stops to ask; the reader on the desk answers.</td>
-<td valign="top"><a href="examples/terminal/README.md"><img width="230" vspace="8" hspace="4" src="examples/terminal/screenshots/shell.png" alt="A shell listing the device root in four columns, over a keyboard with esc, tab and arrow keys"></a><br><b><a href="examples/terminal/README.md">Terminal</a></b><br>A shell, with keys that send a byte rather than collect a word.</td>
+<td valign="top"><a href="examples/chat/README.md"><img width="230" vspace="16" hspace="4" src="examples/chat/screenshots/answer.png" alt="The question how does e ink hold an image, and a full answer from OpenAI beneath it"></a><br><b><a href="examples/chat/README.md">AI Chat</a></b><br>An answer that can be tapped rather than typed.</td>
+<td valign="top"><a href="examples/sidekick/README.md"><img width="230" vspace="16" hspace="4" src="examples/sidekick/screenshots/question.png" alt="A question from a coding agent with three tappable answers and a way to leave it for the terminal"></a><br><b><a href="examples/sidekick/README.md">Sidekick</a></b><br>Your coding agent stops to ask; the reader on the desk answers.</td>
+<td valign="top"><a href="examples/terminal/README.md"><img width="230" vspace="16" hspace="4" src="examples/terminal/screenshots/shell.png" alt="A shell listing the device root in four columns, over a keyboard with esc, tab and arrow keys"></a><br><b><a href="examples/terminal/README.md">Terminal</a></b><br>A shell, with keys that send a byte rather than collect a word.</td>
 </tr>
 <tr>
-<td valign="top"><a href="examples/gallery/README.md"><img width="230" vspace="8" hspace="4" src="examples/gallery/screenshots/text.png" alt="A type specimen: a heading, body copy, a section title and a table of facts"></a><br><b><a href="examples/gallery/README.md">Components</a></b><br>Every UI primitive at once, for checking by eye on real hardware.</td>
-<td valign="top"><a href="examples/settings/README.md"><img width="230" vspace="8" hspace="4" src="examples/settings/screenshots/battery.png" alt="A charge bar over eleven battery facts, from health to charge when new"></a><br><b><a href="examples/settings/README.md">Settings</a></b><br>Join Wi-Fi, pair Bluetooth, and read eleven facts off the fuel gauge.</td>
-<td valign="top"><a href="examples/todo/README.md"><img width="230" vspace="8" hspace="4" src="examples/todo/screenshots/list.png" alt="A to-do list with one item left and one struck through under a Done heading"></a><br><b><a href="examples/todo/README.md">Todo</a></b><br>State that survives a restart, and a row that can be struck through.</td>
+<td valign="top"><a href="examples/gallery/README.md"><img width="230" vspace="16" hspace="4" src="examples/gallery/screenshots/text.png" alt="A type specimen: a heading, body copy, a section title and a table of facts"></a><br><b><a href="examples/gallery/README.md">Components</a></b><br>Every UI primitive at once, for checking by eye on real hardware.</td>
+<td valign="top"><a href="examples/settings/README.md"><img width="230" vspace="16" hspace="4" src="examples/settings/screenshots/battery.png" alt="A charge bar over eleven battery facts, from health to charge when new"></a><br><b><a href="examples/settings/README.md">Settings</a></b><br>Join Wi-Fi, pair Bluetooth, and read eleven facts off the fuel gauge.</td>
+<td valign="top"><a href="examples/todo/README.md"><img width="230" vspace="16" hspace="4" src="examples/todo/screenshots/list.png" alt="A to-do list with one item left and one struck through under a Done heading"></a><br><b><a href="examples/todo/README.md">Todo</a></b><br>State that survives a restart, and a row that can be struck through.</td>
 </tr>
 <tr>
-<td valign="top"><a href="examples/tictactoe/README.md"><img width="230" vspace="8" hspace="4" src="examples/tictactoe/screenshots/game.png" alt="A finished game of tic-tac-toe reading O wins, over a Play again button"></a><br><b><a href="examples/tictactoe/README.md">Tic-tac-toe</a></b><br>Two players, one panel, and partial repaints of single cells.</td>
-<td valign="top"><a href="examples/magnet/README.md"><img width="230" vspace="8" hspace="4" src="examples/magnet/screenshots/counting.png" alt="A screen counting how many times the hall sensor has changed as a magnet passes the bezel"></a><br><b><a href="examples/magnet/README.md">Magnet</a></b><br>The hall sensor behind the bezel, and where to find it.</td>
+<td valign="top"><a href="examples/tictactoe/README.md"><img width="230" vspace="16" hspace="4" src="examples/tictactoe/screenshots/game.png" alt="A finished game of tic-tac-toe reading O wins, over a Play again button"></a><br><b><a href="examples/tictactoe/README.md">Tic-tac-toe</a></b><br>Two players, one panel, and partial repaints of single cells.</td>
+<td valign="top"><a href="examples/magnet/README.md"><img width="230" vspace="16" hspace="4" src="examples/magnet/screenshots/counting.png" alt="A screen counting how many times the hall sensor has changed as a magnet passes the bezel"></a><br><b><a href="examples/magnet/README.md">Magnet</a></b><br>The hall sensor behind the bezel, and where to find it.</td>
 <td valign="top"></td>
 </tr>
 </table>
@@ -73,8 +72,7 @@ narrated, and the last thing on screen is the finished book on the shelf.
 4.45.23697.** Nothing here has been run on any other model. Every device write
 is gated on an exact match of framebuffer identity, geometry, device code,
 serial model prefix, firmware version and kernel release, so a different reader
-is refused rather than guessed at. That refusal is the safety mechanism, not a
-limitation to work around. On any other Kobo, Cobalt will decline to draw.
+is refused rather than guessed at. On any other Kobo, Cobalt declines to draw.
 
 **You run this at your own risk.** It is AGPL-3.0 licensed, which means it
 comes with no warranty of any kind. The design rule is that nothing survives a
@@ -92,7 +90,7 @@ open an issue first so the profile shape can be agreed before you write it.
 
 ## Install it on your Kobo
 
-This is the whole of it: one command over USB, one restart, and a **Cobalt**
+Installing is one command over USB and one restart, after which a **Cobalt**
 entry appears on the reader's own menu. No SSH, no IP address, no terminal on
 the device, and nothing written outside the partition your books live on.
 
@@ -121,9 +119,8 @@ deploying over Wi-Fi instead of USB are in
 
 An application is an ordinary Rust binary. It describes whole screens and
 receives named actions back. It never opens the framebuffer, the touch device,
-a socket or a credential, so there is nothing you can do here that damages a
-reader, and **you do not need a device for any of this**: the simulator runs
-the same layout engine, typeface and refresh planner the panel uses.
+a socket or a credential, so there is nothing you can write here that damages
+a reader — and none of it needs a device.
 
 ```sh
 cargo install --path crates/kobo-cli   # once, so `kobo` is on your PATH
@@ -137,8 +134,7 @@ and a battery reading that shows how hardware is asked for and how every
 answer, including a refusal, comes back.
 
 **[SDK.md](SDK.md) walks the whole thing end to end**, from editing
-`src/main.rs` through to a tile on the reader's own launcher, over Wi-Fi or
-USB.
+`src/main.rs` through to a tile on the reader's own launcher.
 
 ## What is here, and what is not
 
@@ -160,14 +156,13 @@ Verified on the physical Clara BW unless stated otherwise.
 | Tooling | `devices`, `doctor`, `package`, `deploy`, `inspect`, `verify`, `session`, `wait`, `logs`, `touch-probe`, `record`, and a Clara BW simulator in the browser |
 | Applications | `launcher`, `audiobook`, `settings`, `hn`, `rss`, `gutenbird`, `chat`, `todo`, `terminal`, `tictactoe`, `magnet`, `gallery`, `brief` |
 
-**Not here yet, stated plainly**
+**Not here yet**
 
 - **`schedule_wake` has no device backend.** The runtime does not own suspend
   or the RTC alarm, so a scheduled wake is refused rather than silently
-  dropped. This costs the entire ambient genre, which is arguably E Ink's
-  native one: `brief` is the shape of it and on a device it only collects while
-  it is in the foreground. Making it real means `kobod` owning suspend on the
-  only device there is.
+  dropped. This costs the ambient genre: `brief` is the shape of it and on a
+  device it only collects while it is in the foreground. Making it real means
+  `kobod` owning suspend on the only device there is.
 - **One device.** Clara BW N365, device code 391. Everything else is refused
   rather than mapped to a similar model, so there is no second profile to test
   against and no evidence any of this holds elsewhere.
@@ -221,11 +216,11 @@ on-screen keyboard, and a terminal grid.
 
 Everything that varies is *state* rather than styling. A finished row is
 finished, a chosen answer is chosen, a reply has a depth; the renderer decides
-what each looks like. That is what makes a badly proportioned screen
-unexpressible rather than merely discouraged, and it is also what stops an
-application marking its own state with a character the installed face has no
-glyph for. In debug builds `set_screen` refuses a screen carrying one, so an
-application's own tests fail instead of the panel showing an empty box.
+what each looks like. A badly proportioned screen is unexpressible rather than
+merely discouraged, and an application cannot mark its own state with a
+character the installed face has no glyph for: in debug builds `set_screen`
+refuses a screen carrying one, so the application's own tests fail instead of
+the panel showing an empty box.
 
 Pictures are decoded by `kobo-image`, halftoned to the sixteen greys this panel
 resolves, and scaled to the cell they will occupy, including *up*, bounded, so
@@ -301,11 +296,8 @@ cargo run -p kobo-cli -- dev --builtin      # browser simulator
 cargo run -p kobo-cli -- run --sim          # the real runtime, host socket
 ```
 
-The simulator runs the same renderer, layout engine, policy, typeface and
-refresh planner as the panel, so an application can be written and finished
-before a reader is ever plugged in. The rest, including the loop that drives an
-application and photographs what it drew, is in
-**[docs/DEVELOPING.md](docs/DEVELOPING.md)**.
+The rest, including the loop that drives an application and photographs what
+it drew, is in **[docs/DEVELOPING.md](docs/DEVELOPING.md)**.
 
 Working against a real reader — connecting over Wi-Fi, the two ways to
 install, what the runtime does with the radio and the three watchdogs, and

@@ -3,9 +3,9 @@
 Where the magnet is, and nothing else.
 
 The reader has a hall sensor behind one edge of the bezel. It is the thing a
-sleep cover closes against, and until now it was the runtime's private
-business. This application is the whole of the new public surface, used
-honestly: ask once for the state, then wait to be told when it changes.
+sleep cover closes against, and until recently only the runtime could see it.
+This application shows everything the SDK now exposes: ask once for the state,
+then wait to be told when it changes.
 
 | Nothing there | After a few sweeps |
 | --- | --- |
