@@ -11,11 +11,11 @@
 //!
 //! ## Why this is not serde
 //!
-//! Every crates.io dependency in this workspace lives in `kobo-net` and
-//! nowhere else, so that a device binary is a plain
+//! The workspace keeps its crates.io dependencies few and confined to the
+//! crates that need them, so that a device binary is a plain
 //! `cargo build --target armv7-unknown-linux-musleabihf` away and so that the
 //! surface that has to be trusted stays small. A derive-macro JSON stack would
-//! put a proc-macro toolchain on that path to save code that fits in one file.
+//! add a whole serialization framework to save code that fits in one file.
 //!
 //! ## What is guaranteed
 //!
