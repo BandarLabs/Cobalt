@@ -1255,7 +1255,10 @@ mod tests {
         let head = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n";
         assert_eq!(message_end(b"HTTP/1.1 200 OK\r\nContent-Len"), Ok(None));
         assert_eq!(message_end(head), Ok(None));
-        assert_eq!(message_end(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhel"), Ok(None));
+        assert_eq!(
+            message_end(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhel"),
+            Ok(None)
+        );
         let whole = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello";
         assert_eq!(message_end(whole), Ok(Some(whole.len())));
     }
@@ -1269,7 +1272,10 @@ mod tests {
         let end = message_end(response)
             .expect("a framed reply")
             .expect("a complete reply");
-        assert_eq!(&response[..end], b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello");
+        assert_eq!(
+            &response[..end],
+            b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello"
+        );
     }
 
     #[test]
@@ -1359,14 +1365,8 @@ mod tests {
         assert!(
             head(&address, &Method::Get { offset: None }, 1024).contains("Connection: keep-alive")
         );
-        assert!(head(
-            &address,
-            &Method::Get {
-                offset: Some(1024)
-            },
-            1024
-        )
-        .contains("Connection: keep-alive"));
+        assert!(head(&address, &Method::Get { offset: Some(1024) }, 1024)
+            .contains("Connection: keep-alive"));
         assert!(head(
             &address,
             &Method::Post {
@@ -1543,7 +1543,10 @@ mod tests {
 
     #[test]
     fn a_reply_that_is_not_http_is_unreachable_rather_than_parsed() {
-        assert_eq!(split_response(b"garbage", CEILING), Err(TaskError::Unreachable));
+        assert_eq!(
+            split_response(b"garbage", CEILING),
+            Err(TaskError::Unreachable)
+        );
     }
 
     #[test]
@@ -1798,31 +1801,46 @@ mod tests {
         // Returning what arrived would present half a book, or half a reply,
         // as the whole of it.
         let response = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n10\r\nshort";
-        assert_eq!(split_response(response, CEILING), Err(TaskError::Unreachable));
+        assert_eq!(
+            split_response(response, CEILING),
+            Err(TaskError::Unreachable)
+        );
     }
 
     #[test]
     fn a_chunked_body_requires_its_final_header_terminator() {
         let response = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n";
-        assert_eq!(split_response(response, CEILING), Err(TaskError::Unreachable));
+        assert_eq!(
+            split_response(response, CEILING),
+            Err(TaskError::Unreachable)
+        );
     }
 
     #[test]
     fn conflicting_lengths_are_refused() {
         let response = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Length: 4\r\n\r\nhello";
-        assert_eq!(split_response(response, CEILING), Err(TaskError::Unreachable));
+        assert_eq!(
+            split_response(response, CEILING),
+            Err(TaskError::Unreachable)
+        );
     }
 
     #[test]
     fn transfer_encoding_and_content_length_cannot_disagree() {
         let response = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\n5\r\nhello\r\n0\r\n\r\n";
-        assert_eq!(split_response(response, CEILING), Err(TaskError::Unreachable));
+        assert_eq!(
+            split_response(response, CEILING),
+            Err(TaskError::Unreachable)
+        );
     }
 
     #[test]
     fn a_length_framed_body_must_arrive_whole() {
         let response = b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nhello";
-        assert_eq!(split_response(response, CEILING), Err(TaskError::Unreachable));
+        assert_eq!(
+            split_response(response, CEILING),
+            Err(TaskError::Unreachable)
+        );
     }
 
     #[test]

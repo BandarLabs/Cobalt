@@ -1,0 +1,7 @@
+[advisories]
+# RUSTSEC-2025-0044: slice-ring-buffer has double-free bugs in
+# extend_from_slice, insert, shrink_to_fit and IntoIter::clone. No fixed
+# release exists. It reaches this workspace only through minimp3, which uses
+# none of those: it calls extend (the iterator path), truncate_front, len and
+# as_ptr. Re-check if minimp3 is updated or replaced.
+ignore = ["RUSTSEC-2025-0044"]
