@@ -1,10 +1,16 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 120" width="96" height="120" role="img" aria-label="Cobalt: a pixel letter C with one loose pixel inside it">
-  <style>
-    rect { fill: #000; }
-    @media (prefers-color-scheme: dark) { rect { fill: #fff; } }
-  </style>
-  <rect x="24" y="0" width="72" height="24"/>
-  <rect x="0" y="24" width="24" height="72"/>
-  <rect x="24" y="96" width="72" height="24"/>
-  <rect x="72" y="48" width="24" height="24"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="Cobalt: a pixel letter C dithering out at its tips, with one loose pixel inside">
+  <g fill="#0047AB">
+    <rect x="20" y="0" width="60" height="20"/>
+    <rect x="0" y="20" width="20" height="80"/>
+    <rect x="20" y="100" width="60" height="20"/>
+    <rect x="60" y="50" width="20" height="20"/>
+  </g>
+  <g fill="#6E93D6">
+    <rect x="80" y="0" width="20" height="20"/>
+    <rect x="80" y="100" width="20" height="20"/>
+  </g>
+  <g fill="#B7CBEC">
+    <rect x="100" y="20" width="20" height="20"/>
+    <rect x="100" y="80" width="20" height="20"/>
+  </g>
 </svg>
