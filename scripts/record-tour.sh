@@ -125,6 +125,12 @@ AB_CREATE="977,110"
 # restarts the reader, because Bluetooth and Wi-Fi share one radio here and it
 # starts once per boot. A restart mid-tour ends the recording.
 AB_SHELF_ONE="536,250"
+# The second row, measured off the panel rather than guessed, because the shelf
+# sorts by file name and the file name of a new book comes from a title nobody
+# chose in advance. The book already on this reader is "A String into the Sky",
+# which slugs to "a-string-...", so a new one lands above it or below it
+# depending on its second word. The tour opens both rows rather than bet on it.
+AB_SHELF_TWO="536,400"
 AB_LOUDER="783,968"
 
 # The one thing a feed shelf has to offer, centred along the bottom.
@@ -334,8 +340,15 @@ tour_two() {
 # down the left. Five taps and the board says who won. The old three taps left
 # it unfinished, and two of them landed in the same square because they were
 # guessed off a screenshot rather than measured.
+#
+# The opening tap waits 5000ms rather than 2000ms, and that is the difference
+# between a game and four marks. At 2000ms the board is still a splash, the
+# tap lands on nothing, and every move after it is played by the wrong player:
+# the recording of 2025-08-01 shows noughts at 0 and 3 and crosses at 5 and 8,
+# which is exactly this plan with its first move missing, and a game nobody
+# won. Same defect as the keyboard's dropped leading key, one screen later.
 3 | 2500:$L_TICTACTOE
-1 | 2000:$T_R0C2 2000:$T_R0C0 2000:$T_R1C2 2000:$T_R1C0 2500:$T_R2C2
+1 | 5000:$T_R0C2 2000:$T_R0C0 2000:$T_R1C2 2000:$T_R1C0 2500:$T_R2C2
 1 | 6000:$BACK
 
 # And the end of it: the book that was started in the first minute, finished.
@@ -345,12 +358,21 @@ tour_two() {
 # the one that plays it. This runs at real speed to the last frame, because
 # the whole recording exists to say that this happened.
 #
+# Both rows are opened, and that is not padding. The shelf is ordered by file
+# name, the file name comes from a title the model writes rather than one the
+# tour chose, and the book already on this reader is called "A String into the
+# Sky". A new one sorts above or below it on its second word. Opening both is
+# how the book written during the recording is certain to be the one playing at
+# the end of it, without deleting anything off somebody's shelf to make the
+# ordering convenient.
+#
 # Volume rather than play. Play with no headphones connected goes to the
 # Bluetooth pane, and that pane says why it must not: the radio is shared with
 # Wi-Fi, it starts once per boot, and the reader restarts itself on the way
 # out. Two taps take it from 70% to 90%, visibly and without rebooting.
 3 | 2500:$L_AUDIOBOOKS
-1 | 8000:$AB_SHELF_ONE 8000:$AB_LOUDER 4000:$AB_LOUDER 8000:$AB_LOUDER
+1 | 8000:$AB_SHELF_ONE 6000:$AB_LOUDER 6000:$BACK
+1 | 6000:$AB_SHELF_TWO 8000:$AB_LOUDER 4000:$AB_LOUDER 8000:$AB_LOUDER
 TOUR
 }
 
@@ -393,30 +415,72 @@ HOOK="target/release/kobo-sidekickd"
 # Sidekick's segment is the one that fails silently. The panel says "Watching"
 # whether the daemon is down, the pairing is stale or the question simply has
 # not been asked yet, so none of it shows up until the recording is reviewed.
-# Both halves are therefore checked here, where there is somewhere to print.
+# The 2025-08-01 recording lost the segment exactly this way: the reader was
+# still paired with 192.168.1.7 from a fortnight earlier, this machine had
+# been given .3 since, and eleven minutes of filming showed a device politely
+# polling an address nobody was answering on.
 #
-# A pairing goes stale on its own: the reader remembers an address, and DHCP
-# hands this machine a different one every few days. Re-pair by writing the
-# daemon's address and code into the store the app reads, which is the same
-# two lines the pairing screens write, and note that the code has no trailing
-# newline because the app takes everything after the first one as the code.
+# So this no longer prints advice. It repairs the pairing, because every part
+# of one is derivable here: the address from the kernel's own routing table,
+# the code from the daemon's state directory, and the file from the two lines
+# the pairing screens write. Note the code carries no trailing newline; the
+# app takes everything after the first one as the code.
+mkdir -p "$OUT"
+
 PAIRED_FILE="/mnt/onboard/.adds/cobalt/state/sidekick/paired"
+SIDEKICK_STATE="$HOME/.config/kobo/sidekick"
+REKEYED=no
+LAN=$(ipconfig getifaddr en0 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}') || LAN=""
+if [ -z "$LAN" ]; then
+    echo "no LAN address for this machine, so Sidekick cannot be paired" >&2
+    echo "the tour will run, but its Sidekick segment stays on Watching" >&2
+else
+    # The certificate names the addresses the reader will accept, so a machine
+    # that has moved needs a new one rather than a new pairing file. Checking
+    # the certificate rather than the pairing catches the case where both are
+    # stale, which is the usual one, in a single question.
+    if ! openssl x509 -in "$SIDEKICK_STATE/cert.pem" -noout -text 2>/dev/null |
+        grep -q "IP Address:$LAN\b"; then
+        echo "the sidekick certificate does not name $LAN; making a new identity"
+        "$HOOK" init >/dev/null &&
+            REKEYED=yes ||
+            echo "kobo-sidekickd init failed; the Sidekick segment may stay on Watching" >&2
+    fi
+    "$KOBO" trust set sidekick --from "$SIDEKICK_STATE/cert.pem" --device "$DEVICE" >/dev/null ||
+        echo "could not install the sidekick trust root on the reader" >&2
+    CODE=$(tr -d '\r\n' <"$SIDEKICK_STATE/pairing" 2>/dev/null || true)
+    if [ -n "$CODE" ]; then
+        echo "pairing the reader with $LAN:9331"
+        "$KOBO" shell --device "$DEVICE" \
+            "mkdir -p $(dirname "$PAIRED_FILE") && printf '%s:9331\n%s' '$LAN' '$CODE' > $PAIRED_FILE" \
+            >/dev/null || echo "could not write the pairing onto the reader" >&2
+    fi
+fi
+
+# The daemon has to be listening before the tour asks it anything.
+#
+# A daemon that is already running is not necessarily the right daemon. It
+# reads its certificate once, at startup, so one that was running before a new
+# identity was made is still offering the old one, and the reader -- which now
+# trusts only the new one -- will refuse every connection. That failure looks
+# identical to no daemon at all: "Watching", forever. So a re-key replaces the
+# running process rather than leaving it there to be trusted.
+SIDEKICK_OWNED=""
+if [ "$REKEYED" = yes ] && LISTENING=$(lsof -ti "tcp:9330" 2>/dev/null) && [ -n "$LISTENING" ]; then
+    echo "stopping the daemon that is still offering the old certificate"
+    for pid in $LISTENING; do kill "$pid" 2>/dev/null || true; done
+    sleep 2
+fi
 if ! nc -z 127.0.0.1 9330 2>/dev/null; then
-    echo "no sidekick daemon is listening; start one with 'kobo-sidekickd run'" >&2
-    echo "the tour will run, but its Sidekick segment will stay on Watching" >&2
-elif LAN=$(ipconfig getifaddr en0 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}') &&
-    [ -n "$LAN" ]; then
-    REMEMBERED=$("$KOBO" shell --device "$DEVICE" "cat $PAIRED_FILE" 2>/dev/null | head -1)
-    case "$REMEMBERED" in
-    "$LAN":*) ;;
-    *)
-        echo "the reader is paired with '${REMEMBERED:-nothing}', but this machine is $LAN" >&2
-        echo "re-pair it, or the Sidekick segment stays on Watching:" >&2
-        echo "  kobo-sidekickd init && kobo trust set sidekick --device $DEVICE" >&2
-        printf '  kobo shell --device %s "printf %s%s:9331\\nCODE%s > %s"\n' \
-            "$DEVICE" "'" "$LAN" "'" "$PAIRED_FILE" >&2
-        ;;
-    esac
+    echo "starting the sidekick daemon"
+    "$HOOK" run >"$OUT/sidekickd.log" 2>&1 &
+    SIDEKICK_OWNED=$!
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        nc -z 127.0.0.1 9330 2>/dev/null && break
+        sleep 1
+    done
+    nc -z 127.0.0.1 9330 2>/dev/null ||
+        echo "the daemon did not come up; see $OUT/sidekickd.log" >&2
 fi
 
 # Held awake for the whole run. Without this the reader sleeps partway through
@@ -424,8 +488,6 @@ fi
 echo "holding $DEVICE awake"
 "$KOBO" session --device "$DEVICE" --keep-awake on >/dev/null
 "$KOBO" session --device "$DEVICE" --wifi-always-on on >/dev/null 2>&1 || true
-
-mkdir -p "$OUT"
 
 # One launcher for the whole tour, given longer than the recording so it is
 # still what is on the panel when the last frame is taken.
@@ -491,6 +553,14 @@ wait "$recorder" || {
     exit 1
 }
 "$KOBO" stop --device "$DEVICE" >/dev/null 2>&1 || true
+
+# Only a daemon this script started gets stopped by it. One somebody left
+# running for their own agents is theirs, and killing it would take their
+# coding session's approvals down with it.
+if [ -n "$SIDEKICK_OWNED" ]; then
+    echo "stopping the sidekick daemon this run started"
+    kill "$SIDEKICK_OWNED" 2>/dev/null || true
+fi
 
 # Handed back deliberately. A reader left with a wake lock does not sleep, and
 # the owner finds a flat battery in the morning.
