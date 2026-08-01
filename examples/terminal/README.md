@@ -2,9 +2,8 @@
 
 A shell on the panel.
 
-This replaced the hello example, which showed that a button could be tapped and
-nothing else. A terminal is the opposite: it is the hardest thing this platform
-can host, and every part of it is a claim that has to be true.
+A terminal is the hardest thing this platform can host, and every part of it
+is a claim that has to be true.
 
 ![A real /bin/sh listing the Kobo root filesystem in four columns, above a
 keyboard with esc, tab, ctrl and arrow keys](screenshots/shell.png)
@@ -44,3 +43,20 @@ kobo deploy --device <ip>               # onto a reader over Wi-Fi
 
 The simulator runs the same host the daemon runs and starts a real `/bin/sh`,
 so the loop can be exercised without a reader present.
+
+---
+
+Built with the [Cobalt SDK](../../README.md). The other apps:
+[Launcher](../launcher/README.md) ·
+[Audiobook Studio](../audiobook/README.md) ·
+[Gutenbird](../gutenbird/README.md) ·
+[Hacker News](../hn/README.md) ·
+[RSS Reader](../rss/README.md) ·
+[Daily Brief](../brief/README.md) ·
+[AI Chat](../chat/README.md) ·
+[Coding Agents Sidekick](../sidekick/README.md) ·
+[UI Components Showcase](../gallery/README.md) ·
+[Settings](../settings/README.md) ·
+[Todo](../todo/README.md) ·
+[Tic-tac-toe](../tictactoe/README.md) ·
+[Magnet Sensor](../magnet/README.md)

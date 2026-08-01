@@ -2,9 +2,8 @@
 
 A list of things to do, which is where a platform's state model shows.
 
-It replaced a counter, because a counter demonstrates that a number can go up
-and nothing else. This exercises the four things an application on this device
-actually has to get right.
+It exercises the four things an application on this device actually has to get
+right.
 
 | The list | Adding an item |
 | --- | --- |
@@ -40,3 +39,20 @@ power loss can cost is the change that was in flight.
 kobo run --sim --app todo               # in the browser simulator
 kobo deploy --device <ip>               # onto a reader over Wi-Fi
 ```
+
+---
+
+Built with the [Cobalt SDK](../../README.md). The other apps:
+[Launcher](../launcher/README.md) ·
+[Audiobook Studio](../audiobook/README.md) ·
+[Gutenbird](../gutenbird/README.md) ·
+[Hacker News](../hn/README.md) ·
+[RSS Reader](../rss/README.md) ·
+[Daily Brief](../brief/README.md) ·
+[AI Chat](../chat/README.md) ·
+[Coding Agents Sidekick](../sidekick/README.md) ·
+[Terminal](../terminal/README.md) ·
+[UI Components Showcase](../gallery/README.md) ·
+[Settings](../settings/README.md) ·
+[Tic-tac-toe](../tictactoe/README.md) ·
+[Magnet Sensor](../magnet/README.md)

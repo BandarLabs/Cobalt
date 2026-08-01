@@ -1,11 +1,10 @@
-# Magnet
+# Magnet Sensor
 
 Where the magnet is, and nothing else.
 
 The reader has a hall sensor behind one edge of the bezel. It is the thing a
-sleep cover closes against, and until recently only the runtime could see it.
-This application shows everything the SDK now exposes: ask once for the state,
-then wait to be told when it changes.
+sleep cover closes against. This application shows everything the SDK exposes:
+ask once for the state, then wait to be told when it changes.
 
 | Nothing there | After a few sweeps |
 | --- | --- |
@@ -63,3 +62,20 @@ It does not say "cover closed". The sensor cannot tell a cover from a fridge
 magnet, and an application that reports the one thing when it measured the
 other is inventing a reading. The runtime says what it measured; deciding what
 that means is the application's job, and this application declines to.
+
+---
+
+Built with the [Cobalt SDK](../../README.md). The other apps:
+[Launcher](../launcher/README.md) ·
+[Audiobook Studio](../audiobook/README.md) ·
+[Gutenbird](../gutenbird/README.md) ·
+[Hacker News](../hn/README.md) ·
+[RSS Reader](../rss/README.md) ·
+[Daily Brief](../brief/README.md) ·
+[AI Chat](../chat/README.md) ·
+[Coding Agents Sidekick](../sidekick/README.md) ·
+[Terminal](../terminal/README.md) ·
+[UI Components Showcase](../gallery/README.md) ·
+[Settings](../settings/README.md) ·
+[Todo](../todo/README.md) ·
+[Tic-tac-toe](../tictactoe/README.md)

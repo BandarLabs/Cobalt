@@ -4,11 +4,10 @@ A chat client for a device with no keyboard worth the name.
 
 Three screens and one rule. The rule is that the reader should have to type as
 little as possible: typing here means hunting for keys on a panel that takes
-tens of milliseconds a repaint, so the model is asked to offer tappable answers
-wherever a question genuinely has them, and those answers are drawn with the
-same `ScreenBuilder::choose` a native screen would use. It is asked just as
-firmly *not* to do that every turn, because a conversation that answers every
-remark with a menu is a form.
+tens of milliseconds a repaint. When a question genuinely has tappable
+answers, the reply carries them, and they are drawn with the same
+`ScreenBuilder::choose` a native screen would use — but not every turn,
+because a conversation that answers every remark with a menu is a form.
 
 | A real answer, over the radio | Choosing the service |
 | --- | --- |
@@ -53,3 +52,20 @@ image at zero power until there is something new to say.
 kobo run --sim --app chat               # in the browser simulator
 kobo deploy --device <ip>               # onto a reader over Wi-Fi
 ```
+
+---
+
+Built with the [Cobalt SDK](../../README.md). The other apps:
+[Launcher](../launcher/README.md) ·
+[Audiobook Studio](../audiobook/README.md) ·
+[Gutenbird](../gutenbird/README.md) ·
+[Hacker News](../hn/README.md) ·
+[RSS Reader](../rss/README.md) ·
+[Daily Brief](../brief/README.md) ·
+[Coding Agents Sidekick](../sidekick/README.md) ·
+[Terminal](../terminal/README.md) ·
+[UI Components Showcase](../gallery/README.md) ·
+[Settings](../settings/README.md) ·
+[Todo](../todo/README.md) ·
+[Tic-tac-toe](../tictactoe/README.md) ·
+[Magnet Sensor](../magnet/README.md)

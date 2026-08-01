@@ -29,12 +29,9 @@ seconds spent learning nothing.
 The panes are honest about what they measured. Charge, status and time
 remaining come from the same sysfs gauge the reader itself uses; capacity,
 chemistry, temperature, voltage, current and the three charge figures come from
-the fuel gauge and are reported as read.
-
-An earlier version claimed the battery was "not supported on this hardware" and
-then showed a full reading the moment you opened it, which is the worst of both:
-wrong on the summary and right on the detail. Availability is now decided by the
-same read that produces the numbers, so the two cannot disagree.
+the fuel gauge and are reported as read. Availability is decided by the
+same read that produces the numbers, so the summary and the detail cannot
+disagree.
 
 `Read again` exists because current and temperature move while you watch, and a
 settings screen that silently goes stale is worse than one that admits it is a
@@ -45,10 +42,7 @@ snapshot.
 Devices are listed by the name the device gave, which is less obvious than it
 sounds. `bluez` is reached through `dbus-send`, whose output indents a variant
 one level deeper than its parent, so the indentation in front of a string
-property depends on how deeply it is nested. Parsing it with a fixed number of
-spaces worked in isolation and failed inside `GetManagedObjects`, where every
-name silently fell back to the MAC address while `paired` and `connected` beside
-it stayed correct.
+property depends on how deeply it is nested rather than on a fixed count.
 
 There is no `bluetoothd` on this firmware unless the reader itself has turned
 Bluetooth on. Off means off, and the pane says so rather than presenting an
@@ -65,3 +59,20 @@ scan is only a scan; it does not join anything.
 No brightness, no time zone, no account, no firmware. Those belong to the
 reader and it already has screens for them, and a second set that drifts out of
 step with the first is worse than none.
+
+---
+
+Built with the [Cobalt SDK](../../README.md). The other apps:
+[Launcher](../launcher/README.md) ·
+[Audiobook Studio](../audiobook/README.md) ·
+[Gutenbird](../gutenbird/README.md) ·
+[Hacker News](../hn/README.md) ·
+[RSS Reader](../rss/README.md) ·
+[Daily Brief](../brief/README.md) ·
+[AI Chat](../chat/README.md) ·
+[Coding Agents Sidekick](../sidekick/README.md) ·
+[Terminal](../terminal/README.md) ·
+[UI Components Showcase](../gallery/README.md) ·
+[Todo](../todo/README.md) ·
+[Tic-tac-toe](../tictactoe/README.md) ·
+[Magnet Sensor](../magnet/README.md)

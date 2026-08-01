@@ -19,9 +19,6 @@ it: the runtime keeps the process, the work in flight and the memory, and tells
 the application it is no longer being looked at. Come back and the brief is
 finished and drawn, with no reload and no second fetch.
 
-Under the previous design, leaving killed the process and returning started it
-again from nothing, so this application could not have existed.
-
 ## Why it saves the moment it goes to the background
 
 `KoboApp::on_background` is the last certain moment. A reader closes an
@@ -45,3 +42,20 @@ a readable width.
 kobo run --sim --app brief              # in the browser simulator
 kobo deploy --device <ip>               # onto a reader over Wi-Fi
 ```
+
+---
+
+Built with the [Cobalt SDK](../../README.md). The other apps:
+[Launcher](../launcher/README.md) ·
+[Audiobook Studio](../audiobook/README.md) ·
+[Gutenbird](../gutenbird/README.md) ·
+[Hacker News](../hn/README.md) ·
+[RSS Reader](../rss/README.md) ·
+[AI Chat](../chat/README.md) ·
+[Coding Agents Sidekick](../sidekick/README.md) ·
+[Terminal](../terminal/README.md) ·
+[UI Components Showcase](../gallery/README.md) ·
+[Settings](../settings/README.md) ·
+[Todo](../todo/README.md) ·
+[Tic-tac-toe](../tictactoe/README.md) ·
+[Magnet Sensor](../magnet/README.md)

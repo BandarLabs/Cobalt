@@ -33,10 +33,9 @@ row without a word, so the tiles are paginated against the room actually
 measured for them, and the page position under the grid is what tells a page
 turn from a tap that did nothing.
 
-A direction is only offered when there is a page on that side of this one. The
-bar showed both on every page and wrapped at the ends until the screenshots
-above were taken, which made "Previous" and "More apps" two names for one
-destination and had the last page promising applications that were not there.
+A direction is only offered when there is a page on that side of this one, so
+"Previous" and "More apps" never name the same destination and the last page
+never promises applications that are not there.
 
 ## Running it
 
@@ -47,3 +46,20 @@ kobo deploy --device <ip>               # onto a reader over Wi-Fi
 
 On a reader, `/mnt/onboard/.adds/cobalt/start.sh` starts the session and this
 is the first screen it shows.
+
+---
+
+Built with the [Cobalt SDK](../../README.md). The other apps:
+[Audiobook Studio](../audiobook/README.md) ·
+[Gutenbird](../gutenbird/README.md) ·
+[Hacker News](../hn/README.md) ·
+[RSS Reader](../rss/README.md) ·
+[Daily Brief](../brief/README.md) ·
+[AI Chat](../chat/README.md) ·
+[Coding Agents Sidekick](../sidekick/README.md) ·
+[Terminal](../terminal/README.md) ·
+[UI Components Showcase](../gallery/README.md) ·
+[Settings](../settings/README.md) ·
+[Todo](../todo/README.md) ·
+[Tic-tac-toe](../tictactoe/README.md) ·
+[Magnet Sensor](../magnet/README.md)

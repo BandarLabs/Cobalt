@@ -1,4 +1,4 @@
-# Feeds
+# RSS Reader
 
 The sites you read, on the device.
 
@@ -41,3 +41,20 @@ layout, script and advertising wrapped around the same words.
 kobo run --sim --app rss                # in the browser simulator
 kobo deploy --device <ip>               # onto a reader over Wi-Fi
 ```
+
+---
+
+Built with the [Cobalt SDK](../../README.md). The other apps:
+[Launcher](../launcher/README.md) ·
+[Audiobook Studio](../audiobook/README.md) ·
+[Gutenbird](../gutenbird/README.md) ·
+[Hacker News](../hn/README.md) ·
+[Daily Brief](../brief/README.md) ·
+[AI Chat](../chat/README.md) ·
+[Coding Agents Sidekick](../sidekick/README.md) ·
+[Terminal](../terminal/README.md) ·
+[UI Components Showcase](../gallery/README.md) ·
+[Settings](../settings/README.md) ·
+[Todo](../todo/README.md) ·
+[Tic-tac-toe](../tictactoe/README.md) ·
+[Magnet Sensor](../magnet/README.md)

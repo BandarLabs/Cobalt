@@ -33,32 +33,10 @@ foot of the page says so when they are.
 
 ## Why the reading screen is not built here
 
-It was, once: forty lines that turned pages and nothing else. Type size, front
-light, bookmarks and marked passages are not Gutenbird's to invent. Every
+Type size, front light, bookmarks and marked passages are not Gutenbird's to
+invent. Every
 application that shows a book wants the same ones, and a reader who learns them
 in one should find them in the next. They live in `kobo-read`.
-
-## Three things the panel found that the tests did not
-
-The shelf above is six books because six is what fits. It used to be six in two
-columns of three, and the third row was cut in half by the nav bar, so the
-shelf showed four books and a mistake. Then a page position was added under the
-grid and the second row of captions was printed straight through it, because a
-tile's height was derived from the width of the grid and not from the room left
-under it.
-
-The third was on the book screen. The summary is paged, and the pagination
-moved a lone "About" heading forward onto the next page to keep it with the
-text under it. That emptied the page it came from, the empty page was dropped,
-and the page behind it inherited a cover and a Read button it had never been
-measured against: the summary ran off the bottom of the panel and through the
-"1 of 2" beneath it. A heading is no longer moved off a page it is alone on,
-and a summary too long for the room left is now divided at a word boundary
-rather than moved whole.
-
-All three are measured against what is actually drawn, and all three have
-regression tests that fail on the real typeface with a real status bar, which
-is the only configuration in which any of them was ever visible.
 
 ## Running it
 
@@ -66,3 +44,20 @@ is the only configuration in which any of them was ever visible.
 kobo run --sim --app gutenbird          # in the browser simulator
 kobo deploy --device <ip>               # onto a reader over Wi-Fi
 ```
+
+---
+
+Built with the [Cobalt SDK](../../README.md). The other apps:
+[Launcher](../launcher/README.md) ·
+[Audiobook Studio](../audiobook/README.md) ·
+[Hacker News](../hn/README.md) ·
+[RSS Reader](../rss/README.md) ·
+[Daily Brief](../brief/README.md) ·
+[AI Chat](../chat/README.md) ·
+[Coding Agents Sidekick](../sidekick/README.md) ·
+[Terminal](../terminal/README.md) ·
+[UI Components Showcase](../gallery/README.md) ·
+[Settings](../settings/README.md) ·
+[Todo](../todo/README.md) ·
+[Tic-tac-toe](../tictactoe/README.md) ·
+[Magnet Sensor](../magnet/README.md)

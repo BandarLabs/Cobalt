@@ -1,4 +1,4 @@
-# Components
+# UI Components Showcase
 
 Every UI primitive, on one device, so each can be checked by eye.
 
@@ -22,20 +22,10 @@ first person to reach for it finds out that it is nine pixels too tall.
 The conformance test measures every page against the status band the runtime
 draws above it. Without that band the content starts sixty pixels higher than
 it does on the device, and the slack is enough to hide a page that overflows.
-Two pages here were doing exactly that.
 
 The gallery is also the fastest way to see a rendering change. `kobo drive`
 taps through its tabs and captures each one, so a change to the layout engine
 can be diffed as pictures rather than as numbers.
-
-## What it found
-
-The sub-tab strip used to drop every tab past a fixed maximum without saying
-so, which meant the gallery itself was hiding some of the components it exists
-to show. The empty states were drawn at the top of a thousand pixels of white.
-That is what made `Splash` worth having as a node rather than a heading and a
-paragraph: it centres itself in the band it is given, and stops short of
-whatever follows it.
 
 ## Running it
 
@@ -43,3 +33,20 @@ whatever follows it.
 kobo run --sim --app gallery            # in the browser simulator
 kobo deploy --device <ip>               # onto a reader over Wi-Fi
 ```
+
+---
+
+Built with the [Cobalt SDK](../../README.md). The other apps:
+[Launcher](../launcher/README.md) ·
+[Audiobook Studio](../audiobook/README.md) ·
+[Gutenbird](../gutenbird/README.md) ·
+[Hacker News](../hn/README.md) ·
+[RSS Reader](../rss/README.md) ·
+[Daily Brief](../brief/README.md) ·
+[AI Chat](../chat/README.md) ·
+[Coding Agents Sidekick](../sidekick/README.md) ·
+[Terminal](../terminal/README.md) ·
+[Settings](../settings/README.md) ·
+[Todo](../todo/README.md) ·
+[Tic-tac-toe](../tictactoe/README.md) ·
+[Magnet Sensor](../magnet/README.md)

@@ -1,4 +1,4 @@
-# Sidekick
+# Coding Agents Sidekick
 
 The permission prompt, moved to the armchair.
 
@@ -71,7 +71,7 @@ what is ticked with a button of its own. An agent asking four questions at
 once has them put one at a time, so the panel never holds more than one
 thing to decide.
 
-## Trust, stated plainly
+## Trust
 
 The connection is TLS against a root the owner installed with `kobo trust
 set`; the runtime verifies the daemon exactly as it verifies any public
@@ -79,3 +79,20 @@ host. The pairing code rides every request so nobody else on the network can
 watch the questions or answer them. And the failure mode is honest: when the
 daemon is unreachable, the agents' own terminal prompts work exactly as they
 did before this application existed.
+
+---
+
+Built with the [Cobalt SDK](../../README.md). The other apps:
+[Launcher](../launcher/README.md) ·
+[Audiobook Studio](../audiobook/README.md) ·
+[Gutenbird](../gutenbird/README.md) ·
+[Hacker News](../hn/README.md) ·
+[RSS Reader](../rss/README.md) ·
+[Daily Brief](../brief/README.md) ·
+[AI Chat](../chat/README.md) ·
+[Terminal](../terminal/README.md) ·
+[UI Components Showcase](../gallery/README.md) ·
+[Settings](../settings/README.md) ·
+[Todo](../todo/README.md) ·
+[Tic-tac-toe](../tictactoe/README.md) ·
+[Magnet Sensor](../magnet/README.md)
