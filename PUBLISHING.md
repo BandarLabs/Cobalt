@@ -17,5 +17,8 @@ packaging, so `kobo-sdk` cannot complete its dry run until the preceding crates
 exist in the registry at the same version.
 
 Runtime binaries, CLI tools and examples are distributed from this repository,
-not as library crates. Tag releases from a clean commit and attach the generated
-checksums and third-party notices with every binary package.
+not as library crates. Pushing a tag `vX.Y.Z` from a clean commit runs the
+[release workflow](.github/workflows/release.yml), which checks the tag against
+the workspace version, builds the device package per profile, and publishes a
+GitHub release with assets named `cobalt-X.Y.Z-<device>-KoboRoot.tgz` alongside
+their checksums and third-party notices.
