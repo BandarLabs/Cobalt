@@ -76,10 +76,10 @@ is refused rather than guessed at. On any other Kobo, Cobalt declines to draw.
 
 **You run this at your own risk.** It is AGPL-3.0 licensed, which means it
 comes with no warranty of any kind. The design rule is that nothing survives a
-reboot, and it is followed carefully (see [The governing
-rule](#the-governing-rule)), but nobody here can promise your reader will be
-fine. If you brick a device, that is your device and your decision. Do not run
-this on a reader you cannot afford to lose.
+reboot, and it is followed carefully (see [Safety](#safety)), but nobody here
+can promise your reader will be fine. If you brick a device, that is your
+device and your decision. Do not run this on a reader you cannot afford to
+lose.
 
 **Other devices: pull requests welcome.** Support for another Kobo means a new
 profile with its own geometry, waveforms, touch transform and identity gate.
@@ -136,11 +136,9 @@ answer, including a refusal, comes back.
 **[SDK.md](SDK.md) walks the whole thing end to end**, from editing
 `src/main.rs` through to a tile on the reader's own launcher.
 
-## What is here, and what is not
+## Features
 
 Verified on the physical Clara BW unless stated otherwise.
-
-**Working on the device**
 
 | | |
 |---|---|
@@ -156,29 +154,7 @@ Verified on the physical Clara BW unless stated otherwise.
 | Tooling | `devices`, `doctor`, `package`, `deploy`, `inspect`, `verify`, `session`, `wait`, `logs`, `touch-probe`, `record`, and a Clara BW simulator in the browser |
 | Applications | `launcher`, `audiobook`, `settings`, `hn`, `rss`, `gutenbird`, `chat`, `todo`, `terminal`, `tictactoe`, `magnet`, `gallery`, `brief` |
 
-**Not here yet**
-
-- **`schedule_wake` has no device backend.** The runtime does not own suspend
-  or the RTC alarm, so a scheduled wake is refused rather than silently
-  dropped. This costs the ambient genre: `brief` is the shape of it and on a
-  device it only collects while it is in the foreground. Making it real means
-  `kobod` owning suspend on the only device there is.
-- **One device.** Clara BW N365, device code 391. Everything else is refused
-  rather than mapped to a similar model, so there is no second profile to test
-  against and no evidence any of this holds elsewhere.
-- **No install without SSH.** Deploying over Wi-Fi needs an SSH server the
-  platform does not ship. The USB route (`kobo package`, copy to
-  `.kobo/KoboRoot.tgz`) always works and needs nothing.
-- **The simulator draws the chrome but not the reader's hands.** It attaches
-  the same status band and back bar the runtime does, which is how the band
-  overlapping the top bar was found. It still cannot exercise the grace period
-  behind Back, or a finger arriving mid-refresh.
-- **Nothing is signed or verified at rest.** `kobo deploy` checksums what it
-  uploads end to end, but a package already on the drive is trusted.
-- **No power budget.** Nothing measures or bounds what a session costs the
-  battery beyond the idle and ceiling timers.
-
-## The governing rule
+## Safety
 
 **Nothing that cannot be undone by a reboot.**
 
@@ -205,7 +181,7 @@ report is in [docs/PORTING.md](docs/PORTING.md#how-to-get-the-numbers), and
 what has been proven on the device, waveform by waveform, is under [Attended
 display smoke tests](docs/DEVICES.md#attended-display-smoke-tests).
 
-## What the UI layer draws
+## UI primitives
 
 A closed set of nodes, no free-form drawing, no colour, no font choice and no
 pixel positioning: headings and paragraphs, buttons, rows and checklists, tile
@@ -227,7 +203,7 @@ resolves, and scaled to the cell they will occupy, including *up*, bounded, so
 a book cover published at 190 by 300 fills a tile on a 300 pixel-per-inch panel
 instead of sitting in the middle of it like a stamp.
 
-### Back belongs to the reader, and can be lent
+### Back navigation
 
 The Back control in the top bar is drawn by the runtime, on top of whatever the
 application asked for. It cannot be removed, cannot be forged, and always ends
@@ -321,6 +297,25 @@ not a feed: a cut XML feed keeps every item that arrived whole, but half a JSON
 document is not a document at all and yields nothing, and sending somebody to
 look for a different address does not help when the address was right.
 
+## Limitations
+
+- **`schedule_wake` has no device backend.** The runtime does not own suspend
+  or the RTC alarm, so a scheduled wake is refused rather than silently
+  dropped. Making it real means `kobod` owning suspend.
+- **One device.** Clara BW N365, device code 391. Everything else is refused
+  rather than mapped to a similar model, so there is no second profile to test
+  against and no evidence any of this holds elsewhere.
+- **No install without SSH.** Deploying over Wi-Fi needs an SSH server the
+  platform does not ship. The USB route (`kobo package`, copy to
+  `.kobo/KoboRoot.tgz`) always works and needs nothing.
+- **The simulator draws the chrome but not the reader's hands.** It attaches
+  the same status band and back bar the runtime does, but it cannot exercise
+  the grace period behind Back, or a finger arriving mid-refresh.
+- **Nothing is signed or verified at rest.** `kobo deploy` checksums what it
+  uploads end to end, but a package already on the drive is trusted.
+- **No power budget.** Nothing measures or bounds what a session costs the
+  battery beyond the idle and ceiling timers.
+
 ## Contributing
 
 The most valuable contribution is a second device. Everything here is measured
@@ -337,8 +332,8 @@ Beyond that:
   `cargo fmt --all --check` clean.
 - `unsafe` is forbidden outside `kobo-abi`, which is where the kernel structs
   live.
-- Anything that touches the device has to keep the governing rule: nothing a
-  reboot cannot undo.
+- Anything that touches the device has to keep the rule: nothing a reboot
+  cannot undo.
 - A test that asserts intention rather than a measured result is not worth
   much here. Most of the defects in this project were found by rendering
   something and looking at it, against real captured data, and the tests that
