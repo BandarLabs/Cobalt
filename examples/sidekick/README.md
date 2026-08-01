@@ -62,7 +62,7 @@ Three screens after pairing, and nothing on any of them that is not needed:
   Usually Allow and Deny; a question that brought its own answers shows one
   row each, with the sentence the agent wrote underneath. Back is not an
   escape hatch here: dismissing a question sends "leave it for the
-  terminal", said out loud rather than left dangling on the daemon.
+  terminal", said out loud instead of left dangling on the daemon.
 - **Sending** -- stated once with `activity`, because a tap with no visible
   answer on a slow panel reads as a tap that was missed.
 

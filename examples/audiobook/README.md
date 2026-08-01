@@ -34,12 +34,12 @@ waiting, so the copy that exists is worth more than the copy that does not.
 
 Two things store it. The `.mp3z` itself goes to `/mnt/onboard/Audiobooks`,
 which is where the reader's own My Books looks, and is published by rename so a
-power cut during a save leaves the previous state rather than a truncated file.
+power cut during a save leaves the previous state, never a truncated file.
 The titles go to the application's own store, because the shelf can only key on
 a slug and `a-string-into-the-sky-the-story-and-science-of-k` is not a title.
 
 The shelf remains the truth about what exists. The index only supplies the
-words and the order, and a line it cannot parse is skipped rather than fatal,
+words and the order, and a line it cannot parse is skipped,
 so a corrupt index costs you a title and not a library.
 
 Nothing here needs the network. A book made last week opens and plays with
@@ -69,7 +69,7 @@ kobo secret set elevenlabs --from PATH --device IP
 ```
 
 All three are needed. Without one the run stops at the stage that wanted it and
-says which, rather than failing at the end with everything already spent.
+says which, instead of failing at the end with everything already spent.
 
 ---
 

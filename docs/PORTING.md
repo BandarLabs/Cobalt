@@ -77,7 +77,7 @@ model prefix.
 ## What will refuse to work until the profile is right
 
 By design, all of it. `validate` returns `Rejected` on any mismatch, and every
-write path additionally demands an exact device code, serial prefix, firmware
+write path also demands an exact device code, serial prefix, firmware
 version and kernel release. A profile that is merely close is treated as a
 different device. That is the whole point: geometry alone is not proof of
 identity, and the failure mode of guessing is somebody else's reader.

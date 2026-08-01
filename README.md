@@ -192,8 +192,8 @@ on-screen keyboard, and a terminal grid.
 
 Everything that varies is *state* rather than styling. A finished row is
 finished, a chosen answer is chosen, a reply has a depth; the renderer decides
-what each looks like. A badly proportioned screen is unexpressible rather than
-merely discouraged, and an application cannot mark its own state with a
+what each looks like. A badly proportioned screen cannot be expressed at
+all, and an application cannot mark its own state with a
 character the installed face has no glyph for: in debug builds `set_screen`
 refuses a screen carrying one, so the application's own tests fail instead of
 the panel showing an empty box.
@@ -302,8 +302,8 @@ look for a different address does not help when the address was right.
 - **`schedule_wake` has no device backend.** The runtime does not own suspend
   or the RTC alarm, so a scheduled wake is refused rather than silently
   dropped. Making it real means `kobod` owning suspend.
-- **One device.** Clara BW N365, device code 391. Everything else is refused
-  rather than mapped to a similar model, so there is no second profile to test
+- **One device.** Clara BW N365, device code 391. Anything else is refused
+  outright; there is no second profile to test
   against and no evidence any of this holds elsewhere.
 - **No install without SSH.** Deploying over Wi-Fi needs an SSH server the
   platform does not ship. The USB route (`kobo package`, copy to

@@ -325,8 +325,8 @@ able to draw something indistinguishable from a system control.
 The artwork is [Tabler Icons](https://tabler.io/icons), which is MIT, converted
 once into checked-in Rust at `crates/kobo-ui/src/vector/tabler.rs`. Nothing at
 build time or run time reads an SVG or reaches the network, so the workspace
-keeps its no-dependency rule. It is a published set rather than forty
-hand-drawn ones because forty hand-drawn icons are forty separate judgements
+keeps its no-dependency rule. It is a published set because forty
+hand-drawn ones are forty separate judgements
 about how round a corner runs and how long a tail is, and a set drawn that way
 looks like a set only from across the room.
 
@@ -342,8 +342,8 @@ cargo test -p kobo-ui contact_sheet -- --ignored --nocapture
 ```
 
 draws every glyph onto one sheet and says where it put it. The wire tag for a
-glyph is one byte, so the set can hold 256 and no more, which is the reason it
-is curated rather than wholesale.
+glyph is one byte, so the set can hold 256 and no more, which is why it
+is curated.
 
 Three places take one: `rows` and `tiles`, where the icon leads a title, and
 `controls`, where it replaces one. There is deliberately no way to put a glyph
@@ -444,7 +444,7 @@ overleaf is the most common way a paginated layout reads as broken, and on a
 panel that takes a second to turn, the reader has a whole second to look at it.
 
 **One way out.** The runtime's Back plus `owns_back` is already the way back.
-A screen that additionally offers "Back to the results" has three controls
+A screen that also offers "Back to the results" has three controls
 meaning one thing and no way for the reader to tell which is which.
 
 ### The words
@@ -960,7 +960,7 @@ either changed.
 
 `terminal_keys` sends a byte the instant a key is tapped rather than collecting
 a word, because `Ctrl-C` has to arrive while the program is still running.
-`Ctrl` is arithmetic rather than a lookup table. It clears the two high bits,
+`Ctrl` is plain arithmetic: it clears the two high bits,
 which is why `Ctrl-C` is 3 and `Ctrl-[` is escape. Return sends a carriage
 return, and the key above it sends delete.
 
@@ -992,7 +992,7 @@ fn on_foreground(&mut self, context: &mut Context) {
 
 Drawing while backgrounded is not an error, it is just traffic for no picture.
 A long-running job should keep its state and rebuild the screen once on the way
-back, rather than sending one per chunk of progress.
+back, instead of sending one per chunk of progress.
 
 ---
 
