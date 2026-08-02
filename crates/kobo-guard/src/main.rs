@@ -252,11 +252,7 @@ impl fmt::Display for Outcome {
 /// input is detached as well, so a child can never consume the owner's SSH
 /// session out from under the guardian.
 fn supervise(request: &Request) -> Result<Outcome, String> {
-    let mut child = Command::new(&request.program)
-        .env_clear()
-        .stdin(Stdio::null())
-        .spawn()
-        .map_err(|error| format!("start {}: {error}", request.program))?;
+    let mut child = start(&request.program)?;
 
     let deadline = Instant::now() + request.timeout;
     loop {
@@ -277,6 +273,36 @@ fn supervise(request: &Request) -> Result<Outcome, String> {
         sleep(POLL_INTERVAL);
     }
 }
+
+/// Starts the program, riding out the one refusal that cures itself.
+///
+/// "Text file busy" means some other process still holds the executable open
+/// for writing — an installer finishing a copy, or on a busy host a child
+/// forked between another thread's write and its exec. The writer is done in
+/// a moment, so a short retry is the difference between a supervisor that
+/// works and one that fails by timing.
+fn start(program: &str) -> Result<Child, String> {
+    let deadline = Instant::now() + KILL_GRACE;
+    loop {
+        let refused = match Command::new(program)
+            .env_clear()
+            .stdin(Stdio::null())
+            .spawn()
+        {
+            Ok(child) => return Ok(child),
+            Err(error) => error,
+        };
+        let busy = refused.raw_os_error() == Some(TEXT_FILE_BUSY);
+        if !busy || Instant::now() >= deadline {
+            return Err(format!("start {program}: {refused}"));
+        }
+        sleep(POLL_INTERVAL);
+    }
+}
+
+/// ETXTBSY, without pulling a crate in for one number. It is 26 on Linux,
+/// where the guardian runs, and 26 on the host this is tested on.
+const TEXT_FILE_BUSY: i32 = 26;
 
 /// Stops exactly the child this process created.
 ///

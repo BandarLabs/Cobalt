@@ -651,6 +651,12 @@ pub mod sandbox {
 
         /// Enters the prepared sandbox in the freshly forked child.
         ///
+        /// # Errors
+        ///
+        /// Returns the operating system's error when any step of the descent
+        /// is refused: the process group, the root change, the privilege
+        /// ceiling, the syscall filter or the identity drop.
+        ///
         /// # Safety
         ///
         /// This must only run from `Command::pre_exec`: it changes the process
@@ -720,6 +726,13 @@ pub mod sandbox {
             }
         }
 
+        /// A syscall number as the 32-bit immediate a BPF instruction holds.
+        /// Every number this filter names is far below the ceiling; the
+        /// fallback matches no syscall, like the length clamp below it.
+        fn syscall(number: libc::c_long) -> u32 {
+            u32::try_from(number).unwrap_or(u32::MAX)
+        }
+
         // seccomp_data.nr is at byte 0 and args[0] at byte 16 on the little-
         // endian ARM and x86 Linux targets supported by this workspace. SDK
         // applications are single-process event loops; their asynchronous work
@@ -728,15 +741,15 @@ pub mod sandbox {
         // behind without changing any shipped application.
         let filter = [
             statement(LD_W_ABS, 0),
-            jump(libc::SYS_socket as u32, 9, 0),
-            jump(libc::SYS_setsid as u32, 10, 0),
-            jump(libc::SYS_setpgid as u32, 9, 0),
-            jump(libc::SYS_unshare as u32, 8, 0),
-            jump(libc::SYS_setns as u32, 7, 0),
-            jump(libc::SYS_fork as u32, 6, 0),
-            jump(libc::SYS_vfork as u32, 5, 0),
-            jump(libc::SYS_clone as u32, 4, 0),
-            jump(libc::SYS_clone3 as u32, 3, 0),
+            jump(syscall(libc::SYS_socket), 9, 0),
+            jump(syscall(libc::SYS_setsid), 10, 0),
+            jump(syscall(libc::SYS_setpgid), 9, 0),
+            jump(syscall(libc::SYS_unshare), 8, 0),
+            jump(syscall(libc::SYS_setns), 7, 0),
+            jump(syscall(libc::SYS_fork), 6, 0),
+            jump(syscall(libc::SYS_vfork), 5, 0),
+            jump(syscall(libc::SYS_clone), 4, 0),
+            jump(syscall(libc::SYS_clone3), 3, 0),
             statement(RET_K, libc::SECCOMP_RET_ALLOW),
             statement(LD_W_ABS, 16),
             jump(libc::AF_UNIX as u32, 1, 0),
