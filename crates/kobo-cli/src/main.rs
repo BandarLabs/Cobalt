@@ -2507,6 +2507,7 @@ fn setup_device(arguments: &[String]) -> Result<(), String> {
         .then(|| setup::enable_ssh(&reader.volume))
         .transpose()?;
     let settings = setup::apply_settings(&reader.volume)?;
+    let trust = setup::carry_trust_roots(&reader.volume);
     let menu = (options.menu != MenuEntry::Skip)
         .then(|| add_menu_entry(&reader.volume, options.menu == MenuEntry::Force));
     // After the menu, because the firmware extracts exactly one archive and
@@ -2531,6 +2532,7 @@ fn setup_device(arguments: &[String]) -> Result<(), String> {
             ssh,
             key,
             settings,
+            trust,
             menu,
             ejected,
             waiting,
@@ -2678,6 +2680,7 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
         MenuEntry::Add => !plugin_installed,
         MenuEntry::Skip => false,
     };
+    let trust_plan = describe_trust_plan();
     let keys = setup::SETTINGS_APPLIED
         .iter()
         .map(|(section, key, value)| format!("{section}/{key}={value}"))
@@ -2702,6 +2705,7 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
         "would install Cobalt into {}/{}\n\
          {}\n\
          would set {keys}\n\
+         {trust_plan}\n\
          {}\n\
          {}\n\
          would eject, then {}\n\
@@ -2763,6 +2767,20 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
             (false, false) => ", nothing extracted as root",
         }
     )
+}
+
+/// The one line of the dry run that covers this machine's trust roots.
+fn describe_trust_plan() -> String {
+    let names = setup::host_trust_names();
+    if names.is_empty() {
+        "would carry no trust roots, because ~/.config/kobo/trust holds none".to_owned()
+    } else {
+        format!(
+            "would copy this machine's trust roots ({}) into {}/trust",
+            names.join(", "),
+            setup::INSTALL_FOLDER,
+        )
+    }
 }
 
 /// The one line of the dry run that covers this machine's key.

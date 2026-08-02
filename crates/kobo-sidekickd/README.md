@@ -26,12 +26,14 @@ kobo-sidekickd setup codex    # prints the hook config to paste; also: claude
 kobo-sidekickd hook codex     # what the agent runs; reads stdin, asks, answers
 ```
 
-`init` writes to `~/.config/kobo/sidekick`: a ten-year self-signed
-certificate naming the machine's addresses (add more with `--host`), its
-key, and a six-character pairing code. The certificate also lands in
-`~/.config/kobo/trust`, where the host runtimes already look, so the
-simulator trusts the daemon with no further ceremony; the reader gets the
-same certificate with `kobo trust set sidekick --device IP`.
+`init` writes to `~/.config/kobo/sidekick`: a certificate authority made
+once, a leaf certificate minted from it for the machine's current addresses
+(add more with `--host`), their keys, and a six-character pairing code. The
+authority also lands in `~/.config/kobo/trust`, where the host runtimes
+already look, so the simulator trusts the daemon with no further ceremony,
+and where `kobo setup` looks, so a reader picks it up with the install. A
+reader set up before the authority existed gets it with
+`kobo trust set sidekick --device IP`.
 
 ## The two listeners
 

@@ -366,6 +366,88 @@ pub fn apply_settings(volume: &Path) -> Result<Vec<String>, String> {
     edit_settings(volume, SETTINGS_APPLIED.iter().copied(), true)
 }
 
+/// Copies this machine's trust roots onto the reader, returning their names.
+///
+/// `kobo-sidekickd init` drops its authority in `~/.config/kobo/trust`,
+/// where every host runtime already looks. A reader being set up gets the
+/// same files, into the same folder `kobo trust set` writes, so pairing with
+/// the daemon needs no second command and no second cable session. Best
+/// effort, like the menu entry: the install succeeded either way, and
+/// `kobo trust set` remains for a root that has to travel by itself.
+#[must_use]
+pub fn carry_trust_roots(volume: &Path) -> Vec<String> {
+    let Some(source) = host_trust_directory() else {
+        return Vec::new();
+    };
+    carry_trust_from(&source, volume)
+}
+
+/// The names [`carry_trust_roots`] would carry, for the dry run to say.
+#[must_use]
+pub fn host_trust_names() -> Vec<String> {
+    host_trust_directory().map_or_else(Vec::new, |source| {
+        valid_roots(&source)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect()
+    })
+}
+
+/// Where this machine keeps the trust roots its own tooling made.
+fn host_trust_directory() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME")?;
+    Some(
+        PathBuf::from(home)
+            .join(".config")
+            .join("kobo")
+            .join("trust"),
+    )
+}
+
+/// The testable inside of [`carry_trust_roots`]: everything but where home is.
+fn carry_trust_from(source: &Path, volume: &Path) -> Vec<String> {
+    let destination = volume.join(INSTALL_FOLDER).join("trust");
+    let mut carried = Vec::new();
+    for (name, text) in valid_roots(source) {
+        if fs::create_dir_all(&destination).is_err() {
+            break;
+        }
+        if fs::write(destination.join(format!("{name}.pem")), &text).is_ok() {
+            carried.push(name);
+        }
+    }
+    carried
+}
+
+/// Every certificate in `source`, by name, in name order.
+///
+/// Only what is actually a certificate is returned; the runtime would ignore
+/// anything else, but a stray file has no business travelling at all.
+fn valid_roots(source: &Path) -> Vec<(String, String)> {
+    let Ok(entries) = fs::read_dir(source) else {
+        return Vec::new();
+    };
+    let mut roots = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("pem") {
+            continue;
+        }
+        let Some(name) = path.file_stem().and_then(|stem| stem.to_str()) else {
+            continue;
+        };
+        let Ok(text) = fs::read_to_string(&path) else {
+            continue;
+        };
+        if kobo_net::pem::certificates(&text).is_empty() {
+            continue;
+        }
+        roots.push((name.to_owned(), text));
+    }
+    roots.sort();
+    roots
+}
+
 /// Removes [`SETTINGS_APPLIED`] again.
 ///
 /// # Errors
@@ -530,6 +612,8 @@ pub struct Report {
     pub key: Option<Result<(crate::authorize::Key, crate::authorize::Staged), String>>,
     /// Settings keys that changed.
     pub settings: Vec<String>,
+    /// Trust roots carried over from this machine's own trust directory.
+    pub trust: Vec<String>,
     /// What became of the reader's own menu entry, when one was asked for.
     pub menu: Option<Result<crate::menu::Menu, String>>,
     /// Whether the volume was ejected.
@@ -567,6 +651,13 @@ impl Report {
             let _ = writeln!(text, "  · settings already as wanted");
         } else {
             let _ = writeln!(text, "  · settings set: {}", self.settings.join(", "));
+        }
+        if !self.trust.is_empty() {
+            let _ = writeln!(
+                text,
+                "  · trust roots carried over: {}",
+                self.trust.join(", ")
+            );
         }
         match &self.menu {
             Some(Ok(menu)) => {
@@ -877,12 +968,50 @@ pub fn wait_for_reader(
 #[cfg(test)]
 mod tests {
     use super::{
-        clear_setting, is_kobo_serial, next_steps, parse_version, set_setting, wait_for_reader,
-        Arrival, Mounted, Report, Ssh, Staged, Verdict, INSTALL_FOLDER, SETTINGS_APPLIED,
-        SSH_DISABLED, SSH_ENABLED,
+        carry_trust_from, clear_setting, is_kobo_serial, next_steps, parse_version, set_setting,
+        wait_for_reader, Arrival, Mounted, Report, Ssh, Staged, Verdict, INSTALL_FOLDER,
+        SETTINGS_APPLIED, SSH_DISABLED, SSH_ENABLED,
     };
     use std::net::Ipv4Addr;
     use std::path::PathBuf;
+
+    #[test]
+    fn the_machines_trust_roots_ride_along_with_a_setup() {
+        let root = std::env::temp_dir().join(format!("kobo-setup-trust-{}", std::process::id()));
+        let _ignored = std::fs::remove_dir_all(&root);
+        let source = root.join("trust");
+        let volume = root.join("volume");
+        std::fs::create_dir_all(&source).expect("source folder");
+        std::fs::create_dir_all(&volume).expect("volume folder");
+        // One certificate, one imposter with the right extension, one
+        // unrelated file: only the certificate travels.
+        std::fs::write(
+            source.join("sidekick.pem"),
+            "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n",
+        )
+        .expect("certificate");
+        std::fs::write(source.join("notes.pem"), "not a certificate").expect("imposter");
+        std::fs::write(source.join("readme.txt"), "hello").expect("stray file");
+
+        let carried = carry_trust_from(&source, &volume);
+        assert_eq!(carried, vec!["sidekick".to_owned()]);
+        let installed = volume.join(INSTALL_FOLDER).join("trust");
+        assert!(installed.join("sidekick.pem").exists());
+        assert!(!installed.join("notes.pem").exists());
+        assert!(!installed.join("readme.txt").exists());
+        let _ignored = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_machine_without_trust_roots_carries_none_and_writes_nothing() {
+        let root = std::env::temp_dir().join(format!("kobo-setup-notrust-{}", std::process::id()));
+        let _ignored = std::fs::remove_dir_all(&root);
+        let volume = root.join("volume");
+        std::fs::create_dir_all(&volume).expect("volume folder");
+        assert!(carry_trust_from(&root.join("missing"), &volume).is_empty());
+        assert!(!volume.join(INSTALL_FOLDER).join("trust").exists());
+        let _ignored = std::fs::remove_dir_all(&root);
+    }
 
     fn address(last: u8) -> Ipv4Addr {
         Ipv4Addr::new(192, 168, 1, last)
@@ -1109,6 +1238,7 @@ mod tests {
             ssh: Some(Ssh::Enabled),
             key,
             settings: Vec::new(),
+            trust: Vec::new(),
             menu,
             ejected: true,
             waiting: false,
@@ -1327,6 +1457,7 @@ mod tests {
             ssh: Some(Ssh::Enabled),
             key: None,
             settings: vec!["DeveloperSettings/ForceWifiOn".to_owned()],
+            trust: vec!["sidekick".to_owned()],
             menu: None,
             ejected: true,
             waiting: false,
@@ -1335,6 +1466,7 @@ mod tests {
         assert!(text.contains("13 files"));
         assert!(text.contains("SSH enabled"));
         assert!(text.contains("ForceWifiOn"));
+        assert!(text.contains("trust roots carried over: sidekick"));
         assert!(text.contains("--undo"));
         assert!(text.contains("nothing was extracted as\nroot"), "{text}");
     }
@@ -1348,6 +1480,7 @@ mod tests {
             ssh: Some(Ssh::Enabled),
             key: None,
             settings: Vec::new(),
+            trust: Vec::new(),
             menu: Some(Ok(crate::menu::Menu::Staged)),
             ejected: true,
             waiting: false,
@@ -1375,6 +1508,7 @@ mod tests {
                 crate::authorize::Staged::Written,
             ))),
             settings: Vec::new(),
+            trust: Vec::new(),
             menu: None,
             ejected: true,
             waiting: false,
@@ -1398,6 +1532,7 @@ mod tests {
                 crate::authorize::Staged::SlotTaken,
             ))),
             settings: Vec::new(),
+            trust: Vec::new(),
             menu: None,
             ejected: true,
             waiting: false,
@@ -1419,6 +1554,7 @@ mod tests {
             ssh: Some(Ssh::Enabled),
             key: Some(Err("ssh-keygen refused".to_owned())),
             settings: Vec::new(),
+            trust: Vec::new(),
             menu: None,
             ejected: true,
             waiting: false,
@@ -1438,6 +1574,7 @@ mod tests {
             ssh: Some(Ssh::Enabled),
             key: None,
             settings: Vec::new(),
+            trust: Vec::new(),
             menu: Some(Ok(crate::menu::Menu::Added)),
             ejected: true,
             waiting: false,

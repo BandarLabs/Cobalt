@@ -15,7 +15,8 @@
 //!
 //! `init` also drops the authority into `~/.config/kobo/trust`, where the
 //! host runtimes already look, so the simulator trusts the daemon with no
-//! further ceremony; the reader gets the same file over
+//! further ceremony, and where `kobo setup` looks, so a reader being set up
+//! carries it too; one set up earlier gets it over
 //! `kobo trust set sidekick --device IP`, once. A machine with more
 //! addresses than the one we can see gets them added with `--host`.
 
@@ -136,10 +137,13 @@ pub fn init(extra_hosts: &[String]) -> Result<(), String> {
         println!("already trusts this daemon needs nothing done to it.\n");
     }
     println!("Next:");
-    println!("  1. kobo trust set sidekick --device READER_IP");
-    println!("  2. kobo-sidekickd setup codex   (or claude), follow it");
-    println!("  3. kobo-sidekickd run");
-    println!("  4. open Sidekick on the reader, enter the address and code");
+    println!("  1. kobo-sidekickd setup codex   (or claude), follow it");
+    println!("  2. kobo-sidekickd run");
+    println!("  3. open Sidekick on the reader, enter the address and code");
+    println!();
+    println!("A reader set up with 'kobo setup' after this point trusts the");
+    println!("daemon already; one that was set up before it needs one");
+    println!("'kobo trust set sidekick --device READER_IP'.");
     Ok(())
 }
 

@@ -885,7 +885,9 @@ kobo trust set sidekick --device 192.168.1.5
 
 The value travels over the same attended channel as a secret, but unlike a
 secret it is checked for being a PEM certificate before it goes, and listing
-installed roots is harmless. Roots are loaded once at session start.
+installed roots is harmless. Roots are loaded once at session start. The
+command is rarely needed by hand: `kobo setup` carries everything in
+`~/.config/kobo/trust` onto the reader it is setting up.
 
 ---
 
