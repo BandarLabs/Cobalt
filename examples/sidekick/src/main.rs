@@ -40,6 +40,10 @@ const REPAIR: &str = "repair";
 /// bare address, so the common case is typing one thing instead of two.
 const DEFAULT_PORT: &str = "9331";
 
+/// How many characters `kobo-sidekickd init` puts in a pairing code. The
+/// code screen draws this many boxes and refuses a seventh character.
+const CODE_LENGTH: usize = 6;
+
 /// How long the daemon holds an empty poll before answering "nothing yet".
 /// Well under the runtime's own request ceiling, so a quiet afternoon is a
 /// steady heartbeat of short requests rather than a stack of timeouts.
@@ -159,7 +163,7 @@ impl Sidekick {
             screen = screen.banner(BannerLevel::Attention, trouble.clone());
         }
         screen
-            .typed(&self.keyboard, "192.168.1.20:9331")
+            .field("address.box", self.keyboard.text(), "192.168.1.20:9331")
             .spacer(Space::Small)
             .keyboard(&self.keyboard, "Next")
             .build()
@@ -179,8 +183,15 @@ impl Sidekick {
         if let Some(trouble) = &self.trouble {
             screen = screen.banner(BannerLevel::Attention, trouble.clone());
         }
+        let typed: Vec<char> = self.keyboard.text().trim().chars().collect();
+        let boxes = (0..CODE_LENGTH).map(|slot| {
+            (
+                format!("code.{slot}"),
+                typed.get(slot).map(char::to_string).unwrap_or_default(),
+            )
+        });
         screen
-            .typed(&self.keyboard, "the pairing code")
+            .grid(6, true, boxes)
             .spacer(Space::Small)
             .keyboard(&self.keyboard, "Pair")
             .build()
@@ -447,7 +458,16 @@ impl Sidekick {
             return false;
         };
         match pressed {
-            Pressed::Edited | Pressed::Shifted => self.show(context),
+            Pressed::Edited | Pressed::Shifted => {
+                // A seventh character has nowhere to be drawn, and a code
+                // longer than the boxes would be an entry the panel disagrees
+                // with. Refused at the keyboard, not trimmed at submission.
+                if self.view == View::Code && self.keyboard.text().chars().count() > CODE_LENGTH {
+                    let kept: String = self.keyboard.text().chars().take(CODE_LENGTH).collect();
+                    self.keyboard = Keyboard::with_text(kept);
+                }
+                self.show(context);
+            }
             Pressed::Submitted => match self.view {
                 View::Address => {
                     let typed = self.keyboard.text().to_owned();
@@ -1095,6 +1115,28 @@ mod tests {
         );
         let (_, url) = fetched(&commands).expect("pairing starts the first poll");
         assert!(url.starts_with("https://192.168.1.9:9331/pending?token=qk3mzp"));
+    }
+
+    #[test]
+    fn a_seventh_code_character_is_refused_at_the_keyboard() {
+        let mut app = Sidekick::default();
+        let mut context = Context::default();
+        app.on_start(&mut context);
+        app.on_store(
+            &mut context,
+            StoreResult::Loaded {
+                key: PAIRED.to_owned(),
+                value: None,
+            },
+        );
+        app.keyboard = Keyboard::with_text("192.168.1.9");
+        act(&mut app, action_id("kb.enter"));
+        assert_eq!(app.view, View::Code);
+        app.keyboard = Keyboard::with_text("qk3mzp");
+        // The panel draws six boxes; a seventh character has no box to be
+        // drawn in, so the key does nothing.
+        act(&mut app, action_id("kb.r0c0"));
+        assert_eq!(app.keyboard.text(), "qk3mzp");
     }
 
     #[test]
