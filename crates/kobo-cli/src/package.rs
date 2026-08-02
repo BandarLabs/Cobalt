@@ -207,6 +207,11 @@ fn directories(members: &[Member]) -> Vec<String> {
             all.insert(parts[..end].join("/"));
         }
     }
+    // Folders above the install root are not this package's to describe:
+    // they already exist on any reader, and an updater that rightly refuses
+    // members outside the install root would refuse the whole archive over
+    // them. tar creates missing parents on its own.
+    all.retain(|path| path == INSTALL_ROOT || path.starts_with(&format!("{INSTALL_ROOT}/")));
     let mut ordered: Vec<String> = all.into_iter().collect();
     ordered.sort_by_key(|path| (path.matches('/').count(), path.clone()));
     ordered
@@ -485,15 +490,11 @@ mod tests {
             .filter(|entry| entry.kind == b'5')
             .map(|entry| entry.path.as_str())
             .collect();
+        // Nothing above the install root: those folders exist on every
+        // reader, and the on-device updater refuses members outside it.
         assert_eq!(
             directories,
-            vec![
-                "mnt/",
-                "mnt/onboard/",
-                "mnt/onboard/.adds/",
-                "mnt/onboard/.adds/cobalt/",
-                "mnt/onboard/.adds/cobalt/bin/",
-            ]
+            vec!["mnt/onboard/.adds/cobalt/", "mnt/onboard/.adds/cobalt/bin/",]
         );
     }
 

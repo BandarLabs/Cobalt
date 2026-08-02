@@ -101,10 +101,21 @@ fn unpack(tar: &[u8], staging: &Path) -> Result<(), DeviceError> {
         }
         verify_checksum(block)?;
         let path = read_string(&block[0..100]);
-        let relative = installed_path(&path).ok_or(DeviceError::InvalidInput)?;
         let size = read_octal(&block[124..136])?;
         let size = usize::try_from(size).map_err(|_| DeviceError::InvalidInput)?;
         let kind = block[156];
+        let relative = match installed_path(&path) {
+            Some(relative) => relative,
+            // A general-purpose packager describes the folders above the
+            // install root too. They already exist on a reader and nothing
+            // is written for them, but they are not grounds to refuse the
+            // release either.
+            None if kind == b'5' && names_folder_above_prefix(&path) => {
+                offset += BLOCK;
+                continue;
+            }
+            None => return Err(DeviceError::InvalidInput),
+        };
         let payload = match kind {
             b'5' => 0,
             b'0' => size,
@@ -184,6 +195,16 @@ fn installed_path(path: &str) -> Option<&Path> {
     } else {
         None
     }
+}
+
+/// Returns whether `path` names one of the folders the installation prefix
+/// sits inside, such as `mnt/` or `mnt/onboard/.adds/`.
+fn names_folder_above_prefix(path: &str) -> bool {
+    let trimmed = path.trim_end_matches('/');
+    !trimmed.is_empty()
+        && PREFIX
+            .strip_prefix(trimmed)
+            .is_some_and(|rest| rest.starts_with('/'))
 }
 
 /// Applies the executable bits a member carries, where the filesystem has
@@ -368,6 +389,52 @@ mod tests {
         );
         assert!(!adds.join("cobalt").exists());
         assert!(!adds.join("cobalt.next").exists());
+        let _ignored = fs::remove_dir_all(&adds);
+    }
+
+    #[test]
+    fn the_folders_above_the_prefix_are_tolerated_but_never_written() {
+        let adds = scratch("above");
+        // The shape `kobo package` used to publish: every ancestor folder
+        // described before the payload.
+        let above = |path: &str| Member {
+            path: path.to_owned(),
+            kind: b'5',
+            payload: &[],
+        };
+        let (archive, digest) = published(&[
+            above("mnt/"),
+            above("mnt/onboard/"),
+            above("mnt/onboard/.adds/"),
+            folder(""),
+            file("start.sh", b"#!/bin/sh\n"),
+        ]);
+        install(&archive, &digest, &adds).expect("install succeeds");
+        assert_eq!(
+            fs::read(adds.join("cobalt/start.sh")).expect("installed file"),
+            b"#!/bin/sh\n"
+        );
+        // Tolerated means skipped: nothing above the prefix appears in the
+        // staging area or beside it.
+        assert!(!adds.join("mnt").exists());
+        assert!(!adds.join("onboard").exists());
+        let _ignored = fs::remove_dir_all(&adds);
+    }
+
+    #[test]
+    fn a_file_above_the_prefix_is_still_refused() {
+        let adds = scratch("above-file");
+        let stray = Member {
+            path: "mnt/onboard/.adds/".to_owned(),
+            kind: b'0',
+            payload: b"tampered",
+        };
+        let (archive, digest) = published(&[file("start.sh", b"fine"), stray]);
+        assert_eq!(
+            install(&archive, &digest, &adds),
+            Err(DeviceError::InvalidInput)
+        );
+        assert!(!adds.join("cobalt").exists());
         let _ignored = fs::remove_dir_all(&adds);
     }
 
