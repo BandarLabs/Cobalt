@@ -60,6 +60,9 @@ enum Stage {
 struct Audiobook {
     stage: Stage,
     topic: Keyboard,
+    /// What the book is written and narrated in. Chosen on the composer,
+    /// spoken by a narrator whose accent is native to it.
+    language: pipeline::Language,
     task: Option<TaskId>,
     title: String,
     summary: String,
@@ -114,6 +117,14 @@ impl Audiobook {
                     screen = screen.secondary(hint);
                 }
                 screen
+                    .section("Language")
+                    .chips(pipeline::LANGUAGES.map(|language| {
+                        (
+                            language_action(language),
+                            language.label().to_owned(),
+                            language == self.language,
+                        )
+                    }))
                     .typed(&self.topic, "Type any topic")
                     .keyboard(&self.topic, "Create")
                     .build()
@@ -370,7 +381,7 @@ impl Audiobook {
     }
 
     fn start_writing(&mut self, context: &mut Context, research: &[u8]) {
-        match pipeline::write_book(self.topic.text(), research) {
+        match pipeline::write_book(self.topic.text(), self.language, research) {
             Ok(task) => {
                 self.stage = Stage::Write;
                 self.task = context.spawn(task);
@@ -410,7 +421,7 @@ impl Audiobook {
             return;
         };
         self.stage = Stage::Narrate;
-        self.task = context.spawn(pipeline::speech(text));
+        self.task = context.spawn(pipeline::speech(text, self.language));
         if self.task.is_none() {
             self.fail("The runtime is already busy.");
         }
@@ -455,7 +466,10 @@ impl Audiobook {
         let titles = std::mem::take(&mut self.titles);
         let pages = std::mem::take(&mut self.pages);
         let shelf_unreadable = self.shelf_unreadable;
+        // A person who narrates in Hindi will narrate in Hindi again.
+        let language = self.language;
         *self = Self {
+            language,
             library,
             titles,
             pages,
@@ -573,6 +587,13 @@ impl KoboApp for Audiobook {
             return;
         }
         if self.stage == Stage::Compose {
+            for language in pipeline::LANGUAGES {
+                if action == action_id(&language_action(language)) {
+                    self.language = language;
+                    self.show(context);
+                    return;
+                }
+            }
             if let Some(pressed) = self.topic.press(action) {
                 if pressed == Pressed::Submitted {
                     self.begin(context);
@@ -733,6 +754,11 @@ fn cover_art(title: &str) -> (u32, u32, Vec<u8>) {
 /// The name of the row that plays the `index`th audiobook.
 fn play_action(index: usize) -> String {
     format!("play-{index}")
+}
+
+/// The name of the chip that selects a narration language.
+fn language_action(language: pipeline::Language) -> String {
+    format!("language-{}", language.name())
 }
 
 /// The size of a book on the card, in the coarsest honest unit.

@@ -182,6 +182,18 @@ pub fn has_origin(url: &str, host: &str, port: u16) -> bool {
     parse(url).is_ok_and(|address| address.host.eq_ignore_ascii_case(host) && address.port == port)
 }
 
+/// The narration voices the audiobook application may spend its `ElevenLabs`
+/// key on: one per offered language, native accents. The application holds
+/// the same list in its pipeline; a voice added there must be added here.
+const AUDIOBOOK_VOICES: [&str; 6] = [
+    "JBFqnCBsd6RMkjVDRZzb", // George, English
+    "1qEiC6qsybMkmnNdVMbK", // Monika Sogam, Hindi
+    "l1zE9xgNpUTaQCZzpNJa", // Alberto Rodríguez, Spanish
+    "aQROLel5sQbj1vuIVi6B", // Nicolas, French
+    "7eVMgwCnXydb3CikjV7a", // Lea, German
+    "4VZIsMPtgggwNg7OXbPY", // James Gao, Chinese
+];
+
 /// Whether a shipped application may attach one named secret to this URL.
 ///
 /// The application selects a service, but the runtime independently binds the
@@ -208,11 +220,11 @@ pub fn credential_allowed(app: &str, credential: &Credential, url: &str) -> bool
             }
             ("elevenlabs", SecretHeader::Named(header)) => {
                 header.eq_ignore_ascii_case("xi-api-key")
-                    && url
-                        == concat!(
-                            "https://api.elevenlabs.io/v1/text-to-speech/",
-                            "JBFqnCBsd6RMkjVDRZzb?output_format=mp3_22050_32"
+                    && AUDIOBOOK_VOICES.iter().any(|voice| {
+                        url == format!(
+                            "https://api.elevenlabs.io/v1/text-to-speech/{voice}?output_format=mp3_44100_128"
                         )
+                    })
                     && has_origin(url, "api.elevenlabs.io", 443)
             }
             _ => false,
@@ -1153,34 +1165,45 @@ mod tests {
     }
 
     #[test]
-    fn audiobook_credentials_are_bound_to_three_exact_provider_requests() {
+    fn audiobook_credentials_are_bound_to_exact_provider_requests() {
         use kobo_protocol::Credential;
 
         let requests = [
             (
                 Credential::in_header("exa", "x-api-key"),
-                "https://api.exa.ai/search",
+                "https://api.exa.ai/search".to_owned(),
             ),
             (
                 Credential::bearer("openai"),
-                "https://api.openai.com/v1/responses",
-            ),
-            (
-                Credential::in_header("elevenlabs", "xi-api-key"),
-                concat!(
-                    "https://api.elevenlabs.io/v1/text-to-speech/",
-                    "JBFqnCBsd6RMkjVDRZzb?output_format=mp3_22050_32"
-                ),
+                "https://api.openai.com/v1/responses".to_owned(),
             ),
         ];
-        for (credential, url) in requests {
-            assert!(super::credential_allowed("audiobook", &credential, url));
-            assert!(!super::credential_allowed("chat", &credential, url));
+        let voices = super::AUDIOBOOK_VOICES.map(|voice| {
+            (
+                Credential::in_header("elevenlabs", "xi-api-key"),
+                format!(
+                    "https://api.elevenlabs.io/v1/text-to-speech/{voice}?output_format=mp3_44100_128"
+                ),
+            )
+        });
+        for (credential, url) in requests.into_iter().chain(voices) {
+            assert!(super::credential_allowed("audiobook", &credential, &url));
+            assert!(!super::credential_allowed("chat", &credential, &url));
             assert!(!super::credential_allowed(
                 "audiobook",
                 &credential,
                 "https://attacker.invalid/collect"
             ));
+        }
+        // A different voice, a different format, or a path dressed up as a
+        // query must all be refused: the key is bound to these narrators.
+        let elevenlabs = Credential::in_header("elevenlabs", "xi-api-key");
+        for url in [
+            "https://api.elevenlabs.io/v1/text-to-speech/AAAAAAAAAAAAAAAAAAAA?output_format=mp3_44100_128",
+            "https://api.elevenlabs.io/v1/text-to-speech/JBFqnCBsd6RMkjVDRZzb?output_format=mp3_22050_32",
+            "https://api.elevenlabs.io.attacker.invalid/v1/text-to-speech/JBFqnCBsd6RMkjVDRZzb?output_format=mp3_44100_128",
+        ] {
+            assert!(!super::credential_allowed("audiobook", &elevenlabs, url));
         }
     }
 

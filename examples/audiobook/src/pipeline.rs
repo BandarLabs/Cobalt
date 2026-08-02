@@ -5,10 +5,97 @@ use kobo_sdk::{Credential, Header, Task};
 
 pub const EXA_ENDPOINT: &str = "https://api.exa.ai/search";
 pub const OPENAI_ENDPOINT: &str = "https://api.openai.com/v1/responses";
-pub const ELEVENLABS_ENDPOINT: &str = concat!(
-    "https://api.elevenlabs.io/v1/text-to-speech/",
-    "JBFqnCBsd6RMkjVDRZzb?output_format=mp3_44100_128"
-);
+
+/// The languages a book can be narrated in, each with a voice whose accent is
+/// native to it.
+///
+/// A single multilingual voice can read all six, but reads five of them with
+/// an English accent. These six are the most-used narration voices in the
+/// `ElevenLabs` voice library for their language, chosen by ear. The runtime
+/// holds the same list in its credential policy, so adding a language here
+/// means adding its voice there.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Language {
+    #[default]
+    English,
+    Hindi,
+    Spanish,
+    French,
+    German,
+    Chinese,
+}
+
+pub const LANGUAGES: [Language; 6] = [
+    Language::English,
+    Language::Hindi,
+    Language::Spanish,
+    Language::French,
+    Language::German,
+    Language::Chinese,
+];
+
+impl Language {
+    /// The name a reader picks. Latin script throughout: the device's fonts
+    /// carry no Devanagari or Han glyphs, and a chip of boxes says nothing.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::English => "English",
+            Self::Hindi => "Hindi",
+            Self::Spanish => "Español",
+            Self::French => "Français",
+            Self::German => "Deutsch",
+            Self::Chinese => "Chinese",
+        }
+    }
+
+    /// The name the writing model is instructed with.
+    #[must_use]
+    pub const fn english_name(self) -> &'static str {
+        match self {
+            Self::English => "English",
+            Self::Hindi => "Hindi",
+            Self::Spanish => "Spanish",
+            Self::French => "French",
+            Self::German => "German",
+            Self::Chinese => "Simplified Chinese",
+        }
+    }
+
+    /// A stable word for building action names.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::English => "english",
+            Self::Hindi => "hindi",
+            Self::Spanish => "spanish",
+            Self::French => "french",
+            Self::German => "german",
+            Self::Chinese => "chinese",
+        }
+    }
+
+    /// The narrator: George, Monika Sogam, Alberto Rodríguez, Nicolas, Lea
+    /// and James Gao.
+    #[must_use]
+    pub const fn voice_id(self) -> &'static str {
+        match self {
+            Self::English => "JBFqnCBsd6RMkjVDRZzb",
+            Self::Hindi => "1qEiC6qsybMkmnNdVMbK",
+            Self::Spanish => "l1zE9xgNpUTaQCZzpNJa",
+            Self::French => "aQROLel5sQbj1vuIVi6B",
+            Self::German => "7eVMgwCnXydb3CikjV7a",
+            Self::Chinese => "4VZIsMPtgggwNg7OXbPY",
+        }
+    }
+
+    fn endpoint(self) -> String {
+        format!(
+            "https://api.elevenlabs.io/v1/text-to-speech/{}?output_format=mp3_44100_128",
+            self.voice_id()
+        )
+    }
+}
 
 const MAX_RESEARCH_BYTES: usize = 180 * 1024;
 
@@ -75,7 +162,11 @@ pub fn research(topic: &str) -> Task {
     }
 }
 
-pub fn write_book(topic: &str, exa_response: &[u8]) -> Result<Task, &'static str> {
+pub fn write_book(
+    topic: &str,
+    language: Language,
+    exa_response: &[u8],
+) -> Result<Task, &'static str> {
     let research = research_context(exa_response)?;
     let schema = ObjectBuilder::new()
         .set("type", "object")
@@ -112,7 +203,7 @@ pub fn write_book(topic: &str, exa_response: &[u8]) -> Result<Task, &'static str
         .set("required", vec!["title", "summary", "chapters"])
         .set("additionalProperties", false)
         .build();
-    let instructions = "You are an audiobook editor. Turn the supplied Exa research into an original, accurate 8–12 minute audiobook for a curious general audience. Use 3–5 chapters, a strong spoken opening, smooth transitions, and a brief conclusion. Write for the ear: no markdown, URLs, footnote markers, lists, or visual references. Paraphrase sources; do not reproduce passages. Clearly qualify disputed or uncertain claims.";
+    let instructions = format!("You are an audiobook editor. Turn the supplied Exa research into an original, accurate 8–12 minute audiobook for a curious general audience. Use 3–5 chapters, a strong spoken opening, smooth transitions, and a brief conclusion. Write for the ear: no markdown, URLs, footnote markers, lists, or visual references. Paraphrase sources; do not reproduce passages. Clearly qualify disputed or uncertain claims. Write the chapter titles and the narration in {}, whatever language the research is in. Write the book title and the summary in that language too, but strictly in Latin script (romanized if the language is not written in it): they are shown on a screen whose fonts have no other glyphs.", language.english_name());
     let user = format!("Topic requested by the listener: {topic}\n\nExa research:\n{research}");
     let body = ObjectBuilder::new()
         .set("model", "gpt-5.6-sol")
@@ -143,7 +234,7 @@ pub fn write_book(topic: &str, exa_response: &[u8]) -> Result<Task, &'static str
     })
 }
 
-pub fn speech(text: &str) -> Task {
+pub fn speech(text: &str, language: Language) -> Task {
     let body = ObjectBuilder::new()
         .set("text", text)
         .set("model_id", "eleven_multilingual_v2")
@@ -158,7 +249,7 @@ pub fn speech(text: &str) -> Task {
         .build()
         .to_json();
     Task::Post {
-        url: ELEVENLABS_ENDPOINT.to_owned(),
+        url: language.endpoint(),
         body,
         content_type: "application/json".to_owned(),
         credential: Some(Credential::in_header("elevenlabs", "xi-api-key")),
@@ -294,8 +385,8 @@ fn split_spoken(text: &str, max_bytes: usize) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        narration_parts, parse_book, research, speech, split_spoken, write_book, Book,
-        ELEVENLABS_ENDPOINT, EXA_ENDPOINT, OPENAI_ENDPOINT,
+        narration_parts, parse_book, research, speech, split_spoken, write_book, Book, Language,
+        EXA_ENDPOINT, LANGUAGES, OPENAI_ENDPOINT,
     };
     use kobo_sdk::{SecretHeader, Task};
 
@@ -321,18 +412,44 @@ mod tests {
         assert!(matches!(credential.header, SecretHeader::Named(ref name) if name == "x-api-key"));
 
         let exa = br#"{"output":{"research":"brief","sources":[]},"results":[]}"#;
-        let (url, body, credential) = post(write_book("volcanoes", exa).expect("research"));
+        let (url, body, credential) =
+            post(write_book("volcanoes", Language::Hindi, exa).expect("research"));
         assert_eq!(url, OPENAI_ENDPOINT);
         assert!(body.contains("\"model\":\"gpt-5.6-sol\""));
         assert!(body.contains("\"type\":\"json_schema\""));
+        assert!(body.contains("in Hindi"));
         assert_eq!(&*credential.secret, "openai");
         assert_eq!(credential.header, SecretHeader::Bearer);
 
-        let (url, body, credential) = post(speech("A spoken sentence."));
-        assert_eq!(url, ELEVENLABS_ENDPOINT);
+        let (url, body, credential) = post(speech("A spoken sentence.", Language::default()));
+        assert_eq!(
+            url,
+            "https://api.elevenlabs.io/v1/text-to-speech/JBFqnCBsd6RMkjVDRZzb?output_format=mp3_44100_128"
+        );
         assert!(body.contains("\"model_id\":\"eleven_multilingual_v2\""));
         assert_eq!(&*credential.secret, "elevenlabs");
         assert!(matches!(credential.header, SecretHeader::Named(ref name) if name == "xi-api-key"));
+    }
+
+    /// Every offered language narrates with its own native voice, so two
+    /// languages sharing a voice id means one of them got the other's
+    /// accent by a copy-paste.
+    #[test]
+    fn every_language_has_its_own_voice() {
+        for language in LANGUAGES {
+            let (url, _, _) = post(speech("hello", language));
+            assert!(url.contains(language.voice_id()), "{language:?}");
+            assert!(
+                url.ends_with("?output_format=mp3_44100_128"),
+                "{language:?}"
+            );
+            for other in LANGUAGES {
+                assert!(
+                    language == other || language.voice_id() != other.voice_id(),
+                    "{language:?} and {other:?} share a voice"
+                );
+            }
+        }
     }
 
     #[test]
