@@ -207,12 +207,17 @@ impl Bluetooth {
                 let paired = self
                     .dbus_property(&path, "org.bluez.Device1", "Paired")
                     .is_ok_and(|value| value.contains("boolean true"));
-                let result = if paired {
-                    Ok(String::new())
-                } else {
-                    self.dbus_call(&path, &["org.bluez.Device1.Pair"])
-                }
-                .and_then(|_| self.set_trusted(&path, true));
+                // Trust must come first: this firmware's stack refuses
+                // Device1.Pair on an untrusted device ("device must be
+                // trusted before pairing"), the reverse of stock BlueZ's
+                // pair-then-trust order.
+                let result = self.set_trusted(&path, true).and_then(|_| {
+                    if paired {
+                        Ok(String::new())
+                    } else {
+                        self.dbus_call(&path, &["org.bluez.Device1.Pair"])
+                    }
+                });
                 result.map_or_else(DeviceResult::Failed, |_| self.state())
             }
             Backend::Bluetoothctl(_) => self
