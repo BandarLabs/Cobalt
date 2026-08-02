@@ -83,10 +83,18 @@ const INITIAL_STATE: [u32; 8] = [
 ];
 
 /// Returns the lowercase hexadecimal SHA-256 digest of `message`.
+///
+/// The message is read in place; the only allocation is the final block or
+/// two of padding, so hashing a whole downloaded archive costs no second
+/// copy of it.
 #[must_use]
 pub fn hex_digest(message: &[u8]) -> String {
     let mut state = INITIAL_STATE;
-    for chunk in padded(message).chunks_exact(64) {
+    let whole = message.len() - message.len() % 64;
+    for chunk in message[..whole].chunks_exact(64) {
+        compress(&mut state, chunk);
+    }
+    for chunk in tail(&message[whole..], message.len()).chunks_exact(64) {
         compress(&mut state, chunk);
     }
 
@@ -100,9 +108,12 @@ pub fn hex_digest(message: &[u8]) -> String {
     digest
 }
 
-fn padded(message: &[u8]) -> Vec<u8> {
-    let bit_length = (message.len() as u64).wrapping_mul(8);
-    let mut blocks = message.to_vec();
+/// The padded end of a message: whatever bytes did not fill a block, the
+/// 0x80 marker, zeros up to the length field, and the whole message's length
+/// in bits. At most two blocks, whatever the message weighed.
+fn tail(rest: &[u8], total: usize) -> Vec<u8> {
+    let bit_length = (total as u64).wrapping_mul(8);
+    let mut blocks = rest.to_vec();
     blocks.push(0x80);
     while blocks.len() % 64 != 56 {
         blocks.push(0);

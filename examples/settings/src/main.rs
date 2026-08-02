@@ -617,7 +617,13 @@ impl Settings {
         // shows it while the runtime blocks on the download and the swap.
         self.update = UpdateFlow::Installing { version };
         self.show(context);
-        context.device().update(url, sha256);
+        if !context.device().update(url, sha256) {
+            // Nothing was queued, so no reply will ever arrive to move the
+            // screen on; the refusal is reported here instead.
+            self.update =
+                UpdateFlow::Failed("The release names a download that cannot be used.".to_owned());
+            self.show(context);
+        }
     }
 
     /// Takes the reply to whichever update fetch was in flight: the release
@@ -1070,7 +1076,7 @@ fn latest_release(body: &str) -> Result<Release, String> {
 /// sixty-four hex characters, whitespace, a file name per line.
 fn digest_for(listing: &str, asset: &str) -> Option<String> {
     listing.lines().find_map(|line| {
-        let (digest, name) = line.split_once(' ')?;
+        let (digest, name) = line.split_once(char::is_whitespace)?;
         let named = name.trim_start().trim_start_matches('*') == asset;
         let plausible = digest.len() == 64
             && digest

@@ -143,13 +143,24 @@ fn unpack(tar: &[u8], staging: &Path) -> Result<(), DeviceError> {
 fn swap(adds: &Path, staging: &Path) -> Result<(), DeviceError> {
     let current = adds.join("cobalt");
     let previous = adds.join("cobalt.prev");
+    let mut retired = false;
     if current.exists() {
         if previous.exists() {
             fs::remove_dir_all(&previous).map_err(|_| DeviceError::Backend)?;
         }
         fs::rename(&current, &previous).map_err(|_| DeviceError::Backend)?;
+        retired = true;
     }
-    fs::rename(staging, &current).map_err(|_| DeviceError::Backend)?;
+    if fs::rename(staging, &current).is_err() {
+        // The old installation was already stepped aside, and leaving the
+        // launcher pointing at nothing is the one outcome worse than any
+        // failure. Put it back; both names are on the same filesystem, so
+        // this rename is as likely to work as the one that just did.
+        if retired {
+            let _ignored = fs::rename(&previous, &current);
+        }
+        return Err(DeviceError::Backend);
+    }
     Ok(())
 }
 
@@ -177,12 +188,14 @@ fn installed_path(path: &str) -> Option<&Path> {
 
 /// Applies the executable bits a member carries, where the filesystem has
 /// them to apply. The book partition is FAT32 and has none, so failure here
-/// is the expected case on a reader and is not reported.
+/// is the expected case on a reader and is not reported. Only the plain
+/// permission bits are taken: setuid, setgid and the sticky bit are nothing
+/// an application archive has any business carrying.
 fn set_mode(path: &Path, field: &[u8]) {
     #[cfg(unix)]
     if let Ok(mode) = read_octal(field) {
         use std::os::unix::fs::PermissionsExt;
-        let mode = u32::try_from(mode & 0o7777).unwrap_or(0o644);
+        let mode = u32::try_from(mode & 0o777).unwrap_or(0o644);
         let _ignored = fs::set_permissions(path, fs::Permissions::from_mode(mode));
     }
     #[cfg(not(unix))]
