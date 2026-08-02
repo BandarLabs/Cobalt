@@ -34,10 +34,22 @@ pub const SSH_PORT: u16 = 22;
 /// a packet out, and short enough that a whole /24 finishes in seconds.
 pub const PROBE_TIMEOUT: Duration = Duration::from_millis(600);
 
+/// How long the second look at a silent address is given.
+///
+/// A reader's radio spends its idle time in Wi-Fi power save, where the
+/// access point holds a packet until the radio's next scheduled wake. When
+/// that hold outlives the first timeout, the kernel does not send the opening
+/// packet again for about a second, so the first probe can pass a healthy,
+/// awake reader over. The retry has to be long enough to cover that
+/// retransmission, and it costs nothing on the empty addresses: those fail
+/// fast in the first round and are the only ones retried in bulk.
+pub const PROBE_RETRY_TIMEOUT: Duration = Duration::from_millis(2500);
+
 /// How many addresses are probed at once.
 ///
 /// A sweep is entirely waiting, so the limit is file descriptors rather than
-/// processors. Sixty-four keeps a /24 to four rounds of the timeout above.
+/// processors. Sixty-four keeps a /24 to four rounds of the two timeouts
+/// above.
 pub const PROBE_CONCURRENCY: usize = 64;
 
 /// What to try when a device does not answer.
@@ -138,18 +150,28 @@ pub fn sweep(subnet: &str, timeout: Duration) -> Vec<Ipv4Addr> {
 }
 
 /// True when `address` completes a TCP handshake on [`SSH_PORT`] within
-/// `timeout`.
+/// `timeout`, looking twice at an address that stays silent.
+///
+/// A refusal comes back in milliseconds and is final: a machine is there with
+/// nothing on this port. Silence is not final. A reader whose radio is dozing
+/// in power save misses the opening packet, and the second look waits out the
+/// kernel's retransmission of it (see [`PROBE_RETRY_TIMEOUT`]). Truly empty
+/// addresses stay silent both times; they cost the retry and nothing else.
 fn answers(address: Ipv4Addr, timeout: Duration) -> bool {
-    match TcpStream::connect_timeout(&SocketAddr::from((address, SSH_PORT)), timeout) {
-        Ok(stream) => {
-            let _ = stream.shutdown(std::net::Shutdown::Both);
-            true
+    match attempt(address, timeout) {
+        Ok(()) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {
+            attempt(address, PROBE_RETRY_TIMEOUT).is_ok()
         }
-        // Every failure is the same answer here. A refusal means a host is
-        // there with nothing on this port and a timeout means nothing is there
-        // at all, and neither is somewhere a shell can be opened.
         Err(_) => false,
     }
+}
+
+/// One connection attempt on [`SSH_PORT`], dropped as soon as it completes.
+fn attempt(address: Ipv4Addr, timeout: Duration) -> std::io::Result<()> {
+    let stream = TcpStream::connect_timeout(&SocketAddr::from((address, SSH_PORT)), timeout)?;
+    let _ = stream.shutdown(std::net::Shutdown::Both);
+    Ok(())
 }
 
 /// A script that prints one `key=value` line per fact identifying a device.
