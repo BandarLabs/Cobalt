@@ -150,7 +150,8 @@ fn unpack(tar: &[u8], staging: &Path) -> Result<(), DeviceError> {
     Ok(())
 }
 
-/// Retires the current installation and moves the staged one into place.
+/// Retires the current installation and moves the staged one into place,
+/// carrying what the owner put inside it over to the new one.
 fn swap(adds: &Path, staging: &Path) -> Result<(), DeviceError> {
     let current = adds.join("cobalt");
     let previous = adds.join("cobalt.prev");
@@ -172,7 +173,32 @@ fn swap(adds: &Path, staging: &Path) -> Result<(), DeviceError> {
         }
         return Err(DeviceError::Backend);
     }
+    if retired {
+        carry_owner_folders(&previous, &current);
+    }
     Ok(())
+}
+
+/// What the owner put on the reader, as opposed to what a release ships:
+/// installed trust roots, secrets, application state and application data. A
+/// release archive never carries these folders, so an update carries them
+/// forward or the reader forgets everything it was trusted with.
+const OWNER_FOLDERS: [&str; 4] = ["secrets", "trust", "state", "data"];
+
+/// Moves the owner's folders from the retired installation into the new one.
+///
+/// Best effort, on purpose: the new installation is already in place and
+/// working, and a folder that would not move is still where an owner can
+/// recover it by hand, in `cobalt.prev`. Failing the whole update over it
+/// would report a failure for an install that took.
+fn carry_owner_folders(previous: &Path, current: &Path) {
+    for folder in OWNER_FOLDERS {
+        let kept = previous.join(folder);
+        let place = current.join(folder);
+        if kept.exists() && !place.exists() {
+            let _ignored = fs::rename(&kept, &place);
+        }
+    }
 }
 
 /// Returns the path relative to the installation folder, or `None` for a
@@ -374,6 +400,32 @@ mod tests {
         assert_eq!(
             fs::read(adds.join("cobalt.prev/start.sh")).expect("kept file"),
             b"old"
+        );
+        let _ignored = fs::remove_dir_all(&adds);
+    }
+
+    #[test]
+    fn the_owners_folders_survive_an_update() {
+        let adds = scratch("carry");
+        fs::create_dir_all(adds.join("cobalt/trust")).expect("current trust");
+        fs::write(adds.join("cobalt/trust/sidekick.pem"), b"PEM").expect("trust root");
+        fs::create_dir_all(adds.join("cobalt/secrets")).expect("current secrets");
+        fs::write(adds.join("cobalt/secrets/hn"), b"token").expect("secret");
+        fs::write(adds.join("cobalt/start.sh"), b"old").expect("current file");
+        let (archive, digest) = published(&[file("start.sh", b"new")]);
+        install(&archive, &digest, &adds).expect("install succeeds");
+        // The release replaced its own files and carried the owner's.
+        assert_eq!(
+            fs::read(adds.join("cobalt/start.sh")).expect("new file"),
+            b"new"
+        );
+        assert_eq!(
+            fs::read(adds.join("cobalt/trust/sidekick.pem")).expect("carried trust root"),
+            b"PEM"
+        );
+        assert_eq!(
+            fs::read(adds.join("cobalt/secrets/hn")).expect("carried secret"),
+            b"token"
         );
         let _ignored = fs::remove_dir_all(&adds);
     }
