@@ -273,12 +273,15 @@ impl DeviceServices {
             | DeviceRequest::SeekAudio { .. }
             | DeviceRequest::StopAudio
             | DeviceRequest::SetAudioVolume { .. }) => self.handle_audio(&request),
-            // Only a real reader has an installation to replace; the daemon
-            // answers this itself before the policy fallback is consulted.
-            DeviceRequest::Update { .. } => DeviceResult::Denied(
-                self.refusal(Capability::Network)
-                    .unwrap_or(DenyReason::Unsupported),
-            ),
+            // Only a real reader has an installation to replace, so nothing
+            // is downloaded or written here. The simulator answers the way a
+            // reader that finished installing would, which is what lets an
+            // application's whole update flow be exercised at a desk: the
+            // scenario refusals still apply first, and a permitted request
+            // simply reports done.
+            DeviceRequest::Update { .. } => self
+                .refusal(Capability::Network)
+                .map_or(DeviceResult::Done, DeviceResult::Denied),
         }
     }
 
@@ -579,6 +582,38 @@ mod tests {
             DeviceResult::Denied(DenyReason::Unsupported)
         );
         assert_eq!(services.wifi_hold(), None);
+    }
+
+    #[test]
+    fn a_simulated_update_reports_done_so_the_flow_can_be_tested() {
+        let mut services = DeviceServices::new(
+            declared(&["network"]),
+            PowerPolicy::DEFAULT,
+            Backends::with([Capability::Network]),
+        );
+        assert_eq!(
+            services.handle(DeviceRequest::Update {
+                url: "https://example.com/cobalt.tgz".to_owned(),
+                sha256: "a".repeat(64),
+            }),
+            DeviceResult::Done
+        );
+    }
+
+    #[test]
+    fn an_update_without_the_network_declaration_is_refused() {
+        let mut services = DeviceServices::new(
+            declared(&[]),
+            PowerPolicy::DEFAULT,
+            Backends::with([Capability::Network]),
+        );
+        assert_eq!(
+            services.handle(DeviceRequest::Update {
+                url: "https://example.com/cobalt.tgz".to_owned(),
+                sha256: "a".repeat(64),
+            }),
+            DeviceResult::Denied(DenyReason::NotDeclared)
+        );
     }
 
     #[test]
