@@ -387,7 +387,7 @@ mod tests {
                     y: 80
                 },
                 Step {
-                    wait: Duration::from_millis(2000),
+                    wait: Duration::from_secs(2),
                     x: 400,
                     y: 1380
                 },
