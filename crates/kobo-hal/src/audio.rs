@@ -3,7 +3,7 @@
 //! Bluetooth connection ownership stays with the firmware's `btservice`.
 //! Once an audio device is connected it exposes the standard AOSP
 //! `audio_a2dp_hw` control and data sockets. The player sends CHECK_READY,
-//! START and STOP on the control socket and paced, 44.1 kHz stereo S16LE PCM
+//! START and STOP on the control socket and paced, 48 kHz stereo S16LE PCM
 //! on the data socket. No Nickel process or audio command-line utility is
 //! required.
 
@@ -25,10 +25,14 @@ const COMMAND_CHECK_READY: u8 = 0x01;
 const COMMAND_START: u8 = 0x02;
 const COMMAND_STOP: u8 = 0x03;
 const ACK_SUCCESS: u8 = 0x00;
-const TARGET_RATE: u64 = 44_100;
-const TARGET_RATE_I64: i64 = 44_100;
-const CHUNK_FRAMES: usize = 2_205;
-const LEAD_IN_FRAMES: usize = 22_050;
+/// What the firmware's Bluetooth encoder consumes. Found empirically on the
+/// Clara BW: a 44.1 kHz sine over the data socket stutters and plays sharp,
+/// the same tone generated at 48 kHz plays clean and true, so the encoder
+/// reads the stream as 48 kHz no matter what it is fed.
+const TARGET_RATE: u64 = 48_000;
+const TARGET_RATE_I64: i64 = 48_000;
+const CHUNK_FRAMES: usize = 2_400;
+const LEAD_IN_FRAMES: usize = 24_000;
 /// How much audio one chunk carries, and therefore the write cadence.
 const WRITE_PERIOD: Duration = Duration::from_millis(50);
 /// A schedule this far behind is a stall, not jitter, and is restarted
@@ -878,15 +882,15 @@ mod tests {
 
     #[test]
     fn resampling_preserves_channels_and_duration() {
-        let input = [100_i16, -100].repeat(22_050);
-        let output = resample_stereo(&input, 22_050).expect("resample");
-        assert_eq!(output.len(), 44_100 * 2);
+        let input = [100_i16, -100].repeat(24_000);
+        let output = resample_stereo(&input, 24_000).expect("resample");
+        assert_eq!(output.len(), 48_000 * 2);
         assert_eq!(&output[..2], &[100, -100]);
     }
 
     #[test]
     fn frames_are_reported_in_milliseconds_without_overflow() {
-        assert_eq!(frames_to_ms(44_100), 1_000);
+        assert_eq!(frames_to_ms(48_000), 1_000);
         assert_eq!(frames_to_ms(u64::MAX), u32::MAX);
     }
 
