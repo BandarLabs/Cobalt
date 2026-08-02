@@ -7,7 +7,7 @@ pub const EXA_ENDPOINT: &str = "https://api.exa.ai/search";
 pub const OPENAI_ENDPOINT: &str = "https://api.openai.com/v1/responses";
 pub const ELEVENLABS_ENDPOINT: &str = concat!(
     "https://api.elevenlabs.io/v1/text-to-speech/",
-    "JBFqnCBsd6RMkjVDRZzb?output_format=mp3_22050_32"
+    "JBFqnCBsd6RMkjVDRZzb?output_format=mp3_44100_128"
 );
 
 const MAX_RESEARCH_BYTES: usize = 180 * 1024;
