@@ -1,16 +1,23 @@
 //! Where the daemon keeps its identity, and how it is first made.
 //!
-//! Everything lives in `~/.config/kobo/sidekick`: a self-signed certificate
-//! and key from the `openssl` binary every Mac and Linux box carries, and a
-//! short pairing code. `init` also drops the certificate into
-//! `~/.config/kobo/trust`, where the host runtimes already look, so the
-//! simulator trusts the daemon with no further ceremony; the reader gets the
-//! same certificate over `kobo trust set sidekick --device IP`.
+//! Everything lives in `~/.config/kobo/sidekick`: a small certificate
+//! authority made once, a leaf certificate the daemon mints for itself from
+//! whatever addresses the machine has right now, and a short pairing code.
+//! All of it comes from the `openssl` binary every Mac and Linux box carries.
 //!
-//! The certificate names the machine's LAN address in an IP subject
-//! alternative name, because that is what the reader will dial and rustls
-//! verifies exactly what was dialled. A machine with more addresses than the
-//! one we can see gets them added with `--host`.
+//! The split matters. rustls verifies exactly the address that was dialled,
+//! so a certificate that names the machine's LAN address goes stale every
+//! time the router hands out a different one. The reader therefore trusts
+//! the authority, which names no address and never changes, and `run` mints
+//! a fresh leaf under it whenever the addresses have moved. A new IP costs a
+//! daemon restart and nothing else: no cable, no `kobo trust set`, no new
+//! pairing code.
+//!
+//! `init` also drops the authority into `~/.config/kobo/trust`, where the
+//! host runtimes already look, so the simulator trusts the daemon with no
+//! further ceremony; the reader gets the same file over
+//! `kobo trust set sidekick --device IP`, once. A machine with more
+//! addresses than the one we can see gets them added with `--host`.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -33,7 +40,8 @@ pub struct State {
     pub pairing: String,
 }
 
-/// Reads the state `init` wrote.
+/// Reads the state `init` wrote, minting a fresh leaf certificate first if
+/// the machine's addresses have changed since the last one was made.
 ///
 /// # Errors
 ///
@@ -49,14 +57,31 @@ pub fn load() -> Result<State, String> {
             )
         })
     };
+    // Older installs have a self-signed cert.pem and no authority. They need
+    // one `init` (and one re-trust on the reader); after that, never again.
+    read(CA_CERT)?;
+    refresh_leaf(&directory)?;
     Ok(State {
-        certificate: read("cert.pem")?,
-        key: read("key.pem")?,
+        certificate: read(LEAF_CERT)?,
+        key: read(LEAF_KEY)?,
         pairing: read("pairing")?.trim().to_owned(),
     })
 }
 
-/// Creates the daemon's identity: certificate, key, pairing code.
+const CA_CERT: &str = "ca-cert.pem";
+const CA_KEY: &str = "ca-key.pem";
+const LEAF_CERT: &str = "cert.pem";
+const LEAF_KEY: &str = "key.pem";
+/// Extra `--host` addresses, kept so `run` can mint leaves with them too.
+const HOSTS: &str = "hosts";
+/// What the current leaf names, so a change of address is noticed.
+const LEAF_HOSTS: &str = "leaf-hosts";
+
+/// Creates the daemon's identity: authority, leaf certificate, pairing code.
+///
+/// Made to be run again without ceremony: an existing authority and pairing
+/// code are kept, so nothing the reader already trusts or knows is thrown
+/// away just because the addresses changed.
 ///
 /// # Errors
 ///
@@ -66,10 +91,7 @@ pub fn init(extra_hosts: &[String]) -> Result<(), String> {
     let directory = state_directory()?;
     std::fs::create_dir_all(&directory)
         .map_err(|error| format!("create {}: {error}", directory.display()))?;
-    let mut hosts = vec!["127.0.0.1".to_owned()];
-    if let Some(lan) = lan_address() {
-        hosts.push(lan);
-    }
+    let mut extras = Vec::new();
     let mut extra = extra_hosts.iter();
     while let Some(flag) = extra.next() {
         if flag != "--host" {
@@ -77,25 +99,42 @@ pub fn init(extra_hosts: &[String]) -> Result<(), String> {
                 "unknown argument '{flag}'; expected --host ADDRESS"
             ));
         }
-        let address = extra.next().ok_or("--host needs an address")?;
-        hosts.push(address.clone());
+        extras.push(extra.next().ok_or("--host needs an address")?.clone());
     }
-    hosts.dedup();
-    generate_certificate(&directory, &hosts)?;
-    let pairing = pairing_code()?;
-    std::fs::write(directory.join("pairing"), &pairing)
-        .map_err(|error| format!("write pairing code: {error}"))?;
+    std::fs::write(directory.join(HOSTS), extras.join("\n"))
+        .map_err(|error| format!("write the extra hosts: {error}"))?;
+    let trusted_already = directory.join(CA_CERT).exists();
+    ensure_authority(&directory)?;
+    // A stale record forces a mint even when the addresses look unchanged,
+    // because a fresh authority makes every earlier leaf worthless.
+    if !trusted_already {
+        let _ = std::fs::remove_file(directory.join(LEAF_HOSTS));
+    }
+    refresh_leaf(&directory)?;
+    let pairing = match std::fs::read_to_string(directory.join("pairing")) {
+        Ok(code) if !code.trim().is_empty() => code.trim().to_owned(),
+        _ => {
+            let code = pairing_code()?;
+            std::fs::write(directory.join("pairing"), &code)
+                .map_err(|error| format!("write pairing code: {error}"))?;
+            code
+        }
+    };
     let trust = trust_directory()?;
     std::fs::create_dir_all(&trust)
         .map_err(|error| format!("create {}: {error}", trust.display()))?;
-    let certificate = std::fs::read_to_string(directory.join("cert.pem"))
-        .map_err(|error| format!("read the new certificate: {error}"))?;
-    std::fs::write(trust.join("sidekick.pem"), certificate)
+    let authority = std::fs::read_to_string(directory.join(CA_CERT))
+        .map_err(|error| format!("read the authority: {error}"))?;
+    std::fs::write(trust.join("sidekick.pem"), authority)
         .map_err(|error| format!("install the host trust root: {error}"))?;
-    let reachable = hosts.get(1).cloned().unwrap_or_else(|| hosts[0].clone());
+    let reachable = lan_address().unwrap_or_else(|| "127.0.0.1".to_owned());
     println!("Sidekick is initialised.\n");
     println!("  address       {reachable}:{READER_PORT}");
     println!("  pairing code  {pairing}\n");
+    if trusted_already {
+        println!("The authority and pairing code were kept, so a reader that");
+        println!("already trusts this daemon needs nothing done to it.\n");
+    }
     println!("Next:");
     println!("  1. kobo trust set sidekick --device READER_IP");
     println!("  2. kobo-sidekickd setup codex   (or claude), follow it");
@@ -104,8 +143,79 @@ pub fn init(extra_hosts: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// Asks `openssl` for a ten-year self-signed certificate naming `hosts`.
-fn generate_certificate(directory: &std::path::Path, hosts: &[String]) -> Result<(), String> {
+/// The addresses the leaf certificate must name right now: loopback, the
+/// LAN address, and whatever `init --host` was told about.
+fn wanted_hosts(directory: &std::path::Path) -> Vec<String> {
+    let mut hosts = vec!["127.0.0.1".to_owned()];
+    if let Some(lan) = lan_address() {
+        hosts.push(lan);
+    }
+    if let Ok(extras) = std::fs::read_to_string(directory.join(HOSTS)) {
+        for line in extras
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+        {
+            hosts.push(line.to_owned());
+        }
+    }
+    hosts.dedup();
+    hosts
+}
+
+/// Makes the authority if there is none. Never replaces one: the reader
+/// trusts it by fingerprint, and a new authority means a trip to the reader.
+fn ensure_authority(directory: &std::path::Path) -> Result<(), String> {
+    if directory.join(CA_CERT).exists() && directory.join(CA_KEY).exists() {
+        return Ok(());
+    }
+    let output = Command::new("openssl")
+        .args([
+            "req", "-x509", "-newkey", "rsa:2048", "-sha256", "-days", "3650", "-nodes",
+        ])
+        .arg("-keyout")
+        .arg(directory.join(CA_KEY))
+        .arg("-out")
+        .arg(directory.join(CA_CERT))
+        .args(["-subj", "/CN=kobo-sidekickd authority"])
+        .args(["-addext", "basicConstraints=critical,CA:TRUE"])
+        .args(["-addext", "keyUsage=critical,keyCertSign"])
+        .output()
+        .map_err(|error| format!("run openssl: {error}; is it installed?"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "openssl refused to make the authority:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(())
+}
+
+/// Mints a leaf for the machine's current addresses, unless the one on disk
+/// already names exactly those.
+fn refresh_leaf(directory: &std::path::Path) -> Result<(), String> {
+    let hosts = wanted_hosts(directory);
+    let record = hosts.join("\n");
+    let current = std::fs::read_to_string(directory.join(LEAF_HOSTS)).unwrap_or_default();
+    if current == record && directory.join(LEAF_CERT).exists() {
+        return Ok(());
+    }
+    mint_leaf(directory, &hosts)?;
+    std::fs::write(directory.join(LEAF_HOSTS), record)
+        .map_err(|error| format!("record the leaf's addresses: {error}"))?;
+    if hosts.len() > 1 {
+        println!(
+            "sidekick: minted a certificate for {}",
+            hosts[1..].join(", ")
+        );
+    }
+    Ok(())
+}
+
+/// Asks `openssl` for a leaf naming `hosts`, signed by the authority. The
+/// written `cert.pem` carries the authority behind the leaf, so the server
+/// presents the whole chain.
+fn mint_leaf(directory: &std::path::Path, hosts: &[String]) -> Result<(), String> {
     let mut names = String::new();
     for host in hosts {
         if !names.is_empty() {
@@ -120,25 +230,68 @@ fn generate_certificate(directory: &std::path::Path, hosts: &[String]) -> Result
         names.push(':');
         names.push_str(host);
     }
+    let request = directory.join("leaf.csr");
+    let extensions = directory.join("leaf.ext");
+    std::fs::write(
+        &extensions,
+        format!(
+            "subjectAltName={names}\n\
+             basicConstraints=CA:FALSE\n\
+             keyUsage=digitalSignature,keyEncipherment\n\
+             extendedKeyUsage=serverAuth\n"
+        ),
+    )
+    .map_err(|error| format!("write the leaf extensions: {error}"))?;
     let output = Command::new("openssl")
-        .args([
-            "req", "-x509", "-newkey", "rsa:2048", "-sha256", "-days", "3650", "-nodes",
-        ])
+        .args(["req", "-newkey", "rsa:2048", "-nodes"])
         .arg("-keyout")
-        .arg(directory.join("key.pem"))
+        .arg(directory.join(LEAF_KEY))
         .arg("-out")
-        .arg(directory.join("cert.pem"))
+        .arg(&request)
         .args(["-subj", "/CN=kobo-sidekickd"])
-        .arg("-addext")
-        .arg(format!("subjectAltName={names}"))
         .output()
         .map_err(|error| format!("run openssl: {error}; is it installed?"))?;
     if !output.status.success() {
         return Err(format!(
-            "openssl refused to make the certificate:\n{}",
+            "openssl refused to make the leaf request:\n{}",
             String::from_utf8_lossy(&output.stderr)
         ));
     }
+    let output = Command::new("openssl")
+        .args([
+            "x509",
+            "-req",
+            "-sha256",
+            "-days",
+            "3650",
+            "-CAcreateserial",
+        ])
+        .arg("-in")
+        .arg(&request)
+        .arg("-CA")
+        .arg(directory.join(CA_CERT))
+        .arg("-CAkey")
+        .arg(directory.join(CA_KEY))
+        .arg("-extfile")
+        .arg(&extensions)
+        .arg("-out")
+        .arg(directory.join(LEAF_CERT))
+        .output()
+        .map_err(|error| format!("run openssl: {error}; is it installed?"))?;
+    let _ = std::fs::remove_file(&request);
+    let _ = std::fs::remove_file(&extensions);
+    if !output.status.success() {
+        return Err(format!(
+            "openssl refused to sign the leaf:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let authority = std::fs::read_to_string(directory.join(CA_CERT))
+        .map_err(|error| format!("read the authority: {error}"))?;
+    let leaf = std::fs::read_to_string(directory.join(LEAF_CERT))
+        .map_err(|error| format!("read the new leaf: {error}"))?;
+    std::fs::write(directory.join(LEAF_CERT), format!("{leaf}{authority}"))
+        .map_err(|error| format!("write the chain: {error}"))?;
     Ok(())
 }
 

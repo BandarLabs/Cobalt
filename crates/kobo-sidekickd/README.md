@@ -45,5 +45,4 @@ Deliberately different, because their trust is different:
   demand the pairing code.
 
 The TLS server side lives in `kobo-net::serve`, beside the client it was
-built to talk to, because every crates.io dependency in this workspace lives
-in that one crate.
+built to talk to, so the workspace's network dependencies stay in one crate.

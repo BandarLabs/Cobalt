@@ -15,9 +15,9 @@
 //!
 //! Two listeners, deliberately different: hooks talk plaintext on loopback,
 //! because they are on the same machine; the reader talks TLS on the LAN,
-//! verified against the self-signed root that `init` generates and the owner
-//! installs with `kobo trust set`. A pairing code rides along as a token so
-//! a neighbour on the network cannot answer for you.
+//! verified against the authority that `init` generates and the owner
+//! installs once with `kobo trust set`. A pairing code rides along as a
+//! token so a neighbour on the network cannot answer for you.
 
 mod agents;
 mod board;
