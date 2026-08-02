@@ -30,7 +30,14 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// have read as the next row's action.
 pub const VERSION: u8 = 5;
 pub const HEADER_LEN: usize = 14;
-pub const MAX_FRAME_LEN: usize = 1_048_576;
+/// The largest single frame either side will read.
+///
+/// Was one megabyte until narrated audio began arriving as task replies: a
+/// minute of 128 kbps MP3 is about a megabyte on its own, and a frame budget
+/// the same size as the payload it carries leaves no room for the envelope.
+/// Eight megabytes bounds a runaway peer just as well and costs nothing when
+/// frames stay small, which every frame except an audio reply does.
+pub const MAX_FRAME_LEN: usize = 8 * 1_048_576;
 /// The largest decoded picture accepted from one application.
 ///
 /// Four Clara panels is the same bound used by `kobo-image`: enough headroom
@@ -63,9 +70,14 @@ pub const MAX_URL_LEN: usize = 2048;
 
 /// The most a single task may hand back in one frame.
 ///
-/// A task that needs more than this is downloading a file, which belongs on
-/// disk rather than in memory on a device with this much of it.
-pub const MAX_TASK_BYTES_U32: u32 = 512 * 1024;
+/// Half a megabyte, until it met a minute of narrated speech: at 128 kbps
+/// that is a megabyte of MP3, delivered as one task reply, and the reply was
+/// refused as too large on the very device it was made for. Four megabytes
+/// carries the longest part a narration is split into with room to spare,
+/// while still refusing a provider that will not stop talking. Anything
+/// genuinely bigger than this is a file download, which belongs on disk
+/// rather than in memory on a device with this much of it.
+pub const MAX_TASK_BYTES_U32: u32 = 4 * 1024 * 1024;
 
 /// The same limit as [`MAX_TASK_BYTES_U32`], in the width Rust indexes with.
 /// Declaring the wire width first means the conversion only ever widens.
@@ -5408,7 +5420,10 @@ mod tests {
 
     #[test]
     fn encoder_preflights_payload_limit() {
-        let nodes = (0..65)
+        // The full node budget with the longest string each node may carry:
+        // 512 × 16 KiB is the frame limit exactly, and the envelope around
+        // the strings takes it over.
+        let nodes = (0..512)
             .map(|id| Node::Text {
                 id: NodeId(id),
                 text: "x".repeat(MAX_STRING_LEN),
