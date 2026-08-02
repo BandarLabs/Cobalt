@@ -211,7 +211,7 @@ pub fn credential_allowed(app: &str, credential: &Credential, url: &str) -> bool
         return match (&*credential.secret, &credential.header) {
             ("exa", SecretHeader::Named(header)) => {
                 header.eq_ignore_ascii_case("x-api-key")
-                    && url == "https://api.exa.ai/search"
+                    && url == "https://api.exa.ai/agent/runs"
                     && has_origin(url, "api.exa.ai", 443)
             }
             ("openai", SecretHeader::Bearer) => {
@@ -1171,7 +1171,7 @@ mod tests {
         let requests = [
             (
                 Credential::in_header("exa", "x-api-key"),
-                "https://api.exa.ai/search".to_owned(),
+                "https://api.exa.ai/agent/runs".to_owned(),
             ),
             (
                 Credential::bearer("openai"),

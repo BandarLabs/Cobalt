@@ -3,7 +3,7 @@
 use kobo_json::{parse, ObjectBuilder, Value};
 use kobo_sdk::{Credential, Header, Task};
 
-pub const EXA_ENDPOINT: &str = "https://api.exa.ai/search";
+pub const EXA_ENDPOINT: &str = "https://api.exa.ai/agent/runs";
 pub const OPENAI_ENDPOINT: &str = "https://api.openai.com/v1/responses";
 
 /// The languages a book can be narrated in, each with a voice whose accent is
@@ -140,25 +140,30 @@ pub fn research(topic: &str) -> Task {
         .set("required", vec!["research", "sources"])
         .set("additionalProperties", false)
         .build();
+    let query = format!(
+        "Research this topic for a factual, engaging general-audience audiobook: {topic}. Prefer primary and authoritative sources, represent uncertainty, include dates where relevant, and do not copy long passages."
+    );
     let body = ObjectBuilder::new()
-        .set("query", topic)
-        .set("type", "deep")
-        .set("numResults", 12_u32)
-        .set("moderation", true)
-        .set(
-            "systemPrompt",
-            "Research this topic for a factual, engaging general-audience audiobook. Prefer primary and authoritative sources, represent uncertainty, include dates where relevant, and do not copy long passages.",
-        )
+        .set("query", query.as_str())
+        .set("effort", "high")
         .set("outputSchema", schema)
         .build()
         .to_json();
+    // An agent run takes minutes, so the answer is asked for as a stream of
+    // events. The transport reads the stream to its end and hands the whole
+    // transcript over; the terminal event carries the completed run. Without
+    // the stream the endpoint answers immediately with a run id to poll, and
+    // polling is a second URL, a credential rule per poll, and a clock, all
+    // to reproduce what the socket already does by staying open. The events
+    // arrive seconds apart with keep-alives between, so the read timeout
+    // never comes near.
     Task::Post {
         url: EXA_ENDPOINT.to_owned(),
         body,
         content_type: "application/json".to_owned(),
         credential: Some(Credential::in_header("exa", "x-api-key")),
-        headers: Vec::new(),
-        max_bytes: 256 * 1024,
+        headers: vec![Header::new("accept", "text/event-stream")],
+        max_bytes: 512 * 1024,
     }
 }
 
@@ -230,7 +235,7 @@ pub fn write_book(
         content_type: "application/json".to_owned(),
         credential: Some(Credential::bearer("openai")),
         headers: Vec::new(),
-        max_bytes: 128 * 1024,
+        max_bytes: 512 * 1024,
     })
 }
 
@@ -254,7 +259,9 @@ pub fn speech(text: &str, language: Language) -> Task {
         content_type: "application/json".to_owned(),
         credential: Some(Credential::in_header("elevenlabs", "xi-api-key")),
         headers: vec![Header::new("accept", "audio/mpeg")],
-        max_bytes: 512 * 1024,
+        // A minute of 128 kbps MP3 is a megabyte; a slow, expressive
+        // narrator can take a thousand-byte part well past that.
+        max_bytes: 4 * 1024 * 1024,
     }
 }
 
@@ -302,15 +309,12 @@ pub fn narration_parts(book: &Book) -> Vec<String> {
 fn research_context(response: &[u8]) -> Result<String, &'static str> {
     let text = std::str::from_utf8(response)
         .map_err(|_| "The research came back in a form this reader cannot read.")?;
-    let parsed = parse(text).map_err(|_| "The research came back malformed.")?;
-    let output = parsed
+    let run = completed_run(text)?;
+    let structured = run
         .get("output")
+        .and_then(|output| output.get("structured"))
         .ok_or("No sources were found for that topic.")?;
-    let mut context = output.to_json();
-    if let Some(grounding) = parsed.get("results") {
-        context.push_str("\nSearch results: ");
-        grounding.write_json(&mut context);
-    }
+    let mut context = structured.to_json();
     if context.len() > MAX_RESEARCH_BYTES {
         let mut end = MAX_RESEARCH_BYTES;
         while !context.is_char_boundary(end) {
@@ -319,6 +323,40 @@ fn research_context(response: &[u8]) -> Result<String, &'static str> {
         context.truncate(end);
     }
     Ok(context)
+}
+
+/// Finds the completed run in an agent event stream.
+///
+/// The transcript is server-sent events: frames of `event:` and `data:`
+/// lines separated by blank lines, with `:` comment lines as keep-alives.
+/// Progress events narrate the run as it goes; only the terminal frame
+/// matters here, and its `data` payload is the finished run itself. A frame's
+/// data may span several `data:` lines, which the format defines as one
+/// payload joined by newlines.
+fn completed_run(transcript: &str) -> Result<Value, &'static str> {
+    let mut event = "";
+    let mut data = String::new();
+    let mut completed = None;
+    for line in transcript.lines().chain(std::iter::once("")) {
+        if line.is_empty() {
+            match event {
+                "agent_run.completed" => completed = Some(std::mem::take(&mut data)),
+                "agent_run.failed" => return Err("The research service gave up on that topic."),
+                _ => {}
+            }
+            event = "";
+            data.clear();
+        } else if let Some(name) = line.strip_prefix("event:") {
+            event = name.trim();
+        } else if let Some(payload) = line.strip_prefix("data:") {
+            if !data.is_empty() {
+                data.push('\n');
+            }
+            data.push_str(payload.strip_prefix(' ').unwrap_or(payload));
+        }
+    }
+    let completed = completed.ok_or("The research never finished.")?;
+    parse(&completed).map_err(|_| "The research came back malformed.")
 }
 
 /// Finds the written script in a Responses envelope.
@@ -403,17 +441,43 @@ mod tests {
         (url, body, credential)
     }
 
+    /// The stream the agent endpoint answers with: progress frames, a
+    /// keep-alive comment, and a terminal frame whose data is the whole
+    /// completed run, split across two `data:` lines the way the format
+    /// allows.
+    fn sse_transcript() -> String {
+        [
+            "id: 1",
+            "event: agent_run.created",
+            r#"data: {"id":"agent_run_1","status":"queued"}"#,
+            "",
+            "id: 2",
+            "event: agent_run.started",
+            r#"data: {"id":"agent_run_1","status":"running"}"#,
+            "",
+            ": keep-alive",
+            "",
+            "id: 3",
+            "event: agent_run.completed",
+            r#"data: {"id":"agent_run_1","status":"completed","output":{"text":"an answer","structured":"#,
+            r#"data: {"research":"brief","sources":[{"title":"A source","url":"https://example.org"}]}}}"#,
+            "",
+        ]
+        .join("\n")
+    }
+
     #[test]
     fn provider_requests_use_the_expected_endpoints_shapes_and_secret_names() {
         let (url, body, credential) = post(research("volcanoes"));
         assert_eq!(url, EXA_ENDPOINT);
-        assert!(body.contains("\"type\":\"deep\""));
+        assert!(body.contains("\"effort\":\"high\""));
+        assert!(body.contains("volcanoes"));
         assert_eq!(&*credential.secret, "exa");
         assert!(matches!(credential.header, SecretHeader::Named(ref name) if name == "x-api-key"));
 
-        let exa = br#"{"output":{"research":"brief","sources":[]},"results":[]}"#;
+        let exa = sse_transcript();
         let (url, body, credential) =
-            post(write_book("volcanoes", Language::Hindi, exa).expect("research"));
+            post(write_book("volcanoes", Language::Hindi, exa.as_bytes()).expect("research"));
         assert_eq!(url, OPENAI_ENDPOINT);
         assert!(body.contains("\"model\":\"gpt-5.6-sol\""));
         assert!(body.contains("\"type\":\"json_schema\""));
@@ -429,6 +493,49 @@ mod tests {
         assert!(body.contains("\"model_id\":\"eleven_multilingual_v2\""));
         assert_eq!(&*credential.secret, "elevenlabs");
         assert!(matches!(credential.header, SecretHeader::Named(ref name) if name == "xi-api-key"));
+    }
+
+    /// The agent endpoint without a stream answers instantly with an id to
+    /// poll; the header is what asks it to stay on the line instead.
+    #[test]
+    fn research_asks_for_the_event_stream() {
+        let Task::Post { headers, .. } = research("volcanoes") else {
+            panic!("research must be a POST");
+        };
+        assert!(headers
+            .iter()
+            .any(|header| header.name == "accept" && header.value == "text/event-stream"));
+    }
+
+    #[test]
+    fn the_completed_run_in_a_transcript_becomes_the_writing_context() {
+        let task = write_book("volcanoes", Language::English, sse_transcript().as_bytes())
+            .expect("a completed run carries research");
+        let (_, body, _) = post(task);
+        assert!(body.contains("brief"));
+        assert!(
+            !body.contains("keep-alive"),
+            "progress frames are not research"
+        );
+    }
+
+    #[test]
+    fn a_failed_run_is_reported_not_written_from() {
+        let transcript = "event: agent_run.failed\ndata: {\"id\":\"agent_run_1\",\"status\":\"failed\",\"error\":{\"code\":\"x\"}}\n\n";
+        assert_eq!(
+            write_book("volcanoes", Language::English, transcript.as_bytes()).unwrap_err(),
+            "The research service gave up on that topic."
+        );
+    }
+
+    #[test]
+    fn a_stream_that_ends_early_is_not_mistaken_for_research() {
+        let transcript =
+            "event: agent_run.started\ndata: {\"id\":\"agent_run_1\",\"status\":\"running\"}\n\n";
+        assert_eq!(
+            write_book("volcanoes", Language::English, transcript.as_bytes()).unwrap_err(),
+            "The research never finished."
+        );
     }
 
     /// Every offered language narrates with its own native voice, so two
