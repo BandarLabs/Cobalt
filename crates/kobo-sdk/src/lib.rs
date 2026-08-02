@@ -978,24 +978,22 @@ impl ScreenBuilder {
         N: AsRef<str>,
         L: Into<String>,
     {
-        let actions: Vec<(String, String)> = actions
+        let mut actions = actions
             .into_iter()
             .take(MAX_BAND_SLOTS)
-            .map(|(name, label)| (name.as_ref().to_owned(), label.into()))
-            .collect();
-        match actions.len() {
-            0 => self,
+            .map(|(name, label)| (name.as_ref().to_owned(), label.into()));
+        match (actions.next(), actions.next()) {
+            (None, _) => self,
             // One action side by side with nothing is a button, and going
             // through a band would only cost a node and read the same.
-            1 => {
-                let (name, label) = actions.into_iter().next().expect("one action");
-                self.button(name, label)
-            }
-            _ => self.band(
+            (Some((name, label)), None) => self.button(name, label),
+            (Some(first), Some(second)) => self.band(
                 BandAlign::Middle,
-                actions.into_iter().map(|(name, label)| {
-                    (SlotWidth::Fill, move |slot: Self| slot.button(name, label))
-                }),
+                [first, second].into_iter().chain(actions).map(
+                    |(name, label): (String, String)| {
+                        (SlotWidth::Fill, move |slot: Self| slot.button(name, label))
+                    },
+                ),
             ),
         }
     }
@@ -3752,6 +3750,32 @@ impl Device<'_> {
         });
     }
 
+    /// Replaces the installed Cobalt with a published release archive.
+    ///
+    /// The runtime downloads `url`, refuses the bytes unless their SHA-256
+    /// digest is exactly `sha256`, and swaps the new install into place while
+    /// keeping the old one beside it. The reply is [`DeviceResult::Done`] or
+    /// a [`DeviceResult::Failed`] naming what went wrong.
+    ///
+    /// Returns `false` without queueing for a malformed URL or a string that
+    /// is not a sixty-four character lowercase hex digest.
+    pub fn update(&mut self, url: impl Into<String>, sha256: impl Into<String>) -> bool {
+        let url = url.into();
+        let sha256 = sha256.into();
+        if !url.starts_with("https://") || url.len() > MAX_URL_LEN {
+            return false;
+        }
+        if sha256.len() != 64
+            || !sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return false;
+        }
+        self.request(DeviceRequest::Update { url, sha256 });
+        true
+    }
+
     fn bluetooth_address(
         &mut self,
         address: impl Into<String>,
@@ -4448,6 +4472,36 @@ impl Client {
 mod tests {
     use super::*;
     use std::thread;
+
+    #[test]
+    fn an_update_that_could_not_possibly_verify_is_refused_before_the_wire() {
+        struct Updater;
+        impl KoboApp for Updater {
+            fn on_start(&mut self, context: &mut Context) {
+                let good_digest = "a".repeat(64);
+                assert!(
+                    !context
+                        .device()
+                        .update("http://plain.example", &good_digest),
+                    "an update must not travel over plain HTTP"
+                );
+                assert!(
+                    !context.device().update("https://good.example", "DEADBEEF"),
+                    "a string that is not a digest can never match a download"
+                );
+                assert!(context
+                    .device()
+                    .update("https://good.example", &good_digest));
+            }
+            fn on_action(&mut self, _context: &mut Context, _action: ActionId) {}
+        }
+        let queued = AppRunner::new(Updater)
+            .start()
+            .into_iter()
+            .filter(|command| matches!(command, Command::Device(DeviceRequest::Update { .. })))
+            .count();
+        assert_eq!(queued, 1, "only the well-formed request may be queued");
+    }
 
     #[test]
     fn a_screen_identical_to_the_one_showing_is_not_sent_again() {

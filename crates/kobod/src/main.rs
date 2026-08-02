@@ -15,6 +15,7 @@ use std::process::ExitCode;
 mod blackbox;
 #[cfg(feature = "device-write")]
 mod device;
+mod update;
 
 fn main() -> ExitCode {
     let arguments = env::args().skip(1).collect::<Vec<_>>();

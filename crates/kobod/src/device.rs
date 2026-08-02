@@ -1649,6 +1649,21 @@ fn host_applications(
                                             },
                                         )
                                     }
+                                    // Blocks the message loop like a
+                                    // Bluetooth scan does. The application
+                                    // paints its progress screen before
+                                    // asking, and nothing else is served
+                                    // while the installation is replaced,
+                                    // which is exactly the quiet wanted.
+                                    kobo_protocol::DeviceRequest::Update { url, sha256 } => {
+                                        match crate::update::apply(url, sha256) {
+                                            Ok(()) => kobo_protocol::DeviceResult::Done,
+                                            Err(error) => {
+                                                trace(&format!("update refused: {error}"));
+                                                kobo_protocol::DeviceResult::Failed(error)
+                                            }
+                                        }
+                                    }
                                     _ => services.handle(request.clone()),
                                 }
                             };

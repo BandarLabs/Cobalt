@@ -880,6 +880,14 @@ pub enum DeviceRequest {
     StopAudio,
     /// Set software playback volume as a percentage.
     SetAudioVolume { percent: u8 },
+    /// Replace the installed Cobalt with a downloaded release archive.
+    ///
+    /// The runtime fetches `url`, refuses the bytes unless their SHA-256
+    /// digest is exactly `sha256`, unpacks them beside the install and swaps
+    /// the folders, keeping the old install for one step of rollback. The
+    /// root filesystem is never written, so the worst a bad archive can do
+    /// is fail to start; the reader itself cannot be harmed.
+    Update { url: String, sha256: String },
 }
 
 /// Everything the gauge publishes that is worth putting in front of a reader.
@@ -1109,6 +1117,8 @@ pub enum DeviceError {
     Unreachable = 4,
     InvalidInput = 5,
     Backend = 6,
+    /// Downloaded bytes did not match the digest they were promised under.
+    Integrity = 7,
 }
 
 impl DeviceError {
@@ -1121,6 +1131,7 @@ impl DeviceError {
             Self::Unreachable => "the device or network is unreachable",
             Self::InvalidInput => "the address or credentials are invalid",
             Self::Backend => "the system radio service failed",
+            Self::Integrity => "the download did not match its published digest",
         }
     }
 }
@@ -1142,6 +1153,7 @@ impl TryFrom<u8> for DeviceError {
             4 => Ok(Self::Unreachable),
             5 => Ok(Self::InvalidInput),
             6 => Ok(Self::Backend),
+            7 => Ok(Self::Integrity),
             _ => Err(ProtocolError::InvalidValue("device error")),
         }
     }
@@ -1915,8 +1927,29 @@ fn encode_device_request(
         DeviceRequest::SetAudioVolume { .. } => {
             return Err(ProtocolError::InvalidValue("audio volume"));
         }
+        DeviceRequest::Update { url, sha256 } => {
+            if !url.starts_with("https://") || url.len() > MAX_URL_LEN {
+                return Err(ProtocolError::InvalidValue("update url"));
+            }
+            if !is_hex_digest(sha256) {
+                return Err(ProtocolError::InvalidValue("update digest"));
+            }
+            output.push(31);
+            push_string(output, url)?;
+            push_string(output, sha256)?;
+        }
     }
     Ok(())
+}
+
+/// Sixty-four lowercase hex characters: the only shape a SHA-256 hex digest
+/// has. Checked at both ends of the wire, so a digest that cannot possibly
+/// match anything is refused before a download is spent on it.
+fn is_hex_digest(digest: &str) -> bool {
+    digest.len() == 64
+        && digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn fixed_device_request(output: &mut Vec<u8>, tag: u8, argument: u32) {
@@ -2124,8 +2157,23 @@ fn decode_device_request(reader: &mut Reader<'_>) -> Result<DeviceRequest, Proto
                 Err(ProtocolError::InvalidValue("audio volume"))
             }
         }
+        31 => decode_update(reader),
         _ => Err(ProtocolError::InvalidValue("device request")),
     }
+}
+
+/// Both fields are checked here as well as at the encoder, so a peer that
+/// skipped the encoder cannot hand the runtime an unverifiable job.
+fn decode_update(reader: &mut Reader<'_>) -> Result<DeviceRequest, ProtocolError> {
+    let url = reader.string()?;
+    if !url.starts_with("https://") || url.len() > MAX_URL_LEN {
+        return Err(ProtocolError::InvalidValue("update url"));
+    }
+    let sha256 = reader.string()?;
+    if !is_hex_digest(&sha256) {
+        return Err(ProtocolError::InvalidValue("update digest"));
+    }
+    Ok(DeviceRequest::Update { url, sha256 })
 }
 
 fn fixed_argument(reader: &mut Reader<'_>, expected: u32) -> Result<(), ProtocolError> {
@@ -4982,6 +5030,10 @@ mod tests {
             DeviceRequest::SetAudioVolume { percent: 65 },
             DeviceRequest::ReadBatteryDetail,
             DeviceRequest::ReadCover,
+            DeviceRequest::Update {
+                url: "https://github.com/o/r/releases/download/v0.1.1/KoboRoot.tgz".to_owned(),
+                sha256: "a".repeat(64),
+            },
         ];
         for request in requests {
             let frame = Frame {
@@ -4990,6 +5042,31 @@ mod tests {
             };
             let bytes = encode(&frame).expect("encode");
             assert_eq!(decode(&bytes).expect("decode"), frame);
+        }
+    }
+
+    #[test]
+    fn an_update_that_could_not_be_verified_is_refused_at_the_encoder() {
+        let cases = [
+            // Plaintext could be rewritten in flight, digest or no digest.
+            ("http://github.com/a.tgz".to_owned(), "a".repeat(64)),
+            // A digest of the wrong length matches nothing.
+            ("https://github.com/a.tgz".to_owned(), "a".repeat(63)),
+            // Uppercase is somebody's formatting, not this wire's.
+            (
+                "https://github.com/a.tgz".to_owned(),
+                format!("{}F", "a".repeat(63)),
+            ),
+        ];
+        for (url, sha256) in cases {
+            let frame = Frame {
+                request_id: 9,
+                message: Message::DeviceRequest(DeviceRequest::Update {
+                    url: url.clone(),
+                    sha256,
+                }),
+            };
+            assert!(encode(&frame).is_err(), "{url} was encoded");
         }
     }
 
@@ -5049,6 +5126,7 @@ mod tests {
                 volume: 70,
             },
             DeviceResult::Failed(DeviceError::Authentication),
+            DeviceResult::Failed(DeviceError::Integrity),
             DeviceResult::BatteryDetail(BatteryDetail {
                 percent: Some(28),
                 status: Some("Discharging".to_owned()),

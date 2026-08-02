@@ -1,5 +1,6 @@
 //! Radio settings implemented entirely through the public SDK.
 
+use kobo_json::Value;
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
     action_id, ActionId, BatteryDetail, BluetoothDevice, Context, DeviceRequest, DeviceResult,
@@ -11,6 +12,9 @@ use std::process::ExitCode;
 const BLUETOOTH: &str = "bluetooth";
 const WIFI: &str = "wifi";
 const BATTERY: &str = "battery";
+const UPDATE: &str = "update";
+const CHECK: &str = "check";
+const INSTALL: &str = "install";
 const TOGGLE: &str = "toggle";
 const RESCAN: &str = "rescan";
 const MORE: &str = "more";
@@ -24,6 +28,14 @@ const NETWORK_ACTIONS: [&str; 10] = [
     "wifi-9",
 ];
 
+/// The version this binary was compiled as, which is the version installed:
+/// the binaries and the installer travel together.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Where releases are published.
+const RELEASES: &str = "https://api.github.com/repos/BandarLabs/Cobalt/releases/latest";
+/// The device profile this build is packaged for, as release assets name it.
+const DEVICE: &str = "ClaraBW";
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum View {
     #[default]
@@ -32,6 +44,7 @@ enum View {
     Wifi,
     WifiPassword,
     Battery,
+    Update,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -61,6 +74,37 @@ enum Pending {
     BluetoothRefresh,
     WifiRefresh,
     ConnectAfterPair(String),
+}
+
+/// Where the software update stands. One journey, told left to right:
+/// nothing asked, asking GitHub, reading the digest file, ready to install,
+/// installing, installed, or stopped with a reason.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+enum UpdateFlow {
+    #[default]
+    Idle,
+    Checking,
+    UpToDate {
+        latest: String,
+    },
+    /// The release is newer; its digest file is being fetched so the
+    /// download can be verified before it is installed.
+    Digest {
+        version: String,
+        url: String,
+    },
+    Ready {
+        version: String,
+        url: String,
+        sha256: String,
+    },
+    Installing {
+        version: String,
+    },
+    Installed {
+        version: String,
+    },
+    Failed(String),
 }
 
 /// Which row a failure belongs to.
@@ -117,6 +161,8 @@ struct Settings {
     selected_ssid: Option<String>,
     password: Keyboard,
     battery: Option<BatteryDetail>,
+    update: UpdateFlow,
+    update_task: Option<TaskId>,
     pending: Option<Pending>,
     delayed: Option<TaskId>,
     trouble: Option<(Topic, String)>,
@@ -131,6 +177,7 @@ impl Settings {
             View::Wifi => self.wifi(),
             View::WifiPassword => self.wifi_password(),
             View::Battery => self.battery(),
+            View::Update => self.update(),
         };
         context.set_screen(screen);
     }
@@ -191,12 +238,83 @@ impl Settings {
                 (WIFI, "Wi-Fi", wifi, RowLead::from(Glyph::Wifi)),
             ])
             .section("Device")
-            .rows([(
-                BATTERY,
-                "Battery",
-                self.battery_summary(),
-                RowLead::from(Glyph::Battery),
-            )]);
+            .rows([
+                (
+                    BATTERY,
+                    "Battery",
+                    self.battery_summary(),
+                    RowLead::from(Glyph::Battery),
+                ),
+                (
+                    UPDATE,
+                    "Software update",
+                    self.update_summary(),
+                    RowLead::from(Glyph::Download),
+                ),
+            ])
+            // The installed build's own version, baked in at compile time.
+            // The binaries and the installer travel together, so what this
+            // binary was compiled as is what is installed.
+            .section_with_value("Cobalt", VERSION);
+        screen.build()
+    }
+
+    /// One line for the home row: where the update journey stands, or an
+    /// invitation to start it.
+    fn update_summary(&self) -> String {
+        match &self.update {
+            UpdateFlow::Idle => format!("Cobalt {VERSION}"),
+            UpdateFlow::Checking | UpdateFlow::Digest { .. } => "Checking".to_owned(),
+            UpdateFlow::UpToDate { .. } => "Up to date".to_owned(),
+            UpdateFlow::Ready { version, .. } => format!("{version} available"),
+            UpdateFlow::Installing { .. } => "Installing".to_owned(),
+            UpdateFlow::Installed { version } => format!("Updated to {version}"),
+            UpdateFlow::Failed(_) => "Update failed".to_owned(),
+        }
+    }
+
+    fn update(&self) -> Screen {
+        let mut screen = ScreenBuilder::new("settings-update")
+            .top_bar("Software update")
+            .owns_back(true)
+            .section_with_value("Installed", VERSION);
+        match &self.update {
+            UpdateFlow::Idle => {
+                screen = screen
+                    .text("Checking asks GitHub for the newest published release. Nothing is downloaded until you choose to install it.")
+                    .button(CHECK, "Check for updates");
+            }
+            UpdateFlow::Checking | UpdateFlow::Digest { .. } => {
+                screen = screen.text("Checking for the newest release.");
+            }
+            UpdateFlow::UpToDate { latest } => {
+                screen = screen
+                    .text(format!("{latest} is the newest published release, and it is what this reader is running."))
+                    .button(CHECK, "Check again");
+            }
+            UpdateFlow::Ready { version, .. } => {
+                screen = screen
+                    .text(
+                        "The download is checked against its published digest before anything is replaced, and the release you are running now is kept for one step back.",
+                    )
+                    .button(INSTALL, format!("Update to {version}"));
+            }
+            UpdateFlow::Installing { version } => {
+                screen = screen.text(format!(
+                    "Installing {version}. Keep the reader awake; this screen will change when it is done."
+                ));
+            }
+            UpdateFlow::Installed { version } => {
+                screen = screen.text(format!(
+                    "Updated to {version}. Close Cobalt and open it again from the menu to run the new release."
+                ));
+            }
+            UpdateFlow::Failed(reason) => {
+                screen = screen
+                    .banner(kobo_sdk::BannerLevel::Attention, reason.clone())
+                    .button(CHECK, "Try again");
+            }
+        }
         screen.build()
     }
 
@@ -471,6 +589,83 @@ impl Settings {
         context.device().read_battery_detail();
     }
 
+    /// Asks GitHub what the newest published release is. Nothing is
+    /// downloaded beyond the release description until the reader chooses to
+    /// install.
+    fn check_for_update(&mut self, context: &mut Context) {
+        self.update = UpdateFlow::Checking;
+        self.update_task = context.spawn(Task::Fetch {
+            url: RELEASES.to_owned(),
+            offset: 0,
+            max_bytes: 256 * 1024,
+        });
+        if self.update_task.is_none() {
+            self.update = UpdateFlow::Failed("This build was refused the network.".to_owned());
+        }
+    }
+
+    fn install_update(&mut self, context: &mut Context) {
+        let UpdateFlow::Ready {
+            version,
+            url,
+            sha256,
+        } = self.update.clone()
+        else {
+            return;
+        };
+        // The progress screen is queued ahead of the request, so the panel
+        // shows it while the runtime blocks on the download and the swap.
+        self.update = UpdateFlow::Installing { version };
+        self.show(context);
+        context.device().update(url, sha256);
+    }
+
+    /// Takes the reply to whichever update fetch was in flight: the release
+    /// description first, then the digest file that lets the download be
+    /// verified.
+    fn took_update_reply(&mut self, context: &mut Context, bytes: &[u8]) {
+        let body = String::from_utf8_lossy(bytes);
+        match self.update.clone() {
+            UpdateFlow::Checking => match latest_release(&body) {
+                Err(reason) => self.update = UpdateFlow::Failed(reason),
+                Ok(release) if release.newer_than(VERSION) => {
+                    self.update_task = context.spawn(Task::Fetch {
+                        url: release.digest,
+                        offset: 0,
+                        max_bytes: 16 * 1024,
+                    });
+                    self.update = if self.update_task.is_none() {
+                        UpdateFlow::Failed("This build was refused the network.".to_owned())
+                    } else {
+                        UpdateFlow::Digest {
+                            version: release.version,
+                            url: release.archive,
+                        }
+                    };
+                }
+                Ok(release) => {
+                    self.update = UpdateFlow::UpToDate {
+                        latest: release.version,
+                    };
+                }
+            },
+            UpdateFlow::Digest { version, url } => {
+                self.update = match digest_for(&body, &archive_name(&version)) {
+                    Some(sha256) => UpdateFlow::Ready {
+                        version,
+                        url,
+                        sha256,
+                    },
+                    None => UpdateFlow::Failed(
+                        "The release does not publish a digest for this reader's download."
+                            .to_owned(),
+                    ),
+                };
+            }
+            _ => {}
+        }
+    }
+
     fn delay_refresh(&mut self, context: &mut Context, pending: Pending) {
         self.pending = Some(pending);
         self.delayed = context.spawn(Task::Sleep { seconds: 3 });
@@ -500,7 +695,7 @@ impl Settings {
         let (page, pages) = match self.view {
             View::Bluetooth => (&mut self.bluetooth_page, page_count(self.devices.len())),
             View::Wifi => (&mut self.wifi_page, page_count(self.networks.len())),
-            View::Home | View::WifiPassword | View::Battery => return,
+            View::Home | View::WifiPassword | View::Battery | View::Update => return,
         };
         *page = if forward {
             (*page + 1).min(pages - 1)
@@ -595,13 +790,21 @@ impl KoboApp for Settings {
             self.view = View::Battery;
             context.device().read_battery_detail();
             self.show(context);
+        } else if action == action_id(UPDATE) {
+            self.view = View::Update;
+            self.show(context);
+        } else if action == action_id(CHECK) {
+            self.check_for_update(context);
+            self.show(context);
+        } else if action == action_id(INSTALL) {
+            self.install_update(context);
         } else if action == action_id(TOGGLE) {
             match self.view {
                 View::Bluetooth => context
                     .device()
                     .set_bluetooth(!self.bluetooth_state.enabled()),
                 View::Wifi => context.device().set_wifi(!self.wifi_state.enabled()),
-                View::Home | View::WifiPassword | View::Battery => {}
+                View::Home | View::WifiPassword | View::Battery | View::Update => {}
             }
         } else if action == action_id(RESCAN) {
             match self.view {
@@ -616,7 +819,7 @@ impl KoboApp for Settings {
                     self.delay_refresh(context, Pending::WifiRefresh);
                 }
                 View::Battery => context.device().read_battery_detail(),
-                View::Home | View::WifiPassword => {}
+                View::Home | View::WifiPassword | View::Update => {}
             }
             self.show(context);
         } else if action == action_id(MORE) {
@@ -689,12 +892,16 @@ impl KoboApp for Settings {
             // is not one of the three rows, there is nowhere honest to show it,
             // so it is dropped rather than shown under an unrelated heading.
             DeviceResult::Failed(error) => {
-                if let Some(topic) = Topic::of(&request) {
+                if matches!(request, DeviceRequest::Update { .. }) {
+                    self.update = UpdateFlow::Failed(error.to_string());
+                } else if let Some(topic) = Topic::of(&request) {
                     self.fail(topic, error.to_string());
                 }
             }
             DeviceResult::Denied(reason) => {
-                if let Some(topic) = Topic::of(&request) {
+                if matches!(request, DeviceRequest::Update { .. }) {
+                    self.update = UpdateFlow::Failed(reason.to_string());
+                } else if let Some(topic) = Topic::of(&request) {
                     self.fail(topic, reason.to_string());
                 }
             }
@@ -711,6 +918,11 @@ impl KoboApp for Settings {
                 | DeviceRequest::ScanWifi
                 | DeviceRequest::JoinWifi { .. }
                 | DeviceRequest::DisconnectWifi => context.device().read_wifi(),
+                DeviceRequest::Update { .. } => {
+                    if let UpdateFlow::Installing { version } = self.update.clone() {
+                        self.update = UpdateFlow::Installed { version };
+                    }
+                }
                 _ => {}
             },
             DeviceResult::Granted { .. }
@@ -730,6 +942,16 @@ impl KoboApp for Settings {
                 self.scanning = true;
                 context.device().scan_wifi();
             }
+            return;
+        }
+        if self.update_task == Some(task) {
+            self.update_task = None;
+            match outcome {
+                TaskOutcome::Completed(bytes) => self.took_update_reply(context, &bytes),
+                TaskOutcome::Failed(error) => self.update = UpdateFlow::Failed(error.to_string()),
+                TaskOutcome::Cancelled => self.update = UpdateFlow::Idle,
+            }
+            self.show(context);
             return;
         }
         if self.delayed != Some(task) {
@@ -774,6 +996,88 @@ fn paging(page: usize, pages: usize) -> Vec<(&'static str, &'static str, Glyph)>
 
 fn page_count(items: usize) -> usize {
     items.div_ceil(PAGE_SIZE).max(1)
+}
+
+/// The newest published release, as its assets name this device's download.
+#[derive(Debug)]
+struct Release {
+    version: String,
+    /// Where the installable archive is.
+    archive: String,
+    /// Where the digest file that vouches for it is.
+    digest: String,
+}
+
+impl Release {
+    /// Strictly newer, so the same version and anything unparseable both
+    /// answer no and nothing is offered.
+    fn newer_than(&self, installed: &str) -> bool {
+        match (numbers(&self.version), numbers(installed)) {
+            (Some(latest), Some(installed)) => latest > installed,
+            _ => false,
+        }
+    }
+}
+
+fn numbers(version: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = version.split('.').map(str::parse::<u64>);
+    match (parts.next(), parts.next(), parts.next(), parts.next()) {
+        (Some(Ok(major)), Some(Ok(minor)), Some(Ok(patch)), None) => Some((major, minor, patch)),
+        _ => None,
+    }
+}
+
+fn archive_name(version: &str) -> String {
+    format!("cobalt-{version}-{DEVICE}-KoboRoot.tgz")
+}
+
+/// Reads the GitHub "latest release" reply down to the two URLs this device
+/// needs. The failure strings face the reader, so they say what is missing
+/// rather than where in the JSON it was not.
+fn latest_release(body: &str) -> Result<Release, String> {
+    let value = kobo_json::parse(body)
+        .map_err(|_| "GitHub sent something that is not a release.".to_owned())?;
+    let tag = value
+        .get("tag_name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "The newest release does not name a version.".to_owned())?;
+    let version = tag.trim_start_matches('v').to_owned();
+    let empty = [];
+    let assets = value
+        .get("assets")
+        .and_then(Value::as_array)
+        .unwrap_or(&empty);
+    let url_of = |name: &str| {
+        assets
+            .iter()
+            .find(|asset| asset.get("name").and_then(Value::as_str) == Some(name))
+            .and_then(|asset| asset.get("browser_download_url"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    };
+    let archive = url_of(&archive_name(&version))
+        .ok_or_else(|| "The newest release has no download for this reader.".to_owned())?;
+    let digest = url_of(&format!("cobalt-{version}-{DEVICE}.sha256"))
+        .ok_or_else(|| "The newest release publishes no digest to verify against.".to_owned())?;
+    Ok(Release {
+        version,
+        archive,
+        digest,
+    })
+}
+
+/// Finds the digest vouching for `asset` in a `sha256sum` style listing:
+/// sixty-four hex characters, whitespace, a file name per line.
+fn digest_for(listing: &str, asset: &str) -> Option<String> {
+    listing.lines().find_map(|line| {
+        let (digest, name) = line.split_once(' ')?;
+        let named = name.trim_start().trim_start_matches('*') == asset;
+        let plausible = digest.len() == 64
+            && digest
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+        (named && plausible).then(|| digest.to_owned())
+    })
 }
 
 /// Hours and minutes, because "412 minutes" is arithmetic a reader should not
@@ -1072,5 +1376,138 @@ mod tests {
             Some(super::Topic::Bluetooth)
         );
         assert_eq!(super::Topic::of(&DeviceRequest::ReadFrontlight), None);
+    }
+
+    fn release_json(version: &str, with_digest: bool) -> String {
+        let archive = format!(
+            r#"{{"name":"cobalt-{version}-ClaraBW-KoboRoot.tgz","browser_download_url":"https://example.test/{version}/KoboRoot.tgz"}}"#
+        );
+        let digest = if with_digest {
+            format!(
+                r#",{{"name":"cobalt-{version}-ClaraBW.sha256","browser_download_url":"https://example.test/{version}/checksums"}}"#
+            )
+        } else {
+            String::new()
+        };
+        format!(r#"{{"tag_name":"v{version}","assets":[{archive}{digest}]}}"#)
+    }
+
+    #[test]
+    fn a_release_is_read_down_to_the_two_urls_this_reader_needs() {
+        let release = super::latest_release(&release_json("9.9.9", true)).expect("a full release");
+        assert_eq!(release.version, "9.9.9");
+        assert_eq!(release.archive, "https://example.test/9.9.9/KoboRoot.tgz");
+        assert_eq!(release.digest, "https://example.test/9.9.9/checksums");
+        assert!(release.newer_than(super::VERSION));
+    }
+
+    #[test]
+    fn a_release_without_a_digest_to_verify_against_is_not_offered() {
+        assert!(super::latest_release(&release_json("9.9.9", false))
+            .expect_err("no digest, no offer")
+            .contains("digest"));
+    }
+
+    #[test]
+    fn the_installed_release_and_an_unreadable_tag_are_both_not_newer() {
+        let same = super::latest_release(&release_json(super::VERSION, true)).expect("release");
+        assert!(!same.newer_than(super::VERSION));
+        let strange = super::Release {
+            version: "nightly".to_owned(),
+            archive: String::new(),
+            digest: String::new(),
+        };
+        assert!(
+            !strange.newer_than(super::VERSION),
+            "a version that cannot be compared must not be offered as an upgrade"
+        );
+    }
+
+    #[test]
+    fn the_digest_is_found_beside_the_other_files_in_the_listing() {
+        let digest = "a".repeat(64);
+        let listing = format!(
+            "{}  THIRD-PARTY.md\n{digest}  cobalt-9.9.9-ClaraBW-KoboRoot.tgz\n",
+            "b".repeat(64)
+        );
+        assert_eq!(
+            super::digest_for(&listing, "cobalt-9.9.9-ClaraBW-KoboRoot.tgz"),
+            Some(digest)
+        );
+        assert_eq!(
+            super::digest_for(&listing, "cobalt-9.9.9-ClaraBW.tgz"),
+            None,
+            "a digest for a different file vouches for nothing"
+        );
+        assert_eq!(
+            super::digest_for("not a listing", "cobalt-9.9.9-ClaraBW-KoboRoot.tgz"),
+            None
+        );
+    }
+
+    #[test]
+    fn every_stop_on_the_update_journey_fits_the_panel() {
+        let flows = [
+            super::UpdateFlow::Idle,
+            super::UpdateFlow::Checking,
+            super::UpdateFlow::UpToDate {
+                latest: "0.1.0".to_owned(),
+            },
+            super::UpdateFlow::Ready {
+                version: "9.9.9".to_owned(),
+                url: "https://example.test/KoboRoot.tgz".to_owned(),
+                sha256: "a".repeat(64),
+            },
+            super::UpdateFlow::Installing {
+                version: "9.9.9".to_owned(),
+            },
+            super::UpdateFlow::Installed {
+                version: "9.9.9".to_owned(),
+            },
+            super::UpdateFlow::Failed("The download did not match its digest.".to_owned()),
+        ];
+        for flow in flows {
+            let settings = Settings {
+                view: super::View::Update,
+                update: flow.clone(),
+                ..Settings::default()
+            };
+            let issues = settings.update().validate(&CLARA_BW_METRICS);
+            assert!(issues.is_empty(), "{flow:?}: {issues:?}");
+        }
+    }
+
+    #[test]
+    fn only_a_release_that_is_ready_offers_the_install_button() {
+        let ready = Settings {
+            view: super::View::Update,
+            update: super::UpdateFlow::Ready {
+                version: "9.9.9".to_owned(),
+                url: "https://example.test/KoboRoot.tgz".to_owned(),
+                sha256: "a".repeat(64),
+            },
+            ..Settings::default()
+        };
+        let layout = ready
+            .update()
+            .layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
+        assert!(layout.rect_of_action(action_id(super::INSTALL)).is_some());
+
+        let checking = Settings {
+            view: super::View::Update,
+            update: super::UpdateFlow::Checking,
+            ..Settings::default()
+        };
+        let layout = checking
+            .update()
+            .layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
+        assert!(
+            layout.rect_of_action(action_id(super::INSTALL)).is_none(),
+            "nothing may be installed before it is verified"
+        );
+        assert!(
+            layout.rect_of_action(action_id(super::CHECK)).is_none(),
+            "a check that is already running must not be restartable"
+        );
     }
 }

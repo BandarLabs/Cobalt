@@ -273,6 +273,12 @@ impl DeviceServices {
             | DeviceRequest::SeekAudio { .. }
             | DeviceRequest::StopAudio
             | DeviceRequest::SetAudioVolume { .. }) => self.handle_audio(&request),
+            // Only a real reader has an installation to replace; the daemon
+            // answers this itself before the policy fallback is consulted.
+            DeviceRequest::Update { .. } => DeviceResult::Denied(
+                self.refusal(Capability::Network)
+                    .unwrap_or(DenyReason::Unsupported),
+            ),
         }
     }
 
@@ -523,6 +529,10 @@ fn request_capability(request: &DeviceRequest) -> Capability {
         | DeviceRequest::SeekAudio { .. }
         | DeviceRequest::StopAudio
         | DeviceRequest::SetAudioVolume { .. } => Capability::BluetoothAudio,
+        // An update is fetched from the network and applied to the
+        // installation the requester is already running from, so the network
+        // permission is the one that governs it.
+        DeviceRequest::Update { .. } => Capability::Network,
     }
 }
 

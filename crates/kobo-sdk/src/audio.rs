@@ -814,7 +814,12 @@ fn audio_error(error: DeviceError) -> &'static str {
         DeviceError::InvalidInput => "This audio source is not a supported bounded MP3 or MP3Z",
         DeviceError::NotFound => "The audio source is no longer on this device",
         DeviceError::TimedOut => "The Bluetooth audio service stopped responding",
-        DeviceError::Authentication | DeviceError::Backend => "Audio playback failed",
+        // Integrity is spelled out rather than folded into a wildcard so
+        // that the next device error added is routed here deliberately. An
+        // audio load never verifies a digest, so this is unreachable today.
+        DeviceError::Authentication | DeviceError::Backend | DeviceError::Integrity => {
+            "Audio playback failed"
+        }
     }
 }
 

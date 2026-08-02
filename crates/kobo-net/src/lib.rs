@@ -27,6 +27,7 @@
 pub mod gzip;
 pub mod pem;
 pub mod serve;
+pub mod sha256;
 
 use kobo_protocol::{Credential, SecretHeader, TaskError};
 use std::borrow::Cow;
