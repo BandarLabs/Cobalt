@@ -1,5 +1,6 @@
 use std::env;
 use std::ffi::OsStr;
+use std::fmt::Write as _;
 use std::fs;
 use std::io::{Read, Write};
 use std::os::unix::fs::PermissionsExt;
@@ -2380,6 +2381,9 @@ enum SetupMode {
 enum MenuEntry {
     /// Write the entry, staging NickelMenu if it is not already installed.
     Add,
+    /// Stage NickelMenu even when its marker says it is installed, for a
+    /// reader whose plugin a firmware update removed.
+    Force,
     /// Leave the reader's menus alone.
     Skip,
 }
@@ -2428,6 +2432,7 @@ fn parse_setup(arguments: &[String]) -> Result<SetupOptions, String> {
             "--no-eject" => options.eject = false,
             "--no-wait" => options.wait = false,
             "--no-menu" => options.menu = MenuEntry::Skip,
+            "--menu" => options.menu = MenuEntry::Force,
             "--enable-ssh" => options.enable_ssh = true,
             "--no-key" => options.authorize_key = false,
             "--dry-run" => options.dry_run = true,
@@ -2435,7 +2440,7 @@ fn parse_setup(arguments: &[String]) -> Result<SetupOptions, String> {
                 return Err(format!(
                     "unknown option '{other}'\n\
                      usage: kobo setup [--volume PATH] [--undo] [--enable-ssh] [--no-key] \
-                     [--no-eject] [--no-wait] [--no-menu] [--dry-run]"
+                     [--no-eject] [--no-wait] [--menu] [--no-menu] [--dry-run]"
                 ))
             }
         }
@@ -2502,7 +2507,8 @@ fn setup_device(arguments: &[String]) -> Result<(), String> {
         .then(|| setup::enable_ssh(&reader.volume))
         .transpose()?;
     let settings = setup::apply_settings(&reader.volume)?;
-    let menu = (options.menu == MenuEntry::Add).then(|| add_menu_entry(&reader.volume));
+    let menu = (options.menu != MenuEntry::Skip)
+        .then(|| add_menu_entry(&reader.volume, options.menu == MenuEntry::Force));
     // After the menu, because the firmware extracts exactly one archive and
     // the first draft of this raced the menu for it: staging the key first
     // meant NickelMenu reported the slot taken on every first-time setup, and
@@ -2577,13 +2583,13 @@ fn compressed(archive: &[u8]) -> Result<Vec<u8>, String> {
 /// menu entry (`start.sh` over SSH is how the whole project has been run so
 /// far) so a download that cannot happen on an aeroplane should not cost
 /// somebody the install they came for.
-fn add_menu_entry(volume: &Path) -> Result<menu::Menu, String> {
-    if menu::installed(volume) {
-        return menu::install(volume, None, setup::INSTALL_FOLDER);
+fn add_menu_entry(volume: &Path, force: bool) -> Result<menu::Menu, String> {
+    if menu::installed(volume) && !force {
+        return menu::install(volume, None, setup::INSTALL_FOLDER, false);
     }
     let archive = env::temp_dir().join(format!("kobo-nickelmenu-{}.tgz", std::process::id()));
     menu::download(&archive)?;
-    let outcome = menu::install(volume, Some(&archive), setup::INSTALL_FOLDER);
+    let outcome = menu::install(volume, Some(&archive), setup::INSTALL_FOLDER, force);
     let _ = fs::remove_file(&archive);
     outcome
 }
@@ -2667,6 +2673,11 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
     // an archive that was never going to be written, and then described the
     // key as sharing it.
     let plugin_installed = menu::installed(&reader.volume);
+    let would_stage = match options.menu {
+        MenuEntry::Force => true,
+        MenuEntry::Add => !plugin_installed,
+        MenuEntry::Skip => false,
+    };
     let keys = setup::SETTINGS_APPLIED
         .iter()
         .map(|(section, key, value)| format!("{section}/{key}={value}"))
@@ -2706,14 +2717,23 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
             "would leave the firmware's SSH server disabled (pass --enable-ssh to opt in)"
                 .to_owned()
         },
-        if options.menu != MenuEntry::Add {
+        if options.menu == MenuEntry::Skip {
             "would add no menu entry, because --no-menu was given".to_owned()
-        } else if plugin_installed {
-            format!(
-                "would write a Cobalt entry to {}, and stage nothing, because NickelMenu\n\
-                 \x20 is already installed on this reader",
-                menu::CONFIG,
-            )
+        } else if !would_stage {
+            if menu::marker_stale(&reader.volume) {
+                format!(
+                    "would write a Cobalt entry to {}, and stage nothing. NickelMenu's\n\
+                     \x20 own files predate the last firmware update, though, and an update\n\
+                     \x20 removes the plugin: pass --menu to stage it again",
+                    menu::CONFIG,
+                )
+            } else {
+                format!(
+                    "would write a Cobalt entry to {}, and stage nothing, because NickelMenu\n\
+                     \x20 is already installed on this reader",
+                    menu::CONFIG,
+                )
+            }
         } else {
             format!(
                 "would write a Cobalt entry to {}, and stage NickelMenu {} in {}\n\
@@ -2725,7 +2745,7 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
                 menu::ARCHIVE_MEMBERS.join(" and "),
             )
         },
-        describe_key_plan(options, plugin_installed),
+        describe_key_plan(options, would_stage),
         if options.enable_ssh && options.wait {
             "wait for the restarted reader to appear on the network"
         } else if !options.enable_ssh {
@@ -2734,7 +2754,7 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
             "stop, because --no-wait was given"
         },
         match (
-            options.menu == MenuEntry::Add && !plugin_installed,
+            would_stage,
             options.enable_ssh && options.authorize_key,
         ) {
             (true, true) => ", and nothing extracted as root but NickelMenu's own two files and one authorized_keys",
@@ -2746,14 +2766,14 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
 }
 
 /// The one line of the dry run that covers this machine's key.
-fn describe_key_plan(options: &SetupOptions, plugin_installed: bool) -> String {
+fn describe_key_plan(options: &SetupOptions, would_stage: bool) -> String {
     if !options.enable_ssh {
         return "would install no key, because there is no SSH server to use it".to_owned();
     }
     if !options.authorize_key {
         return "would install no key, because --no-key was given".to_owned();
     }
-    let slot = if options.menu == MenuEntry::Add && !plugin_installed {
+    let slot = if would_stage {
         format!(
             "into the same {} the menu plugin is staged in",
             menu::KOBOROOT
@@ -3799,7 +3819,7 @@ fn write_recording(
     }
     let mut timings = String::new();
     for (index, frame) in frames.iter().enumerate() {
-        timings.push_str(&format!("frame-{index:04}.png {}\n", frame.millis));
+        let _ = writeln!(timings, "frame-{index:04}.png {}", frame.millis);
     }
     let index_path = directory.join("timings.txt");
     fs::write(&index_path, timings)
@@ -3842,14 +3862,12 @@ fn write_recording_video(
             .get(index + 1)
             .map_or(frame.millis + 1000, |frame| frame.millis);
         let seconds = f64::from(next.saturating_sub(frame.millis)).max(100.0) / 1000.0;
-        list.push_str(&format!(
-            "file 'frame-{index:04}.png'\nduration {seconds:.3}\n"
-        ));
+        let _ = writeln!(list, "file 'frame-{index:04}.png'\nduration {seconds:.3}");
     }
     // ffmpeg's concat demuxer ignores the last duration, so the final frame is
     // named twice to give it one.
     if let Some(index) = frames.len().checked_sub(1) {
-        list.push_str(&format!("file 'frame-{index:04}.png'\n"));
+        let _ = writeln!(list, "file 'frame-{index:04}.png'");
     }
     let list_path = directory.join("frames.txt");
     fs::write(&list_path, list)

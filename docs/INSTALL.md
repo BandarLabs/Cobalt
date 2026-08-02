@@ -113,6 +113,12 @@ stock reader comes back. So does a reboot, always, from anywhere.
   that installer is gated on battery level and fails silently. Charge the
   reader properly and restart it again. Cobalt itself is already on the device
   either way.
+- **There is no Cobalt entry, and a firmware update happened since NickelMenu
+  was installed.** A firmware update removes the plugin but leaves its files
+  on the book partition, so setup believes NickelMenu is still there and
+  stages nothing. Setup says so when it notices the dates disagree. Run
+  `cargo run -p kobo-cli -- setup --menu` to stage NickelMenu again; that
+  keeps every menu entry already on the reader.
 - **The Cobalt entry was there and then vanished.** That is NickelMenu's
   failsafe, which reads any unexpected restart of the reader software as a
   crash and disables itself rather than risk a boot loop. You can confirm it:

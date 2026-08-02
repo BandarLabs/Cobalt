@@ -90,6 +90,13 @@ pub const INSTALLED_MARKER: &str = ".adds/nm/doc";
 /// means the undo works over USB, where the plugin is not reachable.
 pub const UNINSTALL_FLAG: &str = ".adds/nm/uninstall";
 
+/// The firmware's own version file, relative to the mounted volume.
+///
+/// Rewritten by a firmware update, which also wipes the root filesystem the
+/// plugin lives on. A [`INSTALLED_MARKER`] older than this file is therefore
+/// evidence of a NickelMenu the firmware has since removed.
+pub const VERSION_FILE: &str = ".kobo/version";
+
 /// The menu entry itself.
 ///
 /// `cmd_spawn` starts `start.sh` in the background and returns, which is what
@@ -121,6 +128,9 @@ pub enum Menu {
     Added,
     /// Everything was already as wanted.
     Unchanged,
+    /// The entry was written, but the plugin's marker predates the last
+    /// firmware update, so the plugin itself is probably gone.
+    MarkerStale,
     /// Somebody else's archive is already waiting in the slot.
     SlotTaken,
 }
@@ -136,6 +146,12 @@ impl Menu {
             ),
             Self::Added => format!("Cobalt entry written to {CONFIG}"),
             Self::Unchanged => format!("menu entry already as wanted ({CONFIG})"),
+            Self::MarkerStale => format!(
+                "menu entry written to {CONFIG}, but NickelMenu's own files predate the \
+                 last firmware update, and an update removes the plugin. If no Cobalt \
+                 entry appears after a restart, run 'kobo setup --menu' to install \
+                 NickelMenu again; that keeps every menu entry already on the reader."
+            ),
             Self::SlotTaken => format!(
                 "menu entry written, but {KOBOROOT} already holds another mod's archive, so \
                  NickelMenu was not staged. Restart the reader to let that one install, then \
@@ -229,12 +245,39 @@ pub fn installed(volume: &Path) -> bool {
     volume.join(INSTALLED_MARKER).exists()
 }
 
+/// True when the marker predates the last firmware update.
+///
+/// A firmware update rewrites [`VERSION_FILE`] and replaces the root
+/// filesystem, taking the plugin with it, but leaves the book partition and
+/// so the marker alone. The marker is written again the next time NickelMenu
+/// is extracted, so one older than the version file means the plugin was
+/// probably removed. Probably: this is a heuristic over file times, which is
+/// why it changes what is *said* and not what is staged.
+#[must_use]
+pub fn marker_stale(volume: &Path) -> bool {
+    let modified = |path: &str| {
+        volume
+            .join(path)
+            .metadata()
+            .and_then(|meta| meta.modified())
+    };
+    match (modified(INSTALLED_MARKER), modified(VERSION_FILE)) {
+        (Ok(marker), Ok(version)) => marker < version,
+        _ => false,
+    }
+}
+
 /// Writes the menu entry, staging the plugin too when it is not yet installed.
 ///
 /// `archive` is the verified release, and is only consulted when the plugin is
-/// missing. Callers that cannot obtain it may pass `None`, which writes the
-/// entry alone, correct when NickelMenu is already there, and reported as
-/// unchanged when it is not.
+/// missing or `force` is set. Callers that cannot obtain it may pass `None`,
+/// which writes the entry alone, correct when NickelMenu is already there, and
+/// reported as unchanged when it is not.
+///
+/// `force` stages the archive even when the marker says the plugin is
+/// installed, for a reader whose plugin a firmware update has removed.
+/// Re-extracting the plugin leaves every entry in the config folder alone, and
+/// a slot already holding somebody else's archive is still refused.
 ///
 /// # Errors
 ///
@@ -243,6 +286,7 @@ pub fn install(
     volume: &Path,
     archive: Option<&Path>,
     install_folder: &str,
+    force: bool,
 ) -> Result<Menu, String> {
     let folder = volume.join(CONFIG_FOLDER);
     fs::create_dir_all(&folder).map_err(|error| format!("create {}: {error}", folder.display()))?;
@@ -263,7 +307,10 @@ pub fn install(
             .map_err(|error| format!("write {}: {error}", entry.display()))?;
     }
 
-    if installed(volume) {
+    if installed(volume) && !force {
+        if marker_stale(volume) {
+            return Ok(Menu::MarkerStale);
+        }
         return Ok(if already {
             Menu::Unchanged
         } else {
@@ -536,7 +583,7 @@ mod tests {
         let archive = volume.join("release.tgz");
         stub_archive(&archive);
 
-        let menu = install(&volume, Some(&archive), ".adds/cobalt").expect("install");
+        let menu = install(&volume, Some(&archive), ".adds/cobalt", false).expect("install");
         assert_eq!(menu, Menu::Staged);
         assert!(volume.join(KOBOROOT).exists());
         assert!(volume.join(CONFIG).exists());
@@ -550,12 +597,65 @@ mod tests {
         fs::write(volume.join(INSTALLED_MARKER), "docs").expect("pretend it is installed");
 
         assert_eq!(
-            install(&volume, None, ".adds/cobalt").expect("first"),
+            install(&volume, None, ".adds/cobalt", false).expect("first"),
             Menu::Added
         );
         assert_eq!(
-            install(&volume, None, ".adds/cobalt").expect("second"),
+            install(&volume, None, ".adds/cobalt", false).expect("second"),
             Menu::Unchanged
+        );
+        let _ = fs::remove_dir_all(&volume);
+    }
+
+    #[test]
+    fn a_marker_older_than_the_firmware_update_is_reported_not_trusted() {
+        let volume = volume();
+        fs::create_dir_all(volume.join(CONFIG_FOLDER)).expect("make the folder");
+        fs::write(volume.join(INSTALLED_MARKER), "docs").expect("old marker");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(volume.join(VERSION_FILE), "N365,4.9,4.45").expect("newer firmware");
+
+        assert!(marker_stale(&volume));
+        assert_eq!(
+            install(&volume, None, ".adds/cobalt", false).expect("install"),
+            Menu::MarkerStale,
+            "a probably-wiped plugin is said out loud, and nothing is staged"
+        );
+        assert!(
+            !volume.join(KOBOROOT).exists(),
+            "saying it must not become staging it"
+        );
+        let _ = fs::remove_dir_all(&volume);
+    }
+
+    #[test]
+    fn forcing_stages_the_plugin_over_an_installed_marker() {
+        let volume = volume();
+        fs::create_dir_all(volume.join(CONFIG_FOLDER)).expect("make the folder");
+        fs::write(volume.join(INSTALLED_MARKER), "docs").expect("marker");
+        let archive = volume.join("release.tgz");
+        stub_archive(&archive);
+
+        assert_eq!(
+            install(&volume, Some(&archive), ".adds/cobalt", true).expect("install"),
+            Menu::Staged
+        );
+        assert!(volume.join(KOBOROOT).exists());
+        let _ = fs::remove_dir_all(&volume);
+    }
+
+    #[test]
+    fn a_marker_newer_than_the_firmware_update_is_trusted() {
+        let volume = volume();
+        fs::create_dir_all(volume.join(CONFIG_FOLDER)).expect("make the folder");
+        fs::write(volume.join(VERSION_FILE), "N365,4.9,4.45").expect("firmware");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(volume.join(INSTALLED_MARKER), "docs").expect("fresh marker");
+
+        assert!(!marker_stale(&volume));
+        assert_eq!(
+            install(&volume, None, ".adds/cobalt", false).expect("install"),
+            Menu::Added
         );
         let _ = fs::remove_dir_all(&volume);
     }
@@ -570,7 +670,7 @@ mod tests {
         fs::write(volume.join(INSTALLED_MARKER), "docs").expect("installed");
         fs::write(volume.join(UNINSTALL_FLAG), "").expect("pending uninstall");
 
-        install(&volume, None, ".adds/cobalt").expect("install");
+        install(&volume, None, ".adds/cobalt", false).expect("install");
         assert!(!volume.join(UNINSTALL_FLAG).exists());
         let _ = fs::remove_dir_all(&volume);
     }
@@ -583,7 +683,7 @@ mod tests {
         stub_archive(&archive);
 
         assert_eq!(
-            install(&volume, Some(&archive), ".adds/cobalt").expect("install"),
+            install(&volume, Some(&archive), ".adds/cobalt", false).expect("install"),
             Menu::SlotTaken
         );
         assert_eq!(
@@ -598,7 +698,7 @@ mod tests {
         let volume = volume();
         fs::create_dir_all(volume.join(CONFIG_FOLDER)).expect("make the folder");
         fs::write(volume.join(INSTALLED_MARKER), "docs").expect("installed");
-        install(&volume, None, ".adds/cobalt").expect("install");
+        install(&volume, None, ".adds/cobalt", false).expect("install");
 
         let removed = remove(&volume).expect("undo");
         assert!(removed.entry);
@@ -618,7 +718,7 @@ mod tests {
             "menu_item :main :Theirs :dbg_toast :hi",
         )
         .expect("their config");
-        install(&volume, None, ".adds/cobalt").expect("install");
+        install(&volume, None, ".adds/cobalt", false).expect("install");
 
         let removed = remove(&volume).expect("undo");
         assert!(removed.entry);
@@ -636,7 +736,7 @@ mod tests {
         let volume = volume();
         let archive = volume.join("release.tgz");
         stub_archive(&archive);
-        install(&volume, Some(&archive), ".adds/cobalt").expect("install");
+        install(&volume, Some(&archive), ".adds/cobalt", false).expect("install");
         assert!(volume.join(KOBOROOT).exists());
 
         let removed = remove(&volume).expect("undo");
@@ -687,7 +787,7 @@ mod tests {
         assert!(error.contains("./etc/init.d/rcS"), "{error}");
 
         // And the refusal must stop the install, not merely be noticed.
-        let refused = install(&volume, Some(&archive), ".adds/cobalt").expect_err("refused");
+        let refused = install(&volume, Some(&archive), ".adds/cobalt", false).expect_err("refused");
         assert!(refused.contains("as root"), "{refused}");
         assert!(!volume.join(KOBOROOT).exists(), "nothing was staged");
         let _ = fs::remove_dir_all(&volume);
