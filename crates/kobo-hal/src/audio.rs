@@ -29,6 +29,11 @@ const TARGET_RATE: u64 = 44_100;
 const TARGET_RATE_I64: i64 = 44_100;
 const CHUNK_FRAMES: usize = 2_205;
 const LEAD_IN_FRAMES: usize = 22_050;
+/// How much audio one chunk carries, and therefore the write cadence.
+const WRITE_PERIOD: Duration = Duration::from_millis(50);
+/// A schedule this far behind is a stall, not jitter, and is restarted
+/// rather than caught up with a burst of writes.
+const RESYNC_LIMIT: Duration = Duration::from_millis(500);
 const IO_TIMEOUT: Duration = Duration::from_secs(3);
 const DATA_CONNECT_TIMEOUT: Duration = Duration::from_millis(750);
 const MAX_SOURCE_BYTES: usize = 64 * 1024 * 1024;
@@ -419,7 +424,7 @@ fn run(receiver: &mpsc::Receiver<Command>, state: &Mutex<State>, fetcher: Option
                     fail(state, error);
                     stop_sink(&mut sink);
                 }
-                next_write = Instant::now() + Duration::from_millis(50);
+                next_write = next_deadline(next_write, Instant::now());
             }
         }
     }
@@ -468,7 +473,11 @@ fn handle_command(
                             return;
                         }
                         *sink = Some(opened);
-                        *next_write = Instant::now() + Duration::from_millis(500);
+                        // The silence above is the cushion. Writing the first
+                        // real chunk right behind it keeps the cushion full;
+                        // waiting it out would start playback with an empty
+                        // buffer and a click on the first late chunk.
+                        *next_write = Instant::now();
                     }
                     Err(error) => {
                         fail(state, error);
@@ -609,6 +618,24 @@ fn stop_sink(sink: &mut Option<A2dpSink>) {
 
 fn frames_to_ms(frames: u64) -> u32 {
     u32::try_from(frames.saturating_mul(1_000) / TARGET_RATE).unwrap_or(u32::MAX)
+}
+
+/// When the write after the one just made is due.
+///
+/// The schedule advances by [`WRITE_PERIOD`] from the previous *deadline*,
+/// not from the moment the write finished. Scheduling from the finish time
+/// silently adds the cost of decoding and writing to every period, so
+/// delivery runs a few percent slower than the device plays and the
+/// buffer drains to a steady crackle. A schedule that has fallen more
+/// than [`RESYNC_LIMIT`] behind has hit a real stall and restarts at
+/// `now`; anything nearer is jitter, and the shortened waits that follow
+/// let the writes catch back up to the clock.
+fn next_deadline(previous: Instant, now: Instant) -> Instant {
+    if now.saturating_duration_since(previous) > RESYNC_LIMIT {
+        now
+    } else {
+        previous + WRITE_PERIOD
+    }
 }
 
 fn inspect_frames(encoded: &[u8]) -> Result<u64, DeviceError> {
@@ -824,11 +851,29 @@ fn io_error(error: std::io::Error) -> DeviceError {
 
 #[cfg(test)]
 mod tests {
-    use super::{frames_to_ms, resample_stereo, Audio, BACKEND_MARKERS};
+    use super::{frames_to_ms, next_deadline, resample_stereo, Audio, BACKEND_MARKERS};
+    use super::{RESYNC_LIMIT, WRITE_PERIOD};
+    use std::time::Instant;
 
     #[test]
     fn clara_bw_stable_a2dp_hal_marker_is_known() {
         assert!(BACKEND_MARKERS.contains(&"/usr/lib/libaudio.a2dp.default.so"));
+    }
+
+    #[test]
+    fn the_write_cadence_does_not_absorb_the_cost_of_the_writes() {
+        let start = Instant::now();
+        // The chunk took 8ms to produce and deliver; the next deadline still
+        // sits one whole period after the previous one.
+        let after_work = start + std::time::Duration::from_millis(8);
+        assert_eq!(next_deadline(start, after_work), start + WRITE_PERIOD);
+    }
+
+    #[test]
+    fn a_stalled_schedule_restarts_instead_of_bursting() {
+        let start = Instant::now();
+        let much_later = start + RESYNC_LIMIT + WRITE_PERIOD;
+        assert_eq!(next_deadline(start, much_later), much_later);
     }
 
     #[test]
