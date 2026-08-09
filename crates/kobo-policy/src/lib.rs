@@ -13,7 +13,7 @@ pub mod shelf;
 pub mod store;
 pub mod tasks;
 
-pub use services::{Backends, DeviceServices, DeviceState};
+pub use services::{request_capability, Backends, DeviceServices, DeviceState};
 pub use tasks::{Finished, RejectReason, TaskRunner, MAX_TASKS_IN_FLIGHT};
 
 use std::collections::BTreeSet;

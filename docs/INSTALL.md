@@ -98,10 +98,29 @@ screen. (NickelMenu puts its items in the top-left menu on old firmware and in
 the bottom-right one from 4.23.15505 onward, and the Clara BW is well past
 that.) Tap it and choose **Cobalt**.
 
-The launcher appears, and every application ships with it.
+The launcher appears with Cobalt's built-in applications. Store-only
+applications are deliberately absent until they are installed over Wi-Fi.
 
 To leave, use **Return to Kobo reader** at the bottom of the launcher. The
 stock reader comes back. So does a reboot, always, from anywhere.
+
+## Installing apps after setup
+
+Open **App Store** in the launcher. It immediately shows the last verified
+catalog saved on the reader, then checks Cobalt's fixed app release channel
+over Wi-Fi.
+Each app can be installed, updated or removed independently. Installed apps
+appear in the launcher without rebooting.
+
+For the `0.2.0` release, **Sudoku** is the end-to-end Store test: it is not in
+the USB package. Seeing it in Store, installing it, and then seeing it appear
+in the launcher proves that catalog refresh, package verification, installation
+and launcher rediscovery all worked.
+
+The Store never replaces Cobalt itself. Full platform updates remain in
+**Settings**, use a separate request and preserve installed apps and the
+verified catalog. If refresh fails, the last verified catalog remains usable;
+if an install fails, the previous installed copy remains in place.
 
 ## If something goes wrong
 

@@ -28,7 +28,10 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// Went to 5 when a row gained an optional overflow action. Same shape again:
 /// a flag byte inside the repeated part of tag 14, which an old runtime would
 /// have read as the next row's action.
-pub const VERSION: u8 = 5;
+///
+/// Went to 6 for the runtime-owned app catalog and app transaction requests,
+/// whose new result variant carries a bounded list of application metadata.
+pub const VERSION: u8 = 6;
 pub const HEADER_LEN: usize = 14;
 /// The largest single frame either side will read.
 ///
@@ -94,6 +97,17 @@ pub const MAX_POST_BODY_LEN: usize = MAX_TASK_BYTES;
 
 /// The most radios a device scan can report in one answer.
 pub const MAX_RADIO_DEVICES: usize = 32;
+
+/// The most applications a catalog may expose in one bounded reply.
+pub const MAX_APP_CATALOG_ENTRIES: usize = 128;
+/// Stable application identities are deliberately short enough to become
+/// filenames without truncation or platform-specific path behavior.
+pub const MAX_APP_ID_LEN: usize = 32;
+/// Application versions share the signed manifest's bounded version field.
+pub const MAX_APP_VERSION_LEN: usize = 64;
+/// Capability declarations are drawn as a short list and are also bounded by
+/// the complete capability vocabulary.
+pub const MAX_APP_CAPABILITIES: usize = 16;
 
 /// Human-readable radio identifiers are deliberately shorter than an ordinary
 /// protocol string. They are drawn on one row and are also accepted from local
@@ -900,6 +914,16 @@ pub enum DeviceRequest {
     /// root filesystem is never written, so the worst a bad archive can do
     /// is fail to start; the reader itself cannot be harmed.
     Update { url: String, sha256: String },
+    /// Enumerate app-store applications currently installed on this reader.
+    ListInstalledApps,
+    /// Read the last verified app catalog without using the network.
+    ReadAppCatalog,
+    /// Fetch and verify the current app catalog from Cobalt's fixed source.
+    RefreshAppCatalog,
+    /// Install or update one catalog application by stable identity.
+    InstallApp { id: String },
+    /// Remove one app-store application by stable identity.
+    UninstallApp { id: String },
 }
 
 /// Everything the gauge publishes that is worth putting in front of a reader.
@@ -1030,10 +1054,45 @@ pub enum DeviceResult {
         duration_ms: u32,
         volume: u8,
     },
+    /// A bounded app-store or installed-app listing.
+    Apps { entries: Vec<AppInfo> },
     /// The backend exists, but the requested operation failed.
     Failed(DeviceError),
     /// The request was refused, with the exact reason.
     Denied(DenyReason),
+}
+
+/// Application metadata safe to show to an unprivileged launcher or Store UI.
+///
+/// Download URLs, signatures and filesystem locations deliberately remain
+/// runtime-owned. An application chooses an identity; it never chooses bytes
+/// or a destination.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AppInfo {
+    pub id: String,
+    pub title: String,
+    pub label: String,
+    pub summary: String,
+    pub version: String,
+    pub glyph: Glyph,
+    pub capabilities: Vec<String>,
+    /// The installed version when present. A different `version` means an
+    /// update is available.
+    pub installed_version: Option<String>,
+}
+
+impl AppInfo {
+    #[must_use]
+    pub const fn is_installed(&self) -> bool {
+        self.installed_version.is_some()
+    }
+
+    #[must_use]
+    pub fn has_update(&self) -> bool {
+        self.installed_version
+            .as_ref()
+            .is_some_and(|installed| installed != &self.version)
+    }
 }
 
 /// A source accepted by the runtime-owned audio player.
@@ -1852,6 +1911,10 @@ fn picture_len(width: u32, height: u32) -> Result<usize, ProtocolError> {
         .ok_or(ProtocolError::FrameTooLarge)
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one explicit bounded request tag table"
+)]
 fn encode_device_request(
     output: &mut Vec<u8>,
     request: &DeviceRequest,
@@ -1950,6 +2013,20 @@ fn encode_device_request(
             push_string(output, url)?;
             push_string(output, sha256)?;
         }
+        DeviceRequest::ListInstalledApps => output.push(32),
+        DeviceRequest::ReadAppCatalog => output.push(33),
+        DeviceRequest::RefreshAppCatalog => output.push(34),
+        DeviceRequest::InstallApp { id } if valid_app_id(id) => {
+            output.push(35);
+            push_string(output, id)?;
+        }
+        DeviceRequest::UninstallApp { id } if valid_app_id(id) => {
+            output.push(36);
+            push_string(output, id)?;
+        }
+        DeviceRequest::InstallApp { .. } | DeviceRequest::UninstallApp { .. } => {
+            return Err(ProtocolError::InvalidValue("application id"));
+        }
     }
     Ok(())
 }
@@ -1962,6 +2039,21 @@ fn is_hex_digest(digest: &str) -> bool {
         && digest
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+/// Whether an identity can select only one application-owned directory.
+#[must_use]
+pub fn valid_app_id(id: &str) -> bool {
+    if id.is_empty() || id.len() > MAX_APP_ID_LEN {
+        return false;
+    }
+    let bytes = id.as_bytes();
+    bytes[0].is_ascii_lowercase()
+        && bytes.last() != Some(&b'-')
+        && !bytes.windows(2).any(|pair| pair == b"--")
+        && bytes
+            .iter()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'-')
 }
 
 fn fixed_device_request(output: &mut Vec<u8>, tag: u8, argument: u32) {
@@ -2073,6 +2165,10 @@ fn valid_radio_flags(flags: u8, field: &'static str) -> Result<u8, ProtocolError
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one explicit bounded request tag table"
+)]
 fn decode_device_request(reader: &mut Reader<'_>) -> Result<DeviceRequest, ProtocolError> {
     let tag = reader.u8()?;
     match tag {
@@ -2170,6 +2266,11 @@ fn decode_device_request(reader: &mut Reader<'_>) -> Result<DeviceRequest, Proto
             }
         }
         31 => decode_update(reader),
+        32 => Ok(DeviceRequest::ListInstalledApps),
+        33 => Ok(DeviceRequest::ReadAppCatalog),
+        34 => Ok(DeviceRequest::RefreshAppCatalog),
+        35 => decode_app_request(reader, true),
+        36 => decode_app_request(reader, false),
         _ => Err(ProtocolError::InvalidValue("device request")),
     }
 }
@@ -2188,6 +2289,21 @@ fn decode_update(reader: &mut Reader<'_>) -> Result<DeviceRequest, ProtocolError
     Ok(DeviceRequest::Update { url, sha256 })
 }
 
+fn decode_app_request(
+    reader: &mut Reader<'_>,
+    install: bool,
+) -> Result<DeviceRequest, ProtocolError> {
+    let id = reader.string()?;
+    if !valid_app_id(&id) {
+        return Err(ProtocolError::InvalidValue("application id"));
+    }
+    Ok(if install {
+        DeviceRequest::InstallApp { id }
+    } else {
+        DeviceRequest::UninstallApp { id }
+    })
+}
+
 fn fixed_argument(reader: &mut Reader<'_>, expected: u32) -> Result<(), ProtocolError> {
     if reader.u32()? == expected {
         Ok(())
@@ -2196,6 +2312,10 @@ fn fixed_argument(reader: &mut Reader<'_>, expected: u32) -> Result<(), Protocol
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one explicit bounded result tag table"
+)]
 fn encode_device_result(output: &mut Vec<u8>, result: &DeviceResult) -> Result<(), ProtocolError> {
     match result {
         DeviceResult::Done => output.push(1),
@@ -2293,8 +2413,79 @@ fn encode_device_result(output: &mut Vec<u8>, result: &DeviceResult) -> Result<(
             push_u32(output, *duration_ms);
             output.push(*volume);
         }
+        DeviceResult::Apps { entries } => {
+            if entries.len() > MAX_APP_CATALOG_ENTRIES {
+                return Err(ProtocolError::InvalidValue("too many applications"));
+            }
+            output.push(12);
+            push_u16(
+                output,
+                u16::try_from(entries.len()).map_err(|_| ProtocolError::FrameTooLarge)?,
+            );
+            for entry in entries {
+                encode_app_info(output, entry)?;
+            }
+        }
     }
     Ok(())
+}
+
+fn encode_app_info(output: &mut Vec<u8>, entry: &AppInfo) -> Result<(), ProtocolError> {
+    validate_app_info(entry)?;
+    for text in [
+        &entry.id,
+        &entry.title,
+        &entry.label,
+        &entry.summary,
+        &entry.version,
+    ] {
+        push_string(output, text)?;
+    }
+    output.push(encode_glyph(entry.glyph));
+    output.push(u8::try_from(entry.capabilities.len()).map_err(|_| ProtocolError::FrameTooLarge)?);
+    for capability in &entry.capabilities {
+        push_string(output, capability)?;
+    }
+    match &entry.installed_version {
+        Some(version) => {
+            output.push(1);
+            push_string(output, version)?;
+        }
+        None => output.push(0),
+    }
+    Ok(())
+}
+
+fn validate_app_info(entry: &AppInfo) -> Result<(), ProtocolError> {
+    if !valid_app_id(&entry.id)
+        || entry.title.is_empty()
+        || entry.title.len() > 96
+        || entry.label.is_empty()
+        || entry.label.len() > 32
+        || entry.summary.is_empty()
+        || entry.summary.len() > 512
+        || !valid_version(&entry.version)
+        || entry
+            .installed_version
+            .as_deref()
+            .is_some_and(|version| !valid_version(version))
+        || entry.capabilities.len() > MAX_APP_CAPABILITIES
+        || entry
+            .capabilities
+            .iter()
+            .any(|capability| capability.is_empty() || capability.len() > 32)
+    {
+        return Err(ProtocolError::InvalidValue("application metadata"));
+    }
+    Ok(())
+}
+
+fn valid_version(version: &str) -> bool {
+    !version.is_empty()
+        && version.len() <= MAX_APP_VERSION_LEN
+        && version
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'+'))
 }
 
 fn decode_device_result(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
@@ -2392,8 +2583,54 @@ fn decode_device_result(reader: &mut Reader<'_>) -> Result<DeviceResult, Protoco
         }
         8 => Ok(DeviceResult::Failed(DeviceError::try_from(reader.u8()?)?)),
         9 => decode_audio_result(reader),
+        12 => decode_apps_result(reader),
         _ => Err(ProtocolError::InvalidValue("device result")),
     }
+}
+
+fn decode_apps_result(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
+    let count = usize::from(reader.u16()?);
+    if count > MAX_APP_CATALOG_ENTRIES {
+        return Err(ProtocolError::InvalidValue("too many applications"));
+    }
+    let mut entries = Vec::with_capacity(count);
+    for _ in 0..count {
+        let id = reader.string()?;
+        let title = reader.string()?;
+        let label = reader.string()?;
+        let summary = reader.string()?;
+        let version = reader.string()?;
+        let glyph =
+            decode_glyph(reader.u8()?).ok_or(ProtocolError::InvalidValue("application glyph"))?;
+        let capability_count = usize::from(reader.u8()?);
+        if capability_count > MAX_APP_CAPABILITIES {
+            return Err(ProtocolError::InvalidValue(
+                "too many application capabilities",
+            ));
+        }
+        let mut capabilities = Vec::with_capacity(capability_count);
+        for _ in 0..capability_count {
+            capabilities.push(reader.string()?);
+        }
+        let installed_version = match reader.u8()? {
+            0 => None,
+            1 => Some(reader.string()?),
+            _ => return Err(ProtocolError::InvalidValue("installed application flag")),
+        };
+        let entry = AppInfo {
+            id,
+            title,
+            label,
+            summary,
+            version,
+            glyph,
+            capabilities,
+            installed_version,
+        };
+        validate_app_info(&entry)?;
+        entries.push(entry);
+    }
+    Ok(DeviceResult::Apps { entries })
 }
 
 fn decode_audio_result(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
@@ -5046,6 +5283,15 @@ mod tests {
                 url: "https://github.com/o/r/releases/download/v0.1.1/KoboRoot.tgz".to_owned(),
                 sha256: "a".repeat(64),
             },
+            DeviceRequest::ListInstalledApps,
+            DeviceRequest::ReadAppCatalog,
+            DeviceRequest::RefreshAppCatalog,
+            DeviceRequest::InstallApp {
+                id: "word-count".to_owned(),
+            },
+            DeviceRequest::UninstallApp {
+                id: "word-count".to_owned(),
+            },
         ];
         for request in requests {
             let frame = Frame {
@@ -5160,6 +5406,18 @@ mod tests {
                 available: false,
                 magnet_present: false,
             },
+            DeviceResult::Apps {
+                entries: vec![AppInfo {
+                    id: "word-count".to_owned(),
+                    title: "Word Count".to_owned(),
+                    label: "Words".to_owned(),
+                    summary: "Counts words in a note.".to_owned(),
+                    version: "1.2.0".to_owned(),
+                    glyph: Glyph::Note,
+                    capabilities: vec!["shared-files".to_owned()],
+                    installed_version: Some("1.1.0".to_owned()),
+                }],
+            },
         ];
         for result in results {
             let frame = Frame {
@@ -5169,6 +5427,76 @@ mod tests {
             let bytes = encode(&frame).expect("encode");
             assert_eq!(decode(&bytes).expect("decode"), frame);
         }
+    }
+
+    #[test]
+    fn app_requests_and_results_are_bounded_and_validated() {
+        let ids = vec![
+            String::new(),
+            "../todo".to_owned(),
+            "Todo".to_owned(),
+            "a/b".to_owned(),
+            "1todo".to_owned(),
+            "-todo".to_owned(),
+            "todo-".to_owned(),
+            "todo--list".to_owned(),
+            "a".repeat(MAX_APP_ID_LEN + 1),
+        ];
+        for id in ids {
+            let frame = Frame {
+                request_id: 1,
+                message: Message::DeviceRequest(DeviceRequest::InstallApp { id: id.clone() }),
+            };
+            assert!(encode(&frame).is_err(), "{id:?} was accepted as an app id");
+        }
+        for id in ["a", "todo", "todo-2", "a1-b2"] {
+            assert!(valid_app_id(id), "{id:?} was rejected as an app id");
+        }
+
+        let too_many = DeviceResult::Apps {
+            entries: (0..=MAX_APP_CATALOG_ENTRIES)
+                .map(|index| AppInfo {
+                    id: format!("app-{index}"),
+                    title: "App".to_owned(),
+                    label: "App".to_owned(),
+                    summary: "One application.".to_owned(),
+                    version: "1.0.0".to_owned(),
+                    glyph: Glyph::App,
+                    capabilities: Vec::new(),
+                    installed_version: None,
+                })
+                .collect(),
+        };
+        assert!(encode(&Frame {
+            request_id: 1,
+            message: Message::DeviceResult(too_many),
+        })
+        .is_err());
+
+        let app = |version: String| AppInfo {
+            id: "version-test".to_owned(),
+            title: "Version Test".to_owned(),
+            label: "Version".to_owned(),
+            summary: "Checks the application version wire bound.".to_owned(),
+            version,
+            glyph: Glyph::App,
+            capabilities: Vec::new(),
+            installed_version: None,
+        };
+        assert!(encode(&Frame {
+            request_id: 1,
+            message: Message::DeviceResult(DeviceResult::Apps {
+                entries: vec![app("a".repeat(MAX_APP_VERSION_LEN))],
+            }),
+        })
+        .is_ok());
+        assert!(encode(&Frame {
+            request_id: 1,
+            message: Message::DeviceResult(DeviceResult::Apps {
+                entries: vec![app("a".repeat(MAX_APP_VERSION_LEN + 1))],
+            }),
+        })
+        .is_err());
     }
 
     #[test]

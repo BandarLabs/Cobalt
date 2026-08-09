@@ -1,0 +1,137 @@
+{
+  "format_version": 1,
+  "apps": [
+    {
+      "package": "kobo-audiobook",
+      "id": "audiobook",
+      "display_name": "Audiobook Studio",
+      "short_label": "Audiobooks",
+      "summary": "Research, narrate and play an original audiobook about any topic.",
+      "version": "1.0.0",
+      "minimum_cobalt_version": "0.2.0",
+      "glyph": "headphones",
+      "capabilities": ["network", "audio", "bluetooth-audio"]
+    },
+    {
+      "package": "kobo-brief",
+      "id": "brief",
+      "display_name": "Daily Brief",
+      "short_label": "Daily Brief",
+      "summary": "Collects the day's stories while you read something else.",
+      "version": "1.0.0",
+      "minimum_cobalt_version": "0.2.0",
+      "glyph": "clock",
+      "capabilities": ["network"]
+    },
+    {
+      "package": "kobo-chat",
+      "id": "chat",
+      "display_name": "AI Command Center",
+      "short_label": "AI Chat",
+      "summary": "Ask a question and tap the answer, rather than typing one.",
+      "version": "1.0.0",
+      "minimum_cobalt_version": "0.2.0",
+      "glyph": "chat",
+      "capabilities": ["network"]
+    },
+    {
+      "package": "kobo-gallery",
+      "id": "gallery",
+      "display_name": "Components",
+      "short_label": "Components",
+      "summary": "Every UI primitive on real hardware, for checking by eye.",
+      "version": "1.0.0",
+      "minimum_cobalt_version": "0.2.0",
+      "glyph": "chart",
+      "capabilities": ["network"]
+    },
+    {
+      "package": "kobo-gutenbird",
+      "id": "gutenbird",
+      "display_name": "Gutenbird",
+      "short_label": "Gutenbird",
+      "summary": "Sixty thousand free books from Project Gutenberg.",
+      "version": "1.0.0",
+      "minimum_cobalt_version": "0.2.0",
+      "glyph": "book",
+      "capabilities": ["network", "frontlight-control"]
+    },
+    {
+      "package": "kobo-hn",
+      "id": "hn",
+      "display_name": "Hacker News",
+      "short_label": "Hacker News",
+      "summary": "Top, New, Ask and Show, with whole comment threads.",
+      "version": "1.0.0",
+      "minimum_cobalt_version": "0.2.0",
+      "glyph": "news",
+      "capabilities": ["network"]
+    },
+    {
+      "package": "kobo-magnet",
+      "id": "magnet",
+      "display_name": "Magnet",
+      "short_label": "Magnet",
+      "summary": "Find the hall sensor behind the bezel and watch it answer.",
+      "version": "1.0.0",
+      "minimum_cobalt_version": "0.2.0",
+      "glyph": "magnet",
+      "capabilities": ["cover-sensor"]
+    },
+    {
+      "package": "kobo-rss",
+      "id": "rss",
+      "display_name": "Feeds",
+      "short_label": "Feeds",
+      "summary": "Follow a site by name and read its articles, not its layout.",
+      "version": "1.0.0",
+      "minimum_cobalt_version": "0.2.0",
+      "glyph": "rss",
+      "capabilities": ["network"]
+    },
+    {
+      "package": "kobo-sidekick",
+      "id": "sidekick",
+      "display_name": "Sidekick",
+      "short_label": "Sidekick",
+      "summary": "Approve or deny what your coding agents ask to run, from here.",
+      "version": "1.0.0",
+      "minimum_cobalt_version": "0.2.0",
+      "glyph": "key",
+      "capabilities": ["network"]
+    },
+    {
+      "package": "kobo-sudoku",
+      "id": "sudoku",
+      "display_name": "Sudoku",
+      "short_label": "Sudoku",
+      "summary": "A crisp touch-first Sudoku built for the e-ink panel.",
+      "version": "1.0.1",
+      "minimum_cobalt_version": "0.2.0",
+      "glyph": "grid",
+      "capabilities": []
+    },
+    {
+      "package": "kobo-tictactoe",
+      "id": "tictactoe",
+      "display_name": "Tic-tac-toe",
+      "short_label": "Tic-tac-toe",
+      "summary": "Two players, one panel. Nought goes first.",
+      "version": "1.0.0",
+      "minimum_cobalt_version": "0.2.0",
+      "glyph": "grid",
+      "capabilities": []
+    },
+    {
+      "package": "kobo-todo",
+      "id": "todo",
+      "display_name": "Todo",
+      "short_label": "Todo",
+      "summary": "A list that remembers itself. Tap an item to finish it.",
+      "version": "1.0.0",
+      "minimum_cobalt_version": "0.2.0",
+      "glyph": "check",
+      "capabilities": []
+    }
+  ]
+}

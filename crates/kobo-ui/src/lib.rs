@@ -2847,7 +2847,10 @@ pub const MAX_CHIPS: usize = 16;
 pub const MAX_TABS: usize = 4;
 
 /// The most cells one grid will lay out.
-pub const MAX_CELLS: usize = 64;
+///
+/// Eighty-one is a complete Sudoku board. The protocol and layout node budgets
+/// can carry the full board without clipping.
+pub const MAX_CELLS: usize = 81;
 /// The most columns a grid may ask for.
 pub const MAX_COLUMNS: u8 = 12;
 
@@ -5030,7 +5033,12 @@ fn layout_node(
         } => {
             let columns = i32::from((*columns).clamp(1, MAX_COLUMNS));
             let gutter = metrics.space(Space::Tight);
-            let cell_width = (width - gutter * (columns - 1)) / columns;
+            let block_extra = if *square && columns == 9 && cells.len() >= 81 {
+                gutter
+            } else {
+                0
+            };
+            let cell_width = (width - gutter * (columns - 1) - block_extra * 2) / columns;
             // A square cell is what makes a board read as a board. A grid that
             // is not square is a keyboard, and there one row of touch target
             // is exactly right and anything taller wastes the panel.
@@ -5061,8 +5069,8 @@ fn layout_node(
                 let row = position / columns;
                 rows = row + 1;
                 let rect = Rect {
-                    x: x.saturating_add(column * (cell_width + gutter)),
-                    y: y.saturating_add(row * (cell_height + gutter)),
+                    x: x.saturating_add(column * (cell_width + gutter) + column / 3 * block_extra),
+                    y: y.saturating_add(row * (cell_height + gutter) + row / 3 * block_extra),
                     width: cell_width,
                     height: cell_height,
                 };
@@ -5106,7 +5114,12 @@ fn layout_node(
             let height = if rows == 0 {
                 0
             } else {
-                rows * cell_height + (rows - 1) * gutter
+                let block_gaps = if block_extra == 0 {
+                    0
+                } else {
+                    (rows - 1) / 3 * block_extra
+                };
+                rows * cell_height + (rows - 1) * gutter + block_gaps
             };
             layout.nodes[index].rect.height = height;
             y.saturating_add(height)

@@ -1,0 +1,126 @@
+name: Publish apps
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cobalt-app-catalog
+  cancel-in-progress: false
+
+jobs:
+  trusted-tool:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      packages: ${{ steps.registry.outputs.packages }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.85.0
+      - name: Build the release tool
+        run: cargo build --locked -p kobo-cli
+      - name: Validate the registry
+        id: registry
+        run: echo "packages=$(target/debug/kobo app-list --registry apps/catalog.json)" >> "$GITHUB_OUTPUT"
+      - name: Save the release tool
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: trusted-kobo
+          path: target/debug/kobo
+          if-no-files-found: error
+
+  build-apps:
+    if: github.ref == 'refs/heads/main'
+    needs: trusted-tool
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJSON(needs.trusted-tool.outputs.packages) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.85.0
+          targets: armv7-unknown-linux-musleabihf
+      - name: Install the ring C cross-compiler
+        run: sudo apt-get update && sudo apt-get install --yes gcc-arm-linux-gnueabihf
+      - name: Load the release tool
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: trusted-kobo
+          path: trusted
+      - name: Build and verify every registered app
+        env:
+          CC_armv7_unknown_linux_musleabihf: arm-linux-gnueabihf-gcc
+          CFLAGS_armv7_unknown_linux_musleabihf: -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0
+        run: |
+          chmod +x trusted/kobo
+          trusted/kobo app-check \
+            --registry apps/catalog.json \
+            --package "${{ matrix.package }}" \
+            --out dist/prebuilt
+      - name: Save verified app binaries
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: verified-app-${{ matrix.package }}
+          path: dist/prebuilt/${{ matrix.package }}
+          if-no-files-found: error
+
+  publish:
+    if: github.ref == 'refs/heads/main'
+    needs: [trusted-tool, build-apps]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Load the release tool
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: trusted-kobo
+          path: trusted
+      - name: Load verified app binaries
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: verified-app-*
+          path: dist/artifacts
+      - name: Sign the app packages and catalog
+        env:
+          COBALT_APP_SIGNING_SEED: ${{ secrets.COBALT_APP_SIGNING_SEED }}
+        run: |
+          set -eu
+          test -n "$COBALT_APP_SIGNING_SEED" || {
+            echo "COBALT_APP_SIGNING_SEED is not configured"
+            exit 1
+          }
+          chmod +x trusted/kobo
+          seed="$RUNNER_TEMP/cobalt-app-signing-seed"
+          trap 'rm -f "$seed"' EXIT
+          printf '%s' "$COBALT_APP_SIGNING_SEED" > "$seed"
+          chmod 600 "$seed"
+          trusted/kobo app-release \
+            --registry apps/catalog.json \
+            --seed "$seed" \
+            --out dist/apps \
+            --base-url https://github.com/BandarLabs/Cobalt/releases/download/app-catalog \
+            --artifact-dir dist/artifacts
+      - name: Publish the fixed app channel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view app-catalog >/dev/null 2>&1; then
+            gh release upload app-catalog dist/apps/* --clobber
+          else
+            gh release create app-catalog dist/apps/* \
+              --target "$GITHUB_SHA" \
+              --title "Cobalt App Catalog" \
+              --notes "Automatically published signed apps for installed Cobalt readers." \
+              --latest=false
+          fi

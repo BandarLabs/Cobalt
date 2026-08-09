@@ -935,7 +935,8 @@ impl KoboApp for Settings {
             | DeviceResult::Battery { .. }
             | DeviceResult::Frontlight { .. }
             | DeviceResult::Cover { .. }
-            | DeviceResult::Audio { .. } => {}
+            | DeviceResult::Audio { .. }
+            | DeviceResult::Apps { .. } => {}
         }
         self.show(context);
     }

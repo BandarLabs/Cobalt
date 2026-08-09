@@ -6,7 +6,7 @@
 //! [`AppRunner::action`] from their platform event loop.
 
 pub use kobo_protocol::{
-    AudioPlaybackState, AudioSource, BatteryDetail, BluetoothDevice, BluetoothDeviceKind,
+    AppInfo, AudioPlaybackState, AudioSource, BatteryDetail, BluetoothDevice, BluetoothDeviceKind,
     Credential, DenyReason, DeviceError, DeviceRequest, DeviceResult, Frame, Header, Lifecycle,
     LogLevel, Message, SecretHeader, ShellError, ShellEvent, ShellRequest, StoreError,
     StoreRequest, StoreResult, StreamError, Task, TaskError, TaskId, TaskOutcome, WifiNetwork,
@@ -2948,6 +2948,17 @@ impl Context {
         Device { context: self }
     }
 
+    /// Runtime-owned application catalog and package transactions.
+    ///
+    /// The runtime authorizes these requests by caller identity. A launcher
+    /// may enumerate installed applications and the built-in Store may refresh
+    /// and change them; ordinary applications receive an explicit refusal.
+    /// Full Cobalt platform updates are deliberately absent and remain under
+    /// [`Context::device`] for the Settings application.
+    pub fn applications(&mut self) -> Applications<'_> {
+        Applications { context: self }
+    }
+
     /// The application's own small state, which survives being closed.
     ///
     /// Every application has one and none has to ask for it, in the same way a
@@ -2986,6 +2997,60 @@ impl Context {
     #[must_use]
     pub fn take_commands(&mut self) -> Vec<Command> {
         std::mem::take(&mut self.commands)
+    }
+}
+
+/// App-only catalog and installation operations.
+#[derive(Debug)]
+pub struct Applications<'a> {
+    context: &'a mut Context,
+}
+
+impl Applications<'_> {
+    /// Enumerates app-store packages currently installed on this reader.
+    pub fn installed(&mut self) {
+        self.request(DeviceRequest::ListInstalledApps);
+    }
+
+    /// Reads the last verified catalog without using the network.
+    pub fn cached_catalog(&mut self) {
+        self.request(DeviceRequest::ReadAppCatalog);
+    }
+
+    /// Fetches and verifies the fixed Cobalt app catalog.
+    pub fn refresh_catalog(&mut self) {
+        self.request(DeviceRequest::RefreshAppCatalog);
+    }
+
+    /// Installs or updates one catalog application.
+    ///
+    /// Returns `false` without queueing when `id` cannot be a stable
+    /// application identity.
+    pub fn install(&mut self, id: impl Into<String>) -> bool {
+        self.with_id(id, |id| DeviceRequest::InstallApp { id })
+    }
+
+    /// Removes one app-store application. Application data is retained so a
+    /// reinstall can recover it.
+    pub fn uninstall(&mut self, id: impl Into<String>) -> bool {
+        self.with_id(id, |id| DeviceRequest::UninstallApp { id })
+    }
+
+    fn with_id(
+        &mut self,
+        id: impl Into<String>,
+        request: impl FnOnce(String) -> DeviceRequest,
+    ) -> bool {
+        let id = id.into();
+        if !kobo_protocol::valid_app_id(&id) {
+            return false;
+        }
+        self.request(request(id));
+        true
+    }
+
+    fn request(&mut self, request: DeviceRequest) {
+        self.context.commands.push(Command::Device(request));
     }
 }
 

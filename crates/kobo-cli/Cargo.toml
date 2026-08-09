@@ -11,8 +11,10 @@ name = "kobo"
 path = "src/main.rs"
 
 [dependencies]
+kobo-app-store = { path = "../kobo-app-store" }
 kobo-sim = { path = "../kobo-sim" }
 kobo-image = { path = "../kobo-image" }
+kobo-json = { path = "../kobo-json" }
 kobo-net = { path = "../kobo-net" }
 
 [features]
@@ -23,4 +25,3 @@ device-write = []
 
 [lints]
 workspace = true
-

@@ -16,7 +16,8 @@
 //! exactly where the reliability is wanted.
 
 use kobo_sdk::{
-    action_id, ActionId, Context, Glyph, KoboApp, ScreenBuilder, Tile, TileShape, TileState,
+    action_id, ActionId, AppInfo, Context, DeviceRequest, DeviceResult, Glyph, KoboApp,
+    ScreenBuilder, Tile, TileShape, TileState,
 };
 use std::process::ExitCode;
 
@@ -44,14 +45,6 @@ struct Entry {
 
 const ENTRIES: &[Entry] = &[
     Entry {
-        name: "audiobook",
-        title: "Audiobook Studio",
-        label: "Audiobooks",
-        summary: "Research, narrate and play an original audiobook about any topic.",
-        needs: "Needs the network and Bluetooth audio.",
-        glyph: Glyph::Headphones,
-    },
-    Entry {
         name: "settings",
         title: "Settings",
         label: "Settings",
@@ -60,12 +53,12 @@ const ENTRIES: &[Entry] = &[
         glyph: Glyph::Settings,
     },
     Entry {
-        name: "gutenbird",
-        title: "Gutenbird",
-        label: "Gutenbird",
-        summary: "Sixty thousand free books from Project Gutenberg.",
-        needs: "Needs the network while searching and downloading.",
-        glyph: Glyph::Book,
+        name: "store",
+        title: "App Store",
+        label: "App Store",
+        summary: "Install, update and remove public Cobalt apps over Wi-Fi.",
+        needs: "Uses Wi-Fi to refresh Cobalt's signed GitHub app catalog.",
+        glyph: Glyph::Download,
     },
     Entry {
         name: "terminal",
@@ -74,78 +67,6 @@ const ENTRIES: &[Entry] = &[
         summary: "A shell on the panel, with keys that send rather than collect.",
         needs: "Runs commands on this device. Nothing it does survives a reboot.",
         glyph: Glyph::Terminal,
-    },
-    Entry {
-        name: "gallery",
-        title: "Components",
-        label: "Components",
-        summary: "Every UI primitive on real hardware, for checking by eye.",
-        needs: "Runs entirely on the device.",
-        glyph: Glyph::Chart,
-    },
-    Entry {
-        name: "magnet",
-        title: "Magnet",
-        label: "Magnet",
-        summary: "Find the hall sensor behind the bezel and watch it answer.",
-        needs: "Reads the cover sensor. Runs entirely on the device.",
-        glyph: Glyph::Magnet,
-    },
-    Entry {
-        name: "tictactoe",
-        title: "Tic-tac-toe",
-        label: "Tic-tac-toe",
-        summary: "Two players, one panel. Nought goes first.",
-        needs: "Runs entirely on the device.",
-        glyph: Glyph::Grid,
-    },
-    Entry {
-        name: "brief",
-        title: "Daily Brief",
-        label: "Daily Brief",
-        summary: "Collects the day's stories while you read something else.",
-        needs: "Needs the network in the background, on a schedule the runtime sets.",
-        glyph: Glyph::Clock,
-    },
-    Entry {
-        name: "todo",
-        title: "Todo",
-        label: "Todo",
-        summary: "A list that remembers itself. Tap an item to finish it.",
-        needs: "Keeps its list in this application's own storage.",
-        glyph: Glyph::Check,
-    },
-    Entry {
-        name: "chat",
-        title: "AI Command Center",
-        label: "AI Chat",
-        summary: "Ask a question and tap the answer, rather than typing one.",
-        needs: "Needs the network, and a key you provide.",
-        glyph: Glyph::Chat,
-    },
-    Entry {
-        name: "sidekick",
-        title: "Sidekick",
-        label: "Sidekick",
-        summary: "Approve or deny what your coding agents ask to run, from here.",
-        needs: "Needs the network, a sidekick daemon on your computer, and its trust root installed.",
-        glyph: Glyph::Key,
-    },
-    Entry {
-        name: "hn",
-        title: "Hacker News",
-        label: "Hacker News",
-        summary: "Top, New, Ask and Show, with whole comment threads.",
-        needs: "Needs the network while loading stories and threads.",
-        glyph: Glyph::News,
-    },
-    Entry {
-        name: "rss",
-        title: "Feeds",
-        label: "Feeds",
-        summary: "Follow a site by name and read its articles, not its layout.",
-        needs: "Needs the network while searching and while fetching a feed. Keeps the list of feeds you follow in this application's own storage.",
-        glyph: Glyph::Rss,
     },
 ];
 
@@ -185,13 +106,15 @@ struct Launcher {
     /// behind it. Marked on its tile rather than claimed in words, because the
     /// launcher has no telemetry to say more than "you left this open".
     working: Option<usize>,
+    /// Store-installed applications discovered from verified manifests.
+    installed: Vec<AppInfo>,
 }
 
 impl Launcher {
     fn show(&mut self, context: &mut Context) {
         let screen = match self.view {
             View::Home => self.home(context),
-            View::Starting(index) => Self::starting(index),
+            View::Starting(index) => self.starting(index),
             View::Leaving => Self::leaving(),
         };
         context.set_screen(screen);
@@ -202,8 +125,8 @@ impl Launcher {
     /// Asked of the runtime rather than assumed. Six fit a Clara and more fit
     /// a Sage, and an application that picked a number would be wrong on every
     /// panel but one.
-    fn pages(context: &Context) -> Vec<Vec<usize>> {
-        let pages = context.paginate_tiles(ENTRIES.len(), TileShape::Square, true);
+    fn pages(&self, context: &Context) -> Vec<Vec<usize>> {
+        let pages = context.paginate_tiles(self.entry_count(), TileShape::Square, true);
         if pages.is_empty() {
             vec![Vec::new()]
         } else {
@@ -229,7 +152,7 @@ impl Launcher {
     /// starting and carries the way back, so a mistaken tap is one tap to
     /// undo.
     fn home(&mut self, context: &Context) -> kobo_sdk::Screen {
-        let pages = Self::pages(context);
+        let pages = self.pages(context);
         self.page = self.page.min(pages.len() - 1);
         let showing = &pages[self.page];
         let title = if pages.len() > 1 {
@@ -240,10 +163,10 @@ impl Launcher {
         let screen = ScreenBuilder::new("launcher").top_bar(title).tile_grid(
             TileShape::Square,
             showing.iter().map(|&index| {
-                let entry = &ENTRIES[index];
+                let entry = self.entry(index);
                 let busy = self.working == Some(index);
                 (
-                    opening(entry.name),
+                    opening(&entry.name),
                     entry.label,
                     entry.glyph,
                     move |tile: Tile| {
@@ -317,8 +240,8 @@ impl Launcher {
     /// so a missing binary, an application that exits before it draws, or one
     /// that is simply slow all leave this screen up. One button answers all of
     /// them.
-    fn starting(index: usize) -> kobo_sdk::Screen {
-        let entry = &ENTRIES[index];
+    fn starting(&self, index: usize) -> kobo_sdk::Screen {
+        let entry = self.entry(index);
         ScreenBuilder::new("launcher-starting")
             .top_bar("Starting")
             .top_bar_action("back", "Back")
@@ -337,10 +260,50 @@ impl Launcher {
             .text("The reader takes about half a minute to start and rescan.")
             .build()
     }
+
+    fn entry_count(&self) -> usize {
+        ENTRIES.len() + self.installed.len()
+    }
+
+    fn entry(&self, index: usize) -> DisplayEntry {
+        if let Some(entry) = ENTRIES.get(index) {
+            return DisplayEntry {
+                name: entry.name.to_owned(),
+                title: entry.title.to_owned(),
+                label: entry.label.to_owned(),
+                summary: entry.summary.to_owned(),
+                needs: entry.needs.to_owned(),
+                glyph: entry.glyph,
+            };
+        }
+        let entry = &self.installed[index - ENTRIES.len()];
+        DisplayEntry {
+            name: entry.id.clone(),
+            title: entry.title.clone(),
+            label: entry.label.clone(),
+            summary: entry.summary.clone(),
+            needs: if entry.capabilities.is_empty() {
+                "Needs no additional capabilities.".to_owned()
+            } else {
+                format!("Uses {}.", entry.capabilities.join(", "))
+            },
+            glyph: entry.glyph,
+        }
+    }
+}
+
+struct DisplayEntry {
+    name: String,
+    title: String,
+    label: String,
+    summary: String,
+    needs: String,
+    glyph: Glyph,
 }
 
 impl KoboApp for Launcher {
     fn on_start(&mut self, context: &mut Context) {
+        context.applications().installed();
         self.show(context);
     }
 
@@ -364,12 +327,13 @@ impl KoboApp for Launcher {
         if !matches!(self.view, View::Home) {
             self.view = View::Home;
         }
+        context.applications().installed();
         self.show(context);
     }
 
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         if action == action_id("next") || action == action_id("previous") {
-            let pages = Self::pages(context).len();
+            let pages = self.pages(context).len();
             self.page = if action == action_id("next") {
                 // Clamped rather than wrapped, to match a bar that only offers
                 // a direction there is a page in. Nothing dispatches this at
@@ -397,16 +361,37 @@ impl KoboApp for Launcher {
             self.show(context);
             return;
         }
-        if let Some(index) = ENTRIES
-            .iter()
-            .position(|entry| action == action_id(&opening(entry.name)))
+        if let Some(index) = (0..self.entry_count())
+            .position(|index| action == action_id(&opening(&self.entry(index).name)))
         {
             // Paint first, then ask. The runtime stops this application to
             // start the other one, so this is the last chance to leave
             // something on the panel explaining the wait.
             self.view = View::Starting(index);
             self.show(context);
-            context.launch(ENTRIES[index].name);
+            context.launch(self.entry(index).name);
+        }
+    }
+
+    fn on_device_result(
+        &mut self,
+        context: &mut Context,
+        request: DeviceRequest,
+        result: DeviceResult,
+    ) {
+        if !matches!(request, DeviceRequest::ListInstalledApps) {
+            return;
+        }
+        if let DeviceResult::Apps { mut entries } = result {
+            entries.sort_by(|left, right| {
+                left.title
+                    .to_ascii_lowercase()
+                    .cmp(&right.title.to_ascii_lowercase())
+                    .then_with(|| left.id.cmp(&right.id))
+            });
+            self.installed = entries;
+            self.page = self.page.min(self.pages(context).len() - 1);
+            self.show(context);
         }
     }
 }
@@ -424,7 +409,9 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{opening, Launcher, View, ENTRIES};
-    use kobo_sdk::{action_id, AppRunner, Command, Lifecycle};
+    use kobo_sdk::{
+        action_id, AppInfo, AppRunner, Command, DeviceRequest, DeviceResult, Glyph, Lifecycle,
+    };
     use kobo_ui::{
         Chrome, DisplayMetrics, LayoutKind, Node, TextScale, TileState, CLARA_BW_METRICS,
     };
@@ -453,6 +440,29 @@ mod tests {
 
     fn painted(commands: Vec<Command>) -> kobo_sdk::Screen {
         repainted(commands).expect("a screen was painted")
+    }
+
+    #[test]
+    fn a_store_installed_app_appears_and_launches_by_manifest_id() {
+        let mut runner = AppRunner::new(Launcher::default());
+        runner.start();
+        runner.device_result(DeviceResult::Apps {
+            entries: vec![AppInfo {
+                id: "word-count".to_owned(),
+                title: "Word Count".to_owned(),
+                label: "Words".to_owned(),
+                summary: "Counts words in a note.".to_owned(),
+                version: "1.0.0".to_owned(),
+                glyph: Glyph::Note,
+                capabilities: Vec::new(),
+                installed_version: Some("1.0.0".to_owned()),
+            }],
+        });
+        assert_eq!(runner.app().installed[0].id, "word-count");
+        let commands = runner.action(action_id(&opening("word-count")));
+        assert!(commands
+            .iter()
+            .any(|command| matches!(command, Command::Launch(id) if id == "word-count")));
     }
 
     /// The screen these commands would put on the panel, if any.
@@ -759,6 +769,9 @@ mod tests {
             matches!(runner.app().view, View::Home),
             "the launcher stayed on the screen it painted while leaving"
         );
+        assert!(commands
+            .iter()
+            .any(|command| matches!(command, Command::Device(DeviceRequest::ListInstalledApps))));
         let painted = commands
             .iter()
             .find_map(|command| match command {
