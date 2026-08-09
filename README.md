@@ -129,6 +129,29 @@ kobo dev
 `kobo dev` runs the app in the Clara BW browser simulator. The SDK guide is in
 [SDK.md](SDK.md).
 
+### What the SDK provides
+
+| Area | Application-facing support |
+|---|---|
+| App model | Ordinary Rust binaries with declarative screens, named actions, lifecycle callbacks, and runtime-managed Back navigation |
+| E-ink UI | Measured text, rows, tiles, pictures, dialogs, keyboards, terminal views, pagination, and full or partial refresh planning |
+| Network and credentials | Asynchronous HTTPS fetches and posts, ranged downloads, bounded responses, and named secrets whose values never enter the app |
+| State and background work | Atomic per-app keyed storage, cancellable tasks, foreground/background lifecycle events, and scheduled wake capabilities |
+| Device and media | Capability-gated battery, cover, frontlight, Wi-Fi, Bluetooth, and audio requests |
+| Tooling | App scaffolding, the browser and native runtime simulators, layout diagnostics, deterministic failure scenarios, packaging, and device deployment |
+
+Apps request services through the SDK instead of opening device resources
+directly. The runtime can deny a request because it was not declared, is too
+expensive for the current battery state, or is unsupported, and each refusal
+is returned to the app as a value it can present or recover from.
+
+See the full guide for [the application model](SDK.md#1-the-shape-of-an-application),
+[screen building](SDK.md#3-building-a-screen),
+[asynchronous work and credentials](SDK.md#5-work-that-takes-time),
+[persistent state](SDK.md#7-state-that-survives-being-closed),
+[hardware capabilities](SDK.md#10-hardware), and
+[simulation, packaging, and deployment](SDK.md#11-running-it).
+
 ## Contributing apps
 
 App contributions are regular pull requests:
