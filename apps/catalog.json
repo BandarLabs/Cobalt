@@ -106,7 +106,7 @@
       "display_name": "Sudoku",
       "short_label": "Sudoku",
       "summary": "A crisp touch-first Sudoku built for the e-ink panel.",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "minimum_cobalt_version": "0.2.0",
       "glyph": "grid",
       "capabilities": []

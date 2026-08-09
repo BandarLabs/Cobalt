@@ -314,11 +314,30 @@ impl KoboApp for Store {
                     self.view = View::Catalog;
                 }
             }
-            (
-                DeviceRequest::InstallApp { id } | DeviceRequest::UninstallApp { id },
-                DeviceResult::Done,
-            ) => {
-                self.notice = Some(format!("{id} changed successfully."));
+            (DeviceRequest::InstallApp { id }, DeviceResult::Done) => {
+                let title = self
+                    .entries
+                    .iter()
+                    .find(|entry| entry.id == id)
+                    .map_or_else(|| id.clone(), |entry| entry.title.clone());
+                let outcome = match &self.view {
+                    View::Working {
+                        id: working_id,
+                        action: "Updating",
+                    } if working_id == &id => "updated",
+                    _ => "installed",
+                };
+                self.notice = Some(format!("{title} {outcome} successfully."));
+                self.view = View::Catalog;
+                context.applications().cached_catalog();
+            }
+            (DeviceRequest::UninstallApp { id }, DeviceResult::Done) => {
+                let title = self
+                    .entries
+                    .iter()
+                    .find(|entry| entry.id == id)
+                    .map_or_else(|| id.clone(), |entry| entry.title.clone());
+                self.notice = Some(format!("{title} removed successfully."));
                 self.view = View::Catalog;
                 context.applications().cached_catalog();
             }
@@ -484,6 +503,55 @@ mod tests {
         assert!(!commands
             .iter()
             .any(|command| matches!(command, Command::Device(DeviceRequest::Update { .. }))));
+    }
+
+    #[test]
+    fn completed_transactions_use_clear_user_facing_messages() {
+        let mut runner = AppRunner::new(Store::default());
+        runner.start();
+        runner.device_result(DeviceResult::Apps {
+            entries: vec![app("sudoku", None)],
+        });
+        runner.device_result(DeviceResult::Apps {
+            entries: vec![app("sudoku", None)],
+        });
+        runner.action(action_id(&app_action("sudoku")));
+        runner.action(action_id(&install_action("sudoku")));
+        runner.device_result(DeviceResult::Done);
+        assert_eq!(
+            runner.app().notice.as_deref(),
+            Some("sudoku app installed successfully.")
+        );
+
+        runner.device_result(DeviceResult::Apps {
+            entries: vec![app("sudoku", Some("1.1.0"))],
+        });
+        runner.action(action_id(&app_action("sudoku")));
+        runner.action(action_id(&remove_action("sudoku")));
+        runner.device_result(DeviceResult::Done);
+        assert_eq!(
+            runner.app().notice.as_deref(),
+            Some("sudoku app removed successfully.")
+        );
+    }
+
+    #[test]
+    fn updates_are_identified_in_the_success_message() {
+        let mut runner = AppRunner::new(Store::default());
+        runner.start();
+        runner.device_result(DeviceResult::Apps {
+            entries: vec![app("sudoku", Some("1.0.0"))],
+        });
+        runner.device_result(DeviceResult::Apps {
+            entries: vec![app("sudoku", Some("1.0.0"))],
+        });
+        runner.action(action_id(&app_action("sudoku")));
+        runner.action(action_id(&install_action("sudoku")));
+        runner.device_result(DeviceResult::Done);
+        assert_eq!(
+            runner.app().notice.as_deref(),
+            Some("sudoku app updated successfully.")
+        );
     }
 
     #[test]

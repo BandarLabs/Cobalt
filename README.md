@@ -14,9 +14,9 @@ new app can appear in Store without reinstalling or updating Cobalt.
 
 <p align="center">
   <a href="docs/media/store-demo.mp4">
-    <img src="docs/media/store-demo.png" width="430" alt="Cobalt App Store showing installed apps">
+    <img src="docs/media/store-demo.gif" width="430" alt="Sudoku being installed, opened, removed, and reinstalled from Cobalt App Store on a Kobo Clara BW">
   </a><br>
-  <sub>Watch the Store install, uninstall, and same-session reinstall demo.</sub>
+  <sub>Recorded on a Kobo Clara BW: install, launch, remove, and same-session reinstall over Wi-Fi.</sub>
 </p>
 
 > [!IMPORTANT]

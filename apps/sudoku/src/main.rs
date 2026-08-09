@@ -151,7 +151,7 @@ impl Game {
                 plural(self.hints)
             ),
             None => self.selected.map_or_else(
-                || "Select a blank square.".to_owned(),
+                || "Tap a blank square, then choose a number.".to_owned(),
                 |cell| format!("R{} C{} selected.", cell / SIDE + 1, cell % SIDE + 1),
             ),
         }
@@ -332,6 +332,7 @@ mod tests {
     #[test]
     fn completing_the_board_reaches_solved_state() {
         let mut game = Game::default();
+        assert_eq!(game.status(), "Tap a blank square, then choose a number.");
         for cell in 0..CELLS {
             if game.puzzle[cell] == 0 {
                 game.board[cell] = game.solution[cell];
