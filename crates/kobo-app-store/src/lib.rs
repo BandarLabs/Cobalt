@@ -15,8 +15,8 @@ mod signing;
 pub use bundle::{build_bundle, parse_bundle, parse_public_bundle, ParsedBundle};
 pub use error::{BundleError, FormatError, SignatureError};
 pub use model::{
-    is_public_glyph, is_public_reserved_app_id, public_reserved_app_ids, Catalog, CatalogEntry,
-    CatalogEntryInput, Manifest, ManifestInput, Sha256Digest,
+    cobalt_version_at_least, is_public_glyph, is_public_reserved_app_id, public_reserved_app_ids,
+    Catalog, CatalogEntry, CatalogEntryInput, Manifest, ManifestInput, Sha256Digest,
 };
 pub use signing::{derive_public_key, sign, verify, DetachedSignature, Ed25519PublicKey};
 

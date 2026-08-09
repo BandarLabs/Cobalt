@@ -42,11 +42,36 @@ jobs:
 
   advisories:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      checks: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: RustSec/advisory-db
+          path: advisory-db
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: RustSec/advisory-db
+          ref: 309ad29d8fe448bf986019e05d47b9e0e29a2218
+          path: advisory-db-fallback
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.88.0
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --version 0.22.2 --locked
+      - name: Audit dependencies
+        run: |
+          set +e
+          output="$(cargo audit --db advisory-db --no-fetch 2>&1)"
+          status=$?
+          set -e
+          if [ "$status" -eq 0 ]; then
+            printf '%s\n' "$output"
+          elif printf '%s\n' "$output" | grep -Eq \
+            'error loading advisory database|expected RUSTSEC-[0-9-]+ to be in'; then
+            printf '%s\n' "$output" >&2
+            echo "Current advisory database is malformed; using the last verified snapshot." >&2
+            cargo audit --db advisory-db-fallback --no-fetch
+          else
+            printf '%s\n' "$output" >&2
+            exit "$status"
+          fi

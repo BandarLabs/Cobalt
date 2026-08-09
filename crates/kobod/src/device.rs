@@ -2184,6 +2184,8 @@ fn start_application(
     let declared = if path.starts_with(Path::new(COBALT_ROOT).join("apps")) {
         crate::app_store::declared(Path::new(COBALT_ROOT), &name)
             .ok_or_else(|| format!("read application manifest for {name}"))?
+    } else if let Some(declared) = crate::app_store::builtin_declared(&name) {
+        declared
     } else {
         Declared::all()
     };
@@ -2288,6 +2290,9 @@ fn preflight(application: &Path) -> Result<(), String> {
 fn resolve(catalogue: &Path, name: &str) -> Result<PathBuf, String> {
     if !valid_application_name(name) {
         return Err(format!("{name:?} is not a valid application name"));
+    }
+    if crate::app_store::manages_builtin(name) {
+        return crate::app_store::resolve(Path::new(COBALT_ROOT), name);
     }
     let path = catalogue.join(format!("kobo-{name}"));
     if path.is_file() {

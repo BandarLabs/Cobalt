@@ -820,9 +820,108 @@ struct SimulatedApps {
 }
 
 impl Default for SimulatedApps {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the simulator catalog mirrors the complete first-party Store listing"
+    )]
     fn default() -> Self {
         Self {
             catalog: vec![
+                simulated_app(
+                    "audiobook",
+                    "Audiobook Studio",
+                    "Audiobooks",
+                    "Research, narrate and play an original audiobook about any topic.",
+                    kobo_ui::Glyph::Headphones,
+                    &["network", "audio", "bluetooth-audio"],
+                    true,
+                ),
+                simulated_app(
+                    "brief",
+                    "Daily Brief",
+                    "Daily Brief",
+                    "Collects the day's stories while you read something else.",
+                    kobo_ui::Glyph::Clock,
+                    &["network"],
+                    true,
+                ),
+                simulated_app(
+                    "chat",
+                    "AI Command Center",
+                    "AI Chat",
+                    "Ask a question and tap the answer, rather than typing one.",
+                    kobo_ui::Glyph::Chat,
+                    &["network"],
+                    true,
+                ),
+                simulated_app(
+                    "gallery",
+                    "Components",
+                    "Components",
+                    "Every UI primitive on real hardware, for checking by eye.",
+                    kobo_ui::Glyph::Chart,
+                    &["network"],
+                    true,
+                ),
+                simulated_app(
+                    "gutenbird",
+                    "Gutenbird",
+                    "Gutenbird",
+                    "Sixty thousand free books from Project Gutenberg.",
+                    kobo_ui::Glyph::Book,
+                    &["network", "frontlight-control"],
+                    true,
+                ),
+                simulated_app(
+                    "hn",
+                    "Hacker News",
+                    "Hacker News",
+                    "Top, New, Ask and Show, with whole comment threads.",
+                    kobo_ui::Glyph::News,
+                    &["network"],
+                    true,
+                ),
+                simulated_app(
+                    "magnet",
+                    "Magnet",
+                    "Magnet",
+                    "Find the hall sensor behind the bezel and watch it answer.",
+                    kobo_ui::Glyph::Magnet,
+                    &["cover-sensor"],
+                    true,
+                ),
+                simulated_app(
+                    "rss",
+                    "Feeds",
+                    "Feeds",
+                    "Follow a site by name and read its articles, not its layout.",
+                    kobo_ui::Glyph::Rss,
+                    &["network"],
+                    true,
+                ),
+                simulated_app(
+                    "settings",
+                    "Settings",
+                    "Settings",
+                    "Connect Wi-Fi, manage hardware and update the Cobalt platform.",
+                    kobo_ui::Glyph::Settings,
+                    &[
+                        "network",
+                        "battery-read",
+                        "bluetooth-control",
+                        "wifi-control",
+                    ],
+                    true,
+                ),
+                simulated_app(
+                    "sidekick",
+                    "Sidekick",
+                    "Sidekick",
+                    "Approve or deny what your coding agents ask to run, from here.",
+                    kobo_ui::Glyph::Key,
+                    &["network"],
+                    true,
+                ),
                 simulated_app(
                     "sudoku",
                     "Sudoku",
@@ -830,30 +929,34 @@ impl Default for SimulatedApps {
                     "A crisp touch-first Sudoku built for the e-ink panel.",
                     kobo_ui::Glyph::Grid,
                     &[],
+                    false,
                 ),
                 simulated_app(
-                    "dictionary",
-                    "Dictionary",
-                    "Dictionary",
-                    "Look up a word without leaving the page.",
-                    kobo_ui::Glyph::Book,
-                    &["network"],
+                    "terminal",
+                    "Terminal",
+                    "Terminal",
+                    "A shell on the panel, with keys that send rather than collect.",
+                    kobo_ui::Glyph::Terminal,
+                    &["shell"],
+                    true,
                 ),
                 simulated_app(
-                    "word-count",
-                    "Word Count",
-                    "Word Count",
-                    "Count words and characters in a note.",
-                    kobo_ui::Glyph::Note,
+                    "tictactoe",
+                    "Tic-tac-toe",
+                    "Tic-tac-toe",
+                    "Two players, one panel. Nought goes first.",
+                    kobo_ui::Glyph::Grid,
                     &[],
+                    true,
                 ),
                 simulated_app(
-                    "weather",
-                    "Weather",
-                    "Weather",
-                    "A quiet forecast designed for an e-ink panel.",
-                    kobo_ui::Glyph::Globe,
-                    &["network"],
+                    "todo",
+                    "Todo",
+                    "Todo",
+                    "A list that remembers itself. Tap an item to finish it.",
+                    kobo_ui::Glyph::Check,
+                    &[],
+                    true,
                 ),
             ],
         }
@@ -867,6 +970,7 @@ fn simulated_app(
     summary: &str,
     glyph: kobo_ui::Glyph,
     capabilities: &[&str],
+    installed: bool,
 ) -> kobo_protocol::AppInfo {
     kobo_protocol::AppInfo {
         id: id.to_owned(),
@@ -879,7 +983,7 @@ fn simulated_app(
             .iter()
             .map(|value| (*value).to_owned())
             .collect(),
-        installed_version: None,
+        installed_version: installed.then(|| "1.0.0".to_owned()),
     }
 }
 
@@ -1797,7 +1901,9 @@ fn simulated_app_request(
             entries: apps
                 .catalog
                 .iter()
-                .filter(|entry| entry.is_installed())
+                .filter(|entry| {
+                    entry.is_installed() && !matches!(entry.id.as_str(), "settings" | "terminal")
+                })
                 .cloned()
                 .collect(),
         },
@@ -1829,6 +1935,9 @@ fn simulated_app_request(
             }
         },
         DeviceRequest::UninstallApp { id } => {
+            if matches!(id.as_str(), "settings" | "terminal") {
+                return Ok(Some(DeviceResult::Failed(DeviceError::InvalidInput)));
+            }
             if let Some(entry) = apps.catalog.iter_mut().find(|entry| entry.id == *id) {
                 entry.installed_version = None;
                 DeviceResult::Done
@@ -2301,10 +2410,19 @@ mod tests {
     }
 
     #[test]
-    fn simulated_store_install_and_uninstall_persist_for_the_launcher() {
+    fn simulated_store_updates_and_reinstalls_in_one_session() {
         use kobo_protocol::{DeviceRequest, DeviceResult};
 
         let apps = Arc::new(Mutex::new(SimulatedApps::default()));
+        {
+            let mut state = apps.lock().expect("simulated apps");
+            let todo = state
+                .catalog
+                .iter_mut()
+                .find(|entry| entry.id == "todo")
+                .expect("Todo entry");
+            todo.version = "1.1.0".to_owned();
+        }
         let store = Arc::new(Mutex::new(AppState::with_apps(Arc::clone(&apps))));
         assert_eq!(
             app_result(
@@ -2312,7 +2430,18 @@ mod tests {
                 "store",
                 Scenario::Normal,
                 &DeviceRequest::InstallApp {
-                    id: "word-count".to_owned(),
+                    id: "todo".to_owned(),
+                },
+            ),
+            DeviceResult::Done
+        );
+        assert_eq!(
+            app_result(
+                &store,
+                "store",
+                Scenario::Normal,
+                &DeviceRequest::InstallApp {
+                    id: "sudoku".to_owned(),
                 },
             ),
             DeviceResult::Done
@@ -2326,15 +2455,22 @@ mod tests {
         ) else {
             panic!("installed list");
         };
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].id, "word-count");
+        assert_eq!(entries.len(), 12);
+        assert_eq!(
+            entries
+                .iter()
+                .find(|entry| entry.id == "todo")
+                .and_then(|entry| entry.installed_version.as_deref()),
+            Some("1.1.0")
+        );
+        assert!(entries.iter().any(|entry| entry.id == "sudoku"));
         assert_eq!(
             app_result(
                 &store,
                 "store",
                 Scenario::Normal,
                 &DeviceRequest::UninstallApp {
-                    id: "word-count".to_owned(),
+                    id: "sudoku".to_owned(),
                 },
             ),
             DeviceResult::Done
@@ -2347,7 +2483,29 @@ mod tests {
         ) else {
             panic!("installed list");
         };
-        assert!(entries.is_empty());
+        assert_eq!(entries.len(), 11);
+        assert!(!entries.iter().any(|entry| entry.id == "sudoku"));
+        assert_eq!(
+            app_result(
+                &store,
+                "store",
+                Scenario::Normal,
+                &DeviceRequest::InstallApp {
+                    id: "sudoku".to_owned(),
+                },
+            ),
+            DeviceResult::Done
+        );
+        let DeviceResult::Apps { entries } = app_result(
+            &launcher,
+            "launcher",
+            Scenario::Normal,
+            &DeviceRequest::ListInstalledApps,
+        ) else {
+            panic!("installed list");
+        };
+        assert_eq!(entries.len(), 12);
+        assert!(entries.iter().any(|entry| entry.id == "sudoku"));
     }
 
     #[test]
@@ -2388,7 +2546,7 @@ mod tests {
                 "store",
                 Scenario::StorageFull,
                 &DeviceRequest::InstallApp {
-                    id: "word-count".to_owned(),
+                    id: "sudoku".to_owned(),
                 },
             ),
             DeviceResult::Failed(DeviceError::Backend)
@@ -2399,7 +2557,7 @@ mod tests {
                 "store",
                 Scenario::Offline,
                 &DeviceRequest::InstallApp {
-                    id: "word-count".to_owned(),
+                    id: "sudoku".to_owned(),
                 },
             ),
             DeviceResult::Failed(DeviceError::Unreachable)
@@ -2410,7 +2568,7 @@ mod tests {
                 "store",
                 Scenario::NetworkTimeout,
                 &DeviceRequest::InstallApp {
-                    id: "word-count".to_owned(),
+                    id: "sudoku".to_owned(),
                 },
             ),
             DeviceResult::Failed(DeviceError::TimedOut)

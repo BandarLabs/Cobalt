@@ -63,11 +63,12 @@ SDK capability.
 
 After merge to `main`, `.github/workflows/apps.yml`:
 
-1. Builds every registered app as static ARMv7 hard-float.
-2. Verifies each executable.
-3. Creates signed `.cobalt-app` packages.
-4. Creates and signs the complete catalog.
-5. Updates the fixed `app-catalog` GitHub release.
+1. Builds every registered app as static ARMv7 hard-float on its own runner.
+2. Verifies and uploads exactly that app's executable.
+3. Downloads the immutable artifacts on a fresh signing runner.
+4. Creates signed `.cobalt-app` packages.
+5. Creates and signs the complete catalog.
+6. Updates the fixed `app-catalog` GitHub release.
 
 Installed readers fetch:
 

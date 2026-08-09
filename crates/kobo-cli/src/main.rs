@@ -57,9 +57,22 @@ const INSTALLED_PACKAGES: &[(&str, Option<&str>)] = &[
     ("kobo-sidekick", None),
     ("kobo-store", None),
 ];
-/// Store-only applications that can be simulated without being placed in the
-/// USB platform package.
-const STORE_PACKAGES: &[&str] = &["kobo-sudoku"];
+/// Applications released through Store, including the initial built-in copies
+/// that users can update, remove and reinstall independently of Cobalt.
+const STORE_PACKAGES: &[&str] = &[
+    "kobo-audiobook",
+    "kobo-brief",
+    "kobo-chat",
+    "kobo-gallery",
+    "kobo-gutenbird",
+    "kobo-hn",
+    "kobo-magnet",
+    "kobo-rss",
+    "kobo-sidekick",
+    "kobo-sudoku",
+    "kobo-tictactoe",
+    "kobo-todo",
+];
 /// Proof that the daemon in the package can actually take the panel. The
 /// phrase only exists inside `present_on_panel`, which is behind
 /// `device-write`, so finding it in the finished binary is the artifact-level
@@ -371,6 +384,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "app-key" => app_key(&arguments[1..]),
         "app-bundle" => app_bundle(&arguments[1..]),
         "app-catalog" => app_catalog(&arguments[1..]),
+        "app-list" => app_list(&arguments[1..]),
         "app-check" => app_check(&arguments[1..]),
         "app-release" => app_release(&arguments[1..]),
         "setup" => setup_device(&arguments[1..]),
@@ -496,16 +510,50 @@ struct ReleaseApp {
     capabilities: Vec<String>,
 }
 
-fn app_check(arguments: &[String]) -> Result<(), String> {
-    const USAGE: &str = "usage: kobo app-check --registry PATH";
+fn app_list(arguments: &[String]) -> Result<(), String> {
+    const USAGE: &str = "usage: kobo app-list --registry PATH";
     let registry_path = single_path_flag(arguments, "--registry", USAGE)?;
     ensure_only_flags(arguments, &["--registry"], USAGE)?;
     let apps = read_release_registry(&registry_path)?;
     if apps.is_empty() {
         return Err("the app registry is empty".to_owned());
     }
+    let packages = apps
+        .iter()
+        .map(|app| format!("\"{}\"", app.package))
+        .collect::<Vec<_>>()
+        .join(",");
+    println!("[{packages}]");
+    Ok(())
+}
+
+fn app_check(arguments: &[String]) -> Result<(), String> {
+    const USAGE: &str = "usage: kobo app-check --registry PATH [--package PACKAGE] [--out PATH]";
+    let registry_path = single_path_flag(arguments, "--registry", USAGE)?;
+    let package = optional_value_flag(arguments, "--package", USAGE)?;
+    let output = optional_path_flag(arguments, "--out", USAGE)?;
+    ensure_only_flags(arguments, &["--registry", "--package", "--out"], USAGE)?;
+    let mut apps = read_release_registry(&registry_path)?;
+    if apps.is_empty() {
+        return Err("the app registry is empty".to_owned());
+    }
+    if let Some(package) = package {
+        apps.retain(|app| app.package == package);
+        if apps.is_empty() {
+            return Err(format!("package '{package}' is not registered"));
+        }
+    }
+    if let Some(output) = &output {
+        fs::create_dir_all(output)
+            .map_err(|error| format!("create {}: {error}", output.display()))?;
+    }
     for app in apps {
-        let _binary = build_release_binary(&app)?;
+        let binary = build_release_binary(&app)?;
+        if let Some(output) = &output {
+            let path = output.join(&app.package);
+            fs::write(&path, binary)
+                .map_err(|error| format!("write {}: {error}", path.display()))?;
+        }
         println!("verified {} ({})", app.id, app.package);
     }
     Ok(())
@@ -513,21 +561,26 @@ fn app_check(arguments: &[String]) -> Result<(), String> {
 
 fn app_release(arguments: &[String]) -> Result<(), String> {
     const USAGE: &str = "usage: kobo app-release --registry PATH --seed PATH --out PATH \
-                         --base-url HTTPS_URL [--prebuilt]";
+                         --base-url HTTPS_URL [--prebuilt-dir PATH | --artifact-dir PATH]";
     let registry_path = single_path_flag(arguments, "--registry", USAGE)?;
     let seed_path = single_path_flag(arguments, "--seed", USAGE)?;
     let output = single_path_flag(arguments, "--out", USAGE)?;
     let base_url = single_value_flag(arguments, "--base-url", USAGE)?;
-    let prebuilt = arguments
-        .iter()
-        .filter(|value| *value == "--prebuilt")
-        .count();
-    if prebuilt > 1 {
+    let prebuilt = optional_path_flag(arguments, "--prebuilt-dir", USAGE)?;
+    let artifacts = optional_path_flag(arguments, "--artifact-dir", USAGE)?;
+    if prebuilt.is_some() && artifacts.is_some() {
         return Err(USAGE.to_owned());
     }
     ensure_only_flags(
         arguments,
-        &["--registry", "--seed", "--out", "--base-url", "--prebuilt"],
+        &[
+            "--registry",
+            "--seed",
+            "--out",
+            "--base-url",
+            "--prebuilt-dir",
+            "--artifact-dir",
+        ],
         USAGE,
     )?;
     if !base_url.starts_with("https://") {
@@ -537,6 +590,12 @@ fn app_release(arguments: &[String]) -> Result<(), String> {
     let apps = read_release_registry(&registry_path)?;
     if apps.is_empty() {
         return Err("the app registry is empty".to_owned());
+    }
+    if let Some(directory) = &prebuilt {
+        validate_prebuilt_directory(&apps, directory)?;
+    }
+    if let Some(directory) = &artifacts {
+        validate_artifact_directory(&apps, directory)?;
     }
     let seed = read_signing_seed(&seed_path)?;
     let public = kobo_app_store::derive_public_key(&seed).map_err(|error| error.to_string())?;
@@ -549,10 +608,12 @@ fn app_release(arguments: &[String]) -> Result<(), String> {
 
     let mut entries = Vec::with_capacity(apps.len());
     for app in apps {
-        let binary = if prebuilt == 1 {
-            read_release_binary(&app)?
-        } else {
-            build_release_binary(&app)?
+        let binary = match &prebuilt {
+            Some(directory) => read_release_binary_from(&app, directory)?,
+            None => match &artifacts {
+                Some(directory) => read_release_artifact(&app, directory)?,
+                None => build_release_binary(&app)?,
+            },
         };
         let manifest = kobo_app_store::Manifest::new_public(kobo_app_store::ManifestInput {
             id: app.id.clone(),
@@ -609,9 +670,117 @@ fn build_release_binary(app: &ReleaseApp) -> Result<Vec<u8>, String> {
 }
 
 fn read_release_binary(app: &ReleaseApp) -> Result<Vec<u8>, String> {
-    let binary_path = workspace_device_binary(&app.package);
-    verify_arm_elf(&binary_path)?;
-    fs::read(&binary_path).map_err(|error| format!("read {}: {error}", binary_path.display()))
+    read_verified_arm_binary(&workspace_device_binary(&app.package))
+}
+
+fn read_release_binary_from(app: &ReleaseApp, directory: &Path) -> Result<Vec<u8>, String> {
+    read_verified_arm_binary(&directory.join(&app.package))
+}
+
+fn validate_prebuilt_directory(apps: &[ReleaseApp], directory: &Path) -> Result<(), String> {
+    let expected = apps
+        .iter()
+        .map(|app| app.package.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut found = BTreeSet::new();
+    let entries = fs::read_dir(directory)
+        .map_err(|error| format!("read prebuilt directory {}: {error}", directory.display()))?;
+    for entry in entries {
+        let entry = entry
+            .map_err(|error| format!("read prebuilt directory {}: {error}", directory.display()))?;
+        let metadata = fs::symlink_metadata(entry.path())
+            .map_err(|error| format!("inspect {}: {error}", entry.path().display()))?;
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            return Err("prebuilt binary names must be UTF-8".to_owned());
+        };
+        if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+            return Err(format!("prebuilt entry '{name}' must be a regular file"));
+        }
+        found.insert(name);
+    }
+    let found = found.iter().map(String::as_str).collect::<BTreeSet<_>>();
+    if found != expected {
+        return Err(format!(
+            "prebuilt directory contents do not match the registry: expected {expected:?}, found {found:?}"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_artifact_directory(apps: &[ReleaseApp], directory: &Path) -> Result<(), String> {
+    let expected = apps
+        .iter()
+        .map(|app| format!("verified-app-{}", app.package))
+        .collect::<BTreeSet<_>>();
+    let found = directory_entries(directory)?;
+    if found != expected {
+        return Err(format!(
+            "artifact directory contents do not match the registry: expected {expected:?}, found {found:?}"
+        ));
+    }
+    for app in apps {
+        let artifact = directory.join(format!("verified-app-{}", app.package));
+        let metadata = fs::symlink_metadata(&artifact)
+            .map_err(|error| format!("inspect {}: {error}", artifact.display()))?;
+        if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+            return Err(format!(
+                "artifact '{}' must be a directory",
+                artifact.display()
+            ));
+        }
+        let contents = directory_entries(&artifact)?;
+        let expected_file = BTreeSet::from([app.package.clone()]);
+        if contents != expected_file {
+            return Err(format!(
+                "artifact '{}' must contain only '{}'",
+                artifact.display(),
+                app.package
+            ));
+        }
+        let binary = artifact.join(&app.package);
+        let metadata = fs::symlink_metadata(&binary)
+            .map_err(|error| format!("inspect {}: {error}", binary.display()))?;
+        if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+            return Err(format!(
+                "artifact binary '{}' is not a regular file",
+                binary.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn directory_entries(directory: &Path) -> Result<BTreeSet<String>, String> {
+    fs::read_dir(directory)
+        .map_err(|error| format!("read directory {}: {error}", directory.display()))?
+        .map(|entry| {
+            let entry = entry
+                .map_err(|error| format!("read directory {}: {error}", directory.display()))?;
+            entry
+                .file_name()
+                .to_str()
+                .map(str::to_owned)
+                .ok_or_else(|| {
+                    format!(
+                        "directory {} contains a non-UTF-8 name",
+                        directory.display()
+                    )
+                })
+        })
+        .collect()
+}
+
+fn read_release_artifact(app: &ReleaseApp, directory: &Path) -> Result<Vec<u8>, String> {
+    read_verified_arm_binary(
+        &directory
+            .join(format!("verified-app-{}", app.package))
+            .join(&app.package),
+    )
+}
+
+fn read_verified_arm_binary(path: &Path) -> Result<Vec<u8>, String> {
+    verify_arm_elf(path)?;
+    fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))
 }
 
 fn read_release_registry(path: &Path) -> Result<Vec<ReleaseApp>, String> {
@@ -758,6 +927,30 @@ fn single_path_flag(arguments: &[String], flag: &str, usage: &str) -> Result<Pat
     single_value_flag(arguments, flag, usage).map(PathBuf::from)
 }
 
+fn optional_path_flag(
+    arguments: &[String],
+    flag: &str,
+    usage: &str,
+) -> Result<Option<PathBuf>, String> {
+    optional_value_flag(arguments, flag, usage).map(|value| value.map(PathBuf::from))
+}
+
+fn optional_value_flag(
+    arguments: &[String],
+    flag: &str,
+    usage: &str,
+) -> Result<Option<String>, String> {
+    let count = arguments
+        .iter()
+        .filter(|argument| *argument == flag)
+        .count();
+    match count {
+        0 => Ok(None),
+        1 => single_value_flag(arguments, flag, usage).map(Some),
+        _ => Err(usage.to_owned()),
+    }
+}
+
 fn paired_flag(
     arguments: &[String],
     flag: &str,
@@ -785,11 +978,7 @@ fn ensure_only_flags(arguments: &[String], flags: &[&str], usage: &str) -> Resul
     let mut index = 0;
     while index < arguments.len() {
         let flag = arguments[index].as_str();
-        let width = match flag {
-            "--entry" => 3,
-            "--prebuilt" => 1,
-            _ => 2,
-        };
+        let width = if flag == "--entry" { 3 } else { 2 };
         if !flags.contains(&flag)
             || arguments.get(index + width - 1).is_none()
             || arguments[index + 1..index + width]
@@ -3705,7 +3894,7 @@ fn simulated_package(arguments: &[String]) -> Result<&'static str, String> {
 
 /// The application names `--app` accepts, for an error message to list.
 fn simulatable() -> String {
-    INSTALLED_PACKAGES
+    let names = INSTALLED_PACKAGES
         .iter()
         .filter_map(|(package, _)| package.strip_prefix("kobo-"))
         .chain(
@@ -3713,8 +3902,8 @@ fn simulatable() -> String {
                 .iter()
                 .filter_map(|package| package.strip_prefix("kobo-")),
         )
-        .collect::<Vec<_>>()
-        .join(", ")
+        .collect::<BTreeSet<_>>();
+    names.into_iter().collect::<Vec<_>>().join(", ")
 }
 
 struct SimulationGuard {
@@ -5020,9 +5209,11 @@ fn print_help() {
                                    Build one signed, pathless .cobalt-app package\n\
            app-catalog --seed PATH --out PATH --signature PATH --entry PACKAGE HTTPS_URL ...\n\
                                    Build and sign the public app catalog\n\
-           app-check --registry PATH\n\
+           app-list --registry PATH\n\
+                                   List validated Store app packages as JSON\n\
+           app-check --registry PATH [--package PACKAGE] [--out PATH]\n\
                                    Build and verify every registered Store app\n\
-           app-release --registry PATH --seed PATH --out PATH --base-url HTTPS_URL [--prebuilt]\n\
+           app-release --registry PATH --seed PATH --out PATH --base-url HTTPS_URL [--prebuilt-dir PATH | --artifact-dir PATH]\n\
                                    Build and sign every registered Store app\n\
            setup [--volume PATH] [--undo] [--enable-ssh] [--no-key]  Prepare a reader\n\
                                    over USB; root SSH is an explicit opt-in, and it\n\
@@ -6289,19 +6480,29 @@ mod tests {
         }
 
         mod app_registry {
-            use super::super::super::{read_release_registry, workspace_manifest};
+            use super::super::super::{read_release_registry, workspace_manifest, STORE_PACKAGES};
+            use std::collections::BTreeSet;
 
             #[test]
-            fn checked_in_registry_contains_store_only_sudoku() {
+            fn checked_in_registry_contains_every_store_application() {
                 let registry = workspace_manifest()
                     .parent()
                     .expect("workspace root")
                     .join("apps/catalog.json");
                 let apps = read_release_registry(&registry).expect("registry");
-                assert_eq!(apps.len(), 1);
-                assert_eq!(apps[0].package, "kobo-sudoku");
-                assert_eq!(apps[0].id, "sudoku");
-                assert_eq!(apps[0].version, "1.0.0");
+                let registered = apps
+                    .iter()
+                    .map(|app| app.package.as_str())
+                    .collect::<BTreeSet<_>>();
+                assert_eq!(
+                    registered,
+                    STORE_PACKAGES.iter().copied().collect::<BTreeSet<_>>()
+                );
+                let sudoku = apps
+                    .iter()
+                    .find(|app| app.id == "sudoku")
+                    .expect("Sudoku registry entry");
+                assert_eq!(sudoku.version, "1.0.0");
             }
         }
     }

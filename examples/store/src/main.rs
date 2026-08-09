@@ -106,7 +106,12 @@ impl Store {
             if self.page + 1 < pages {
                 actions.push((NEXT, "More", Some(Glyph::Next)));
             }
-            screen = screen.action_bar_marked(actions);
+            screen = if actions.len() == 1 {
+                let (id, label, glyph) = actions[0];
+                screen.bottom_action_marked(id, label, glyph.expect("page action glyph"))
+            } else {
+                screen.action_bar_marked(actions)
+            };
         }
         screen.build()
     }
@@ -120,6 +125,7 @@ impl Store {
                 .build();
         };
         let installed = entry.installed_version.as_deref();
+        let system = is_system_app(id);
         let mut screen = ScreenBuilder::new("store-detail")
             .top_bar(entry.title.clone())
             .owns_back(true)
@@ -132,6 +138,14 @@ impl Store {
                 ("Available", entry.version.clone()),
                 ("Installed", installed.unwrap_or("Not installed").to_owned()),
                 (
+                    "Management",
+                    if system {
+                        "Built into Cobalt".to_owned()
+                    } else {
+                        "Managed by App Store".to_owned()
+                    },
+                ),
+                (
                     "Permissions",
                     if entry.capabilities.is_empty() {
                         "None".to_owned()
@@ -140,7 +154,9 @@ impl Store {
                     },
                 ),
             ]);
-        screen = if installed.is_some() {
+        screen = if system {
+            screen.bottom_action_marked(open_action(id), "Open", entry.glyph)
+        } else if installed.is_some() {
             let mut actions = vec![
                 (open_action(id), "Open", Some(entry.glyph)),
                 (remove_action(id), "Uninstall", Some(Glyph::Trash)),
@@ -354,11 +370,18 @@ fn denied(reason: DenyReason) -> &'static str {
 }
 
 fn app_state(entry: &AppInfo) -> String {
+    if is_system_app(&entry.id) {
+        return "Installed · system".to_owned();
+    }
     match &entry.installed_version {
         None => "Available".to_owned(),
         Some(version) if entry.has_update() => format!("{version} → {}", entry.version),
-        Some(version) => format!("Installed {version}"),
+        Some(version) => format!("Installed · {version}"),
     }
+}
+
+fn is_system_app(id: &str) -> bool {
+    matches!(id, "settings" | "terminal")
 }
 
 fn app_action(id: &str) -> String {
@@ -499,6 +522,25 @@ mod tests {
     }
 
     #[test]
+    fn a_multi_page_catalog_can_be_sent_to_the_runtime() {
+        let mut runner = AppRunner::new(Store::default());
+        runner.start();
+        runner.device_result(DeviceResult::Apps {
+            entries: (0..14)
+                .map(|index| app(&format!("app-{index}"), Some("1.1.0")))
+                .collect(),
+        });
+        let commands = runner.device_result(DeviceResult::Apps {
+            entries: (0..14)
+                .map(|index| app(&format!("app-{index}"), Some("1.1.0")))
+                .collect(),
+        });
+        assert!(commands
+            .iter()
+            .any(|command| matches!(command, Command::SetScreen(_))));
+    }
+
+    #[test]
     fn installed_apps_offer_open_and_uninstall() {
         let store = Store {
             entries: vec![app("notes", Some("1.1.0"))],
@@ -513,5 +555,42 @@ mod tests {
         assert!(layout
             .rect_of_action(action_id(&remove_action("notes")))
             .is_some());
+    }
+
+    #[test]
+    fn an_available_version_change_offers_an_in_place_update() {
+        let mut notes = app("notes", Some("1.0.0"));
+        notes.version = "1.1.0".to_owned();
+        let store = Store {
+            entries: vec![notes],
+            view: View::Detail("notes".to_owned()),
+            ..Store::default()
+        };
+        let screen = store.detail("notes");
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
+        assert!(layout
+            .rect_of_action(action_id(&install_action("notes")))
+            .is_some());
+        assert_eq!(app_state(&store.entries[0]), "1.0.0 → 1.1.0");
+    }
+
+    #[test]
+    fn system_apps_are_marked_installed_and_cannot_be_removed() {
+        let mut settings = app("settings", Some("0.2.0"));
+        settings.version = "0.2.0".to_owned();
+        let store = Store {
+            entries: vec![settings],
+            view: View::Detail("settings".to_owned()),
+            ..Store::default()
+        };
+        assert_eq!(app_state(&store.entries[0]), "Installed · system");
+        let screen = store.detail("settings");
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
+        assert!(layout
+            .rect_of_action(action_id(&open_action("settings")))
+            .is_some());
+        assert!(layout
+            .rect_of_action(action_id(&remove_action("settings")))
+            .is_none());
     }
 }

@@ -12,6 +12,13 @@ After one USB installation, users can install, update, and remove signed apps
 over Wi-Fi. App releases are independent from Cobalt platform releases, so a
 new app can appear in Store without reinstalling or updating Cobalt.
 
+<p align="center">
+  <a href="docs/media/store-demo.mp4">
+    <img src="docs/media/store-demo.png" width="430" alt="Cobalt App Store showing installed apps">
+  </a><br>
+  <sub>Watch the Store install, uninstall, and same-session reinstall demo.</sub>
+</p>
+
 > [!IMPORTANT]
 > Cobalt currently supports only the **Kobo Clara BW N365 (device code 391)**.
 > It is an independent project and is not affiliated with Rakuten Kobo.
@@ -43,6 +50,10 @@ Restart the reader and open **Cobalt** from Kobo's menu. Future applications
 are installed from **Store** over Wi-Fi. Full Cobalt updates remain under
 **Settings**.
 
+Readers running Cobalt `0.1.x` need the `0.2.0` platform update once to add
+Store. After that update, new and updated apps arrive independently through
+the app catalog.
+
 See [docs/INSTALL.md](docs/INSTALL.md) for the complete walkthrough and
 recovery steps.
 
@@ -53,12 +64,19 @@ package contains one ARM executable and a signed canonical manifest. The
 runtime verifies the catalog, package, installed manifest, and binary before
 launch.
 
+Store is the only app-management surface. The applications bundled with the
+first `0.2.0` platform install appear as installed, can be removed and
+reinstalled in the same session, and can be updated in place without creating
+a second launcher entry. Platform utilities such as Settings and Terminal are
+shown as installed system apps and cannot be removed.
+
 Apps are published automatically when an app PR is merged into `main`.
 Publishing an app does **not** require changing the Cobalt version or creating
 a platform release.
 
-Sudoku is the first Store-only application and is intentionally absent from
-the USB platform package.
+Sudoku remains Store-only and is intentionally absent from the USB platform
+package, so installing it verifies delivery of an app that was not already on
+the reader.
 
 ## Build an app
 

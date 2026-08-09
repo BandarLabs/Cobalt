@@ -28,23 +28,7 @@ const ENTRY_FIELDS: [&str; 4] = ["manifest", "package_url", "package_sha256", "p
 const MAX_CAPABILITY_NAME_BYTES: usize = 32;
 
 static PUBLIC_RESERVED_APP_IDS: &[&str] = &[
-    "audiobook",
-    "brief",
-    "chat",
-    "cobalt",
-    "gallery",
-    "gutenbird",
-    "hn",
-    "kobod",
-    "launcher",
-    "magnet",
-    "rss",
-    "settings",
-    "sidekick",
-    "store",
-    "terminal",
-    "tictactoe",
-    "todo",
+    "cobalt", "kobod", "launcher", "settings", "store", "terminal",
 ];
 
 /// Platform-owned application identifiers that public packages may not use.
@@ -109,6 +93,15 @@ pub fn is_public_glyph(name: &str) -> bool {
             | "plus"
             | "headphones"
     )
+}
+
+/// Returns whether `current` satisfies a manifest's minimum Cobalt version.
+#[must_use]
+pub fn cobalt_version_at_least(current: &str, minimum: &str) -> bool {
+    match (parse_cobalt_version(current), parse_cobalt_version(minimum)) {
+        (Some(current), Some(minimum)) => current >= minimum,
+        _ => false,
+    }
 }
 
 /// A validated lowercase SHA-256 digest.
@@ -199,7 +192,7 @@ impl Manifest {
         validate_text(&input.short_label, "short_label", MAX_SHORT_LABEL_BYTES)?;
         validate_text(&input.summary, "summary", MAX_SUMMARY_BYTES)?;
         validate_version(&input.version, "version")?;
-        validate_version(&input.minimum_cobalt_version, "minimum_cobalt_version")?;
+        validate_cobalt_version(&input.minimum_cobalt_version)?;
         validate_identifier(&input.glyph, "glyph", MAX_GLYPH_BYTES)?;
         let capabilities = validate_capabilities(&input.capabilities)?;
         let binary_sha256 = Sha256Digest::parse(&input.binary_sha256, "binary_sha256")?;
@@ -424,7 +417,13 @@ impl Catalog {
                 return Err(FormatError::DuplicateAppId(entry.manifest.id().to_owned()));
             }
         }
-        Ok(Self { entries })
+        let catalog = Self { entries };
+        if catalog.to_canonical_bytes().len() > MAX_CATALOG_BYTES {
+            return Err(FormatError::DocumentTooLarge {
+                maximum: MAX_CATALOG_BYTES,
+            });
+        }
+        Ok(catalog)
     }
 
     /// Parses strict UTF-8 catalog JSON with caller-supplied reserved IDs.
@@ -674,6 +673,33 @@ fn validate_version(value: &str, field: &'static str) -> Result<(), FormatError>
     }
 }
 
+fn validate_cobalt_version(value: &str) -> Result<(), FormatError> {
+    if parse_cobalt_version(value).is_some() {
+        Ok(())
+    } else {
+        Err(FormatError::InvalidValue {
+            field: "minimum_cobalt_version",
+            reason: "must be dot-separated numeric components",
+        })
+    }
+}
+
+fn parse_cobalt_version(version: &str) -> Option<Vec<u64>> {
+    if version.is_empty() || version.len() > MAX_VERSION_BYTES {
+        return None;
+    }
+    version
+        .split('.')
+        .map(|part| {
+            if part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()) {
+                None
+            } else {
+                part.parse::<u64>().ok()
+            }
+        })
+        .collect()
+}
+
 fn validate_identifier(
     value: &str,
     field: &'static str,
@@ -884,6 +910,69 @@ mod tests {
         let second = catalog.to_canonical_json();
         assert_eq!(first, second);
         assert_eq!(Catalog::parse(first.as_bytes(), &[]), Ok(catalog));
+    }
+
+    #[test]
+    fn catalog_constructor_enforces_the_serialized_size_limit() {
+        let entries = (0..MAX_CATALOG_ENTRIES)
+            .map(|index| {
+                let id = format!("app-{index:03}");
+                let manifest = Manifest::new(
+                    ManifestInput {
+                        id: id.clone(),
+                        display_name: "\"".repeat(MAX_DISPLAY_NAME_BYTES),
+                        short_label: "\"".repeat(MAX_SHORT_LABEL_BYTES),
+                        summary: "\"".repeat(MAX_SUMMARY_BYTES),
+                        version: "v".repeat(MAX_VERSION_BYTES),
+                        minimum_cobalt_version: "1.1.1.1.1.1.1.1.1.1".to_owned(),
+                        glyph: "g".repeat(MAX_GLYPH_BYTES),
+                        capabilities: kobo_policy::Capability::ALL
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect(),
+                        binary_sha256: "a".repeat(64),
+                        binary_bytes: 1,
+                    },
+                    &[],
+                )
+                .expect("maximal manifest");
+                let package_url_prefix = format!("https://example.test/{id}/");
+                CatalogEntry::new(CatalogEntryInput {
+                    manifest,
+                    package_url: format!(
+                        "{package_url_prefix}{}",
+                        "a".repeat(MAX_PACKAGE_URL_BYTES - package_url_prefix.len())
+                    ),
+                    package_sha256: "b".repeat(64),
+                    package_bytes: 1,
+                })
+                .expect("maximal entry")
+            })
+            .collect();
+        assert!(matches!(
+            Catalog::new(entries),
+            Err(FormatError::DocumentTooLarge {
+                maximum: MAX_CATALOG_BYTES
+            })
+        ));
+    }
+
+    #[test]
+    fn minimum_cobalt_versions_use_the_runtime_comparison_grammar() {
+        for invalid in ["1..0", "0.2.0-beta", ".2.0", "0.2."] {
+            let mut requested = input("version-test", b"binary");
+            requested.minimum_cobalt_version = invalid.to_owned();
+            assert!(matches!(
+                Manifest::new(requested, &[]),
+                Err(FormatError::InvalidValue {
+                    field: "minimum_cobalt_version",
+                    ..
+                })
+            ));
+        }
+        assert!(cobalt_version_at_least("0.2.0", "0.1.9"));
+        assert!(!cobalt_version_at_least("0.1.8", "0.1.9"));
+        assert!(!cobalt_version_at_least("nightly", "0.1.9"));
     }
 
     #[test]

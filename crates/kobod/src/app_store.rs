@@ -19,6 +19,144 @@ const CATALOG_LIMIT: u32 = 512 * 1024;
 const SIGNATURE_LIMIT: u32 = 1024;
 const UNINSTALLED_SUFFIX: &str = "uninstalled";
 
+struct BuiltinApp {
+    id: &'static str,
+    title: &'static str,
+    label: &'static str,
+    summary: &'static str,
+    version: &'static str,
+    glyph: Glyph,
+    capabilities: &'static [&'static str],
+}
+
+const MANAGED_BUILTINS: &[BuiltinApp] = &[
+    BuiltinApp {
+        id: "audiobook",
+        title: "Audiobook Studio",
+        label: "Audiobooks",
+        summary: "Research, narrate and play an original audiobook about any topic.",
+        version: "1.0.0",
+        glyph: Glyph::Headphones,
+        capabilities: &["network", "audio", "bluetooth-audio"],
+    },
+    BuiltinApp {
+        id: "brief",
+        title: "Daily Brief",
+        label: "Daily Brief",
+        summary: "Collects the day's stories while you read something else.",
+        version: "1.0.0",
+        glyph: Glyph::Clock,
+        capabilities: &["network"],
+    },
+    BuiltinApp {
+        id: "chat",
+        title: "AI Command Center",
+        label: "AI Chat",
+        summary: "Ask a question and tap the answer, rather than typing one.",
+        version: "1.0.0",
+        glyph: Glyph::Chat,
+        capabilities: &["network"],
+    },
+    BuiltinApp {
+        id: "gallery",
+        title: "Components",
+        label: "Components",
+        summary: "Every UI primitive on real hardware, for checking by eye.",
+        version: "1.0.0",
+        glyph: Glyph::Chart,
+        capabilities: &["network"],
+    },
+    BuiltinApp {
+        id: "gutenbird",
+        title: "Gutenbird",
+        label: "Gutenbird",
+        summary: "Sixty thousand free books from Project Gutenberg.",
+        version: "1.0.0",
+        glyph: Glyph::Book,
+        capabilities: &["network", "frontlight-control"],
+    },
+    BuiltinApp {
+        id: "hn",
+        title: "Hacker News",
+        label: "Hacker News",
+        summary: "Top, New, Ask and Show, with whole comment threads.",
+        version: "1.0.0",
+        glyph: Glyph::News,
+        capabilities: &["network"],
+    },
+    BuiltinApp {
+        id: "magnet",
+        title: "Magnet",
+        label: "Magnet",
+        summary: "Find the hall sensor behind the bezel and watch it answer.",
+        version: "1.0.0",
+        glyph: Glyph::Magnet,
+        capabilities: &["cover-sensor"],
+    },
+    BuiltinApp {
+        id: "rss",
+        title: "Feeds",
+        label: "Feeds",
+        summary: "Follow a site by name and read its articles, not its layout.",
+        version: "1.0.0",
+        glyph: Glyph::Rss,
+        capabilities: &["network"],
+    },
+    BuiltinApp {
+        id: "sidekick",
+        title: "Sidekick",
+        label: "Sidekick",
+        summary: "Approve or deny what your coding agents ask to run, from here.",
+        version: "1.0.0",
+        glyph: Glyph::Key,
+        capabilities: &["network"],
+    },
+    BuiltinApp {
+        id: "tictactoe",
+        title: "Tic-tac-toe",
+        label: "Tic-tac-toe",
+        summary: "Two players, one panel. Nought goes first.",
+        version: "1.0.0",
+        glyph: Glyph::Grid,
+        capabilities: &[],
+    },
+    BuiltinApp {
+        id: "todo",
+        title: "Todo",
+        label: "Todo",
+        summary: "A list that remembers itself. Tap an item to finish it.",
+        version: "1.0.0",
+        glyph: Glyph::Check,
+        capabilities: &[],
+    },
+];
+
+const SYSTEM_APPS: &[BuiltinApp] = &[
+    BuiltinApp {
+        id: "settings",
+        title: "Settings",
+        label: "Settings",
+        summary: "Connect Wi-Fi, manage hardware and update the Cobalt platform.",
+        version: env!("CARGO_PKG_VERSION"),
+        glyph: Glyph::Settings,
+        capabilities: &[
+            "network",
+            "battery-read",
+            "bluetooth-control",
+            "wifi-control",
+        ],
+    },
+    BuiltinApp {
+        id: "terminal",
+        title: "Terminal",
+        label: "Terminal",
+        summary: "A shell on the panel, with keys that send rather than collect.",
+        version: env!("CARGO_PKG_VERSION"),
+        glyph: Glyph::Terminal,
+        capabilities: &["shell"],
+    },
+];
+
 pub fn refresh(root: &Path) -> Result<Vec<AppInfo>, DeviceError> {
     let key = public_key()?;
     refresh_with(root, &key, |url, maximum| {
@@ -28,8 +166,11 @@ pub fn refresh(root: &Path) -> Result<Vec<AppInfo>, DeviceError> {
 
 pub fn catalog(root: &Path) -> Result<Vec<AppInfo>, DeviceError> {
     let key = public_key()?;
-    let catalog = read_cached_catalog(root, &key)?;
-    catalog_info(root, &catalog, &key)
+    match read_cached_catalog(root, &key) {
+        Ok(catalog) => catalog_info(root, &catalog, &key),
+        Err(DeviceError::NotFound) => local_catalog_info(root, &key),
+        Err(error) => Err(error),
+    }
 }
 
 pub fn installed(root: &Path) -> Result<Vec<AppInfo>, DeviceError> {
@@ -38,6 +179,15 @@ pub fn installed(root: &Path) -> Result<Vec<AppInfo>, DeviceError> {
         .into_iter()
         .map(|manifest| manifest_info(&manifest, Some(manifest.version())))
         .collect::<Result<Vec<_>, _>>()?;
+    let installed_ids = entries
+        .iter()
+        .map(|entry| entry.id.clone())
+        .collect::<BTreeSet<_>>();
+    for app in MANAGED_BUILTINS {
+        if !installed_ids.contains(app.id) && builtin_is_installed(root, app.id)? {
+            entries.push(builtin_info(app));
+        }
+    }
     sort_info(&mut entries);
     Ok(entries)
 }
@@ -48,6 +198,16 @@ pub fn install(root: &Path, id: &str) -> Result<(), DeviceError> {
     })
 }
 
+#[must_use]
+pub fn manages_builtin(id: &str) -> bool {
+    managed_builtin(id).is_some()
+}
+
+pub fn builtin_declared(id: &str) -> Option<kobo_policy::Declared> {
+    let app = managed_builtin(id)?;
+    kobo_policy::Declared::parse(app.capabilities.iter().copied()).ok()
+}
+
 pub fn uninstall(root: &Path, id: &str) -> Result<(), DeviceError> {
     if !kobo_protocol::valid_app_id(id) || kobo_app_store::is_public_reserved_app_id(id) {
         return Err(DeviceError::InvalidInput);
@@ -56,21 +216,29 @@ pub fn uninstall(root: &Path, id: &str) -> Result<(), DeviceError> {
     recover_interrupted_transaction(root, id, &key)?;
     let apps = apps_root(root);
     let current = apps.join(id);
-    if !safe_directory(&current)? {
+    let has_current = safe_directory(&current)?;
+    let has_builtin = managed_builtin(id).is_some() && builtin_is_installed(root, id)?;
+    if !has_current && !has_builtin {
         return Err(DeviceError::NotFound);
     }
+    fs::create_dir_all(&apps).map_err(|_| DeviceError::Backend)?;
+    sync_directory(root)?;
     remove_directory(&apps.join(format!("{id}.prev")))?;
     let removed = apps.join(format!("{id}.removed"));
     remove_directory(&removed)?;
     let tombstone = apps.join(format!("{id}.{UNINSTALLED_SUFFIX}"));
     remove_file(&tombstone)?;
-    rename_synced(&current, &removed, &apps)?;
+    if has_current {
+        rename_synced(&current, &removed, &apps)?;
+    }
     if write_synced(&tombstone, b"committed\n")
         .and_then(|()| sync_directory(&apps))
         .is_err()
     {
         let _ignored = remove_file(&tombstone);
-        let _ignored = rename_synced(&removed, &current, &apps);
+        if has_current {
+            let _ignored = rename_synced(&removed, &current, &apps);
+        }
         return Err(DeviceError::Backend);
     }
     // The absence of the current directory is now the durable commit. Cleanup
@@ -80,15 +248,28 @@ pub fn uninstall(root: &Path, id: &str) -> Result<(), DeviceError> {
 }
 
 pub fn resolve(root: &Path, id: &str) -> Result<PathBuf, String> {
-    let key = public_key().map_err(|error| format!("read app signing key: {error:?}"))?;
-    let manifest = installed_manifest(root, id, &key)
-        .map_err(|error| format!("installed application {id} is invalid: {error:?}"))?;
-    let path = app_binary(root, manifest.id());
-    if path.is_file() {
-        Ok(path)
-    } else {
-        Err(format!("no application named {id} is installed"))
+    if !kobo_protocol::valid_app_id(id) {
+        return Err(format!("{id:?} is not a valid application identity"));
     }
+    let key = public_key().map_err(|error| format!("read app signing key: {error:?}"))?;
+    recover_interrupted_transaction(root, id, &key)
+        .map_err(|error| format!("recover application {id}: {error:?}"))?;
+    if is_uninstalled(root, id)
+        .map_err(|error| format!("read application {id} state: {error:?}"))?
+    {
+        return Err(format!("no application named {id} is installed"));
+    }
+    let directory = apps_root(root).join(id);
+    if safe_directory(&directory).map_err(|error| format!("read application {id}: {error:?}"))? {
+        let manifest = read_installed_manifest(&directory, id, &key)
+            .map_err(|error| format!("installed application {id} is invalid: {error:?}"))?;
+        return Ok(app_binary(root, manifest.id()));
+    }
+    let builtin = builtin_binary(root, id);
+    if managed_builtin(id).is_some() && builtin.is_file() {
+        return Ok(builtin);
+    }
+    Err(format!("no application named {id} is installed"))
 }
 
 pub fn declared(root: &Path, id: &str) -> Option<kobo_policy::Declared> {
@@ -126,7 +307,7 @@ fn install_with(
         .iter()
         .find(|entry| entry.manifest().id() == id)
         .ok_or(DeviceError::NotFound)?;
-    if !version_at_least(
+    if !kobo_app_store::cobalt_version_at_least(
         env!("CARGO_PKG_VERSION"),
         entry.manifest().minimum_cobalt_version(),
     ) {
@@ -191,31 +372,81 @@ fn read_catalog_directory(
 fn catalog_info(
     root: &Path,
     catalog: &Catalog,
-    key: &Ed25519PublicKey,
+    _key: &Ed25519PublicKey,
 ) -> Result<Vec<AppInfo>, DeviceError> {
-    let installed = installed_manifests(root, key)?;
+    let installed = installed(root)?;
     let mut entries = catalog
         .entries()
         .iter()
         .map(|entry| {
             let version = installed
                 .iter()
-                .find(|manifest| manifest.id() == entry.manifest().id())
-                .map(Manifest::version);
+                .find(|installed| installed.id == entry.manifest().id())
+                .and_then(|installed| installed.installed_version.as_deref());
             manifest_info(entry.manifest(), version)
         })
         .collect::<Result<Vec<_>, _>>()?;
-    for manifest in installed {
+    for installed in installed {
         if !catalog
             .entries()
             .iter()
-            .any(|entry| entry.manifest().id() == manifest.id())
+            .any(|entry| entry.manifest().id() == installed.id)
         {
-            entries.push(manifest_info(&manifest, Some(manifest.version()))?);
+            entries.push(installed);
         }
     }
+    entries.extend(system_info(root)?);
     sort_info(&mut entries);
     Ok(entries)
+}
+
+fn local_catalog_info(root: &Path, _key: &Ed25519PublicKey) -> Result<Vec<AppInfo>, DeviceError> {
+    let mut entries = installed(root)?;
+    entries.extend(system_info(root)?);
+    sort_info(&mut entries);
+    Ok(entries)
+}
+
+fn system_info(root: &Path) -> Result<Vec<AppInfo>, DeviceError> {
+    SYSTEM_APPS
+        .iter()
+        .filter_map(
+            |app| match safe_regular_file(&builtin_binary(root, app.id)) {
+                Ok(true) => Some(Ok(builtin_info(app))),
+                Ok(false) => None,
+                Err(error) => Some(Err(error)),
+            },
+        )
+        .collect()
+}
+
+fn builtin_info(app: &BuiltinApp) -> AppInfo {
+    AppInfo {
+        id: app.id.to_owned(),
+        title: app.title.to_owned(),
+        label: app.label.to_owned(),
+        summary: app.summary.to_owned(),
+        version: app.version.to_owned(),
+        glyph: app.glyph,
+        capabilities: app
+            .capabilities
+            .iter()
+            .map(|capability| (*capability).to_owned())
+            .collect(),
+        installed_version: Some(app.version.to_owned()),
+    }
+}
+
+fn managed_builtin(id: &str) -> Option<&'static BuiltinApp> {
+    MANAGED_BUILTINS.iter().find(|app| app.id == id)
+}
+
+fn builtin_is_installed(root: &Path, id: &str) -> Result<bool, DeviceError> {
+    Ok(!is_uninstalled(root, id)? && safe_regular_file(&builtin_binary(root, id))?)
+}
+
+fn is_uninstalled(root: &Path, id: &str) -> Result<bool, DeviceError> {
+    safe_regular_file(&apps_root(root).join(format!("{id}.{UNINSTALLED_SUFFIX}")))
 }
 
 fn manifest_info(
@@ -555,6 +786,10 @@ fn app_binary(root: &Path, id: &str) -> PathBuf {
         .join(format!("kobo-{id}"))
 }
 
+fn builtin_binary(root: &Path, id: &str) -> PathBuf {
+    root.join("bin").join(format!("kobo-{id}"))
+}
+
 fn network_error(error: kobo_protocol::TaskError) -> DeviceError {
     match error {
         kobo_protocol::TaskError::Offline | kobo_protocol::TaskError::Unreachable => {
@@ -567,20 +802,6 @@ fn network_error(error: kobo_protocol::TaskError) -> DeviceError {
         }
         kobo_protocol::TaskError::NoCredential => DeviceError::Authentication,
     }
-}
-
-fn version_at_least(current: &str, minimum: &str) -> bool {
-    match (version_parts(current), version_parts(minimum)) {
-        (Some(current), Some(minimum)) => current >= minimum,
-        _ => false,
-    }
-}
-
-fn version_parts(version: &str) -> Option<Vec<u64>> {
-    version
-        .split('.')
-        .map(|part| part.parse::<u64>().ok())
-        .collect()
 }
 
 fn glyph(name: &str) -> Option<Glyph> {
@@ -651,24 +872,28 @@ mod tests {
     }
 
     fn release(seed: &[u8; 32]) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
-        let binary = b"app binary";
+        release_for(seed, "word-count", "1.0.0")
+    }
+
+    fn release_for(seed: &[u8; 32], id: &str, version: &str) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+        let binary = format!("{id} app binary").into_bytes();
         let manifest = Manifest::new_public(ManifestInput {
-            id: "word-count".to_owned(),
-            display_name: "Word Count".to_owned(),
-            short_label: "Words".to_owned(),
-            summary: "Counts words in a note.".to_owned(),
-            version: "1.0.0".to_owned(),
+            id: id.to_owned(),
+            display_name: format!("{id} application"),
+            short_label: id.to_owned(),
+            summary: format!("The {id} test application."),
+            version: version.to_owned(),
             minimum_cobalt_version: env!("CARGO_PKG_VERSION").to_owned(),
             glyph: "note".to_owned(),
             capabilities: Vec::new(),
-            binary_sha256: kobo_net::sha256::hex_digest(binary),
+            binary_sha256: kobo_net::sha256::hex_digest(&binary),
             binary_bytes: binary.len() as u64,
         })
         .expect("manifest");
-        let package = build_bundle(&manifest, binary, seed).expect("bundle");
+        let package = build_bundle(&manifest, &binary, seed).expect("bundle");
         let catalog = Catalog::new(vec![CatalogEntry::new(CatalogEntryInput {
             manifest,
-            package_url: "https://example.test/word-count.cobalt-app".to_owned(),
+            package_url: format!("https://example.test/{id}.cobalt-app"),
             package_sha256: kobo_net::sha256::hex_digest(&package),
             package_bytes: package.len() as u64,
         })
@@ -677,6 +902,70 @@ mod tests {
         let json = catalog.to_canonical_bytes();
         let signature = format!("{}\n", sign(&json, seed).expect("signature")).into_bytes();
         (json, signature, package)
+    }
+
+    #[test]
+    fn bundled_apps_update_uninstall_and_reinstall_in_place() {
+        let root = root();
+        fs::create_dir_all(root.join("bin")).expect("built-in directory");
+        fs::write(builtin_binary(&root, "todo"), b"built-in todo").expect("built-in Todo");
+
+        let initial = installed(&root).expect("initial installed apps");
+        assert_eq!(initial.len(), 1);
+        assert_eq!(initial[0].id, "todo");
+        assert_eq!(initial[0].installed_version.as_deref(), Some("1.0.0"));
+        assert_eq!(
+            resolve(&root, "todo").expect("resolve built-in"),
+            builtin_binary(&root, "todo")
+        );
+
+        uninstall(&root, "todo").expect("uninstall built-in");
+        assert!(installed(&root).expect("removed apps").is_empty());
+        assert!(resolve(&root, "todo").is_err());
+
+        let seed = [9_u8; 32];
+        let key = derive_public_key(&seed).expect("key");
+        let (json, signature, package) = release_for(&seed, "todo", "1.1.0");
+        refresh_with(&root, &key, |url, _| {
+            if url == CATALOG_URL {
+                Ok(json.clone())
+            } else {
+                Ok(signature.clone())
+            }
+        })
+        .expect("refresh update");
+        install_with(&root, "todo", &key, |_, _| Ok(package.clone())).expect("reinstall");
+        let installed = installed_manifests(&root, &key).expect("reinstalled manifest");
+        assert_eq!(installed.len(), 1);
+        assert_eq!(installed[0].version(), "1.1.0");
+        assert!(!is_uninstalled(&root, "todo").expect("tombstone state"));
+
+        let (json, signature, package) = release_for(&seed, "todo", "1.2.0");
+        refresh_with(&root, &key, |url, _| {
+            if url == CATALOG_URL {
+                Ok(json.clone())
+            } else {
+                Ok(signature.clone())
+            }
+        })
+        .expect("refresh second update");
+        install_with(&root, "todo", &key, |_, _| Ok(package.clone())).expect("update in place");
+        let installed = installed_manifests(&root, &key).expect("updated manifest");
+        assert_eq!(installed.len(), 1);
+        assert_eq!(installed[0].version(), "1.2.0");
+        let _ignored = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn bundled_apps_use_the_same_capabilities_as_their_store_manifests() {
+        assert!(builtin_declared("todo")
+            .expect("Todo declaration")
+            .is_empty());
+        let audiobook = builtin_declared("audiobook").expect("Audiobook declaration");
+        assert!(audiobook.holds(kobo_policy::Capability::Network));
+        assert!(audiobook.holds(kobo_policy::Capability::Audio));
+        assert!(audiobook.holds(kobo_policy::Capability::BluetoothAudio));
+        assert!(builtin_declared("terminal").is_none());
     }
 
     #[test]
@@ -954,8 +1243,8 @@ mod tests {
     #[test]
     fn unknown_glyphs_and_incompatible_versions_are_refused() {
         assert_eq!(glyph("not-a-glyph"), None);
-        assert!(version_at_least("0.2.0", "0.1.9"));
-        assert!(!version_at_least("0.1.8", "0.1.9"));
-        assert!(!version_at_least("nightly", "0.1.9"));
+        assert!(kobo_app_store::cobalt_version_at_least("0.2.0", "0.1.9"));
+        assert!(!kobo_app_store::cobalt_version_at_least("0.1.8", "0.1.9"));
+        assert!(!kobo_app_store::cobalt_version_at_least("nightly", "0.1.9"));
     }
 }
