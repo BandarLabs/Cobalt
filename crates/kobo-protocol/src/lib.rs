@@ -2044,11 +2044,16 @@ fn is_hex_digest(digest: &str) -> bool {
 /// Whether an identity can select only one application-owned directory.
 #[must_use]
 pub fn valid_app_id(id: &str) -> bool {
-    !id.is_empty()
-        && id.len() <= MAX_APP_ID_LEN
-        && id
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    if id.is_empty() || id.len() > MAX_APP_ID_LEN {
+        return false;
+    }
+    let bytes = id.as_bytes();
+    bytes[0].is_ascii_lowercase()
+        && bytes.last() != Some(&b'-')
+        && !bytes.windows(2).any(|pair| pair == b"--")
+        && bytes
+            .iter()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'-')
 }
 
 fn fixed_device_request(output: &mut Vec<u8>, tag: u8, argument: u32) {
@@ -5431,6 +5436,10 @@ mod tests {
             "../todo".to_owned(),
             "Todo".to_owned(),
             "a/b".to_owned(),
+            "1todo".to_owned(),
+            "-todo".to_owned(),
+            "todo-".to_owned(),
+            "todo--list".to_owned(),
             "a".repeat(MAX_APP_ID_LEN + 1),
         ];
         for id in ids {
@@ -5439,6 +5448,9 @@ mod tests {
                 message: Message::DeviceRequest(DeviceRequest::InstallApp { id: id.clone() }),
             };
             assert!(encode(&frame).is_err(), "{id:?} was accepted as an app id");
+        }
+        for id in ["a", "todo", "todo-2", "a1-b2"] {
+            assert!(valid_app_id(id), "{id:?} was rejected as an app id");
         }
 
         let too_many = DeviceResult::Apps {
