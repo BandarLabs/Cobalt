@@ -17,10 +17,10 @@ default = ["text"]
 text = ["dep:kobo-text"]
 
 [dependencies]
-kobo-policy = { version = "0.1.0", path = "../kobo-policy" }
-kobo-protocol = { version = "0.1.0", path = "../kobo-protocol" }
-kobo-text = { version = "0.1.0", path = "../kobo-text", optional = true }
-kobo-ui = { version = "0.1.0", path = "../kobo-ui" }
+kobo-policy = { version = "0.2.0", path = "../kobo-policy" }
+kobo-protocol = { version = "0.2.0", path = "../kobo-protocol" }
+kobo-text = { version = "0.2.0", path = "../kobo-text", optional = true }
+kobo-ui = { version = "0.2.0", path = "../kobo-ui" }
 
 [lints]
 workspace = true

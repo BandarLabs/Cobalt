@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/kobo-abi",
+    "crates/kobo-app-store",
     "crates/kobo-cli",
     "crates/kobo-doc",
     "crates/kobo-doctor",
@@ -40,16 +41,18 @@ members = [
     "examples/magnet",
     "examples/settings",
     "examples/sidekick",
+    "examples/store",
+    "apps/sudoku",
     "tools/icon-import",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.9"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.85"
 license = "AGPL-3.0-only"
-repository = "https://github.com/kobo-platform/kobo"
+repository = "https://github.com/BandarLabs/Cobalt"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

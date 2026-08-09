@@ -447,6 +447,7 @@ impl Server {
 pub struct AppServer {
     http: TcpListener,
     app: UnixListener,
+    apps: Arc<Mutex<SimulatedApps>>,
     socket_path: PathBuf,
     socket_identity: (u64, u64),
 }
@@ -487,6 +488,7 @@ impl AppServer {
         Ok(Self {
             http,
             app,
+            apps: Arc::new(Mutex::new(SimulatedApps::default())),
             socket_path,
             socket_identity: (metadata.dev(), metadata.ino()),
         })
@@ -520,7 +522,7 @@ impl AppServer {
     /// reader fails.
     pub fn accept_app(&self) -> io::Result<AppSession> {
         let (mut stream, _) = self.app.accept()?;
-        Self::start_session(&mut stream)
+        self.start_session(&mut stream)
     }
 
     /// Accepts a pending SDK connection without blocking.
@@ -536,14 +538,14 @@ impl AppServer {
         match self.app.accept() {
             Ok((mut stream, _)) => {
                 stream.set_nonblocking(false)?;
-                Self::start_session(&mut stream).map(Some)
+                self.start_session(&mut stream).map(Some)
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(None),
             Err(error) => Err(error),
         }
     }
 
-    fn start_session(stream: &mut UnixStream) -> io::Result<AppSession> {
+    fn start_session(&self, stream: &mut UnixStream) -> io::Result<AppSession> {
         let hello = read_protocol_frame(stream)?;
         // Kept, not just checked. The name is the identity credential policy
         // is written against, so a simulator that threw it away could not
@@ -567,7 +569,7 @@ impl AppServer {
             },
         )?;
         let reader = stream.try_clone()?;
-        let state = Arc::new(Mutex::new(AppState::default()));
+        let state = Arc::new(Mutex::new(AppState::with_apps(Arc::clone(&self.apps))));
         let reader_state = Arc::clone(&state);
         // One writer for the whole session, shared by every thread that has
         // something to say to the application: taps from the browser, replies
@@ -786,10 +788,17 @@ struct AppState {
     scenario: Scenario,
     lifecycle: Lifecycle,
     last_touch: Option<SimulatedTouch>,
+    apps: Arc<Mutex<SimulatedApps>>,
 }
 
 impl Default for AppState {
     fn default() -> Self {
+        Self::with_apps(Arc::new(Mutex::new(SimulatedApps::default())))
+    }
+}
+
+impl AppState {
+    fn with_apps(apps: Arc<Mutex<SimulatedApps>>) -> Self {
         Self {
             screen: Screen::new(0, Vec::new()),
             paints: 0,
@@ -800,7 +809,77 @@ impl Default for AppState {
             scenario: Scenario::Normal,
             lifecycle: Lifecycle::Foreground,
             last_touch: None,
+            apps,
         }
+    }
+}
+
+#[derive(Debug)]
+struct SimulatedApps {
+    catalog: Vec<kobo_protocol::AppInfo>,
+}
+
+impl Default for SimulatedApps {
+    fn default() -> Self {
+        Self {
+            catalog: vec![
+                simulated_app(
+                    "sudoku",
+                    "Sudoku",
+                    "Sudoku",
+                    "A crisp touch-first Sudoku built for the e-ink panel.",
+                    kobo_ui::Glyph::Grid,
+                    &[],
+                ),
+                simulated_app(
+                    "dictionary",
+                    "Dictionary",
+                    "Dictionary",
+                    "Look up a word without leaving the page.",
+                    kobo_ui::Glyph::Book,
+                    &["network"],
+                ),
+                simulated_app(
+                    "word-count",
+                    "Word Count",
+                    "Word Count",
+                    "Count words and characters in a note.",
+                    kobo_ui::Glyph::Note,
+                    &[],
+                ),
+                simulated_app(
+                    "weather",
+                    "Weather",
+                    "Weather",
+                    "A quiet forecast designed for an e-ink panel.",
+                    kobo_ui::Glyph::Globe,
+                    &["network"],
+                ),
+            ],
+        }
+    }
+}
+
+fn simulated_app(
+    id: &str,
+    title: &str,
+    label: &str,
+    summary: &str,
+    glyph: kobo_ui::Glyph,
+    capabilities: &[&str],
+) -> kobo_protocol::AppInfo {
+    kobo_protocol::AppInfo {
+        id: id.to_owned(),
+        title: title.to_owned(),
+        label: label.to_owned(),
+        summary: summary.to_owned(),
+        version: "1.0.0".to_owned(),
+        glyph,
+        capabilities: capabilities
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect(),
+        installed_version: None,
     }
 }
 
@@ -1572,12 +1651,19 @@ fn read_app_messages(
                     },
                     false,
                 );
-                let result = match scenario {
-                    Scenario::PermissionDenied => {
+                let result =
+                    if let Some(result) = simulated_app_request(state, name, scenario, &request)? {
+                        result
+                    } else if !simulated_platform_request_allowed(name, &request) {
                         kobo_protocol::DeviceResult::Denied(kobo_protocol::DenyReason::NotDeclared)
-                    }
-                    _ => services.handle(request.clone()),
-                };
+                    } else {
+                        match scenario {
+                            Scenario::PermissionDenied => kobo_protocol::DeviceResult::Denied(
+                                kobo_protocol::DenyReason::NotDeclared,
+                            ),
+                            _ => services.handle(request.clone()),
+                        }
+                    };
                 {
                     let mut state = state
                         .lock()
@@ -1670,6 +1756,89 @@ fn read_app_messages(
         }
         deliver_task_outcomes(&tasks, writer, state)?;
     }
+}
+
+fn simulated_platform_request_allowed(
+    caller: &str,
+    request: &kobo_protocol::DeviceRequest,
+) -> bool {
+    !matches!(request, kobo_protocol::DeviceRequest::Update { .. }) || caller == "settings"
+}
+
+fn simulated_app_request(
+    state: &Arc<Mutex<AppState>>,
+    caller: &str,
+    scenario: Scenario,
+    request: &kobo_protocol::DeviceRequest,
+) -> io::Result<Option<kobo_protocol::DeviceResult>> {
+    use kobo_protocol::{DenyReason, DeviceError, DeviceRequest, DeviceResult};
+
+    let authorized = match request {
+        DeviceRequest::ListInstalledApps => matches!(caller, "launcher" | "store"),
+        DeviceRequest::ReadAppCatalog
+        | DeviceRequest::RefreshAppCatalog
+        | DeviceRequest::InstallApp { .. }
+        | DeviceRequest::UninstallApp { .. } => caller == "store",
+        _ => return Ok(None),
+    };
+    if !authorized || scenario == Scenario::PermissionDenied {
+        return Ok(Some(DeviceResult::Denied(DenyReason::NotDeclared)));
+    }
+    let apps = state
+        .lock()
+        .map_err(|_| io::Error::other("app state lock poisoned"))?
+        .apps
+        .clone();
+    let mut apps = apps
+        .lock()
+        .map_err(|_| io::Error::other("simulated apps lock poisoned"))?;
+    let result = match request {
+        DeviceRequest::ListInstalledApps => DeviceResult::Apps {
+            entries: apps
+                .catalog
+                .iter()
+                .filter(|entry| entry.is_installed())
+                .cloned()
+                .collect(),
+        },
+        DeviceRequest::ReadAppCatalog => DeviceResult::Apps {
+            entries: apps.catalog.clone(),
+        },
+        DeviceRequest::RefreshAppCatalog => match scenario {
+            Scenario::Offline | Scenario::HostDown => {
+                DeviceResult::Failed(DeviceError::Unreachable)
+            }
+            Scenario::NetworkTimeout => DeviceResult::Failed(DeviceError::TimedOut),
+            _ => DeviceResult::Apps {
+                entries: apps.catalog.clone(),
+            },
+        },
+        DeviceRequest::InstallApp { id } => match scenario {
+            Scenario::Offline | Scenario::HostDown => {
+                DeviceResult::Failed(DeviceError::Unreachable)
+            }
+            Scenario::NetworkTimeout => DeviceResult::Failed(DeviceError::TimedOut),
+            Scenario::StorageFull => DeviceResult::Failed(DeviceError::Backend),
+            _ => {
+                if let Some(entry) = apps.catalog.iter_mut().find(|entry| entry.id == *id) {
+                    entry.installed_version = Some(entry.version.clone());
+                    DeviceResult::Done
+                } else {
+                    DeviceResult::Failed(DeviceError::NotFound)
+                }
+            }
+        },
+        DeviceRequest::UninstallApp { id } => {
+            if let Some(entry) = apps.catalog.iter_mut().find(|entry| entry.id == *id) {
+                entry.installed_version = None;
+                DeviceResult::Done
+            } else {
+                DeviceResult::Failed(DeviceError::NotFound)
+            }
+        }
+        _ => return Ok(None),
+    };
+    Ok(Some(result))
 }
 
 /// Delivers a finished task as soon as it finishes.
@@ -2119,6 +2288,169 @@ mod tests {
     use std::time::Duration;
 
     static NEXT_PRIVATE_DIR: AtomicUsize = AtomicUsize::new(0);
+
+    fn app_result(
+        state: &Arc<Mutex<AppState>>,
+        caller: &str,
+        scenario: Scenario,
+        request: &kobo_protocol::DeviceRequest,
+    ) -> kobo_protocol::DeviceResult {
+        simulated_app_request(state, caller, scenario, request)
+            .expect("simulate request")
+            .expect("app-store request")
+    }
+
+    #[test]
+    fn simulated_store_install_and_uninstall_persist_for_the_launcher() {
+        use kobo_protocol::{DeviceRequest, DeviceResult};
+
+        let apps = Arc::new(Mutex::new(SimulatedApps::default()));
+        let store = Arc::new(Mutex::new(AppState::with_apps(Arc::clone(&apps))));
+        assert_eq!(
+            app_result(
+                &store,
+                "store",
+                Scenario::Normal,
+                &DeviceRequest::InstallApp {
+                    id: "word-count".to_owned(),
+                },
+            ),
+            DeviceResult::Done
+        );
+        let launcher = Arc::new(Mutex::new(AppState::with_apps(apps)));
+        let DeviceResult::Apps { entries } = app_result(
+            &launcher,
+            "launcher",
+            Scenario::Normal,
+            &DeviceRequest::ListInstalledApps,
+        ) else {
+            panic!("installed list");
+        };
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, "word-count");
+        assert_eq!(
+            app_result(
+                &store,
+                "store",
+                Scenario::Normal,
+                &DeviceRequest::UninstallApp {
+                    id: "word-count".to_owned(),
+                },
+            ),
+            DeviceResult::Done
+        );
+        let DeviceResult::Apps { entries } = app_result(
+            &launcher,
+            "launcher",
+            Scenario::Normal,
+            &DeviceRequest::ListInstalledApps,
+        ) else {
+            panic!("installed list");
+        };
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn simulated_store_models_authorization_and_network_failures() {
+        use kobo_protocol::{DenyReason, DeviceError, DeviceRequest, DeviceResult};
+
+        let state = Arc::new(Mutex::new(AppState::default()));
+        assert_eq!(
+            app_result(
+                &state,
+                "hello",
+                Scenario::Normal,
+                &DeviceRequest::ReadAppCatalog,
+            ),
+            DeviceResult::Denied(DenyReason::NotDeclared)
+        );
+        assert_eq!(
+            app_result(
+                &state,
+                "store",
+                Scenario::Offline,
+                &DeviceRequest::RefreshAppCatalog,
+            ),
+            DeviceResult::Failed(DeviceError::Unreachable)
+        );
+        assert_eq!(
+            app_result(
+                &state,
+                "store",
+                Scenario::NetworkTimeout,
+                &DeviceRequest::RefreshAppCatalog,
+            ),
+            DeviceResult::Failed(DeviceError::TimedOut)
+        );
+        assert_eq!(
+            app_result(
+                &state,
+                "store",
+                Scenario::StorageFull,
+                &DeviceRequest::InstallApp {
+                    id: "word-count".to_owned(),
+                },
+            ),
+            DeviceResult::Failed(DeviceError::Backend)
+        );
+        assert_eq!(
+            app_result(
+                &state,
+                "store",
+                Scenario::Offline,
+                &DeviceRequest::InstallApp {
+                    id: "word-count".to_owned(),
+                },
+            ),
+            DeviceResult::Failed(DeviceError::Unreachable)
+        );
+        assert_eq!(
+            app_result(
+                &state,
+                "store",
+                Scenario::NetworkTimeout,
+                &DeviceRequest::InstallApp {
+                    id: "word-count".to_owned(),
+                },
+            ),
+            DeviceResult::Failed(DeviceError::TimedOut)
+        );
+    }
+
+    #[test]
+    fn simulated_catalog_contains_store_only_sudoku() {
+        use kobo_protocol::{DeviceRequest, DeviceResult};
+
+        let state = Arc::new(Mutex::new(AppState::default()));
+        let DeviceResult::Apps { entries } = app_result(
+            &state,
+            "store",
+            Scenario::Normal,
+            &DeviceRequest::ReadAppCatalog,
+        ) else {
+            panic!("catalog");
+        };
+        let sudoku = entries
+            .iter()
+            .find(|entry| entry.id == "sudoku")
+            .expect("Sudoku catalog entry");
+        assert_eq!(sudoku.version, "1.0.0");
+        assert!(!sudoku.is_installed());
+    }
+
+    #[test]
+    fn simulated_platform_updates_remain_settings_only() {
+        let update = kobo_protocol::DeviceRequest::Update {
+            url: "https://example.test/Cobalt.tgz".to_owned(),
+            sha256: "a".repeat(64),
+        };
+        assert!(simulated_platform_request_allowed("settings", &update));
+        assert!(!simulated_platform_request_allowed("store", &update));
+        assert!(simulated_platform_request_allowed(
+            "store",
+            &kobo_protocol::DeviceRequest::RefreshAppCatalog
+        ));
+    }
 
     #[test]
     fn a_task_that_finishes_while_nothing_is_typed_still_reaches_the_application() {

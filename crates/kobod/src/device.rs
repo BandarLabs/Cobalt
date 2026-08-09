@@ -59,6 +59,7 @@ use std::time::{Duration, Instant};
 
 /// The touch panel on every device this supports so far.
 pub const TOUCH_DEVICE: &str = "/dev/input/event1";
+const COBALT_ROOT: &str = "/mnt/onboard/.adds/cobalt";
 /// Where named credentials live.
 ///
 /// On the book partition, because that is the one place the owner can reach
@@ -801,6 +802,8 @@ struct Hosted {
     store: kobo_policy::store::Store,
     shelf: kobo_policy::shelf::Shelf,
     tasks: TaskRunner,
+    /// Capabilities declared by this installed application.
+    declared: Declared,
     /// The terminal this application may run a program on, or a refusal.
     shells: kobo_shell::Shells,
     /// The last screen this application drew, foreground or not.
@@ -1401,7 +1404,12 @@ fn host_applications(
                         Message::DropPicture { handle } => apps[index].pictures.remove(handle),
                         Message::Log { .. } => {}
                         Message::DeviceRequest(request) => {
-                            if matches!(request, kobo_protocol::DeviceRequest::ReadBattery)
+                            let not_declared = !system_request_allowed(&apps[index].name, &request)
+                                || kobo_policy::request_capability(&request).is_some_and(
+                                    |capability| !apps[index].declared.holds(capability),
+                                );
+                            if !not_declared
+                                && matches!(request, kobo_protocol::DeviceRequest::ReadBattery)
                                 && battery_read_at.elapsed() >= BATTERY_INTERVAL
                             {
                                 if let Some(battery) = kobo_hal::battery::read() {
@@ -1409,33 +1417,41 @@ fn host_applications(
                                 }
                                 battery_read_at = Instant::now();
                             }
-                            // The light is driven before the policy answers,
-                            // so what the application is told is what the
-                            // hardware actually took. Percentages do not divide
-                            // evenly into every control's range, and an
-                            // application that redraws a slider from the reply
-                            // would otherwise drift away from the panel.
-                            if let Some(light) = &frontlight {
-                                match request {
-                                    kobo_protocol::DeviceRequest::SetFrontlight { percent }
-                                        if services.may(Capability::FrontlightControl) =>
-                                    {
-                                        match light.set(percent) {
-                                            Ok(set) => services.observe_frontlight(set),
-                                            Err(error) => {
-                                                trace(&format!("frontlight refused: {error}"));
+                            // Once caller identity and declared capabilities
+                            // pass, drive the light before forming the reply so
+                            // the application is told what the hardware
+                            // actually took. Percentages do not divide evenly
+                            // into every control's range.
+                            if !not_declared {
+                                if let Some(light) = &frontlight {
+                                    match request {
+                                        kobo_protocol::DeviceRequest::SetFrontlight { percent }
+                                            if apps[index]
+                                                .declared
+                                                .holds(Capability::FrontlightControl)
+                                                && services.may(Capability::FrontlightControl) =>
+                                        {
+                                            match light.set(percent) {
+                                                Ok(set) => services.observe_frontlight(set),
+                                                Err(error) => {
+                                                    trace(&format!("frontlight refused: {error}"));
+                                                }
                                             }
                                         }
-                                    }
-                                    kobo_protocol::DeviceRequest::ReadFrontlight => {
-                                        if let Some(percent) = light.percent() {
-                                            services.observe_frontlight(percent);
+                                        kobo_protocol::DeviceRequest::ReadFrontlight => {
+                                            if let Some(percent) = light.percent() {
+                                                services.observe_frontlight(percent);
+                                            }
                                         }
+                                        _ => {}
                                     }
-                                    _ => {}
                                 }
                             }
-                            let result = if let Some(reason) = services.refusal_for(&request) {
+                            let result = if not_declared {
+                                kobo_protocol::DeviceResult::Denied(
+                                    kobo_protocol::DenyReason::NotDeclared,
+                                )
+                            } else if let Some(reason) = services.refusal_for(&request) {
                                 kobo_protocol::DeviceResult::Denied(reason)
                             } else {
                                 match &request {
@@ -1447,6 +1463,7 @@ fn host_applications(
                                             kobo_hal::bluetooth::Bluetooth::state,
                                         )
                                     }
+
                                     kobo_protocol::DeviceRequest::SetBluetooth { enabled } => {
                                         // Kobo documents Bluetooth as sharing the wireless
                                         // radio with Wi-Fi. Bring Wi-Fi up first, exactly as
@@ -1567,7 +1584,11 @@ fn host_applications(
                                                     )
                                                 }
                                                 kobo_protocol::AudioSource::Stream(url) => {
-                                                    if services.may(Capability::Network) {
+                                                    if apps[index]
+                                                        .declared
+                                                        .holds(Capability::Network)
+                                                        && services.may(Capability::Network)
+                                                    {
                                                         audio.load(kobo_hal::audio::Source::Stream(
                                                             url.clone(),
                                                         ))
@@ -1663,6 +1684,37 @@ fn host_applications(
                                                 kobo_protocol::DeviceResult::Failed(error)
                                             }
                                         }
+                                    }
+                                    kobo_protocol::DeviceRequest::ListInstalledApps => {
+                                        app_store_result(crate::app_store::installed(Path::new(
+                                            COBALT_ROOT,
+                                        )))
+                                    }
+                                    kobo_protocol::DeviceRequest::ReadAppCatalog => {
+                                        app_store_result(crate::app_store::catalog(Path::new(
+                                            COBALT_ROOT,
+                                        )))
+                                    }
+                                    kobo_protocol::DeviceRequest::RefreshAppCatalog => {
+                                        app_store_result(crate::app_store::refresh(Path::new(
+                                            COBALT_ROOT,
+                                        )))
+                                    }
+                                    kobo_protocol::DeviceRequest::InstallApp { id } => {
+                                        let result =
+                                            crate::app_store::install(Path::new(COBALT_ROOT), id);
+                                        if result.is_ok() {
+                                            stop_named_application(&mut apps, id);
+                                        }
+                                        app_store_done(result)
+                                    }
+                                    kobo_protocol::DeviceRequest::UninstallApp { id } => {
+                                        let result =
+                                            crate::app_store::uninstall(Path::new(COBALT_ROOT), id);
+                                        if result.is_ok() {
+                                            stop_named_application(&mut apps, id);
+                                        }
+                                        app_store_done(result)
                                     }
                                     _ => services.handle(request.clone()),
                                 }
@@ -1962,6 +2014,46 @@ fn repaint(
     Ok(())
 }
 
+/// Keeps platform replacement and app installation behind distinct built-in
+/// identities even while both travel over the same bounded device channel.
+fn system_request_allowed(app: &str, request: &kobo_protocol::DeviceRequest) -> bool {
+    match request {
+        kobo_protocol::DeviceRequest::Update { .. } => app == "settings",
+        kobo_protocol::DeviceRequest::ListInstalledApps => matches!(app, "launcher" | "store"),
+        kobo_protocol::DeviceRequest::ReadAppCatalog
+        | kobo_protocol::DeviceRequest::RefreshAppCatalog
+        | kobo_protocol::DeviceRequest::InstallApp { .. }
+        | kobo_protocol::DeviceRequest::UninstallApp { .. } => app == "store",
+        _ => true,
+    }
+}
+
+fn app_store_result(
+    result: Result<Vec<kobo_protocol::AppInfo>, kobo_protocol::DeviceError>,
+) -> kobo_protocol::DeviceResult {
+    match result {
+        Ok(entries) => kobo_protocol::DeviceResult::Apps { entries },
+        Err(error) => kobo_protocol::DeviceResult::Failed(error),
+    }
+}
+
+fn app_store_done(result: Result<(), kobo_protocol::DeviceError>) -> kobo_protocol::DeviceResult {
+    match result {
+        Ok(()) => kobo_protocol::DeviceResult::Done,
+        Err(error) => kobo_protocol::DeviceResult::Failed(error),
+    }
+}
+
+fn stop_named_application(apps: &mut [Hosted], name: &str) {
+    if let Some(app) = apps.iter_mut().find(|app| app.name == name) {
+        app.tasks.shutdown();
+        stop_application(&mut app.child, app.jail.as_deref());
+        if let Some(root) = &app.jail {
+            let _ignored = fs::remove_dir_all(root);
+        }
+    }
+}
+
 /// Finds an application by name, starting it only if it is not already running.
 #[allow(clippy::too_many_arguments)]
 fn open_application(
@@ -2022,6 +2114,10 @@ fn coldest(seen: &[(u64, Instant, bool)], front: u64) -> Option<usize> {
 }
 
 /// Starts one application and completes its opening exchange.
+#[allow(
+    clippy::too_many_lines,
+    reason = "process setup, sandboxing and per-app services form one launch transaction"
+)]
 fn start_application(
     apps: &mut Vec<Hosted>,
     next_id: &mut u64,
@@ -2085,6 +2181,12 @@ fn start_application(
     }
     let waker = sender.clone();
     let credential_app = name.clone();
+    let declared = if path.starts_with(Path::new(COBALT_ROOT).join("apps")) {
+        crate::app_store::declared(Path::new(COBALT_ROOT), &name)
+            .ok_or_else(|| format!("read application manifest for {name}"))?
+    } else {
+        Declared::all()
+    };
     let tasks = TaskRunner::simulated(std::env::temp_dir())
         .with_fetch(Arc::new(kobo_net::fetch_from))
         .with_post(Arc::new(kobo_net::post))
@@ -2095,13 +2197,7 @@ fn start_application(
         .with_wake(Arc::new(move || {
             let _ = waker.send(Event::TaskReady);
         }))
-        // Granted to everything for now. This is the placeholder for the
-        // manifest: capabilities belong to an installed application, and until
-        // applications are installed rather than staged in `/tmp` there is
-        // nothing to read a declaration from. It is written here, once, rather
-        // than being absent, so that the day manifests arrive there is exactly
-        // one line to change.
-        .with_capabilities([kobo_policy::Capability::Network]);
+        .with_capabilities(declared.iter());
     let shelf_root = if name == "audiobook" {
         // `.mp3z` is the firmware's sideloaded-audiobook container. Keeping
         // this one privileged shelf in a visible directory means Nickel finds
@@ -2140,6 +2236,7 @@ fn start_application(
         child,
         stream,
         tasks,
+        declared,
         screen: None,
         pictures: PictureCache::default(),
         painted: 0,
@@ -2196,7 +2293,8 @@ fn resolve(catalogue: &Path, name: &str) -> Result<PathBuf, String> {
     if path.is_file() {
         Ok(path)
     } else {
-        Err(format!("no application named {name} is installed"))
+        crate::app_store::resolve(Path::new(COBALT_ROOT), name)
+            .map_err(|_| format!("no application named {name} is installed"))
     }
 }
 
@@ -3041,5 +3139,34 @@ mod hosting_tests {
         // there is no idle candidate the oldest busy one still goes.
         let seen = [(1, ago(30), BUSY), (2, ago(300), BUSY), (3, ago(5), IDLE)];
         assert_eq!(coldest(&seen, 3), Some(1));
+    }
+
+    #[test]
+    fn platform_and_app_updates_have_separate_builtin_authorities() {
+        use kobo_protocol::DeviceRequest;
+
+        let platform = DeviceRequest::Update {
+            url: "https://example.test/Cobalt.tgz".to_owned(),
+            sha256: "a".repeat(64),
+        };
+        assert!(super::system_request_allowed("settings", &platform));
+        assert!(!super::system_request_allowed("store", &platform));
+        assert!(!super::system_request_allowed("todo", &platform));
+
+        let install = DeviceRequest::InstallApp {
+            id: "word-count".to_owned(),
+        };
+        assert!(super::system_request_allowed("store", &install));
+        assert!(!super::system_request_allowed("settings", &install));
+        assert!(!super::system_request_allowed("todo", &install));
+
+        assert!(super::system_request_allowed(
+            "launcher",
+            &DeviceRequest::ListInstalledApps
+        ));
+        assert!(!super::system_request_allowed(
+            "launcher",
+            &DeviceRequest::RefreshAppCatalog
+        ));
     }
 }

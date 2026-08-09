@@ -50,6 +50,8 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           notes="Rename the .tgz to KoboRoot.tgz, copy it into the .kobo folder \
           of a USB-connected ${{ matrix.device }}, and restart the reader. \
+          Store applications are published independently from main and do not \
+          require a new Cobalt platform release. \
           Verify the download against the .sha256 file first. \
           See docs/INSTALL.md for the full walkthrough."
           gh release create "$GITHUB_REF_NAME" dist/* \

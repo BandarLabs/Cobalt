@@ -1,0 +1,20 @@
+[package]
+name = "kobo-store"
+version.workspace = true
+edition.workspace = true
+publish = false
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "kobo-store"
+path = "src/main.rs"
+
+[dependencies]
+kobo-sdk = { path = "../../crates/kobo-sdk" }
+
+[dev-dependencies]
+kobo-ui = { path = "../../crates/kobo-ui" }
+
+[lints]
+workspace = true

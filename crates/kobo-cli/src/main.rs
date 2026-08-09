@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::env;
 use std::ffi::OsStr;
 use std::fmt::Write as _;
@@ -54,7 +55,11 @@ const INSTALLED_PACKAGES: &[(&str, Option<&str>)] = &[
     ("kobo-rss", None),
     ("kobo-settings", None),
     ("kobo-sidekick", None),
+    ("kobo-store", None),
 ];
+/// Store-only applications that can be simulated without being placed in the
+/// USB platform package.
+const STORE_PACKAGES: &[&str] = &["kobo-sudoku"];
 /// Proof that the daemon in the package can actually take the panel. The
 /// phrase only exists inside `present_on_panel`, which is behind
 /// `device-write`, so finding it in the finished binary is the artifact-level
@@ -363,6 +368,11 @@ fn run(arguments: &[String]) -> Result<(), String> {
                 .to_owned(),
         ),
         "package" => build_package(&arguments[1..]),
+        "app-key" => app_key(&arguments[1..]),
+        "app-bundle" => app_bundle(&arguments[1..]),
+        "app-catalog" => app_catalog(&arguments[1..]),
+        "app-check" => app_check(&arguments[1..]),
+        "app-release" => app_release(&arguments[1..]),
         "setup" => setup_device(&arguments[1..]),
         "deploy" => deploy_package(&arguments[1..]),
         "secret" => secret_command(&arguments[1..]),
@@ -380,10 +390,448 @@ fn run(arguments: &[String]) -> Result<(), String> {
             Ok(())
         }
         "version" | "--version" | "-V" => {
-            println!("kobo 0.1.0");
+            println!("kobo {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
         unknown => Err(format!("unknown command '{unknown}'")),
+    }
+}
+
+fn app_key(arguments: &[String]) -> Result<(), String> {
+    let seed_path = single_path_flag(arguments, "--seed", "usage: kobo app-key --seed PATH")?;
+    let seed = read_signing_seed(&seed_path)?;
+    let public = kobo_app_store::derive_public_key(&seed).map_err(|error| error.to_string())?;
+    println!("{public}");
+    Ok(())
+}
+
+fn app_bundle(arguments: &[String]) -> Result<(), String> {
+    const USAGE: &str =
+        "usage: kobo app-bundle --manifest PATH --binary PATH --seed PATH --out PATH";
+    let manifest_path = single_path_flag(arguments, "--manifest", USAGE)?;
+    let binary_path = single_path_flag(arguments, "--binary", USAGE)?;
+    let seed_path = single_path_flag(arguments, "--seed", USAGE)?;
+    let output = single_path_flag(arguments, "--out", USAGE)?;
+    ensure_only_flags(
+        arguments,
+        &["--manifest", "--binary", "--seed", "--out"],
+        USAGE,
+    )?;
+
+    let manifest_bytes = fs::read(&manifest_path)
+        .map_err(|error| format!("read {}: {error}", manifest_path.display()))?;
+    let manifest = kobo_app_store::Manifest::parse_public(&manifest_bytes)
+        .map_err(|error| format!("invalid app manifest: {error}"))?;
+    verify_arm_elf(&binary_path)?;
+    let binary = fs::read(&binary_path)
+        .map_err(|error| format!("read {}: {error}", binary_path.display()))?;
+    let seed = read_signing_seed(&seed_path)?;
+    let bundle = kobo_app_store::build_bundle(&manifest, &binary, &seed)
+        .map_err(|error| format!("build app bundle: {error}"))?;
+    fs::write(&output, bundle).map_err(|error| format!("write {}: {error}", output.display()))?;
+    println!("created {}", output.display());
+    Ok(())
+}
+
+fn app_catalog(arguments: &[String]) -> Result<(), String> {
+    const USAGE: &str = "usage: kobo app-catalog --seed PATH --out PATH --signature PATH \
+                         --entry PACKAGE HTTPS_URL [--entry PACKAGE HTTPS_URL ...]";
+    let seed_path = single_path_flag(arguments, "--seed", USAGE)?;
+    let output = single_path_flag(arguments, "--out", USAGE)?;
+    let signature_output = single_path_flag(arguments, "--signature", USAGE)?;
+    let entries = paired_flag(arguments, "--entry", USAGE)?;
+    ensure_only_flags(
+        arguments,
+        &["--seed", "--out", "--signature", "--entry"],
+        USAGE,
+    )?;
+    if entries.is_empty() {
+        return Err(USAGE.to_owned());
+    }
+
+    let seed = read_signing_seed(&seed_path)?;
+    let public = kobo_app_store::derive_public_key(&seed).map_err(|error| error.to_string())?;
+    let mut catalog_entries = Vec::with_capacity(entries.len());
+    for (package_path, url) in entries {
+        let package_path = PathBuf::from(package_path);
+        let package = fs::read(&package_path)
+            .map_err(|error| format!("read {}: {error}", package_path.display()))?;
+        let parsed = kobo_app_store::parse_public_bundle(&package, &public)
+            .map_err(|error| format!("verify {}: {error}", package_path.display()))?;
+        let package_bytes =
+            u64::try_from(package.len()).map_err(|_| "app package is too large".to_owned())?;
+        catalog_entries.push(
+            kobo_app_store::CatalogEntry::new(kobo_app_store::CatalogEntryInput {
+                manifest: parsed.manifest().clone(),
+                package_url: url,
+                package_sha256: kobo_net::sha256::hex_digest(&package),
+                package_bytes,
+            })
+            .map_err(|error| format!("invalid catalog entry: {error}"))?,
+        );
+    }
+    let catalog = kobo_app_store::Catalog::new(catalog_entries)
+        .map_err(|error| format!("invalid app catalog: {error}"))?;
+    let bytes = catalog.to_canonical_bytes();
+    let signature =
+        kobo_app_store::sign(&bytes, &seed).map_err(|error| format!("sign catalog: {error}"))?;
+    fs::write(&output, &bytes).map_err(|error| format!("write {}: {error}", output.display()))?;
+    fs::write(&signature_output, format!("{signature}\n"))
+        .map_err(|error| format!("write {}: {error}", signature_output.display()))?;
+    println!("created {}", output.display());
+    println!("created {}", signature_output.display());
+    Ok(())
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ReleaseApp {
+    package: String,
+    id: String,
+    display_name: String,
+    short_label: String,
+    summary: String,
+    version: String,
+    minimum_cobalt_version: String,
+    glyph: String,
+    capabilities: Vec<String>,
+}
+
+fn app_check(arguments: &[String]) -> Result<(), String> {
+    const USAGE: &str = "usage: kobo app-check --registry PATH";
+    let registry_path = single_path_flag(arguments, "--registry", USAGE)?;
+    ensure_only_flags(arguments, &["--registry"], USAGE)?;
+    let apps = read_release_registry(&registry_path)?;
+    if apps.is_empty() {
+        return Err("the app registry is empty".to_owned());
+    }
+    for app in apps {
+        let _binary = build_release_binary(&app)?;
+        println!("verified {} ({})", app.id, app.package);
+    }
+    Ok(())
+}
+
+fn app_release(arguments: &[String]) -> Result<(), String> {
+    const USAGE: &str = "usage: kobo app-release --registry PATH --seed PATH --out PATH \
+                         --base-url HTTPS_URL [--prebuilt]";
+    let registry_path = single_path_flag(arguments, "--registry", USAGE)?;
+    let seed_path = single_path_flag(arguments, "--seed", USAGE)?;
+    let output = single_path_flag(arguments, "--out", USAGE)?;
+    let base_url = single_value_flag(arguments, "--base-url", USAGE)?;
+    let prebuilt = arguments
+        .iter()
+        .filter(|value| *value == "--prebuilt")
+        .count();
+    if prebuilt > 1 {
+        return Err(USAGE.to_owned());
+    }
+    ensure_only_flags(
+        arguments,
+        &["--registry", "--seed", "--out", "--base-url", "--prebuilt"],
+        USAGE,
+    )?;
+    if !base_url.starts_with("https://") {
+        return Err("--base-url must use HTTPS".to_owned());
+    }
+    let base_url = base_url.trim_end_matches('/');
+    let apps = read_release_registry(&registry_path)?;
+    if apps.is_empty() {
+        return Err("the app registry is empty".to_owned());
+    }
+    let seed = read_signing_seed(&seed_path)?;
+    let public = kobo_app_store::derive_public_key(&seed).map_err(|error| error.to_string())?;
+    if public.to_string() != kobo_app_store::PUBLIC_RELEASE_KEY_HEX {
+        return Err(
+            "the signing seed does not match the public key trusted by Cobalt runtimes".to_owned(),
+        );
+    }
+    fs::create_dir_all(&output).map_err(|error| format!("create {}: {error}", output.display()))?;
+
+    let mut entries = Vec::with_capacity(apps.len());
+    for app in apps {
+        let binary = if prebuilt == 1 {
+            read_release_binary(&app)?
+        } else {
+            build_release_binary(&app)?
+        };
+        let manifest = kobo_app_store::Manifest::new_public(kobo_app_store::ManifestInput {
+            id: app.id.clone(),
+            display_name: app.display_name,
+            short_label: app.short_label,
+            summary: app.summary,
+            version: app.version,
+            minimum_cobalt_version: app.minimum_cobalt_version,
+            glyph: app.glyph,
+            capabilities: app.capabilities,
+            binary_sha256: kobo_net::sha256::hex_digest(&binary),
+            binary_bytes: u64::try_from(binary.len())
+                .map_err(|_| format!("{} binary is too large", app.package))?,
+        })
+        .map_err(|error| format!("invalid {} metadata: {error}", app.id))?;
+        let bundle = kobo_app_store::build_bundle(&manifest, &binary, &seed)
+            .map_err(|error| format!("bundle {}: {error}", app.id))?;
+        let package_path = output.join(format!("{}.cobalt-app", app.id));
+        fs::write(&package_path, &bundle)
+            .map_err(|error| format!("write {}: {error}", package_path.display()))?;
+        entries.push(
+            kobo_app_store::CatalogEntry::new(kobo_app_store::CatalogEntryInput {
+                manifest,
+                package_url: format!("{base_url}/{}.cobalt-app", app.id),
+                package_sha256: kobo_net::sha256::hex_digest(&bundle),
+                package_bytes: u64::try_from(bundle.len())
+                    .map_err(|_| format!("{} package is too large", app.id))?,
+            })
+            .map_err(|error| format!("catalog {}: {error}", app.id))?,
+        );
+        println!("created {}", package_path.display());
+    }
+
+    let catalog = kobo_app_store::Catalog::new(entries)
+        .map_err(|error| format!("build app catalog: {error}"))?;
+    let catalog_bytes = catalog.to_canonical_bytes();
+    let signature =
+        kobo_app_store::sign(&catalog_bytes, &seed).map_err(|error| error.to_string())?;
+    let catalog_path = output.join("cobalt-app-catalog.json");
+    let signature_path = output.join("cobalt-app-catalog.json.sig");
+    fs::write(&catalog_path, catalog_bytes)
+        .map_err(|error| format!("write {}: {error}", catalog_path.display()))?;
+    fs::write(&signature_path, format!("{signature}\n"))
+        .map_err(|error| format!("write {}: {error}", signature_path.display()))?;
+    println!("created {}", catalog_path.display());
+    println!("created {}", signature_path.display());
+    Ok(())
+}
+
+fn build_release_binary(app: &ReleaseApp) -> Result<Vec<u8>, String> {
+    let mut build = device_build_command(&app.package, None)?;
+    run_status(&mut build, format!("build {}", app.package))?;
+    read_release_binary(app)
+}
+
+fn read_release_binary(app: &ReleaseApp) -> Result<Vec<u8>, String> {
+    let binary_path = workspace_device_binary(&app.package);
+    verify_arm_elf(&binary_path)?;
+    fs::read(&binary_path).map_err(|error| format!("read {}: {error}", binary_path.display()))
+}
+
+fn read_release_registry(path: &Path) -> Result<Vec<ReleaseApp>, String> {
+    let text =
+        fs::read_to_string(path).map_err(|error| format!("read {}: {error}", path.display()))?;
+    let document =
+        kobo_json::parse(&text).map_err(|error| format!("parse {}: {error}", path.display()))?;
+    let fields = strict_registry_object(&document, "registry", &["format_version", "apps"])?;
+    if registry_field(fields, "format_version")?.as_i64() != Some(1) {
+        return Err("app registry format_version must be 1".to_owned());
+    }
+    let values = registry_field(fields, "apps")?
+        .as_array()
+        .ok_or_else(|| "app registry field 'apps' must be an array".to_owned())?;
+    let mut apps = values
+        .iter()
+        .map(parse_release_app)
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut packages = BTreeSet::new();
+    let mut ids = BTreeSet::new();
+    for app in &apps {
+        if !valid_slug(&app.package) || !app.package.starts_with("kobo-") {
+            return Err(format!(
+                "app package '{}' must be a lowercase kobo-* Cargo package",
+                app.package
+            ));
+        }
+        if !packages.insert(&app.package) {
+            return Err(format!("duplicate app package '{}'", app.package));
+        }
+        if !ids.insert(&app.id) {
+            return Err(format!("duplicate app id '{}'", app.id));
+        }
+        kobo_app_store::Manifest::new_public(kobo_app_store::ManifestInput {
+            id: app.id.clone(),
+            display_name: app.display_name.clone(),
+            short_label: app.short_label.clone(),
+            summary: app.summary.clone(),
+            version: app.version.clone(),
+            minimum_cobalt_version: app.minimum_cobalt_version.clone(),
+            glyph: app.glyph.clone(),
+            capabilities: app.capabilities.clone(),
+            binary_sha256: "0".repeat(64),
+            binary_bytes: 1,
+        })
+        .map_err(|error| format!("invalid {} registry entry: {error}", app.id))?;
+    }
+    apps.sort_by(|left, right| left.id.cmp(&right.id));
+    Ok(apps)
+}
+
+fn parse_release_app(value: &kobo_json::Value) -> Result<ReleaseApp, String> {
+    const FIELDS: [&str; 9] = [
+        "package",
+        "id",
+        "display_name",
+        "short_label",
+        "summary",
+        "version",
+        "minimum_cobalt_version",
+        "glyph",
+        "capabilities",
+    ];
+    let fields = strict_registry_object(value, "app", &FIELDS)?;
+    let string = |name| {
+        registry_field(fields, name)?
+            .as_str()
+            .map(str::to_owned)
+            .ok_or_else(|| format!("app field '{name}' must be a string"))
+    };
+    let capabilities = registry_field(fields, "capabilities")?
+        .as_array()
+        .ok_or_else(|| "app field 'capabilities' must be an array".to_owned())?
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| "app capabilities must be strings".to_owned())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(ReleaseApp {
+        package: string("package")?,
+        id: string("id")?,
+        display_name: string("display_name")?,
+        short_label: string("short_label")?,
+        summary: string("summary")?,
+        version: string("version")?,
+        minimum_cobalt_version: string("minimum_cobalt_version")?,
+        glyph: string("glyph")?,
+        capabilities,
+    })
+}
+
+fn strict_registry_object<'a>(
+    value: &'a kobo_json::Value,
+    object: &str,
+    allowed: &[&str],
+) -> Result<&'a [(String, kobo_json::Value)], String> {
+    let kobo_json::Value::Object(fields) = value else {
+        return Err(format!("{object} must be an object"));
+    };
+    let mut seen = BTreeSet::new();
+    for (name, _) in fields {
+        if !allowed.contains(&name.as_str()) {
+            return Err(format!("unknown field '{name}' in {object}"));
+        }
+        if !seen.insert(name.as_str()) {
+            return Err(format!("duplicate field '{name}' in {object}"));
+        }
+    }
+    for name in allowed {
+        if !seen.contains(name) {
+            return Err(format!("missing field '{name}' in {object}"));
+        }
+    }
+    Ok(fields)
+}
+
+fn registry_field<'a>(
+    fields: &'a [(String, kobo_json::Value)],
+    name: &str,
+) -> Result<&'a kobo_json::Value, String> {
+    fields
+        .iter()
+        .find(|(field, _)| field == name)
+        .map(|(_, value)| value)
+        .ok_or_else(|| format!("missing registry field '{name}'"))
+}
+
+fn single_value_flag(arguments: &[String], flag: &str, usage: &str) -> Result<String, String> {
+    let mut values = arguments
+        .windows(2)
+        .filter(|pair| pair[0] == flag)
+        .map(|pair| pair[1].as_str());
+    let value = values.next().ok_or_else(|| usage.to_owned())?;
+    if values.next().is_some() || value.starts_with("--") {
+        return Err(usage.to_owned());
+    }
+    Ok(value.to_owned())
+}
+
+fn single_path_flag(arguments: &[String], flag: &str, usage: &str) -> Result<PathBuf, String> {
+    single_value_flag(arguments, flag, usage).map(PathBuf::from)
+}
+
+fn paired_flag(
+    arguments: &[String],
+    flag: &str,
+    usage: &str,
+) -> Result<Vec<(String, String)>, String> {
+    let mut entries = Vec::new();
+    let mut index = 0;
+    while index < arguments.len() {
+        if arguments[index] == flag {
+            let package = arguments.get(index + 1).ok_or_else(|| usage.to_owned())?;
+            let url = arguments.get(index + 2).ok_or_else(|| usage.to_owned())?;
+            if package.starts_with("--") || url.starts_with("--") {
+                return Err(usage.to_owned());
+            }
+            entries.push((package.clone(), url.clone()));
+            index += 3;
+        } else {
+            index += 2;
+        }
+    }
+    Ok(entries)
+}
+
+fn ensure_only_flags(arguments: &[String], flags: &[&str], usage: &str) -> Result<(), String> {
+    let mut index = 0;
+    while index < arguments.len() {
+        let flag = arguments[index].as_str();
+        let width = match flag {
+            "--entry" => 3,
+            "--prebuilt" => 1,
+            _ => 2,
+        };
+        if !flags.contains(&flag)
+            || arguments.get(index + width - 1).is_none()
+            || arguments[index + 1..index + width]
+                .iter()
+                .any(|value| value.starts_with("--"))
+        {
+            return Err(usage.to_owned());
+        }
+        index += width;
+    }
+    Ok(())
+}
+
+fn read_signing_seed(path: &Path) -> Result<[u8; 32], String> {
+    let bytes = fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))?;
+    if let Ok(seed) = <[u8; 32]>::try_from(bytes.as_slice()) {
+        return Ok(seed);
+    }
+    let text = std::str::from_utf8(&bytes)
+        .map_err(|_| "signing seed must be 32 raw bytes or 64 lowercase hex characters".to_owned())?
+        .trim();
+    if text.len() != 64
+        || !text
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err("signing seed must be 32 raw bytes or 64 lowercase hex characters".to_owned());
+    }
+    let mut seed = [0_u8; 32];
+    for (slot, pair) in seed.iter_mut().zip(text.as_bytes().chunks_exact(2)) {
+        let high = hex_digit(pair[0]).ok_or("invalid signing seed")?;
+        let low = hex_digit(pair[1]).ok_or("invalid signing seed")?;
+        *slot = (high << 4) | low;
+    }
+    Ok(seed)
+}
+
+fn hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        _ => None,
     }
 }
 
@@ -3216,7 +3664,7 @@ fn run_simulation(arguments: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// The package `--app` named, checked against the ones that are shipped.
+/// The package `--app` named, checked against built-in and Store applications.
 ///
 /// Restricted to that list rather than taking any string, because the name
 /// becomes both a cargo argument and a path under `target/debug`, and because
@@ -3247,6 +3695,7 @@ fn simulated_package(arguments: &[String]) -> Result<&'static str, String> {
     INSTALLED_PACKAGES
         .iter()
         .map(|(package, _)| *package)
+        .chain(STORE_PACKAGES.iter().copied())
         .find(|package| {
             *package != "kobod"
                 && (*package == wanted || package.strip_prefix("kobo-") == Some(wanted))
@@ -3259,6 +3708,11 @@ fn simulatable() -> String {
     INSTALLED_PACKAGES
         .iter()
         .filter_map(|(package, _)| package.strip_prefix("kobo-"))
+        .chain(
+            STORE_PACKAGES
+                .iter()
+                .filter_map(|package| package.strip_prefix("kobo-")),
+        )
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -3411,6 +3865,9 @@ fn verify_arm_elf(path: &Path) -> Result<(), String> {
     if bytes[4] != 1 || bytes[5] != 1 {
         return Err("expected a little-endian ELF32 binary".to_owned());
     }
+    if read_u16(&bytes, 16)? != 2 {
+        return Err("expected an executable ELF file".to_owned());
+    }
     if read_u16(&bytes, 18)? != 40 {
         return Err("expected an ARM ELF binary".to_owned());
     }
@@ -3427,6 +3884,8 @@ fn verify_arm_elf(path: &Path) -> Result<(), String> {
     if entry_size < 32 {
         return Err("invalid ELF program header size".to_owned());
     }
+    let entry = read_u32(&bytes, 24)?;
+    let mut executable_entry = false;
     for index in 0..entry_count {
         let offset = program_offset
             .checked_add(
@@ -3439,6 +3898,31 @@ fn verify_arm_elf(path: &Path) -> Result<(), String> {
         if kind == 2 || kind == 3 {
             return Err("binary contains a dynamic or interpreter program header".to_owned());
         }
+        if kind == 1 {
+            let file_offset = usize::try_from(read_u32(&bytes, offset + 4)?)
+                .map_err(|_| "load segment offset overflow")?;
+            let virtual_address = read_u32(&bytes, offset + 8)?;
+            let file_size = usize::try_from(read_u32(&bytes, offset + 16)?)
+                .map_err(|_| "load segment size overflow")?;
+            let memory_size = read_u32(&bytes, offset + 20)?;
+            let segment_flags = read_u32(&bytes, offset + 24)?;
+            if file_size > usize::try_from(memory_size).unwrap_or(usize::MAX)
+                || file_offset
+                    .checked_add(file_size)
+                    .is_none_or(|end| end > bytes.len())
+            {
+                return Err("invalid ELF load segment".to_owned());
+            }
+            if segment_flags & 1 != 0
+                && entry >= virtual_address
+                && entry < virtual_address.saturating_add(memory_size)
+            {
+                executable_entry = true;
+            }
+        }
+    }
+    if !executable_entry {
+        return Err("ELF entry point is not inside an executable load segment".to_owned());
     }
     Ok(())
 }
@@ -4531,6 +5015,15 @@ fn print_help() {
            touch-probe --device IP [--seconds N]  Watch touch read-only to check the transform\n\
            guard-test --device IP --confirm ...   Prove the guardian restores the screen\n\
            package [--out PATH] [--folder PATH]  Build the KoboRoot.tgz an owner copies\n\
+           app-key --seed PATH     Print the Ed25519 public key for a release seed\n\
+           app-bundle --manifest PATH --binary PATH --seed PATH --out PATH\n\
+                                   Build one signed, pathless .cobalt-app package\n\
+           app-catalog --seed PATH --out PATH --signature PATH --entry PACKAGE HTTPS_URL ...\n\
+                                   Build and sign the public app catalog\n\
+           app-check --registry PATH\n\
+                                   Build and verify every registered Store app\n\
+           app-release --registry PATH --seed PATH --out PATH --base-url HTTPS_URL [--prebuilt]\n\
+                                   Build and sign every registered Store app\n\
            setup [--volume PATH] [--undo] [--enable-ssh] [--no-key]  Prepare a reader\n\
                                    over USB; root SSH is an explicit opt-in, and it\n\
                                    installs this machine's key unless --no-key\n\
@@ -4565,6 +5058,125 @@ mod tests {
             raw.extend(std::iter::repeat_n(*fill, (width * height) as usize));
         }
         raw
+    }
+
+    #[test]
+    fn release_seed_accepts_raw_or_lowercase_hex() {
+        let root = std::env::temp_dir().join(format!("kobo-seed-test-{}", std::process::id()));
+        fs::create_dir_all(&root).expect("create fixture");
+        let raw = root.join("raw");
+        let hex = root.join("hex");
+        fs::write(&raw, [7_u8; 32]).expect("write raw seed");
+        fs::write(&hex, format!("{}\n", "07".repeat(32))).expect("write hex seed");
+        assert_eq!(
+            super::read_signing_seed(&raw).expect("raw seed"),
+            [7_u8; 32]
+        );
+        assert_eq!(
+            super::read_signing_seed(&hex).expect("hex seed"),
+            [7_u8; 32]
+        );
+        fs::remove_dir_all(root).expect("remove fixture");
+    }
+
+    #[test]
+    fn app_bundle_and_catalog_commands_produce_verified_assets() {
+        let root = std::env::temp_dir().join(format!("kobo-app-assets-{}", std::process::id()));
+        fs::create_dir_all(&root).expect("create fixture");
+        let seed_path = root.join("seed");
+        let manifest_path = root.join("manifest.json");
+        let binary_path = root.join("kobo-word-count");
+        let bundle_path = root.join("word-count.cobalt-app");
+        let catalog_path = root.join("cobalt-app-catalog.json");
+        let signature_path = root.join("cobalt-app-catalog.json.sig");
+        let seed = [9_u8; 32];
+        let mut binary = vec![0_u8; 84];
+        binary[..6].copy_from_slice(b"\x7fELF\x01\x01");
+        binary[16..18].copy_from_slice(&2_u16.to_le_bytes());
+        binary[18..20].copy_from_slice(&40_u16.to_le_bytes());
+        binary[24..28].copy_from_slice(&0x10_0040_u32.to_le_bytes());
+        binary[28..32].copy_from_slice(&52_u32.to_le_bytes());
+        binary[36..40].copy_from_slice(&0x400_u32.to_le_bytes());
+        binary[42..44].copy_from_slice(&32_u16.to_le_bytes());
+        binary[44..46].copy_from_slice(&1_u16.to_le_bytes());
+        binary[52..56].copy_from_slice(&1_u32.to_le_bytes());
+        binary[56..60].copy_from_slice(&0_u32.to_le_bytes());
+        binary[60..64].copy_from_slice(&0x10_0000_u32.to_le_bytes());
+        let binary_size = u32::try_from(binary.len()).expect("fixture fits in u32");
+        binary[68..72].copy_from_slice(&binary_size.to_le_bytes());
+        binary[72..76].copy_from_slice(&binary_size.to_le_bytes());
+        binary[76..80].copy_from_slice(&5_u32.to_le_bytes());
+        fs::write(&seed_path, seed).expect("write seed");
+        fs::write(&binary_path, &binary).expect("write binary");
+        let manifest = kobo_app_store::Manifest::new_public(kobo_app_store::ManifestInput {
+            id: "word-count".to_owned(),
+            display_name: "Word Count".to_owned(),
+            short_label: "Words".to_owned(),
+            summary: "Counts words in a note.".to_owned(),
+            version: "1.0.0".to_owned(),
+            minimum_cobalt_version: env!("CARGO_PKG_VERSION").to_owned(),
+            glyph: "note".to_owned(),
+            capabilities: Vec::new(),
+            binary_sha256: kobo_net::sha256::hex_digest(&binary),
+            binary_bytes: binary.len() as u64,
+        })
+        .expect("manifest");
+        fs::write(&manifest_path, manifest.to_canonical_bytes()).expect("write manifest");
+
+        let header_only = root.join("header-only");
+        let mut header = vec![0_u8; 52];
+        header[..6].copy_from_slice(b"\x7fELF\x01\x01");
+        header[16..18].copy_from_slice(&2_u16.to_le_bytes());
+        header[18..20].copy_from_slice(&40_u16.to_le_bytes());
+        header[24..28].copy_from_slice(&0x10_0040_u32.to_le_bytes());
+        header[36..40].copy_from_slice(&0x400_u32.to_le_bytes());
+        header[42..44].copy_from_slice(&32_u16.to_le_bytes());
+        fs::write(&header_only, header).expect("write header-only binary");
+        assert!(super::verify_arm_elf(&header_only)
+            .expect_err("an ELF header without a load segment was accepted")
+            .contains("executable load segment"));
+
+        super::app_bundle(&[
+            "--manifest".to_owned(),
+            manifest_path.display().to_string(),
+            "--binary".to_owned(),
+            binary_path.display().to_string(),
+            "--seed".to_owned(),
+            seed_path.display().to_string(),
+            "--out".to_owned(),
+            bundle_path.display().to_string(),
+        ])
+        .expect("build bundle");
+        super::app_catalog(&[
+            "--seed".to_owned(),
+            seed_path.display().to_string(),
+            "--out".to_owned(),
+            catalog_path.display().to_string(),
+            "--signature".to_owned(),
+            signature_path.display().to_string(),
+            "--entry".to_owned(),
+            bundle_path.display().to_string(),
+            "https://example.test/word-count.cobalt-app".to_owned(),
+        ])
+        .expect("build catalog");
+
+        let public = kobo_app_store::derive_public_key(&seed).expect("public key");
+        let bundle = fs::read(&bundle_path).expect("read bundle");
+        assert_eq!(
+            kobo_app_store::parse_public_bundle(&bundle, &public)
+                .expect("verify bundle")
+                .manifest()
+                .id(),
+            "word-count"
+        );
+        let catalog_bytes = fs::read(&catalog_path).expect("read catalog");
+        let signature = fs::read_to_string(&signature_path).expect("read signature");
+        let signature =
+            kobo_app_store::DetachedSignature::from_hex(signature.trim()).expect("signature");
+        kobo_app_store::verify(&catalog_bytes, &signature, &public).expect("verify catalog");
+        let catalog = kobo_app_store::Catalog::parse_public(&catalog_bytes).expect("parse catalog");
+        assert_eq!(catalog.entries().len(), 1);
+        fs::remove_dir_all(root).expect("remove fixture");
     }
 
     /// A session is what somebody asked for by not asking for anything else.
@@ -5645,6 +6257,10 @@ mod tests {
                 simulated_package(&arguments(&["-a", "gutenbird"])),
                 Ok("kobo-gutenbird")
             );
+            assert_eq!(
+                simulated_package(&arguments(&["--app", "sudoku"])),
+                Ok("kobo-sudoku")
+            );
         }
 
         #[test]
@@ -5670,6 +6286,23 @@ mod tests {
             assert!(error.contains("todo"), "{error}");
             let missing = simulated_package(&arguments(&["--app"])).expect_err("refused");
             assert!(missing.contains("needs a name"), "{missing}");
+        }
+
+        mod app_registry {
+            use super::super::super::{read_release_registry, workspace_manifest};
+
+            #[test]
+            fn checked_in_registry_contains_store_only_sudoku() {
+                let registry = workspace_manifest()
+                    .parent()
+                    .expect("workspace root")
+                    .join("apps/catalog.json");
+                let apps = read_release_registry(&registry).expect("registry");
+                assert_eq!(apps.len(), 1);
+                assert_eq!(apps[0].package, "kobo-sudoku");
+                assert_eq!(apps[0].id, "sudoku");
+                assert_eq!(apps[0].version, "1.0.0");
+            }
         }
     }
 

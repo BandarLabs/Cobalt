@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 kobo-abi = { path = "../kobo-abi" }
+kobo-app-store = { path = "../kobo-app-store" }
 kobo-hal = { path = "../kobo-hal", default-features = false }
 kobo-net = { path = "../kobo-net" }
 kobo-policy = { path = "../kobo-policy" }

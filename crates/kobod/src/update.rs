@@ -183,7 +183,7 @@ fn swap(adds: &Path, staging: &Path) -> Result<(), DeviceError> {
 /// installed trust roots, secrets, application state and application data. A
 /// release archive never carries these folders, so an update carries them
 /// forward or the reader forgets everything it was trusted with.
-const OWNER_FOLDERS: [&str; 4] = ["secrets", "trust", "state", "data"];
+const OWNER_FOLDERS: [&str; 6] = ["secrets", "trust", "state", "data", "apps", "store"];
 
 /// Moves the owner's folders from the retired installation into the new one.
 ///

@@ -282,6 +282,14 @@ impl DeviceServices {
             DeviceRequest::Update { .. } => self
                 .refusal(Capability::Network)
                 .map_or(DeviceResult::Done, DeviceResult::Denied),
+            DeviceRequest::ListInstalledApps
+            | DeviceRequest::ReadAppCatalog
+            | DeviceRequest::RefreshAppCatalog => DeviceResult::Apps {
+                entries: Vec::new(),
+            },
+            DeviceRequest::InstallApp { .. } | DeviceRequest::UninstallApp { .. } => {
+                DeviceResult::Done
+            }
         }
     }
 
@@ -289,7 +297,7 @@ impl DeviceServices {
     /// wants to execute, or `None` when the backend may proceed.
     #[must_use]
     pub fn refusal_for(&self, request: &DeviceRequest) -> Option<DenyReason> {
-        self.refusal(request_capability(request))
+        request_capability(request).and_then(|capability| self.refusal(capability))
     }
 
     /// Returns the refusal that applies to a capability, or `None` when the
@@ -503,8 +511,13 @@ impl DeviceServices {
     }
 }
 
-fn request_capability(request: &DeviceRequest) -> Capability {
-    match request {
+/// Returns the application capability required by a hardware or platform request.
+///
+/// Runtime-owned app-store transactions return `None`; they are authorized by
+/// the built-in caller identity instead of a third-party manifest capability.
+#[must_use]
+pub fn request_capability(request: &DeviceRequest) -> Option<Capability> {
+    Some(match request {
         DeviceRequest::ReadBattery | DeviceRequest::ReadBatteryDetail => Capability::BatteryRead,
         DeviceRequest::ReadCover => Capability::CoverSensor,
         DeviceRequest::HoldWifi { .. } | DeviceRequest::ReleaseWifi => Capability::HoldWifi,
@@ -536,7 +549,12 @@ fn request_capability(request: &DeviceRequest) -> Capability {
         // installation the requester is already running from, so the network
         // permission is the one that governs it.
         DeviceRequest::Update { .. } => Capability::Network,
-    }
+        DeviceRequest::ListInstalledApps
+        | DeviceRequest::ReadAppCatalog
+        | DeviceRequest::RefreshAppCatalog
+        | DeviceRequest::InstallApp { .. }
+        | DeviceRequest::UninstallApp { .. } => return None,
+    })
 }
 
 fn clamp_seconds(duration: Duration) -> u32 {
