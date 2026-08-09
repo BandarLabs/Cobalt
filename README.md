@@ -16,7 +16,7 @@ new app can appear in Store without reinstalling or updating Cobalt.
   <a href="docs/cobalt-tour.mp4">
     <img src="docs/tour.gif" height="600" alt="A real Kobo Clara BW running Audiobook Studio, Gutenbird, Terminal, Components, Hacker News, Sidekick, AI Command Center, Feeds, Tic-tac-toe and audio playback, followed by the full App Store catalog and Sudoku being installed, played, removed and reinstalled over Wi-Fi">
   </a><br>
-  <sub>Recorded on a Kobo Clara BW at accelerated e-ink speed: apps, Store discovery, and the complete Sudoku install lifecycle.</sub>
+  <sub>Recorded on a Kobo Clara BW at 3× speed: apps, Store discovery, and the complete Sudoku install lifecycle.</sub>
 </p>
 
 > [!IMPORTANT]
