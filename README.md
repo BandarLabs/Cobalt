@@ -20,7 +20,7 @@ new app can appear in Store without reinstalling or updating Cobalt.
 </p>
 
 > [!IMPORTANT]
-> Cobalt currently is tested only the **Kobo Clara BW N365 (device code 391)**.
+> Cobalt currently is tested only on the **Kobo Clara BW N365 (device code 391)**.
 > It is an independent project and is not affiliated with Rakuten Kobo.
 
 ## Features
