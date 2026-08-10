@@ -564,9 +564,7 @@ impl Builder {
         // one of them. Shifting them here rather than resolving them later is
         // what keeps a chapter entry pointing at its own first words instead
         // of somewhere twenty paragraphs along.
-        let before = self.document.blocks.len();
-        strip_boilerplate(&mut self.document.blocks);
-        let removed_from_front = before - self.document.blocks.len();
+        let removed_from_front = strip_boilerplate(&mut self.document.blocks);
         // A document that ends on a rule or a break ends on a mark pointing at
         // nothing.
         while matches!(
@@ -628,21 +626,32 @@ const GUTENBERG_END: &str = "*** END OF TH";
 ///
 /// A file with no markers is left exactly as it was. Guessing where somebody
 /// else's front matter ends is not something this can do.
-fn strip_boilerplate(blocks: &mut Vec<Block>) {
+/// Removes Project Gutenberg's licence from around the book.
+///
+/// Returns how many blocks came off the *front*, which is the only part that
+/// moves everything after it. Truncating the end removes blocks too, so a
+/// caller measuring the length before and against after would count both and
+/// shift every recorded position by the size of the licence at the end as
+/// well -- which is how a table of contents ends up pointing a chapter or two
+/// early in exactly the books that have both markers.
+fn strip_boilerplate(blocks: &mut Vec<Block>) -> usize {
     let marked = |block: &Block, marker: &str| {
         block
             .text()
             .is_some_and(|text| text.trim_start().starts_with(marker))
     };
+    let mut removed_from_front = 0;
     if let Some(start) = blocks
         .iter()
         .position(|block| marked(block, GUTENBERG_START))
     {
         blocks.drain(..=start);
+        removed_from_front = start + 1;
     }
     if let Some(end) = blocks.iter().position(|block| marked(block, GUTENBERG_END)) {
         blocks.truncate(end);
     }
+    removed_from_front
 }
 
 /// Cuts a string to at most `limit` bytes without splitting a character.

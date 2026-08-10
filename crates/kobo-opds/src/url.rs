@@ -58,10 +58,34 @@ pub fn is_https(url: &str) -> bool {
 pub fn same_origin(a: &str, b: &str) -> bool {
     match (split(a), split(b)) {
         (Some(a), Some(b)) => {
-            a.scheme.eq_ignore_ascii_case(b.scheme) && a.authority.eq_ignore_ascii_case(b.authority)
+            a.scheme.eq_ignore_ascii_case(b.scheme)
+                && without_default_port(a.scheme, a.authority)
+                    .eq_ignore_ascii_case(&without_default_port(b.scheme, b.authority))
         }
         _ => false,
     }
+}
+
+/// An authority with the scheme's own default port taken off.
+///
+/// `https://example.com` and `https://example.com:443` are the same origin,
+/// and a catalog that writes one in its feed and the other in a paging link is
+/// writing about itself both times. Comparing the authorities as written made
+/// that catalog look like it was sending the reader somewhere else, which ends
+/// the shelf.
+fn without_default_port<'a>(scheme: &str, authority: &'a str) -> std::borrow::Cow<'a, str> {
+    let default = if scheme.eq_ignore_ascii_case("https") {
+        ":443"
+    } else if scheme.eq_ignore_ascii_case("http") {
+        ":80"
+    } else {
+        return std::borrow::Cow::Borrowed(authority);
+    };
+    authority
+        .strip_suffix(default)
+        .map_or(std::borrow::Cow::Borrowed(authority), |host| {
+            std::borrow::Cow::Borrowed(host)
+        })
 }
 
 /// The generic-syntax pieces of an absolute URL that resolution needs.
@@ -285,6 +309,14 @@ fn base64_decode(text: &str) -> Option<Vec<u8>> {
 
     let text = text.trim_end_matches('=');
     let bytes = text.as_bytes();
+    // A final group of one character encodes six bits, which is not a byte.
+    // RFC 4648 has no such encoding, so a payload ending that way was built by
+    // something that did not know what it was doing -- and this is the one
+    // place a `data:` URI's own bytes are believed, so it is refused rather
+    // than half-decoded.
+    if bytes.len() % 4 == 1 {
+        return None;
+    }
     let mut out = Vec::with_capacity(bytes.len() * 3 / 4 + 3);
     for chunk in bytes.chunks(4) {
         let mut values = [0u8; 4];
@@ -370,6 +402,44 @@ mod tests {
             "https://example.com/a",
             "https://elsewhere.example/a"
         ));
+    }
+
+
+    #[test]
+    fn a_default_port_written_out_is_the_same_origin_as_one_left_off() {
+        // A catalog that writes itself one way in its feed and the other way
+        // in a paging link is writing about itself both times, and comparing
+        // the authorities as written ended the shelf at page one.
+        assert!(same_origin(
+            "https://example.com/catalog",
+            "https://example.com:443/catalog?page=2"
+        ));
+        assert!(same_origin(
+            "http://example.com/a",
+            "http://example.com:80/b"
+        ));
+        // A port that is not the scheme's own is a different origin, and the
+        // https default is not the http one.
+        assert!(!same_origin(
+            "https://example.com/a",
+            "https://example.com:8443/b"
+        ));
+        assert!(!same_origin(
+            "https://example.com/a",
+            "https://example.com:80/b"
+        ));
+    }
+
+    #[test]
+    fn a_base64_payload_ending_in_a_lone_character_is_refused() {
+        // Six bits is not a byte, and RFC 4648 has no encoding that ends that
+        // way. Decoding it anyway made a malformed `data:` URI look valid.
+        assert!(decode_data_image("data:image/png;base64,QQ==").is_some());
+        assert!(decode_data_image("data:image/png;base64,Q").is_none());
+        // Six characters is two whole bytes and a valid tail; five is one
+        // byte and a stray six bits, which is the shape being refused.
+        assert!(decode_data_image("data:image/png;base64,QUJJRA==").is_some());
+        assert!(decode_data_image("data:image/png;base64,QUJJR").is_none());
     }
 
     #[test]

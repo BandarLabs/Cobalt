@@ -35,6 +35,12 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// Went to 7 when `Fetch` gained `headers`, the same trailing count-and-pairs
 /// shape `Post` already carried. An old runtime reading a new frame would have
 /// read the header count as the first byte of the next message.
+///
+/// Went to 8 when `Fetch` gained a credential, and when a refusal to
+/// authenticate became an answer of its own rather than being reported as a
+/// missing page. Both are tags an older runtime has no reading for, and the
+/// credential sits ahead of the header count, so a frame it did not expect
+/// would have been misread from that point on rather than refused.
 pub const VERSION: u8 = 8;
 pub const HEADER_LEN: usize = 14;
 /// The largest single frame either side will read.

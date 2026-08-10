@@ -1327,6 +1327,37 @@ mod tests {
     }
 
     #[test]
+    fn a_named_place_survives_a_licence_at_both_ends_of_the_book() {
+        // Every real Gutenberg book has both markers, and the licence at the
+        // end removes blocks too. Measuring the length before against after
+        // counted both, so every recorded position moved by the size of the
+        // trailing licence as well and a chapter landed early.
+        let package = opf(
+            r#"<itemref idref="one"/>"#,
+            r#"<item id="one" href="one.xhtml" media-type="application/xhtml+xml"/>"#,
+        );
+        let body = format!(
+            r#"<p>{}</p><p>Front matter.</p><h1 id="start">Chapter One</h1>
+               <p>The book.</p><p>{}</p><p>Licence terms nobody reads.</p>
+               <p>More licence terms.</p><p>Still more.</p>"#,
+            crate::GUTENBERG_START,
+            crate::GUTENBERG_END
+        );
+        let bytes = archive(&[
+            ("META-INF/container.xml", CONTAINER_XML.as_bytes()),
+            ("OEBPS/book.opf", package.as_bytes()),
+            ("OEBPS/one.xhtml", body.as_bytes()),
+        ]);
+        let document = parse(&bytes).expect("a readable book");
+        let at = document
+            .anchors
+            .get("OEBPS/one.xhtml#start")
+            .copied()
+            .expect("the anchor survived both licences");
+        assert_eq!(document.blocks[at].text(), Some("Chapter One"));
+    }
+
+    #[test]
     fn each_file_is_a_part_that_can_be_navigated_to() {
         let document = parse(&a_book()).expect("a readable book");
         assert_eq!(document.parts().len(), 2, "{:?}", document.blocks);
