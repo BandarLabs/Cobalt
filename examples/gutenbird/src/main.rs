@@ -287,6 +287,14 @@ struct StackEntry {
     /// to be a book leaves the navigation list and moves to the shelf, and
     /// every position after it shifts when it does.
     examined: BTreeSet<String>,
+    /// Books found by following this page's rows, held until the whole page
+    /// has been followed.
+    ///
+    /// Applied in one go rather than as each one lands. Moving a row to the
+    /// shelf the moment it resolves means the page relaid itself six times
+    /// while the reader was looking at it, which on a panel that redraws
+    /// whole reads as a list that will not sit still.
+    staged: Vec<(String, kobo_opds::Publication)>,
 }
 
 impl StackEntry {
@@ -304,6 +312,7 @@ impl StackEntry {
             sources: Vec::new(),
             covers,
             examined: BTreeSet::new(),
+            staged: Vec::new(),
         }
     }
 }
@@ -1473,6 +1482,9 @@ impl Gutenbird {
             .map(|navigation| navigation.href.clone())
             .find(|href| !entry.examined.contains(href))
         else {
+            // Every row on this page has been followed, so whatever turned
+            // out to be a book joins the shelf now, in one movement.
+            self.apply_staged(context);
             return;
         };
         // Marked before the answer arrives, so a row that fails to load is
@@ -1502,15 +1514,33 @@ impl Gutenbird {
         if let Ok(feed) = kobo_opds::parse(bytes, href) {
             if let Some(publication) = Self::resolve_entry(&feed) {
                 if let Some(entry) = self.stack.last_mut() {
-                    entry.feed.navigation.retain(|navigation| navigation.href != href);
-                    entry.feed.publications.push(publication);
-                    entry.covers.push(None);
+                    entry.staged.push((href.to_owned(), publication));
                 }
             }
         }
+        self.hydrate_visible(context);
+    }
+
+    /// Moves the books found on this page onto the shelf, all at once.
+    ///
+    /// The screen changes shape exactly once per page, which is the whole
+    /// point: a row leaving the list and a tile joining the grid moves
+    /// everything below it, and doing that once per book relaid the page
+    /// under the reader six times over.
+    fn apply_staged(&mut self, context: &mut Context) {
+        let Some(entry) = self.stack.last_mut() else {
+            return;
+        };
+        if entry.staged.is_empty() {
+            return;
+        }
+        for (href, publication) in std::mem::take(&mut entry.staged) {
+            entry.feed.navigation.retain(|navigation| navigation.href != href);
+            entry.feed.publications.push(publication);
+            entry.covers.push(None);
+        }
         self.show(context);
         self.want_covers(context);
-        self.hydrate_visible(context);
     }
 
     fn want_covers(&mut self, context: &mut Context) {
@@ -4476,6 +4506,14 @@ Please read this before you distribute or use this work.\n";
             ENTRY_DOCUMENT.as_bytes(),
             "https://gutenberg.example/1342.opds",
         );
+        // Held until the page has been followed, so the layout moves once.
+        assert_eq!(
+            runner.app().stack.last().expect("a shelf").feed.publications.len(),
+            0,
+            "the shelf changed shape before the page was finished"
+        );
+        let mut context = runner.context();
+        runner.app_mut().apply_staged(&mut context);
         let entry = runner.app().stack.last().expect("a shelf");
         assert!(
             entry.feed.navigation.is_empty(),
@@ -4503,6 +4541,8 @@ Please read this before you distribute or use this work.\n";
             NAVIGATION_DOCUMENT.as_bytes(),
             "https://gutenberg.example/authors.opds",
         );
+        let mut context = runner.context();
+        runner.app_mut().apply_staged(&mut context);
         let entry = runner.app().stack.last().expect("a shelf");
         assert_eq!(entry.feed.navigation.len(), 1, "a category was taken for a book");
         assert!(entry.feed.publications.is_empty());
