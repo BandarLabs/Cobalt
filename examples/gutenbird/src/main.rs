@@ -720,11 +720,12 @@ impl Gutenbird {
     }
 
     fn took_feed(&mut self, context: &mut Context, bytes: &[u8], purpose: FeedPurpose, base: String) {
-        let Ok(feed) = kobo_opds::parse(bytes, &base) else {
+        let Ok(mut feed) = kobo_opds::parse(bytes, &base) else {
             self.problem = Some("That catalog's answer could not be read.".to_owned());
             self.view = View::Shelf;
             return;
         };
+        fold_groups(&mut feed);
         match purpose {
             FeedPurpose::Root { catalog } => {
                 self.seed_search(catalog, &feed);
@@ -1864,6 +1865,36 @@ impl Gutenbird {
 }
 
 /// Which shelf page a stack entry's publications are cut into.
+/// Brings an OPDS 2.0 feed's groups into the two collections the shelf draws.
+///
+/// A 2.0 catalog may put its publications inside groups rather than beside its
+/// navigation, and a shelf that reads only the top level shows a rich home
+/// feed as an empty one: Open Library's root carries fifty-four books that way
+/// and drew none of them.
+///
+/// A group that names where its full collection lives becomes a row leading
+/// there, which is what the group is for -- "Trending Books" is a place to go,
+/// not a heading to print over a handful of covers. A group that names nowhere
+/// has only what it is carrying, so that is folded onto the shelf, since the
+/// alternative is discarding books the catalog took the trouble to send.
+fn fold_groups(feed: &mut kobo_opds::Feed) {
+    for group in std::mem::take(&mut feed.groups) {
+        if let Some(href) = group.href {
+            feed.navigation.push(kobo_opds::Navigation {
+                title: group.title,
+                href,
+                summary: None,
+                kind: None,
+                rel: None,
+                thumbnail: None,
+            });
+        } else {
+            feed.navigation.extend(group.navigation);
+            feed.publications.extend(group.publications);
+        }
+    }
+}
+
 fn shelf_pages(entry: &StackEntry) -> usize {
     entry.feed.publications.len().div_ceil(SHELF_PAGE).max(1)
 }
@@ -2885,6 +2916,51 @@ Please read this before you distribute or use this work.\n";
         };
         let resolved = Gutenbird::resolve_entry(&feed).expect("collapses to one book");
         assert_eq!(resolved.acquisition[0].length, Some(900_000));
+    }
+
+    #[test]
+    fn a_group_that_says_where_it_lives_becomes_somewhere_to_go() {
+        // Open Library's root carries its books this way. A group naming its
+        // own collection is a place to go rather than a heading to print over
+        // whichever few covers happened to be sent inline.
+        let mut feed = Feed {
+            groups: vec![kobo_opds::Group {
+                title: "Trending Books".to_owned(),
+                href: Some("https://catalog.example/trending".to_owned()),
+                navigation: Vec::new(),
+                publications: vec![publication("Roots", vec![epub_acquisition("https://x/1.epub")])],
+            }],
+            ..Feed::default()
+        };
+        super::fold_groups(&mut feed);
+        assert_eq!(feed.navigation.len(), 1);
+        assert_eq!(feed.navigation[0].title, "Trending Books");
+        assert_eq!(feed.navigation[0].href, "https://catalog.example/trending");
+        assert!(
+            feed.publications.is_empty(),
+            "the books were folded onto the shelf as well as linked"
+        );
+    }
+
+    #[test]
+    fn a_group_that_says_nowhere_gives_up_the_books_it_is_carrying() {
+        // The alternative is discarding books the catalog took the trouble to
+        // send, which is what drawing only the top level did.
+        let mut feed = Feed {
+            groups: vec![kobo_opds::Group {
+                title: "Classic Books".to_owned(),
+                href: None,
+                navigation: Vec::new(),
+                publications: vec![
+                    publication("Emma", vec![epub_acquisition("https://x/1.epub")]),
+                    publication("Persuasion", vec![epub_acquisition("https://x/2.epub")]),
+                ],
+            }],
+            ..Feed::default()
+        };
+        super::fold_groups(&mut feed);
+        assert_eq!(feed.publications.len(), 2);
+        assert!(feed.navigation.is_empty());
     }
 
     #[test]
