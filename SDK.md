@@ -218,6 +218,11 @@ Only the first two are required. Every callback is handed a `&mut Context`,
 which is the only way to affect the outside world; a method that does not take
 one cannot.
 
+`on_suspend` is a short, bounded chance to save state before Linux freezes
+userspace. Store requests queued by that callback are sent before the SDK's
+automatic readiness acknowledgement. After wake, the process and its in-memory
+state continue and `on_resume` runs; the application is not relaunched.
+
 `fn main` is `kobo_sdk::run("name", app)`, which reads the socket path from
 `KOBO_SOCKET`. Use `run_on` to name a socket yourself.
 
@@ -1062,6 +1067,34 @@ Unknown names are rejected rather than ignored, dependencies are enforced
 `PowerPolicy` the application cannot raise imposes a minimum wake interval, a
 maximum Wi-Fi hold, and withdrawal of the expensive capabilities below fifteen
 percent battery unless the device is charging.
+
+### Sleep policy
+
+The owner chooses the global inactivity timeout in Settings; a fresh install
+uses fifteen minutes. An application follows that value by default. A
+foreground app declaring `keep-awake` can replace it for its current process:
+
+```rust
+context.device().override_sleep_timeout(Duration::from_secs(30 * 60));
+// Later, return to the owner-selected value.
+context.device().use_global_sleep_timeout();
+```
+
+The runtime clamps overrides to platform policy. `keep_awake(duration)` is a
+temporary hold for active work and `allow_sleep()` releases it early. Neither
+mechanism prevents an explicit power-button press or sleep-cover closure.
+Applications cannot rewrite the persistent global value; that request is
+reserved for the built-in Settings app.
+
+### Activity diagnostics
+
+Settings includes a one-second Activity Monitor for CPU, memory, free disk
+space and the busiest processes. The runtime reads Linux counters on its behalf
+because Settings is sandboxed and cannot walk `/proc` itself. Sampling stops as
+soon as the owner leaves that screen, process names are sanitised, and the
+bounded snapshot contains at most twelve rows. This system-wide diagnostic is
+reserved for the built-in Settings app rather than exposed as an application
+capability.
 
 `shell` is the one that is different in kind. Every other capability is undone
 by a reboot; a shell on this device is root on a writable root filesystem, so

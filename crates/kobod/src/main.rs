@@ -11,11 +11,15 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+#[cfg(any(feature = "device-write", test))]
+mod activity;
 mod app_store;
 #[cfg(feature = "device-write")]
 mod blackbox;
 #[cfg(feature = "device-write")]
 mod device;
+#[cfg(any(feature = "device-write", test))]
+mod power;
 mod update;
 
 fn main() -> ExitCode {
@@ -131,10 +135,10 @@ fn present_on_panel(application: &Path) -> Result<(), Box<dyn Error>> {
     if env::var(UNLOCK_ENV).ok().as_deref() != Some(UNLOCK_PHRASE) {
         return Err("owner-attended panel session unlock is missing or incorrect".into());
     }
-    // The session used to end on a timer, which took the panel away from
-    // somebody in the middle of using it. It now ends when the reader taps the
-    // way out, or when the device has been left alone; the environment is only
-    // an escape hatch for testing, and both values are clamped inside.
+    // The session no longer ends on inactivity: the runtime suspends and comes
+    // back to the same applications. This environment value is only the
+    // installation fallback until Settings persists an owner-selected timeout;
+    // both limits are clamped inside.
     let limits = device::Limits {
         idle: env::var("KOBO_IDLE_SECONDS")
             .ok()
@@ -480,6 +484,7 @@ fn serve_application(
                 .lock()
                 .map_err(|_| "the task lock was poisoned")?
                 .cancel(task),
+            Message::LifecycleReady(_) => {}
             Message::Exit => {
                 // Nothing an application started may outlive it.
                 tasks

@@ -789,6 +789,7 @@ struct AppState {
     lifecycle: Lifecycle,
     last_touch: Option<SimulatedTouch>,
     apps: Arc<Mutex<SimulatedApps>>,
+    system_sleep_seconds: u32,
 }
 
 impl Default for AppState {
@@ -810,6 +811,7 @@ impl AppState {
             lifecycle: Lifecycle::Foreground,
             last_touch: None,
             apps,
+            system_sleep_seconds: 15 * 60,
         }
     }
 }
@@ -1304,6 +1306,9 @@ fn simulation_json(
     let lifecycle = match lifecycle {
         Lifecycle::Foreground => "foreground",
         Lifecycle::Background => "background",
+        Lifecycle::Suspend => "suspend",
+        Lifecycle::Resume => "resume",
+        Lifecycle::ScheduledWake => "scheduled-wake",
     };
     format!(
         concat!(
@@ -1339,6 +1344,9 @@ fn parse_lifecycle(bytes: &[u8]) -> Option<Lifecycle> {
     match std::str::from_utf8(bytes).ok()?.trim() {
         "foreground" => Some(Lifecycle::Foreground),
         "background" => Some(Lifecycle::Background),
+        "suspend" => Some(Lifecycle::Suspend),
+        "resume" => Some(Lifecycle::Resume),
+        "scheduled-wake" => Some(Lifecycle::ScheduledWake),
         _ => None,
     }
 }
@@ -1745,6 +1753,7 @@ fn read_app_messages(
             }
             message if is_picture_message(&message) => hold(state, message)?,
             Message::Log { level, message } => note(state, &format!("{level:?}: {message}"))?,
+            Message::LifecycleReady(_) => {}
             Message::DeviceRequest(request) => {
                 let scenario = current_scenario(state);
                 services.observe_battery(
@@ -1866,7 +1875,13 @@ fn simulated_platform_request_allowed(
     caller: &str,
     request: &kobo_protocol::DeviceRequest,
 ) -> bool {
-    !matches!(request, kobo_protocol::DeviceRequest::Update { .. }) || caller == "settings"
+    !matches!(
+        request,
+        kobo_protocol::DeviceRequest::Update { .. }
+            | kobo_protocol::DeviceRequest::ReadSystemSleepTimeout
+            | kobo_protocol::DeviceRequest::SetSystemSleepTimeout { .. }
+            | kobo_protocol::DeviceRequest::ReadSystemActivity
+    ) || caller == "settings"
 }
 
 fn simulated_app_request(
@@ -1878,6 +1893,9 @@ fn simulated_app_request(
     use kobo_protocol::{DenyReason, DeviceError, DeviceRequest, DeviceResult};
 
     let authorized = match request {
+        DeviceRequest::ReadSystemSleepTimeout
+        | DeviceRequest::SetSystemSleepTimeout { .. }
+        | DeviceRequest::ReadSystemActivity => caller == "settings",
         DeviceRequest::ListInstalledApps => matches!(caller, "launcher" | "store"),
         DeviceRequest::ReadAppCatalog
         | DeviceRequest::RefreshAppCatalog
@@ -1887,6 +1905,29 @@ fn simulated_app_request(
     };
     if !authorized || scenario == Scenario::PermissionDenied {
         return Ok(Some(DeviceResult::Denied(DenyReason::NotDeclared)));
+    }
+    match request {
+        DeviceRequest::ReadSystemSleepTimeout => {
+            let seconds = state
+                .lock()
+                .map_err(|_| io::Error::other("app state lock poisoned"))?
+                .system_sleep_seconds;
+            return Ok(Some(DeviceResult::SleepTimeout { seconds }));
+        }
+        DeviceRequest::SetSystemSleepTimeout { seconds } => {
+            if !(60..=60 * 60).contains(seconds) {
+                return Ok(Some(DeviceResult::Failed(DeviceError::InvalidInput)));
+            }
+            state
+                .lock()
+                .map_err(|_| io::Error::other("app state lock poisoned"))?
+                .system_sleep_seconds = *seconds;
+            return Ok(Some(DeviceResult::SleepTimeout { seconds: *seconds }));
+        }
+        DeviceRequest::ReadSystemActivity => {
+            return Ok(Some(simulated_activity()));
+        }
+        _ => {}
     }
     let apps = state
         .lock()
@@ -1948,6 +1989,29 @@ fn simulated_app_request(
         _ => return Ok(None),
     };
     Ok(Some(result))
+}
+
+fn simulated_activity() -> kobo_protocol::DeviceResult {
+    kobo_protocol::DeviceResult::SystemActivity(kobo_protocol::SystemActivity {
+        cpu_tenths: 284,
+        memory_used_bytes: 236 * 1024 * 1024,
+        memory_total_bytes: 512 * 1024 * 1024,
+        disk_free_bytes: Some(3 * 1024 * 1024 * 1024),
+        processes: vec![
+            kobo_protocol::ProcessActivity {
+                pid: 310,
+                name: "kobo-settings".to_owned(),
+                cpu_tenths: 92,
+                memory_bytes: 18 * 1024 * 1024,
+            },
+            kobo_protocol::ProcessActivity {
+                pid: 201,
+                name: "kobod".to_owned(),
+                cpu_tenths: 61,
+                memory_bytes: 31 * 1024 * 1024,
+            },
+        ],
+    })
 }
 
 /// Delivers a finished task as soon as it finishes.
@@ -2604,6 +2668,14 @@ mod tests {
         };
         assert!(simulated_platform_request_allowed("settings", &update));
         assert!(!simulated_platform_request_allowed("store", &update));
+        assert!(simulated_platform_request_allowed(
+            "settings",
+            &kobo_protocol::DeviceRequest::ReadSystemActivity
+        ));
+        assert!(!simulated_platform_request_allowed(
+            "store",
+            &kobo_protocol::DeviceRequest::ReadSystemActivity
+        ));
         assert!(simulated_platform_request_allowed(
             "store",
             &kobo_protocol::DeviceRequest::RefreshAppCatalog

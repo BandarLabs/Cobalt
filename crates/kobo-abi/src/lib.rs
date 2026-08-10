@@ -424,6 +424,9 @@ pub mod input {
     /// A press means the magnet arrived, a release means it left.
     pub const KEY_COVER: u16 = 35;
 
+    /// The physical power button, as the `bd71828-pwrkey` input node reports it.
+    pub const KEY_POWER: u16 = 116;
+
     /// Builds an `EVIOCGKEY` query for a key bitmap of `bytes` bytes.
     ///
     /// # Panics

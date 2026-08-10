@@ -4,14 +4,18 @@ use kobo_json::Value;
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
     action_id, ActionId, BatteryDetail, BluetoothDevice, Context, DeviceRequest, DeviceResult,
-    Glyph, Heartbeat, KoboApp, RowLead, Screen, ScreenBuilder, Task, TaskId, TaskOutcome,
-    WifiNetwork,
+    Glyph, Heartbeat, KoboApp, PictureHandle, RowLead, Screen, ScreenBuilder, SystemActivity, Task,
+    TaskId, TaskOutcome, TilePicture, WifiNetwork,
 };
+use std::collections::VecDeque;
 use std::process::ExitCode;
+use std::time::Duration;
 
 const BLUETOOTH: &str = "bluetooth";
 const WIFI: &str = "wifi";
 const BATTERY: &str = "battery";
+const SLEEP: &str = "sleep";
+const ACTIVITY: &str = "activity";
 const UPDATE: &str = "update";
 const CHECK: &str = "check";
 const INSTALL: &str = "install";
@@ -19,6 +23,17 @@ const TOGGLE: &str = "toggle";
 const RESCAN: &str = "rescan";
 const MORE: &str = "more";
 const PREVIOUS: &str = "previous";
+const SLEEP_CHOICES: [(&str, u32); 5] = [
+    ("sleep-5", 5),
+    ("sleep-10", 10),
+    ("sleep-15", 15),
+    ("sleep-30", 30),
+    ("sleep-60", 60),
+];
+const ACTIVITY_HISTORY: usize = 120;
+const ACTIVITY_GRAPH_HEIGHT: u32 = 180;
+const ACTIVITY_GRAPH_MAX_WIDTH: u32 = 900;
+const VISIBLE_PROCESSES: usize = 6;
 const PAGE_SIZE: usize = 4;
 const DEVICE_ACTIONS: [&str; 10] = [
     "bt-0", "bt-1", "bt-2", "bt-3", "bt-4", "bt-5", "bt-6", "bt-7", "bt-8", "bt-9",
@@ -44,6 +59,8 @@ enum View {
     Wifi,
     WifiPassword,
     Battery,
+    Sleep,
+    Activity,
     Update,
 }
 
@@ -118,6 +135,8 @@ enum Topic {
     Bluetooth,
     Wifi,
     Battery,
+    Sleep,
+    Activity,
 }
 
 impl Topic {
@@ -136,6 +155,10 @@ impl Topic {
             | DeviceRequest::JoinWifi { .. }
             | DeviceRequest::DisconnectWifi => Some(Self::Wifi),
             DeviceRequest::ReadBattery | DeviceRequest::ReadBatteryDetail => Some(Self::Battery),
+            DeviceRequest::ReadSystemSleepTimeout | DeviceRequest::SetSystemSleepTimeout { .. } => {
+                Some(Self::Sleep)
+            }
+            DeviceRequest::ReadSystemActivity => Some(Self::Activity),
             _ => None,
         }
     }
@@ -161,6 +184,12 @@ struct Settings {
     selected_ssid: Option<String>,
     password: Keyboard,
     battery: Option<BatteryDetail>,
+    sleep_timeout_seconds: Option<u32>,
+    activity: Option<SystemActivity>,
+    activity_history: VecDeque<(u16, u16)>,
+    activity_picture: Option<TilePicture>,
+    activity_picture_generation: u32,
+    activity_clock: Heartbeat,
     update: UpdateFlow,
     update_task: Option<TaskId>,
     pending: Option<Pending>,
@@ -171,12 +200,15 @@ struct Settings {
 impl Settings {
     fn show(&mut self, context: &mut Context) {
         self.keep_scanning(context);
+        self.keep_activity_monitoring(context);
         let screen = match self.view {
             View::Home => self.home(),
             View::Bluetooth => self.bluetooth(),
             View::Wifi => self.wifi(),
             View::WifiPassword => self.wifi_password(),
             View::Battery => self.battery(),
+            View::Sleep => self.sleep(),
+            View::Activity => self.activity(),
             View::Update => self.update(),
         };
         context.set_screen(screen);
@@ -199,6 +231,20 @@ impl Settings {
         } else {
             self.scan_clock.stop(context);
             self.scanning = false;
+        }
+    }
+
+    /// Samples only while this screen is visible. Leaving it cancels the next
+    /// tick, so the process table costs no background wakeups.
+    fn keep_activity_monitoring(&mut self, context: &mut Context) {
+        if self.view == View::Activity {
+            if !self.activity_clock.is_running() {
+                self.activity_clock = Heartbeat::every(1);
+                self.activity_clock.start(context);
+                context.device().read_system_activity();
+            }
+        } else {
+            self.activity_clock.stop(context);
         }
     }
 
@@ -246,6 +292,18 @@ impl Settings {
                     RowLead::from(Glyph::Battery),
                 ),
                 (
+                    SLEEP,
+                    "Sleep",
+                    self.sleep_summary(),
+                    RowLead::from(Glyph::Power),
+                ),
+                (
+                    ACTIVITY,
+                    "Activity Monitor",
+                    self.activity_summary(),
+                    RowLead::from(Glyph::Chart),
+                ),
+                (
                     UPDATE,
                     "Software update",
                     self.update_summary(),
@@ -257,6 +315,111 @@ impl Settings {
             // binary was compiled as is what is installed.
             .section_with_value("Cobalt", VERSION);
         screen.build()
+    }
+
+    fn sleep_summary(&self) -> String {
+        self.sleep_timeout_seconds.map_or_else(
+            || "Reading".to_owned(),
+            |seconds| format!("After {} minutes", seconds / 60),
+        )
+    }
+
+    fn sleep(&self) -> Screen {
+        let mut screen = ScreenBuilder::new("settings-sleep")
+            .top_bar("Sleep")
+            .owns_back(true);
+        if let Some(trouble) = self.banner_for(Topic::Sleep) {
+            screen = screen.banner(kobo_sdk::BannerLevel::Attention, trouble);
+        }
+        screen
+            .section("Sleep after")
+            .rows(SLEEP_CHOICES.into_iter().map(|(action, minutes)| {
+                let selected = self.sleep_timeout_seconds == Some(minutes * 60);
+                (
+                    action,
+                    format!("{minutes} minutes"),
+                    if selected { "Selected" } else { "" },
+                    RowLead::from(if selected {
+                        Glyph::Check
+                    } else {
+                        Glyph::Circle
+                    }),
+                )
+            }))
+            .build()
+    }
+
+    fn sleep_timeout_for_action(action: ActionId) -> Option<Duration> {
+        SLEEP_CHOICES
+            .iter()
+            .find(|(name, _)| action == action_id(name))
+            .map(|(_, minutes)| Duration::from_secs(u64::from(*minutes) * 60))
+    }
+
+    fn activity_summary(&self) -> String {
+        self.activity.as_ref().map_or_else(
+            || "CPU, memory, disk and processes".to_owned(),
+            |activity| {
+                format!(
+                    "CPU {} · RAM {}",
+                    format_percent(activity.cpu_tenths),
+                    format_percent(memory_percent(activity))
+                )
+            },
+        )
+    }
+
+    fn activity(&self) -> Screen {
+        let mut screen = ScreenBuilder::new("settings-activity")
+            .top_bar("Activity Monitor")
+            .owns_back(true);
+        if let Some(trouble) = self.banner_for(Topic::Activity) {
+            screen = screen.banner(kobo_sdk::BannerLevel::Attention, trouble);
+        }
+        let Some(activity) = self.activity.as_ref() else {
+            return screen.text("Taking the first one-second sample.").build();
+        };
+        screen = screen.section_with_value(
+            "CPU black / RAM gray",
+            format!(
+                "{} / {}",
+                format_percent(activity.cpu_tenths),
+                format_percent(memory_percent(activity))
+            ),
+        );
+        if let Some(picture) = self.activity_picture {
+            screen = screen.picture(picture, 18);
+        }
+        screen
+            .secondary(format!(
+                "Disk available: {}",
+                activity
+                    .disk_free_bytes
+                    .map_or_else(|| "Unavailable".to_owned(), format_bytes)
+            ))
+            .section("Top processes")
+            .terminal(process_rows(activity), None)
+            .build()
+    }
+
+    fn record_activity(&mut self, context: &mut Context, activity: SystemActivity) {
+        self.activity_history
+            .push_back((activity.cpu_tenths, memory_percent(&activity)));
+        while self.activity_history.len() > ACTIVITY_HISTORY {
+            self.activity_history.pop_front();
+        }
+        let width = u32::try_from(context.metrics().width.saturating_sub(160))
+            .unwrap_or(ACTIVITY_GRAPH_MAX_WIDTH)
+            .clamp(480, ACTIVITY_GRAPH_MAX_WIDTH);
+        self.activity_picture_generation = self.activity_picture_generation.wrapping_add(1);
+        let handle = PictureHandle(700 + self.activity_picture_generation % 2);
+        self.activity_picture = context.put_picture(
+            handle,
+            width,
+            ACTIVITY_GRAPH_HEIGHT,
+            activity_graph(&self.activity_history, width, ACTIVITY_GRAPH_HEIGHT),
+        );
+        self.activity = Some(activity);
     }
 
     /// One line for the home row: where the update journey stands, or an
@@ -587,6 +750,7 @@ impl Settings {
         context.device().read_bluetooth();
         context.device().read_wifi();
         context.device().read_battery_detail();
+        context.device().read_system_sleep_timeout();
     }
 
     /// Asks GitHub what the newest published release is. Nothing is
@@ -701,7 +865,12 @@ impl Settings {
         let (page, pages) = match self.view {
             View::Bluetooth => (&mut self.bluetooth_page, page_count(self.devices.len())),
             View::Wifi => (&mut self.wifi_page, page_count(self.networks.len())),
-            View::Home | View::WifiPassword | View::Battery | View::Update => return,
+            View::Home
+            | View::WifiPassword
+            | View::Battery
+            | View::Sleep
+            | View::Activity
+            | View::Update => return,
         };
         *page = if forward {
             (*page + 1).min(pages - 1)
@@ -742,6 +911,30 @@ impl Settings {
         } else {
             context.device().join_wifi(network.ssid, "");
         }
+    }
+
+    fn open_destination(&mut self, context: &mut Context, action: ActionId) -> bool {
+        self.view = if action == action_id(BLUETOOTH) {
+            context.device().read_bluetooth();
+            View::Bluetooth
+        } else if action == action_id(WIFI) {
+            context.device().read_wifi();
+            View::Wifi
+        } else if action == action_id(BATTERY) {
+            context.device().read_battery_detail();
+            View::Battery
+        } else if action == action_id(SLEEP) {
+            context.device().read_system_sleep_timeout();
+            View::Sleep
+        } else if action == action_id(ACTIVITY) {
+            View::Activity
+        } else if action == action_id(UPDATE) {
+            View::Update
+        } else {
+            return false;
+        };
+        self.show(context);
+        true
     }
 }
 
@@ -784,22 +977,12 @@ impl KoboApp for Settings {
         if action == ActionId::BACK {
             self.view = View::Home;
             self.show(context);
-        } else if action == action_id(BLUETOOTH) {
-            self.view = View::Bluetooth;
-            context.device().read_bluetooth();
-            self.show(context);
-        } else if action == action_id(WIFI) {
-            self.view = View::Wifi;
-            context.device().read_wifi();
-            self.show(context);
-        } else if action == action_id(BATTERY) {
-            self.view = View::Battery;
-            context.device().read_battery_detail();
-            self.show(context);
-        } else if action == action_id(UPDATE) {
-            self.view = View::Update;
-            self.show(context);
-        } else if action == action_id(CHECK) {
+            return;
+        }
+        if self.open_destination(context, action) {
+            return;
+        }
+        if action == action_id(CHECK) {
             self.check_for_update(context);
             self.show(context);
         } else if action == action_id(INSTALL) {
@@ -810,7 +993,12 @@ impl KoboApp for Settings {
                     .device()
                     .set_bluetooth(!self.bluetooth_state.enabled()),
                 View::Wifi => context.device().set_wifi(!self.wifi_state.enabled()),
-                View::Home | View::WifiPassword | View::Battery | View::Update => {}
+                View::Home
+                | View::WifiPassword
+                | View::Battery
+                | View::Sleep
+                | View::Activity
+                | View::Update => {}
             }
         } else if action == action_id(RESCAN) {
             match self.view {
@@ -825,7 +1013,7 @@ impl KoboApp for Settings {
                     self.delay_refresh(context, Pending::WifiRefresh);
                 }
                 View::Battery => context.device().read_battery_detail(),
-                View::Home | View::WifiPassword | View::Update => {}
+                View::Home | View::WifiPassword | View::Sleep | View::Activity | View::Update => {}
             }
             self.show(context);
         } else if action == action_id(MORE) {
@@ -834,6 +1022,8 @@ impl KoboApp for Settings {
         } else if action == action_id(PREVIOUS) {
             self.turn_page(false);
             self.show(context);
+        } else if let Some(timeout) = Self::sleep_timeout_for_action(action) {
+            context.device().set_system_sleep_timeout(timeout);
         } else if let Some(index) = DEVICE_ACTIONS
             .iter()
             .position(|name| action == action_id(name))
@@ -894,6 +1084,14 @@ impl KoboApp for Settings {
                 self.battery = Some(detail);
                 self.settled(Topic::Battery);
             }
+            DeviceResult::SleepTimeout { seconds } => {
+                self.sleep_timeout_seconds = Some(seconds);
+                self.settled(Topic::Sleep);
+            }
+            DeviceResult::SystemActivity(activity) => {
+                self.record_activity(context, activity);
+                self.settled(Topic::Activity);
+            }
             // A failure belongs to whatever was asked for. When the request
             // is not one of the three rows, there is nowhere honest to show it,
             // so it is dropped rather than shown under an unrelated heading.
@@ -951,6 +1149,12 @@ impl KoboApp for Settings {
             }
             return;
         }
+        if self.activity_clock.on_task(context, task, &outcome) {
+            if self.view == View::Activity {
+                context.device().read_system_activity();
+            }
+            return;
+        }
         if self.update_task == Some(task) {
             self.update_task = None;
             match outcome {
@@ -981,6 +1185,169 @@ impl KoboApp for Settings {
             TaskOutcome::Cancelled => {}
         }
         self.show(context);
+    }
+}
+
+fn memory_percent(activity: &SystemActivity) -> u16 {
+    if activity.memory_total_bytes == 0 {
+        return 0;
+    }
+    let tenths = u128::from(activity.memory_used_bytes).saturating_mul(1000)
+        / u128::from(activity.memory_total_bytes);
+    u16::try_from(tenths.min(1000)).unwrap_or(1000)
+}
+
+fn format_percent(tenths: u16) -> String {
+    format!("{}.{:01}%", tenths / 10, tenths % 10)
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];
+    let mut divisor = 1_u64;
+    let mut unit = 0;
+    while bytes / divisor >= 1024 && unit + 1 < UNITS.len() {
+        divisor = divisor.saturating_mul(1024);
+        unit += 1;
+    }
+    if unit == 0 {
+        return format!("{bytes} B");
+    }
+    let tenths =
+        (u128::from(bytes).saturating_mul(10) / u128::from(divisor)).min(u128::from(u64::MAX));
+    let tenths = u64::try_from(tenths).unwrap_or(u64::MAX);
+    format!("{}.{:01} {}", tenths / 10, tenths % 10, UNITS[unit])
+}
+
+fn compact_bytes(bytes: u64) -> String {
+    format_bytes(bytes).replace(' ', "")
+}
+
+fn process_rows(activity: &SystemActivity) -> Vec<String> {
+    let mut rows = vec!["  PID PROCESS             CPU     MEM".to_owned()];
+    rows.extend(
+        activity
+            .processes
+            .iter()
+            .take(VISIBLE_PROCESSES)
+            .map(|process| {
+                let name = process.name.chars().take(16).collect::<String>();
+                format!(
+                    "{:>5} {:<16} {:>6} {:>7}",
+                    process.pid,
+                    name,
+                    format_percent(process.cpu_tenths),
+                    compact_bytes(process.memory_bytes)
+                )
+            }),
+    );
+    rows
+}
+
+fn activity_graph(history: &VecDeque<(u16, u16)>, width: u32, height: u32) -> Vec<u8> {
+    let Some(length) = usize::try_from(width)
+        .ok()
+        .and_then(|width| width.checked_mul(usize::try_from(height).ok()?))
+    else {
+        return Vec::new();
+    };
+    let mut pixels = vec![255; length];
+    if width < 2 || height < 2 {
+        return pixels;
+    }
+    for quarter in 0..=4 {
+        let y = (height - 1).saturating_mul(quarter) / 4;
+        draw_line(&mut pixels, width, height, 0, y, width - 1, y, 228);
+    }
+    for slot in [30_usize, 60, 90, 119] {
+        let x = u32::try_from(slot).unwrap_or(0).saturating_mul(width - 1)
+            / u32::try_from(ACTIVITY_HISTORY - 1).unwrap_or(1);
+        draw_line(&mut pixels, width, height, x, 0, x, height - 1, 238);
+    }
+    draw_activity_series(&mut pixels, width, height, history, 1, 120);
+    draw_activity_series(&mut pixels, width, height, history, 0, 0);
+    pixels
+}
+
+fn draw_activity_series(
+    pixels: &mut [u8],
+    width: u32,
+    height: u32,
+    history: &VecDeque<(u16, u16)>,
+    value_index: usize,
+    tone: u8,
+) {
+    let mut previous = None;
+    for (index, values) in history.iter().enumerate() {
+        let value = if value_index == 0 { values.0 } else { values.1 }.min(1000);
+        let x = u32::try_from(index)
+            .unwrap_or(u32::MAX)
+            .saturating_mul(width - 1)
+            / u32::try_from(ACTIVITY_HISTORY - 1).unwrap_or(1);
+        let y = (height - 1).saturating_sub(u32::from(value).saturating_mul(height - 1) / 1000);
+        if let Some((last_x, last_y)) = previous {
+            draw_line(pixels, width, height, last_x, last_y, x, y, tone);
+        } else {
+            set_graph_pixel(pixels, width, height, x, y, tone);
+        }
+        previous = Some((x, y));
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_line(
+    pixels: &mut [u8],
+    width: u32,
+    height: u32,
+    from_x: u32,
+    from_y: u32,
+    to_x: u32,
+    to_y: u32,
+    tone: u8,
+) {
+    let (mut x, mut y) = (i64::from(from_x), i64::from(from_y));
+    let (to_x, to_y) = (i64::from(to_x), i64::from(to_y));
+    let dx = (to_x - x).abs();
+    let step_x = if x < to_x { 1 } else { -1 };
+    let dy = -(to_y - y).abs();
+    let step_y = if y < to_y { 1 } else { -1 };
+    let mut error = dx + dy;
+    loop {
+        set_graph_pixel(
+            pixels,
+            width,
+            height,
+            u32::try_from(x).unwrap_or(0),
+            u32::try_from(y).unwrap_or(0),
+            tone,
+        );
+        if x == to_x && y == to_y {
+            break;
+        }
+        let twice = error.saturating_mul(2);
+        if twice >= dy {
+            error += dy;
+            x += step_x;
+        }
+        if twice <= dx {
+            error += dx;
+            y += step_y;
+        }
+    }
+}
+
+fn set_graph_pixel(pixels: &mut [u8], width: u32, height: u32, x: u32, y: u32, tone: u8) {
+    if x >= width || y >= height {
+        return;
+    }
+    let Some(index) = usize::try_from(y)
+        .ok()
+        .and_then(|y| y.checked_mul(usize::try_from(width).ok()?))
+        .and_then(|row| row.checked_add(usize::try_from(x).ok()?))
+    else {
+        return;
+    };
+    if let Some(pixel) = pixels.get_mut(index) {
+        *pixel = tone;
     }
 }
 
@@ -1137,9 +1504,10 @@ fn main() -> ExitCode {
 mod tests {
     use super::{RadioState, Settings, DEVICE_ACTIONS, MORE, NETWORK_ACTIONS, PREVIOUS, RESCAN};
     use kobo_sdk::{
-        action_id, BatteryDetail, BluetoothDevice, BluetoothDeviceKind, Chrome, WifiNetwork,
-        CLARA_BW_METRICS,
+        action_id, BatteryDetail, BluetoothDevice, BluetoothDeviceKind, Chrome, PictureHandle,
+        ProcessActivity, SystemActivity, TilePicture, WifiNetwork, CLARA_BW_METRICS,
     };
+    use std::collections::VecDeque;
 
     fn bluetooth_device(index: usize) -> BluetoothDevice {
         BluetoothDevice {
@@ -1312,6 +1680,77 @@ mod tests {
         assert!(issues.is_empty(), "{issues:?}");
         let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
         assert!(layout.rect_of_action(action_id(RESCAN)).is_some());
+    }
+
+    #[test]
+    fn every_global_sleep_choice_fits_and_the_current_one_is_marked() {
+        let settings = Settings {
+            view: super::View::Sleep,
+            sleep_timeout_seconds: Some(15 * 60),
+            ..Settings::default()
+        };
+        let screen = settings.sleep();
+        let issues = screen.validate(&CLARA_BW_METRICS);
+        assert!(issues.is_empty(), "{issues:?}");
+        let actions = screen
+            .nodes
+            .iter()
+            .flat_map(|node| match node {
+                kobo_sdk::Node::Rows { rows, .. } => rows.iter().map(|row| row.action).collect(),
+                _ => Vec::new(),
+            })
+            .collect::<Vec<_>>();
+        for (action, _) in super::SLEEP_CHOICES {
+            assert!(actions.contains(&action_id(action)), "{action}");
+        }
+        assert!(screen.nodes.iter().any(|node| matches!(
+            node,
+            kobo_sdk::Node::Rows { rows, .. }
+                if rows.iter().any(|row| row.summary == "Selected")
+        )));
+    }
+
+    #[test]
+    fn activity_graph_and_top_processes_fit_the_clara_panel() {
+        let activity = SystemActivity {
+            cpu_tenths: 427,
+            memory_used_bytes: 230 * 1024 * 1024,
+            memory_total_bytes: 512 * 1024 * 1024,
+            disk_free_bytes: Some(3 * 1024 * 1024 * 1024),
+            processes: (0_u32..12)
+                .map(|index| ProcessActivity {
+                    pid: 100 + index,
+                    name: format!("process-{index}"),
+                    cpu_tenths: u16::try_from(300_u32.saturating_sub(index * 10)).unwrap_or(0),
+                    memory_bytes: u64::from(index + 1) * 1024 * 1024,
+                })
+                .collect(),
+        };
+        let settings = Settings {
+            view: super::View::Activity,
+            activity: Some(activity),
+            activity_history: VecDeque::from([(427, 449), (510, 451)]),
+            activity_picture: Some(TilePicture::new(PictureHandle(700), 900, 180)),
+            ..Settings::default()
+        };
+        let screen = settings.activity();
+        let issues = screen.validate(&CLARA_BW_METRICS);
+        assert!(issues.is_empty(), "{issues:?}");
+        let table = screen.nodes.iter().find_map(|node| match node {
+            kobo_sdk::Node::Terminal { rows, .. } => Some(rows),
+            _ => None,
+        });
+        assert_eq!(table.map(Vec::len), Some(super::VISIBLE_PROCESSES + 1));
+    }
+
+    #[test]
+    fn activity_history_draws_black_cpu_and_gray_memory_from_left_to_right() {
+        let history = VecDeque::from([(100, 800), (900, 200)]);
+        let graph = super::activity_graph(&history, 120, 40);
+        assert_eq!(graph.len(), 120 * 40);
+        assert!(graph.contains(&0), "CPU line is absent");
+        assert!(graph.contains(&120), "memory line is absent");
+        assert!(graph.contains(&255), "unused future is not blank");
     }
 
     #[test]
