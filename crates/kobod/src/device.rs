@@ -995,7 +995,13 @@ fn host_applications(
             // runtime never has one to be missing. Spelled out rather than
             // caught by a wildcard so that giving fetch a credential later
             // fails here instead of quietly reporting the wrong thing.
-            kobo_protocol::TaskError::NoCredential => kobo_protocol::DeviceError::Authentication,
+            //
+            // A refusal to authenticate is not unreachable in the same way:
+            // the host answered, and what it said was that this stream is not
+            // for whoever asked.
+            kobo_protocol::TaskError::NoCredential | kobo_protocol::TaskError::Unauthorized => {
+                kobo_protocol::DeviceError::Authentication
+            }
         })
     });
     let audio = kobo_hal::audio::Audio::open(Some(audio_fetcher));
