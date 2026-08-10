@@ -318,6 +318,11 @@ pub fn split_response(response: &[u8], max_bytes: u32) -> Result<Response<'_>, T
         301..=303 | 307 | 308 => header(headers, "location")
             .map(|target| Response::Redirect(target.to_string()))
             .ok_or(TaskError::Unreachable),
+        // Told apart from every other refusal because it is the one a reader
+        // can do something about. A catalogue behind a subscription answers
+        // exactly this, and reporting it as "not found" sent them looking for
+        // a book rather than for a login.
+        401 | 403 => Err(TaskError::Unauthorized),
         400..=599 => Err(TaskError::NotFound),
         _ => Err(TaskError::Unreachable),
     }

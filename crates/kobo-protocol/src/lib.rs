@@ -35,7 +35,7 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// Went to 7 when `Fetch` gained `headers`, the same trailing count-and-pairs
 /// shape `Post` already carried. An old runtime reading a new frame would have
 /// read the header count as the first byte of the next message.
-pub const VERSION: u8 = 7;
+pub const VERSION: u8 = 8;
 pub const HEADER_LEN: usize = 14;
 /// The largest single frame either side will read.
 ///
@@ -437,6 +437,19 @@ pub enum TaskError {
     TooLarge,
     TimedOut,
     NotFound,
+    /// The host will not answer without a credential, or not with the one it
+    /// was given.
+    ///
+    /// Kept apart from [`TaskError::NotFound`], which is where every refusal
+    /// used to land, because the two ask opposite things of the person holding
+    /// the reader. A book that is not there is the end of it; a feed that
+    /// wants a subscription is something they can go and get. Standard Ebooks
+    /// answers its catalogue this way for anyone who has not donated, and
+    /// "not found" was both wrong and unactionable.
+    ///
+    /// Kept apart from [`TaskError::NoCredential`] as well: that one is the
+    /// device having no key, this one is the host refusing the request.
+    Unauthorized,
 }
 
 impl TaskError {
@@ -468,6 +481,7 @@ impl fmt::Display for TaskError {
             Self::TooLarge => "the response was larger than the limit the task declared",
             Self::TimedOut => "the task ran out of time",
             Self::NotFound => "not found",
+            Self::Unauthorized => "the host will not answer without a credential",
         })
     }
 }
@@ -6981,6 +6995,7 @@ const fn encode_task_error(error: TaskError) -> u8 {
         // went wrong without either of them noticing.
         TaskError::Offline => 5,
         TaskError::NoCredential => 6,
+        TaskError::Unauthorized => 7,
     }
 }
 
@@ -6993,6 +7008,7 @@ const fn decode_task_error(tag: u8) -> Result<TaskError, ProtocolError> {
         4 => TaskError::NotFound,
         5 => TaskError::Offline,
         6 => TaskError::NoCredential,
+        7 => TaskError::Unauthorized,
         _ => return Err(ProtocolError::InvalidValue("task error")),
     })
 }
@@ -7060,7 +7076,7 @@ mod task_error_tests {
     #[test]
     fn a_tag_from_the_future_is_refused_rather_than_guessed() {
         assert_eq!(
-            decode_task_error(7),
+            decode_task_error(8),
             Err(ProtocolError::InvalidValue("task error"))
         );
         assert_eq!(

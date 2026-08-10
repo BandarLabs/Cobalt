@@ -812,7 +812,9 @@ fn network_error(error: kobo_protocol::TaskError) -> DeviceError {
         kobo_protocol::TaskError::TooLarge | kobo_protocol::TaskError::Denied => {
             DeviceError::InvalidInput
         }
-        kobo_protocol::TaskError::NoCredential => DeviceError::Authentication,
+        kobo_protocol::TaskError::NoCredential | kobo_protocol::TaskError::Unauthorized => {
+            DeviceError::Authentication
+        }
     }
 }
 

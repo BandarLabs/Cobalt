@@ -293,6 +293,15 @@ impl Failure {
                 advice: "This application is not allowed to do that.",
                 retryable: false,
             },
+            // The host's refusal rather than this device's, so the advice
+            // points at the service. Retrying is pointless until whoever
+            // holds the reader has an account there, and saying "try again"
+            // would send them round the same loop.
+            TaskError::Unauthorized => Self {
+                state: StandardState::PermissionDenied,
+                advice: "This service will not answer without an account.",
+                retryable: false,
+            },
             // Names the supported way to fix it rather than a path. The path
             // wrapped mid-directory on the panel, and pointing at a file tells
             // whoever is holding the reader to go and edit one by hand when
