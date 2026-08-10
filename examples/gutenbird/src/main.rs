@@ -165,6 +165,17 @@ const PICTURE_HEIGHT_MM: u16 = 90;
 /// wrong illustration rather than as an error.
 const PICTURE_HANDLE_BASE: u32 = 1_000;
 
+/// Where the handles for navigation tile pictures start, and how many of them
+/// are cycled through.
+///
+/// Kept apart from both the shelf's own cover handles and a book's pictures,
+/// because two pictures sharing a handle shows up as the wrong illustration
+/// rather than as an error. Cycled rather than grown without end: a reader
+/// paging through a long catalog would otherwise ask the runtime to hold a
+/// picture for every book they had passed.
+const NAV_COVER_HANDLE_BASE: u32 = 2_000;
+const NAV_COVER_HANDLES: u32 = 64;
+
 /// How wide the cover in a book's hero is drawn.
 const DETAILS_COVER_MM: u16 = 30;
 
@@ -287,14 +298,14 @@ struct StackEntry {
     /// to be a book leaves the navigation list and moves to the shelf, and
     /// every position after it shifts when it does.
     examined: BTreeSet<String>,
-    /// Books found by following this page's rows, held until the whole page
-    /// has been followed.
+    /// Covers for `feed.navigation`, parallel to that list.
     ///
-    /// Applied in one go rather than as each one lands. Moving a row to the
-    /// shelf the moment it resolves means the page relaid itself six times
-    /// while the reader was looking at it, which on a panel that redraws
-    /// whole reads as a list that will not sit still.
-    staged: Vec<(String, kobo_opds::Publication)>,
+    /// A navigation entry is drawn as a tile like any other, so that a
+    /// catalog which serves no shelf still looks like a shelf. The picture
+    /// arrives later, or never, and only the picture changes: the tile is in
+    /// place from the first draw, which is what stops the page moving under
+    /// the reader.
+    nav_covers: Vec<Option<TilePicture>>,
 }
 
 impl StackEntry {
@@ -304,6 +315,7 @@ impl StackEntry {
             .map(|link| link.href.clone())
             .filter(|next| kobo_opds::same_origin(next, &url));
         let covers = vec![None; feed.publications.len()];
+        let navigation = feed.navigation.len();
         Self {
             feed,
             url,
@@ -311,8 +323,8 @@ impl StackEntry {
             page: 0,
             sources: Vec::new(),
             covers,
+            nav_covers: vec![None; navigation],
             examined: BTreeSet::new(),
-            staged: Vec::new(),
         }
     }
 }
@@ -359,6 +371,9 @@ enum Awaiting {
     /// entries on the page being looked at are followed to see which of them
     /// are books, and the ones that are move to the shelf.
     Hydrate { href: String },
+    /// The picture for a navigation tile, once following that entry has said
+    /// where its cover lives.
+    NavCover { href: String },
     /// A catalog's root feed, fetched only because nothing about it has been
     /// fetched yet and a search needs to know whether it offers one at all.
     DiscoverRoot {
@@ -483,6 +498,9 @@ struct Gutenbird {
     current: usize,
     stack: Vec<StackEntry>,
 
+    /// Which navigation tile picture handle to use next.
+    nav_cover_handle: u32,
+
     /// The book on the details or reading screen, if any.
     open: Option<Publication>,
     open_cover: Option<TilePicture>,
@@ -530,6 +548,7 @@ struct Gutenbird {
 impl Default for Gutenbird {
     fn default() -> Self {
         Self {
+            nav_cover_handle: 0,
             view: View::Shelf,
             keyboard: Keyboard::new(),
             catalogs: CATALOGS
@@ -803,7 +822,7 @@ impl Gutenbird {
                     self.stack = vec![StackEntry::fresh(feed, base)];
                     self.view = View::Shelf;
                     self.want_covers(context);
-                    self.hydrate_visible(context);
+        self.hydrate_visible(context);
                 }
             }
             FeedPurpose::Push { catalog } => {
@@ -814,7 +833,7 @@ impl Gutenbird {
                     self.stack.push(StackEntry::fresh(feed, base));
                     self.view = View::Shelf;
                     self.want_covers(context);
-                    self.hydrate_visible(context);
+        self.hydrate_visible(context);
                 }
             }
             FeedPurpose::More => {
@@ -837,7 +856,7 @@ impl Gutenbird {
                 }
                 self.view = View::Shelf;
                 self.want_covers(context);
-                self.hydrate_visible(context);
+        self.hydrate_visible(context);
             }
             FeedPurpose::Federated { catalog } => {
                 let name = self.catalogs[catalog].name.clone();
@@ -1115,23 +1134,53 @@ impl Gutenbird {
             }
             return screen.text("Nothing here.").build();
         }
-        if !entry.feed.navigation.is_empty() {
-            screen = screen.section("Browse").rows(entry.feed.navigation.iter().enumerate().map(
-                |(index, navigation)| {
-                    (
-                        format!("nav-{index}"),
-                        navigation.title.clone(),
-                        navigation.summary.clone().unwrap_or_default(),
-                        RowLead::Icon(Glyph::Book),
-                    )
-                },
-            ));
-        }
-        if entry.feed.publications.is_empty() {
-            return screen.build();
-        }
-        let shown_screen = self.publication_grid(context, entry, screen);
+        // One grid, whatever the catalog sent. A feed of navigation entries
+        // is still a shelf of things to open, and drawing it as a list while
+        // a second list of books sat underneath gave the page two paginations
+        // and left the books past the first screenful unreachable.
+        let shown_screen = if entry.feed.publications.is_empty() {
+            Self::navigation_grid(entry, screen)
+        } else {
+            self.publication_grid(context, entry, screen)
+        };
         Self::paginated(entry, shown_screen)
+    }
+
+    /// Draws a catalog's navigation as tiles, so a catalog that serves no
+    /// shelf still looks like one.
+    ///
+    /// Project Gutenberg is the case this exists for: every book in it is a
+    /// navigation entry pointing at that book's own document. The tile is
+    /// drawn from what the entry already says, and its picture is filled in
+    /// afterwards if following it turns up a cover -- so the page is complete
+    /// from the first draw and only gets better, rather than rearranging
+    /// itself under the reader.
+    fn navigation_grid(entry: &StackEntry, screen: ScreenBuilder) -> ScreenBuilder {
+        let first = entry.page * SHELF_PAGE;
+        let tiles = entry
+            .feed
+            .navigation
+            .iter()
+            .enumerate()
+            .skip(first)
+            .take(SHELF_PAGE)
+            .map(|(index, navigation)| {
+                let subtitle = navigation.summary.clone().unwrap_or_default();
+                let picture = entry.nav_covers.get(index).copied().flatten();
+                (
+                    format!("nav-{index}"),
+                    navigation.title.clone(),
+                    Glyph::Book,
+                    move |tile: Tile| {
+                        let tile = tile.with_subtitle(subtitle);
+                        match picture {
+                            Some(picture) => tile.with_picture(picture),
+                            None => tile,
+                        }
+                    },
+                )
+            });
+        screen.tile_grid(TileShape::Portrait, tiles)
     }
 
     fn publication_grid(&self, _context: &Context, entry: &StackEntry, screen: ScreenBuilder) -> ScreenBuilder {
@@ -1482,9 +1531,6 @@ impl Gutenbird {
             .map(|navigation| navigation.href.clone())
             .find(|href| !entry.examined.contains(href))
         else {
-            // Every row on this page has been followed, so whatever turned
-            // out to be a book joins the shelf now, in one movement.
-            self.apply_staged(context);
             return;
         };
         // Marked before the answer arrives, so a row that fails to load is
@@ -1511,36 +1557,70 @@ impl Gutenbird {
     /// answer, and there is nothing in the address to tell them apart, which
     /// is why this looks rather than guesses.
     fn took_hydration(&mut self, context: &mut Context, bytes: &[u8], href: &str) {
-        if let Ok(feed) = kobo_opds::parse(bytes, href) {
-            if let Some(publication) = Self::resolve_entry(&feed) {
-                if let Some(entry) = self.stack.last_mut() {
-                    entry.staged.push((href.to_owned(), publication));
+        let cover = kobo_opds::parse(bytes, href)
+            .ok()
+            .as_ref()
+            .and_then(Self::resolve_entry)
+            .as_ref()
+            .and_then(Publication::cover)
+            .map(|image| image.href.clone());
+        if let Some(kobo_opds::ImageSource::Url(url)) = cover {
+            self.ask_nav_cover(context, href.to_owned(), url);
+        } else {
+            self.hydrate_visible(context);
+        }
+    }
+
+    /// Asks for the picture a followed navigation entry named.
+    fn ask_nav_cover(&mut self, context: &mut Context, href: String, url: String) {
+        let Some(task) = context.spawn_retrying(Task::Fetch {
+            url,
+            offset: 0,
+            max_bytes: COVER_BYTES,
+            credential: None,
+            headers: Vec::new(),
+        }) else {
+            self.hydrate_visible(context);
+            return;
+        };
+        self.task = Some((task, Awaiting::NavCover { href }));
+    }
+
+    /// Puts a picture into the tile that asked for it.
+    ///
+    /// Found by address rather than by position, because the page may have
+    /// turned while the picture was in the air and the tile at that index is
+    /// then a different book.
+    fn took_nav_cover(&mut self, context: &mut Context, bytes: &[u8], href: &str) {
+        let (cell_width, cell_height) = context.metrics().tile_body(TileShape::Portrait);
+        if let (Ok(width), Ok(height)) = (u32::try_from(cell_width), u32::try_from(cell_height)) {
+            if let Ok(picture) = kobo_image::decode(bytes) {
+                if let Ok(mut picture) = picture.fit_enlarging(width, height) {
+                    picture.dither(kobo_image::PANEL_GREYS);
+                    let handle = PictureHandle(NAV_COVER_HANDLE_BASE + self.nav_cover_handle);
+                    self.nav_cover_handle = self.nav_cover_handle.wrapping_add(1) % NAV_COVER_HANDLES;
+                    let (drawn_width, drawn_height) = (picture.width(), picture.height());
+                    if let Some(reference) =
+                        context.put_picture(handle, drawn_width, drawn_height, picture.into_grey())
+                    {
+                        if let Some(entry) = self.stack.last_mut() {
+                            if let Some(at) = entry
+                                .feed
+                                .navigation
+                                .iter()
+                                .position(|navigation| navigation.href == href)
+                            {
+                                if let Some(slot) = entry.nav_covers.get_mut(at) {
+                                    *slot = Some(reference);
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
-        self.hydrate_visible(context);
-    }
-
-    /// Moves the books found on this page onto the shelf, all at once.
-    ///
-    /// The screen changes shape exactly once per page, which is the whole
-    /// point: a row leaving the list and a tile joining the grid moves
-    /// everything below it, and doing that once per book relaid the page
-    /// under the reader six times over.
-    fn apply_staged(&mut self, context: &mut Context) {
-        let Some(entry) = self.stack.last_mut() else {
-            return;
-        };
-        if entry.staged.is_empty() {
-            return;
-        }
-        for (href, publication) in std::mem::take(&mut entry.staged) {
-            entry.feed.navigation.retain(|navigation| navigation.href != href);
-            entry.feed.publications.push(publication);
-            entry.covers.push(None);
-        }
         self.show(context);
-        self.want_covers(context);
+        self.hydrate_visible(context);
     }
 
     fn want_covers(&mut self, context: &mut Context) {
@@ -2135,7 +2215,12 @@ fn affordable(acquisition: &kobo_opds::Acquisition) -> bool {
 }
 
 fn shelf_pages(entry: &StackEntry) -> usize {
-    entry.feed.publications.len().div_ceil(SHELF_PAGE).max(1)
+    let shown = if entry.feed.publications.is_empty() {
+        entry.feed.navigation.len()
+    } else {
+        entry.feed.publications.len()
+    };
+    shown.div_ceil(SHELF_PAGE).max(1)
 }
 
 /// The blob name a book is kept under, and the key its reading place is kept
@@ -2520,7 +2605,7 @@ impl KoboApp for Gutenbird {
                         self.stop_federating();
                         self.stack.pop();
                         self.want_covers(context);
-                        self.hydrate_visible(context);
+        self.hydrate_visible(context);
                     }
                 }
             }
@@ -2661,7 +2746,7 @@ impl KoboApp for Gutenbird {
             }
             self.show(context);
             self.want_covers(context);
-            self.hydrate_visible(context);
+        self.hydrate_visible(context);
             return;
         }
 
@@ -2756,6 +2841,7 @@ impl KoboApp for Gutenbird {
                 }
                 Awaiting::Book => self.took_book(context, &bytes),
                 Awaiting::Hydrate { href } => self.took_hydration(context, &bytes, &href),
+                Awaiting::NavCover { href } => self.took_nav_cover(context, &bytes, &href),
             },
             TaskOutcome::Failed(error) => match awaiting {
                 Awaiting::Book => {
@@ -2779,7 +2865,9 @@ impl KoboApp for Gutenbird {
                 // A row that could not be followed stays a row. It is already
                 // marked as examined, so the next page turn does not spend
                 // the radio asking again.
-                Awaiting::Hydrate { .. } => self.hydrate_visible(context),
+                Awaiting::Hydrate { .. } | Awaiting::NavCover { .. } => {
+                    self.hydrate_visible(context);
+                }
                 Awaiting::Feed(..) => {
                     let failure = Failure::of(error);
                     self.trouble = Some(failure);
@@ -4487,48 +4575,55 @@ Please read this before you distribute or use this work.\n";
     }
 
     #[test]
-    fn a_row_that_turns_out_to_be_a_book_moves_to_the_shelf() {
-        // Project Gutenberg never serves a shelf. Every book in it is a
-        // navigation entry pointing at that book's own document, carrying a
-        // twenty-two pixel icon and no cover, so the catalog drew as a page
-        // of identical rows and the application lost the thing it is
-        // recognisable for.
+    fn a_tile_keeps_its_place_while_its_picture_is_looked_for() {
+        // The tile is drawn from what the entry already said and stays
+        // exactly where it is. Moving books into a second collection gave the
+        // page two paginations, drew every row whether it fitted or not, and
+        // left everything past the first screenful unreachable on a panel
+        // that does not scroll.
         let mut runner = AppRunner::new(Gutenbird::default());
         let feed = Feed {
-            navigation: vec![navigation("Pride and Prejudice", "https://gutenberg.example/1342.opds")],
+            navigation: vec![
+                navigation("Pride and Prejudice", "https://gutenberg.example/1342.opds"),
+                navigation("Moby Dick", "https://gutenberg.example/2701.opds"),
+            ],
             ..Feed::default()
         };
         runner.app_mut().stack = vec![StackEntry::fresh(feed, "https://gutenberg.example/".to_owned())];
-
         let mut context = runner.context();
         runner.app_mut().took_hydration(
             &mut context,
             ENTRY_DOCUMENT.as_bytes(),
             "https://gutenberg.example/1342.opds",
         );
-        // Held until the page has been followed, so the layout moves once.
-        assert_eq!(
-            runner.app().stack.last().expect("a shelf").feed.publications.len(),
-            0,
-            "the shelf changed shape before the page was finished"
-        );
-        let mut context = runner.context();
-        runner.app_mut().apply_staged(&mut context);
         let entry = runner.app().stack.last().expect("a shelf");
-        assert!(
-            entry.feed.navigation.is_empty(),
-            "the book stayed a row: {:?}",
-            entry.feed.navigation
-        );
-        assert_eq!(entry.feed.publications.len(), 1, "the book never reached the shelf");
-        assert_eq!(entry.covers.len(), 1, "the shelf has no room for its cover");
+        assert_eq!(entry.feed.navigation.len(), 2, "the tile left the grid");
+        assert!(entry.feed.publications.is_empty(), "a second collection appeared");
+        assert_eq!(entry.nav_covers.len(), 2, "no room was kept for the pictures");
     }
 
     #[test]
-    fn a_row_that_turns_out_to_be_another_list_stays_a_row() {
+    fn a_navigation_feed_is_paged_by_what_it_actually_holds() {
+        // The page count came from the publications, so a feed of twenty
+        // navigation entries and no publications said "1 of 1" and drew all
+        // twenty.
+        let feed = Feed {
+            navigation: (0..20)
+                .map(|n| navigation(&format!("Book {n}"), &format!("https://x/{n}.opds")))
+                .collect(),
+            ..Feed::default()
+        };
+        let entry = StackEntry::fresh(feed, "https://x/".to_owned());
+        assert_eq!(super::shelf_pages(&entry), 4, "twenty entries, six to a page");
+    }
+
+
+    #[test]
+    fn a_tile_that_is_a_list_rather_than_a_book_gets_no_picture() {
         // "Authors" and "Subjects" sit among the books in a Gutenberg search
-        // answer and there is nothing in the address to tell them apart,
-        // which is why this looks rather than guesses.
+        // answer. They stay tiles and keep their glyph, because there is
+        // nothing in the address to tell them apart and following them is how
+        // this finds out.
         let mut runner = AppRunner::new(Gutenbird::default());
         let feed = Feed {
             navigation: vec![navigation("Authors", "https://gutenberg.example/authors.opds")],
@@ -4541,11 +4636,9 @@ Please read this before you distribute or use this work.\n";
             NAVIGATION_DOCUMENT.as_bytes(),
             "https://gutenberg.example/authors.opds",
         );
-        let mut context = runner.context();
-        runner.app_mut().apply_staged(&mut context);
         let entry = runner.app().stack.last().expect("a shelf");
-        assert_eq!(entry.feed.navigation.len(), 1, "a category was taken for a book");
-        assert!(entry.feed.publications.is_empty());
+        assert_eq!(entry.feed.navigation.len(), 1);
+        assert!(entry.nav_covers[0].is_none(), "a list was given a cover");
     }
 
     /// One book, as a catalog's own entry document states it.
