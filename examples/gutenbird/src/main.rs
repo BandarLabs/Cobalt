@@ -717,25 +717,20 @@ impl Gutenbird {
                 if !titles.all(|title| title == first) {
                     return None;
                 }
-                // The smallest edition, because the reader cannot show what
-                // the larger one is carrying. `kobo-doc` has no picture block
-                // at all -- an EPUB's illustrations are discarded on the way
-                // in -- so Gutenberg's illustrated Pride and Prejudice is
-                // twenty-five megabytes to render exactly the same words as
-                // the five-hundred-kilobyte edition beside it. Forty-five
-                // times the radio time, over Wi-Fi, for nothing that reaches
-                // the panel. When a picture can be drawn this should be
-                // revisited, and this comment is how the next person knows
-                // the choice was made rather than defaulted into.
+                // The illustrated edition, now that an illustration reaches
+                // the panel. This was the smaller one for as long as pictures
+                // were discarded on the way in, when Gutenberg's illustrated
+                // Pride and Prejudice was twenty-five megabytes to draw the
+                // same words as the five-hundred-kilobyte edition beside it.
+                // It costs radio time, and the download says how much as it
+                // goes, but a book's plates are part of the book.
                 feed.publications
                     .iter()
-                    .min_by_key(|publication| {
+                    .find(|publication| {
                         publication
                             .acquisition
                             .iter()
-                            .filter_map(|acquisition| acquisition.length)
-                            .min()
-                            .unwrap_or(u64::MAX)
+                            .any(|acquisition| acquisition.href.contains(".images"))
                     })
                     .or_else(|| feed.publications.first())
                     .cloned()
@@ -2953,16 +2948,15 @@ Please read this before you distribute or use this work.\n";
             ..Feed::default()
         };
         let resolved = Gutenbird::resolve_entry(&feed).expect("collapses to one book");
-        assert!(resolved.acquisition[0].href.contains(".noimages"));
+        assert!(resolved.acquisition[0].href.contains(".images"));
     }
 
     #[test]
-    fn the_edition_chosen_is_the_one_whose_pictures_the_reader_could_not_have_drawn_anyway() {
-        // Measured from Gutenberg's own entry document for Pride and
-        // Prejudice: five hundred kilobytes against twenty-five megabytes for
-        // the same words, because `kobo-doc` has no picture block and throws
-        // every illustration away on the way in. Choosing the larger one
-        // spent forty-five times the radio time to reach an identical page.
+    fn the_illustrated_edition_is_chosen_now_that_its_plates_reach_the_panel() {
+        // For as long as illustrations were discarded this chose the smaller
+        // edition, because twenty-five megabytes bought exactly the same page
+        // as five hundred kilobytes. A plate reaches the panel now, so the
+        // book's own pictures are worth the radio time.
         let feed = Feed {
             publications: vec![
                 publication("Pride and Prejudice", vec![sized_epub("https://gutenberg.example/1342.epub3.images", 24_835_612)]),
@@ -2971,19 +2965,17 @@ Please read this before you distribute or use this work.\n";
             ..Feed::default()
         };
         let resolved = Gutenbird::resolve_entry(&feed).expect("collapses to one book");
-        assert_eq!(resolved.acquisition[0].length, Some(558_547));
+        assert_eq!(resolved.acquisition[0].length, Some(24_835_612));
     }
 
     #[test]
-    fn an_edition_that_states_no_size_never_displaces_one_that_does() {
-        // A catalog that omits `length` must not win by default: an unstated
-        // size is unknown, not small, and treating it as nothing would make
-        // every silent catalog beat a Gutenberg edition that measured itself
-        // honestly.
+    fn editions_that_name_no_pictures_fall_back_to_the_first() {
+        // Not every catalog spells its editions the way Gutenberg does, and
+        // one of two identical-looking books is better than neither.
         let feed = Feed {
             publications: vec![
-                publication("Emma", vec![epub_acquisition("https://gutenberg.example/unstated.epub")]),
-                publication("Emma", vec![sized_epub("https://gutenberg.example/stated.epub", 900_000)]),
+                publication("Emma", vec![sized_epub("https://elsewhere.example/a.epub", 900_000)]),
+                publication("Emma", vec![sized_epub("https://elsewhere.example/b.epub", 100_000)]),
             ],
             ..Feed::default()
         };
