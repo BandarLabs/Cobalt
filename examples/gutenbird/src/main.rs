@@ -45,7 +45,7 @@ use kobo_sdk::{
     StoreResult, Task, TaskId, TaskOutcome, Tile, TilePicture, TileShape, TileState,
     MAX_STORE_VALUE,
 };
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::process::ExitCode;
 
 /// The catalogs built in, and the only place any of them is named.
@@ -281,6 +281,12 @@ struct StackEntry {
     /// Decoded covers for `feed.publications`, parallel to that list.
     /// Nothing is fetched for a page the reader has not turned to yet.
     covers: Vec<Option<TilePicture>>,
+    /// The navigation entries already followed to see whether they are books.
+    ///
+    /// Held by address rather than by position, because a row that turns out
+    /// to be a book leaves the navigation list and moves to the shelf, and
+    /// every position after it shifts when it does.
+    examined: BTreeSet<String>,
 }
 
 impl StackEntry {
@@ -297,6 +303,7 @@ impl StackEntry {
             page: 0,
             sources: Vec::new(),
             covers,
+            examined: BTreeSet::new(),
         }
     }
 }
@@ -334,6 +341,15 @@ enum Awaiting {
     /// again once the bytes land, since every relative href inside them
     /// resolves against it.
     Feed(FeedPurpose, String),
+    /// A navigation entry followed to find out whether it is a book.
+    ///
+    /// Project Gutenberg never serves a shelf: every book in it, even in a
+    /// bookshelf or an author's list, is a navigation entry pointing at that
+    /// book's own document, carrying a twenty-two pixel icon and no cover. A
+    /// catalog like that would draw as a page of identical rows, so the
+    /// entries on the page being looked at are followed to see which of them
+    /// are books, and the ones that are move to the shelf.
+    Hydrate { href: String },
     /// A catalog's root feed, fetched only because nothing about it has been
     /// fetched yet and a search needs to know whether it offers one at all.
     DiscoverRoot {
@@ -778,6 +794,7 @@ impl Gutenbird {
                     self.stack = vec![StackEntry::fresh(feed, base)];
                     self.view = View::Shelf;
                     self.want_covers(context);
+                    self.hydrate_visible(context);
                 }
             }
             FeedPurpose::Push { catalog } => {
@@ -788,6 +805,7 @@ impl Gutenbird {
                     self.stack.push(StackEntry::fresh(feed, base));
                     self.view = View::Shelf;
                     self.want_covers(context);
+                    self.hydrate_visible(context);
                 }
             }
             FeedPurpose::More => {
@@ -810,6 +828,7 @@ impl Gutenbird {
                 }
                 self.view = View::Shelf;
                 self.want_covers(context);
+                self.hydrate_visible(context);
             }
             FeedPurpose::Federated { catalog } => {
                 let name = self.catalogs[catalog].name.clone();
@@ -1429,6 +1448,70 @@ impl Gutenbird {
     // ---------------------------------------------------------------
     // Covers -- the shelf's publications
     // ---------------------------------------------------------------
+
+    /// Follows the navigation entries on this page to find the books among
+    /// them.
+    ///
+    /// One at a time, because the cover lanes are for covers and a page of
+    /// six books would otherwise take every task the runtime allows. Only the
+    /// page being looked at: a reader who turns pages quickly must not leave
+    /// a trail of requests behind them.
+    fn hydrate_visible(&mut self, context: &mut Context) {
+        if self.task.is_some() {
+            return;
+        }
+        let Some(entry) = self.stack.last() else {
+            return;
+        };
+        let first = entry.page * SHELF_PAGE;
+        let Some(href) = entry
+            .feed
+            .navigation
+            .iter()
+            .skip(first)
+            .take(SHELF_PAGE)
+            .map(|navigation| navigation.href.clone())
+            .find(|href| !entry.examined.contains(href))
+        else {
+            return;
+        };
+        // Marked before the answer arrives, so a row that fails to load is
+        // not asked for again on every redraw.
+        if let Some(entry) = self.stack.last_mut() {
+            entry.examined.insert(href.clone());
+        }
+        let headers = vec![Header::new("Accept", kobo_opds::ACCEPT)];
+        if let Some(task) = context.spawn_retrying(Task::Fetch {
+            url: href.clone(),
+            offset: 0,
+            max_bytes: FEED_BYTES,
+            credential: None,
+            headers,
+        }) {
+            self.task = Some((task, Awaiting::Hydrate { href }));
+        }
+    }
+
+    /// Takes a followed row, and moves it to the shelf if it was a book.
+    ///
+    /// A row that turns out to be another feed is left exactly where it was:
+    /// "Authors" and "Subjects" sit among the books in a Gutenberg search
+    /// answer, and there is nothing in the address to tell them apart, which
+    /// is why this looks rather than guesses.
+    fn took_hydration(&mut self, context: &mut Context, bytes: &[u8], href: &str) {
+        if let Ok(feed) = kobo_opds::parse(bytes, href) {
+            if let Some(publication) = Self::resolve_entry(&feed) {
+                if let Some(entry) = self.stack.last_mut() {
+                    entry.feed.navigation.retain(|navigation| navigation.href != href);
+                    entry.feed.publications.push(publication);
+                    entry.covers.push(None);
+                }
+            }
+        }
+        self.show(context);
+        self.want_covers(context);
+        self.hydrate_visible(context);
+    }
 
     fn want_covers(&mut self, context: &mut Context) {
         self.wanted.clear();
@@ -2407,6 +2490,7 @@ impl KoboApp for Gutenbird {
                         self.stop_federating();
                         self.stack.pop();
                         self.want_covers(context);
+                        self.hydrate_visible(context);
                     }
                 }
             }
@@ -2547,6 +2631,7 @@ impl KoboApp for Gutenbird {
             }
             self.show(context);
             self.want_covers(context);
+            self.hydrate_visible(context);
             return;
         }
 
@@ -2640,6 +2725,7 @@ impl KoboApp for Gutenbird {
                     }
                 }
                 Awaiting::Book => self.took_book(context, &bytes),
+                Awaiting::Hydrate { href } => self.took_hydration(context, &bytes, &href),
             },
             TaskOutcome::Failed(error) => match awaiting {
                 Awaiting::Book => {
@@ -2660,6 +2746,10 @@ impl KoboApp for Gutenbird {
                 Awaiting::Feed(FeedPurpose::Federated { .. }, _) => {
                     self.advance_federated(context);
                 }
+                // A row that could not be followed stays a row. It is already
+                // marked as examined, so the next page turn does not spend
+                // the radio asking again.
+                Awaiting::Hydrate { .. } => self.hydrate_visible(context),
                 Awaiting::Feed(..) => {
                     let failure = Failure::of(error);
                     self.trouble = Some(failure);
@@ -4365,5 +4455,87 @@ Please read this before you distribute or use this work.\n";
         };
         assert!(Gutenbird::resolve_entry(&feed).is_some());
     }
+
+    #[test]
+    fn a_row_that_turns_out_to_be_a_book_moves_to_the_shelf() {
+        // Project Gutenberg never serves a shelf. Every book in it is a
+        // navigation entry pointing at that book's own document, carrying a
+        // twenty-two pixel icon and no cover, so the catalog drew as a page
+        // of identical rows and the application lost the thing it is
+        // recognisable for.
+        let mut runner = AppRunner::new(Gutenbird::default());
+        let feed = Feed {
+            navigation: vec![navigation("Pride and Prejudice", "https://gutenberg.example/1342.opds")],
+            ..Feed::default()
+        };
+        runner.app_mut().stack = vec![StackEntry::fresh(feed, "https://gutenberg.example/".to_owned())];
+
+        let mut context = runner.context();
+        runner.app_mut().took_hydration(
+            &mut context,
+            ENTRY_DOCUMENT.as_bytes(),
+            "https://gutenberg.example/1342.opds",
+        );
+        let entry = runner.app().stack.last().expect("a shelf");
+        assert!(
+            entry.feed.navigation.is_empty(),
+            "the book stayed a row: {:?}",
+            entry.feed.navigation
+        );
+        assert_eq!(entry.feed.publications.len(), 1, "the book never reached the shelf");
+        assert_eq!(entry.covers.len(), 1, "the shelf has no room for its cover");
+    }
+
+    #[test]
+    fn a_row_that_turns_out_to_be_another_list_stays_a_row() {
+        // "Authors" and "Subjects" sit among the books in a Gutenberg search
+        // answer and there is nothing in the address to tell them apart,
+        // which is why this looks rather than guesses.
+        let mut runner = AppRunner::new(Gutenbird::default());
+        let feed = Feed {
+            navigation: vec![navigation("Authors", "https://gutenberg.example/authors.opds")],
+            ..Feed::default()
+        };
+        runner.app_mut().stack = vec![StackEntry::fresh(feed, "https://gutenberg.example/".to_owned())];
+        let mut context = runner.context();
+        runner.app_mut().took_hydration(
+            &mut context,
+            NAVIGATION_DOCUMENT.as_bytes(),
+            "https://gutenberg.example/authors.opds",
+        );
+        let entry = runner.app().stack.last().expect("a shelf");
+        assert_eq!(entry.feed.navigation.len(), 1, "a category was taken for a book");
+        assert!(entry.feed.publications.is_empty());
+    }
+
+    /// One book, as a catalog's own entry document states it.
+    const ENTRY_DOCUMENT: &str = r#"<?xml version="1.0"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Pride and Prejudice</title>
+  <entry>
+    <title>Pride and Prejudice</title>
+    <author><name>Austen, Jane</name></author>
+    <link rel="http://opds-spec.org/acquisition" type="application/epub+zip"
+          href="https://gutenberg.example/1342.epub"/>
+    <link rel="http://opds-spec.org/image" type="image/jpeg"
+          href="https://gutenberg.example/1342.cover.jpg"/>
+  </entry>
+</feed>"#;
+
+    /// A list of somewhere else to go, which is not a book.
+    const NAVIGATION_DOCUMENT: &str = r#"<?xml version="1.0"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Authors</title>
+  <entry>
+    <title>Austen, Jane</title>
+    <link rel="subsection" type="application/atom+xml;profile=opds-catalog"
+          href="https://gutenberg.example/author/68.opds"/>
+  </entry>
+  <entry>
+    <title>Dickens, Charles</title>
+    <link rel="subsection" type="application/atom+xml;profile=opds-catalog"
+          href="https://gutenberg.example/author/37.opds"/>
+  </entry>
+</feed>"#;
 
 }
