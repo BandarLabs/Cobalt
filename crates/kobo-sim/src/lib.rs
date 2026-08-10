@@ -1880,6 +1880,7 @@ fn simulated_platform_request_allowed(
         kobo_protocol::DeviceRequest::Update { .. }
             | kobo_protocol::DeviceRequest::ReadSystemSleepTimeout
             | kobo_protocol::DeviceRequest::SetSystemSleepTimeout { .. }
+            | kobo_protocol::DeviceRequest::ReadSystemActivity
     ) || caller == "settings"
 }
 
@@ -1892,9 +1893,9 @@ fn simulated_app_request(
     use kobo_protocol::{DenyReason, DeviceError, DeviceRequest, DeviceResult};
 
     let authorized = match request {
-        DeviceRequest::ReadSystemSleepTimeout | DeviceRequest::SetSystemSleepTimeout { .. } => {
-            caller == "settings"
-        }
+        DeviceRequest::ReadSystemSleepTimeout
+        | DeviceRequest::SetSystemSleepTimeout { .. }
+        | DeviceRequest::ReadSystemActivity => caller == "settings",
         DeviceRequest::ListInstalledApps => matches!(caller, "launcher" | "store"),
         DeviceRequest::ReadAppCatalog
         | DeviceRequest::RefreshAppCatalog
@@ -1922,6 +1923,9 @@ fn simulated_app_request(
                 .map_err(|_| io::Error::other("app state lock poisoned"))?
                 .system_sleep_seconds = *seconds;
             return Ok(Some(DeviceResult::SleepTimeout { seconds: *seconds }));
+        }
+        DeviceRequest::ReadSystemActivity => {
+            return Ok(Some(simulated_activity()));
         }
         _ => {}
     }
@@ -1985,6 +1989,29 @@ fn simulated_app_request(
         _ => return Ok(None),
     };
     Ok(Some(result))
+}
+
+fn simulated_activity() -> kobo_protocol::DeviceResult {
+    kobo_protocol::DeviceResult::SystemActivity(kobo_protocol::SystemActivity {
+        cpu_tenths: 284,
+        memory_used_bytes: 236 * 1024 * 1024,
+        memory_total_bytes: 512 * 1024 * 1024,
+        disk_free_bytes: Some(3 * 1024 * 1024 * 1024),
+        processes: vec![
+            kobo_protocol::ProcessActivity {
+                pid: 310,
+                name: "kobo-settings".to_owned(),
+                cpu_tenths: 92,
+                memory_bytes: 18 * 1024 * 1024,
+            },
+            kobo_protocol::ProcessActivity {
+                pid: 201,
+                name: "kobod".to_owned(),
+                cpu_tenths: 61,
+                memory_bytes: 31 * 1024 * 1024,
+            },
+        ],
+    })
 }
 
 /// Delivers a finished task as soon as it finishes.
@@ -2641,6 +2668,14 @@ mod tests {
         };
         assert!(simulated_platform_request_allowed("settings", &update));
         assert!(!simulated_platform_request_allowed("store", &update));
+        assert!(simulated_platform_request_allowed(
+            "settings",
+            &kobo_protocol::DeviceRequest::ReadSystemActivity
+        ));
+        assert!(!simulated_platform_request_allowed(
+            "store",
+            &kobo_protocol::DeviceRequest::ReadSystemActivity
+        ));
         assert!(simulated_platform_request_allowed(
             "store",
             &kobo_protocol::DeviceRequest::RefreshAppCatalog

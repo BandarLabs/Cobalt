@@ -32,6 +32,7 @@
 //! unwinding is therefore explicit and centralised in one function rather than
 //! spread across returns.
 
+use crate::activity::ActivityMonitor;
 use crate::blackbox::{self, trace};
 use crate::power::{AppSleep, GlobalSleep, DEFAULT_SLEEP_TIMEOUT};
 use kobo_hal::display::{DisplaySession, OWNER_UNLOCK_PHRASE};
@@ -968,6 +969,7 @@ fn host_applications(
     let (sender, events) = mpsc::channel();
     touch.set(Some(sender.clone()));
     let mut global_sleep = GlobalSleep::load(Path::new(COBALT_ROOT), limits.idle);
+    let mut activity = ActivityMonitor::system(Path::new(COBALT_ROOT));
     let system_suspend = match SystemSuspend::open() {
         Ok(suspend) => Some(suspend),
         Err(error) => {
@@ -1820,6 +1822,21 @@ fn host_applications(
                                         }
                                         Err(error) => kobo_protocol::DeviceResult::Failed(error),
                                     },
+                                    kobo_protocol::DeviceRequest::ReadSystemActivity => {
+                                        match activity.sample() {
+                                            Ok(sample) => {
+                                                kobo_protocol::DeviceResult::SystemActivity(sample)
+                                            }
+                                            Err(error) => {
+                                                trace(&format!(
+                                                    "system activity unavailable: {error}"
+                                                ));
+                                                kobo_protocol::DeviceResult::Failed(
+                                                    kobo_protocol::DeviceError::Backend,
+                                                )
+                                            }
+                                        }
+                                    }
                                     // Blocks the message loop like a
                                     // Bluetooth scan does. The application
                                     // paints its progress screen before
@@ -2211,7 +2228,8 @@ fn system_request_allowed(app: &str, request: &kobo_protocol::DeviceRequest) -> 
     match request {
         kobo_protocol::DeviceRequest::Update { .. }
         | kobo_protocol::DeviceRequest::ReadSystemSleepTimeout
-        | kobo_protocol::DeviceRequest::SetSystemSleepTimeout { .. } => app == "settings",
+        | kobo_protocol::DeviceRequest::SetSystemSleepTimeout { .. }
+        | kobo_protocol::DeviceRequest::ReadSystemActivity => app == "settings",
         kobo_protocol::DeviceRequest::ListInstalledApps => matches!(app, "launcher" | "store"),
         kobo_protocol::DeviceRequest::ReadAppCatalog
         | kobo_protocol::DeviceRequest::RefreshAppCatalog
@@ -3356,6 +3374,11 @@ mod hosting_tests {
         assert!(super::system_request_allowed("settings", &sleep));
         assert!(!super::system_request_allowed("store", &sleep));
         assert!(!super::system_request_allowed("todo", &sleep));
+
+        let activity = DeviceRequest::ReadSystemActivity;
+        assert!(super::system_request_allowed("settings", &activity));
+        assert!(!super::system_request_allowed("store", &activity));
+        assert!(!super::system_request_allowed("todo", &activity));
 
         let install = DeviceRequest::InstallApp {
             id: "word-count".to_owned(),

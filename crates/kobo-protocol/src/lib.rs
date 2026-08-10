@@ -29,9 +29,9 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// a flag byte inside the repeated part of tag 14, which an old runtime would
 /// have read as the next row's action.
 ///
-/// Went to 6 for the runtime-owned app catalog and app transaction requests,
-/// whose new result variant carries a bounded list of application metadata.
-pub const VERSION: u8 = 7;
+/// Went to 8 for the Settings-only activity snapshot. Its process list is
+/// bounded and carries CPU and resident-memory readings from the runtime.
+pub const VERSION: u8 = 8;
 pub const HEADER_LEN: usize = 14;
 /// The largest single frame either side will read.
 ///
@@ -108,6 +108,12 @@ pub const MAX_APP_VERSION_LEN: usize = 64;
 /// Capability declarations are drawn as a short list and are also bounded by
 /// the complete capability vocabulary.
 pub const MAX_APP_CAPABILITIES: usize = 16;
+
+/// The process table in one activity snapshot is deliberately a top list, not
+/// an unbounded copy of `/proc`.
+pub const MAX_ACTIVITY_PROCESSES: usize = 12;
+/// Process names occupy one fixed-width table column in Settings.
+pub const MAX_PROCESS_NAME_LEN: usize = 48;
 
 /// Human-readable radio identifiers are deliberately shorter than an ordinary
 /// protocol string. They are drawn on one row and are also accepted from local
@@ -883,6 +889,8 @@ pub enum DeviceRequest {
     ReadSystemSleepTimeout,
     /// Persist the owner-selected global timeout. Settings-only.
     SetSystemSleepTimeout { seconds: u32 },
+    /// Read a bounded system and process activity sample. Settings-only.
+    ReadSystemActivity,
     /// Ask to be woken again after this many seconds.
     ScheduleWake { seconds: u32 },
     /// Cancel a pending scheduled wake.
@@ -1026,6 +1034,28 @@ impl BatteryDetail {
     }
 }
 
+/// One process in a bounded system activity snapshot.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProcessActivity {
+    pub pid: u32,
+    pub name: String,
+    /// CPU contribution in tenths of one system-wide percent.
+    pub cpu_tenths: u16,
+    /// Resident memory currently held by this process.
+    pub memory_bytes: u64,
+}
+
+/// CPU, memory, disk, and top-process readings sampled by the runtime.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct SystemActivity {
+    /// Busy CPU in tenths of a percent.
+    pub cpu_tenths: u16,
+    pub memory_used_bytes: u64,
+    pub memory_total_bytes: u64,
+    pub disk_free_bytes: Option<u64>,
+    pub processes: Vec<ProcessActivity>,
+}
+
 /// The runtime's answer to a device request.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DeviceResult {
@@ -1035,6 +1065,8 @@ pub enum DeviceResult {
     Granted { seconds: u32 },
     /// The global inactivity timeout currently selected by the owner.
     SleepTimeout { seconds: u32 },
+    /// A bounded system activity sample for the built-in Settings app.
+    SystemActivity(SystemActivity),
     /// Battery state.
     Battery { percent: u8, charging: bool },
     /// Everything the gauge publishes. See [`BatteryDetail`].
@@ -1964,6 +1996,7 @@ fn encode_device_request(
         DeviceRequest::SetSystemSleepTimeout { seconds } => {
             fixed_device_request(output, 40, *seconds);
         }
+        DeviceRequest::ReadSystemActivity => fixed_device_request(output, 41, 0),
         DeviceRequest::ScheduleWake { seconds } => fixed_device_request(output, 6, *seconds),
         DeviceRequest::CancelWake => fixed_device_request(output, 7, 0),
         DeviceRequest::SetFrontlight { percent } => {
@@ -2228,6 +2261,7 @@ fn decode_device_request(reader: &mut Reader<'_>) -> Result<DeviceRequest, Proto
         40 => Ok(DeviceRequest::SetSystemSleepTimeout {
             seconds: reader.u32()?,
         }),
+        41 => fixed_argument(reader, 0).map(|()| DeviceRequest::ReadSystemActivity),
         6 => Ok(DeviceRequest::ScheduleWake {
             seconds: reader.u32()?,
         }),
@@ -2371,6 +2405,40 @@ fn encode_device_result(output: &mut Vec<u8>, result: &DeviceResult) -> Result<(
         DeviceResult::SleepTimeout { seconds } => {
             output.push(13);
             push_u32(output, *seconds);
+        }
+        DeviceResult::SystemActivity(activity) => {
+            if activity.cpu_tenths > 1000
+                || activity.memory_used_bytes > activity.memory_total_bytes
+                || activity.processes.len() > MAX_ACTIVITY_PROCESSES
+            {
+                return Err(ProtocolError::InvalidValue("system activity"));
+            }
+            output.push(14);
+            push_u16(output, activity.cpu_tenths);
+            push_u64(output, activity.memory_used_bytes);
+            push_u64(output, activity.memory_total_bytes);
+            match activity.disk_free_bytes {
+                Some(bytes) => {
+                    output.push(1);
+                    push_u64(output, bytes);
+                }
+                None => output.push(0),
+            }
+            output.push(
+                u8::try_from(activity.processes.len()).map_err(|_| ProtocolError::FrameTooLarge)?,
+            );
+            for process in &activity.processes {
+                if process.name.is_empty()
+                    || process.name.len() > MAX_PROCESS_NAME_LEN
+                    || process.cpu_tenths > 1000
+                {
+                    return Err(ProtocolError::InvalidValue("process activity"));
+                }
+                push_u32(output, process.pid);
+                push_string(output, &process.name)?;
+                push_u16(output, process.cpu_tenths);
+                push_u64(output, process.memory_bytes);
+            }
         }
         DeviceResult::Battery { percent, charging } => {
             output.push(3);
@@ -2546,18 +2614,8 @@ fn decode_device_result(reader: &mut Reader<'_>) -> Result<DeviceResult, Protoco
         13 => Ok(DeviceResult::SleepTimeout {
             seconds: reader.u32()?,
         }),
-        3 => {
-            let percent = reader.u8()?;
-            if percent > 100 {
-                return Err(ProtocolError::InvalidValue("battery percent"));
-            }
-            let charging = match reader.u8()? {
-                0 => false,
-                1 => true,
-                _ => return Err(ProtocolError::InvalidValue("charging flag")),
-            };
-            Ok(DeviceResult::Battery { percent, charging })
-        }
+        14 => decode_system_activity(reader).map(DeviceResult::SystemActivity),
+        3 => decode_battery_result(reader),
         10 => battery_detail(reader).map(DeviceResult::BatteryDetail),
         11 => Ok(DeviceResult::Cover {
             available: read_boolean(reader, "cover sensor available")?,
@@ -2638,6 +2696,58 @@ fn decode_device_result(reader: &mut Reader<'_>) -> Result<DeviceResult, Protoco
         12 => decode_apps_result(reader),
         _ => Err(ProtocolError::InvalidValue("device result")),
     }
+}
+
+fn decode_battery_result(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
+    let percent = reader.u8()?;
+    if percent > 100 {
+        return Err(ProtocolError::InvalidValue("battery percent"));
+    }
+    let charging = match reader.u8()? {
+        0 => false,
+        1 => true,
+        _ => return Err(ProtocolError::InvalidValue("charging flag")),
+    };
+    Ok(DeviceResult::Battery { percent, charging })
+}
+
+fn decode_system_activity(reader: &mut Reader<'_>) -> Result<SystemActivity, ProtocolError> {
+    let cpu_tenths = reader.u16()?;
+    let memory_used_bytes = reader.u64()?;
+    let memory_total_bytes = reader.u64()?;
+    let disk_free_bytes = match reader.u8()? {
+        0 => None,
+        1 => Some(reader.u64()?),
+        _ => return Err(ProtocolError::InvalidValue("disk availability")),
+    };
+    let count = usize::from(reader.u8()?);
+    if cpu_tenths > 1000 || memory_used_bytes > memory_total_bytes || count > MAX_ACTIVITY_PROCESSES
+    {
+        return Err(ProtocolError::InvalidValue("system activity"));
+    }
+    let mut processes = Vec::with_capacity(count);
+    for _ in 0..count {
+        let pid = reader.u32()?;
+        let name = reader.string()?;
+        let process_cpu_tenths = reader.u16()?;
+        let memory_bytes = reader.u64()?;
+        if name.is_empty() || name.len() > MAX_PROCESS_NAME_LEN || process_cpu_tenths > 1000 {
+            return Err(ProtocolError::InvalidValue("process activity"));
+        }
+        processes.push(ProcessActivity {
+            pid,
+            name,
+            cpu_tenths: process_cpu_tenths,
+            memory_bytes,
+        });
+    }
+    Ok(SystemActivity {
+        cpu_tenths,
+        memory_used_bytes,
+        memory_total_bytes,
+        disk_free_bytes,
+        processes,
+    })
 }
 
 fn decode_apps_result(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
@@ -5302,6 +5412,7 @@ mod tests {
             DeviceRequest::UseGlobalSleepTimeout,
             DeviceRequest::ReadSystemSleepTimeout,
             DeviceRequest::SetSystemSleepTimeout { seconds: 900 },
+            DeviceRequest::ReadSystemActivity,
             DeviceRequest::ScheduleWake { seconds: 900 },
             DeviceRequest::CancelWake,
             DeviceRequest::SetFrontlight { percent: 100 },
@@ -5395,12 +5506,28 @@ mod tests {
         }
     }
 
+    fn activity_sample() -> SystemActivity {
+        SystemActivity {
+            cpu_tenths: 427,
+            memory_used_bytes: 128 * 1024 * 1024,
+            memory_total_bytes: 512 * 1024 * 1024,
+            disk_free_bytes: Some(3 * 1024 * 1024 * 1024),
+            processes: vec![ProcessActivity {
+                pid: 42,
+                name: "kobod".to_owned(),
+                cpu_tenths: 103,
+                memory_bytes: 12 * 1024 * 1024,
+            }],
+        }
+    }
+
     #[test]
     fn every_device_result_round_trips() {
         let results = vec![
             DeviceResult::Done,
             DeviceResult::Granted { seconds: 300 },
             DeviceResult::SleepTimeout { seconds: 900 },
+            DeviceResult::SystemActivity(activity_sample()),
             DeviceResult::Battery {
                 percent: 100,
                 charging: true,

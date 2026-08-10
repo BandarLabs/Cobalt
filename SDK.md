@@ -1086,6 +1086,16 @@ mechanism prevents an explicit power-button press or sleep-cover closure.
 Applications cannot rewrite the persistent global value; that request is
 reserved for the built-in Settings app.
 
+### Activity diagnostics
+
+Settings includes a one-second Activity Monitor for CPU, memory, free disk
+space and the busiest processes. The runtime reads Linux counters on its behalf
+because Settings is sandboxed and cannot walk `/proc` itself. Sampling stops as
+soon as the owner leaves that screen, process names are sanitised, and the
+bounded snapshot contains at most twelve rows. This system-wide diagnostic is
+reserved for the built-in Settings app rather than exposed as an application
+capability.
+
 `shell` is the one that is different in kind. Every other capability is undone
 by a reboot; a shell on this device is root on a writable root filesystem, so
 it is the first thing the platform hosts that a power cycle cannot repair. It

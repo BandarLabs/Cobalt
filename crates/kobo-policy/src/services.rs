@@ -222,9 +222,9 @@ impl DeviceServices {
                 self.sleep_timeout = None;
                 DeviceResult::Done
             }
-            DeviceRequest::ReadSystemSleepTimeout | DeviceRequest::SetSystemSleepTimeout { .. } => {
-                DeviceResult::Failed(DeviceError::InvalidInput)
-            }
+            DeviceRequest::ReadSystemSleepTimeout
+            | DeviceRequest::SetSystemSleepTimeout { .. }
+            | DeviceRequest::ReadSystemActivity => DeviceResult::Failed(DeviceError::InvalidInput),
             DeviceRequest::ScheduleWake { seconds } => self.schedule_wake(seconds),
             DeviceRequest::CancelWake => {
                 self.wake_scheduled_in = None;
@@ -559,7 +559,9 @@ pub fn request_capability(request: &DeviceRequest) -> Option<Capability> {
         | DeviceRequest::AllowSleep
         | DeviceRequest::SetSleepTimeout { .. }
         | DeviceRequest::UseGlobalSleepTimeout => Capability::KeepAwake,
-        DeviceRequest::ReadSystemSleepTimeout | DeviceRequest::SetSystemSleepTimeout { .. } => {
+        DeviceRequest::ReadSystemSleepTimeout
+        | DeviceRequest::SetSystemSleepTimeout { .. }
+        | DeviceRequest::ReadSystemActivity => {
             return None;
         }
         DeviceRequest::ScheduleWake { .. } | DeviceRequest::CancelWake => Capability::ScheduledWake,

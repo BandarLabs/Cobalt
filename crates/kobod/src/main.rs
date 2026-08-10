@@ -11,6 +11,8 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+#[cfg(any(feature = "device-write", test))]
+mod activity;
 mod app_store;
 #[cfg(feature = "device-write")]
 mod blackbox;

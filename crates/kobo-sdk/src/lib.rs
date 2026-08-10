@@ -8,12 +8,12 @@
 pub use kobo_protocol::{
     AppInfo, AudioPlaybackState, AudioSource, BatteryDetail, BluetoothDevice, BluetoothDeviceKind,
     Credential, DenyReason, DeviceError, DeviceRequest, DeviceResult, Frame, Header, Lifecycle,
-    LogLevel, Message, SecretHeader, ShellError, ShellEvent, ShellRequest, StoreError,
-    StoreRequest, StoreResult, StreamError, Task, TaskError, TaskId, TaskOutcome, WifiNetwork,
-    CACHE_PREFIX, MAX_CACHE_KEYS, MAX_HEADERS, MAX_HEADER_NAME, MAX_HEADER_VALUE,
-    MAX_INLINE_PICTURE_BYTES, MAX_PICTURE_BYTES, MAX_PICTURE_CHUNK_BYTES, MAX_RADIO_DEVICES,
-    MAX_RADIO_NAME, MAX_SHELF_CHUNK, MAX_SHELL_CHUNK, MAX_STORE_KEYS, MAX_STORE_VALUE,
-    MAX_TASK_BYTES, MAX_URL_LEN,
+    LogLevel, Message, ProcessActivity, SecretHeader, ShellError, ShellEvent, ShellRequest,
+    StoreError, StoreRequest, StoreResult, StreamError, SystemActivity, Task, TaskError, TaskId,
+    TaskOutcome, WifiNetwork, CACHE_PREFIX, MAX_ACTIVITY_PROCESSES, MAX_CACHE_KEYS, MAX_HEADERS,
+    MAX_HEADER_NAME, MAX_HEADER_VALUE, MAX_INLINE_PICTURE_BYTES, MAX_PICTURE_BYTES,
+    MAX_PICTURE_CHUNK_BYTES, MAX_PROCESS_NAME_LEN, MAX_RADIO_DEVICES, MAX_RADIO_NAME,
+    MAX_SHELF_CHUNK, MAX_SHELL_CHUNK, MAX_STORE_KEYS, MAX_STORE_VALUE, MAX_TASK_BYTES, MAX_URL_LEN,
 };
 pub use kobo_ui::QuoteRole;
 pub use kobo_ui::{
@@ -51,9 +51,10 @@ pub mod prelude {
         AudioMetadata, AudioPlaybackState, AudioPlayer, AudioSource, BluetoothDevice,
         BluetoothDeviceKind, Capability, Client, ClientEvent, Command, Context, ControlState,
         DenyReason, Device, DeviceError, DeviceRequest, DeviceResult, DialogAction, Failure, Grant,
-        Grants, Heartbeat, KoboApp, Lifecycle, Navigator, Node, NodeId, PowerPolicy, Screen,
-        ScreenBuilder, ShelfDownload, ShelfProgress, ShelfUpload, ShellError, ShellEvent,
-        ShellRequest, StandardState, StoreError, StoreRequest, StoreResult, WifiNetwork,
+        Grants, Heartbeat, KoboApp, Lifecycle, Navigator, Node, NodeId, PowerPolicy,
+        ProcessActivity, Screen, ScreenBuilder, ShelfDownload, ShelfProgress, ShelfUpload,
+        ShellError, ShellEvent, ShellRequest, StandardState, StoreError, StoreRequest, StoreResult,
+        SystemActivity, WifiNetwork,
     };
 }
 
@@ -3674,6 +3675,13 @@ impl Device<'_> {
         self.request(DeviceRequest::SetSystemSleepTimeout {
             seconds: whole_seconds(duration),
         });
+    }
+
+    /// Reads a bounded CPU, memory, disk, and top-process activity sample.
+    ///
+    /// This platform request is reserved for the built-in Settings app.
+    pub fn read_system_activity(&mut self) {
+        self.request(DeviceRequest::ReadSystemActivity);
     }
 
     /// Asks to be woken after `delay` to refresh content.

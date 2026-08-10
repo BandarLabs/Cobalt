@@ -577,6 +577,14 @@ Nickel rather than remaining awake indefinitely. Radio connectivity is not
 promised across suspend; applications must treat resume as a fresh opportunity
 to observe network state.
 
+The built-in Settings Activity Monitor samples aggregate CPU, memory, free
+disk space and a bounded process list once per second while its screen is open.
+It keeps two minutes of CPU and memory history. Each new declarative screen
+still goes through the pixel frame planner, so the panel receives only the
+changed rectangle and identical samples cause no refresh at all. Leaving the
+screen stops the timer and its activity wakeups, allowing the normal inactivity
+policy to resume.
+
 ### One audited path for every settings change
 
 Settings are described rather than hand-written, so there is a single reviewed
