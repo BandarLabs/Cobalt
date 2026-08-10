@@ -1,0 +1,388 @@
+<?xml version="1.0" encoding="utf-8"?>
+<?xml-stylesheet href="https://standardebooks.org/feeds/atom/style" type="text/xsl"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/">
+	<script xmlns="http://www.w3.org/1999/xhtml" src="https://standardebooks.org/scripts/xslt-polyfill.min.js"/>
+	<id>https://standardebooks.org/feeds/atom/new-releases</id>
+	<link href="https://standardebooks.org/feeds/atom/new-releases" rel="self" type="application/atom+xml"/>
+	<title>Standard Ebooks - Newest Ebooks</title>
+	<subtitle>The 15 latest Standard Ebooks, most-recently-released first.</subtitle>
+	<icon>https://standardebooks.org/images/logo.png</icon>
+	<updated>2026-08-09T02:55:28Z</updated>
+	<author>
+		<name>Standard Ebooks</name>
+		<uri>https://standardebooks.org</uri>
+	</author>
+	<link href="https://standardebooks.org/opensearch" rel="search" title="Standard Ebooks" type="application/opensearchdescription+xml"/>
+	<entry>
+		<id>https://standardebooks.org/ebooks/dorothy-m-richardson/revolving-lights</id>
+		<title>Revolving Lights</title>
+		<author>
+			<name>Dorothy M. Richardson</name>
+			<uri>https://standardebooks.org/ebooks/dorothy-m-richardson</uri>
+		</author>
+		<published>2026-08-09T02:53:47Z</published>
+		<updated>2026-08-09T02:53:58Z</updated>
+		<rights>Public domain in the United States. Users located outside of the United States must check their local laws before using this ebook. Original content released to the public domain via the Creative Commons CC0 1.0 Universal Public Domain Dedication.</rights>
+		<summary type="text">An independent woman and budding writer living in London at the dawn of the twentieth century ends a relationship with a Russian expatriate and visits her mentor and his wife at their country home.</summary>
+		<content type="html">&lt;p&gt;&lt;i&gt;Revolving Lights&lt;/i&gt; is the seventh “chapter volume” of &lt;a href="https://standardebooks.org/ebooks/dorothy-m-richardson"&gt;Dorothy &lt;abbr&gt;M.&lt;/abbr&gt; Richardson’s&lt;/a&gt; pioneering semi-autobiographical series, &lt;a href="https://standardebooks.org/collections/pilgrimage"&gt;Pilgrimage&lt;/a&gt;.&lt;/p&gt; &lt;p&gt;Series protagonist Miriam Henderson puts an end to her relationship with co-lodger Michael Shatov, a young Russian intellectual. She spends two weeks visiting the mansion of author Hypo Wilson and his wife Alma, Miriam’s old schoolmate. While there she meets author Miss Prout, another friend of Hypo’s.&lt;/p&gt; &lt;p&gt;The Wilsons are generally understood to be proxies for &lt;a href="https://standardebooks.org/ebooks/h-g-wells"&gt;&lt;abbr&gt;H. G.&lt;/abbr&gt; Wells&lt;/a&gt; and Amy Catherine Robbins Wells. Miss Prout is thought to be based on Violet Hunt.&lt;/p&gt;</content>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Autobiographical fiction"/>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Women -- England -- Fiction"/>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="England -- Social life and customs -- 20th century -- Fiction"/>
+		<category scheme="https://standardebooks.org/vocab/subjects" term="Fiction"/>
+		<media:thumbnail height="525" url="https://standardebooks.org/ebooks/dorothy-m-richardson/revolving-lights/downloads/cover-thumbnail.jpg" width="350"/>
+		<link href="https://standardebooks.org/ebooks/dorothy-m-richardson/revolving-lights" rel="alternate" title="This ebook’s page at Standard Ebooks" type="application/xhtml+xml"/>
+		<link href="https://standardebooks.org/ebooks/dorothy-m-richardson/revolving-lights/downloads/dorothy-m-richardson_revolving-lights.epub?source=feed" length="640526" rel="enclosure" title="Recommended compatible epub" type="application/epub+zip"/>
+		<link href="https://standardebooks.org/ebooks/dorothy-m-richardson/revolving-lights/downloads/dorothy-m-richardson_revolving-lights_advanced.epub?source=feed" length="1148232" rel="enclosure" title="Advanced epub" type="application/epub+zip"/>
+		<link href="https://standardebooks.org/ebooks/dorothy-m-richardson/revolving-lights/downloads/dorothy-m-richardson_revolving-lights.kepub.epub?source=feed" length="563850" rel="enclosure" title="Kobo Kepub epub" type="application/kepub+zip"/>
+		<link href="https://standardebooks.org/ebooks/dorothy-m-richardson/revolving-lights/downloads/dorothy-m-richardson_revolving-lights.azw3?source=feed" length="684099" rel="enclosure" title="Amazon Kindle azw3" type="application/x-mobipocket-ebook"/>
+		<link href="https://standardebooks.org/ebooks/dorothy-m-richardson/revolving-lights/text/single-page" length="447951" rel="enclosure" title="XHTML" type="application/xhtml+xml"/>
+	</entry>
+	<entry>
+		<id>https://standardebooks.org/ebooks/charlotte-m-yonge/the-clever-woman-of-the-family</id>
+		<title>The Clever Woman of the Family</title>
+		<author>
+			<name>Charlotte M. Yonge</name>
+			<uri>https://standardebooks.org/ebooks/charlotte-m-yonge</uri>
+		</author>
+		<published>2026-08-07T19:37:36Z</published>
+		<updated>2026-08-07T21:34:18Z</updated>
+		<rights>Public domain in the United States. Users located outside of the United States must check their local laws before using this ebook. Original content released to the public domain via the Creative Commons CC0 1.0 Universal Public Domain Dedication.</rights>
+		<summary type="text">An opinionated young woman seeks to prove her cleverness as she searches for a purpose in life.</summary>
+		<content type="html">&lt;p&gt;Unsatisfied with the rigid gender roles of her small seaside community, Rachel Curtis yearns to use her cleverness to find a purpose in life. Seeking to make the world a better place for women, she dives into intellectual battles, writes opinionated articles, and dreams of liberating oppressed women from lace-making and marriage. Acting as her foils are Lady Temple, a widow with an army of small children, and Miss Williams, a young woman left deformed and scarred by a horrible accident in her youth. As she strives to make her dreams come true, her small community will cause Rachel’s cleverness to be opposed, tried, and tested, making her carefully consider: is she truly the clever woman of the family?&lt;/p&gt;</content>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Young women -- Fiction"/>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Single women -- Fiction"/>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Domestic fiction"/>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Sex role -- Fiction"/>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Women -- England -- Fiction"/>
+		<category scheme="https://standardebooks.org/vocab/subjects" term="Fiction"/>
+		<media:thumbnail height="525" url="https://standardebooks.org/ebooks/charlotte-m-yonge/the-clever-woman-of-the-family/downloads/cover-thumbnail.jpg" width="350"/>
+		<link href="https://standardebooks.org/ebooks/charlotte-m-yonge/the-clever-woman-of-the-family" rel="alternate" title="This ebook’s page at Standard Ebooks" type="application/xhtml+xml"/>
+		<link href="https://standardebooks.org/ebooks/charlotte-m-yonge/the-clever-woman-of-the-family/downloads/charlotte-m-yonge_the-clever-woman-of-the-family.epub?source=feed" length="1001279" rel="enclosure" title="Recommended compatible epub" type="application/epub+zip"/>
+		<link href="https://standardebooks.org/ebooks/charlotte-m-yonge/the-clever-woman-of-the-family/downloads/charlotte-m-yonge_the-clever-woman-of-the-family_advanced.epub?source=feed" length="1915169" rel="enclosure" title="Advanced epub" type="application/epub+zip"/>
+		<link href="https://standardebooks.org/ebooks/charlotte-m-yonge/the-clever-woman-of-the-family/downloads/charlotte-m-yonge_the-clever-woman-of-the-family.kepub.epub?source=feed" length="941820" rel="enclosure" title="Kobo Kepub epub" type="application/kepub+zip"/>
+		<link href="https://standardebooks.org/ebooks/charlotte-m-yonge/the-clever-woman-of-the-family/downloads/charlotte-m-yonge_the-clever-woman-of-the-family.azw3?source=feed" length="1223581" rel="enclosure" title="Amazon Kindle azw3" type="application/x-mobipocket-ebook"/>
+		<link href="https://standardebooks.org/ebooks/charlotte-m-yonge/the-clever-woman-of-the-family/text/single-page" length="1211391" rel="enclosure" title="XHTML" type="application/xhtml+xml"/>
+	</entry>
+	<entry>
+		<id>https://standardebooks.org/ebooks/mourning-dove/cogewea-the-half-blood</id>
+		<title>Cogewea, the Half-Blood</title>
+		<author>
+			<name>Mourning Dove</name>
+			<uri>https://standardebooks.org/ebooks/mourning-dove</uri>
+		</author>
+		<published>2026-08-06T20:36:59Z</published>
+		<updated>2026-08-07T01:30:01Z</updated>
+		<rights>Public domain in the United States. Users located outside of the United States must check their local laws before using this ebook. Original content released to the public domain via the Creative Commons CC0 1.0 Universal Public Domain Dedication.</rights>
+		<summary type="text">A young woman rancher of mixed Native American and European descent is wooed by the foreman and a newly-arrived tenderfoot.</summary>
+		<content type="html">&lt;p&gt;Cogewea, a mischievous young rancher, lives with her older sister and brother-in-law on their homestead, the Horseshoe Bend Ranch, located in the Flathead Indian Reservation. A member of the Okanogan tribe, Cogewea is nevertheless stigmatized as a “breed”—a derogatory term historically applied to people of mixed Native American and European descent. Drama arrives at the Horseshoe Bend with the person of Alfred Densmore, a businessman who has set out from the Eastern states in search of adventure and money. After he breaks his arm by being thrown by a half-tame bronco, Densmore develops a romantic interest in Cogewea, sparking a rivalry with Cogewea’s friend Jim, who is the ranch’s foreman and a fellow breed. Cogewea must navigate the interwoven challenges of choosing a suitor and reckoning with her ethnic identity, with the aid of advice in the form of stories told by her grandmother, the Stemteemä.&lt;/p&gt; &lt;p&gt;&lt;i&gt;Cogewea&lt;/i&gt; was one of the first novels ever published by a Native American woman. It was the product of collaboration between &lt;a href="https://standardebooks.org/ebooks/mourning-dove"&gt;Mourning Dove&lt;/a&gt; and her editor, Lucullus Virgil McWhorter, a Euro-American anthropologist and advocate of indigenous American cultures. Critics have debated the extent of McWhorter’s influence on the final product, but Mourning Dove’s own correspondence with McWhorter suggests that McWhorter revised her draft significantly and introduced his own voice into the novel. &lt;i&gt;Cogewea&lt;/i&gt; continues to be studied as an early example of Native American literature.&lt;/p&gt;</content>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Indians of North America--Fiction"/>
+		<category scheme="https://standardebooks.org/vocab/subjects" term="Fiction"/>
+		<media:thumbnail height="525" url="https://standardebooks.org/ebooks/mourning-dove/cogewea-the-half-blood/downloads/cover-thumbnail.jpg" width="350"/>
+		<link href="https://standardebooks.org/ebooks/mourning-dove/cogewea-the-half-blood" rel="alternate" title="This ebook’s page at Standard Ebooks" type="application/xhtml+xml"/>
+		<link href="https://standardebooks.org/ebooks/mourning-dove/cogewea-the-half-blood/downloads/mourning-dove_cogewea-the-half-blood.epub?source=feed" length="753933" rel="enclosure" title="Recommended compatible epub" type="application/epub+zip"/>
+		<link href="https://standardebooks.org/ebooks/mourning-dove/cogewea-the-half-blood/downloads/mourning-dove_cogewea-the-half-blood_advanced.epub?source=feed" length="694886" rel="enclosure" title="Advanced epub" type="application/epub+zip"/>
+		<link href="https://standardebooks.org/ebooks/mourning-dove/cogewea-the-half-blood/downloads/mourning-dove_cogewea-the-half-blood.kepub.epub?source=feed" length="688412" rel="enclosure" title="Kobo Kepub epub" type="application/kepub+zip"/>
+		<link href="https://standardebooks.org/ebooks/mourning-dove/cogewea-the-half-blood/downloads/mourning-dove_cogewea-the-half-blood.azw3?source=feed" length="840752" rel="enclosure" title="Amazon Kindle azw3" type="application/x-mobipocket-ebook"/>
+		<link href="https://standardebooks.org/ebooks/mourning-dove/cogewea-the-half-blood/text/single-page" length="690972" rel="enclosure" title="XHTML" type="application/xhtml+xml"/>
+	</entry>
+	<entry>
+		<id>https://standardebooks.org/ebooks/henry-van-dyke-jr/the-house-of-rimmon</id>
+		<title>The House of Rimmon</title>
+		<author>
+			<name>Henry van Dyke Jr.</name>
+			<uri>https://standardebooks.org/ebooks/henry-van-dyke-jr</uri>
+		</author>
+		<published>2026-08-06T20:11:42Z</published>
+		<updated>2026-08-06T20:11:45Z</updated>
+		<rights>Public domain in the United States. Users located outside of the United States must check their local laws before using this ebook. Original content released to the public domain via the Creative Commons CC0 1.0 Universal Public Domain Dedication.</rights>
+		<summary type="text">A Syrian general and a captive maid seek aid from the prophet Elisha.</summary>
+		<content type="html">&lt;p&gt;After being betrayed by his beloved wife, the commander of the Syrian army, Naaman, finds help from a captive maid, Ruahmah. Cursed with leprosy by his god, Naaman is led by Ruahmah to Elisha, a prophet of her people’s god. Along the way, Naaman is confronted by his own commitments to faith, honor, and his nation.&lt;/p&gt; &lt;p&gt;In this dramatic adaptation of the story of Naaman and Elisha, &lt;a href="https://standardebooks.org/ebooks/henry-van-dyke-jr"&gt;Henry van Dyke&lt;/a&gt; illuminates a brief but intriguing Biblical narrative, interweaving themes of love, patriotism, and fidelity.&lt;/p&gt;</content>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Naaman, the Syrian -- Drama"/>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Religious drama, American"/>
+		<category scheme="https://standardebooks.org/vocab/subjects" term="Drama"/>
+		<media:thumbnail height="525" url="https://standardebooks.org/ebooks/henry-van-dyke-jr/the-house-of-rimmon/downloads/cover-thumbnail.jpg" width="350"/>
+		<link href="https://standardebooks.org/ebooks/henry-van-dyke-jr/the-house-of-rimmon" rel="alternate" title="This ebook’s page at Standard Ebooks" type="application/xhtml+xml"/>
+		<link href="https://standardebooks.org/ebooks/henry-van-dyke-jr/the-house-of-rimmon/downloads/henry-van-dyke-jr_the-house-of-rimmon.epub?source=feed" length="510573" rel="enclosure" title="Recommended compatible epub" type="application/epub+zip"/>
+		<link href="https://standardebooks.org/ebooks/henry-van-dyke-jr/the-house-of-rimmon/downloads/henry-van-dyke-jr_the-house-of-rimmon_advanced.epub?source=feed" length="391288" rel="enclosure" title="Advanced epub" type="application/epub+zip"/>
+		<link href="https://standardebooks.org/ebooks/henry-van-dyke-jr/the-house-of-rimmon/downloads/henry-van-dyke-jr_the-house-of-rimmon.kepub.epub?source=feed" length="425480" rel="enclosure" title="Kobo Kepub epub" type="application/kepub+zip"/>
+		<link href="https://standardebooks.org/ebooks/henry-van-dyke-jr/the-house-of-rimmon/downloads/henry-van-dyke-jr_the-house-of-rimmon.azw3?source=feed" length="509208" rel="enclosure" title="Amazon Kindle azw3" type="application/x-mobipocket-ebook"/>
+		<link href="https://standardebooks.org/ebooks/henry-van-dyke-jr/the-house-of-rimmon/text/single-page" length="264633" rel="enclosure" title="XHTML" type="application/xhtml+xml"/>
+	</entry>
+	<entry>
+		<id>https://standardebooks.org/ebooks/john-gay/the-beggars-opera</id>
+		<title>The Beggar’s Opera</title>
+		<author>
+			<name>John Gay</name>
+			<uri>https://standardebooks.org/ebooks/john-gay</uri>
+		</author>
+		<published>2026-08-04T21:13:24Z</published>
+		<updated>2026-08-04T21:32:50Z</updated>
+		<rights>Public domain in the United States. Users located outside of the United States must check their local laws before using this ebook. Original content released to the public domain via the Creative Commons CC0 1.0 Universal Public Domain Dedication.</rights>
+		<summary type="text">A highwayman worries that he’s undone when his love affairs are uncovered.</summary>
+		<content type="html">&lt;p&gt;Peachum’s racket—running a gang of thieves who prey on London’s well-to-do—is paying great dividends, but what wasn’t in his plans was his daughter secretly marrying his most profitable rogue, the highwayman Captain Macheath. The best way out of the situation seems to be to collaborate with Lockit, the corrupt jailer of Newgate prison, to see Macheath hung for his crimes—but it turns out that it’s not just Polly whom Macheath has been having a dalliance with.&lt;/p&gt; &lt;p&gt;&lt;i&gt;The Beggar’s Opera&lt;/i&gt; was written as a satire of the fashionable Italian operas of the time, riffing on the same form but moving the setting from the upper-class sphere to something decidedly more down-to-earth. The music, similarly, was arranged from popular songs that the audience would have been familiar with. It was enormously popular, enjoying the then-longest theatrical run in London. A contemporary review, referring to the writer &lt;a href="https://standardebooks.org/ebooks/john-gay"&gt;John Gay&lt;/a&gt; and director John Rich, quipped that “it has made Rich very Gay, and probably will make Gay very Rich.” But not all of the critics were quite so positive, with some criticizing the thinly veiled satire of then-prominent public figures.&lt;/p&gt; &lt;p&gt;The opera remained enduringly popular after its initial run, though the sequel &lt;i&gt;Polly&lt;/i&gt; was seen to be a step too far and was banned. &lt;i&gt;The Beggar’s Opera&lt;/i&gt; had its biggest revival in the 1920s, inspiring Berthold Brecht’s &lt;i&gt;The Threepenny Opera&lt;/i&gt; and numerous other global performances and adaptations.&lt;/p&gt;</content>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Ballad operas -- Librettos"/>
+		<category scheme="https://standardebooks.org/vocab/subjects" term="Drama"/>
+		<category scheme="https://standardebooks.org/vocab/subjects" term="Satire"/>
+		<media:thumbnail height="525" url="https://standardebooks.org/ebooks/john-gay/the-beggars-opera/downloads/cover-thumbnail.jpg" width="350"/>
+		<link href="https://standardebooks.org/ebooks/john-gay/the-beggars-opera" rel="alternate" title="This ebook’s page at Standard Ebooks" type="application/xhtml+xml"/>
+		<link href="https://standardebooks.org/ebooks/john-gay/the-beggars-opera/downloads/john-gay_the-beggars-opera.epub?source=feed" length="2096019" rel="enclosure" title="Recommended compatible epub" type="application/epub+zip"/>
+		<link href="https://standardebooks.org/ebooks/john-gay/the-beggars-opera/downloads/john-gay_the-beggars-opera_advanced.epub?source=feed" length="909352" rel="enclosure" title="Advanced epub" type="application/epub+zip"/>
+		<link href="https://standardebooks.org/ebooks/john-gay/the-beggars-opera/downloads/john-gay_the-beggars-opera.kepub.epub?source=feed" length="814559" rel="enclosure" title="Kobo Kepub epub" type="application/kepub+zip"/>
+		<link href="https://standardebooks.org/ebooks/john-gay/the-beggars-opera/downloads/john-gay_the-beggars-opera.azw3?source=feed" length="1100114" rel="enclosure" title="Amazon Kindle azw3" type="application/x-mobipocket-ebook"/>
+		<link href="https://standardebooks.org/ebooks/john-gay/the-beggars-opera/text/single-page" length="2176754" rel="enclosure" title="XHTML" type="application/xhtml+xml"/>
+	</entry>
+	<entry>
+		<id>https://standardebooks.org/ebooks/franklin-w-dixon/the-great-airport-mystery</id>
+		<title>The Great Airport Mystery</title>
+		<author>
+			<name>Franklin W. Dixon</name>
+			<uri>https://standardebooks.org/ebooks/franklin-w-dixon</uri>
+		</author>
+		<published>2026-08-04T18:25:29Z</published>
+		<updated>2026-08-04T18:26:15Z</updated>
+		<rights>Public domain in the United States. Users located outside of the United States must check their local laws before using this ebook. Original content released to the public domain via the Creative Commons CC0 1.0 Universal Public Domain Dedication.</rights>
+		<summary type="text">After surviving an airplane accident, a pair of amateur sleuths get tangled up with a gang of thieves.</summary>
+		<content type="html">&lt;p&gt;It’s almost the end of term for the &lt;a href="https://standardebooks.org/collections/the-hardy-boys"&gt;Hardy boys&lt;/a&gt; and their chums. With tests and college (or a career as detectives) looming, the boys decide to take a drive to a newly constructed airport. However, their sightseeing quickly turns sour as an airplane crashes, nearly killing them in the process. Sore over the witnesses and evidence taking the boys’ side, the guilty pilot seems bent on revenge. The question is: just how far will he go?&lt;/p&gt; &lt;p&gt;This book was published in 1930 and then rewritten in 1965. This Standard Ebooks edition follows the original 1930 edition.&lt;/p&gt;</content>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Brothers -- Juvenile fiction"/>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Mystery and detective stories"/>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Robbers and outlaws -- Juvenile fiction"/>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Hardy Boys (Fictitious characters) -- Juvenile fiction"/>
+		<category scheme="https://standardebooks.org/vocab/subjects" term="Adventure"/>
+		<category scheme="https://standardebooks.org/vocab/subjects" term="Children’s"/>
+		<category scheme="https://standardebooks.org/vocab/subjects" term="Fiction"/>
+		<media:thumbnail height="525" url="https://standardebooks.org/ebooks/franklin-w-dixon/the-great-airport-mystery/downloads/cover-thumbnail.jpg" width="350"/>
+		<link href="https://standardebooks.org/ebooks/franklin-w-dixon/the-great-airport-mystery" rel="alternate" title="This ebook’s page at Standard Ebooks" type="application/xhtml+xml"/>
+		<link href="https://standardebooks.org/ebooks/franklin-w-dixon/the-great-airport-mystery/downloads/franklin-w-dixon_the-great-airport-mystery.epub?source=feed" length="479823" rel="enclosure" title="Recommended compatible epub" type="application/epub+zip"/>
+		<link href="https://standardebooks.org/ebooks/franklin-w-dixon/the-great-airport-mystery/downloads/franklin-w-dixon_the-great-airport-mystery_advanced.epub?source=feed" length="598024" rel="enclosure" title="Advanced epub" type="application/epub+zip"/>
+		<link href="https://standardebooks.org/ebooks/franklin-w-dixon/the-great-airport-mystery/downloads/franklin-w-dixon_the-great-airport-mystery.kepub.epub?source=feed" length="389942" rel="enclosure" title="Kobo Kepub epub" type="application/kepub+zip"/>
+		<link href="https://standardebooks.org/ebooks/franklin-w-dixon/the-great-airport-mystery/downloads/franklin-w-dixon_the-great-airport-mystery.azw3?source=feed" length="480909" rel="enclosure" title="Amazon Kindle azw3" type="application/x-mobipocket-ebook"/>
+		<link href="https://standardebooks.org/ebooks/franklin-w-dixon/the-great-airport-mystery/text/single-page" length="334644" rel="enclosure" title="XHTML" type="application/xhtml+xml"/>
+	</entry>
+	<entry>
+		<id>https://standardebooks.org/ebooks/rabindranath-tagore/the-home-and-the-world/surendranath-tagore</id>
+		<title>The Home and the World</title>
+		<author>
+			<name>Rabindranath Tagore</name>
+			<uri>https://standardebooks.org/ebooks/rabindranath-tagore</uri>
+		</author>
+		<published>2026-08-04T17:57:15Z</published>
+		<updated>2026-08-04T17:57:21Z</updated>
+		<rights>Public domain in the United States. Users located outside of the United States must check their local laws before using this ebook. Original content released to the public domain via the Creative Commons CC0 1.0 Universal Public Domain Dedication.</rights>
+		<summary type="text">When a wealthy Bengali woman’s husband invites an anti-British activist to their home, she becomes devoted to the nationalist cause, leading to disharmony in the household.</summary>
+		<content type="html">&lt;p&gt;The wealthy Bengali zamindar Nikhil has spent his last nine years of marriage trying to modernize and westernize his wife Bimala. But when he invites his friend Sandip, a fiery pro-Swadeshi activist fighting for Indian independence, to his home, Bimala becomes enraptured by the nationalist cause—and by the fascinating figure himself.&lt;/p&gt; &lt;p&gt;&lt;i&gt;The Home and the World&lt;/i&gt; is a complex exploration of the contradictions of the anti-British Swadeshi movement in the early 1900s. &lt;a href="https://standardebooks.org/ebooks/rabindranath-tagore"&gt;Rabindranath Tagore&lt;/a&gt; was himself active in the early days of the movement, but later became disillusioned, for reasons this novel examines in depth. The novel is also an examination of the traditional organization of wealthy Bengali households, in which women are kept separate from the outside world.&lt;/p&gt; &lt;p&gt;&lt;i&gt;The Home and the World&lt;/i&gt; was adapted into a 1984 Golden Palm nominated film by Satyajit Ray.&lt;/p&gt;</content>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="India -- History -- Autonomy and independence movements -- Fiction"/>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="India -- Fiction"/>
+		<category scheme="https://standardebooks.org/vocab/subjects" term="Fiction"/>
+		<media:thumbnail height="525" url="https://standardebooks.org/ebooks/rabindranath-tagore/the-home-and-the-world/surendranath-tagore/downloads/cover-thumbnail.jpg" width="350"/>
+		<link href="https://standardebooks.org/ebooks/rabindranath-tagore/the-home-and-the-world/surendranath-tagore" rel="alternate" title="This ebook’s page at Standard Ebooks" type="application/xhtml+xml"/>
+		<link href="https://standardebooks.org/ebooks/rabindranath-tagore/the-home-and-the-world/surendranath-tagore/downloads/rabindranath-tagore_the-home-and-the-world_surendranath-tagore.epub?source=feed" length="540083" rel="enclosure" title="Recommended compatible epub" type="application/epub+zip"/>
+		<link href="https://standardebooks.org/ebooks/rabindranath-tagore/the-home-and-the-world/surendranath-tagore/downloads/rabindranath-tagore_the-home-and-the-world_surendranath-tagore_advanced.epub?source=feed" length="542874" rel="enclosure" title="Advanced epub" type="application/epub+zip"/>
+		<link href="https://standardebooks.org/ebooks/rabindranath-tagore/the-home-and-the-world/surendranath-tagore/downloads/rabindranath-tagore_the-home-and-the-world_surendranath-tagore.kepub.epub?source=feed" length="419512" rel="enclosure" title="Kobo Kepub epub" type="application/kepub+zip"/>
+		<link href="https://standardebooks.org/ebooks/rabindranath-tagore/the-home-and-the-world/surendranath-tagore/downloads/rabindranath-tagore_the-home-and-the-world_surendranath-tagore.azw3?source=feed" length="562125" rel="enclosure" title="Amazon Kindle azw3" type="application/x-mobipocket-ebook"/>
+		<link href="https://standardebooks.org/ebooks/rabindranath-tagore/the-home-and-the-world/surendranath-tagore/text/single-page" length="509302" rel="enclosure" title="XHTML" type="application/xhtml+xml"/>
+	</entry>
+	<entry>
+		<id>https://standardebooks.org/ebooks/joseph-conrad/suspense</id>
+		<title>Suspense</title>
+		<author>
+			<name>Joseph Conrad</name>
+			<uri>https://standardebooks.org/ebooks/joseph-conrad</uri>
+		</author>
+		<published>2026-08-01T21:38:28Z</published>
+		<updated>2026-08-04T14:54:45Z</updated>
+		<rights>Public domain in the United States. Users located outside of the United States must check their local laws before using this ebook. Original content released to the public domain via the Creative Commons CC0 1.0 Universal Public Domain Dedication.</rights>
+		<summary type="text">A young Englishman stumbles upon love and political intrigue in Napoleonic-era Genoa.</summary>
+		<content type="html">&lt;p&gt;Cosmo Latham is a young Englishman travelling in Italy. The year is 1815, Napoleon is exiled on Elba, and the Congress of Vienna is still in session. Hoping to glimpse the exiled emperor himself, Cosmo arrives in Genoa, where he finds both political intrigue and a young woman—the Countess de Montevesso, whom he had known in England as Adèle d’Armand, and who is now unhappily married.&lt;/p&gt; &lt;p&gt;&lt;i&gt;Suspense&lt;/i&gt; is &lt;a href="https://standardebooks.org/ebooks/joseph-conrad"&gt;Conrad’s&lt;/a&gt; final, unfinished novel, published posthumously in 1925 by Richard Curle, Conrad’s executor and close friend. The plot is partially based on the memoirs of Adèle d’Osmond, Comtesse de Boigne, and the idea for the book had been on Conrad’s mind for many years; he even visited Corsica to gather writing material.&lt;/p&gt;</content>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="War stories"/>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Napoleonic Wars, 1800-1815 -- Fiction"/>
+		<category scheme="https://standardebooks.org/vocab/subjects" term="Fiction"/>
+		<media:thumbnail height="525" url="https://standardebooks.org/ebooks/joseph-conrad/suspense/downloads/cover-thumbnail.jpg" width="350"/>
+		<link href="https://standardebooks.org/ebooks/joseph-conrad/suspense" rel="alternate" title="This ebook’s page at Standard Ebooks" type="application/xhtml+xml"/>
+		<link href="https://standardebooks.org/ebooks/joseph-conrad/suspense/downloads/joseph-conrad_suspense.epub?source=feed" length="612050" rel="enclosure" title="Recommended compatible epub" type="application/epub+zip"/>
+		<link href="https://standardebooks.org/ebooks/joseph-conrad/suspense/downloads/joseph-conrad_suspense_advanced.epub?source=feed" length="1075822" rel="enclosure" title="Advanced epub" type="application/epub+zip"/>
+		<link href="https://standardebooks.org/ebooks/joseph-conrad/suspense/downloads/joseph-conrad_suspense.kepub.epub?source=feed" length="568770" rel="enclosure" title="Kobo Kepub epub" type="application/kepub+zip"/>
+		<link href="https://standardebooks.org/ebooks/joseph-conrad/suspense/downloads/joseph-conrad_suspense.azw3?source=feed" length="694674" rel="enclosure" title="Amazon Kindle azw3" type="application/x-mobipocket-ebook"/>
+		<link href="https://standardebooks.org/ebooks/joseph-conrad/suspense/text/single-page" length="558888" rel="enclosure" title="XHTML" type="application/xhtml+xml"/>
+	</entry>
+	<entry>
+		<id>https://standardebooks.org/ebooks/charles-kingsley/hypatia</id>
+		<title>Hypatia</title>
+		<author>
+			<name>Charles Kingsley</name>
+			<uri>https://standardebooks.org/ebooks/charles-kingsley</uri>
+		</author>
+		<published>2026-07-31T16:45:36Z</published>
+		<updated>2026-08-04T14:48:51Z</updated>
+		<rights>Public domain in the United States. Users located outside of the United States must check their local laws before using this ebook. Original content released to the public domain via the Creative Commons CC0 1.0 Universal Public Domain Dedication.</rights>
+		<summary type="text">A naive young monk in Roman Alexandria tries to convert a famous pagan woman philosopher to Christianity.</summary>
+		<content type="html">&lt;p&gt;Philammon is a young monk living in an isolated Egyptian monastery circa 400 AD. He feels a longing to see the world, so he embarks on a trip to Alexandria, a city teeming with culture and learning. On his way he meets Pelagia, a beautiful courtesan traveling up the Nile with a band of Goths in search of Asgard.&lt;/p&gt; &lt;p&gt;On reaching the legendary city, Philammon quickly finds himself embroiled in the feud between Orestes, the city’s prefect, and Cyril, the city’s Catholic archbishop. As he tries to navigate these troubled political waters, he hears of Hypatia, a woman philosopher and one of the last prominent champions of the Greek gods. Hypnotized by her knowledge and beauty, he undertakes to convert her to Christianity—but as his naivete keeps preventing him from reaching the brilliant philosopher, it becomes apparent that she’s being used as a pawn in Orestes’ and Cyril’s dangerous games. Meanwhile, Pelagia and her violent Goth friends complicate matters significantly.&lt;/p&gt; &lt;p&gt;&lt;i&gt;Hypatia&lt;/i&gt; is historical fiction based on real events and people. &lt;a href="https://standardebooks.org/ebooks/charles-kingsley"&gt;Kingsley&lt;/a&gt; wrote it mainly as a Christian apologia, asserting the moral superiority of Christianity over not just pagan religions, but Judaism, Catholicism, and Neoplatonism as well; but despite this, the novel spares few from scrutiny, with almost everyone engaging in their fair share of scheming and violence.&lt;/p&gt; &lt;p&gt;Hypatia herself, historically a prominent philosopher, mathematician, and astronomer, is protrayed as a strong, noble, and pure thinker. Kingsley’s characterization popularized her as the last of the great pagans, and made her an icon for women’s rights and feminism.&lt;/p&gt; &lt;p&gt;The novel is said to have been Queen Victoria’s favorite of Kingsley’s, and it inspired at least three contemporary paintings, one of which sparked an intense debate on nudity in art.&lt;/p&gt;</content>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Historical fiction"/>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Biographical fiction"/>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Egypt -- History -- 30 B.C.-640 A.D. -- Fiction"/>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Alexandria (Egypt) -- Fiction"/>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Hypatia, -415 -- Fiction"/>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Women philosophers -- Fiction"/>
+		<category scheme="https://standardebooks.org/vocab/subjects" term="Fiction"/>
+		<media:thumbnail height="525" url="https://standardebooks.org/ebooks/charles-kingsley/hypatia/downloads/cover-thumbnail.jpg" width="350"/>
+		<link href="https://standardebooks.org/ebooks/charles-kingsley/hypatia" rel="alternate" title="This ebook’s page at Standard Ebooks" type="application/xhtml+xml"/>
+		<link href="https://standardebooks.org/ebooks/charles-kingsley/hypatia/downloads/charles-kingsley_hypatia.epub?source=feed" length="846137" rel="enclosure" title="Recommended compatible epub" type="application/epub+zip"/>
+		<link href="https://standardebooks.org/ebooks/charles-kingsley/hypatia/downloads/charles-kingsley_hypatia_advanced.epub?source=feed" length="861079" rel="enclosure" title="Advanced epub" type="application/epub+zip"/>
+		<link href="https://standardebooks.org/ebooks/charles-kingsley/hypatia/downloads/charles-kingsley_hypatia.kepub.epub?source=feed" length="839460" rel="enclosure" title="Kobo Kepub epub" type="application/kepub+zip"/>
+		<link href="https://standardebooks.org/ebooks/charles-kingsley/hypatia/downloads/charles-kingsley_hypatia.azw3?source=feed" length="1066289" rel="enclosure" title="Amazon Kindle azw3" type="application/x-mobipocket-ebook"/>
+		<link href="https://standardebooks.org/ebooks/charles-kingsley/hypatia/text/single-page" length="1095361" rel="enclosure" title="XHTML" type="application/xhtml+xml"/>
+	</entry>
+	<entry>
+		<id>https://standardebooks.org/ebooks/mor-jokai/midst-the-wild-carpathians/robert-nisbet-bain</id>
+		<title>’Midst the Wild Carpathians</title>
+		<author>
+			<name>Mór Jókai</name>
+			<uri>https://standardebooks.org/ebooks/mor-jokai</uri>
+		</author>
+		<published>2026-07-31T14:40:15Z</published>
+		<updated>2026-08-04T14:56:47Z</updated>
+		<rights>Public domain in the United States. Users located outside of the United States must check their local laws before using this ebook. Original content released to the public domain via the Creative Commons CC0 1.0 Universal Public Domain Dedication.</rights>
+		<summary type="text">The newly-placed Prince of Transylvania must defend his realm against foreign influence.</summary>
+		<content type="html">&lt;p&gt;After being released from Tartar captivity, Michael Apafi, a Transylvanian noble, is installed as Prince of Transylvania by the Ottoman Sultan. He must now secure his authority and deal with conflicting interests both domestic and foreign. With his realm located between the Ottoman Sultan and the Austrian Emperor, its independence is in constant danger.&lt;/p&gt; &lt;p&gt;&lt;i&gt;’Midst the Wild Carpathians&lt;/i&gt; is one of &lt;a href="https://standardebooks.org/ebooks/mor-jokai"&gt;Mór Jókai’s&lt;/a&gt; most famous works. Written in the context of budding Hungarian nationalism, the novel is a fictionalized retelling of real events of 17th Century Transylvania.&lt;/p&gt;</content>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Historical fiction"/>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Hungarian fiction -- Translations into English"/>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Transylvania (Romania) -- History -- Fiction"/>
+		<category scheme="https://standardebooks.org/vocab/subjects" term="Fiction"/>
+		<media:thumbnail height="525" url="https://standardebooks.org/ebooks/mor-jokai/midst-the-wild-carpathians/robert-nisbet-bain/downloads/cover-thumbnail.jpg" width="350"/>
+		<link href="https://standardebooks.org/ebooks/mor-jokai/midst-the-wild-carpathians/robert-nisbet-bain" rel="alternate" title="This ebook’s page at Standard Ebooks" type="application/xhtml+xml"/>
+		<link href="https://standardebooks.org/ebooks/mor-jokai/midst-the-wild-carpathians/robert-nisbet-bain/downloads/mor-jokai_midst-the-wild-carpathians_robert-nisbet-bain.epub?source=feed" length="800795" rel="enclosure" title="Recommended compatible epub" type="application/epub+zip"/>
+		<link href="https://standardebooks.org/ebooks/mor-jokai/midst-the-wild-carpathians/robert-nisbet-bain/downloads/mor-jokai_midst-the-wild-carpathians_robert-nisbet-bain_advanced.epub?source=feed" length="836986" rel="enclosure" title="Advanced epub" type="application/epub+zip"/>
+		<link href="https://standardebooks.org/ebooks/mor-jokai/midst-the-wild-carpathians/robert-nisbet-bain/downloads/mor-jokai_midst-the-wild-carpathians_robert-nisbet-bain.kepub.epub?source=feed" length="691355" rel="enclosure" title="Kobo Kepub epub" type="application/kepub+zip"/>
+		<link href="https://standardebooks.org/ebooks/mor-jokai/midst-the-wild-carpathians/robert-nisbet-bain/downloads/mor-jokai_midst-the-wild-carpathians_robert-nisbet-bain.azw3?source=feed" length="878861" rel="enclosure" title="Amazon Kindle azw3" type="application/x-mobipocket-ebook"/>
+		<link href="https://standardebooks.org/ebooks/mor-jokai/midst-the-wild-carpathians/robert-nisbet-bain/text/single-page" length="710503" rel="enclosure" title="XHTML" type="application/xhtml+xml"/>
+	</entry>
+	<entry>
+		<id>https://standardebooks.org/ebooks/h-c-mcneile/the-black-gang</id>
+		<title>The Black Gang</title>
+		<author>
+			<name>H. C. McNeile</name>
+			<uri>https://standardebooks.org/ebooks/h-c-mcneile</uri>
+		</author>
+		<published>2026-07-31T14:22:54Z</published>
+		<updated>2026-08-04T14:52:32Z</updated>
+		<rights>Public domain in the United States. Users located outside of the United States must check their local laws before using this ebook. Original content released to the public domain via the Creative Commons CC0 1.0 Universal Public Domain Dedication.</rights>
+		<summary type="text">A soldier-turned-detective and his team bust up a Bolshevik plot to take over Britain.</summary>
+		<content type="html">&lt;p&gt;Having just survived the horrors of the First World War, Great Britain faces a new, more insidious threat: all across the country, clandestine groups of radicals are committing acts of sabotage and terror, with the ultimate goal of bringing about a Communist revolution in Britain. But these terrorists face a new terror of their own as their plans are foiled, their meetings raided, and their members kidnapped—all by a mysterious band of men dressed in black. Who’s behind the so-called “Black Gang”? The terrorists have no idea, and neither do Scotland Yard nor the media. Could the leader possibly be war hero-turned-gentleman sleuth &lt;a href="https://standardebooks.org/collections/bulldog-drummond"&gt;Hugh “Bulldog” Drummond&lt;/a&gt;, continuing his struggle against his archenemy, Carl Peterson?&lt;/p&gt;</content>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Detective and mystery stories"/>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="English fiction -- 20th century"/>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="World War, 1914-1918 -- Veterans -- Fiction"/>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Drummond, Bulldog (Fictitious character) -- Fiction"/>
+		<category scheme="https://standardebooks.org/vocab/subjects" term="Adventure"/>
+		<category scheme="https://standardebooks.org/vocab/subjects" term="Fiction"/>
+		<media:thumbnail height="525" url="https://standardebooks.org/ebooks/h-c-mcneile/the-black-gang/downloads/cover-thumbnail.jpg" width="350"/>
+		<link href="https://standardebooks.org/ebooks/h-c-mcneile/the-black-gang" rel="alternate" title="This ebook’s page at Standard Ebooks" type="application/xhtml+xml"/>
+		<link href="https://standardebooks.org/ebooks/h-c-mcneile/the-black-gang/downloads/h-c-mcneile_the-black-gang.epub?source=feed" length="597369" rel="enclosure" title="Recommended compatible epub" type="application/epub+zip"/>
+		<link href="https://standardebooks.org/ebooks/h-c-mcneile/the-black-gang/downloads/h-c-mcneile_the-black-gang_advanced.epub?source=feed" length="854356" rel="enclosure" title="Advanced epub" type="application/epub+zip"/>
+		<link href="https://standardebooks.org/ebooks/h-c-mcneile/the-black-gang/downloads/h-c-mcneile_the-black-gang.kepub.epub?source=feed" length="553303" rel="enclosure" title="Kobo Kepub epub" type="application/kepub+zip"/>
+		<link href="https://standardebooks.org/ebooks/h-c-mcneile/the-black-gang/downloads/h-c-mcneile_the-black-gang.azw3?source=feed" length="679945" rel="enclosure" title="Amazon Kindle azw3" type="application/x-mobipocket-ebook"/>
+		<link href="https://standardebooks.org/ebooks/h-c-mcneile/the-black-gang/text/single-page" length="544543" rel="enclosure" title="XHTML" type="application/xhtml+xml"/>
+	</entry>
+	<entry>
+		<id>https://standardebooks.org/ebooks/max-weber/the-protestant-ethic-and-the-spirit-of-capitalism/talcott-parsons</id>
+		<title>The Protestant Ethic and the Spirit of Capitalism</title>
+		<author>
+			<name>Max Weber</name>
+			<uri>https://standardebooks.org/ebooks/max-weber</uri>
+		</author>
+		<published>2026-07-28T20:00:36Z</published>
+		<updated>2026-08-04T14:56:38Z</updated>
+		<rights>Public domain in the United States. Users located outside of the United States must check their local laws before using this ebook. Original content released to the public domain via the Creative Commons CC0 1.0 Universal Public Domain Dedication.</rights>
+		<summary type="text">A German historian presents a theory detailing how certain ideas which are key to capitalism may have evolved from Protestantism.</summary>
+		<content type="html">&lt;p&gt;Capitalism as a pervasive economic system was not inevitable. The ideas underlying such a way of organizing society must have originated somewhere.&lt;/p&gt; &lt;p&gt;In &lt;i&gt;The Protestant Ethic and the Spirit of Capitalism&lt;/i&gt;, the German historian &lt;a href="https://standardebooks.org/ebooks/max-weber"&gt;Max Weber&lt;/a&gt; attempts to trace the economic and philosophical development of capitalism, first by identifying what he calls “the spirit of capitalism.” For Weber this is best encapsulated by &lt;a href="https://standardebooks.org/ebooks/benjamin-franklin"&gt;Benjamin Franklin’s&lt;/a&gt; well-known aphorism “time is money.” This apparently innocuous statement only makes sense in a wage economy, where one is comfortable thinking about time as something that can be bought. Indeed, this and other of Franklin aphorisms paint a picture of a world we might recognize, in which making money is commonly seen not a means to a better life, but as a goal in and of itself. Virtues such as honesty and trustworthiness are still important, but mainly because they’re qualities that are profitable.&lt;/p&gt; &lt;p&gt;This rational utilitarian view has its roots, Weber contends, in earlier Protestant thought. One of the key ideas that the Reformation introduced was the idea of a calling, which is an idea that compelled believers to perform work on Earth in the service of God. Over time this ethic of work came to be applied to more and more material concerns, including the seeking of profit. But the idea of work as a moral duty never completely disappeared—rather, it became the spiritual basis of industrial capitalism.&lt;/p&gt; &lt;p&gt;Today &lt;i&gt;The Protestant Ethic and the Spirit of Capitalism&lt;/i&gt; is regarded as a classic in sociology, and was named the fourth most important sociological book of the 20th century by the International Sociological Association.&lt;/p&gt;</content>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Capitalism--Religious aspects--Protestant churches"/>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Protestant work ethic"/>
+		<category scheme="https://standardebooks.org/vocab/subjects" term="Nonfiction"/>
+		<category scheme="https://standardebooks.org/vocab/subjects" term="Philosophy"/>
+		<category scheme="https://standardebooks.org/vocab/subjects" term="Spirituality"/>
+		<media:thumbnail height="525" url="https://standardebooks.org/ebooks/max-weber/the-protestant-ethic-and-the-spirit-of-capitalism/talcott-parsons/downloads/cover-thumbnail.jpg" width="350"/>
+		<link href="https://standardebooks.org/ebooks/max-weber/the-protestant-ethic-and-the-spirit-of-capitalism/talcott-parsons" rel="alternate" title="This ebook’s page at Standard Ebooks" type="application/xhtml+xml"/>
+		<link href="https://standardebooks.org/ebooks/max-weber/the-protestant-ethic-and-the-spirit-of-capitalism/talcott-parsons/downloads/max-weber_the-protestant-ethic-and-the-spirit-of-capitalism_talcott-parsons.epub?source=feed" length="747041" rel="enclosure" title="Recommended compatible epub" type="application/epub+zip"/>
+		<link href="https://standardebooks.org/ebooks/max-weber/the-protestant-ethic-and-the-spirit-of-capitalism/talcott-parsons/downloads/max-weber_the-protestant-ethic-and-the-spirit-of-capitalism_talcott-parsons_advanced.epub?source=feed" length="995724" rel="enclosure" title="Advanced epub" type="application/epub+zip"/>
+		<link href="https://standardebooks.org/ebooks/max-weber/the-protestant-ethic-and-the-spirit-of-capitalism/talcott-parsons/downloads/max-weber_the-protestant-ethic-and-the-spirit-of-capitalism_talcott-parsons.kepub.epub?source=feed" length="626641" rel="enclosure" title="Kobo Kepub epub" type="application/kepub+zip"/>
+		<link href="https://standardebooks.org/ebooks/max-weber/the-protestant-ethic-and-the-spirit-of-capitalism/talcott-parsons/downloads/max-weber_the-protestant-ethic-and-the-spirit-of-capitalism_talcott-parsons.azw3?source=feed" length="880518" rel="enclosure" title="Amazon Kindle azw3" type="application/x-mobipocket-ebook"/>
+		<link href="https://standardebooks.org/ebooks/max-weber/the-protestant-ethic-and-the-spirit-of-capitalism/talcott-parsons/text/single-page" length="846389" rel="enclosure" title="XHTML" type="application/xhtml+xml"/>
+	</entry>
+	<entry>
+		<id>https://standardebooks.org/ebooks/joseph-conrad/the-rescue</id>
+		<title>The Rescue</title>
+		<author>
+			<name>Joseph Conrad</name>
+			<uri>https://standardebooks.org/ebooks/joseph-conrad</uri>
+		</author>
+		<published>2026-07-26T17:01:31Z</published>
+		<updated>2026-08-04T14:54:48Z</updated>
+		<rights>Public domain in the United States. Users located outside of the United States must check their local laws before using this ebook. Original content released to the public domain via the Creative Commons CC0 1.0 Universal Public Domain Dedication.</rights>
+		<summary type="text">The captain of a cargo ship is forced to rescue the passangers and crew of a yacht stranded on a Malaysian island.</summary>
+		<content type="html">&lt;p&gt;Tom Lingard, captain of the vessel &lt;i&gt;Lightning&lt;/i&gt;, is returning to the Malaysian Archipelago to fulfill his promise to an exiled Malaysian prince and princess to help them retake control of their kingdom. Lingard’s plans are interrupted when his ship encounters a small boat that’s stranded on the same island that Lingard is to rendezvous with the prince.&lt;/p&gt; &lt;p&gt;Upon arriving Lingard meets the boat’s passengers: Mr. Travers, a successful businessman and the boat’s owner, his wife Edith, and Mr. d’Alcacer, a Spanish acquaintance of theirs. Lingard encounters resistance from Mr. Travers, who refuses his help; but before Lingard can leave, the prince and princess make an appearance and upend Lingard’s plans. This is further complicated by Lingard’s having fallen for Edith Travers, and by the abrupt entrance of a local tribe bent on claiming the boat’s resources for themselves.&lt;/p&gt; &lt;p&gt;&lt;a href="https://standardebooks.org/ebooks/joseph-conrad"&gt;Conrad’s&lt;/a&gt; preface explains that work on &lt;i&gt;The Rescue&lt;/i&gt; took over twenty years: even though he knew the direction of the story, he wasn’t convinced that he could present it clearly, so it was sidelined for years while he worked on his many other novels in the meantime.&lt;/p&gt;</content>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Sea stories"/>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Love stories"/>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Rescues -- Fiction"/>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Lingard, Tom (Fictitious character) -- Fiction"/>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Yachting -- Fiction"/>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Malay Archipelago -- Fiction"/>
+		<category scheme="https://standardebooks.org/vocab/subjects" term="Fiction"/>
+		<media:thumbnail height="525" url="https://standardebooks.org/ebooks/joseph-conrad/the-rescue/downloads/cover-thumbnail.jpg" width="350"/>
+		<link href="https://standardebooks.org/ebooks/joseph-conrad/the-rescue" rel="alternate" title="This ebook’s page at Standard Ebooks" type="application/xhtml+xml"/>
+		<link href="https://standardebooks.org/ebooks/joseph-conrad/the-rescue/downloads/joseph-conrad_the-rescue.epub?source=feed" length="602742" rel="enclosure" title="Recommended compatible epub" type="application/epub+zip"/>
+		<link href="https://standardebooks.org/ebooks/joseph-conrad/the-rescue/downloads/joseph-conrad_the-rescue_advanced.epub?source=feed" length="526221" rel="enclosure" title="Advanced epub" type="application/epub+zip"/>
+		<link href="https://standardebooks.org/ebooks/joseph-conrad/the-rescue/downloads/joseph-conrad_the-rescue.kepub.epub?source=feed" length="594455" rel="enclosure" title="Kobo Kepub epub" type="application/kepub+zip"/>
+		<link href="https://standardebooks.org/ebooks/joseph-conrad/the-rescue/downloads/joseph-conrad_the-rescue.azw3?source=feed" length="763216" rel="enclosure" title="Amazon Kindle azw3" type="application/x-mobipocket-ebook"/>
+		<link href="https://standardebooks.org/ebooks/joseph-conrad/the-rescue/text/single-page" length="914268" rel="enclosure" title="XHTML" type="application/xhtml+xml"/>
+	</entry>
+	<entry>
+		<id>https://standardebooks.org/ebooks/james-branch-cabell/the-line-of-love</id>
+		<title>The Line of Love</title>
+		<author>
+			<name>James Branch Cabell</name>
+			<uri>https://standardebooks.org/ebooks/james-branch-cabell</uri>
+		</author>
+		<published>2026-07-22T18:06:32Z</published>
+		<updated>2026-08-04T14:53:44Z</updated>
+		<rights>Public domain in the United States. Users located outside of the United States must check their local laws before using this ebook. Original content released to the public domain via the Creative Commons CC0 1.0 Universal Public Domain Dedication.</rights>
+		<summary type="text">A generational saga plays out in a series of short stories about love and marriage in medieval Europe.</summary>
+		<content type="html">&lt;p&gt;&lt;i&gt;The Line of Love&lt;/i&gt;, the seventh installment in &lt;a href="https://standardebooks.org/ebooks/james-branch-cabell"&gt;James Branch Cabell’s&lt;/a&gt; &lt;a href="https://standardebooks.org/collections/biography-of-the-life-of-manuel"&gt;Biography of the Life of Manuel&lt;/a&gt;, is a short story collection that satirizes love and marriage, combining Cabell’s affinity for genealogical works with his signature comedic wit. Originally published in 1905, it was revised in 1921 to better fit within the Life of Manuel series, and follows the romantic escapades of the “monstrous clever fellow” Jurgen’s descendants.&lt;/p&gt;</content>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Historical fiction"/>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Fantasy fiction"/>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Middle Ages -- Fiction"/>
+		<category scheme="https://standardebooks.org/vocab/subjects" term="Comedy"/>
+		<category scheme="https://standardebooks.org/vocab/subjects" term="Fantasy"/>
+		<media:thumbnail height="525" url="https://standardebooks.org/ebooks/james-branch-cabell/the-line-of-love/downloads/cover-thumbnail.jpg" width="350"/>
+		<link href="https://standardebooks.org/ebooks/james-branch-cabell/the-line-of-love" rel="alternate" title="This ebook’s page at Standard Ebooks" type="application/xhtml+xml"/>
+		<link href="https://standardebooks.org/ebooks/james-branch-cabell/the-line-of-love/downloads/james-branch-cabell_the-line-of-love.epub?source=feed" length="826827" rel="enclosure" title="Recommended compatible epub" type="application/epub+zip"/>
+		<link href="https://standardebooks.org/ebooks/james-branch-cabell/the-line-of-love/downloads/james-branch-cabell_the-line-of-love_advanced.epub?source=feed" length="897361" rel="enclosure" title="Advanced epub" type="application/epub+zip"/>
+		<link href="https://standardebooks.org/ebooks/james-branch-cabell/the-line-of-love/downloads/james-branch-cabell_the-line-of-love.kepub.epub?source=feed" length="769186" rel="enclosure" title="Kobo Kepub epub" type="application/kepub+zip"/>
+		<link href="https://standardebooks.org/ebooks/james-branch-cabell/the-line-of-love/downloads/james-branch-cabell_the-line-of-love.azw3?source=feed" length="889970" rel="enclosure" title="Amazon Kindle azw3" type="application/x-mobipocket-ebook"/>
+		<link href="https://standardebooks.org/ebooks/james-branch-cabell/the-line-of-love/text/single-page" length="457055" rel="enclosure" title="XHTML" type="application/xhtml+xml"/>
+	</entry>
+	<entry>
+		<id>https://standardebooks.org/ebooks/walter-white/the-fire-in-the-flint</id>
+		<title>The Fire in the Flint</title>
+		<author>
+			<name>Walter White</name>
+			<uri>https://standardebooks.org/ebooks/walter-white</uri>
+		</author>
+		<published>2026-07-22T17:20:07Z</published>
+		<updated>2026-08-04T14:59:44Z</updated>
+		<rights>Public domain in the United States. Users located outside of the United States must check their local laws before using this ebook. Original content released to the public domain via the Creative Commons CC0 1.0 Universal Public Domain Dedication.</rights>
+		<summary type="text">An optimistic Black physician returns to his Georgia hometown where he must grapple with racial tensions he thought had faded.</summary>
+		<content type="html">&lt;p&gt;Set in the Jim Crow South following World War I, &lt;i&gt;The Fire in the Flint&lt;/i&gt; follows Dr. Kenneth Harper, a young, sometimes naive Black physician and war veteran. After graduating from a Northern medical school, he returns to his hometown of Central City, Georgia to start a practice. He arrives believing he can avoid discrimination by simply not getting involved with the town’s racial affairs—but he quickly finds out otherwise, and must confront the reality of living in a place where systemic racism and the Ku Klux Klan run rampant.&lt;/p&gt; &lt;p&gt;&lt;i&gt;The Fire in the Flint&lt;/i&gt;, published in 1924, is American civil rights activist &lt;a href="https://standardebooks.org/ebooks/walter-white"&gt;Walter White’s&lt;/a&gt; debut novel. Written during the height of the Harlem Renaissance—a period where African American literature flourished—White sought to promote anti-racist themes and showcase the oppression Black people faced in the early twentieth-century.&lt;/p&gt;</content>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Bildungsromans"/>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Young men -- Fiction"/>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Medical fiction"/>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Race relations -- Fiction"/>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="Georgia -- Fiction"/>
+		<category scheme="http://purl.org/dc/terms/LCSH" term="African American physicians -- Fiction"/>
+		<category scheme="https://standardebooks.org/vocab/subjects" term="Fiction"/>
+		<media:thumbnail height="525" url="https://standardebooks.org/ebooks/walter-white/the-fire-in-the-flint/downloads/cover-thumbnail.jpg" width="350"/>
+		<link href="https://standardebooks.org/ebooks/walter-white/the-fire-in-the-flint" rel="alternate" title="This ebook’s page at Standard Ebooks" type="application/xhtml+xml"/>
+		<link href="https://standardebooks.org/ebooks/walter-white/the-fire-in-the-flint/downloads/walter-white_the-fire-in-the-flint.epub?source=feed" length="784463" rel="enclosure" title="Recommended compatible epub" type="application/epub+zip"/>
+		<link href="https://standardebooks.org/ebooks/walter-white/the-fire-in-the-flint/downloads/walter-white_the-fire-in-the-flint_advanced.epub?source=feed" length="1199080" rel="enclosure" title="Advanced epub" type="application/epub+zip"/>
+		<link href="https://standardebooks.org/ebooks/walter-white/the-fire-in-the-flint/downloads/walter-white_the-fire-in-the-flint.kepub.epub?source=feed" length="757313" rel="enclosure" title="Kobo Kepub epub" type="application/kepub+zip"/>
+		<link href="https://standardebooks.org/ebooks/walter-white/the-fire-in-the-flint/downloads/walter-white_the-fire-in-the-flint.azw3?source=feed" length="860125" rel="enclosure" title="Amazon Kindle azw3" type="application/x-mobipocket-ebook"/>
+		<link href="https://standardebooks.org/ebooks/walter-white/the-fire-in-the-flint/text/single-page" length="520202" rel="enclosure" title="XHTML" type="application/xhtml+xml"/>
+	</entry>
+</feed>

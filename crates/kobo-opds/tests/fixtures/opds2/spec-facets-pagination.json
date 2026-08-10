@@ -1,0 +1,58 @@
+{
+  "metadata": {
+    "title": "Paginated feed",
+    "numberOfItems": 5678,
+    "itemsPerPage": 50,
+    "currentPage": 2
+  },
+  "links": [
+    {"rel": "self", "href": "https://example.com/?page=2", "type": "application/opds+json"},
+    {"rel": ["first", "previous"], "href": "https://example.com/?page=1", "type": "application/opds+json"},
+    {"rel": "next", "href": "https://example.com/?page=3", "type": "application/opds+json"},
+    {"rel": "last", "href": "https://example.com/?page=114", "type": "application/opds+json"},
+    {"rel": "search", "href": "search{?query,title,author}", "type": "application/opds+json", "templated": true}
+  ],
+  "facets": [
+    {
+      "metadata": {"title": "Language"},
+      "links": [
+        {"href": "/fr", "type": "application/opds+json", "title": "French", "properties": {"numberOfItems": 10}},
+        {"href": "/en", "type": "application/opds+json", "title": "English", "properties": {"numberOfItems": 40}},
+        {"rel": "self", "href": "/de", "type": "application/opds+json", "title": "German", "properties": {"numberOfItems": 6}}
+      ]
+    }
+  ],
+  "publications": [
+    {
+      "metadata": {
+        "@type": "http://schema.org/EBook",
+        "identifier": "urn:isbn:9780000000002",
+        "title": "A Journey into the Center of the Earth",
+        "author": {
+          "name": "Jules Verne",
+          "identifier": "http://isni.org/isni/0000000121400562",
+          "sortAs": "Verne, Jules",
+          "links": [{"href": "/author/0000000121400562", "type": "application/opds+json"}]
+        },
+        "translator": "Frederick Amadeus Malleson",
+        "language": "en",
+        "publisher": "SciFi Publishing Inc.",
+        "modified": "2016-02-22T11:31:38Z",
+        "description": "The story involves German professor Otto Lidenbrock who believes there are volcanic tubes going toward the centre of the Earth.",
+        "belongsTo": {
+          "series": {"name": "The Extraordinary Voyages", "position": 3},
+          "collection": "SciFi Classics"
+        }
+      },
+      "links": [
+        {"href": "/buy", "rel": "buy", "type": "text/html", "properties": {"price": {"currency": "USD", "value": 4.99}, "indirectAcquisition": [{"type": "application/epub+zip"}]}},
+        {"href": "/sample.epub", "rel": "preview", "type": "application/epub+zip"},
+        {"href": "/free.epub", "rel": "download", "type": "application/epub+zip"}
+      ],
+      "images": [
+        {"href": "http://example.org/cover.jpg", "type": "image/jpeg", "height": 1400, "width": 800},
+        {"href": "http://example.org/cover-small.jpg", "type": "image/jpeg", "height": 700, "width": 400}
+      ]
+    }
+  ]
+}
