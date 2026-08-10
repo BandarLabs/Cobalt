@@ -93,6 +93,9 @@ pub(crate) fn skip_bracketed(tail: &str) -> Option<&str> {
 struct State {
     builder: Builder,
     text: String,
+    /// The link being read: where it points, and how much text had been
+    /// collected when it opened, so its own words can be taken back out.
+    link: Option<(String, usize)>,
     /// How many block quotations deep the scan is. See `markdown` for why this
     /// is a count.
     quoted: usize,
@@ -114,6 +117,7 @@ impl State {
     fn new() -> Self {
         Self {
             builder: Builder::new(),
+            link: None,
             text: String::new(),
             quoted: 0,
             pre: 0,
@@ -183,6 +187,15 @@ impl State {
             }
             return;
         }
+        if name == "a" {
+            // Where the words of the link start, so they can be taken back
+            // out when it closes: a link's own text is what a reader taps,
+            // and the paragraph around it is not.
+            if let Some(href) = attribute(inside, "href") {
+                self.link = Some((decode_entities(href), self.text.len()));
+            }
+            return;
+        }
         match name {
             // A `<br>` is a soft break. One column, and the paginator wraps:
             // honouring it would give a ragged short line in the middle of a
@@ -249,6 +262,13 @@ impl State {
 
     fn close(&mut self, name: &str) {
         if self.pre > 0 && name != "pre" {
+            return;
+        }
+        if name == "a" {
+            if let Some((target, from)) = self.link.take() {
+                let words = self.text.get(from..).unwrap_or_default().to_owned();
+                self.builder.record_link(&words, &target);
+            }
             return;
         }
         match name {

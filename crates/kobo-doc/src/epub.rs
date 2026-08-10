@@ -100,6 +100,7 @@ pub fn parse(bytes: &[u8]) -> Result<Document, Fault> {
     // be compared without either knowing how the other was spelled.
     let mut starts: Vec<(String, usize)> = Vec::new();
     let mut anchors: BTreeMap<String, usize> = BTreeMap::new();
+    let mut links: Vec<crate::Link> = Vec::new();
     for id in package.reading_order() {
         if parts >= MAX_PARTS {
             truncated = true;
@@ -149,6 +150,17 @@ pub fn parse(bytes: &[u8]) -> Result<Document, Fault> {
         for (id, at) in part.anchors {
             anchors.insert(format!("{name}#{id}"), start + at);
         }
+        // A link's target was written relative to this file too, and its
+        // fragment is the whole point: a footnote marker points at a place
+        // inside a chapter, not at the chapter.
+        for mut link in part.links {
+            link.block += start;
+            link.target = match fragment_of(&link.target) {
+                Some(fragment) => format!("{}#{fragment}", resolve(&inside, &link.target)),
+                None => resolve(&inside, &link.target),
+            };
+            links.push(link);
+        }
         starts.push((name, start));
         for block in part.blocks {
             builder.push(block);
@@ -161,6 +173,7 @@ pub fn parse(bytes: &[u8]) -> Result<Document, Fault> {
     }
     builder.set_contents(contents_of(&archive, &package, &base, &starts, &anchors));
     builder.set_anchors(anchors);
+    builder.set_links(links);
     builder.set_images(images_of(&archive, &builder));
     let mut document = builder.finish();
     document.truncated |= truncated;

@@ -136,6 +136,13 @@ pub const MAX_TEXT: usize = 16 * 1024 * 1024;
 /// the map cost more than the book.
 pub const MAX_ANCHORS: usize = 20_000;
 
+/// The most links one document may hold.
+///
+/// An annotated edition links every other sentence to a note. This is above
+/// that and below the point where the list costs more than the book it is a
+/// list of.
+pub const MAX_LINKS: usize = 20_000;
+
 /// The most text one block may hold.
 ///
 /// A paragraph is a few hundred characters. A "paragraph" of a megabyte is a
@@ -265,6 +272,35 @@ pub struct Document {
     /// drawing them rather than to the parser. A book of four hundred
     /// engravings should not cost four hundred decodes to open.
     pub images: BTreeMap<String, Vec<u8>>,
+    /// The links the book makes from one part of itself to another.
+    ///
+    /// A footnote marker, an endnote's way back, a cross-reference: all of
+    /// them were flattened to plain text, so the words stayed and the going
+    /// there did not. Kept in reading order.
+    pub links: Vec<Link>,
+}
+
+/// Somewhere the book points, and the words it points from.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Link {
+    /// The block the words sit in, as an index into [`Document::blocks`].
+    pub block: usize,
+    pub text: String,
+    /// What it points at, in the same spelling [`Document::anchors`] uses.
+    ///
+    /// A target that is not in the anchors is one this book cannot reach: a
+    /// link out to the web, or into a file the reading order left out. Kept
+    /// rather than dropped, so a reader can be told the difference between a
+    /// link that goes nowhere and a link that was never there.
+    pub target: String,
+}
+
+impl Document {
+    /// Where a link goes, when it goes somewhere in this book.
+    #[must_use]
+    pub fn destination(&self, link: &Link) -> Option<usize> {
+        self.anchors.get(&link.target).copied()
+    }
 }
 
 /// One line of a book's own table of contents.
@@ -381,6 +417,28 @@ impl Builder {
     /// assembled before it can say what else the book needs.
     pub(crate) fn blocks(&self) -> &[Block] {
         &self.document.blocks
+    }
+
+    /// Notes a link from the block being assembled.
+    ///
+    /// Recorded against the block it will become, the same way an anchor is,
+    /// because the words of a link are part of a paragraph that has not been
+    /// pushed yet.
+    pub(crate) fn record_link(&mut self, text: &str, target: &str) {
+        let text = collapse(text);
+        if text.is_empty() || target.trim().is_empty() || self.document.links.len() >= MAX_LINKS {
+            return;
+        }
+        self.document.links.push(Link {
+            block: self.document.blocks.len(),
+            text,
+            target: target.to_owned(),
+        });
+    }
+
+    /// Replaces the links, once a caller has resolved their targets.
+    pub(crate) fn set_links(&mut self, links: Vec<Link>) {
+        self.document.links = links;
     }
 
     /// Records the pictures the book refers to.
@@ -537,6 +595,13 @@ impl Builder {
                 (at < kept).then_some((name, at))
             })
             .collect();
+        self.document.links.retain_mut(|link| {
+            let Some(block) = link.block.checked_sub(removed_from_front) else {
+                return false;
+            };
+            link.block = block;
+            block < kept
+        });
         self.document
     }
 }

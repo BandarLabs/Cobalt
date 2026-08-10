@@ -100,6 +100,8 @@ pub enum Chrome {
     Light,
     /// Everything marked in this book, in order, each one a way back to it.
     Highlights,
+    /// Where this page points: footnotes, cross-references, notes back.
+    Links,
     /// The book's own table of contents, each line a way into it.
     ///
     /// Only reachable for a book that published one. The parts worked out
@@ -277,6 +279,8 @@ pub mod action {
     pub const GO: &str = "reader-go-";
     /// Opens the book's own table of contents.
     pub const CONTENTS: &str = "reader-contents";
+    /// Opens the links the page being read points at.
+    pub const LINKS: &str = "reader-links";
 }
 
 /// What an application still has to do about an action the reader handled.
@@ -785,6 +789,10 @@ impl Reader {
                 self.set_chrome(Chrome::Contents, panel);
                 Outcome::Repaint
             }
+            action::LINKS => {
+                self.set_chrome(Chrome::Links, panel);
+                Outcome::Repaint
+            }
             action::MARKING => {
                 self.set_chrome(Chrome::Marking, panel);
                 Outcome::Repaint
@@ -870,6 +878,9 @@ impl Reader {
         for entry in &self.document.contents {
             names.push(format!("{}{}", action::GO, entry.block));
         }
+        for (_, block) in self.links_here() {
+            names.push(format!("{}{block}", action::GO));
+        }
         let Some(name) = names
             .into_iter()
             .find(|name| kobo_sdk::action_id(name) == action)
@@ -894,6 +905,7 @@ impl Reader {
         match self.chrome {
             Chrome::Highlights => self.marks_screen(title),
             Chrome::Contents => self.contents_screen(title),
+            Chrome::Links => self.links_screen(title),
             Chrome::Marking => self.marking_screen(title),
             Chrome::Controls | Chrome::Light | Chrome::Hidden => self.book_screen(title),
         }
@@ -1084,7 +1096,66 @@ impl Reader {
         if !self.document.contents.is_empty() {
             panel = panel.button(action::CONTENTS, "Contents");
         }
+        // Offered only where there is somewhere to go from, so the control
+        // appears on the pages that have footnotes and stays out of the way
+        // on the ones that do not.
+        if !self.links_here().is_empty() {
+            panel = panel.button(action::LINKS, "Links on this page");
+        }
         panel.button(action::HIGHLIGHTS, "Notes")
+    }
+
+    /// Where this page points, each line a way there.
+    ///
+    /// A list rather than words a finger finds in the middle of a paragraph.
+    /// A footnote marker is a single character set above the line, which is
+    /// smaller than any tap this panel can tell apart, and making the prose
+    /// tappable would put a hit target over every sentence a reader is trying
+    /// to read past. The links on the page they are on is the same answer the
+    /// marking screen already gives for choosing a paragraph.
+    fn links_screen(&self, title: &str) -> Screen {
+        let mut screen = ScreenBuilder::new("reader-links").top_bar(title);
+        let here = self.links_here();
+        if here.is_empty() {
+            return screen
+                .secondary("Nothing on this page points anywhere else in the book.")
+                .build();
+        }
+        for (text, block) in here {
+            screen = screen.button(format!("{}{block}", action::GO), text);
+        }
+        screen.build()
+    }
+
+    /// The links whose words are on the page being read, and where they go.
+    ///
+    /// Only the ones that land inside this book. A link out to the web is
+    /// left out rather than offered: there is no browser here, and a button
+    /// that cannot do anything is worse than the absence of one.
+    fn links_here(&self) -> Vec<(String, usize)> {
+        let Some(page) = self.pages.get(self.page) else {
+            return Vec::new();
+        };
+        let (Some(first), Some(last)) = (page.first(), page.last()) else {
+            return Vec::new();
+        };
+        let (from, to) = (first.block, last.block);
+        let mut found: Vec<(String, usize)> = Vec::new();
+        for link in &self.document.links {
+            let Ok(at) = Locator::try_from(link.block) else {
+                continue;
+            };
+            if at < from || at > to {
+                continue;
+            }
+            let Some(block) = self.document.destination(link) else {
+                continue;
+            };
+            if !found.iter().any(|(text, _)| *text == link.text) {
+                found.push((link.text.clone(), block));
+            }
+        }
+        found
     }
 
     /// The book's own table of contents, each line a way into it.
@@ -1650,6 +1721,54 @@ mod tests {
     ) {
         let reader = Reader::open(illustrated(), Memory::default(), &panel());
         assert_eq!(reader.pictures_wanted(), vec!["plate.png"]);
+    }
+
+    #[test]
+    fn a_footnote_marker_on_the_page_is_somewhere_a_reader_can_go() {
+        // The words stayed and the going there did not: every link in an
+        // EPUB was flattened to plain text, so a footnote marker was a
+        // superscript number that did nothing.
+        let document = Document {
+            blocks: vec![
+                Block::Paragraph("A sentence with a note.".into()),
+                Block::Paragraph("The note itself.".into()),
+            ],
+            anchors: [("note-1".to_owned(), 1usize)].into_iter().collect(),
+            links: vec![kobo_doc::Link {
+                block: 0,
+                text: "1".into(),
+                target: "note-1".into(),
+            }],
+            ..Document::default()
+        };
+        let mut reader = Reader::open(document, Memory::default(), &panel());
+        assert_eq!(reader.act(action::LINKS, &panel()), Outcome::Repaint);
+        let names = reader
+            .screen("A Book")
+            .layout_with(&panel(), &kobo_ui::Chrome::with_back(true))
+            .nodes
+            .iter()
+            .flat_map(|node| node.text_lines.clone())
+            .collect::<Vec<_>>();
+        assert!(names.iter().any(|text| text == "1"), "{names:?}");
+        assert_eq!(reader.act(&format!("{}1", action::GO), &panel()), Outcome::Save);
+    }
+
+    #[test]
+    fn a_link_out_to_the_web_is_not_offered_as_somewhere_to_go() {
+        // There is no browser here, and a button that cannot do anything is
+        // worse than the absence of one.
+        let document = Document {
+            blocks: vec![Block::Paragraph("A sentence citing a website.".into())],
+            links: vec![kobo_doc::Link {
+                block: 0,
+                text: "the website".into(),
+                target: "https://example.com/".into(),
+            }],
+            ..Document::default()
+        };
+        let reader = Reader::open(document, Memory::default(), &panel());
+        assert!(reader.links_here().is_empty());
     }
 
     #[test]
