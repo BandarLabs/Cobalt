@@ -31,7 +31,7 @@
 //! two prefixed names that mean anything are named explicitly.
 
 use kobo_html::to_text;
-use kobo_xml::{decode_entities, scan, Event};
+use kobo_xml::{scan, Event};
 
 /// The most items one feed contributes.
 ///
@@ -478,7 +478,8 @@ fn clamp(text: &str, characters: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{attribute, decode_entities, parse, Feed, Item, MAX_ITEMS};
+    use super::{attribute, parse, Feed, Item, MAX_ITEMS};
+    use kobo_xml::decode_entities;
     use std::fmt::Write as _;
 
     fn read(source: &str) -> Feed {

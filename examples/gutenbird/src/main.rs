@@ -125,6 +125,22 @@ const COVER_TRIES: u8 = 3;
 /// one, which would look like a decoding fault rather than a small picture.
 const MIN_COVER_PX: u32 = 32;
 
+/// The largest book this will take from a catalog, in bytes.
+///
+/// A zip cannot be read a piece at a time -- its directory is at the end --
+/// so the whole of a book is in memory at once while it is parsed, alongside
+/// the blocks and pictures that come out of it. This reader has 448 MB in
+/// total and shares them with the firmware it is pretending not to be, and
+/// Gutenberg's illustrated Pride and Prejudice, at twenty-four, took the
+/// device down with it.
+///
+/// Twelve is comfortably more than any book of prose and enough for a
+/// moderately illustrated one. A catalog offering nothing smaller is refused
+/// on the page rather than part-way through the download, because a reader
+/// who has watched a progress bar for four minutes has already been charged
+/// for the failure.
+const MAX_BOOK_BYTES: u64 = 12 * 1024 * 1024;
+
 /// The most pictures decoded when a book opens.
 ///
 /// Every one costs memory the reader shares with the firmware, and a novel's
@@ -728,10 +744,17 @@ impl Gutenbird {
                 feed.publications
                     .iter()
                     .find(|publication| {
-                        publication
-                            .acquisition
-                            .iter()
-                            .any(|acquisition| acquisition.href.contains(".images"))
+                        publication.acquisition.iter().any(|acquisition| {
+                            acquisition.href.contains(".images") && affordable(acquisition)
+                        })
+                    })
+                    .or_else(|| {
+                        // Nothing illustrated small enough to read, so the
+                        // plainest edition that will open. A book of words is
+                        // better than a book that takes the reader down.
+                        feed.publications.iter().find(|publication| {
+                            publication.acquisition.iter().any(affordable)
+                        })
                     })
                     .or_else(|| feed.publications.first())
                     .cloned()
@@ -1786,7 +1809,15 @@ impl Gutenbird {
         if self.stored.contains_key(&blob) || download.bytes.is_empty() {
             return;
         }
-        let mut upload = ShelfUpload::new(blob, download.bytes.clone());
+        // Moved rather than copied. Cloning meant a twenty-four megabyte
+        // book was two of them at once, at the exact moment the parse was
+        // about to want a third, which is how this took the device down. The
+        // reader is opened from the shelf copy afterwards, so nothing here
+        // needs the bytes again.
+        let Some(download) = self.download.take() else {
+            return;
+        };
+        let mut upload = ShelfUpload::new(blob, download.bytes);
         upload.start(context);
         self.keeping = Some(upload);
     }
@@ -1916,6 +1947,15 @@ impl Gutenbird {
             self.view = View::Details;
             return;
         }
+        // The ceiling applied to the bytes rather than to what the catalog
+        // said about them. A stated length is a claim; this is the arrival.
+        if download.bytes.len().saturating_add(bytes.len()) as u64 > MAX_BOOK_BYTES {
+            self.download = None;
+            self.failed = Some("This book is too large to read on this device.".to_owned());
+            self.retryable = false;
+            self.view = View::Details;
+            return;
+        }
         let short = bytes.len() < CHUNK_BYTES as usize;
         download.bytes.extend_from_slice(bytes);
         self.fetched = u32::try_from(download.bytes.len()).unwrap_or(u32::MAX);
@@ -1967,6 +2007,18 @@ fn fold_groups(feed: &mut kobo_opds::Feed) {
             feed.publications.extend(group.publications);
         }
     }
+}
+
+/// Whether a book is small enough that reading it will not take the device.
+///
+/// An acquisition that states no length is allowed through: an unstated size
+/// is unknown rather than enormous, and refusing every catalog that declines
+/// to measure itself would refuse most of them. The ceiling still applies as
+/// the bytes actually arrive, which is the check that cannot be lied to.
+fn affordable(acquisition: &kobo_opds::Acquisition) -> bool {
+    acquisition
+        .length
+        .is_none_or(|length| length <= MAX_BOOK_BYTES)
 }
 
 fn shelf_pages(entry: &StackEntry) -> usize {
@@ -2955,24 +3007,9 @@ Please read this before you distribute or use this work.\n";
             ..Feed::default()
         };
         let resolved = Gutenbird::resolve_entry(&feed).expect("collapses to one book");
-        assert!(resolved.acquisition[0].href.contains(".images"));
-    }
-
-    #[test]
-    fn the_illustrated_edition_is_chosen_now_that_its_plates_reach_the_panel() {
-        // For as long as illustrations were discarded this chose the smaller
-        // edition, because twenty-five megabytes bought exactly the same page
-        // as five hundred kilobytes. A plate reaches the panel now, so the
-        // book's own pictures are worth the radio time.
-        let feed = Feed {
-            publications: vec![
-                publication("Pride and Prejudice", vec![sized_epub("https://gutenberg.example/1342.epub3.images", 24_835_612)]),
-                publication("Pride and Prejudice", vec![sized_epub("https://gutenberg.example/1342.epub.noimages", 558_547)]),
-            ],
-            ..Feed::default()
-        };
-        let resolved = Gutenbird::resolve_entry(&feed).expect("collapses to one book");
-        assert_eq!(resolved.acquisition[0].length, Some(24_835_612));
+        // The illustrated edition of this one is twenty-four megabytes, which
+        // is past what this device can parse, so the plain one is what opens.
+        assert!(resolved.acquisition[0].href.contains(".noimages"));
     }
 
     #[test]
@@ -4272,4 +4309,61 @@ Please read this before you distribute or use this work.\n";
             assert!(!text.contains("1.2") && !text.contains("2.0"), "the shelf named a version: {text}");
         }
     }
+    #[test]
+    fn a_book_too_large_for_this_device_is_refused_before_it_is_downloaded() {
+        // Gutenberg's illustrated Pride and Prejudice is twenty-four
+        // megabytes, and taking it took the device down: a zip is parsed
+        // whole, so the book, the blocks and the pictures are all in memory
+        // at once on a reader with 448 MB shared with the firmware.
+        let feed = Feed {
+            publications: vec![
+                publication(
+                    "Pride and Prejudice",
+                    vec![sized_epub("https://gutenberg.example/1342.epub3.images", 24_835_612)],
+                ),
+                publication(
+                    "Pride and Prejudice",
+                    vec![sized_epub("https://gutenberg.example/1342.epub.noimages", 558_547)],
+                ),
+            ],
+            ..Feed::default()
+        };
+        let resolved = Gutenbird::resolve_entry(&feed).expect("collapses to one book");
+        assert_eq!(
+            resolved.acquisition[0].length,
+            Some(558_547),
+            "took the edition that crashed the reader"
+        );
+    }
+
+    #[test]
+    fn an_illustrated_edition_small_enough_to_read_is_still_preferred() {
+        // The ceiling is not a preference for plainness. A book whose plates
+        // fit is still the better book.
+        let feed = Feed {
+            publications: vec![
+                publication("Emma", vec![sized_epub("https://gutenberg.example/1.noimages.epub", 500_000)]),
+                publication("Emma", vec![sized_epub("https://gutenberg.example/1.images.epub", 3_000_000)]),
+            ],
+            ..Feed::default()
+        };
+        let resolved = Gutenbird::resolve_entry(&feed).expect("collapses to one book");
+        assert!(resolved.acquisition[0].href.contains(".images"));
+    }
+
+    #[test]
+    fn an_edition_that_states_no_size_is_still_offered() {
+        // An unstated size is unknown rather than enormous, and most catalogs
+        // decline to measure themselves. The bytes are still counted as they
+        // arrive, which is the check that cannot be lied to.
+        let feed = Feed {
+            publications: vec![publication(
+                "Emma",
+                vec![epub_acquisition("https://catalog.example/emma.epub")],
+            )],
+            ..Feed::default()
+        };
+        assert!(Gutenbird::resolve_entry(&feed).is_some());
+    }
+
 }
