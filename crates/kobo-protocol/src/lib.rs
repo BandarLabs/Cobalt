@@ -252,6 +252,14 @@ pub enum SecretHeader {
     Bearer,
     /// A header carrying the value alone, such as `x-api-key`.
     Named(String),
+    /// `Authorization: Basic <base64 of the stored value>`.
+    ///
+    /// The stored value is the whole `user:password` pair, encoded by the
+    /// runtime rather than the application, so an application asking for a
+    /// gated feed never holds either half. Standard Ebooks wants a donor's
+    /// email address as the user and nothing as the password, which is a
+    /// perfectly ordinary Basic credential and an unusual-looking secret.
+    Basic,
 }
 
 /// A credential an application may use and never see.
@@ -272,6 +280,15 @@ impl Credential {
         }
     }
 
+    /// The credential a site asks for with `WWW-Authenticate: Basic`.
+    #[must_use]
+    pub fn basic(secret: impl Into<String>) -> Self {
+        Self {
+            secret: secret.into(),
+            header: SecretHeader::Basic,
+        }
+    }
+
     /// A named header, such as `x-api-key` or `x-goog-api-key`.
     #[must_use]
     pub fn in_header(secret: impl Into<String>, header: impl Into<String>) -> Self {
@@ -285,7 +302,7 @@ impl Credential {
     #[must_use]
     pub fn header_name(&self) -> &str {
         match &self.header {
-            SecretHeader::Bearer => "Authorization",
+            SecretHeader::Bearer | SecretHeader::Basic => "Authorization",
             SecretHeader::Named(name) => name,
         }
     }
@@ -296,7 +313,7 @@ impl Credential {
             return false;
         }
         match &self.header {
-            SecretHeader::Bearer => true,
+            SecretHeader::Bearer | SecretHeader::Basic => true,
             SecretHeader::Named(name) => {
                 !name.is_empty() && name.len() <= MAX_HEADER_NAME && name.bytes().all(is_token_byte)
             }
@@ -1533,6 +1550,12 @@ fn encode_task_message(payload: &mut Vec<u8>, message: &Message) -> Result<(), P
                             SecretHeader::Named(name) => {
                                 payload.push(2);
                                 push_string(payload, name)?;
+                                push_string(payload, &credential.secret)?;
+                            }
+                            // Appended rather than inserted, for the same
+                            // reason the task error tags are.
+                            SecretHeader::Basic => {
+                                payload.push(3);
                                 push_string(payload, &credential.secret)?;
                             }
                         },
@@ -3188,6 +3211,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
                             let header = reader.string()?;
                             Some(Credential::in_header(reader.string()?, header))
                         }
+                        3 => Some(Credential::basic(reader.string()?)),
                         _ => return Err(ProtocolError::InvalidValue("credential")),
                     };
                     if credential
@@ -7265,4 +7289,30 @@ mod picture_tests {
             Err(ProtocolError::InvalidValue("tile shape"))
         ));
     }
+    #[test]
+    fn a_basic_credential_survives_an_encode_decode_round_trip() {
+        // A gated catalogue is reached by name, and the name is all an
+        // application ever holds: the pair behind it is the runtime's.
+        let work = Task::Post {
+            url: "https://standardebooks.example/feeds/opds/all".to_owned(),
+            body: String::new(),
+            content_type: "application/x-www-form-urlencoded".to_owned(),
+            credential: Some(Credential::basic("standardebooks")),
+            headers: Vec::new(),
+            max_bytes: 1024,
+        };
+        let frame = Frame {
+            request_id: 1,
+            message: Message::Spawn {
+                task: TaskId(1),
+                work: work.clone(),
+            },
+        };
+        let bytes = encode(&frame).expect("encodes");
+        let Message::Spawn { work: back, .. } = decode(&bytes).expect("decodes").message else {
+            panic!("not a spawn");
+        };
+        assert_eq!(back, work);
+    }
+
 }

@@ -558,6 +558,11 @@ fn run(work: &Task, root: &Path, backends: Backends<'_>, cancel: &AtomicBool) ->
                         match wanted.header {
                             SecretHeader::Bearer => format!("Bearer {value}"),
                             SecretHeader::Named(_) => value,
+                            // Encoded here rather than by the application,
+                            // which is the whole point: an application asking
+                            // for a gated feed never holds the address or the
+                            // password that make up the pair.
+                            SecretHeader::Basic => format!("Basic {}", base64(value.as_bytes())),
                         },
                     )),
                 },
@@ -603,6 +608,34 @@ fn resolve(root: &Path, path: &str) -> Option<PathBuf> {
         }
     }
     Some(resolved)
+}
+
+/// Standard base64, which is how a Basic credential is spelled on the wire.
+///
+/// Written out rather than taken from a crate: it is twenty lines, it runs on
+/// a credential a few dozen bytes long, and a dependency that can see secrets
+/// is a dependency worth not having.
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let mut block = [0u8; 3];
+        block[..chunk.len()].copy_from_slice(chunk);
+        let packed = (u32::from(block[0]) << 16) | (u32::from(block[1]) << 8) | u32::from(block[2]);
+        for index in 0..4 {
+            // Every byte past the ones that were there is padding, and the
+            // count of them is what says how much of the last block is real.
+            if index <= chunk.len() {
+                let shift = 18 - index * 6;
+                let at = usize::try_from((packed >> shift) & 0b0011_1111).unwrap_or(0);
+                out.push(char::from(ALPHABET[at]));
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -1081,4 +1114,18 @@ mod tests {
             TaskOutcome::Failed(TaskError::Denied)
         );
     }
+    #[test]
+    fn a_basic_credential_is_encoded_by_the_runtime_rather_than_the_application() {
+        // The pairs from RFC 4648, plus the shape Standard Ebooks asks for:
+        // an address as the user and nothing at all as the password.
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        assert_eq!(base64(b"foob"), "Zm9vYg==");
+        assert_eq!(base64(b"fooba"), "Zm9vYmE=");
+        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
+        assert_eq!(base64(b"reader@example.com:"), "cmVhZGVyQGV4YW1wbGUuY29tOg==");
+    }
+
 }
