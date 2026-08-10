@@ -2671,6 +2671,7 @@ mod tests {
                         url: "https://example.invalid/x".into(),
                         offset: 0,
                         max_bytes: 16,
+                        headers: Vec::new(),
                     },
                 )
                 .is_ok(),
@@ -2764,6 +2765,7 @@ mod tests {
             url: "https://example.invalid/data".into(),
             offset: 0,
             max_bytes: 32,
+            headers: Vec::new(),
         };
         let local = kobo_protocol::Task::ReadFile {
             path: "notes.txt".into(),

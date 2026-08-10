@@ -10,6 +10,7 @@ publish = false
 kobo-html = { path = "../../crates/kobo-html" }
 kobo-json = { path = "../../crates/kobo-json" }
 kobo-sdk = { path = "../../crates/kobo-sdk" }
+kobo-xml = { path = "../../crates/kobo-xml" }
 
 [dev-dependencies]
 kobo-ui = { path = "../../crates/kobo-ui" }

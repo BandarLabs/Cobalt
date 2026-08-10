@@ -61,8 +61,11 @@ struct Running {
 ///
 /// It is a named type because the runtime, its builder and the worker all
 /// mention it, and spelling the whole signature in three places invites them
-/// to drift apart.
-pub type Fetcher = dyn Fn(&str, u32, u32) -> Result<Vec<u8>, TaskError> + Send + Sync;
+/// to drift apart. The fourth argument is the non-secret headers the
+/// application asked for, already checked against the ones the runtime owns,
+/// the same guarantee `Poster` makes for `Post`.
+pub type Fetcher =
+    dyn Fn(&str, u32, u32, &[(&str, &str)]) -> Result<Vec<u8>, TaskError> + Send + Sync;
 
 /// The host-provided implementation a `Post` task runs through.
 ///
@@ -102,6 +105,26 @@ const RESERVED_HEADERS: &[&str] = &[
 #[must_use]
 pub fn header_is_the_applications_to_set(name: &str) -> bool {
     !RESERVED_HEADERS.contains(&name.to_ascii_lowercase().as_str())
+}
+
+/// Checks a task's headers against the ones the runtime owns and, if none of
+/// them are reserved, hands back the pairs a network backend can use.
+///
+/// Shared by `Fetch` and `Post` rather than duplicated, because the two
+/// checks have to keep agreeing: `Range` is reserved for exactly the reason
+/// `Authorization` is, and a fork here is how one of them would quietly stop
+/// enforcing it.
+fn own_headers(headers: &[kobo_protocol::Header]) -> Result<Vec<(&str, &str)>, TaskError> {
+    if headers
+        .iter()
+        .any(|header| !header_is_the_applications_to_set(&header.name))
+    {
+        return Err(TaskError::Denied);
+    }
+    Ok(headers
+        .iter()
+        .map(|header| (header.name.as_str(), header.value.as_str()))
+        .collect())
 }
 
 /// Told, from the finishing task's own thread, that a result is now waiting.
@@ -476,11 +499,21 @@ fn run(work: &Task, root: &Path, backends: Backends<'_>, cancel: &AtomicBool) ->
             url,
             offset,
             max_bytes,
+            headers,
         } => match fetch {
             None => TaskOutcome::Failed(TaskError::Denied),
-            Some(fetch) => match fetch(url, *offset, (*max_bytes).min(MAX_TASK_BYTES_U32)) {
-                Ok(bytes) => TaskOutcome::Completed(bytes),
+            // The same gate `Post` applies to its headers, and for `Fetch` it
+            // is load-bearing rather than tidy: `Range` is how `offset` is
+            // turned into the piece of the document actually asked for, and
+            // an application that could set `Range` itself could read past
+            // the piece the byte ceiling allowed.
+            Some(fetch) => match own_headers(headers) {
                 Err(error) => TaskOutcome::Failed(error),
+                Ok(extra) => match fetch(url, *offset, (*max_bytes).min(MAX_TASK_BYTES_U32), &extra)
+                {
+                    Ok(bytes) => TaskOutcome::Completed(bytes),
+                    Err(error) => TaskOutcome::Failed(error),
+                },
             },
         },
         Task::Post {
@@ -497,12 +530,10 @@ fn run(work: &Task, root: &Path, backends: Backends<'_>, cancel: &AtomicBool) ->
             // Refused rather than quietly dropped. A request that loses a
             // header the runtime happens to own would fail at the far end with
             // an error the author cannot connect to anything they wrote.
-            if headers
-                .iter()
-                .any(|header| !header_is_the_applications_to_set(&header.name))
-            {
-                return TaskOutcome::Failed(TaskError::Denied);
-            }
+            let extra = match own_headers(headers) {
+                Ok(extra) => extra,
+                Err(error) => return TaskOutcome::Failed(error),
+            };
             // A task that names a credential the runtime does not hold is
             // refused rather than sent without one. Sending it anyway would
             // reach the server as an unauthenticated request, and the
@@ -531,10 +562,6 @@ fn run(work: &Task, root: &Path, backends: Backends<'_>, cancel: &AtomicBool) ->
                     )),
                 },
             };
-            let extra = headers
-                .iter()
-                .map(|header| (header.name.as_str(), header.value.as_str()))
-                .collect::<Vec<_>>();
             match post(
                 url,
                 body.as_bytes(),
@@ -581,7 +608,7 @@ fn resolve(root: &Path, path: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kobo_protocol::Credential;
+    use kobo_protocol::{Credential, Header};
     use std::sync::atomic::AtomicUsize;
 
     fn temp_root(name: &str) -> PathBuf {
@@ -611,6 +638,7 @@ mod tests {
                     url: "https://example.invalid/catalog".into(),
                     offset: 0,
                     max_bytes: 1024,
+                    headers: Vec::new(),
                 },
             )
             .expect("submitted");
@@ -636,6 +664,7 @@ mod tests {
                     url: "https://example.invalid".into(),
                     offset: 0,
                     max_bytes: 16,
+                    headers: Vec::new(),
                 },
             )
             .expect("submitted");
@@ -676,6 +705,7 @@ mod tests {
                     url: "https://example.invalid".into(),
                     offset: 0,
                     max_bytes: 16,
+                    headers: Vec::new(),
                 },
             )
             .expect("submitted");
@@ -792,7 +822,7 @@ mod tests {
     fn a_granted_fetch_reaches_the_backend() {
         let mut runner = TaskRunner::simulated(temp_root("fetch"))
             .with_capabilities([Capability::Network])
-            .with_fetch(Arc::new(|url: &str, _, _| Ok(url.as_bytes().to_vec())));
+            .with_fetch(Arc::new(|url: &str, _, _, _| Ok(url.as_bytes().to_vec())));
         runner
             .submit(
                 TaskId(1),
@@ -800,6 +830,7 @@ mod tests {
                     url: "https://example.test/a".into(),
                     offset: 0,
                     max_bytes: 128,
+                    headers: Vec::new(),
                 },
             )
             .expect("submitted");
@@ -807,6 +838,63 @@ mod tests {
         assert_eq!(
             finished[0].outcome,
             TaskOutcome::Completed(b"https://example.test/a".to_vec())
+        );
+    }
+
+    #[test]
+    fn a_fetch_header_reaches_the_backend_the_application_asked_for_it_by() {
+        let mut runner = TaskRunner::simulated(temp_root("fetch-headers"))
+            .with_capabilities([Capability::Network])
+            .with_fetch(Arc::new(|_, _, _, headers: &[(&str, &str)]| {
+                Ok(headers
+                    .iter()
+                    .map(|(name, value)| format!("{name}: {value}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    .into_bytes())
+            }));
+        runner
+            .submit(
+                TaskId(1),
+                Task::Fetch {
+                    url: "https://example.test/catalog".into(),
+                    offset: 0,
+                    max_bytes: 128,
+                    headers: vec![Header::new("Accept", "application/opds+json")],
+                },
+            )
+            .expect("submitted");
+        let finished = collect(&mut runner, 1);
+        assert_eq!(
+            finished[0].outcome,
+            TaskOutcome::Completed(b"Accept: application/opds+json".to_vec())
+        );
+    }
+
+    #[test]
+    fn an_application_supplied_range_header_cannot_displace_the_byte_offset_the_runtime_sets() {
+        // `offset` is the only thing allowed to become `Range`: it is turned
+        // into the header the runtime sends, not merged with one the
+        // application names, so a fetch naming its own `Range` is refused
+        // outright rather than sent with two.
+        let mut runner = TaskRunner::simulated(temp_root("fetch-range"))
+            .with_capabilities([Capability::Network])
+            .with_fetch(Arc::new(|_, _, _, _| Ok(b"should not run".to_vec())));
+        runner
+            .submit(
+                TaskId(1),
+                Task::Fetch {
+                    url: "https://example.test/book.txt".into(),
+                    offset: 100,
+                    max_bytes: 128,
+                    headers: vec![Header::new("Range", "bytes=0-9999")],
+                },
+            )
+            .expect("submitted");
+        let finished = collect(&mut runner, 1);
+        assert_eq!(
+            finished[0].outcome,
+            TaskOutcome::Failed(TaskError::Denied)
         );
     }
 

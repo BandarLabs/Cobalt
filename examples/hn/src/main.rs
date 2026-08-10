@@ -580,6 +580,7 @@ impl Hn {
             url: self.tab.ranking_url(),
             offset: 0,
             max_bytes: RANKING_BYTES,
+            headers: Vec::new(),
         }) {
             Some(task) => self.task = Some((task, Awaiting::Ranking(self.tab))),
             None => self.problem = Some("Too much is already in flight.".to_owned()),
@@ -600,6 +601,7 @@ impl Hn {
                 url: item_url(id),
                 offset: 0,
                 max_bytes: ITEM_BYTES,
+                headers: Vec::new(),
             }) else {
                 break;
             };
@@ -635,6 +637,7 @@ impl Hn {
             url: item_url(id),
             offset: 0,
             max_bytes: ITEM_BYTES,
+            headers: Vec::new(),
         }) {
             Some(task) => self.lanes.push((task, id)),
             None => self.problem = Some("Too much is already in flight.".to_owned()),
@@ -652,6 +655,7 @@ impl Hn {
                 url: item_url(id),
                 offset: 0,
                 max_bytes: ITEM_BYTES,
+                headers: Vec::new(),
             }) else {
                 break;
             };

@@ -5488,6 +5488,7 @@ mod task_tests {
                 url: "https://example.invalid/feed".into(),
                 offset: 0,
                 max_bytes: 1024,
+                headers: Vec::new(),
             }
         }
     }

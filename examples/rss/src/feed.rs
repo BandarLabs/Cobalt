@@ -15,12 +15,12 @@
 //! prefix chosen to collide with a name this module reads. A parser that
 //! models XML faithfully has to have an answer for all of it.
 //!
-//! This one models exactly the shape a feed has (a flat run of elements, of
-//! which about a dozen names mean anything) and treats everything else as text
-//! to be skipped. Every malformed shape has the same defined outcome: reading
-//! stops early, and whatever was understood before that point is what you get.
-//! There is no input that makes it recurse and none that makes it allocate a
-//! multiple of its input.
+//! The scanning itself — walking a flat run of elements and text, treating
+//! everything else as text to be skipped, stopping rather than guessing at
+//! the first malformed shape — now lives in [`kobo_xml`], because an OPDS
+//! catalog reader needs exactly that same defensive walk over the same kind
+//! of adversarial input. What stays here is the part that is genuinely about
+//! feeds: which dozen or so element names mean anything, in [`field`].
 //!
 //! # Why namespace prefixes are matched whole
 //!
@@ -31,6 +31,7 @@
 //! two prefixed names that mean anything are named explicitly.
 
 use kobo_html::to_text;
+use kobo_xml::{decode_entities, scan, Event};
 
 /// The most items one feed contributes.
 ///
@@ -47,13 +48,6 @@ pub const MAX_ITEMS: usize = 50;
 /// seen. Cutting it here rather than at the layout means a stored subscription
 /// does not carry a kilobyte of somebody's essay-as-headline.
 const MAX_TITLE: usize = 300;
-
-/// How deep the element stack may go before the document is called malformed.
-///
-/// A feed is three levels deep and inline markup adds a few more. Anything
-/// past this is either not a feed or is built to make a parser grow, and both
-/// have the same answer.
-const MAX_DEPTH: usize = 64;
 
 /// One entry in a feed.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -160,151 +154,6 @@ pub fn parse(bytes: &[u8]) -> Option<Feed> {
         return None;
     }
     Some(feed)
-}
-
-/// One step of the document.
-#[derive(Clone, Copy, Debug)]
-enum Event<'a> {
-    Open {
-        name: &'a str,
-        attributes: &'a str,
-    },
-    /// Text that needed no decoding, borrowed from the document.
-    Text(&'a str),
-    /// Text that had entities in it, and so had to be built. The index is into
-    /// the scratch the caller passed in.
-    Owned(usize),
-    Close {
-        name: &'a str,
-    },
-}
-
-/// Walks the document, calling `visit` for each step.
-///
-/// Stops at the first thing it cannot make sense of rather than guessing,
-/// because a feed truncated by a proxy is far more common than one that is
-/// subtly wrong, and half a feed is a useful answer.
-fn scan<'a>(input: &'a str, decoded: &mut Vec<String>, mut visit: impl FnMut(Event<'a>)) {
-    let mut rest = input;
-    let mut depth = 0usize;
-    while !rest.is_empty() {
-        let Some(open) = rest.find('<') else {
-            emit_text(rest, decoded, &mut visit);
-            return;
-        };
-        if open > 0 {
-            emit_text(&rest[..open], decoded, &mut visit);
-            rest = &rest[open..];
-            continue;
-        }
-
-        if let Some(tail) = rest.strip_prefix("<!--") {
-            let Some(end) = tail.find("-->") else { return };
-            rest = &tail[end + 3..];
-        } else if let Some(tail) = rest.strip_prefix("<![CDATA[") {
-            let Some(end) = tail.find("]]>") else { return };
-            // Verbatim: the whole point of a character section is that what is
-            // inside it was never escaped, and so must not be decoded again.
-            visit(Event::Text(&tail[..end]));
-            rest = &tail[end + 3..];
-        } else if rest.starts_with("<?") || rest.starts_with("<!") {
-            let Some(end) = rest.find('>') else { return };
-            rest = &rest[end + 1..];
-        } else {
-            let Some(end) = rest.find('>') else { return };
-            let inner = &rest[1..end];
-            rest = &rest[end + 1..];
-            if let Some(name) = inner.strip_prefix('/') {
-                depth = depth.saturating_sub(1);
-                visit(Event::Close { name: name.trim() });
-            } else {
-                let closes_itself = inner.ends_with('/');
-                let inner = inner.strip_suffix('/').unwrap_or(inner);
-                let (name, attributes) = match inner.find(char::is_whitespace) {
-                    Some(split) => (&inner[..split], &inner[split..]),
-                    None => (inner, ""),
-                };
-                if name.is_empty() {
-                    continue;
-                }
-                visit(Event::Open { name, attributes });
-                if closes_itself {
-                    visit(Event::Close { name });
-                } else {
-                    depth += 1;
-                    if depth > MAX_DEPTH {
-                        return;
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Emits a run of text, decoding entities only when there are any.
-fn emit_text<'a>(raw: &'a str, decoded: &mut Vec<String>, visit: &mut impl FnMut(Event<'a>)) {
-    if raw.trim().is_empty() {
-        return;
-    }
-    if raw.contains('&') {
-        decoded.push(decode_entities(raw));
-        visit(Event::Owned(decoded.len() - 1));
-    } else {
-        visit(Event::Text(raw));
-    }
-}
-
-/// The five entities XML defines, plus numeric ones.
-///
-/// Named HTML entities beyond these are left alone deliberately. They are only
-/// legal in a feed if the document declared them, and what reaches the body is
-/// handed to [`to_text`], which knows the full set. Decoding them twice is how
-/// `&amp;lt;` becomes a tag.
-fn decode_entities(raw: &str) -> String {
-    let mut out = String::with_capacity(raw.len());
-    let mut rest = raw;
-    while let Some(start) = rest.find('&') {
-        out.push_str(&rest[..start]);
-        let tail = &rest[start..];
-        // An entity is short. Looking further than this for the semicolon
-        // turns a bare ampersand in prose into a scan of the rest of the post.
-        let Some(end) = tail
-            .bytes()
-            .take(12)
-            .position(|byte| byte == b';')
-            .filter(|end| *end > 1)
-        else {
-            out.push('&');
-            rest = &tail[1..];
-            continue;
-        };
-        let name = &tail[1..end];
-        let replacement = match name {
-            "amp" => Some('&'),
-            "lt" => Some('<'),
-            "gt" => Some('>'),
-            "quot" => Some('"'),
-            "apos" => Some('\''),
-            _ => numeric_entity(name),
-        };
-        match replacement {
-            Some(character) => out.push(character),
-            None => out.push_str(&tail[..=end]),
-        }
-        rest = &tail[end + 1..];
-    }
-    out.push_str(rest);
-    out
-}
-
-/// `#38` and `#x26`, or nothing.
-fn numeric_entity(name: &str) -> Option<char> {
-    let digits = name.strip_prefix('#')?;
-    let code = match digits.strip_prefix(['x', 'X']) {
-        Some(hex) => u32::from_str_radix(hex, 16).ok()?,
-        None => digits.parse::<u32>().ok()?,
-    };
-    char::from_u32(code)
 }
 
 /// Which of the names this module reads an element is, if any.

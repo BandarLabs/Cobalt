@@ -974,6 +974,7 @@ impl Gutenbird {
             url,
             offset: 0,
             max_bytes: CATALOGUE_BYTES,
+            headers: Vec::new(),
         }) {
             Some(task) => self.task = Some((task, awaiting)),
             None => self.problem = Some("Too much is already in flight.".to_owned()),
@@ -1166,6 +1167,7 @@ impl Gutenbird {
                 url,
                 offset: 0,
                 max_bytes: COVER_BYTES,
+                headers: Vec::new(),
             }) {
                 self.covers.push((task, index, tries));
                 continue;
@@ -1356,6 +1358,7 @@ impl Gutenbird {
             url,
             offset: self.fetched,
             max_bytes: CHUNK_BYTES,
+            headers: Vec::new(),
         }) {
             Some(task) => self.task = Some((task, Awaiting::Text)),
             None => self.problem = Some("Too much is already in flight.".to_owned()),

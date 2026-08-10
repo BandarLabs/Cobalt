@@ -598,6 +598,7 @@ impl Settings {
             url: RELEASES.to_owned(),
             offset: 0,
             max_bytes: 256 * 1024,
+            headers: Vec::new(),
         });
         if self.update_task.is_none() {
             self.update = UpdateFlow::Failed("This build was refused the network.".to_owned());
@@ -639,6 +640,7 @@ impl Settings {
                         url: release.digest,
                         offset: 0,
                         max_bytes: 16 * 1024,
+                        headers: Vec::new(),
                     });
                     self.update = if self.update_task.is_none() {
                         UpdateFlow::Failed("This build was refused the network.".to_owned())

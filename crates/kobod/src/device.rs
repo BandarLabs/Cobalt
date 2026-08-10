@@ -979,7 +979,7 @@ fn host_applications(
         }
     };
     let audio_fetcher: kobo_hal::audio::StreamFetcher = Arc::new(|url, offset, max_bytes| {
-        kobo_net::fetch_from(url, offset, max_bytes).map_err(|error| match error {
+        kobo_net::fetch_from(url, offset, max_bytes, &[]).map_err(|error| match error {
             // A reader with no route and a service that will not answer are
             // different things everywhere else, but `DeviceError` is the radio
             // vocabulary and has one word for both. Unreachable is the honest

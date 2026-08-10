@@ -496,7 +496,7 @@ fn decode_chunked(mut body: &[u8]) -> Result<Vec<u8>, TaskError> {
 /// past the ceiling is [`TaskError::TooLarge`], and a refusal by the server is
 /// [`TaskError::NotFound`].
 pub fn fetch(url: &str, max_bytes: u32) -> Result<Vec<u8>, TaskError> {
-    get(url, None, max_bytes)
+    get(url, None, max_bytes, &[])
 }
 
 /// Fetches `url` starting `offset` bytes in, returning at most `max_bytes`.
@@ -515,19 +515,46 @@ pub fn fetch(url: &str, max_bytes: u32) -> Result<Vec<u8>, TaskError> {
 /// the ceiling then reports it as too large rather than handing back the
 /// beginning of the book labelled as the middle.
 ///
+/// `headers` are the non-secret headers the application asked for, already
+/// checked by the runtime against the ones it owns itself: an application
+/// cannot be one of these headers, because `offset` is the only thing
+/// permitted to become `Range`, so a `Fetch` could never ask for a piece
+/// other than the one the byte ceiling agreed to.
+///
 /// # Errors
 ///
 /// The same distinctions [`fetch`] makes.
-pub fn fetch_from(url: &str, offset: u32, max_bytes: u32) -> Result<Vec<u8>, TaskError> {
-    get(url, Some(offset), max_bytes)
+pub fn fetch_from(
+    url: &str,
+    offset: u32,
+    max_bytes: u32,
+    headers: &[(&str, &str)],
+) -> Result<Vec<u8>, TaskError> {
+    // The last gate before the socket, and the same one `post` applies to its
+    // own headers: both names and values may ultimately originate outside the
+    // runtime, so grammar is checked here rather than trusted from upstream.
+    let valid_header =
+        |name: &str, value: &str| name.parse::<http::HeaderName>().is_ok() && value.parse::<http::HeaderValue>().is_ok();
+    if headers
+        .iter()
+        .any(|(name, value)| !valid_header(name, value))
+    {
+        return Err(TaskError::Denied);
+    }
+    get(url, Some(offset), max_bytes, headers)
 }
 
 /// The one implementation behind [`fetch`] and [`fetch_from`].
-fn get(url: &str, offset: Option<u32>, max_bytes: u32) -> Result<Vec<u8>, TaskError> {
+fn get(
+    url: &str,
+    offset: Option<u32>,
+    max_bytes: u32,
+    headers: &[(&str, &str)],
+) -> Result<Vec<u8>, TaskError> {
     let mut target = url.to_string();
     for _ in 0..=MAX_REDIRECTS {
         let address = parse(&target)?;
-        let response = request(&address, &Method::Get { offset }, max_bytes)?;
+        let response = request(&address, &Method::Get { offset, headers }, max_bytes)?;
         match split_response(&response, max_bytes)? {
             Response::Body(body) => {
                 return if body.len() > max_bytes as usize {
@@ -548,6 +575,10 @@ enum Method<'a> {
         /// Where to start reading, as a byte offset, or `None` to ask for the
         /// whole document with no range header at all.
         offset: Option<u32>,
+        /// Further headers the request needs, none of them secret and none of
+        /// them `Range`: that one is derived from `offset` alone, in [`head`],
+        /// so an application cannot widen or move the piece it was granted.
+        headers: &'a [(&'a str, &'a str)],
     },
     Post {
         body: &'a [u8],
@@ -660,8 +691,10 @@ fn head(address: &Address, method: &Method<'_>, max_bytes: u32) -> String {
     // and everything else, which is every JSON API here, takes the fifth of
     // the bytes that gzip costs instead.
     let encoding = match method {
-        Method::Get { offset: Some(_) } => "identity",
-        Method::Get { offset: None } | Method::Post { .. } => "gzip",
+        Method::Get {
+            offset: Some(_), ..
+        } => "identity",
+        Method::Get { offset: None, .. } | Method::Post { .. } => "gzip",
     };
     // A POST hangs up after its answer; a GET does not. HTTP/1.1 is
     // persistent by default, so the difference is whether `close` is said at
@@ -675,18 +708,24 @@ fn head(address: &Address, method: &Method<'_>, max_bytes: u32) -> String {
         "{verb} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: {connection}\r\nAccept-Encoding: {encoding}\r\nUser-Agent: kobo-runtime\r\n"
     );
     match method {
-        Method::Get { offset: None } => {}
-        Method::Get {
-            offset: Some(start),
-        } => {
+        Method::Get { offset, headers } => {
             // Closed at both ends, because an open-ended range invites the
             // server to send the rest of a book that does not fit. Sent for
             // the first piece as well as later ones: a request for the opening
             // 256 KB of a 738 KB novel without a range is answered with the
             // whole novel, and then rejected by the ceiling.
-            let last = u64::from(*start) + u64::from(max_bytes) - 1;
-            write!(head, "Range: bytes={start}-{last}\r\n")
-                .expect("writing to a String cannot fail");
+            if let Some(start) = offset {
+                let last = u64::from(*start) + u64::from(max_bytes) - 1;
+                write!(head, "Range: bytes={start}-{last}\r\n")
+                    .expect("writing to a String cannot fail");
+            }
+            // Written after `Range`, and never able to replace it: `headers`
+            // here has already been through the same reserved-name gate
+            // `Post`'s headers pass through, so `Range` can never be one of
+            // these pairs in the first place.
+            for (name, value) in *headers {
+                write!(head, "{name}: {value}\r\n").expect("writing to a String cannot fail");
+            }
         }
         Method::Post {
             body,
@@ -1386,11 +1425,24 @@ mod tests {
         // model to answer twice or a daemon to run a command twice, so it
         // hangs up rather than risk being the request that gets repeated.
         let address = book();
-        assert!(
-            head(&address, &Method::Get { offset: None }, 1024).contains("Connection: keep-alive")
-        );
-        assert!(head(&address, &Method::Get { offset: Some(1024) }, 1024)
-            .contains("Connection: keep-alive"));
+        assert!(head(
+            &address,
+            &Method::Get {
+                offset: None,
+                headers: &[]
+            },
+            1024
+        )
+        .contains("Connection: keep-alive"));
+        assert!(head(
+            &address,
+            &Method::Get {
+                offset: Some(1024),
+                headers: &[]
+            },
+            1024
+        )
+        .contains("Connection: keep-alive"));
         assert!(head(
             &address,
             &Method::Post {
@@ -1426,7 +1478,14 @@ mod tests {
         // Prejudice, the 256 KB ceiling rejects it, and the opening page of
         // every book larger than one piece is unreachable. The symptom on the
         // device was a download that appeared to hang.
-        let request = head(&book(), &Method::Get { offset: Some(0) }, 262_144);
+        let request = head(
+            &book(),
+            &Method::Get {
+                offset: Some(0),
+                headers: &[],
+            },
+            262_144,
+        );
         assert!(
             request.contains("\r\nRange: bytes=0-262143\r\n"),
             "no range on the first piece: {request}"
@@ -1439,6 +1498,7 @@ mod tests {
             &book(),
             &Method::Get {
                 offset: Some(262_144),
+                headers: &[],
             },
             262_144,
         );
@@ -1452,7 +1512,14 @@ mod tests {
     fn asking_for_a_whole_document_sends_no_range_at_all() {
         // A catalogue response is meant to be complete or nothing; a partial
         // one is not shorter JSON, it is broken JSON.
-        let request = head(&book(), &Method::Get { offset: None }, 262_144);
+        let request = head(
+            &book(),
+            &Method::Get {
+                offset: None,
+                headers: &[],
+            },
+            262_144,
+        );
         assert!(!request.contains("Range:"), "{request}");
     }
 
@@ -1546,7 +1613,14 @@ mod tests {
     #[test]
     fn a_non_default_port_is_present_in_the_host_header() {
         let address = parse("https://example.com:8443/path").expect("a URL");
-        let request = head(&address, &Method::Get { offset: None }, 1024);
+        let request = head(
+            &address,
+            &Method::Get {
+                offset: None,
+                headers: &[],
+            },
+            1024,
+        );
         assert!(request.contains("Host: example.com:8443\r\n"), "{request}");
     }
 
@@ -1679,7 +1753,14 @@ mod tests {
     #[test]
     fn a_json_api_is_asked_for_its_reply_compressed() {
         let address = parse("https://feedsearch.dev/api/v1/search?url=nytimes.com").expect("a url");
-        let request = head(&address, &Method::Get { offset: None }, 512 * 1024);
+        let request = head(
+            &address,
+            &Method::Get {
+                offset: None,
+                headers: &[],
+            },
+            512 * 1024,
+        );
         assert!(
             request.contains("\r\nAccept-Encoding: gzip\r\n"),
             "a plain fetch did not ask for gzip: {request}"
@@ -1708,6 +1789,7 @@ mod tests {
             &address,
             &Method::Get {
                 offset: Some(262_144),
+                headers: &[],
             },
             262_144,
         );

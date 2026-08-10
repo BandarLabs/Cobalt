@@ -31,7 +31,11 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 ///
 /// Went to 6 for the runtime-owned app catalog and app transaction requests,
 /// whose new result variant carries a bounded list of application metadata.
-pub const VERSION: u8 = 6;
+///
+/// Went to 7 when `Fetch` gained `headers`, the same trailing count-and-pairs
+/// shape `Post` already carried. An old runtime reading a new frame would have
+/// read the header count as the first byte of the next message.
+pub const VERSION: u8 = 7;
 pub const HEADER_LEN: usize = 14;
 /// The largest single frame either side will read.
 ///
@@ -320,6 +324,15 @@ pub enum Task {
         /// books these applications exist to read.
         offset: u32,
         max_bytes: u32,
+        /// Headers the request needs that are not secret.
+        ///
+        /// An OPDS catalogue is JSON to one server and Atom to another at the
+        /// same path, and the only way to ask for one over the other is
+        /// `Accept`. Bounded and validated exactly like `Post`'s headers, and
+        /// for the same reason the runtime, not the application, turns
+        /// `offset` into the `Range` header: an application that could set
+        /// `Range` itself could read past the piece the byte ceiling allowed.
+        headers: Vec<Header>,
     },
     /// Sends a body to a URL. The application supplies the body and, when the
     /// request needs a credential, the *name* of one, never its value. The
@@ -354,7 +367,11 @@ impl Task {
     #[must_use]
     pub fn is_sendable(&self) -> bool {
         match self {
-            Self::Fetch { url, .. } => url.len() <= MAX_URL_LEN,
+            Self::Fetch { url, headers, .. } => {
+                url.len() <= MAX_URL_LEN
+                    && headers.len() <= MAX_HEADERS
+                    && headers.iter().all(Header::is_well_formed)
+            }
             Self::Post {
                 url,
                 body,
@@ -1457,11 +1474,20 @@ fn encode_task_message(payload: &mut Vec<u8>, message: &Message) -> Result<(), P
                     url,
                     offset,
                     max_bytes,
+                    headers,
                 } => {
                     payload.push(0);
                     push_string(payload, url)?;
                     push_u32(payload, *offset);
                     push_u32(payload, *max_bytes);
+                    payload.push(
+                        u8::try_from(headers.len())
+                            .map_err(|_| ProtocolError::InvalidValue("too many headers"))?,
+                    );
+                    for header in headers {
+                        push_string(payload, &header.name)?;
+                        push_string(payload, &header.value)?;
+                    }
                 }
                 Task::ReadFile { path } => {
                     payload.push(1);
@@ -1769,9 +1795,21 @@ fn encoded_task_len(work: &Task) -> Result<usize, ProtocolError> {
     // anything could be opened in the simulator at all.
     let mut length = 5;
     match work {
-        Task::Fetch { url, .. } => {
-            add_encoded_len(&mut length, 8)?;
+        Task::Fetch { url, headers, .. } => {
+            // Refused here rather than stripped silently, for the same reason
+            // as `Post`: a request that quietly loses the header an API
+            // requires (`Accept`, say) fails at the far end with an error the
+            // author cannot connect to anything they wrote.
+            if headers.len() > MAX_HEADERS || headers.iter().any(|header| !header.is_well_formed())
+            {
+                return Err(ProtocolError::InvalidValue("request header"));
+            }
+            add_encoded_len(&mut length, 9)?;
             add_encoded_len(&mut length, encoded_string_len(url)?)?;
+            for header in headers {
+                add_encoded_len(&mut length, encoded_string_len(&header.name)?)?;
+                add_encoded_len(&mut length, encoded_string_len(&header.value)?)?;
+            }
         }
         Task::ReadFile { path } => {
             add_encoded_len(&mut length, encoded_string_len(path)?)?;
@@ -3092,13 +3130,28 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
                     if url.len() > MAX_URL_LEN {
                         return Err(ProtocolError::StringTooLarge);
                     }
+                    let offset = reader.u32()?;
+                    // Clamped here rather than trusted, so a task cannot
+                    // declare a ceiling larger than the transport can carry
+                    // and then be surprised when the answer will not fit.
+                    let max_bytes = min(reader.u32()?, MAX_TASK_BYTES_U32);
+                    let count = usize::from(reader.u8()?);
+                    if count > MAX_HEADERS {
+                        return Err(ProtocolError::InvalidValue("too many headers"));
+                    }
+                    let mut headers = Vec::with_capacity(count);
+                    for _ in 0..count {
+                        let header = Header::new(reader.string()?, reader.string()?);
+                        if !header.is_well_formed() {
+                            return Err(ProtocolError::InvalidValue("request header"));
+                        }
+                        headers.push(header);
+                    }
                     Task::Fetch {
                         url,
-                        offset: reader.u32()?,
-                        // Clamped here rather than trusted, so a task cannot
-                        // declare a ceiling larger than the transport can carry
-                        // and then be surprised when the answer will not fit.
-                        max_bytes: min(reader.u32()?, MAX_TASK_BYTES_U32),
+                        offset,
+                        max_bytes,
+                        headers,
                     }
                 }
                 1 => Task::ReadFile {
@@ -6546,6 +6599,16 @@ mod store_tests {
                     url: "https://example.invalid/book.txt".into(),
                     offset: 0,
                     max_bytes: 1024,
+                    headers: Vec::new(),
+                },
+            },
+            Message::Spawn {
+                task: TaskId(16),
+                work: Task::Fetch {
+                    url: "https://example.invalid/catalog".into(),
+                    offset: 0,
+                    max_bytes: 1024,
+                    headers: vec![Header::new("Accept", "application/opds+json")],
                 },
             },
             Message::Spawn {
@@ -6607,6 +6670,73 @@ mod store_tests {
                 "{message:?} encodes to a different length than it predicted"
             );
             assert_eq!(message_round_trip(message.clone()), message);
+        }
+    }
+
+    #[test]
+    fn a_fetch_that_carries_headers_survives_an_encode_decode_round_trip() {
+        let message = Message::Spawn {
+            task: TaskId(20),
+            work: Task::Fetch {
+                url: "https://example.invalid/catalog".into(),
+                offset: 0,
+                max_bytes: 4096,
+                headers: vec![
+                    Header::new("Accept", "application/opds+json"),
+                    Header::new("If-None-Match", "\"abc123\""),
+                ],
+            },
+        };
+        assert_eq!(message_round_trip(message.clone()), message);
+    }
+
+    #[test]
+    fn a_fetch_whose_header_count_exceeds_the_bound_is_refused_rather_than_truncated() {
+        let headers = (0..=MAX_HEADERS)
+            .map(|index| Header::new(format!("X-{index}"), "value"))
+            .collect();
+        let frame = Frame {
+            request_id: 1,
+            message: Message::Spawn {
+                task: TaskId(21),
+                work: Task::Fetch {
+                    url: "https://example.invalid/catalog".into(),
+                    offset: 0,
+                    max_bytes: 4096,
+                    headers,
+                },
+            },
+        };
+        assert_eq!(
+            encode(&frame),
+            Err(ProtocolError::InvalidValue("request header"))
+        );
+    }
+
+    #[test]
+    fn a_fetch_header_carrying_a_newline_in_its_name_or_value_is_refused() {
+        // A newline in either would let an application append headers of its
+        // own onto the wire, including ones the runtime never agreed to send.
+        for header in [
+            Header::new("X-Evil\r\nX-Injected", "value"),
+            Header::new("X-Evil", "value\r\nX-Injected: 1"),
+        ] {
+            let frame = Frame {
+                request_id: 1,
+                message: Message::Spawn {
+                    task: TaskId(22),
+                    work: Task::Fetch {
+                        url: "https://example.invalid/catalog".into(),
+                        offset: 0,
+                        max_bytes: 4096,
+                        headers: vec![header],
+                    },
+                },
+            };
+            assert_eq!(
+                encode(&frame),
+                Err(ProtocolError::InvalidValue("request header"))
+            );
         }
     }
 

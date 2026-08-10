@@ -937,6 +937,7 @@ impl KoboApp for Gallery {
                 url: "https://example.invalid/catalog".to_owned(),
                 offset: 0,
                 max_bytes: 4096,
+                headers: Vec::new(),
             }) {
                 Some(task) => {
                     self.task = Some(task);
