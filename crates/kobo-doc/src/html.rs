@@ -161,6 +161,13 @@ impl State {
             }
             return;
         }
+        // Noted before the element is interpreted, because whatever this
+        // element becomes is where the name points. A name on an element that
+        // turns out to say nothing lands on the block after it, which is the
+        // next thing a reader sent there would actually read.
+        if let Some(id) = attribute(inside, "id") {
+            self.builder.mark_anchor(&decode_entities(&id));
+        }
         match name {
             // A `<br>` is a soft break. One column, and the paginator wraps:
             // honouring it would give a ragged short line in the middle of a

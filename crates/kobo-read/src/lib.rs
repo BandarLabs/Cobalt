@@ -1300,6 +1300,7 @@ mod tests {
             author: Some("Jane Austen".into()),
             blocks,
             truncated: false,
+            ..Document::default()
         }
     }
 
@@ -1391,6 +1392,7 @@ mod tests {
                 author: None,
                 blocks: vec![Block::Paragraph("Short.".into())],
                 truncated: false,
+                ..Document::default()
             },
             Memory::default(),
             &panel(),
@@ -1797,6 +1799,7 @@ mod tests {
                     .map(|index| Block::Paragraph(format!("Paragraph {index}.")))
                     .collect(),
                 truncated: true,
+                ..Document::default()
             },
             Memory::default(),
             &panel(),
@@ -2022,6 +2025,7 @@ mod tests {
                 author: None,
                 blocks: Vec::new(),
                 truncated: false,
+                ..Document::default()
             },
             Memory::default(),
             &panel(),
@@ -2091,6 +2095,7 @@ mod tests {
                 author: None,
                 blocks: vec![Block::Rule],
                 truncated: false,
+                ..Document::default()
             },
             Memory::default(),
             &panel(),
@@ -2189,6 +2194,7 @@ mod tests {
             author: None,
             blocks: vec![Block::Paragraph(giant)],
             truncated: false,
+            ..Document::default()
         };
         let reader = Reader::open(document, Memory::default(), &panel());
         assert!(reader.page_count() > 1);
@@ -2202,6 +2208,7 @@ mod tests {
             author: None,
             blocks: Vec::new(),
             truncated: false,
+            ..Document::default()
         };
         let mut reader = Reader::open(document, Memory::default(), &panel());
         assert_eq!(reader.page_count(), 0);

@@ -43,6 +43,8 @@ pub mod markdown;
 pub mod text;
 pub mod zip;
 
+use std::collections::BTreeMap;
+
 /// What a file turned out to be.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Format {
@@ -126,6 +128,14 @@ pub const MAX_BLOCKS: usize = 60_000;
 /// far below the point at which holding it is a problem.
 pub const MAX_TEXT: usize = 16 * 1024 * 1024;
 
+/// The most named places one document may hold.
+///
+/// A heavily cross-referenced book names a few thousand: every footnote, every
+/// verse, every entry in an index. This is above that and below the point
+/// where a generated file whose every paragraph carries an identifier can make
+/// the map cost more than the book.
+pub const MAX_ANCHORS: usize = 20_000;
+
 /// The most text one block may hold.
 ///
 /// A paragraph is a few hundred characters. A "paragraph" of a megabyte is a
@@ -203,6 +213,50 @@ pub struct Document {
     /// silently stops two thirds of the way through looks like a book that
     /// ends abruptly, and the reader has no way to tell the difference.
     pub truncated: bool,
+    /// The book's own table of contents, when it published one.
+    ///
+    /// Empty for a format that has no such thing, and for an EPUB whose
+    /// contents could not be matched to anything in the spine. [`parts`] is
+    /// the fallback and is always available, but it is a guess assembled from
+    /// headings and file seams: it cannot tell a preface from chapter one, and
+    /// it names a part after whatever heading happens to open it. A book that
+    /// states its own contents is stating what its author called each part and
+    /// in what order, which is not something to re-derive when it was given.
+    ///
+    /// [`parts`]: Document::parts
+    pub contents: Vec<Contents>,
+    /// Every named place in the book, and the block it names.
+    ///
+    /// A fragment is how one part of a book points at another: a table of
+    /// contents entry, a footnote marker, a cross-reference. Gutenberg's
+    /// EPUBs make this unavoidable rather than a nicety -- they put a whole
+    /// novel's chapters in one file and tell them apart only by fragment, so
+    /// a reader that resolves an href to a file lands every chapter of Pride
+    /// and Prejudice on the same page.
+    ///
+    /// Keyed as the target is written after resolution, which for an EPUB is
+    /// the archive name and the fragment together, because the same `id` is
+    /// used in every file of most books.
+    pub anchors: BTreeMap<String, usize>,
+}
+
+/// One line of a book's own table of contents.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Contents {
+    pub title: String,
+    /// Where it starts, as an index into [`Document::blocks`].
+    ///
+    /// Resolved when the book is read rather than followed later, because the
+    /// href it came from is relative to the file it was written in and that
+    /// file is inside an archive nobody keeps open. An entry whose target is
+    /// not in the reading order is dropped rather than pointed somewhere else.
+    pub block: usize,
+    /// How deep this entry sits, zero for a top-level part.
+    ///
+    /// Kept so a contents screen can indent rather than present a flat list of
+    /// two hundred sections, which is what a book with numbered subsections
+    /// looks like when the nesting is thrown away.
+    pub depth: u8,
 }
 
 impl Document {
@@ -264,6 +318,41 @@ impl Builder {
             document: Document::default(),
             text_used: 0,
         }
+    }
+
+    /// How many blocks have been kept so far.
+    ///
+    /// Asked while a book is being assembled, so that a format which knows
+    /// where its own parts begin can record the position of each one as it
+    /// goes. Counting afterwards would not do: blocks are dropped on the way
+    /// in, so the number of blocks pushed and the number kept are different.
+    pub(crate) fn len(&self) -> usize {
+        self.document.blocks.len()
+    }
+
+    /// Records the book's own table of contents.
+    pub(crate) fn set_contents(&mut self, contents: Vec<Contents>) {
+        self.document.contents = contents;
+    }
+
+    /// Notes that a named place in the document starts here.
+    ///
+    /// Recorded against the block that is about to be pushed rather than the
+    /// one just finished, because an `id` sits on the element whose words
+    /// follow it. The first use of a name wins: a book that reuses one has
+    /// already made it ambiguous, and picking the first keeps a link pointing
+    /// backwards rather than to wherever the name was last repeated.
+    pub(crate) fn mark_anchor(&mut self, id: &str) {
+        if id.is_empty() || self.document.anchors.len() >= MAX_ANCHORS {
+            return;
+        }
+        let at = self.document.blocks.len();
+        self.document.anchors.entry(id.to_owned()).or_insert(at);
+    }
+
+    /// Replaces the anchors, once a caller has re-keyed them.
+    pub(crate) fn set_anchors(&mut self, anchors: BTreeMap<String, usize>) {
+        self.document.anchors = anchors;
     }
 
     /// Adds a block, trimming its text and dropping it if it says nothing.
@@ -362,7 +451,14 @@ impl Builder {
     }
 
     pub(crate) fn finish(mut self) -> Document {
+        // The contents were recorded against the blocks as they arrived, and
+        // stripping the licence off the front of a Gutenberg book moves every
+        // one of them. Shifting them here rather than resolving them later is
+        // what keeps a chapter entry pointing at its own first words instead
+        // of somewhere twenty paragraphs along.
+        let before = self.document.blocks.len();
         strip_boilerplate(&mut self.document.blocks);
+        let removed_from_front = before - self.document.blocks.len();
         // A document that ends on a rule or a break ends on a mark pointing at
         // nothing.
         while matches!(
@@ -371,6 +467,26 @@ impl Builder {
         ) {
             self.document.blocks.pop();
         }
+        let kept = self.document.blocks.len();
+        // An entry whose target was inside the licence, or past the end after
+        // the trailing marks came off, no longer names anything in the book.
+        // It is dropped rather than clamped to the nearest block, because a
+        // contents line that silently goes to the wrong chapter is worse than
+        // one that is not offered at all.
+        self.document.contents.retain_mut(|entry| {
+            let Some(block) = entry.block.checked_sub(removed_from_front) else {
+                return false;
+            };
+            entry.block = block;
+            block < kept
+        });
+        self.document.anchors = std::mem::take(&mut self.document.anchors)
+            .into_iter()
+            .filter_map(|(name, at)| {
+                let at = at.checked_sub(removed_from_front)?;
+                (at < kept).then_some((name, at))
+            })
+            .collect();
         self.document
     }
 }

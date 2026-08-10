@@ -34,7 +34,7 @@ use kobo_html::{attribute, decode_entities, element_name};
 
 use crate::html::skip_bracketed;
 use crate::zip::{self, Archive};
-use crate::{Block, Builder, Document};
+use crate::{collapse, Block, Builder, Contents, Document};
 
 /// Where the container always is. The one path in an EPUB that is fixed.
 const CONTAINER: &str = "META-INF/container.xml";
@@ -94,6 +94,12 @@ pub fn parse(bytes: &[u8]) -> Result<Document, Fault> {
 
     let mut truncated = false;
     let mut parts = 0;
+    // Where each file of the book begins, so that a contents entry naming a
+    // file can be turned into somewhere to go. Kept as the resolved archive
+    // name, which is what a contents href resolves to as well, so the two can
+    // be compared without either knowing how the other was spelled.
+    let mut starts: Vec<(String, usize)> = Vec::new();
+    let mut anchors: BTreeMap<String, usize> = BTreeMap::new();
     for id in package.reading_order() {
         if parts >= MAX_PARTS {
             truncated = true;
@@ -107,7 +113,8 @@ pub fn parse(bytes: &[u8]) -> Result<Document, Fault> {
         if !is_readable(&item.media_type, &item.href) {
             continue;
         }
-        let Ok(bytes) = archive.read(&resolve(&base, &item.href)) else {
+        let name = resolve(&base, &item.href);
+        let Ok(bytes) = archive.read(&name) else {
             continue;
         };
         let part = crate::html::parse(&text_of(&bytes));
@@ -120,6 +127,17 @@ pub fn parse(bytes: &[u8]) -> Result<Document, Fault> {
         if parts > 0 {
             builder.push(Block::Break);
         }
+        // Recorded after the break rather than before it, so that going to a
+        // chapter lands on its first words rather than on the seam in front
+        // of them.
+        let start = builder.len();
+        // The names inside this file are only unique within it -- most books
+        // number their sections from one in every chapter -- so each is keyed
+        // by the file it was written in before it joins the book's own map.
+        for (id, at) in part.anchors {
+            anchors.insert(format!("{name}#{id}"), start + at);
+        }
+        starts.push((name, start));
         for block in part.blocks {
             builder.push(block);
         }
@@ -129,9 +147,228 @@ pub fn parse(bytes: &[u8]) -> Result<Document, Fault> {
     if parts == 0 {
         return Err(Fault::NotABook);
     }
+    builder.set_contents(contents_of(&archive, &package, &base, &starts, &anchors));
+    builder.set_anchors(anchors);
     let mut document = builder.finish();
     document.truncated |= truncated;
     Ok(document)
+}
+
+/// The most contents entries kept from one book.
+///
+/// A novel has tens and a reference work has hundreds. This is the point past
+/// which a contents screen has stopped being a way to find a chapter, and it
+/// also bounds what a book with a generated entry per paragraph can make this
+/// crate build.
+const MAX_CONTENTS: usize = 2_048;
+
+/// How deep a contents entry may be nested before the nesting is flattened.
+///
+/// Three is a part, a chapter and a section, which is as much structure as a
+/// screen this size can indent and still leave room for the words.
+const MAX_CONTENTS_DEPTH: u8 = 3;
+
+/// Reads the book's own table of contents, if it published one this can use.
+///
+/// EPUB 3 states it in a navigation document and EPUB 2 in an NCX, and books
+/// carrying both are common, because a publisher who moved to EPUB 3 still
+/// wants older readers to open the file. The navigation document is preferred
+/// and the NCX is the fallback, which between them covers everything these
+/// catalogs actually serve.
+///
+/// Every entry has to name somewhere in the reading order. One that does not
+/// is dropped rather than pointed at the nearest thing: a contents line that
+/// goes to the wrong chapter is worse than one that is missing, because the
+/// reader cannot tell it went wrong.
+fn contents_of(
+    archive: &Archive<'_>,
+    package: &Package,
+    base: &str,
+    starts: &[(String, usize)],
+    anchors: &BTreeMap<String, usize>,
+) -> Vec<Contents> {
+    let from_nav = package
+        .nav
+        .as_ref()
+        .and_then(|id| package.manifest.get(id))
+        .map(|item| resolve(base, &item.href))
+        .and_then(|name| {
+            let bytes = archive.read(&name).ok()?;
+            let inside = directory_of(&name);
+            Some(read_nav(&text_of(&bytes), &inside))
+        })
+        .unwrap_or_default();
+    let raw = if from_nav.is_empty() {
+        package
+            .ncx
+            .as_ref()
+            .and_then(|id| package.manifest.get(id))
+            .map(|item| resolve(base, &item.href))
+            .and_then(|name| {
+                let bytes = archive.read(&name).ok()?;
+                let inside = directory_of(&name);
+                Some(read_ncx(&text_of(&bytes), &inside))
+            })
+            .unwrap_or_default()
+    } else {
+        from_nav
+    };
+    raw.into_iter()
+        .filter_map(|(title, file, fragment, depth)| {
+            let title = collapse(&title);
+            if title.is_empty() {
+                return None;
+            }
+            // The fragment first, because it is the finer answer and often the
+            // only true one: Gutenberg puts every chapter of a novel in one
+            // file and separates them by name alone, so resolving to the file
+            // would put the whole contents on page one.
+            let block = fragment
+                .and_then(|fragment| anchors.get(&format!("{file}#{fragment}")).copied())
+                .or_else(|| {
+                    starts
+                        .iter()
+                        .find(|(name, _)| *name == file)
+                        .map(|(_, block)| *block)
+                })?;
+            Some(Contents {
+                title,
+                block,
+                depth: depth.min(MAX_CONTENTS_DEPTH),
+            })
+        })
+        .take(MAX_CONTENTS)
+        .collect()
+}
+
+/// Reads an EPUB 3 navigation document's `toc` nav.
+///
+/// A navigation document holds several navs -- a table of contents, a list of
+/// illustrations, a set of landmarks -- and only the one marked `toc` is the
+/// contents. The marking is `epub:type`, but the prefix is chosen by whoever
+/// wrote the file, so the attribute is matched by its local name.
+fn read_nav(xml: &str, base: &str) -> Vec<(String, String, Option<String>, u8)> {
+    let mut found = Vec::new();
+    let mut in_toc = false;
+    let mut depth: u8 = 0;
+    let mut nav_depth = 0usize;
+    let mut href: Option<String> = None;
+    for_each_element(xml, |name, inside, closing, before| {
+        match (closing, name) {
+            (false, "nav") => {
+                nav_depth += 1;
+                if !in_toc && is_toc_nav(inside) {
+                    in_toc = true;
+                    nav_depth = 1;
+                    depth = 0;
+                }
+            }
+            (true, "nav") => {
+                nav_depth = nav_depth.saturating_sub(1);
+                if nav_depth == 0 {
+                    in_toc = false;
+                }
+            }
+            // An `ol` inside the contents is a level of nesting. The first one
+            // is the list itself rather than an indent, so depth counts from
+            // the second.
+            (false, "ol") if in_toc => depth = depth.saturating_add(1),
+            (true, "ol") if in_toc => depth = depth.saturating_sub(1),
+            (false, "a") if in_toc => {
+                href = attribute(inside, "href").map(decode_entities);
+            }
+            (true, "a") if in_toc => {
+                if let Some(target) = href.take() {
+                    found.push((
+                        decode_entities(before),
+                        resolve(base, &target),
+                        fragment_of(&target),
+                        depth.saturating_sub(1),
+                    ));
+                }
+            }
+            _ => {}
+        }
+    });
+    found
+}
+
+/// Whether this `nav` is the one holding the table of contents.
+fn is_toc_nav(inside: &str) -> bool {
+    inside.split_whitespace().any(|word| {
+        let mut parts = word.splitn(2, '=');
+        let key = parts.next().unwrap_or_default();
+        let local = key.rsplit(':').next().unwrap_or(key);
+        local == "type"
+            && parts
+                .next()
+                .is_some_and(|value| value.trim_matches(['"', '\'']).eq_ignore_ascii_case("toc"))
+    })
+}
+
+/// Reads an EPUB 2 NCX.
+///
+/// A `navPoint` carries its label before its target and may contain further
+/// points, so a parent closes only after all of its children. Emitting an
+/// entry when its point closed would therefore put every chapter after its own
+/// sections. Each point instead claims its place in the list the moment it
+/// opens, and the label and target are written into that place as they arrive,
+/// which keeps the contents in the order the book states them.
+fn read_ncx(xml: &str, base: &str) -> Vec<(String, String, Option<String>, u8)> {
+    let mut found: Vec<(Option<String>, Option<String>, u8)> = Vec::new();
+    let mut stack: Vec<usize> = Vec::new();
+    let mut in_label = false;
+    for_each_element(xml, |name, inside, closing, before| {
+        // Lower case throughout, because `element_name` folds the case it was
+        // written in: an NCX spells these `navPoint` and `navLabel`, and
+        // matching them the way the file does finds nothing at all.
+        let local = name.rsplit(':').next().unwrap_or(name);
+        match (closing, local) {
+            (false, "navpoint") => {
+                let depth = u8::try_from(stack.len()).unwrap_or(u8::MAX);
+                stack.push(found.len());
+                found.push((None, None, depth));
+            }
+            (true, "navpoint") => {
+                stack.pop();
+            }
+            (false, "navlabel") => in_label = true,
+            (true, "navlabel") => in_label = false,
+            (true, "text") if in_label => {
+                if let Some(entry) = stack.last().and_then(|at| found.get_mut(*at)) {
+                    if entry.0.is_none() {
+                        entry.0 = Some(decode_entities(before));
+                    }
+                }
+            }
+            (false, "content") => {
+                if let Some(entry) = stack.last().and_then(|at| found.get_mut(*at)) {
+                    if entry.1.is_none() {
+                        entry.1 = attribute(inside, "src").map(decode_entities);
+                    }
+                }
+            }
+            _ => {}
+        }
+    });
+    found
+        .into_iter()
+        .filter_map(|(title, target, depth)| {
+            let target = target?;
+            Some((title?, resolve(base, &target), fragment_of(&target), depth))
+        })
+        .collect()
+}
+
+/// The part of an href after the `#`, when it names one.
+///
+/// Kept apart from [`resolve`], which drops it deliberately: a fragment is a
+/// place inside a file rather than a different file, so it is the wrong thing
+/// to look up in an archive and the right thing to look up in a book.
+fn fragment_of(href: &str) -> Option<String> {
+    href.split_once('#')
+        .map(|(_, fragment)| fragment.to_owned())
+        .filter(|fragment| !fragment.is_empty())
 }
 
 /// Finds the package document.
@@ -183,6 +420,17 @@ struct Package {
     manifest: BTreeMap<String, Item>,
     /// Spine entries in order, each with whether it is part of the main flow.
     spine: Vec<(String, bool)>,
+    /// The identifier of the EPUB 3 navigation document, when the manifest
+    /// marks one with `properties="nav"`.
+    nav: Option<String>,
+    /// The identifier the spine's `toc` attribute names, which is how EPUB 2
+    /// points at its NCX.
+    ///
+    /// Both are kept because both are found in the wild, often in the same
+    /// book: an EPUB 3 that still ships an NCX so that older readers can open
+    /// it. The navigation document is preferred when there is one, and the NCX
+    /// is what the great majority of Project Gutenberg's books actually carry.
+    ncx: Option<String>,
 }
 
 impl Package {
@@ -209,6 +457,8 @@ fn read_package(xml: &str) -> Package {
         author: None,
         manifest: BTreeMap::new(),
         spine: Vec::new(),
+        nav: None,
+        ncx: None,
     };
     // The same element names appear in more than one place (`<title>` is in
     // the metadata and also in a `<guide>` reference) so the section matters.
@@ -232,6 +482,14 @@ fn read_package(xml: &str) -> Package {
                 let id = attribute(inside, "id").map(decode_entities);
                 let href = attribute(inside, "href").map(decode_entities);
                 if let (Some(id), Some(href)) = (id, href) {
+                    // `properties` is a space-separated list, so `nav` has to
+                    // be matched as one of its words: a stylesheet marked
+                    // `navigation-only` is not the navigation document.
+                    if attribute(inside, "properties")
+                        .is_some_and(|properties| properties.split_whitespace().any(|word| word == "nav"))
+                    {
+                        package.nav = Some(id.clone());
+                    }
                     package.manifest.insert(
                         id,
                         Item {
@@ -242,6 +500,9 @@ fn read_package(xml: &str) -> Package {
                         },
                     );
                 }
+            }
+            (false, "spine") => {
+                package.ncx = attribute(inside, "toc").map(decode_entities);
             }
             (false, "itemref") => {
                 if let Some(id) = attribute(inside, "idref").map(decode_entities) {
@@ -683,6 +944,194 @@ mod tests {
         let document = parse(&a_book()).expect("a readable book");
         assert_eq!(document.title.as_deref(), Some("A Book"));
         assert_eq!(document.author.as_deref(), Some("A Person"));
+    }
+
+    /// A book whose whole contents live in one file, told apart by fragment.
+    ///
+    /// This is Project Gutenberg's shape, not a contrived one: its EPUBs put a
+    /// novel's every chapter in a single document and separate them by name
+    /// alone, so a reader that resolves a contents entry to a file puts the
+    /// entire table of contents on page one.
+    fn one_file_with_named_chapters(toc: &str, toc_item: &str) -> Vec<u8> {
+        let package = format!(
+            r#"<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>A Book</dc:title></metadata>
+  <manifest>
+    <item id="body" href="body.xhtml" media-type="application/xhtml+xml"/>
+    {toc_item}
+  </manifest>
+  <spine toc="ncx"><itemref idref="body"/></spine>
+</package>"#
+        );
+        archive(&[
+            ("META-INF/container.xml", CONTAINER_XML.as_bytes()),
+            ("OEBPS/book.opf", package.as_bytes()),
+            (
+                "OEBPS/body.xhtml",
+                br#"<h1 id="one">Chapter One</h1><p>The first words.</p>
+                    <h1 id="two">Chapter Two</h1><p>The second words.</p>"#,
+            ),
+            ("OEBPS/toc.ncx", toc.as_bytes()),
+        ])
+    }
+
+    const NCX_ITEM: &str = r#"<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>"#;
+
+    #[test]
+    fn a_books_own_table_of_contents_is_read_rather_than_guessed_at() {
+        let ncx = r#"<?xml version="1.0"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/"><navMap>
+  <navPoint id="a"><navLabel><text>Chapter One</text></navLabel>
+    <content src="body.xhtml#one"/></navPoint>
+  <navPoint id="b"><navLabel><text>Chapter Two</text></navLabel>
+    <content src="body.xhtml#two"/></navPoint>
+</navMap></ncx>"#;
+        let document = parse(&one_file_with_named_chapters(ncx, NCX_ITEM)).expect("a readable book");
+        let titles: Vec<&str> = document
+            .contents
+            .iter()
+            .map(|entry| entry.title.as_str())
+            .collect();
+        assert_eq!(titles, ["Chapter One", "Chapter Two"]);
+    }
+
+    #[test]
+    fn two_chapters_in_one_file_do_not_land_on_the_same_page() {
+        // The whole reason fragments are resolved. Without it both entries
+        // point at the first block of the only file and the contents lies.
+        let ncx = r#"<?xml version="1.0"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/"><navMap>
+  <navPoint id="a"><navLabel><text>Chapter One</text></navLabel>
+    <content src="body.xhtml#one"/></navPoint>
+  <navPoint id="b"><navLabel><text>Chapter Two</text></navLabel>
+    <content src="body.xhtml#two"/></navPoint>
+</navMap></ncx>"#;
+        let document = parse(&one_file_with_named_chapters(ncx, NCX_ITEM)).expect("a readable book");
+        assert_ne!(
+            document.contents[0].block, document.contents[1].block,
+            "both chapters resolved to the same block"
+        );
+        assert_eq!(
+            document.blocks[document.contents[1].block].text(),
+            Some("Chapter Two")
+        );
+    }
+
+    #[test]
+    fn a_chapter_that_closes_after_its_own_sections_still_comes_before_them() {
+        // An NCX nests, so a parent point closes only once its children have.
+        // Emitting an entry when its point closed put every chapter after its
+        // own sections, which is the contents in very nearly the wrong order.
+        let ncx = r#"<?xml version="1.0"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/"><navMap>
+  <navPoint id="a"><navLabel><text>Chapter One</text></navLabel>
+    <content src="body.xhtml#one"/>
+    <navPoint id="a1"><navLabel><text>Chapter Two</text></navLabel>
+      <content src="body.xhtml#two"/></navPoint>
+  </navPoint>
+</navMap></ncx>"#;
+        let document = parse(&one_file_with_named_chapters(ncx, NCX_ITEM)).expect("a readable book");
+        let titles: Vec<&str> = document
+            .contents
+            .iter()
+            .map(|entry| entry.title.as_str())
+            .collect();
+        assert_eq!(titles, ["Chapter One", "Chapter Two"]);
+        assert_eq!(document.contents[0].depth, 0);
+        assert_eq!(document.contents[1].depth, 1, "the nesting was lost");
+    }
+
+    #[test]
+    fn an_epub_3_navigation_document_is_preferred_over_an_ncx() {
+        // Books carrying both are ordinary: a publisher who moved to EPUB 3
+        // keeps an NCX so that older readers still open the file.
+        let ncx = r#"<?xml version="1.0"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/"><navMap>
+  <navPoint id="a"><navLabel><text>From the NCX</text></navLabel>
+    <content src="body.xhtml#one"/></navPoint>
+</navMap></ncx>"#;
+        let package = r#"<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>A Book</dc:title></metadata>
+  <manifest>
+    <item id="body" href="body.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+  </manifest>
+  <spine toc="ncx"><itemref idref="body"/></spine>
+</package>"#;
+        let nav = r#"<html><body>
+  <nav epub:type="landmarks"><ol><li><a href="body.xhtml#one">Not the contents</a></li></ol></nav>
+  <nav epub:type="toc"><ol>
+    <li><a href="body.xhtml#one">From the nav</a></li>
+    <li><a href="body.xhtml#two">Chapter Two</a></li>
+  </ol></nav>
+</body></html>"#;
+        let bytes = archive(&[
+            ("META-INF/container.xml", CONTAINER_XML.as_bytes()),
+            ("OEBPS/book.opf", package.as_bytes()),
+            (
+                "OEBPS/body.xhtml",
+                br#"<h1 id="one">Chapter One</h1><p>Words.</p><h1 id="two">Chapter Two</h1><p>More.</p>"#,
+            ),
+            ("OEBPS/toc.ncx", ncx.as_bytes()),
+            ("OEBPS/nav.xhtml", nav.as_bytes()),
+        ]);
+        let document = parse(&bytes).expect("a readable book");
+        assert_eq!(document.contents[0].title, "From the nav");
+        assert_eq!(
+            document.contents.len(),
+            2,
+            "the landmarks nav was read as contents"
+        );
+    }
+
+    #[test]
+    fn a_contents_entry_naming_nothing_in_the_book_is_dropped() {
+        // Pointing it at the nearest block would send a reader somewhere the
+        // book never said, and they would have no way to tell it went wrong.
+        let ncx = r#"<?xml version="1.0"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/"><navMap>
+  <navPoint id="a"><navLabel><text>Chapter One</text></navLabel>
+    <content src="body.xhtml#one"/></navPoint>
+  <navPoint id="b"><navLabel><text>A Chapter That Is Not Here</text></navLabel>
+    <content src="missing.xhtml"/></navPoint>
+</navMap></ncx>"#;
+        let document = parse(&one_file_with_named_chapters(ncx, NCX_ITEM)).expect("a readable book");
+        let titles: Vec<&str> = document
+            .contents
+            .iter()
+            .map(|entry| entry.title.as_str())
+            .collect();
+        assert_eq!(titles, ["Chapter One"]);
+    }
+
+    #[test]
+    fn a_named_place_can_be_found_after_the_licence_is_stripped_off_the_front() {
+        // Gutenberg's boilerplate is removed once the book is assembled, which
+        // moves every block. An anchor that was not moved with them points at
+        // whatever happens to sit at the old index.
+        let package = opf(
+            r#"<itemref idref="one"/>"#,
+            r#"<item id="one" href="one.xhtml" media-type="application/xhtml+xml"/>"#,
+        );
+        let body = format!(
+            r#"<p>{}</p><p>Front matter nobody reads.</p><h1 id="start">Chapter One</h1><p>The book.</p>"#,
+            crate::GUTENBERG_START
+        );
+        let bytes = archive(&[
+            ("META-INF/container.xml", CONTAINER_XML.as_bytes()),
+            ("OEBPS/book.opf", package.as_bytes()),
+            ("OEBPS/one.xhtml", body.as_bytes()),
+        ]);
+        let document = parse(&bytes).expect("a readable book");
+        let at = document
+            .anchors
+            .get("OEBPS/one.xhtml#start")
+            .copied()
+            .expect("the anchor survived the strip");
+        assert_eq!(document.blocks[at].text(), Some("Chapter One"));
     }
 
     #[test]
