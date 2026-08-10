@@ -1143,6 +1143,32 @@ fn first_words(text: &str) -> String {
 ///
 /// Returns the pages, and whether it stopped at the ceiling with book left --
 /// which the caller has to say out loud rather than present as an ending.
+/// Where the book itself says a chapter begins.
+///
+/// A chapter starting halfway down the page, under the last paragraph of the
+/// one before it, is the tell of something that reflows text rather than sets
+/// a book. It is the difference a reader notices first, and the book already
+/// stated where the boundaries are.
+fn chapter_starts_of(document: &Document) -> BTreeSet<usize> {
+    document
+        .contents
+        .iter()
+        .map(|entry| entry.block)
+        .collect()
+}
+
+/// Ends the page being filled, if anything is on it.
+///
+/// A page break with nothing above it is not a break, it is a blank page, and
+/// a book whose first chapter is listed in its contents would otherwise open
+/// on one.
+fn break_page(pages: &mut Vec<Vec<Piece>>, page: &mut Vec<Piece>, used: &mut i32) {
+    if !page.is_empty() {
+        pages.push(std::mem::take(page));
+        *used = 0;
+    }
+}
+
 fn paginate(
     document: &Document,
     highlights: &BTreeSet<Locator>,
@@ -1157,8 +1183,10 @@ fn paginate(
         return (pages, !document.blocks.is_empty());
     }
     let mut capped = false;
+    let chapter_starts = chapter_starts_of(document);
 
     for (index, block) in document.blocks.iter().enumerate() {
+        let starts_chapter = chapter_starts.contains(&index);
         let Ok(index) = Locator::try_from(index) else {
             break;
         };
@@ -1167,6 +1195,14 @@ fn paginate(
             break;
         }
         let kind = kind_of(block, highlights.contains(&index));
+        // A file seam is a chapter boundary in every EPUB, listed in the
+        // contents or not, and it used to draw a small space instead.
+        if kind == Kind::Break || starts_chapter {
+            break_page(&mut pages, &mut page, &mut used);
+            if kind == Kind::Break {
+                continue;
+            }
+        }
         let size = kind.size();
         let height = size.line_height_in(area.face);
         let (_, width) = quote_offsets(metrics, area.width, kind.depth());
@@ -1310,6 +1346,77 @@ mod tests {
 
     /// Everything behind the reading bar (type size, front light, bookmarks,
     /// marked passages) was written, tested and shipped while being
+    /// A book whose second chapter is named in its contents.
+    ///
+    /// Short enough that both chapters would sit on one page if nothing put
+    /// them apart, which is the whole point of the test.
+    fn two_chapters() -> Document {
+        Document {
+            title: Some("A Book".into()),
+            blocks: vec![
+                Block::Heading {
+                    level: 1,
+                    text: "Chapter One".into(),
+                },
+                Block::Paragraph("The first chapter is short.".into()),
+                Block::Heading {
+                    level: 1,
+                    text: "Chapter Two".into(),
+                },
+                Block::Paragraph("So is the second.".into()),
+            ],
+            contents: vec![
+                kobo_doc::Contents {
+                    title: "Chapter One".into(),
+                    block: 0,
+                    depth: 0,
+                },
+                kobo_doc::Contents {
+                    title: "Chapter Two".into(),
+                    block: 2,
+                    depth: 0,
+                },
+            ],
+            ..Document::default()
+        }
+    }
+
+    #[test]
+    fn a_chapter_begins_on_a_page_of_its_own() {
+        // Both chapters fit on one page with room to spare, so anything that
+        // does not deliberately break between them will run them together --
+        // which is what a reader sees as "this is not a book".
+        let reader = Reader::open(two_chapters(), Memory::default(), &panel());
+        assert_eq!(reader.page_count(), 2, "the chapters shared a page");
+        let first: Vec<&str> = reader.page().iter().map(|piece| piece.text.as_str()).collect();
+        assert!(
+            first.iter().any(|text| text.contains("first chapter")),
+            "{first:?}"
+        );
+        assert!(
+            !first.iter().any(|text| text.contains("Chapter Two")),
+            "the second chapter started on the first chapter's page: {first:?}"
+        );
+    }
+
+    #[test]
+    fn a_file_seam_starts_a_page_rather_than_leaving_a_gap() {
+        // An EPUB's chapters are separate files and the seam between two of
+        // them is a chapter boundary even when the book listed no contents.
+        // It used to draw a small space, so one page held the end of one
+        // chapter and the start of the next.
+        let document = Document {
+            blocks: vec![
+                Block::Paragraph("The end of one chapter.".into()),
+                Block::Break,
+                Block::Paragraph("The start of the next.".into()),
+            ],
+            ..Document::default()
+        };
+        let reader = Reader::open(document, Memory::default(), &panel());
+        assert_eq!(reader.page_count(), 2, "the seam drew a gap instead");
+    }
+
     /// unreachable: the reading screen carries nothing at the foot, and the
     /// whole content area answered a tap with a page turn. This is the way in.
     #[test]
