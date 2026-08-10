@@ -176,6 +176,13 @@ const PICTURE_HANDLE_BASE: u32 = 1_000;
 const NAV_COVER_HANDLE_BASE: u32 = 2_000;
 const NAV_COVER_HANDLES: u32 = 64;
 
+/// How many rows are followed at once to find their pictures.
+///
+/// Two rather than the three the shelf's own covers get, and both together
+/// stay under the runtime's ceiling of four, so a reader's tap always has a
+/// lane waiting for it. Six tiles then fill in three rounds instead of six.
+const FILL_LANES: usize = 2;
+
 /// How wide the cover in a book's hero is drawn.
 const DETAILS_COVER_MM: u16 = 30;
 
@@ -355,6 +362,19 @@ enum FeedPurpose {
     Federated { catalog: usize },
 }
 
+/// What one of the shelf's own background requests is for.
+///
+/// Kept apart from [`Awaiting`], which is the single request a reader is
+/// actually waiting on. These run in their own lanes so that filling a shelf
+/// in can never be the reason a tap does nothing.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum FillStage {
+    /// Following a row to see whether it is a book, and where its picture is.
+    Entry { href: String },
+    /// Fetching that picture.
+    Picture { href: String },
+}
+
 /// What a completed task should be applied to.
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Awaiting {
@@ -370,10 +390,7 @@ enum Awaiting {
     /// catalog like that would draw as a page of identical rows, so the
     /// entries on the page being looked at are followed to see which of them
     /// are books, and the ones that are move to the shelf.
-    Hydrate { href: String },
-    /// The picture for a navigation tile, once following that entry has said
-    /// where its cover lives.
-    NavCover { href: String },
+
     /// A catalog's root feed, fetched only because nothing about it has been
     /// fetched yet and a search needs to know whether it offers one at all.
     DiscoverRoot {
@@ -528,6 +545,10 @@ struct Gutenbird {
     /// Covers the store is being asked about, by the key each answer will
     /// carry.
     looking: Vec<(String, usize)>,
+    /// Rows being followed to find their pictures, and what each request is
+    /// for. Its own lanes rather than the one exclusive slot: a shelf filling
+    /// itself in must never be the reason a tap does nothing.
+    filling: Vec<(TaskId, FillStage)>,
 
     detail_page: usize,
 
@@ -570,6 +591,7 @@ impl Default for Gutenbird {
             wanted: Vec::new(),
             covers: Vec::new(),
             looking: Vec::new(),
+            filling: Vec::new(),
             detail_page: 0,
             download: None,
             fetched: 0,
@@ -729,12 +751,9 @@ impl Gutenbird {
     fn spawn_feed(&mut self, context: &mut Context, url: String, purpose: FeedPurpose) {
         self.problem = None;
         self.trouble = None;
-        // Whatever the shelf was doing for itself, the reader asking to go
-        // somewhere outranks it. Filling tiles in occupies a lane, and on a
-        // catalog whose entries are slow it occupies one continuously, so
-        // every tap was refused with "too much is already in flight" and the
-        // application looked frozen while it was in fact busy on the
-        // reader's behalf and ignoring them.
+        // The shelf's own work runs in lanes of its own and never holds the
+        // slot this needs, but a page the reader has left is not worth
+        // finishing, so its pictures are dropped rather than waited for.
         self.abandon_hydration(context);
         let headers = vec![Header::new("Accept", kobo_opds::ACCEPT)];
         match context.spawn_retrying(Task::Fetch {
@@ -1522,42 +1541,52 @@ impl Gutenbird {
     /// page being looked at: a reader who turns pages quickly must not leave
     /// a trail of requests behind them.
     fn hydrate_visible(&mut self, context: &mut Context) {
-        // Never while the reader is waiting on something of their own, and
-        // never on a screen that is not the shelf: a book downloading wants
-        // every lane there is.
-        if self.task.is_some() || !matches!(self.view, View::Shelf) {
+        // Never on a screen that is not the shelf: a book downloading wants
+        // every lane there is, and a picture for a tile nobody is looking at
+        // is not worth taking one.
+        if !matches!(self.view, View::Shelf) {
             return;
         }
-        let Some(entry) = self.stack.last() else {
-            return;
-        };
-        let first = entry.page * SHELF_PAGE;
-        let Some(href) = entry
-            .feed
-            .navigation
-            .iter()
-            .skip(first)
-            .take(SHELF_PAGE)
-            .map(|navigation| navigation.href.clone())
-            .find(|href| !entry.examined.contains(href))
-        else {
-            return;
-        };
-        // Marked before the answer arrives, so a row that fails to load is
-        // not asked for again on every redraw.
-        if let Some(entry) = self.stack.last_mut() {
-            entry.examined.insert(href.clone());
+        while self.filling.len() < FILL_LANES {
+            let Some(entry) = self.stack.last() else {
+                return;
+            };
+            let first = entry.page * SHELF_PAGE;
+            let Some(href) = entry
+                .feed
+                .navigation
+                .iter()
+                .skip(first)
+                .take(SHELF_PAGE)
+                .map(|navigation| navigation.href.clone())
+                .find(|href| !entry.examined.contains(href))
+            else {
+                return;
+            };
+            // Marked before the answer arrives, so a row that fails to load
+            // is not asked for again on every redraw, and so that the lane
+            // beside this one picks a different row.
+            if let Some(entry) = self.stack.last_mut() {
+                entry.examined.insert(href.clone());
+            }
+            let headers = vec![Header::new("Accept", kobo_opds::ACCEPT)];
+            let Some(task) = context.spawn_retrying(Task::Fetch {
+                url: href.clone(),
+                offset: 0,
+                max_bytes: FEED_BYTES,
+                credential: None,
+                headers,
+            }) else {
+                return;
+            };
+            self.filling.push((task, FillStage::Entry { href }));
         }
-        let headers = vec![Header::new("Accept", kobo_opds::ACCEPT)];
-        if let Some(task) = context.spawn_retrying(Task::Fetch {
-            url: href.clone(),
-            offset: 0,
-            max_bytes: FEED_BYTES,
-            credential: None,
-            headers,
-        }) {
-            self.task = Some((task, Awaiting::Hydrate { href }));
-        }
+    }
+
+    /// Takes one of the shelf's own answers, if this task was one.
+    fn finish_filling(&mut self, task: TaskId) -> Option<FillStage> {
+        let at = self.filling.iter().position(|(id, _)| *id == task)?;
+        Some(self.filling.remove(at).1)
     }
 
     /// Takes a followed row, and moves it to the shelf if it was a book.
@@ -1587,10 +1616,8 @@ impl Gutenbird {
     /// Called before anything the reader asked for. A tile without its
     /// picture is a tile; a tap that does nothing is a broken application.
     fn abandon_hydration(&mut self, context: &mut Context) {
-        if let Some((task, Awaiting::Hydrate { .. } | Awaiting::NavCover { .. })) = self.task.clone()
-        {
+        for (task, _) in std::mem::take(&mut self.filling) {
             context.cancel(task);
-            self.task = None;
         }
     }
 
@@ -1605,7 +1632,7 @@ impl Gutenbird {
             self.hydrate_visible(context);
             return;
         };
-        self.task = Some((task, Awaiting::NavCover { href }));
+        self.filling.push((task, FillStage::Picture { href }));
     }
 
     /// Puts a picture into the tile that asked for it.
@@ -2792,6 +2819,19 @@ impl KoboApp for Gutenbird {
 
     #[allow(clippy::too_many_lines)]
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
+        if let Some(stage) = self.finish_filling(task) {
+            if let TaskOutcome::Completed(bytes) = outcome {
+                match stage {
+                    FillStage::Entry { href } => self.took_hydration(context, &bytes, &href),
+                    FillStage::Picture { href } => self.took_nav_cover(context, &bytes, &href),
+                }
+            } else {
+                // A row that will not load stays a tile with a glyph, which
+                // is what it already was.
+                self.hydrate_visible(context);
+            }
+            return;
+        }
         if let Some((index, tries)) = self.finish_cover(task) {
             match outcome {
                 TaskOutcome::Completed(bytes) => self.keep_cover(context, index, &bytes),
@@ -2862,8 +2902,7 @@ impl KoboApp for Gutenbird {
                     }
                 }
                 Awaiting::Book => self.took_book(context, &bytes),
-                Awaiting::Hydrate { href } => self.took_hydration(context, &bytes, &href),
-                Awaiting::NavCover { href } => self.took_nav_cover(context, &bytes, &href),
+
             },
             TaskOutcome::Failed(error) => match awaiting {
                 Awaiting::Book => {
@@ -2887,9 +2926,7 @@ impl KoboApp for Gutenbird {
                 // A row that could not be followed stays a row. It is already
                 // marked as examined, so the next page turn does not spend
                 // the radio asking again.
-                Awaiting::Hydrate { .. } | Awaiting::NavCover { .. } => {
-                    self.hydrate_visible(context);
-                }
+
                 Awaiting::Feed(..) => {
                     let failure = Failure::of(error);
                     self.trouble = Some(failure);
@@ -2906,7 +2943,7 @@ impl KoboApp for Gutenbird {
 
 #[cfg(test)]
 mod tests {
-    use super::{
+    use super::{FillStage, 
         book_keys, catalog_display_name, decode_registry, download_kind, encode_registry, readable,
         read_offer, Awaiting, Catalog, DetailBlock, Download, DownloadKind, FeedPurpose, Gutenbird,
         Memory, ReadOffer, Reader, SearchState, SearchWay, StackEntry, View, COVER_TRIES,
@@ -4671,9 +4708,9 @@ Please read this before you distribute or use this work.\n";
         // "too much is already in flight", so the application looked frozen
         // while it was busy on the reader's behalf and ignoring them.
         let mut runner = AppRunner::new(Gutenbird::default());
-        runner.app_mut().task = Some((
+        runner.app_mut().filling.push((
             kobo_sdk::TaskId(77),
-            Awaiting::Hydrate {
+            FillStage::Entry {
                 href: "https://gutenberg.example/1342.opds".to_owned(),
             },
         ));
@@ -4685,6 +4722,10 @@ Please read this before you distribute or use this work.\n";
         assert!(
             matches!(awaiting, Some((_, Awaiting::Feed(..)))),
             "the shelf's own work kept the lane: {awaiting:?}"
+        );
+        assert!(
+            runner.app().filling.is_empty(),
+            "a page the reader has left was still being filled in"
         );
     }
 
@@ -4701,7 +4742,7 @@ Please read this before you distribute or use this work.\n";
         runner.app_mut().stack = vec![StackEntry::fresh(feed, "https://gutenberg.example/".to_owned())];
         let mut context = runner.context();
         runner.app_mut().hydrate_visible(&mut context);
-        assert!(runner.app().task.is_none(), "it went looking anyway");
+        assert!(runner.app().filling.is_empty(), "it went looking anyway");
     }
 
     /// One book, as a catalog's own entry document states it.
