@@ -8,10 +8,12 @@ use kobo_sdk::{
     WifiNetwork,
 };
 use std::process::ExitCode;
+use std::time::Duration;
 
 const BLUETOOTH: &str = "bluetooth";
 const WIFI: &str = "wifi";
 const BATTERY: &str = "battery";
+const SLEEP: &str = "sleep";
 const UPDATE: &str = "update";
 const CHECK: &str = "check";
 const INSTALL: &str = "install";
@@ -19,6 +21,13 @@ const TOGGLE: &str = "toggle";
 const RESCAN: &str = "rescan";
 const MORE: &str = "more";
 const PREVIOUS: &str = "previous";
+const SLEEP_CHOICES: [(&str, u32); 5] = [
+    ("sleep-5", 5),
+    ("sleep-10", 10),
+    ("sleep-15", 15),
+    ("sleep-30", 30),
+    ("sleep-60", 60),
+];
 const PAGE_SIZE: usize = 4;
 const DEVICE_ACTIONS: [&str; 10] = [
     "bt-0", "bt-1", "bt-2", "bt-3", "bt-4", "bt-5", "bt-6", "bt-7", "bt-8", "bt-9",
@@ -44,6 +53,7 @@ enum View {
     Wifi,
     WifiPassword,
     Battery,
+    Sleep,
     Update,
 }
 
@@ -118,6 +128,7 @@ enum Topic {
     Bluetooth,
     Wifi,
     Battery,
+    Sleep,
 }
 
 impl Topic {
@@ -136,6 +147,9 @@ impl Topic {
             | DeviceRequest::JoinWifi { .. }
             | DeviceRequest::DisconnectWifi => Some(Self::Wifi),
             DeviceRequest::ReadBattery | DeviceRequest::ReadBatteryDetail => Some(Self::Battery),
+            DeviceRequest::ReadSystemSleepTimeout | DeviceRequest::SetSystemSleepTimeout { .. } => {
+                Some(Self::Sleep)
+            }
             _ => None,
         }
     }
@@ -161,6 +175,7 @@ struct Settings {
     selected_ssid: Option<String>,
     password: Keyboard,
     battery: Option<BatteryDetail>,
+    sleep_timeout_seconds: Option<u32>,
     update: UpdateFlow,
     update_task: Option<TaskId>,
     pending: Option<Pending>,
@@ -177,6 +192,7 @@ impl Settings {
             View::Wifi => self.wifi(),
             View::WifiPassword => self.wifi_password(),
             View::Battery => self.battery(),
+            View::Sleep => self.sleep(),
             View::Update => self.update(),
         };
         context.set_screen(screen);
@@ -246,6 +262,12 @@ impl Settings {
                     RowLead::from(Glyph::Battery),
                 ),
                 (
+                    SLEEP,
+                    "Sleep",
+                    self.sleep_summary(),
+                    RowLead::from(Glyph::Power),
+                ),
+                (
                     UPDATE,
                     "Software update",
                     self.update_summary(),
@@ -257,6 +279,45 @@ impl Settings {
             // binary was compiled as is what is installed.
             .section_with_value("Cobalt", VERSION);
         screen.build()
+    }
+
+    fn sleep_summary(&self) -> String {
+        self.sleep_timeout_seconds.map_or_else(
+            || "Reading".to_owned(),
+            |seconds| format!("After {} minutes", seconds / 60),
+        )
+    }
+
+    fn sleep(&self) -> Screen {
+        let mut screen = ScreenBuilder::new("settings-sleep")
+            .top_bar("Sleep")
+            .owns_back(true);
+        if let Some(trouble) = self.banner_for(Topic::Sleep) {
+            screen = screen.banner(kobo_sdk::BannerLevel::Attention, trouble);
+        }
+        screen
+            .section("Sleep after")
+            .rows(SLEEP_CHOICES.into_iter().map(|(action, minutes)| {
+                let selected = self.sleep_timeout_seconds == Some(minutes * 60);
+                (
+                    action,
+                    format!("{minutes} minutes"),
+                    if selected { "Selected" } else { "" },
+                    RowLead::from(if selected {
+                        Glyph::Check
+                    } else {
+                        Glyph::Circle
+                    }),
+                )
+            }))
+            .build()
+    }
+
+    fn sleep_timeout_for_action(action: ActionId) -> Option<Duration> {
+        SLEEP_CHOICES
+            .iter()
+            .find(|(name, _)| action == action_id(name))
+            .map(|(_, minutes)| Duration::from_secs(u64::from(*minutes) * 60))
     }
 
     /// One line for the home row: where the update journey stands, or an
@@ -587,6 +648,7 @@ impl Settings {
         context.device().read_bluetooth();
         context.device().read_wifi();
         context.device().read_battery_detail();
+        context.device().read_system_sleep_timeout();
     }
 
     /// Asks GitHub what the newest published release is. Nothing is
@@ -701,7 +763,7 @@ impl Settings {
         let (page, pages) = match self.view {
             View::Bluetooth => (&mut self.bluetooth_page, page_count(self.devices.len())),
             View::Wifi => (&mut self.wifi_page, page_count(self.networks.len())),
-            View::Home | View::WifiPassword | View::Battery | View::Update => return,
+            View::Home | View::WifiPassword | View::Battery | View::Sleep | View::Update => return,
         };
         *page = if forward {
             (*page + 1).min(pages - 1)
@@ -796,6 +858,10 @@ impl KoboApp for Settings {
             self.view = View::Battery;
             context.device().read_battery_detail();
             self.show(context);
+        } else if action == action_id(SLEEP) {
+            self.view = View::Sleep;
+            context.device().read_system_sleep_timeout();
+            self.show(context);
         } else if action == action_id(UPDATE) {
             self.view = View::Update;
             self.show(context);
@@ -810,7 +876,7 @@ impl KoboApp for Settings {
                     .device()
                     .set_bluetooth(!self.bluetooth_state.enabled()),
                 View::Wifi => context.device().set_wifi(!self.wifi_state.enabled()),
-                View::Home | View::WifiPassword | View::Battery | View::Update => {}
+                View::Home | View::WifiPassword | View::Battery | View::Sleep | View::Update => {}
             }
         } else if action == action_id(RESCAN) {
             match self.view {
@@ -825,7 +891,7 @@ impl KoboApp for Settings {
                     self.delay_refresh(context, Pending::WifiRefresh);
                 }
                 View::Battery => context.device().read_battery_detail(),
-                View::Home | View::WifiPassword | View::Update => {}
+                View::Home | View::WifiPassword | View::Sleep | View::Update => {}
             }
             self.show(context);
         } else if action == action_id(MORE) {
@@ -834,6 +900,8 @@ impl KoboApp for Settings {
         } else if action == action_id(PREVIOUS) {
             self.turn_page(false);
             self.show(context);
+        } else if let Some(timeout) = Self::sleep_timeout_for_action(action) {
+            context.device().set_system_sleep_timeout(timeout);
         } else if let Some(index) = DEVICE_ACTIONS
             .iter()
             .position(|name| action == action_id(name))
@@ -893,6 +961,10 @@ impl KoboApp for Settings {
             DeviceResult::BatteryDetail(detail) => {
                 self.battery = Some(detail);
                 self.settled(Topic::Battery);
+            }
+            DeviceResult::SleepTimeout { seconds } => {
+                self.sleep_timeout_seconds = Some(seconds);
+                self.settled(Topic::Sleep);
             }
             // A failure belongs to whatever was asked for. When the request
             // is not one of the three rows, there is nowhere honest to show it,
@@ -1312,6 +1384,34 @@ mod tests {
         assert!(issues.is_empty(), "{issues:?}");
         let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
         assert!(layout.rect_of_action(action_id(RESCAN)).is_some());
+    }
+
+    #[test]
+    fn every_global_sleep_choice_fits_and_the_current_one_is_marked() {
+        let settings = Settings {
+            view: super::View::Sleep,
+            sleep_timeout_seconds: Some(15 * 60),
+            ..Settings::default()
+        };
+        let screen = settings.sleep();
+        let issues = screen.validate(&CLARA_BW_METRICS);
+        assert!(issues.is_empty(), "{issues:?}");
+        let actions = screen
+            .nodes
+            .iter()
+            .flat_map(|node| match node {
+                kobo_sdk::Node::Rows { rows, .. } => rows.iter().map(|row| row.action).collect(),
+                _ => Vec::new(),
+            })
+            .collect::<Vec<_>>();
+        for (action, _) in super::SLEEP_CHOICES {
+            assert!(actions.contains(&action_id(action)), "{action}");
+        }
+        assert!(screen.nodes.iter().any(|node| matches!(
+            node,
+            kobo_sdk::Node::Rows { rows, .. }
+                if rows.iter().any(|row| row.summary == "Selected")
+        )));
     }
 
     #[test]

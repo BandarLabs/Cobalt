@@ -136,7 +136,7 @@ const SYSTEM_APPS: &[BuiltinApp] = &[
         id: "settings",
         title: "Settings",
         label: "Settings",
-        summary: "Connect Wi-Fi, manage hardware and update the Cobalt platform.",
+        summary: "Set sleep, connect Wi-Fi, manage hardware and update the platform.",
         version: env!("CARGO_PKG_VERSION"),
         glyph: Glyph::Settings,
         capabilities: &[

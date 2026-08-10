@@ -557,6 +557,26 @@ suspends at all.
 `kobo session --hold [minutes]` still exists and renews the wake lock, but it is
 not sufficient on its own on this firmware and is documented as such.
 
+### Sleeping while Cobalt owns the panel
+
+Nickel cannot request suspend while it is stopped, so the device runtime owns
+that transition for an active Cobalt session. The owner sets a global
+inactivity timeout in Settings (fifteen minutes on a fresh install), and the
+foreground application follows it unless it has declared `keep-awake` and
+explicitly selected a process-local override.
+
+When the timeout expires, the power button is released, or the sleep cover
+closes, the runtime sends every hosted application a bounded suspend callback.
+It synchronises pending writes, writes `mem` to `/sys/power/state`, and blocks
+there while Linux suspends. Wake returns from that write, refreshes device
+status, and sends resume callbacks to the same processes. Cobalt therefore
+returns to the same app and in-memory state instead of restarting Nickel.
+
+If the kernel does not advertise `mem`, the runtime returns the device to
+Nickel rather than remaining awake indefinitely. Radio connectivity is not
+promised across suspend; applications must treat resume as a fresh opportunity
+to observe network state.
+
 ### One audited path for every settings change
 
 Settings are described rather than hand-written, so there is a single reviewed

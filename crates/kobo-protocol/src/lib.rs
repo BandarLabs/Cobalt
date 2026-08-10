@@ -31,7 +31,7 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 ///
 /// Went to 6 for the runtime-owned app catalog and app transaction requests,
 /// whose new result variant carries a bounded list of application metadata.
-pub const VERSION: u8 = 6;
+pub const VERSION: u8 = 7;
 pub const HEADER_LEN: usize = 14;
 /// The largest single frame either side will read.
 ///
@@ -516,6 +516,12 @@ pub enum Message {
     StoreRequest(StoreRequest),
     /// Sent by the runtime when an application gains or loses the panel.
     Lifecycle(Lifecycle),
+    /// Sent by an application after it has handled a lifecycle transition.
+    ///
+    /// Suspend uses this as a barrier: the runtime does not freeze userspace
+    /// until every responsive application has saved and answered, or until the
+    /// bounded preparation deadline expires.
+    LifecycleReady(Lifecycle),
     /// The runtime's answer to exactly one store request.
     StoreResult(StoreResult),
     /// An application driving a terminal the runtime owns.
@@ -710,6 +716,12 @@ pub enum Lifecycle {
     /// Something else owns the panel. Keep working, but nothing drawn now will
     /// be seen until this comes back, so this is the moment to save.
     Background,
+    /// The whole system is about to enter suspend-to-RAM.
+    Suspend,
+    /// The system returned from suspend-to-RAM with this process intact.
+    Resume,
+    /// An RTC wake happened so background work may refresh before sleeping.
+    ScheduledWake,
 }
 
 /// The runtime's answer to exactly one [`StoreRequest`].
@@ -860,6 +872,17 @@ pub enum DeviceRequest {
     KeepAwake { seconds: u32 },
     /// Release a wake hold early.
     AllowSleep,
+    /// Use this timeout while the application is in the foreground.
+    ///
+    /// The runtime clamps it to system policy. It is not persistent and affects
+    /// no other application.
+    SetSleepTimeout { seconds: u32 },
+    /// Remove the foreground override and follow the owner-selected timeout.
+    UseGlobalSleepTimeout,
+    /// Read the owner-selected global timeout. Settings-only.
+    ReadSystemSleepTimeout,
+    /// Persist the owner-selected global timeout. Settings-only.
+    SetSystemSleepTimeout { seconds: u32 },
     /// Ask to be woken again after this many seconds.
     ScheduleWake { seconds: u32 },
     /// Cancel a pending scheduled wake.
@@ -1010,6 +1033,8 @@ pub enum DeviceResult {
     Done,
     /// A time-bounded request was granted, possibly for less than was asked.
     Granted { seconds: u32 },
+    /// The global inactivity timeout currently selected by the owner.
+    SleepTimeout { seconds: u32 },
     /// Battery state.
     Battery { percent: u8, charging: bool },
     /// Everything the gauge publishes. See [`BatteryDetail`].
@@ -1430,9 +1455,12 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
         Message::CommitPicture { handle } | Message::DropPicture { handle } => {
             push_u32(&mut payload, handle.0);
         }
-        Message::Lifecycle(state) => payload.push(match state {
+        Message::Lifecycle(state) | Message::LifecycleReady(state) => payload.push(match state {
             Lifecycle::Foreground => 0,
             Lifecycle::Background => 1,
+            Lifecycle::Suspend => 2,
+            Lifecycle::Resume => 3,
+            Lifecycle::ScheduledWake => 4,
         }),
         Message::CoverChanged { magnet_present } => payload.push(u8::from(*magnet_present)),
     }
@@ -1901,6 +1929,7 @@ fn encoded_message_layout(message: &Message) -> Result<(u8, usize), ProtocolErro
         }
         Message::CommitPicture { .. } => Ok((22, 4)),
         Message::CoverChanged { .. } => Ok((23, 1)),
+        Message::LifecycleReady(_) => Ok((24, 1)),
     }
 }
 
@@ -1927,6 +1956,14 @@ fn encode_device_request(
         DeviceRequest::ReleaseWifi => fixed_device_request(output, 3, 0),
         DeviceRequest::KeepAwake { seconds } => fixed_device_request(output, 4, *seconds),
         DeviceRequest::AllowSleep => fixed_device_request(output, 5, 0),
+        DeviceRequest::SetSleepTimeout { seconds } => {
+            fixed_device_request(output, 37, *seconds);
+        }
+        DeviceRequest::UseGlobalSleepTimeout => fixed_device_request(output, 38, 0),
+        DeviceRequest::ReadSystemSleepTimeout => fixed_device_request(output, 39, 0),
+        DeviceRequest::SetSystemSleepTimeout { seconds } => {
+            fixed_device_request(output, 40, *seconds);
+        }
         DeviceRequest::ScheduleWake { seconds } => fixed_device_request(output, 6, *seconds),
         DeviceRequest::CancelWake => fixed_device_request(output, 7, 0),
         DeviceRequest::SetFrontlight { percent } => {
@@ -2183,6 +2220,14 @@ fn decode_device_request(reader: &mut Reader<'_>) -> Result<DeviceRequest, Proto
             seconds: reader.u32()?,
         }),
         5 => fixed_argument(reader, 0).map(|()| DeviceRequest::AllowSleep),
+        37 => Ok(DeviceRequest::SetSleepTimeout {
+            seconds: reader.u32()?,
+        }),
+        38 => fixed_argument(reader, 0).map(|()| DeviceRequest::UseGlobalSleepTimeout),
+        39 => fixed_argument(reader, 0).map(|()| DeviceRequest::ReadSystemSleepTimeout),
+        40 => Ok(DeviceRequest::SetSystemSleepTimeout {
+            seconds: reader.u32()?,
+        }),
         6 => Ok(DeviceRequest::ScheduleWake {
             seconds: reader.u32()?,
         }),
@@ -2321,6 +2366,10 @@ fn encode_device_result(output: &mut Vec<u8>, result: &DeviceResult) -> Result<(
         DeviceResult::Done => output.push(1),
         DeviceResult::Granted { seconds } => {
             output.push(2);
+            push_u32(output, *seconds);
+        }
+        DeviceResult::SleepTimeout { seconds } => {
+            output.push(13);
             push_u32(output, *seconds);
         }
         DeviceResult::Battery { percent, charging } => {
@@ -2492,6 +2541,9 @@ fn decode_device_result(reader: &mut Reader<'_>) -> Result<DeviceResult, Protoco
     match reader.u8()? {
         1 => Ok(DeviceResult::Done),
         2 => Ok(DeviceResult::Granted {
+            seconds: reader.u32()?,
+        }),
+        13 => Ok(DeviceResult::SleepTimeout {
             seconds: reader.u32()?,
         }),
         3 => {
@@ -3297,6 +3349,9 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
         15 => Message::Lifecycle(match reader.u8()? {
             0 => Lifecycle::Foreground,
             1 => Lifecycle::Background,
+            2 => Lifecycle::Suspend,
+            3 => Lifecycle::Resume,
+            4 => Lifecycle::ScheduledWake,
             _ => return Err(ProtocolError::InvalidValue("lifecycle state")),
         }),
         16 => Message::ShellRequest(match reader.u8()? {
@@ -3380,6 +3435,14 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
         23 => Message::CoverChanged {
             magnet_present: read_boolean(&mut reader, "cover magnet present")?,
         },
+        24 => Message::LifecycleReady(match reader.u8()? {
+            0 => Lifecycle::Foreground,
+            1 => Lifecycle::Background,
+            2 => Lifecycle::Suspend,
+            3 => Lifecycle::Resume,
+            4 => Lifecycle::ScheduledWake,
+            _ => return Err(ProtocolError::InvalidValue("lifecycle state")),
+        }),
         value => return Err(ProtocolError::UnknownMessageType(value)),
     };
     if !reader.is_finished() {
@@ -5235,6 +5298,10 @@ mod tests {
             DeviceRequest::ReleaseWifi,
             DeviceRequest::KeepAwake { seconds: u32::MAX },
             DeviceRequest::AllowSleep,
+            DeviceRequest::SetSleepTimeout { seconds: 300 },
+            DeviceRequest::UseGlobalSleepTimeout,
+            DeviceRequest::ReadSystemSleepTimeout,
+            DeviceRequest::SetSystemSleepTimeout { seconds: 900 },
             DeviceRequest::ScheduleWake { seconds: 900 },
             DeviceRequest::CancelWake,
             DeviceRequest::SetFrontlight { percent: 100 },
@@ -5333,6 +5400,7 @@ mod tests {
         let results = vec![
             DeviceResult::Done,
             DeviceResult::Granted { seconds: 300 },
+            DeviceResult::SleepTimeout { seconds: 900 },
             DeviceResult::Battery {
                 percent: 100,
                 charging: true,
@@ -6642,6 +6710,10 @@ mod store_tests {
             Message::StoreResult(StoreResult::Denied(StoreError::BadKey)),
             Message::Lifecycle(Lifecycle::Foreground),
             Message::Lifecycle(Lifecycle::Background),
+            Message::Lifecycle(Lifecycle::Suspend),
+            Message::Lifecycle(Lifecycle::Resume),
+            Message::Lifecycle(Lifecycle::ScheduledWake),
+            Message::LifecycleReady(Lifecycle::Suspend),
             Message::CoverChanged {
                 magnet_present: true,
             },

@@ -33,8 +33,10 @@
 //! spread across returns.
 
 use crate::blackbox::{self, trace};
+use crate::power::{AppSleep, GlobalSleep, DEFAULT_SLEEP_TIMEOUT};
 use kobo_hal::display::{DisplaySession, OWNER_UNLOCK_PHRASE};
 use kobo_hal::input::TouchSession;
+use kobo_hal::power::{PowerButton, SystemSuspend};
 use kobo_hal::reader::{Reader, Watchdog, WATCHDOG_CHECK};
 use kobo_hal::soc_watchdog::SocWatchdog;
 use kobo_hal::supervisor::Suspended;
@@ -47,6 +49,7 @@ use kobo_ui::{
     display_metrics_from_env, render_all, ActionId, Chrome, FramePlanner, PanelWaveform,
     PictureCache, Screen, Surface,
 };
+use std::collections::BTreeSet;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -134,22 +137,15 @@ const START_GRACE: Duration = Duration::from_secs(45);
 /// This used to be half an hour and used to be the *only* way a session ended,
 /// which meant the panel was taken away from somebody in the middle of using
 /// it. It is now a backstop rather than a policy: a session ends when the
-/// reader asks to go back, or when nothing has happened for [`IDLE_LIMIT`].
+/// reader asks to go back or the runtime itself has been unhealthy for too
+/// long. Ordinary inactivity suspends and resumes this same session.
 const MAX_SESSION: Duration = Duration::from_secs(2 * 60 * 60);
-/// How long the panel may sit with nothing happening before the reader gets it
-/// back.
+/// The inactivity timeout used until the owner saves a choice in Settings.
 ///
 /// Every tap and every repaint restarts this, so it measures genuine
-/// abandonment rather than the pace of use. A device left on a screen nobody
-/// is looking at should be an e-reader again, because that is what somebody
-/// picking it up will expect it to be.
-///
-/// An hour rather than the fifteen minutes this started as. Fifteen sounds
-/// generous and is not: a panel session is something the owner starts and then
-/// puts down, and a session that had never been touched ended itself while its
-/// owner was still deciding what to open. The point of this limit is a device
-/// left behind, not a device being thought about.
-const IDLE_LIMIT: Duration = Duration::from_secs(60 * 60);
+/// inactivity rather than the pace of use. The persistent Settings value takes
+/// precedence; this remains an environment-configurable installation fallback.
+const IDLE_LIMIT: Duration = DEFAULT_SLEEP_TIMEOUT;
 /// The longest the loop waits between passes even when nothing is happening,
 /// which bounds how stale the recovery watchdog's heartbeat can get.
 const BEAT_INTERVAL: Duration = Duration::from_secs(10);
@@ -169,6 +165,9 @@ const BACK_GRACE: Duration = Duration::from_secs(2);
 /// has not finished handing anything back. Ten times a second is far below
 /// what a panel refresh costs and far above what anybody can perceive.
 const POLL_FOR_STOP: Duration = Duration::from_millis(100);
+
+/// Long enough for every SDK callback's 250 ms deadline plus one socket turn.
+const SUSPEND_PREPARE_GRACE: Duration = Duration::from_secs(1);
 
 /// How stale a battery reading may be before it is taken again.
 ///
@@ -229,6 +228,12 @@ impl StatusSource {
             polled: None,
             bluetooth: false,
         }
+    }
+
+    /// Forces the clock, radio and battery to be re-read after system resume.
+    fn invalidate(&mut self) {
+        self.taken = None;
+        self.polled = None;
     }
 
     /// Records what the daemon just learned about Bluetooth.
@@ -410,12 +415,38 @@ enum Event {
     /// way so the panel, the touch device, the reader and the freeze watchdog
     /// all go back.
     Stopping(i32),
+    /// The physical power button was released.
+    PowerButton,
 }
 
-/// How long a session may run, and how long it may be ignored.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SleepReason {
+    Idle,
+    PowerButton,
+    Cover,
+}
+
+impl SleepReason {
+    const fn description(self) -> &'static str {
+        match self {
+            Self::Idle => "the inactivity timer expired",
+            Self::PowerButton => "the power button was pressed",
+            Self::Cover => "the sleep cover closed",
+        }
+    }
+}
+
+struct SleepPreparation {
+    reason: SleepReason,
+    waiting: BTreeSet<u64>,
+    deadline: Instant,
+}
+
+/// How long a session may run, and its fallback sleep timeout.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Limits {
-    /// Ends the session when nothing has happened for this long.
+    /// Suspends when nothing has happened for this long unless Settings or the
+    /// foreground application supplies another timeout.
     pub idle: Duration,
     /// Ends the session however busy it is.
     pub ceiling: Duration,
@@ -430,8 +461,8 @@ impl Default for Limits {
     }
 }
 
-/// Runs `application` on the panel until it asks to leave, is left alone for
-/// `limits.idle`, or reaches `limits.ceiling`.
+/// Runs `application` on the panel until it asks to leave or reaches
+/// `limits.ceiling`. Inactivity suspends and resumes the same hosted session.
 ///
 /// Deliberately one function. Every step here takes something away from the
 /// device and has to give it back in the exact reverse order, and that
@@ -804,6 +835,8 @@ struct Hosted {
     tasks: TaskRunner,
     /// Capabilities declared by this installed application.
     declared: Declared,
+    /// This application's foreground departure from the global sleep timer.
+    sleep: AppSleep,
     /// The terminal this application may run a program on, or a refusal.
     shells: kobo_shell::Shells,
     /// The last screen this application drew, foreground or not.
@@ -934,6 +967,32 @@ fn host_applications(
     let home = application.to_path_buf();
     let (sender, events) = mpsc::channel();
     touch.set(Some(sender.clone()));
+    let mut global_sleep = GlobalSleep::load(Path::new(COBALT_ROOT), limits.idle);
+    let system_suspend = match SystemSuspend::open() {
+        Ok(suspend) => Some(suspend),
+        Err(error) => {
+            println!("system suspend unavailable ({error}); sleep falls back to Nickel");
+            None
+        }
+    };
+    match PowerButton::open() {
+        Ok(mut button) => {
+            if let Some(releases) = button.take_events() {
+                let power_events = sender.clone();
+                thread::Builder::new()
+                    .name("power-events".to_owned())
+                    .spawn(move || {
+                        while releases.recv().is_ok() {
+                            if power_events.send(Event::PowerButton).is_err() {
+                                return;
+                            }
+                        }
+                    })
+                    .map_err(|error| format!("watch power button: {error}"))?;
+            }
+        }
+        Err(error) => println!("power button unavailable ({error})"),
+    }
 
     let mut apps: Vec<Hosted> = Vec::new();
     let mut next_id = 1_u64;
@@ -1014,7 +1073,7 @@ fn host_applications(
         }
     }
     // A guard rather than a line at the end of the loop, because the loop has
-    // several exits (the session clock, an idle reader, a failed write to an
+    // several exits (the session clock, a requested return, a failed write to an
     // application) and a front light left bright by whichever path was taken
     // is exactly the kind of change a reboot should not have to fix.
     let _restore_light = FrontlightGuard(frontlight.clone());
@@ -1040,8 +1099,9 @@ fn host_applications(
         let front = start_application(&mut apps, &mut next_id, &home, whole_screen, &sender)?;
         let mut front = front;
         let mut visited: Vec<String> = Vec::new();
-        let ceiling = Instant::now() + limits.ceiling;
+        let mut ceiling = Instant::now() + limits.ceiling;
         let mut last_activity = Instant::now();
+        let mut preparing_sleep: Option<SleepPreparation> = None;
         // Set when Back has been handed to an application that asked for it,
         // and cleared by the next screen that application draws. The reader's
         // way out is never left waiting on an application: if this is still
@@ -1061,6 +1121,38 @@ fn host_applications(
             // the runtime is still serving the panel rather than merely that
             // the process has not been reaped.
             watchdog.beat();
+            if preparing_sleep.as_ref().is_some_and(|preparation| {
+                preparation.waiting.is_empty() || now >= preparation.deadline
+            }) {
+                let preparation = preparing_sleep.take().expect("sleep preparation exists");
+                trace(&format!(
+                    "suspending because {} ({} application(s) missed the preparation deadline)",
+                    preparation.reason.description(),
+                    preparation.waiting.len()
+                ));
+                let Some(suspend) = system_suspend.as_ref() else {
+                    return Ok(finish(
+                        &apps,
+                        &visited,
+                        "system suspend disappeared, so the reader has the device back",
+                    ));
+                };
+                watchdog.beat();
+                suspend.suspend().map_err(|error| {
+                    format!("enter system suspend: {error}; the reader will be restored")
+                })?;
+                // This line executes after resume, in the same process and with
+                // every hosted application still in memory.
+                watchdog.beat();
+                last_activity = Instant::now();
+                ceiling = last_activity + limits.ceiling;
+                status.invalidate();
+                for app in &mut apps {
+                    app.send(Message::Lifecycle(Lifecycle::Resume))?;
+                }
+                trace("resumed into Cobalt");
+                continue;
+            }
             // The band is the only thing on the panel that changes without
             // anybody touching it, so the loop has to notice it on its own.
             // Repainting is conditional on the reading having moved, and the
@@ -1088,6 +1180,16 @@ fn host_applications(
                             magnet_present: magnet == kobo_hal::cover::Magnet::Present,
                         })?;
                     }
+                    if magnet == kobo_hal::cover::Magnet::Present && preparing_sleep.is_none() {
+                        let Some(_) = system_suspend.as_ref() else {
+                            return Ok(finish(
+                                &apps,
+                                &visited,
+                                "the cover closed but system suspend is unavailable, so the reader has the device back",
+                            ));
+                        };
+                        preparing_sleep = Some(prepare_sleep(&mut apps, SleepReason::Cover)?);
+                    }
                 }
             }
             if now >= ceiling {
@@ -1097,16 +1199,22 @@ fn host_applications(
                     &format!("the {} session limit was reached", describe(limits.ceiling)),
                 ));
             }
-            let idle_at = last_activity + limits.idle;
-            if now >= idle_at {
-                return Ok(finish(
-                    &apps,
-                    &visited,
-                    &format!(
-                        "nothing was touched for {}, so the reader has it back",
-                        describe(limits.idle)
-                    ),
-                ));
+            let Some(front_index) = index_of(&apps, front) else {
+                return Ok(finish(&apps, &visited, "nothing is on the panel"));
+            };
+            let idle_at =
+                apps[front_index]
+                    .sleep
+                    .deadline(last_activity, global_sleep.timeout(), now);
+            if now >= idle_at && preparing_sleep.is_none() {
+                let Some(_) = system_suspend.as_ref() else {
+                    return Ok(finish(
+                        &apps,
+                        &visited,
+                        "the sleep timer expired but system suspend is unavailable, so the reader has the device back",
+                    ));
+                };
+                preparing_sleep = Some(prepare_sleep(&mut apps, SleepReason::Idle)?);
             }
             // An application that was offered Back and drew nothing has had
             // its turn. This is what keeps the guarantee: the way out belongs
@@ -1137,7 +1245,10 @@ fn host_applications(
             // session nobody is touching still proves it is alive.
             let wait = ceiling
                 .saturating_duration_since(now)
-                .min(idle_at.saturating_duration_since(now))
+                .min(preparing_sleep.as_ref().map_or_else(
+                    || idle_at.saturating_duration_since(now),
+                    |preparation| preparation.deadline.saturating_duration_since(now),
+                ))
                 .min(BEAT_INTERVAL)
                 // So a charger pulled out while nobody is touching the panel
                 // is noticed in seconds rather than at the next heartbeat.
@@ -1162,6 +1273,18 @@ fn host_applications(
                 Err(RecvTimeoutError::Timeout) | Ok(Event::TaskReady) => {}
                 Err(RecvTimeoutError::Disconnected) => {
                     return Ok(finish(&apps, &visited, "the runtime ran out of work"));
+                }
+                Ok(Event::PowerButton) => {
+                    if preparing_sleep.is_none() {
+                        let Some(_) = system_suspend.as_ref() else {
+                            return Ok(finish(
+                                &apps,
+                                &visited,
+                                "the power button was pressed but system suspend is unavailable, so the reader has the device back",
+                            ));
+                        };
+                        preparing_sleep = Some(prepare_sleep(&mut apps, SleepReason::PowerButton)?);
+                    }
                 }
                 Ok(Event::AppGone(id)) => {
                     let Some(index) = index_of(&apps, id) else {
@@ -1403,6 +1526,13 @@ fn host_applications(
                         }
                         Message::DropPicture { handle } => apps[index].pictures.remove(handle),
                         Message::Log { .. } => {}
+                        Message::LifecycleReady(state) => {
+                            if state == Lifecycle::Suspend {
+                                if let Some(preparation) = preparing_sleep.as_mut() {
+                                    preparation.waiting.remove(&apps[index].id);
+                                }
+                            }
+                        }
                         Message::DeviceRequest(request) => {
                             let not_declared = !system_request_allowed(&apps[index].name, &request)
                                 || kobo_policy::request_capability(&request).is_some_and(
@@ -1670,6 +1800,26 @@ fn host_applications(
                                             },
                                         )
                                     }
+                                    kobo_protocol::DeviceRequest::ReadSystemSleepTimeout => {
+                                        kobo_protocol::DeviceResult::SleepTimeout {
+                                            seconds: u32::try_from(
+                                                global_sleep.timeout().as_secs(),
+                                            )
+                                            .unwrap_or(u32::MAX),
+                                        }
+                                    }
+                                    kobo_protocol::DeviceRequest::SetSystemSleepTimeout {
+                                        seconds,
+                                    } => match global_sleep.set_seconds(*seconds) {
+                                        Ok(timeout) => {
+                                            last_activity = Instant::now();
+                                            kobo_protocol::DeviceResult::SleepTimeout {
+                                                seconds: u32::try_from(timeout.as_secs())
+                                                    .unwrap_or(u32::MAX),
+                                            }
+                                        }
+                                        Err(error) => kobo_protocol::DeviceResult::Failed(error),
+                                    },
                                     // Blocks the message loop like a
                                     // Bluetooth scan does. The application
                                     // paints its progress screen before
@@ -1719,6 +1869,30 @@ fn host_applications(
                                     _ => services.handle(request.clone()),
                                 }
                             };
+                            match (&request, &result) {
+                                (
+                                    kobo_protocol::DeviceRequest::KeepAwake { .. },
+                                    kobo_protocol::DeviceResult::Granted { seconds },
+                                ) => apps[index].sleep.keep_awake(
+                                    Instant::now(),
+                                    Duration::from_secs(u64::from(*seconds)),
+                                ),
+                                (
+                                    kobo_protocol::DeviceRequest::AllowSleep,
+                                    kobo_protocol::DeviceResult::Done,
+                                ) => apps[index].sleep.allow_sleep(),
+                                (
+                                    kobo_protocol::DeviceRequest::SetSleepTimeout { .. },
+                                    kobo_protocol::DeviceResult::Granted { seconds },
+                                ) => apps[index]
+                                    .sleep
+                                    .override_timeout(Duration::from_secs(u64::from(*seconds))),
+                                (
+                                    kobo_protocol::DeviceRequest::UseGlobalSleepTimeout,
+                                    kobo_protocol::DeviceResult::Done,
+                                ) => apps[index].sleep.use_global_timeout(),
+                                _ => {}
+                            }
                             // Every Bluetooth reply passes through here, so
                             // this is the one place that has to know the band
                             // shows a Bluetooth mark. A reply that changes the
@@ -1900,6 +2074,23 @@ fn host_applications(
     result
 }
 
+/// Gives every live application one bounded chance to save before userspace is
+/// frozen. Applications acknowledge only after their callback's commands have
+/// been written, so store requests already sit ahead of the acknowledgement in
+/// the same ordered socket stream.
+fn prepare_sleep(apps: &mut [Hosted], reason: SleepReason) -> Result<SleepPreparation, String> {
+    let mut waiting = BTreeSet::new();
+    for app in apps {
+        app.send(Message::Lifecycle(Lifecycle::Suspend))?;
+        waiting.insert(app.id);
+    }
+    Ok(SleepPreparation {
+        reason,
+        waiting,
+        deadline: Instant::now() + SUSPEND_PREPARE_GRACE,
+    })
+}
+
 fn index_of(apps: &[Hosted], id: u64) -> Option<usize> {
     apps.iter().position(|app| app.id == id)
 }
@@ -2018,7 +2209,9 @@ fn repaint(
 /// identities even while both travel over the same bounded device channel.
 fn system_request_allowed(app: &str, request: &kobo_protocol::DeviceRequest) -> bool {
     match request {
-        kobo_protocol::DeviceRequest::Update { .. } => app == "settings",
+        kobo_protocol::DeviceRequest::Update { .. }
+        | kobo_protocol::DeviceRequest::ReadSystemSleepTimeout
+        | kobo_protocol::DeviceRequest::SetSystemSleepTimeout { .. } => app == "settings",
         kobo_protocol::DeviceRequest::ListInstalledApps => matches!(app, "launcher" | "store"),
         kobo_protocol::DeviceRequest::ReadAppCatalog
         | kobo_protocol::DeviceRequest::RefreshAppCatalog
@@ -2239,6 +2432,7 @@ fn start_application(
         stream,
         tasks,
         declared,
+        sleep: AppSleep::default(),
         screen: None,
         pictures: PictureCache::default(),
         painted: 0,
@@ -3157,6 +3351,11 @@ mod hosting_tests {
         assert!(super::system_request_allowed("settings", &platform));
         assert!(!super::system_request_allowed("store", &platform));
         assert!(!super::system_request_allowed("todo", &platform));
+
+        let sleep = DeviceRequest::SetSystemSleepTimeout { seconds: 900 };
+        assert!(super::system_request_allowed("settings", &sleep));
+        assert!(!super::system_request_allowed("store", &sleep));
+        assert!(!super::system_request_allowed("todo", &sleep));
 
         let install = DeviceRequest::InstallApp {
             id: "word-count".to_owned(),

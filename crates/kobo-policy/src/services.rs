@@ -83,6 +83,7 @@ pub struct DeviceServices {
     state: DeviceState,
     wifi_held_for: Option<Duration>,
     awake_held_for: Option<Duration>,
+    sleep_timeout: Option<Duration>,
     wake_scheduled_in: Option<Duration>,
     bluetooth_enabled: bool,
     wifi_enabled: bool,
@@ -121,6 +122,7 @@ impl DeviceServices {
             state: DeviceState::default(),
             wifi_held_for: None,
             awake_held_for: None,
+            sleep_timeout: None,
             wake_scheduled_in: None,
             bluetooth_enabled: false,
             wifi_enabled: true,
@@ -187,6 +189,12 @@ impl DeviceServices {
         self.awake_held_for
     }
 
+    /// Foreground inactivity timeout explicitly selected by the application.
+    #[must_use]
+    pub const fn sleep_timeout(&self) -> Option<Duration> {
+        self.sleep_timeout
+    }
+
     /// Currently scheduled wake delay, if any.
     #[must_use]
     pub const fn scheduled_wake(&self) -> Option<Duration> {
@@ -208,6 +216,14 @@ impl DeviceServices {
             DeviceRequest::AllowSleep => {
                 self.awake_held_for = None;
                 DeviceResult::Done
+            }
+            DeviceRequest::SetSleepTimeout { seconds } => self.set_sleep_timeout(seconds),
+            DeviceRequest::UseGlobalSleepTimeout => {
+                self.sleep_timeout = None;
+                DeviceResult::Done
+            }
+            DeviceRequest::ReadSystemSleepTimeout | DeviceRequest::SetSystemSleepTimeout { .. } => {
+                DeviceResult::Failed(DeviceError::InvalidInput)
             }
             DeviceRequest::ScheduleWake { seconds } => self.schedule_wake(seconds),
             DeviceRequest::CancelWake => {
@@ -496,6 +512,24 @@ impl DeviceServices {
         }
     }
 
+    fn set_sleep_timeout(&mut self, seconds: u32) -> DeviceResult {
+        if seconds == 0 {
+            return DeviceResult::Denied(DenyReason::PolicyRejected);
+        }
+        if let Some(reason) = self.refusal(Capability::KeepAwake) {
+            return DeviceResult::Denied(reason);
+        }
+        let policy = self.grants.policy();
+        let granted = Duration::from_secs(u64::from(seconds)).clamp(
+            policy.minimum_foreground_sleep,
+            policy.maximum_foreground_awake,
+        );
+        self.sleep_timeout = Some(granted);
+        DeviceResult::Granted {
+            seconds: clamp_seconds(granted),
+        }
+    }
+
     fn schedule_wake(&mut self, seconds: u32) -> DeviceResult {
         if let Some(reason) = self.refusal(Capability::ScheduledWake) {
             return DeviceResult::Denied(reason);
@@ -521,7 +555,13 @@ pub fn request_capability(request: &DeviceRequest) -> Option<Capability> {
         DeviceRequest::ReadBattery | DeviceRequest::ReadBatteryDetail => Capability::BatteryRead,
         DeviceRequest::ReadCover => Capability::CoverSensor,
         DeviceRequest::HoldWifi { .. } | DeviceRequest::ReleaseWifi => Capability::HoldWifi,
-        DeviceRequest::KeepAwake { .. } | DeviceRequest::AllowSleep => Capability::KeepAwake,
+        DeviceRequest::KeepAwake { .. }
+        | DeviceRequest::AllowSleep
+        | DeviceRequest::SetSleepTimeout { .. }
+        | DeviceRequest::UseGlobalSleepTimeout => Capability::KeepAwake,
+        DeviceRequest::ReadSystemSleepTimeout | DeviceRequest::SetSystemSleepTimeout { .. } => {
+            return None;
+        }
         DeviceRequest::ScheduleWake { .. } | DeviceRequest::CancelWake => Capability::ScheduledWake,
         DeviceRequest::SetFrontlight { .. } | DeviceRequest::ReadFrontlight => {
             Capability::FrontlightControl
@@ -742,6 +782,30 @@ mod tests {
         assert_eq!(services.wifi_hold(), None);
         assert_eq!(services.wake_hold(), None);
         assert_eq!(services.scheduled_wake(), None);
+    }
+
+    #[test]
+    fn an_app_timeout_is_bounded_and_can_return_to_global() {
+        let mut services = DeviceServices::new(
+            declared(&["keep-awake"]),
+            PowerPolicy::DEFAULT,
+            Backends::with([Capability::KeepAwake]),
+        );
+        assert_eq!(
+            services.handle(DeviceRequest::SetSleepTimeout { seconds: 1 }),
+            DeviceResult::Granted {
+                seconds: seconds_of(PowerPolicy::DEFAULT.minimum_foreground_sleep),
+            }
+        );
+        assert_eq!(
+            services.sleep_timeout(),
+            Some(PowerPolicy::DEFAULT.minimum_foreground_sleep)
+        );
+        assert_eq!(
+            services.handle(DeviceRequest::UseGlobalSleepTimeout),
+            DeviceResult::Done
+        );
+        assert_eq!(services.sleep_timeout(), None);
     }
 
     #[test]

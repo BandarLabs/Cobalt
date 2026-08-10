@@ -157,6 +157,7 @@ impl fmt::Display for Capability {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PowerPolicy {
     pub minimum_wake_interval: Duration,
+    pub minimum_foreground_sleep: Duration,
     pub maximum_foreground_awake: Duration,
     pub maximum_wifi_hold: Duration,
     pub low_battery_percent: u8,
@@ -166,6 +167,7 @@ impl PowerPolicy {
     /// The default policy applied to every application.
     pub const DEFAULT: Self = Self {
         minimum_wake_interval: Duration::from_secs(15 * 60),
+        minimum_foreground_sleep: Duration::from_secs(60),
         maximum_foreground_awake: Duration::from_secs(60 * 60),
         maximum_wifi_hold: Duration::from_secs(10 * 60),
         low_battery_percent: 15,

@@ -789,6 +789,7 @@ struct AppState {
     lifecycle: Lifecycle,
     last_touch: Option<SimulatedTouch>,
     apps: Arc<Mutex<SimulatedApps>>,
+    system_sleep_seconds: u32,
 }
 
 impl Default for AppState {
@@ -810,6 +811,7 @@ impl AppState {
             lifecycle: Lifecycle::Foreground,
             last_touch: None,
             apps,
+            system_sleep_seconds: 15 * 60,
         }
     }
 }
@@ -1304,6 +1306,9 @@ fn simulation_json(
     let lifecycle = match lifecycle {
         Lifecycle::Foreground => "foreground",
         Lifecycle::Background => "background",
+        Lifecycle::Suspend => "suspend",
+        Lifecycle::Resume => "resume",
+        Lifecycle::ScheduledWake => "scheduled-wake",
     };
     format!(
         concat!(
@@ -1339,6 +1344,9 @@ fn parse_lifecycle(bytes: &[u8]) -> Option<Lifecycle> {
     match std::str::from_utf8(bytes).ok()?.trim() {
         "foreground" => Some(Lifecycle::Foreground),
         "background" => Some(Lifecycle::Background),
+        "suspend" => Some(Lifecycle::Suspend),
+        "resume" => Some(Lifecycle::Resume),
+        "scheduled-wake" => Some(Lifecycle::ScheduledWake),
         _ => None,
     }
 }
@@ -1745,6 +1753,7 @@ fn read_app_messages(
             }
             message if is_picture_message(&message) => hold(state, message)?,
             Message::Log { level, message } => note(state, &format!("{level:?}: {message}"))?,
+            Message::LifecycleReady(_) => {}
             Message::DeviceRequest(request) => {
                 let scenario = current_scenario(state);
                 services.observe_battery(
@@ -1866,7 +1875,12 @@ fn simulated_platform_request_allowed(
     caller: &str,
     request: &kobo_protocol::DeviceRequest,
 ) -> bool {
-    !matches!(request, kobo_protocol::DeviceRequest::Update { .. }) || caller == "settings"
+    !matches!(
+        request,
+        kobo_protocol::DeviceRequest::Update { .. }
+            | kobo_protocol::DeviceRequest::ReadSystemSleepTimeout
+            | kobo_protocol::DeviceRequest::SetSystemSleepTimeout { .. }
+    ) || caller == "settings"
 }
 
 fn simulated_app_request(
@@ -1878,6 +1892,9 @@ fn simulated_app_request(
     use kobo_protocol::{DenyReason, DeviceError, DeviceRequest, DeviceResult};
 
     let authorized = match request {
+        DeviceRequest::ReadSystemSleepTimeout | DeviceRequest::SetSystemSleepTimeout { .. } => {
+            caller == "settings"
+        }
         DeviceRequest::ListInstalledApps => matches!(caller, "launcher" | "store"),
         DeviceRequest::ReadAppCatalog
         | DeviceRequest::RefreshAppCatalog
@@ -1887,6 +1904,26 @@ fn simulated_app_request(
     };
     if !authorized || scenario == Scenario::PermissionDenied {
         return Ok(Some(DeviceResult::Denied(DenyReason::NotDeclared)));
+    }
+    match request {
+        DeviceRequest::ReadSystemSleepTimeout => {
+            let seconds = state
+                .lock()
+                .map_err(|_| io::Error::other("app state lock poisoned"))?
+                .system_sleep_seconds;
+            return Ok(Some(DeviceResult::SleepTimeout { seconds }));
+        }
+        DeviceRequest::SetSystemSleepTimeout { seconds } => {
+            if !(60..=60 * 60).contains(seconds) {
+                return Ok(Some(DeviceResult::Failed(DeviceError::InvalidInput)));
+            }
+            state
+                .lock()
+                .map_err(|_| io::Error::other("app state lock poisoned"))?
+                .system_sleep_seconds = *seconds;
+            return Ok(Some(DeviceResult::SleepTimeout { seconds: *seconds }));
+        }
+        _ => {}
     }
     let apps = state
         .lock()

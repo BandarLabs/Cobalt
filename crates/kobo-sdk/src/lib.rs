@@ -3646,6 +3646,36 @@ impl Device<'_> {
         self.request(DeviceRequest::AllowSleep);
     }
 
+    /// Overrides the global inactivity timeout while this application is in
+    /// the foreground. The grant is clamped by system policy and lasts for this
+    /// running application only.
+    pub fn override_sleep_timeout(&mut self, duration: Duration) {
+        self.request(DeviceRequest::SetSleepTimeout {
+            seconds: whole_seconds(duration),
+        });
+    }
+
+    /// Removes this application's timeout override and follows Settings again.
+    pub fn use_global_sleep_timeout(&mut self) {
+        self.request(DeviceRequest::UseGlobalSleepTimeout);
+    }
+
+    /// Reads the owner-selected global inactivity timeout.
+    ///
+    /// This platform request is reserved for the built-in Settings app.
+    pub fn read_system_sleep_timeout(&mut self) {
+        self.request(DeviceRequest::ReadSystemSleepTimeout);
+    }
+
+    /// Persists the global inactivity timeout selected by the owner.
+    ///
+    /// This platform request is reserved for the built-in Settings app.
+    pub fn set_system_sleep_timeout(&mut self, duration: Duration) {
+        self.request(DeviceRequest::SetSystemSleepTimeout {
+            seconds: whole_seconds(duration),
+        });
+    }
+
     /// Asks to be woken after `delay` to refresh content.
     ///
     /// The runtime coalesces wakes across applications and enforces a minimum
@@ -3881,8 +3911,12 @@ pub trait KoboApp {
     fn on_start(&mut self, context: &mut Context);
     fn on_action(&mut self, context: &mut Context, action: ActionId);
 
+    /// Called after the device resumes into the same running application.
     fn on_resume(&mut self, _context: &mut Context) {}
 
+    /// Called immediately before suspend so short state saves can be queued.
+    /// The runtime proceeds after a bounded grace period even if an
+    /// application does not answer.
     fn on_suspend(&mut self, _context: &mut Context) {}
 
     fn on_scheduled_wake(&mut self, _context: &mut Context) {}
@@ -4197,6 +4231,9 @@ impl<A: KoboApp> AppRunner<A> {
                 self.displayed = None;
                 self.dispatch(KoboApp::on_background)
             }
+            Lifecycle::Suspend => self.dispatch(KoboApp::on_suspend),
+            Lifecycle::Resume => self.dispatch(KoboApp::on_resume),
+            Lifecycle::ScheduledWake => self.dispatch(KoboApp::on_scheduled_wake),
         }
     }
 
@@ -4530,6 +4567,10 @@ impl Client {
             },
         )?;
         Ok(())
+    }
+
+    fn lifecycle_ready(&mut self, state: Lifecycle) -> Result<(), ClientError> {
+        self.send(Message::LifecycleReady(state))
     }
 }
 
@@ -5149,6 +5190,14 @@ mod tests {
         fn on_action(&mut self, context: &mut Context, action: ActionId) {
             context.log(LogLevel::Info, format!("action {}", action.0));
         }
+
+        fn on_suspend(&mut self, context: &mut Context) {
+            context.store().save("state", b"safe".to_vec());
+        }
+
+        fn on_resume(&mut self, context: &mut Context) {
+            context.log(LogLevel::Info, "resumed");
+        }
     }
 
     struct Tofu;
@@ -5207,6 +5256,15 @@ mod tests {
         assert!(runner.start().is_empty());
         assert!(matches!(
             runner.action(ActionId(9)).as_slice(),
+            [Command::Log { .. }]
+        ));
+        assert!(matches!(
+            runner.lifecycle(Lifecycle::Suspend).as_slice(),
+            [Command::Store(StoreRequest::Save { key, value })]
+                if key == "state" && value == b"safe"
+        ));
+        assert!(matches!(
+            runner.lifecycle(Lifecycle::Resume).as_slice(),
             [Command::Log { .. }]
         ));
     }
@@ -5891,6 +5949,7 @@ pub fn run_on<A: KoboApp>(name: &str, app: A, socket: &Path) -> Result<(), Clien
                 }
                 ClientEvent::Lifecycle(state) => {
                     client.send_commands(runner.lifecycle(state))?;
+                    client.lifecycle_ready(state)?;
                 }
                 ClientEvent::Shell(event) => {
                     client.send_commands(runner.shell_event(event))?;
@@ -5906,14 +5965,14 @@ pub fn run_on<A: KoboApp>(name: &str, app: A, socket: &Path) -> Result<(), Clien
     }
 
     loop {
-        let commands = match client.next_event()? {
-            ClientEvent::Action(action) => runner.action(action),
-            ClientEvent::Device(result) => runner.device_result(result),
-            ClientEvent::Task { task, outcome } => runner.task_outcome(task, outcome),
-            ClientEvent::Store(result) => runner.store_result(result),
-            ClientEvent::Lifecycle(state) => runner.lifecycle(state),
-            ClientEvent::Shell(event) => runner.shell_event(event),
-            ClientEvent::CoverChanged(present) => runner.cover_changed(present),
+        let (commands, lifecycle_ready) = match client.next_event()? {
+            ClientEvent::Action(action) => (runner.action(action), None),
+            ClientEvent::Device(result) => (runner.device_result(result), None),
+            ClientEvent::Task { task, outcome } => (runner.task_outcome(task, outcome), None),
+            ClientEvent::Store(result) => (runner.store_result(result), None),
+            ClientEvent::Lifecycle(state) => (runner.lifecycle(state), Some(state)),
+            ClientEvent::Shell(event) => (runner.shell_event(event), None),
+            ClientEvent::CoverChanged(present) => (runner.cover_changed(present), None),
             ClientEvent::Exit => {
                 // The runtime is taking the screen back. Give the application
                 // its exit callback, then go, rather than arguing about it.
@@ -5925,6 +5984,9 @@ pub fn run_on<A: KoboApp>(name: &str, app: A, socket: &Path) -> Result<(), Clien
             .iter()
             .any(|command| matches!(command, Command::Exit));
         client.send_commands(commands)?;
+        if let Some(state) = lifecycle_ready {
+            client.lifecycle_ready(state)?;
+        }
         if leaving {
             return Ok(());
         }
