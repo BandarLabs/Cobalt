@@ -131,6 +131,40 @@ would mean scraping HTML, which is the thing OPDS exists to avoid.
 
 It remains reachable as a user-added catalog. It is not fit to ship as one.
 
+## One interface, whatever the catalog speaks
+
+The version a catalog speaks is a fact about the wire, not about the reader.
+Nothing on the panel may reveal it: no badge saying "OPDS 2.0", no screen that
+exists for one version and not the other, no wording that changes because the
+metadata arrived as Dublin Core rather than schema.org. A reader who adds a
+catalog should be unable to tell which specification it implements, and should
+never have to care.
+
+This is enforced rather than intended. `kobo-opds` returns **one** model, and
+the application is not given a way to ask which parser produced it — the
+version is recorded for diagnostics and is not reachable from any drawing code.
+Where the two specifications genuinely differ, the difference is resolved
+inside the crate:
+
+| The wire says | The reader sees |
+| --- | --- |
+| `dcterms:language` / `metadata.language` | a language |
+| `content` beating `summary` / `metadata.description` | a description |
+| `opds:price` element / `properties.price` object | a price |
+| `http://opds-spec.org/acquisition/open-access` / `download` | a book to read |
+| OpenSearch description document / `search{?query}` | a keyboard |
+| `opensearch:totalResults` / `metadata.numberOfItems` | a count of results |
+
+The one thing a reader may legitimately notice is *speed*: an OPDS 1.2 search
+costs a round trip that a 2.0 search does not, and Gutenberg costs a fetch per
+cover that an acquisition feed does not. Those are properties of the catalog,
+not of the interface, and the screens are the same either way.
+
+Kept honest by **parity tests**: the same logical catalog, written once as
+1.2 Atom and once as 2.0 JSON, must produce the same screens. The test asserts
+on the text the screen draws, so a difference in wording is a failure the same
+way a missing button is.
+
 ## The shape of the client
 
 Three new pieces, each of which is useful on its own.

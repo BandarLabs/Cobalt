@@ -1,0 +1,42 @@
+{
+  "_comment": "One small catalog, written twice. This is the OPDS 2.0 half; parity-1.2.xml is the same catalog in OPDS 1.2, field for field, including a search link. The two exist so gutenbird's own parity tests can assert that the screens they draw read the same whichever version answered.",
+
+  "metadata": {
+    "title": "A Small Library"
+  },
+
+  "links": [
+    {"rel": "self", "href": "https://parity.example/catalog", "type": "application/opds+json"},
+    {"rel": "search", "href": "https://parity.example/search{?query}", "type": "application/opds+json", "templated": true}
+  ],
+
+  "publications": [
+    {
+      "metadata": {
+        "@type": "http://schema.org/Book",
+        "identifier": "urn:isbn:9780000000002",
+        "title": "A Journey into the Center of the Earth",
+        "author": "Jules Verne",
+        "language": "en",
+        "published": "1864",
+        "modified": "2024-06-01T00:00:00Z",
+        "description": "A professor, his nephew and their guide descend an Icelandic volcano.",
+        "rights": "Public domain",
+        "subject": [
+          {"name": "Science Fiction", "code": "sf", "scheme": "https://parity.example/subjects"}
+        ]
+      },
+      "links": [
+        {
+          "rel": "http://opds-spec.org/acquisition/open-access",
+          "href": "https://parity.example/books/journey.epub",
+          "type": "application/epub+zip",
+          "properties": {"length": 769028}
+        }
+      ],
+      "images": [
+        {"href": "https://parity.example/covers/journey.jpg", "type": "image/jpeg"}
+      ]
+    }
+  ]
+}

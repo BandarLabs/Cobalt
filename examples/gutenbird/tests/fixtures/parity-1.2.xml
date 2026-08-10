@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  One small catalog, written twice. This is the OPDS 1.2 half; `parity-2.0.json`
+  is the same catalog in OPDS 2.0, field for field, including a search link.
+
+  The two exist so gutenbird's own parity tests can assert that the screens
+  they draw read the same whichever version answered -- title, author,
+  description, language, category, EPUB link and the search keyboard alike.
+  Anything added to one must be added to the other, or the test is no longer
+  testing what it claims to.
+-->
+<feed xmlns="http://www.w3.org/2005/Atom"
+      xmlns:opds="http://opds-spec.org/2010/catalog"
+      xmlns:dcterms="http://purl.org/dc/terms/">
+  <id>https://parity.example/catalog</id>
+  <title>A Small Library</title>
+
+  <link rel="self"
+        type="application/atom+xml;profile=opds-catalog;kind=acquisition"
+        href="https://parity.example/catalog"/>
+  <link rel="search"
+        type="application/atom+xml;profile=opds-catalog"
+        href="https://parity.example/search{?query}"/>
+
+  <entry>
+    <title>A Journey into the Center of the Earth</title>
+    <id>urn:isbn:9780000000002</id>
+    <updated>2024-06-01T00:00:00Z</updated>
+    <author><name>Jules Verne</name></author>
+    <dcterms:language>en</dcterms:language>
+    <dcterms:issued>1864</dcterms:issued>
+    <rights>Public domain</rights>
+    <summary type="text">A professor, his nephew and their guide descend an Icelandic volcano.</summary>
+    <category scheme="https://parity.example/subjects" term="sf" label="Science Fiction"/>
+    <link rel="http://opds-spec.org/image"
+          type="image/jpeg"
+          href="https://parity.example/covers/journey.jpg"/>
+    <link rel="http://opds-spec.org/acquisition/open-access"
+          type="application/epub+zip"
+          length="769028"
+          href="https://parity.example/books/journey.epub"/>
+  </entry>
+</feed>

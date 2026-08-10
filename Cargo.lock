@@ -277,7 +277,7 @@ version = "0.2.0"
 dependencies = [
  "kobo-doc",
  "kobo-image",
- "kobo-json",
+ "kobo-opds",
  "kobo-read",
  "kobo-sdk",
  "kobo-ui",
