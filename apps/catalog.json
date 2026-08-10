@@ -10,7 +10,7 @@
       "version": "1.0.0",
       "minimum_cobalt_version": "0.2.0",
       "glyph": "headphones",
-      "capabilities": ["network", "audio", "bluetooth-audio"]
+      "capabilities": ["network", "audio", "bluetooth-audio", "bluetooth-control"]
     },
     {
       "package": "kobo-brief",

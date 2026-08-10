@@ -833,7 +833,7 @@ impl Default for SimulatedApps {
                     "Audiobooks",
                     "Research, narrate and play an original audiobook about any topic.",
                     kobo_ui::Glyph::Headphones,
-                    &["network", "audio", "bluetooth-audio"],
+                    &["network", "audio", "bluetooth-audio", "bluetooth-control"],
                     true,
                 ),
                 simulated_app(
