@@ -168,6 +168,21 @@ impl State {
         if let Some(id) = attribute(inside, "id") {
             self.builder.mark_anchor(&decode_entities(id));
         }
+        if name == "img" {
+            // Emitted where it stands, so a picture keeps its place among the
+            // paragraphs. The source is left exactly as the book wrote it --
+            // resolving it against the file it came from needs to know what
+            // that file was, which only the format assembling the book does.
+            if let Some(source) = attribute(inside, "src") {
+                self.flush();
+                let alt = attribute(inside, "alt").map(decode_entities).unwrap_or_default();
+                self.builder.push(Block::Picture {
+                    name: decode_entities(source),
+                    alt,
+                });
+            }
+            return;
+        }
         match name {
             // A `<br>` is a soft break. One column, and the paginator wraps:
             // honouring it would give a ragged short line in the middle of a
@@ -520,17 +535,51 @@ mod tests {
     }
 
     #[test]
-    fn a_picture_leaves_behind_what_it_was_described_as() {
+    fn a_picture_becomes_something_that_can_be_drawn_rather_than_described() {
+        // This used to fold the description into the sentence as "[a cat]",
+        // which was the best a reader could do when a picture could not be
+        // drawn at all. It can be now, so the picture is a block of its own
+        // and keeps its description for the case where it still cannot --
+        // which splits a paragraph an illustration was sitting inside. That
+        // is the right way round for a book: an illustration is nearly always
+        // its own paragraph already, and one genuinely mid-sentence is
+        // decorative.
         let document = parse("<p>Before <img src=\"a.png\" alt=\"a cat\"> after.</p>");
         assert_eq!(
             document.blocks,
-            vec![Block::Paragraph("Before [a cat] after.".to_owned())]
+            vec![
+                Block::Paragraph("Before".to_owned()),
+                Block::Picture {
+                    name: "a.png".to_owned(),
+                    alt: "a cat".to_owned()
+                },
+                Block::Paragraph("after.".to_owned()),
+            ]
         );
     }
 
     #[test]
-    fn a_picture_with_no_description_says_nothing() {
+    fn a_picture_with_no_description_still_has_somewhere_to_be_drawn() {
+        // No description is not nothing: the picture is still there, and a
+        // book whose plates carry no alt text is the ordinary case rather
+        // than the exception.
         let document = parse("<p>Before <img src=\"a.png\" alt=\"\"> after.</p>");
+        assert_eq!(
+            document.blocks,
+            vec![
+                Block::Paragraph("Before".to_owned()),
+                Block::Picture {
+                    name: "a.png".to_owned(),
+                    alt: String::new()
+                },
+                Block::Paragraph("after.".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_picture_with_no_source_is_not_a_picture() {
+        let document = parse("<p>Before <img alt=\"a cat\"> after.</p>");
         assert_eq!(
             document.blocks,
             vec![Block::Paragraph("Before after.".to_owned())]

@@ -35,7 +35,7 @@
 //! renderer, and because the paragraph is *paginated* at that depth as well,
 //! marking one never pushes the foot of the page off the bottom.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use kobo_doc::{Block, Document};
 use kobo_sdk::{BannerLevel, Screen, ScreenBuilder};
@@ -135,6 +135,8 @@ enum Kind {
     Quote,
     Preformatted,
     Item,
+    /// A picture the book set into its text.
+    Picture,
     Rule,
     Break,
 }
@@ -159,6 +161,9 @@ impl Kind {
     }
 
     /// Whether this is something to look at rather than something to read.
+    ///
+    /// A picture is not here. Furniture takes one line and carries no words,
+    /// and a picture takes as much room as it takes.
     const fn is_furniture(self) -> bool {
         matches!(self, Kind::Rule | Kind::Break)
     }
@@ -312,6 +317,14 @@ pub struct Reader {
     /// end of the book -- which is the exact confusion the `cut` banner exists
     /// to prevent, and would cause itself if it fired while more was coming.
     pending: bool,
+    /// The pictures an application has handed over, by the name the book
+    /// stored them under.
+    ///
+    /// Empty until something supplies them, which is the ordinary state for a
+    /// caller that has not asked for pictures: the reader then draws each
+    /// one's description instead, and every other part of the book is
+    /// unaffected.
+    pictures: BTreeMap<String, kobo_ui::TilePicture>,
 }
 
 impl Reader {
@@ -323,6 +336,7 @@ impl Reader {
     #[must_use]
     pub fn open(document: Document, memory: Memory, panel: &DisplayMetrics) -> Self {
         let mut reader = Self {
+            pictures: BTreeMap::new(),
             document,
             memory,
             pages: Vec::new(),
@@ -365,7 +379,7 @@ impl Reader {
         // line height both read it -- and the screen carries the same value,
         // so what was measured here is what gets drawn.
         let (mut pages, mut capped) = kobo_ui::with_text_scale(self.memory.scale, || {
-            paginate(&self.document, &self.memory.highlights, &metrics, area)
+            paginate(&self.document, &self.memory.highlights, &self.pictures, &metrics, area)
         });
         // A book of one page says nothing about where it is, so no strip is
         // drawn and the room it was holding belongs to the words. Deciding it
@@ -373,7 +387,7 @@ impl Reader {
         // never turns one page into two.
         if pages.len() <= 1 {
             let (whole, cut) = kobo_ui::with_text_scale(self.memory.scale, || {
-                paginate(&self.document, &self.memory.highlights, &metrics, full)
+                paginate(&self.document, &self.memory.highlights, &self.pictures, &metrics, full)
             });
             if whole.len() <= 1 {
                 pages = whole;
@@ -925,6 +939,19 @@ impl Reader {
                 Kind::Marked | Kind::Quote | Kind::Item => {
                     screen.quote(HIGHLIGHT_DEPTH, piece.text.clone())
                 }
+                Kind::Picture => {
+                    // The handle is the application's to supply, because
+                    // handing pixels to the runtime needs a `Context` and this
+                    // is a view over a document rather than an application.
+                    // Until one arrives, or when the picture will not decode,
+                    // what the book said the picture shows is better than a
+                    // gap the reader cannot account for.
+                    match self.picture_for(piece.block) {
+                        Some(drawn) => screen.picture(drawn, MAX_PICTURE_MM),
+                        None if piece.text.is_empty() => screen,
+                        None => screen.secondary(piece.text.clone()),
+                    }
+                }
                 Kind::Rule => screen.divider(),
                 Kind::Break => screen.spacer(kobo_ui::Space::Small),
                 Kind::Body | Kind::Preformatted => screen.text(piece.text.clone()),
@@ -1183,6 +1210,113 @@ fn first_words(text: &str) -> String {
 ///
 /// Returns the pages, and whether it stopped at the ceiling with book left --
 /// which the caller has to say out loud rather than present as an ending.
+impl Reader {
+    /// Hands over the pictures this book's text refers to.
+    ///
+    /// Keyed by the name the book stored each one under, which is what a
+    /// [`Block::Picture`] carries. Supplying pixels needs a runtime handle and
+    /// a handle needs a `Context`, so the work of decoding an image and giving
+    /// it to the runtime belongs to the application; this only draws what it
+    /// is given. A name with nothing against it draws its description instead,
+    /// so an application may supply as few as it likes -- which is what makes
+    /// it possible to decode only the pictures on the page being read rather
+    /// than four hundred engravings at the moment a book opens.
+    pub fn set_pictures(&mut self, pictures: BTreeMap<String, kobo_ui::TilePicture>) {
+        self.pictures = pictures;
+    }
+
+    /// Every picture the book refers to, in the order it refers to them.
+    ///
+    /// What an application asks in order to know what to decode.
+    #[must_use]
+    pub fn pictures_wanted(&self) -> Vec<&str> {
+        let mut wanted = Vec::new();
+        for block in &self.document.blocks {
+            if let Block::Picture { name, .. } = block {
+                if !wanted.contains(&name.as_str()) {
+                    wanted.push(name.as_str());
+                }
+            }
+        }
+        wanted
+    }
+
+    /// The picture to draw for a block, when one has been handed over.
+    fn picture_for(&self, block: Locator) -> Option<kobo_ui::TilePicture> {
+        let at = usize::try_from(block).ok()?;
+        let Block::Picture { name, .. } = self.document.blocks.get(at)? else {
+            return None;
+        };
+        self.pictures.get(name).copied()
+    }
+}
+
+/// The tallest a picture inside the text may be drawn, in millimetres.
+///
+/// An illustration is part of the page rather than the whole of it: a plate
+/// that fills the panel turns every page turn around it into a page of white,
+/// and on a screen this size two thirds of the height is already generous. A
+/// picture smaller than this is drawn at its own size rather than stretched,
+/// because enlarging a woodcut printed at three hundred pixels only makes the
+/// grain visible.
+const MAX_PICTURE_MM: u16 = 90;
+
+/// The page being packed, handed to something that needs to add to it.
+struct Placing<'a> {
+    pages: &'a mut Vec<Vec<Piece>>,
+    page: &'a mut Vec<Piece>,
+    used: &'a mut i32,
+    gap: i32,
+}
+
+/// Puts a picture on the page, or on the next one when it will not fit.
+///
+/// Whole or not at all: there is no half of a picture to leave behind, which
+/// is the one way it differs from the prose around it.
+fn place_picture(
+    drawn: kobo_ui::TilePicture,
+    piece: Piece,
+    placing: &mut Placing<'_>,
+    metrics: &kobo_ui::DisplayMetrics,
+    area: ProseArea,
+) {
+    let height = picture_height(drawn, metrics, area);
+    if !placing.page.is_empty() && *placing.used + placing.gap + height > area.height {
+        placing.pages.push(std::mem::take(placing.page));
+        *placing.used = 0;
+    }
+    *placing.used += if placing.page.is_empty() {
+        height
+    } else {
+        placing.gap + height
+    };
+    placing.page.push(piece);
+}
+
+/// How tall a picture will be drawn, so a page can be packed around it.
+///
+/// The same arithmetic the layout will do: fit it to the column when it is
+/// wider than one, never enlarge it past its own size, and cap it so that no
+/// single illustration takes the page. Working it out here rather than asking
+/// the renderer keeps pagination a pure function of the document, which is
+/// what stops a preview from disagreeing with the panel.
+fn picture_height(
+    picture: kobo_ui::TilePicture,
+    metrics: &kobo_ui::DisplayMetrics,
+    area: ProseArea,
+) -> i32 {
+    let (source_width, source_height) = picture.source;
+    let width = i32::try_from(source_width).unwrap_or(i32::MAX).max(1);
+    let height = i32::try_from(source_height).unwrap_or(i32::MAX).max(1);
+    let fitted = if width > area.width {
+        height.saturating_mul(area.width) / width
+    } else {
+        height
+    };
+    let ceiling = metrics.tenth_mm(i32::from(MAX_PICTURE_MM) * 10);
+    fitted.min(ceiling).min(area.height).max(1)
+}
+
 /// Where the book itself says a chapter begins.
 ///
 /// A chapter starting halfway down the page, under the last paragraph of the
@@ -1209,9 +1343,14 @@ fn break_page(pages: &mut Vec<Vec<Piece>>, page: &mut Vec<Piece>, used: &mut i32
     }
 }
 
+// A packing loop: measure, place, and break when the page is full. Splitting
+// it would mean handing the same six pieces of state to each half, and the
+// hand-off is where an off-by-one in a page break would hide.
+#[allow(clippy::too_many_lines)]
 fn paginate(
     document: &Document,
     highlights: &BTreeSet<Locator>,
+    pictures: &BTreeMap<String, kobo_ui::TilePicture>,
     metrics: &kobo_ui::DisplayMetrics,
     area: ProseArea,
 ) -> (Vec<Vec<Piece>>, bool) {
@@ -1268,7 +1407,31 @@ fn paginate(
             continue;
         }
 
-        let Some(text) = block.text() else { continue };
+        // A picture is placed whole or moved to the next page: there is no
+        // half of one to leave behind, which is what the line-by-line packing
+        // below does for prose. A picture nobody has handed over yet falls
+        // through to that packing with its description standing in for it.
+        let described;
+        let text = if let Block::Picture { name, alt } = block {
+            if let Some(drawn) = pictures.get(name.as_str()) {
+                place_picture(
+                    *drawn,
+                    Piece { block: index, text: alt.clone(), kind },
+                    &mut Placing { pages: &mut pages, page: &mut page, used: &mut used, gap },
+                    metrics,
+                    area,
+                );
+                continue;
+            }
+            if alt.is_empty() {
+                continue;
+            }
+            described = alt.clone();
+            described.as_str()
+        } else {
+            let Some(text) = block.text() else { continue };
+            text
+        };
         let lines = wrap_text_in(text, width, size, area.face);
         if lines.is_empty() {
             continue;
@@ -1342,6 +1505,7 @@ fn kind_of(block: &Block, marked: bool) -> Kind {
         Block::Quote(_) => Kind::Quote,
         Block::Preformatted(_) => Kind::Preformatted,
         Block::Item { .. } => Kind::Item,
+        Block::Picture { .. } => Kind::Picture,
         Block::Rule => Kind::Rule,
         Block::Break => Kind::Break,
     }
@@ -1419,6 +1583,73 @@ mod tests {
             ],
             ..Document::default()
         }
+    }
+
+    fn illustrated() -> Document {
+        Document {
+            blocks: vec![
+                Block::Paragraph("Before the plate.".into()),
+                Block::Picture {
+                    name: "plate.png".into(),
+                    alt: "A cathedral tower at dawn".into(),
+                },
+                Block::Paragraph("After the plate.".into()),
+            ],
+            ..Document::default()
+        }
+    }
+
+    #[test]
+    fn a_picture_nobody_has_handed_over_reads_as_what_it_shows() {
+        // The ordinary state for an application that has not asked for
+        // pictures, and the state for one whose picture would not decode. A
+        // gap the reader cannot account for is worse than a description.
+        let reader = Reader::open(illustrated(), Memory::default(), &panel());
+        let words: Vec<&str> = reader.page().iter().map(|piece| piece.text.as_str()).collect();
+        assert!(
+            words.iter().any(|text| text.contains("cathedral tower")),
+            "{words:?}"
+        );
+    }
+
+    #[test]
+    fn a_picture_that_was_handed_over_takes_the_room_it_needs() {
+        // The description stops being drawn once there is a picture to draw
+        // in its place, and the page has to be packed around the picture's
+        // real height rather than a line of text's.
+        // Padded until a page is nearly full, because a picture is capped at
+        // ninety millimetres and an otherwise empty page has room for one.
+        let mut blocks: Vec<Block> = (0..12)
+            .map(|n| Block::Paragraph(format!("Paragraph number {n} of the chapter before the plate.")))
+            .collect();
+        blocks.push(Block::Picture {
+            name: "plate.png".into(),
+            alt: "A cathedral tower at dawn".into(),
+        });
+        let document = Document {
+            blocks,
+            ..Document::default()
+        };
+        let mut reader = Reader::open(document, Memory::default(), &panel());
+        let plain = reader.page_count();
+        let mut pictures = BTreeMap::new();
+        pictures.insert(
+            "plate.png".to_owned(),
+            kobo_ui::TilePicture::new(kobo_ui::PictureHandle(1), 600, 4000),
+        );
+        reader.set_pictures(pictures);
+        reader.repaginate(&panel());
+        assert!(
+            reader.page_count() > plain,
+            "a picture took no more room than the line of text standing in for it"
+        );
+    }
+
+    #[test]
+    fn a_book_says_which_pictures_it_wants(
+    ) {
+        let reader = Reader::open(illustrated(), Memory::default(), &panel());
+        assert_eq!(reader.pictures_wanted(), vec!["plate.png"]);
     }
 
     #[test]

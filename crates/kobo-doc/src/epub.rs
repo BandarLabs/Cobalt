@@ -131,6 +131,18 @@ pub fn parse(bytes: &[u8]) -> Result<Document, Fault> {
         // chapter lands on its first words rather than on the seam in front
         // of them.
         let start = builder.len();
+        // A picture's source was written relative to the file that referred to
+        // it, so it is resolved here, where that file is known, and the block
+        // is rewritten to name the archive member instead. A picture the
+        // archive does not hold becomes its own description, which is what a
+        // book with a broken link should read as.
+        let mut part = part;
+        let inside = directory_of(&name);
+        for block in &mut part.blocks {
+            if let Block::Picture { name: source, .. } = block {
+                *source = resolve(&inside, source);
+            }
+        }
         // The names inside this file are only unique within it -- most books
         // number their sections from one in every chapter -- so each is keyed
         // by the file it was written in before it joins the book's own map.
@@ -149,6 +161,7 @@ pub fn parse(bytes: &[u8]) -> Result<Document, Fault> {
     }
     builder.set_contents(contents_of(&archive, &package, &base, &starts, &anchors));
     builder.set_anchors(anchors);
+    builder.set_images(images_of(&archive, &builder));
     let mut document = builder.finish();
     document.truncated |= truncated;
     Ok(document)
@@ -358,6 +371,49 @@ fn read_ncx(xml: &str, base: &str) -> Vec<(String, String, Option<String>, u8)> 
             Some((title?, resolve(base, &target), fragment_of(&target), depth))
         })
         .collect()
+}
+
+/// The most bytes of pictures carried out of one book.
+///
+/// An illustrated Gutenberg edition runs to twenty-five megabytes of plates,
+/// and this device shares its memory with the reader it is pretending not to
+/// be. Eight is enough for the illustrations of a novel at the size this panel
+/// can show, and is the point past which a book of photographs stops being
+/// something to open on a reader.
+const MAX_IMAGE_BYTES: usize = 8 * 1024 * 1024;
+
+/// The most bytes one picture may take.
+///
+/// A plate scanned at print resolution is several megabytes and will be drawn
+/// at ninety millimetres on a greyscale panel. Refusing the largest ones
+/// costs a picture and saves the book.
+const MAX_ONE_IMAGE_BYTES: usize = 2 * 1024 * 1024;
+
+/// Reads the pictures the assembled book refers to, and only those.
+///
+/// A book's archive holds cover art, publisher marks and the stylesheet's own
+/// decorations that no page refers to, so the blocks decide what is worth
+/// carrying rather than the manifest.
+fn images_of(archive: &Archive<'_>, builder: &Builder) -> BTreeMap<String, Vec<u8>> {
+    let mut images: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    let mut total = 0usize;
+    for block in builder.blocks() {
+        let Block::Picture { name, .. } = block else {
+            continue;
+        };
+        if images.contains_key(name) {
+            continue;
+        }
+        let Ok(bytes) = archive.read(name) else {
+            continue;
+        };
+        if bytes.len() > MAX_ONE_IMAGE_BYTES || total.saturating_add(bytes.len()) > MAX_IMAGE_BYTES {
+            continue;
+        }
+        total += bytes.len();
+        images.insert(name.clone(), bytes);
+    }
+    images
 }
 
 /// Removes a table of contents printed into the middle of the book.

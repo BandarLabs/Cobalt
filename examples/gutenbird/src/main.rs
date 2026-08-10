@@ -125,6 +125,30 @@ const COVER_TRIES: u8 = 3;
 /// one, which would look like a decoding fault rather than a small picture.
 const MIN_COVER_PX: u32 = 32;
 
+/// The most pictures decoded when a book opens.
+///
+/// Every one costs memory the reader shares with the firmware, and a novel's
+/// illustrations run to a few dozen. This is above that and far below the
+/// point where a book of photographs takes the device down with it.
+const MAX_BOOK_PICTURES: usize = 64;
+
+/// How large a picture inside a book is decoded to, in millimetres.
+///
+/// Fitted before it is handed over rather than after, so what the runtime
+/// holds is the size it will be drawn: a plate scanned at print resolution is
+/// several megabytes of pixels the panel has no way to show. The height
+/// matches the ceiling `kobo-read` draws pictures at, and the width is the
+/// column it has to fit inside.
+const PICTURE_WIDTH_MM: u16 = 80;
+const PICTURE_HEIGHT_MM: u16 = 90;
+
+/// Where a book's picture handles start.
+///
+/// The shelf is holding cover handles numbered from zero at the same time, and
+/// two pictures sharing a handle is the sort of fault that shows up as the
+/// wrong illustration rather than as an error.
+const PICTURE_HANDLE_BASE: u32 = 1_000;
+
 /// How wide the cover in a book's hero is drawn.
 const DETAILS_COVER_MM: u16 = 30;
 
@@ -1799,13 +1823,62 @@ impl Gutenbird {
         };
         let _ = name;
         if let Ok(document) = result {
-            self.reader = Some(Reader::open(document, memory, &context.metrics()));
+            let pictures = Self::hand_over_pictures(context, &document);
+            let mut reader = Reader::open(document, memory, &context.metrics());
+            reader.set_pictures(pictures);
+            self.reader = Some(reader);
         } else {
             self.problem = Some("This book could not be read.".to_owned());
             if self.complete {
                 self.discard_broken_book(context);
             }
         }
+    }
+
+    /// Decodes the book's pictures and hands them to the runtime.
+    ///
+    /// Handles are the runtime's to give and a `Context` is needed to ask, so
+    /// this is the application's work rather than the reader's -- `kobo-read`
+    /// draws what it is given and each picture's description where it was
+    /// given nothing.
+    ///
+    /// Bounded twice over, because a book of plates would otherwise decode
+    /// four hundred images at the moment it opened: at most `MAX_BOOK_PICTURES`
+    /// are decoded, and each is fitted to the panel before it is handed over
+    /// so what the runtime holds is the size it will be drawn rather than the
+    /// size it was scanned. A picture that will not decode is simply left out,
+    /// and the page then reads its description, which is what a book with a
+    /// broken plate should look like.
+    fn hand_over_pictures(
+        context: &mut Context,
+        document: &kobo_doc::Document,
+    ) -> BTreeMap<String, TilePicture> {
+        let mut handed = BTreeMap::new();
+        let metrics = context.metrics();
+        let width = metrics.tenth_mm(i32::from(PICTURE_WIDTH_MM) * 10);
+        let height = metrics.tenth_mm(i32::from(PICTURE_HEIGHT_MM) * 10);
+        let (Ok(width), Ok(height)) = (u32::try_from(width), u32::try_from(height)) else {
+            return handed;
+        };
+        for (index, (name, bytes)) in document.images.iter().take(MAX_BOOK_PICTURES).enumerate() {
+            let Ok(picture) = kobo_image::decode(bytes) else {
+                continue;
+            };
+            let Ok(mut picture) = picture.fit(width, height) else {
+                continue;
+            };
+            picture.dither(kobo_image::PANEL_GREYS);
+            // Numbered from a base that cannot collide with the cover handles
+            // the shelf is holding at the same time.
+            let handle = PictureHandle(PICTURE_HANDLE_BASE + u32::try_from(index).unwrap_or(0));
+            let (drawn_width, drawn_height) = (picture.width(), picture.height());
+            if let Some(reference) =
+                context.put_picture(handle, drawn_width, drawn_height, picture.into_grey())
+            {
+                handed.insert(name.clone(), reference);
+            }
+        }
+        handed
     }
 
     /// A blob that arrived and will not parse is forgotten rather than kept,

@@ -168,6 +168,22 @@ pub enum Block {
     /// is drawn, so that inserting an item cannot leave the list numbered
     /// wrongly.
     Item { ordered: bool, text: String },
+    /// A picture the book set into its text.
+    ///
+    /// Carried as the name it was stored under rather than as pixels, because
+    /// a block is copied and compared all over this crate and an illustrated
+    /// book is twenty-five megabytes of them. The bytes live once, in
+    /// [`Document::images`], and this says which.
+    Picture {
+        /// The key into [`Document::images`].
+        name: String,
+        /// What the book says the picture shows.
+        ///
+        /// Kept even when the picture is drawn: it is what a reader gets when
+        /// the image will not decode, and on a panel that cannot show colour
+        /// a caption is often the more useful of the two.
+        alt: String,
+    },
     /// A break between parts with no words on it.
     Rule,
     /// Where one file of a book ends and the next begins.
@@ -188,7 +204,10 @@ impl Block {
             | Self::Quote(text)
             | Self::Preformatted(text)
             | Self::Item { text, .. } => Some(text),
-            Self::Rule | Self::Break => None,
+            // A picture's description is not the words of the book: returning
+            // it here would put a caption into a search, a highlight and the
+            // count of what a page holds, all of which are about prose.
+            Self::Picture { .. } | Self::Rule | Self::Break => None,
         }
     }
 
@@ -238,6 +257,14 @@ pub struct Document {
     /// the archive name and the fragment together, because the same `id` is
     /// used in every file of most books.
     pub anchors: BTreeMap<String, usize>,
+    /// The pictures the book set into its text, as they were stored.
+    ///
+    /// Undecoded on purpose. Turning bytes into pixels costs memory this
+    /// device has to share with the reader it is pretending not to be, so the
+    /// decision of how many to decode, and when, belongs to whatever is
+    /// drawing them rather than to the parser. A book of four hundred
+    /// engravings should not cost four hundred decodes to open.
+    pub images: BTreeMap<String, Vec<u8>>,
 }
 
 /// One line of a book's own table of contents.
@@ -350,6 +377,17 @@ impl Builder {
         self.document.anchors.entry(id.to_owned()).or_insert(at);
     }
 
+    /// The blocks kept so far, for a format that needs to look at what it has
+    /// assembled before it can say what else the book needs.
+    pub(crate) fn blocks(&self) -> &[Block] {
+        &self.document.blocks
+    }
+
+    /// Records the pictures the book refers to.
+    pub(crate) fn set_images(&mut self, images: BTreeMap<String, Vec<u8>>) {
+        self.document.images = images;
+    }
+
     /// Replaces the anchors, once a caller has re-keyed them.
     pub(crate) fn set_anchors(&mut self, anchors: BTreeMap<String, usize>) {
         self.document.anchors = anchors;
@@ -381,6 +419,15 @@ impl Builder {
                 }
                 Block::Preformatted(self.fit(text))
             }
+            // A picture carries no words to trim and no ceiling to fit it to,
+            // and an empty name is a picture nobody can find, so it is the one
+            // block kept or dropped on its own terms.
+            Block::Picture { ref name, .. } => {
+                if name.trim().is_empty() {
+                    return;
+                }
+                block
+            }
             Block::Rule | Block::Break => {
                 // Two rules in a row, or a break with nothing between it and
                 // the last one, is a seam in the source rather than something
@@ -410,7 +457,10 @@ impl Builder {
                     Block::Paragraph(_) => Block::Paragraph(text),
                     Block::Quote(_) => Block::Quote(text),
                     Block::Item { ordered, .. } => Block::Item { ordered, text },
-                    Block::Preformatted(_) | Block::Rule | Block::Break => return,
+                    Block::Preformatted(_)
+                    | Block::Picture { .. }
+                    | Block::Rule
+                    | Block::Break => return,
                 }
             }
         };
