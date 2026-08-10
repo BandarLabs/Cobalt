@@ -100,6 +100,13 @@ pub enum Chrome {
     Light,
     /// Everything marked in this book, in order, each one a way back to it.
     Highlights,
+    /// The book's own table of contents, each line a way into it.
+    ///
+    /// Only reachable for a book that published one. The parts worked out
+    /// from headings are a fallback for paging, not something to offer as a
+    /// contents list: a reader who opens one wants the chapters the author
+    /// named, not every heading in the file.
+    Contents,
     /// The paragraphs on this page, to choose one to mark.
     ///
     /// A separate screen because there is no text selection on this panel: a
@@ -263,6 +270,8 @@ pub mod action {
     pub const MARK: &str = "reader-mark-";
     /// One per stored mark, suffixed with its block index.
     pub const GO: &str = "reader-go-";
+    /// Opens the book's own table of contents.
+    pub const CONTENTS: &str = "reader-contents";
 }
 
 /// What an application still has to do about an action the reader handled.
@@ -758,6 +767,10 @@ impl Reader {
                 self.set_chrome(Chrome::Highlights, panel);
                 Outcome::Repaint
             }
+            action::CONTENTS => {
+                self.set_chrome(Chrome::Contents, panel);
+                Outcome::Repaint
+            }
             action::MARKING => {
                 self.set_chrome(Chrome::Marking, panel);
                 Outcome::Repaint
@@ -840,6 +853,9 @@ impl Reader {
         for block in self.memory.highlights.iter().chain(&self.memory.bookmarks) {
             names.push(format!("{}{block}", action::GO));
         }
+        for entry in &self.document.contents {
+            names.push(format!("{}{}", action::GO, entry.block));
+        }
         let Some(name) = names
             .into_iter()
             .find(|name| kobo_sdk::action_id(name) == action)
@@ -863,6 +879,7 @@ impl Reader {
     pub fn screen(&self, title: &str) -> Screen {
         match self.chrome {
             Chrome::Highlights => self.marks_screen(title),
+            Chrome::Contents => self.contents_screen(title),
             Chrome::Marking => self.marking_screen(title),
             Chrome::Controls | Chrome::Light | Chrome::Hidden => self.book_screen(title),
         }
@@ -1034,7 +1051,30 @@ impl Reader {
         if !self.markable().is_empty() {
             panel = panel.button(action::MARKING, "Mark a paragraph");
         }
+        // Offered only for a book that published its own contents. A button
+        // that opens an empty list is a dead end somebody has to back out of,
+        // and the parts worked out from headings are not a contents list.
+        if !self.document.contents.is_empty() {
+            panel = panel.button(action::CONTENTS, "Contents");
+        }
         panel.button(action::HIGHLIGHTS, "Notes")
+    }
+
+    /// The book's own table of contents, each line a way into it.
+    ///
+    /// Nesting is drawn with an indent rather than a heading per level: a
+    /// reference work nests three deep, and a heading for every part would
+    /// leave a screen that is mostly headings.
+    fn contents_screen(&self, title: &str) -> Screen {
+        let mut screen = ScreenBuilder::new("reader-contents").top_bar(title);
+        for entry in &self.document.contents {
+            let indent = "    ".repeat(entry.depth as usize);
+            screen = screen.button(
+                format!("{}{}", action::GO, entry.block),
+                format!("{indent}{}", entry.title),
+            );
+        }
+        screen.build()
     }
 
     fn marks_screen(&self, title: &str) -> Screen {

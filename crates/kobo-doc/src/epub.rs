@@ -30,7 +30,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-use kobo_html::{attribute, decode_entities, element_name};
+use kobo_html::{attribute, decode_entities, element_name, skip_element};
 
 use crate::html::skip_bracketed;
 use crate::zip::{self, Archive};
@@ -117,7 +117,7 @@ pub fn parse(bytes: &[u8]) -> Result<Document, Fault> {
         let Ok(bytes) = archive.read(&name) else {
             continue;
         };
-        let part = crate::html::parse(&text_of(&bytes));
+        let part = crate::html::parse(&strip_toc(&text_of(&bytes)));
         truncated |= part.truncated;
         if part.blocks.is_empty() {
             // An empty file (a cover page holding only an image) should not
@@ -358,6 +358,63 @@ fn read_ncx(xml: &str, base: &str) -> Vec<(String, String, Option<String>, u8)> 
             Some((title?, resolve(base, &target), fragment_of(&target), depth))
         })
         .collect()
+}
+
+/// Removes a table of contents printed into the middle of the book.
+///
+/// A book's contents is navigation, not prose, and the reader now has the real
+/// one on a screen of its own. Left in, it arrives as a wall of chapter
+/// numbers: Project Gutenberg writes its contents as a `<p class="toc">` full
+/// of links separated by line breaks, and a line break is folded into a space
+/// by the paginator, so sixty-one chapter numbers become one paragraph. That
+/// paragraph was the first thing a reader saw on opening Pride and Prejudice.
+///
+/// Marked by three different conventions and any of them will do: the EPUB 3
+/// semantic `epub:type`, the publishing ARIA role, and the class Gutenberg
+/// actually writes. Only the element's own text goes -- the rest of the file
+/// is left exactly as it was, because a contents block sits inside a title
+/// page often enough that dropping the whole file would take the title with
+/// it.
+fn strip_toc(xml: &str) -> String {
+    let mut out = String::with_capacity(xml.len());
+    let mut rest = xml;
+    while let Some(at) = rest.find('<') {
+        let (before, tail) = rest.split_at(at);
+        out.push_str(before);
+        let Some(end) = tail.find('>') else {
+            out.push_str(tail);
+            return out;
+        };
+        let inside = &tail[1..end];
+        let name = element_name(inside);
+        if !inside.starts_with('/') && is_contents_element(inside) {
+            rest = skip_element(&tail[end + 1..], &name);
+            continue;
+        }
+        out.push_str(&tail[..=end]);
+        rest = &tail[end + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Whether an element is marked as a table of contents.
+fn is_contents_element(inside: &str) -> bool {
+    for (key, wanted) in [("type", "toc"), ("role", "doc-toc"), ("class", "toc")] {
+        let Some(value) = attribute(inside, key) else {
+            continue;
+        };
+        // `class` and `epub:type` are both space-separated lists, so the mark
+        // has to be one of the words: a `class="tocsomething"` is not a table
+        // of contents, and neither is `class="not-toc"`.
+        if value
+            .split_whitespace()
+            .any(|word| word.eq_ignore_ascii_case(wanted))
+        {
+            return true;
+        }
+    }
+    false
 }
 
 /// The part of an href after the `#`, when it names one.
@@ -1085,6 +1142,72 @@ mod tests {
             2,
             "the landmarks nav was read as contents"
         );
+    }
+
+    #[test]
+    fn a_contents_printed_into_the_book_is_not_read_as_prose() {
+        // Gutenberg writes its contents as a paragraph of links separated by
+        // line breaks, and a line break folds into a space, so sixty-one
+        // chapter numbers arrive as one paragraph. It was the first thing a
+        // reader saw on opening the book.
+        let package = opf(
+            r#"<itemref idref="one"/>"#,
+            r#"<item id="one" href="one.xhtml" media-type="application/xhtml+xml"/>"#,
+        );
+        let bytes = archive(&[
+            ("META-INF/container.xml", CONTAINER_XML.as_bytes()),
+            ("OEBPS/book.opf", package.as_bytes()),
+            (
+                "OEBPS/one.xhtml",
+                br##"<h1>A Book</h1>
+                    <p class="toc"><a href="#a">Chapter I.</a><br/><a href="#b">Chapter II.</a></p>
+                    <p>The book itself begins.</p>"##,
+            ),
+        ]);
+        let document = parse(&bytes).expect("a readable book");
+        let words: Vec<&str> = document
+            .blocks
+            .iter()
+            .filter_map(|block| block.text())
+            .collect();
+        assert!(
+            !words.iter().any(|text| text.contains("Chapter I.")),
+            "the contents was read as prose: {words:?}"
+        );
+        assert!(
+            words.iter().any(|text| text.contains("The book itself")),
+            "the rest of the file went with it: {words:?}"
+        );
+        assert!(
+            words.iter().any(|text| text.contains("A Book")),
+            "the title went with it: {words:?}"
+        );
+    }
+
+    #[test]
+    fn a_class_that_merely_starts_with_toc_is_not_a_contents() {
+        // `class` is a list of words and a contents is one of them. Matching
+        // it as a substring would take a `tocsin` out of a book about bells.
+        let package = opf(
+            r#"<itemref idref="one"/>"#,
+            r#"<item id="one" href="one.xhtml" media-type="application/xhtml+xml"/>"#,
+        );
+        let bytes = archive(&[
+            ("META-INF/container.xml", CONTAINER_XML.as_bytes()),
+            ("OEBPS/book.opf", package.as_bytes()),
+            (
+                "OEBPS/one.xhtml",
+                br#"<p class="tocsin">The bell rang.</p><p class="not-toc">So did this one.</p>"#,
+            ),
+        ]);
+        let document = parse(&bytes).expect("a readable book");
+        let words: Vec<&str> = document
+            .blocks
+            .iter()
+            .filter_map(|block| block.text())
+            .collect();
+        assert!(words.iter().any(|text| text.contains("The bell rang")), "{words:?}");
+        assert!(words.iter().any(|text| text.contains("So did this one")), "{words:?}");
     }
 
     #[test]
