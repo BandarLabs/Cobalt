@@ -2671,6 +2671,7 @@ mod tests {
                         url: "https://example.invalid/x".into(),
                         offset: 0,
                         max_bytes: 16,
+                        credential: None,
                         headers: Vec::new(),
                     },
                 )
@@ -2765,6 +2766,7 @@ mod tests {
             url: "https://example.invalid/data".into(),
             offset: 0,
             max_bytes: 32,
+            credential: None,
             headers: Vec::new(),
         };
         let local = kobo_protocol::Task::ReadFile {

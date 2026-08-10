@@ -190,6 +190,7 @@ impl Feeds {
             url: request,
             offset: 0,
             max_bytes: SEARCH_BYTES,
+            credential: None,
             headers: Vec::new(),
         }) {
             Some(task) => self.task = Some((task, Awaiting::Search)),
@@ -210,6 +211,7 @@ impl Feeds {
             url,
             offset: 0,
             max_bytes: FEED_BYTES,
+            credential: None,
             headers: Vec::new(),
         }) {
             Some(task) => self.task = Some((task, Awaiting::Feed)),

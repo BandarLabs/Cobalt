@@ -114,6 +114,45 @@ pub fn header_is_the_applications_to_set(name: &str) -> bool {
 /// checks have to keep agreeing: `Range` is reserved for exactly the reason
 /// `Authorization` is, and a fork here is how one of them would quietly stop
 /// enforcing it.
+/// Turns a named credential into the header it will be sent as.
+///
+/// The one place that has both the naming convention and the value, so nothing
+/// downstream has to know that Bearer is spelled differently from an API key
+/// or that Basic is encoded at all. Shared by fetch and post: a catalogue
+/// behind a subscription is reached with a GET, and a credential that only
+/// worked on a POST would mean recognising a gated feed and never opening it.
+fn resolved_credential(
+    wanted: Option<&kobo_protocol::Credential>,
+    url: &str,
+    credentials: Option<&CredentialAuthorizer>,
+    secrets: Option<&Path>,
+) -> Result<Option<(String, String)>, TaskError> {
+    let Some(wanted) = wanted else {
+        return Ok(None);
+    };
+    if credentials.is_none_or(|allows| !allows(wanted, url)) {
+        return Err(TaskError::Denied);
+    }
+    // Not `Denied`. The application asked for a key it is allowed to ask for,
+    // by the name the runtime publishes, and the check above already said so.
+    // What is missing is the key itself, which is the reader owner's to
+    // install.
+    let Some(value) = secret(secrets, &wanted.secret) else {
+        return Err(TaskError::NoCredential);
+    };
+    Ok(Some((
+        wanted.header_name().to_owned(),
+        match wanted.header {
+            SecretHeader::Bearer => format!("Bearer {value}"),
+            SecretHeader::Named(_) => value,
+            // Encoded here rather than by the application, which is the whole
+            // point: an application asking for a gated feed never holds the
+            // address or the password that make up the pair.
+            SecretHeader::Basic => format!("Basic {}", base64(value.as_bytes())),
+        },
+    )))
+}
+
 fn own_headers(headers: &[kobo_protocol::Header]) -> Result<Vec<(&str, &str)>, TaskError> {
     if headers
         .iter()
@@ -499,6 +538,7 @@ fn run(work: &Task, root: &Path, backends: Backends<'_>, cancel: &AtomicBool) ->
             url,
             offset,
             max_bytes,
+            credential: wanted,
             headers,
         } => match fetch {
             None => TaskOutcome::Failed(TaskError::Denied),
@@ -507,14 +547,28 @@ fn run(work: &Task, root: &Path, backends: Backends<'_>, cancel: &AtomicBool) ->
             // turned into the piece of the document actually asked for, and
             // an application that could set `Range` itself could read past
             // the piece the byte ceiling allowed.
-            Some(fetch) => match own_headers(headers) {
-                Err(error) => TaskOutcome::Failed(error),
-                Ok(extra) => match fetch(url, *offset, (*max_bytes).min(MAX_TASK_BYTES_U32), &extra)
-                {
+            Some(fetch) => {
+                let extra = match own_headers(headers) {
+                    Ok(extra) => extra,
+                    Err(error) => return TaskOutcome::Failed(error),
+                };
+                // Appended after the gate above rather than before it: the
+                // credential is the runtime's own header, and an application
+                // is refused for setting one by hand.
+                let credential =
+                    match resolved_credential(wanted.as_ref(), url, credentials, secrets) {
+                        Ok(credential) => credential,
+                        Err(error) => return TaskOutcome::Failed(error),
+                    };
+                let mut extra = extra;
+                if let Some((name, value)) = &credential {
+                    extra.push((name.as_str(), value.as_str()));
+                }
+                match fetch(url, *offset, (*max_bytes).min(MAX_TASK_BYTES_U32), &extra) {
                     Ok(bytes) => TaskOutcome::Completed(bytes),
                     Err(error) => TaskOutcome::Failed(error),
-                },
-            },
+                }
+            }
         },
         Task::Post {
             url,
@@ -539,33 +593,10 @@ fn run(work: &Task, root: &Path, backends: Backends<'_>, cancel: &AtomicBool) ->
             // reach the server as an unauthenticated request, and the
             // application would report whatever the server said about that
             // instead of the real problem.
-            let credential = match wanted {
-                None => None,
-                Some(wanted) if credentials.is_none_or(|allows| !allows(wanted, url)) => {
-                    return TaskOutcome::Failed(TaskError::Denied);
-                }
-                Some(wanted) => match secret(secrets, &wanted.secret) {
-                    // Not `Denied`. The application asked for a key it is
-                    // allowed to ask for, by the name the runtime publishes,
-                    // and the check above already said so. What is missing is
-                    // the key itself, which is the reader owner's to install.
-                    None => return TaskOutcome::Failed(TaskError::NoCredential),
-                    // Assembled here, in the one place that has both the
-                    // convention and the value, so nothing downstream has to
-                    // know that Bearer is spelled differently from an API key.
-                    Some(value) => Some((
-                        wanted.header_name().to_owned(),
-                        match wanted.header {
-                            SecretHeader::Bearer => format!("Bearer {value}"),
-                            SecretHeader::Named(_) => value,
-                            // Encoded here rather than by the application,
-                            // which is the whole point: an application asking
-                            // for a gated feed never holds the address or the
-                            // password that make up the pair.
-                            SecretHeader::Basic => format!("Basic {}", base64(value.as_bytes())),
-                        },
-                    )),
-                },
+            let credential = match resolved_credential(wanted.as_ref(), url, credentials, secrets)
+            {
+                Ok(credential) => credential,
+                Err(error) => return TaskOutcome::Failed(error),
             };
             match post(
                 url,
@@ -671,6 +702,7 @@ mod tests {
                     url: "https://example.invalid/catalog".into(),
                     offset: 0,
                     max_bytes: 1024,
+                    credential: None,
                     headers: Vec::new(),
                 },
             )
@@ -697,6 +729,7 @@ mod tests {
                     url: "https://example.invalid".into(),
                     offset: 0,
                     max_bytes: 16,
+                    credential: None,
                     headers: Vec::new(),
                 },
             )
@@ -738,6 +771,7 @@ mod tests {
                     url: "https://example.invalid".into(),
                     offset: 0,
                     max_bytes: 16,
+                    credential: None,
                     headers: Vec::new(),
                 },
             )
@@ -863,6 +897,7 @@ mod tests {
                     url: "https://example.test/a".into(),
                     offset: 0,
                     max_bytes: 128,
+                    credential: None,
                     headers: Vec::new(),
                 },
             )
@@ -893,6 +928,7 @@ mod tests {
                     url: "https://example.test/catalog".into(),
                     offset: 0,
                     max_bytes: 128,
+                    credential: None,
                     headers: vec![Header::new("Accept", "application/opds+json")],
                 },
             )
@@ -920,6 +956,7 @@ mod tests {
                     url: "https://example.test/book.txt".into(),
                     offset: 100,
                     max_bytes: 128,
+                    credential: None,
                     headers: vec![Header::new("Range", "bytes=0-9999")],
                 },
             )

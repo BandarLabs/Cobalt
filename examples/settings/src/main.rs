@@ -598,6 +598,7 @@ impl Settings {
             url: RELEASES.to_owned(),
             offset: 0,
             max_bytes: 256 * 1024,
+            credential: None,
             headers: Vec::new(),
         });
         if self.update_task.is_none() {
@@ -640,6 +641,7 @@ impl Settings {
                         url: release.digest,
                         offset: 0,
                         max_bytes: 16 * 1024,
+                        credential: None,
                         headers: Vec::new(),
                     });
                     self.update = if self.update_task.is_none() {

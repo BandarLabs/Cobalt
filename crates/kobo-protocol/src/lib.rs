@@ -341,6 +341,14 @@ pub enum Task {
         /// books these applications exist to read.
         offset: u32,
         max_bytes: u32,
+        /// The credential to attach, or `None`.
+        ///
+        /// Named, never held: a catalogue behind a subscription is reached by
+        /// asking the runtime for "the Standard Ebooks credential", and the
+        /// runtime is what knows the address and the password. A feed is a
+        /// GET, so a fetch that could not carry one meant a gated catalogue
+        /// could be recognised and never opened.
+        credential: Option<Credential>,
         /// Headers the request needs that are not secret.
         ///
         /// An OPDS catalogue is JSON to one server and Atom to another at the
@@ -384,10 +392,16 @@ impl Task {
     #[must_use]
     pub fn is_sendable(&self) -> bool {
         match self {
-            Self::Fetch { url, headers, .. } => {
+            Self::Fetch {
+                url,
+                credential,
+                headers,
+                ..
+            } => {
                 url.len() <= MAX_URL_LEN
                     && headers.len() <= MAX_HEADERS
                     && headers.iter().all(Header::is_well_formed)
+                    && credential.as_ref().is_none_or(Credential::is_well_formed)
             }
             Self::Post {
                 url,
@@ -1496,6 +1510,58 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
     Ok(bytes)
 }
 
+/// Writes a credential, or the absence of one.
+///
+/// Shared by fetch and post so the two cannot drift: a tag written by one and
+/// read by the other is how a credential turns into a header nobody meant.
+/// Tags are appended rather than inserted, so an older runtime meeting a newer
+/// one refuses what it does not know instead of guessing.
+fn push_credential(
+    payload: &mut Vec<u8>,
+    credential: Option<&Credential>,
+) -> Result<(), ProtocolError> {
+    match credential {
+        None => payload.push(0),
+        Some(credential) => match &credential.header {
+            SecretHeader::Bearer => {
+                payload.push(1);
+                push_string(payload, &credential.secret)?;
+            }
+            SecretHeader::Named(name) => {
+                payload.push(2);
+                push_string(payload, name)?;
+                push_string(payload, &credential.secret)?;
+            }
+            SecretHeader::Basic => {
+                payload.push(3);
+                push_string(payload, &credential.secret)?;
+            }
+        },
+    }
+    Ok(())
+}
+
+/// Reads a credential back, refusing a tag it does not know.
+fn take_credential(reader: &mut Reader<'_>) -> Result<Option<Credential>, ProtocolError> {
+    let credential = match reader.u8()? {
+        0 => None,
+        1 => Some(Credential::bearer(reader.string()?)),
+        2 => {
+            let header = reader.string()?;
+            Some(Credential::in_header(reader.string()?, header))
+        }
+        3 => Some(Credential::basic(reader.string()?)),
+        _ => return Err(ProtocolError::InvalidValue("credential")),
+    };
+    if credential
+        .as_ref()
+        .is_some_and(|credential| !credential.is_well_formed())
+    {
+        return Err(ProtocolError::InvalidValue("credential"));
+    }
+    Ok(credential)
+}
+
 fn encode_task_message(payload: &mut Vec<u8>, message: &Message) -> Result<(), ProtocolError> {
     match message {
         Message::Spawn { task, work } => {
@@ -1505,12 +1571,14 @@ fn encode_task_message(payload: &mut Vec<u8>, message: &Message) -> Result<(), P
                     url,
                     offset,
                     max_bytes,
+                    credential,
                     headers,
                 } => {
                     payload.push(0);
                     push_string(payload, url)?;
                     push_u32(payload, *offset);
                     push_u32(payload, *max_bytes);
+                    push_credential(payload, credential.as_ref())?;
                     payload.push(
                         u8::try_from(headers.len())
                             .map_err(|_| ProtocolError::InvalidValue("too many headers"))?,
@@ -1540,26 +1608,7 @@ fn encode_task_message(payload: &mut Vec<u8>, message: &Message) -> Result<(), P
                     push_string(payload, url)?;
                     push_long_string(payload, body)?;
                     push_string(payload, content_type)?;
-                    match credential {
-                        None => payload.push(0),
-                        Some(credential) => match &credential.header {
-                            SecretHeader::Bearer => {
-                                payload.push(1);
-                                push_string(payload, &credential.secret)?;
-                            }
-                            SecretHeader::Named(name) => {
-                                payload.push(2);
-                                push_string(payload, name)?;
-                                push_string(payload, &credential.secret)?;
-                            }
-                            // Appended rather than inserted, for the same
-                            // reason the task error tags are.
-                            SecretHeader::Basic => {
-                                payload.push(3);
-                                push_string(payload, &credential.secret)?;
-                            }
-                        },
-                    }
+                    push_credential(payload, credential.as_ref())?;
                     payload.push(
                         u8::try_from(headers.len())
                             .map_err(|_| ProtocolError::InvalidValue("too many headers"))?,
@@ -1832,7 +1881,12 @@ fn encoded_task_len(work: &Task) -> Result<usize, ProtocolError> {
     // anything could be opened in the simulator at all.
     let mut length = 5;
     match work {
-        Task::Fetch { url, headers, .. } => {
+        Task::Fetch {
+            url,
+            credential,
+            headers,
+            ..
+        } => {
             // Refused here rather than stripped silently, for the same reason
             // as `Post`: a request that quietly loses the header an API
             // requires (`Accept`, say) fails at the far end with an error the
@@ -1841,8 +1895,22 @@ fn encoded_task_len(work: &Task) -> Result<usize, ProtocolError> {
             {
                 return Err(ProtocolError::InvalidValue("request header"));
             }
-            add_encoded_len(&mut length, 9)?;
+            if credential
+                .as_ref()
+                .is_some_and(|credential| !credential.is_well_formed())
+            {
+                return Err(ProtocolError::InvalidValue("credential"));
+            }
+            // Nine for the offset, the ceiling and the header count, and one
+            // more for the credential's own tag.
+            add_encoded_len(&mut length, 10)?;
             add_encoded_len(&mut length, encoded_string_len(url)?)?;
+            if let Some(credential) = credential {
+                add_encoded_len(&mut length, encoded_string_len(&credential.secret)?)?;
+                if let SecretHeader::Named(name) = &credential.header {
+                    add_encoded_len(&mut length, encoded_string_len(name)?)?;
+                }
+            }
             for header in headers {
                 add_encoded_len(&mut length, encoded_string_len(&header.name)?)?;
                 add_encoded_len(&mut length, encoded_string_len(&header.value)?)?;
@@ -3172,6 +3240,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
                     // declare a ceiling larger than the transport can carry
                     // and then be surprised when the answer will not fit.
                     let max_bytes = min(reader.u32()?, MAX_TASK_BYTES_U32);
+                    let credential = take_credential(&mut reader)?;
                     let count = usize::from(reader.u8()?);
                     if count > MAX_HEADERS {
                         return Err(ProtocolError::InvalidValue("too many headers"));
@@ -3188,6 +3257,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
                         url,
                         offset,
                         max_bytes,
+                        credential,
                         headers,
                     }
                 }
@@ -3204,22 +3274,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
                     }
                     let body = reader.long_string()?;
                     let content_type = reader.string()?;
-                    let credential = match reader.u8()? {
-                        0 => None,
-                        1 => Some(Credential::bearer(reader.string()?)),
-                        2 => {
-                            let header = reader.string()?;
-                            Some(Credential::in_header(reader.string()?, header))
-                        }
-                        3 => Some(Credential::basic(reader.string()?)),
-                        _ => return Err(ProtocolError::InvalidValue("credential")),
-                    };
-                    if credential
-                        .as_ref()
-                        .is_some_and(|credential| !credential.is_well_formed())
-                    {
-                        return Err(ProtocolError::InvalidValue("credential"));
-                    }
+                    let credential = take_credential(&mut reader)?;
                     let count = usize::from(reader.u8()?);
                     if count > MAX_HEADERS {
                         return Err(ProtocolError::InvalidValue("too many headers"));
@@ -6637,6 +6692,7 @@ mod store_tests {
                     url: "https://example.invalid/book.txt".into(),
                     offset: 0,
                     max_bytes: 1024,
+                    credential: None,
                     headers: Vec::new(),
                 },
             },
@@ -6646,6 +6702,7 @@ mod store_tests {
                     url: "https://example.invalid/catalog".into(),
                     offset: 0,
                     max_bytes: 1024,
+                    credential: None,
                     headers: vec![Header::new("Accept", "application/opds+json")],
                 },
             },
@@ -6719,6 +6776,7 @@ mod store_tests {
                 url: "https://example.invalid/catalog".into(),
                 offset: 0,
                 max_bytes: 4096,
+                credential: None,
                 headers: vec![
                     Header::new("Accept", "application/opds+json"),
                     Header::new("If-None-Match", "\"abc123\""),
@@ -6741,6 +6799,7 @@ mod store_tests {
                     url: "https://example.invalid/catalog".into(),
                     offset: 0,
                     max_bytes: 4096,
+                    credential: None,
                     headers,
                 },
             },
@@ -6767,6 +6826,7 @@ mod store_tests {
                         url: "https://example.invalid/catalog".into(),
                         offset: 0,
                         max_bytes: 4096,
+                        credential: None,
                         headers: vec![header],
                     },
                 },

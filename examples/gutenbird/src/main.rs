@@ -674,6 +674,7 @@ impl Gutenbird {
             url: url.clone(),
             offset: 0,
             max_bytes: FEED_BYTES,
+            credential: None,
             headers,
         }) {
             Some(task) => self.task = Some((task, Awaiting::Feed(purpose, url))),
@@ -857,6 +858,7 @@ impl Gutenbird {
                     url: root,
                     offset: 0,
                     max_bytes: FEED_BYTES,
+                    credential: None,
                     headers,
                 }) {
                     Some(task) => {
@@ -940,6 +942,7 @@ impl Gutenbird {
             url: url.clone(),
             offset: 0,
             max_bytes: FEED_BYTES,
+            credential: None,
             headers,
         }) {
             Some(id) => {
@@ -1495,6 +1498,7 @@ impl Gutenbird {
                 url,
                 offset: 0,
                 max_bytes: COVER_BYTES,
+                credential: None,
                 headers: Vec::new(),
             }) {
                 self.covers.push((task, index, tries));
@@ -1621,6 +1625,7 @@ impl Gutenbird {
                     url,
                     offset: 0,
                     max_bytes: COVER_BYTES,
+                    credential: None,
                     headers: Vec::new(),
                 }) {
                     self.open_cover_task = Some((task, 0));
@@ -1696,6 +1701,7 @@ impl Gutenbird {
             url: acquisition.href,
             offset: self.fetched,
             max_bytes: CHUNK_BYTES,
+            credential: None,
             headers,
         }) {
             Some(task) => self.task = Some((task, Awaiting::Book)),
@@ -2535,6 +2541,7 @@ impl KoboApp for Gutenbird {
                                 url,
                                 offset: 0,
                                 max_bytes: COVER_BYTES,
+                                credential: None,
                                 headers: Vec::new(),
                             }) {
                                 self.open_cover_task = Some((new_task, tries + 1));
