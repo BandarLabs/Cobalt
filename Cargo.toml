@@ -44,6 +44,8 @@ members = [
     "examples/settings",
     "examples/sidekick",
     "examples/store",
+    "apps/arxiv",
+    "apps/morse",
     "apps/sudoku",
     "tools/icon-import",
 ]

@@ -203,6 +203,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-arxiv"
+version = "0.2.0"
+dependencies = [
+ "kobo-html",
+ "kobo-sdk",
+ "kobo-xml",
+]
+
+[[package]]
 name = "kobo-audiobook"
 version = "0.2.0"
 dependencies = [
@@ -343,6 +352,14 @@ dependencies = [
 
 [[package]]
 name = "kobo-magnet"
+version = "0.2.0"
+dependencies = [
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
+name = "kobo-morse"
 version = "0.2.0"
 dependencies = [
  "kobo-sdk",
