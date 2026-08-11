@@ -40,7 +40,7 @@ use kobo_opds::{AcquisitionKind, Category, Feed, ImageSource, Link, Publication,
 use kobo_read::{Memory, Outcome, Reader};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Chrome, Context, DiagnosticSeverity, Failure, Glyph, Header,
+    action_id, LogLevel, ActionId, BannerLevel, Chrome, Context, DiagnosticSeverity, Failure, Glyph, Header,
     KoboApp, PictureHandle, RowLead, ScreenBuilder, ShelfDownload, ShelfProgress, ShelfUpload,
     StoreResult, Task, TaskId, TaskOutcome, Tile, TilePicture, TileShape, TileState,
     MAX_STORE_VALUE,
@@ -756,15 +756,18 @@ impl Gutenbird {
         // finishing, so its pictures are dropped rather than waited for.
         self.abandon_hydration(context);
         let headers = vec![Header::new("Accept", kobo_opds::ACCEPT)];
-        match context.spawn_retrying(Task::Fetch {
+        if let Some(task) = context.spawn_retrying(Task::Fetch {
             url: url.clone(),
             offset: 0,
             max_bytes: FEED_BYTES,
             credential: None,
             headers,
         }) {
-            Some(task) => self.task = Some((task, Awaiting::Feed(purpose, url))),
-            None => self.problem = Some("Too much is already in flight.".to_owned()),
+            context.log(LogLevel::Info, format!("feed {task:?} <- {url}"));
+            self.task = Some((task, Awaiting::Feed(purpose, url)));
+        } else {
+            context.log(LogLevel::Warn, format!("feed refused, lanes full: {url}"));
+            self.problem = Some("Too much is already in flight.".to_owned());
         }
     }
 
@@ -834,6 +837,7 @@ impl Gutenbird {
 
     fn took_feed(&mut self, context: &mut Context, bytes: &[u8], purpose: FeedPurpose, base: String) {
         let Ok(mut feed) = kobo_opds::parse(bytes, &base) else {
+            context.log(LogLevel::Warn, format!("unreadable answer from {base}"));
             self.problem = Some("That catalog's answer could not be read.".to_owned());
             self.view = View::Shelf;
             return;
@@ -1579,6 +1583,7 @@ impl Gutenbird {
             }) else {
                 return;
             };
+            context.log(LogLevel::Debug, format!("fill {task:?} <- {href}"));
             self.filling.push((task, FillStage::Entry { href }));
         }
     }
@@ -1632,6 +1637,7 @@ impl Gutenbird {
             self.hydrate_visible(context);
             return;
         };
+        context.log(LogLevel::Debug, format!("cover {task:?} <- {href}"));
         self.filling.push((task, FillStage::Picture { href }));
     }
 
@@ -1969,7 +1975,10 @@ impl Gutenbird {
             credential: None,
             headers,
         }) {
-            Some(task) => self.task = Some((task, Awaiting::Book)),
+            Some(task) => {
+                context.log(LogLevel::Info, format!("book {task:?} at {}", self.fetched));
+                self.task = Some((task, Awaiting::Book));
+            }
             None => self.problem = Some("Too much is already in flight.".to_owned()),
         }
     }
@@ -2184,6 +2193,10 @@ impl Gutenbird {
         // open-access links that answer `200` with exactly that.
         if download.bytes.is_empty() && download.kind == DownloadKind::Epub && !bytes.starts_with(b"PK\x03\x04") {
             self.download = None;
+            context.log(
+                LogLevel::Warn,
+                "book refused: the first bytes are not a zip".to_owned(),
+            );
             self.failed = Some("This book did not arrive.".to_owned());
             self.retryable = false;
             self.view = View::Details;
@@ -2192,7 +2205,12 @@ impl Gutenbird {
         // The ceiling applied to the bytes rather than to what the catalog
         // said about them. A stated length is a claim; this is the arrival.
         if download.bytes.len().saturating_add(bytes.len()) as u64 > MAX_BOOK_BYTES {
+            let reached = download.bytes.len().saturating_add(bytes.len());
             self.download = None;
+            context.log(
+                LogLevel::Warn,
+                format!("book refused at {reached} bytes, ceiling {MAX_BOOK_BYTES}"),
+            );
             self.failed = Some("This book is too large to read on this device.".to_owned());
             self.retryable = false;
             self.view = View::Details;
@@ -2261,6 +2279,18 @@ fn affordable(acquisition: &kobo_opds::Acquisition) -> bool {
     acquisition
         .length
         .is_none_or(|length| length <= MAX_BOOK_BYTES)
+}
+
+/// How an outcome is written in the trace.
+///
+/// A word rather than the whole value: a completed fetch carries the bytes,
+/// and a book in the log is a log nobody can read.
+fn outcome_name(outcome: &TaskOutcome) -> String {
+    match outcome {
+        TaskOutcome::Completed(bytes) => format!("ok {} bytes", bytes.len()),
+        TaskOutcome::Failed(error) => format!("failed {error}"),
+        TaskOutcome::Cancelled => "cancelled".to_owned(),
+    }
 }
 
 fn shelf_pages(entry: &StackEntry) -> usize {
@@ -2820,6 +2850,14 @@ impl KoboApp for Gutenbird {
     #[allow(clippy::too_many_lines)]
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
         if let Some(stage) = self.finish_filling(task) {
+            context.log(
+                LogLevel::Debug,
+                format!(
+                    "fill {task:?} {} ({} lanes busy)",
+                    outcome_name(&outcome),
+                    self.filling.len()
+                ),
+            );
             if let TaskOutcome::Completed(bytes) = outcome {
                 match stage {
                     FillStage::Entry { href } => self.took_hydration(context, &bytes, &href),
@@ -2869,12 +2907,24 @@ impl KoboApp for Gutenbird {
         }
 
         let Some((outstanding, awaiting)) = self.task.clone() else {
+            context.log(
+                LogLevel::Debug,
+                format!("{task:?} {} arrived with nothing waiting", outcome_name(&outcome)),
+            );
             return;
         };
         if outstanding != task {
+            context.log(
+                LogLevel::Debug,
+                format!("{task:?} answered after {outstanding:?} replaced it"),
+            );
             return;
         }
         self.task = None;
+        context.log(
+            LogLevel::Info,
+            format!("{task:?} {} for {awaiting:?}", outcome_name(&outcome)),
+        );
         match outcome {
             TaskOutcome::Completed(bytes) => match awaiting {
                 Awaiting::Feed(purpose, base) => self.took_feed(context, &bytes, purpose, base),
