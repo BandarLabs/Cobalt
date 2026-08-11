@@ -96,9 +96,9 @@ struct Beat {
     /// Which [`Signal`] this second belongs to.
     ///
     /// The silence after a letter is charged to the letter that just finished,
-    /// not the one about to start, so the panel changes at the instant the new
-    /// letter's first flash does. Charged forwards instead, the screen would
-    /// announce a letter up to seven seconds before the light sent it.
+    /// so that the count in the top bar says a letter has gone out once it
+    /// actually has. What the panel *draws* is chosen separately, by
+    /// [`letter_at`], and looks the other way.
     signal: usize,
 }
 
@@ -233,6 +233,28 @@ fn beats(signals: &[Signal]) -> Vec<Beat> {
         beats.pop();
     }
     beats
+}
+
+/// The letter the light is sending at a given second, or the one it is about
+/// to send.
+///
+/// The whole point of the panel here is that somebody across the room can read
+/// the letter the light is flashing, so the letter has to be up before the
+/// flash is, not after. E-ink takes the better part of a second to settle, and
+/// a panel repainted at the instant the light came on would spend that first
+/// flash still showing the letter before it -- which is the one thing the
+/// screen exists not to do. So during a silence the beacon draws what is
+/// coming rather than what has just gone.
+///
+/// Looking forwards also keeps the gap between words off the screen entirely.
+/// It is a silence, not a symbol, and it has no shape of its own; drawn, its
+/// blank filled the panel with an empty frame the size of a letter.
+fn letter_at(beats: &[Beat], at: usize) -> Option<usize> {
+    beats
+        .get(at..)?
+        .iter()
+        .find(|beat| beat.lit)
+        .map(|beat| beat.signal)
 }
 
 /// A number of beats said the way somebody deciding whether to wait would say
@@ -535,23 +557,25 @@ impl Morse {
             self.finish(context);
             return;
         };
+        // The panel goes first and the light second, so that a letter is
+        // already up when its own flash begins. The two are queued in the order
+        // they are asked for, and the paint is the slow one.
+        let letter = letter_at(&self.beats, self.at);
+        if self.showing != letter {
+            self.showing = letter;
+            self.show(context);
+        }
         if self.light {
             context
                 .device()
                 .set_frontlight(if beat.lit { FULL } else { 0 });
         }
-        let changed = self.showing != Some(beat.signal);
-        self.showing = Some(beat.signal);
         self.tick = context.spawn(Task::Sleep { seconds: 1 });
         if self.tick.is_none() {
             // Nothing else can advance the beacon, so it stops here rather than
             // standing with the light held on whatever the last beat was.
             self.trouble = Some("The beacon could not keep time, so it stopped.".to_owned());
             self.finish(context);
-            return;
-        }
-        if changed {
-            self.show(context);
         }
     }
 
@@ -712,7 +736,8 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        beats, encode, glyph, paint, Beat, Morse, AGAIN, CODE, MAX_MESSAGE, STOP, TOGGLE_LIGHT,
+        beats, encode, glyph, letter_at, paint, Beat, Morse, AGAIN, CODE, MAX_MESSAGE, STOP,
+        TOGGLE_LIGHT,
     };
     use kobo_sdk::{action_id, AppRunner, Command, DeviceRequest};
     use kobo_ui::{tone, Chrome, CLARA_BW_METRICS};
@@ -916,6 +941,53 @@ mod tests {
             !drawn.contains("Picture"),
             "the resting beacon still draws a letter: {drawn}"
         );
+    }
+
+    /// The point of the panel is that the letter can be read while the light is
+    /// flashing it. Every lit second must therefore find its own letter on the
+    /// screen and not the one before it.
+    #[test]
+    fn the_letter_on_the_panel_is_the_one_the_light_is_flashing() {
+        for message in ["sos", "hello world", "e t e", "73"] {
+            let run = beats(&encode(message).0);
+            for (at, beat) in run.iter().enumerate() {
+                if beat.lit {
+                    assert_eq!(
+                        letter_at(&run, at),
+                        Some(beat.signal),
+                        "{message} at second {at}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A silence is when the panel gets ahead of the light, which is what buys
+    /// the e-ink time to settle before the flash it belongs to.
+    #[test]
+    fn a_silence_shows_the_letter_that_is_coming_rather_than_the_one_that_went() {
+        // I is two dots, then three dark beats, then E: "#.#...#".
+        let run = beats(&encode("ie").0);
+        assert_eq!(letter_at(&run, 1), Some(0), "the gap inside I is still I");
+        for at in 3..6 {
+            assert_eq!(letter_at(&run, at), Some(1), "the gap before E is E");
+        }
+    }
+
+    /// The gap between words is a silence rather than a symbol and has no shape
+    /// of its own. Drawn anyway, its blank filled the panel with an empty frame
+    /// the size of a letter, which is the bug the resting screen had.
+    #[test]
+    fn the_gap_between_words_never_reaches_the_panel() {
+        let (signals, _) = encode("e e");
+        let space = signals
+            .iter()
+            .position(|signal| signal.code.is_empty())
+            .expect("a word gap");
+        let run = beats(&signals);
+        for at in 0..run.len() {
+            assert_ne!(letter_at(&run, at), Some(space), "at second {at}");
+        }
     }
 
     /// Send starts the beacon there and then, so the screen the Send key is on

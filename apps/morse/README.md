@@ -28,6 +28,12 @@ On by default, because a beacon nobody can see from across the room is the
 feature switched off. Full brightness on a lit beat and dark on an unlit one:
 a signal that is merely brighter than the last one is not a signal.
 
+Full here means every bank of the light, which is more than the stock reader
+asks for at its own maximum — it sits at one end of the warmth balance, where
+half the lamps are dark. The platform lights both at the top of the range and
+puts the balance back afterwards, so a lit beat is as much light as this device
+can make.
+
 The brightness you had is read when the application opens and put back when it
 closes, when you switch the light off, and when you leave for another
 application. Most messages end on a dark beat, so without that the reader would
@@ -44,6 +50,13 @@ difference from a real face.
 It is rebuilt when the *letter* changes rather than when the light does, which
 is what keeps the panel calm: a ten letter message repaints ten times across
 two minutes rather than sixty times a minute.
+
+The repaint happens during the silence *before* a letter goes out, not at the
+moment its first flash does. E-ink takes the better part of a second to settle,
+so a panel repainted on the flash would spend that flash still showing the
+letter before it — and the whole point of the screen is that the letter can be
+read while the light is sending it. The same rule keeps the gap between words
+off the panel: it is a silence rather than a symbol and has no shape to draw.
 
 ## What it can send
 
