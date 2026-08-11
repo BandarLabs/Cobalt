@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  One catalog, written twice. This is the OPDS 1.2 half; `parity-2.0.json` is
+  the same catalog in OPDS 2.0, field for field.
+
+  The two exist so a test can assert that the application draws the same
+  screens from either, because the version a catalog speaks is a fact about the
+  wire and must never reach the panel. Anything added to one must be added to
+  the other, or the test is no longer testing what it claims to.
+-->
+<feed xmlns="http://www.w3.org/2005/Atom"
+      xmlns:opds="http://opds-spec.org/2010/catalog"
+      xmlns:dcterms="http://purl.org/dc/terms/"
+      xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/">
+  <id>https://parity.example/catalog</id>
+  <title>A Small Library</title>
+  <subtitle>Two books and a way to look for more</subtitle>
+  <updated>2024-06-01T00:00:00Z</updated>
+
+  <link rel="self"
+        type="application/atom+xml;profile=opds-catalog;kind=acquisition"
+        href="https://parity.example/catalog"/>
+  <link rel="start"
+        type="application/atom+xml;profile=opds-catalog;kind=navigation"
+        href="https://parity.example/catalog"/>
+  <link rel="next"
+        type="application/atom+xml;profile=opds-catalog;kind=acquisition"
+        href="https://parity.example/catalog?page=2"/>
+
+  <opensearch:totalResults>2</opensearch:totalResults>
+  <opensearch:itemsPerPage>2</opensearch:itemsPerPage>
+
+  <entry>
+    <title>A Journey into the Center of the Earth</title>
+    <id>urn:isbn:9780000000002</id>
+    <updated>2024-06-01T00:00:00Z</updated>
+    <author><name>Jules Verne</name></author>
+    <dcterms:language>en</dcterms:language>
+    <dcterms:issued>1864</dcterms:issued>
+    <rights>Public domain</rights>
+    <summary type="text">A professor, his nephew and their guide descend an Icelandic volcano.</summary>
+    <category scheme="https://parity.example/subjects" term="sf" label="Science Fiction"/>
+    <category scheme="https://parity.example/subjects" term="adv" label="Adventure"/>
+    <link rel="http://opds-spec.org/image"
+          type="image/jpeg"
+          href="https://parity.example/covers/journey.jpg"/>
+    <link rel="http://opds-spec.org/image/thumbnail"
+          type="image/jpeg"
+          href="https://parity.example/covers/journey-small.jpg"/>
+    <link rel="http://opds-spec.org/acquisition/open-access"
+          type="application/epub+zip"
+          length="769028"
+          href="https://parity.example/books/journey.epub"/>
+  </entry>
+
+  <entry>
+    <title>The Mystery of Edwin Drood</title>
+    <id>urn:isbn:9780000000019</id>
+    <updated>2024-06-01T00:00:00Z</updated>
+    <author><name>Charles Dickens</name></author>
+    <dcterms:language>en</dcterms:language>
+    <dcterms:issued>1870</dcterms:issued>
+    <rights>Public domain</rights>
+    <summary type="text">A choirmaster covets his nephew's fiancee, and then his nephew disappears.</summary>
+    <category scheme="https://parity.example/subjects" term="mys" label="Mystery"/>
+    <link rel="http://opds-spec.org/image"
+          type="image/jpeg"
+          href="https://parity.example/covers/drood.jpg"/>
+    <link rel="http://opds-spec.org/acquisition/open-access"
+          type="application/epub+zip"
+          length="1798872"
+          href="https://parity.example/books/drood.epub"/>
+  </entry>
+</feed>

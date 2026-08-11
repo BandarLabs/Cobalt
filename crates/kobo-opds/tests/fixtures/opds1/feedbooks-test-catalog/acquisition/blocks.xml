@@ -1,0 +1,347 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns:thr="http://purl.org/syndication/thread/1.0" xmlns:opds4l="http://www.feedbooks.com/opds4l" xmlns:opds="http://opds-spec.org/2010/catalog" xmlns="http://www.w3.org/2005/Atom" xmlns:app="http://www.w3.org/2007/app" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xml:lang="en">
+  <id>blocks.xml</id>
+  <title>Acquisition with blocks</title>
+  <updated>2014-11-07T12:13:58Z</updated>
+  <author>
+    <name>Hadrien Gardeur</name>
+    <uri>https://github.com/Feedbooks</uri>
+  </author>
+
+  <link type="application/atom+xml;profile=opds-catalog;kind=acquisition" rel="self" href="blocks.xml"/>
+  <link type="application/atom+xml;profile=opds-catalog;kind=navigation" rel="start" href="../root.xml"/>
+  <link type="application/opensearchdescription+xml" title="Search on test catalog" rel="search" href="../opensearch.xml" />
+
+  <entry>
+    <link title="Sherlock Holmes" type="application/atom+xml;profile=opds-catalog;kind=acquisition" rel="http://opds-spec.org/group" href="http://www.feedbooks.com/list/9.atom"/>
+    <title>A Study in Scarlet</title>
+    <id>http://www.feedbooks.com/book/57</id>
+    <author>
+      <name>Arthur Conan Doyle</name>
+      <uri>http://www.feedbooks.com/author/1</uri>
+    </author>
+    <published>2006-12-29T16:33:07Z</published>
+    <updated>2014-11-02T19:59:46Z</updated>
+    <dcterms:language>en</dcterms:language>
+    <dcterms:issued>1887</dcterms:issued>
+    <category scheme="http://www.feedbooks.com/categories" label="Fiction" term="FBFIC000000"/>
+    <category scheme="http://www.feedbooks.com/categories" label="Mystery &amp; Detective" term="FBFIC022000"/>
+    <summary>A Study in Scarlet is a detective mystery novel written by Sir Arthur Conan Doyle, which was first published in 1887. It is the first story to feature the character of Sherlock Holmes, who would later become one of the most famous and iconic liter...</summary>
+    <dcterms:extent>43,385 words</dcterms:extent>
+    <dcterms:source>Wikisource</dcterms:source>
+    <rights>This work is available for countries where copyright is Life+70 and in the USA.</rights>
+    <link type="text/html" href="http://www.feedbooks.com/book/57" rel="alternate" title="View on Feedbooks"/>
+    <link type="application/epub+zip" href="http://www.feedbooks.com/book/57.epub" rel="http://opds-spec.org/acquisition"/>
+    <link type="application/x-mobipocket-ebook" href="http://www.feedbooks.com/book/57.mobi" rel="http://opds-spec.org/acquisition"/>
+    <link type="application/pdf" href="http://www.feedbooks.com/book/57.pdf" rel="http://opds-spec.org/acquisition"/>
+    <link type="image/jpeg" href="http://covers.feedbooks.net/book/57.jpg?size=large&amp;t=1414958386" rel="http://opds-spec.org/image"/>
+    <link type="image/jpeg" href="http://covers.feedbooks.net/book/57.jpg?t=1414958386" rel="http://opds-spec.org/image/thumbnail"/>
+    <link type="application/atom+xml;type=entry;profile=opds-catalog" title="Full entry" href="http://www.feedbooks.com/book/57.atom" rel="alternate"/>
+  </entry>
+
+  <entry>
+    <link title="Sherlock Holmes" type="application/atom+xml;profile=opds-catalog;kind=acquisition" rel="http://opds-spec.org/group" href="http://www.feedbooks.com/list/9.atom"/>
+    <title>The Sign of the Four</title>
+    <id>http://www.feedbooks.com/book/2</id>
+    <author>
+      <name>Arthur Conan Doyle</name>
+      <uri>http://www.feedbooks.com/author/1</uri>
+    </author>
+    <published>2006-10-30T16:56:59Z</published>
+    <updated>2014-11-02T19:59:46Z</updated>
+    <dcterms:language>en</dcterms:language>
+    <dcterms:issued>1890</dcterms:issued>
+    <category scheme="http://www.feedbooks.com/categories" label="Fiction" term="FBFIC000000"/>
+    <category scheme="http://www.feedbooks.com/categories" label="Mystery &amp; Detective" term="FBFIC022000"/>
+    <summary>First published in 1890, The Sign of Four is Sir Arthur Conan Doyle's second book starring legendary detective Sherlock Holmes. The story is complex, involving a secret between four ex-cons from India and a hidden treasure. More complex than the f...</summary>
+    <dcterms:extent>43,217 words</dcterms:extent>
+    <rights>This work is available for countries where copyright is Life+70 and in the USA.</rights>
+    <link type="text/html" href="http://www.feedbooks.com/book/2" rel="alternate" title="View on Feedbooks"/>
+    <link type="application/epub+zip" href="http://www.feedbooks.com/book/2.epub" rel="http://opds-spec.org/acquisition"/>
+    <link type="application/x-mobipocket-ebook" href="http://www.feedbooks.com/book/2.mobi" rel="http://opds-spec.org/acquisition"/>
+    <link type="application/pdf" href="http://www.feedbooks.com/book/2.pdf" rel="http://opds-spec.org/acquisition"/>
+    <link type="image/jpeg" href="http://covers.feedbooks.net/book/2.jpg?size=large&amp;t=1414958386" rel="http://opds-spec.org/image"/>
+    <link type="image/jpeg" href="http://covers.feedbooks.net/book/2.jpg?t=1414958386" rel="http://opds-spec.org/image/thumbnail"/>
+    <link type="application/atom+xml;type=entry;profile=opds-catalog" title="Full entry" href="http://www.feedbooks.com/book/2.atom" rel="alternate"/>
+  </entry>
+
+  <entry>
+    <link title="Sherlock Holmes" type="application/atom+xml;profile=opds-catalog;kind=acquisition" rel="http://opds-spec.org/group" href="http://www.feedbooks.com/list/9.atom"/>
+    <title>The Hound of the Baskervilles</title>
+    <id>http://www.feedbooks.com/book/1</id>
+    <author>
+      <name>Arthur Conan Doyle</name>
+      <uri>http://www.feedbooks.com/author/1</uri>
+    </author>
+    <published>2006-10-30T16:40:14Z</published>
+    <updated>2014-11-02T19:59:47Z</updated>
+    <dcterms:language>en</dcterms:language>
+    <dcterms:issued>1902</dcterms:issued>
+    <category scheme="http://www.feedbooks.com/categories" label="Fiction" term="FBFIC000000"/>
+    <category scheme="http://www.feedbooks.com/categories" label="Mystery &amp; Detective" term="FBFIC022000"/>
+    <summary>The rich landowner Sir Charles Baskerville is found dead in the park of his manor surrounded by the grim moor of Dartmoor, in the county of Devon. His death seems to have been caused by a heart attack, but the victim's best friend, Dr. Mortimer, i...</summary>
+    <dcterms:extent>59,046 words</dcterms:extent>
+    <rights>This work is available for countries where copyright is Life+70 and in the USA.</rights>
+    <link type="text/html" href="http://www.feedbooks.com/book/1" rel="alternate" title="View on Feedbooks"/>
+    <link type="application/epub+zip" href="http://www.feedbooks.com/book/1.epub" rel="http://opds-spec.org/acquisition"/>
+    <link type="application/x-mobipocket-ebook" href="http://www.feedbooks.com/book/1.mobi" rel="http://opds-spec.org/acquisition"/>
+    <link type="application/pdf" href="http://www.feedbooks.com/book/1.pdf" rel="http://opds-spec.org/acquisition"/>
+    <link type="image/jpeg" href="http://covers.feedbooks.net/book/1.jpg?size=large&amp;t=1414958387" rel="http://opds-spec.org/image"/>
+    <link type="image/jpeg" href="http://covers.feedbooks.net/book/1.jpg?t=1414958387" rel="http://opds-spec.org/image/thumbnail"/>
+    <link type="application/atom+xml;type=entry;profile=opds-catalog" title="Full entry" href="http://www.feedbooks.com/book/1.atom" rel="alternate"/>
+  </entry>
+
+  <entry>
+    <link title="Sherlock Holmes" type="application/atom+xml;profile=opds-catalog;kind=acquisition" rel="http://opds-spec.org/group" href="http://www.feedbooks.com/list/9.atom"/>
+    <title>The Valley of Fear</title>
+    <id>http://www.feedbooks.com/book/64</id>
+    <author>
+      <name>Arthur Conan Doyle</name>
+      <uri>http://www.feedbooks.com/author/1</uri>
+    </author>
+    <published>2006-12-29T18:48:02Z</published>
+    <updated>2014-11-02T19:59:48Z</updated>
+    <dcterms:language>en</dcterms:language>
+    <dcterms:issued>1915</dcterms:issued>
+    <category scheme="http://www.feedbooks.com/categories" label="Fiction" term="FBFIC000000"/>
+    <category scheme="http://www.feedbooks.com/categories" label="Mystery &amp; Detective" term="FBFIC022000"/>
+    <summary>The plot of the novel is based very loosely on the real-life activities of the Molly Maguires and, particularly, of Pinkerton agent James McParland.
+    The novel is divided into two parts: in the first, Holmes investigates an apparent murder and disc...</summary>
+    <dcterms:extent>57,400 words</dcterms:extent>
+    <dcterms:source>Wikisource</dcterms:source>
+    <rights>This work is available for countries where copyright is Life+70 and in the USA.</rights>
+    <link type="text/html" href="http://www.feedbooks.com/book/64" rel="alternate" title="View on Feedbooks"/>
+    <link type="application/epub+zip" href="http://www.feedbooks.com/book/64.epub" rel="http://opds-spec.org/acquisition"/>
+    <link type="application/x-mobipocket-ebook" href="http://www.feedbooks.com/book/64.mobi" rel="http://opds-spec.org/acquisition"/>
+    <link type="application/pdf" href="http://www.feedbooks.com/book/64.pdf" rel="http://opds-spec.org/acquisition"/>
+    <link type="image/jpeg" href="http://covers.feedbooks.net/book/64.jpg?size=large&amp;t=1414958388" rel="http://opds-spec.org/image"/>
+    <link type="image/jpeg" href="http://covers.feedbooks.net/book/64.jpg?t=1414958388" rel="http://opds-spec.org/image/thumbnail"/>
+    <link type="application/atom+xml;type=entry;profile=opds-catalog" title="Full entry" href="http://www.feedbooks.com/book/64.atom" rel="alternate"/>
+  </entry>
+
+  <entry>
+    <link title="Sherlock Holmes" type="application/atom+xml;profile=opds-catalog;kind=acquisition" rel="http://opds-spec.org/group" href="http://www.feedbooks.com/list/9.atom"/>
+    <title>The Memoirs of Sherlock Holmes</title>
+    <id>http://www.feedbooks.com/book/58</id>
+    <author>
+      <name>Arthur Conan Doyle</name>
+      <uri>http://www.feedbooks.com/author/1</uri>
+    </author>
+    <published>2006-12-29T16:49:57Z</published>
+    <updated>2014-11-02T19:59:48Z</updated>
+    <dcterms:language>en</dcterms:language>
+    <dcterms:issued>1893</dcterms:issued>
+    <category scheme="http://www.feedbooks.com/categories" label="Fiction" term="FBFIC000000"/>
+    <category scheme="http://www.feedbooks.com/categories" label="Mystery &amp; Detective" term="FBFIC022000"/>
+    <category scheme="http://www.feedbooks.com/categories" label="Short Stories" term="FBFIC029000"/>
+    <summary>The Memoirs of Sherlock Holmes is a collection of Sherlock Holmes stories, originally published in 1894, by Arthur Conan Doyle.</summary>
+    <dcterms:extent>87,520 words</dcterms:extent>
+    <dcterms:source>http://www.gutenberg.org/etext/834</dcterms:source>
+    <rights>This work is available for countries where copyright is Life+70 and in the USA.</rights>
+    <link type="text/html" href="http://www.feedbooks.com/book/58" rel="alternate" title="View on Feedbooks"/>
+    <link type="application/epub+zip" href="http://www.feedbooks.com/book/58.epub" rel="http://opds-spec.org/acquisition"/>
+    <link type="application/x-mobipocket-ebook" href="http://www.feedbooks.com/book/58.mobi" rel="http://opds-spec.org/acquisition"/>
+    <link type="application/pdf" href="http://www.feedbooks.com/book/58.pdf" rel="http://opds-spec.org/acquisition"/>
+    <link type="image/jpeg" href="http://covers.feedbooks.net/book/58.jpg?size=large&amp;t=1414958388" rel="http://opds-spec.org/image"/>
+    <link type="image/jpeg" href="http://covers.feedbooks.net/book/58.jpg?t=1414958388" rel="http://opds-spec.org/image/thumbnail"/>
+    <link type="application/atom+xml;type=entry;profile=opds-catalog" title="Full entry" href="http://www.feedbooks.com/book/58.atom" rel="alternate"/>
+  </entry>
+
+  <entry>
+    <link title="Sherlock Holmes" type="application/atom+xml;profile=opds-catalog;kind=acquisition" rel="http://opds-spec.org/group" href="http://www.feedbooks.com/list/9.atom"/>
+    <title>The Return of Sherlock Holmes</title>
+    <id>http://www.feedbooks.com/book/63</id>
+    <author>
+      <name>Arthur Conan Doyle</name>
+      <uri>http://www.feedbooks.com/author/1</uri>
+    </author>
+    <published>2006-12-29T17:21:26Z</published>
+    <updated>2014-11-02T19:59:48Z</updated>
+    <dcterms:language>en</dcterms:language>
+    <dcterms:issued>1905</dcterms:issued>
+    <category scheme="http://www.feedbooks.com/categories" label="Fiction" term="FBFIC000000"/>
+    <category scheme="http://www.feedbooks.com/categories" label="Mystery &amp; Detective" term="FBFIC022000"/>
+    <category scheme="http://www.feedbooks.com/categories" label="Short Stories" term="FBFIC029000"/>
+    <summary>The Return of Sherlock Holmes is a collection of 13 Sherlock Holmes stories, originally published in 1903-1904, by Arthur Conan Doyle.
+    The book was first published on March 7, 1905 by Georges Newnes, Ltd and in a Colonial edition by Longmans. 30,...</summary>
+    <dcterms:extent>112,676 words</dcterms:extent>
+    <dcterms:source>Wikisource</dcterms:source>
+    <rights>This work is available for countries where copyright is Life+70 and in the USA.</rights>
+    <link type="text/html" href="http://www.feedbooks.com/book/63" rel="alternate" title="View on Feedbooks"/>
+    <link type="application/epub+zip" href="http://www.feedbooks.com/book/63.epub" rel="http://opds-spec.org/acquisition"/>
+    <link type="application/x-mobipocket-ebook" href="http://www.feedbooks.com/book/63.mobi" rel="http://opds-spec.org/acquisition"/>
+    <link type="application/pdf" href="http://www.feedbooks.com/book/63.pdf" rel="http://opds-spec.org/acquisition"/>
+    <link type="image/jpeg" href="http://covers.feedbooks.net/book/63.jpg?size=large&amp;t=1414958388" rel="http://opds-spec.org/image"/>
+    <link type="image/jpeg" href="http://covers.feedbooks.net/book/63.jpg?t=1414958388" rel="http://opds-spec.org/image/thumbnail"/>
+    <link type="application/atom+xml;type=entry;profile=opds-catalog" title="Full entry" href="http://www.feedbooks.com/book/63.atom" rel="alternate"/>
+  </entry>
+
+  <entry>
+    <link title="Sherlock Holmes" type="application/atom+xml;profile=opds-catalog;kind=acquisition" rel="http://opds-spec.org/group" href="http://www.feedbooks.com/list/9.atom"/>
+    <title>His Last Bow</title>
+    <id>http://www.feedbooks.com/book/65</id>
+    <author>
+      <name>Arthur Conan Doyle</name>
+      <uri>http://www.feedbooks.com/author/1</uri>
+    </author>
+    <published>2006-12-29T19:00:34Z</published>
+    <updated>2014-11-02T19:59:48Z</updated>
+    <dcterms:language>en</dcterms:language>
+    <dcterms:issued>1917</dcterms:issued>
+    <category scheme="http://www.feedbooks.com/categories" label="Fiction" term="FBFIC000000"/>
+    <category scheme="http://www.feedbooks.com/categories" label="Mystery &amp; Detective" term="FBFIC022000"/>
+    <category scheme="http://www.feedbooks.com/categories" label="Short Stories" term="FBFIC029000"/>
+    <summary>His Last Bow is a collection of seven Sherlock Holmes stories (eight in American editions) by Arthur Conan Doyle, as well as the title of one of the stories in that collection. Originally published in 1917, it contains the various Holmes stories p...</summary>
+    <dcterms:extent>67,683 words</dcterms:extent>
+    <dcterms:source>Wikisource</dcterms:source>
+    <rights>This work is available for countries where copyright is Life+70 and in the USA.</rights>
+    <link type="text/html" href="http://www.feedbooks.com/book/65" rel="alternate" title="View on Feedbooks"/>
+    <link type="application/epub+zip" href="http://www.feedbooks.com/book/65.epub" rel="http://opds-spec.org/acquisition"/>
+    <link type="application/x-mobipocket-ebook" href="http://www.feedbooks.com/book/65.mobi" rel="http://opds-spec.org/acquisition"/>
+    <link type="application/pdf" href="http://www.feedbooks.com/book/65.pdf" rel="http://opds-spec.org/acquisition"/>
+    <link type="image/jpeg" href="http://covers.feedbooks.net/book/65.jpg?size=large&amp;t=1414958388" rel="http://opds-spec.org/image"/>
+    <link type="image/jpeg" href="http://covers.feedbooks.net/book/65.jpg?t=1414958388" rel="http://opds-spec.org/image/thumbnail"/>
+    <link type="application/atom+xml;type=entry;profile=opds-catalog" title="Full entry" href="http://www.feedbooks.com/book/65.atom" rel="alternate"/>
+  </entry>
+
+  <entry>
+    <link title="Sherlock Holmes" type="application/atom+xml;profile=opds-catalog;kind=acquisition" rel="http://opds-spec.org/group" href="http://www.feedbooks.com/list/9.atom"/>
+    <title>The Casebook of Sherlock Holmes</title>
+    <id>http://www.feedbooks.com/book/66</id>
+    <author>
+      <name>Arthur Conan Doyle</name>
+      <uri>http://www.feedbooks.com/author/1</uri>
+    </author>
+    <published>2006-12-29T19:15:14Z</published>
+    <updated>2014-11-02T19:59:49Z</updated>
+    <dcterms:language>en</dcterms:language>
+    <dcterms:issued>1923</dcterms:issued>
+    <category scheme="http://www.feedbooks.com/categories" label="Fiction" term="FBFIC000000"/>
+    <category scheme="http://www.feedbooks.com/categories" label="Mystery &amp; Detective" term="FBFIC022000"/>
+    <category scheme="http://www.feedbooks.com/categories" label="Short Stories" term="FBFIC029000"/>
+    <summary>The last twelve stories written about Holmes and Watson, these tales reflect the disillusioned world of the 1920s in which they were written. Some of the sharpest turns of wit in English literature are contrasted by dark images of psychological tr...</summary>
+    <dcterms:extent>83,179 words</dcterms:extent>
+    <dcterms:source>Wikisource</dcterms:source>
+    <rights>This work is available for countries where copyright is Life+70 and in the USA.</rights>
+    <link type="text/html" href="http://www.feedbooks.com/book/66" rel="alternate" title="View on Feedbooks"/>
+    <link type="application/epub+zip" href="http://www.feedbooks.com/book/66.epub" rel="http://opds-spec.org/acquisition"/>
+    <link type="application/x-mobipocket-ebook" href="http://www.feedbooks.com/book/66.mobi" rel="http://opds-spec.org/acquisition"/>
+    <link type="application/pdf" href="http://www.feedbooks.com/book/66.pdf" rel="http://opds-spec.org/acquisition"/>
+    <link type="image/jpeg" href="http://covers.feedbooks.net/book/66.jpg?size=large&amp;t=1414958389" rel="http://opds-spec.org/image"/>
+    <link type="image/jpeg" href="http://covers.feedbooks.net/book/66.jpg?t=1414958389" rel="http://opds-spec.org/image/thumbnail"/>
+    <link type="application/atom+xml;type=entry;profile=opds-catalog" title="Full entry" href="http://www.feedbooks.com/book/66.atom" rel="alternate"/>
+  </entry>
+
+  <entry>
+    <link title="Sherlock Holmes" type="application/atom+xml;profile=opds-catalog;kind=acquisition" rel="http://opds-spec.org/group" href="http://www.feedbooks.com/list/9.atom"/>
+    <title>The Adventures of Sherlock Holmes</title>
+    <id>http://www.feedbooks.com/book/1421</id>
+    <author>
+      <name>Arthur Conan Doyle</name>
+      <uri>http://www.feedbooks.com/author/1</uri>
+    </author>
+    <published>2007-07-19T11:36:30Z</published>
+    <updated>2014-11-02T19:59:49Z</updated>
+    <dcterms:language>en</dcterms:language>
+    <dcterms:issued>1892</dcterms:issued>
+    <category scheme="http://www.feedbooks.com/categories" label="Fiction" term="FBFIC000000"/>
+    <category scheme="http://www.feedbooks.com/categories" label="Mystery &amp; Detective" term="FBFIC022000"/>
+    <category scheme="http://www.feedbooks.com/categories" label="Short Stories" term="FBFIC029000"/>
+    <summary>The Adventures of Sherlock Holmes is a collection of twelve stories by Sir Arthur Conan Doyle, featuring his famous detective and illustrated by Sidney Paget.
+    These are the first of the Sherlock Holmes short stories, originally published as singl...</summary>
+    <dcterms:extent>104,333 words</dcterms:extent>
+    <dcterms:source>http://gutenberg.org</dcterms:source>
+    <rights>This work is available for countries where copyright is Life+70 and in the USA.</rights>
+    <link type="text/html" href="http://www.feedbooks.com/book/1421" rel="alternate" title="View on Feedbooks"/>
+    <link type="application/epub+zip" href="http://www.feedbooks.com/book/1421.epub" rel="http://opds-spec.org/acquisition"/>
+    <link type="application/x-mobipocket-ebook" href="http://www.feedbooks.com/book/1421.mobi" rel="http://opds-spec.org/acquisition"/>
+    <link type="application/pdf" href="http://www.feedbooks.com/book/1421.pdf" rel="http://opds-spec.org/acquisition"/>
+    <link type="image/jpeg" href="http://covers.feedbooks.net/book/1421.jpg?size=large&amp;t=1414958389" rel="http://opds-spec.org/image"/>
+    <link type="image/jpeg" href="http://covers.feedbooks.net/book/1421.jpg?t=1414958389" rel="http://opds-spec.org/image/thumbnail"/>
+    <link type="application/atom+xml;type=entry;profile=opds-catalog" title="Full entry" href="http://www.feedbooks.com/book/1421.atom" rel="alternate"/>
+  </entry>
+
+  <entry>
+    <link title="Westerns" type="application/atom+xml;profile=opds-catalog;kind=acquisition" rel="http://opds-spec.org/group" href="http://www.feedbooks.com/books/top.atom?category=FBFIC033000"/>
+    <title>Cabin Fever</title>
+    <id>http://www.feedbooks.com/book/6642</id>
+    <author>
+      <name>B. M. Bower</name>
+      <uri>http://www.feedbooks.com/author/2136</uri>
+    </author>
+    <published>2013-02-21T09:33:26Z</published>
+    <updated>2014-02-03T12:46:09Z</updated>
+    <dcterms:language>en</dcterms:language>
+    <dcterms:issued>1918</dcterms:issued>
+    <category term="FBFIC000000" scheme="http://www.feedbooks.com/categories" label="Fiction"/>
+    <category term="FBFIC002000" scheme="http://www.feedbooks.com/categories" label="Action &amp; Adventure"/>
+    <category term="FBFIC033000" scheme="http://www.feedbooks.com/categories" label="Westerns"/>
+    <summary>&quot;... the mind fed too long upon monotony succumbs to the insidious mental ailment which the West calls 'cabin fever.' ... Bud Moore, ex-cow-puncher and now owner of an auto stage that did not run in the winter, was touched with cabin fever and did...</summary>
+    <dcterms:extent>55,948 words</dcterms:extent>
+    <dcterms:source>Project Gutenberg Australia http://gutenberg.net.au/ebooks/w00013.html#1_0_2</dcterms:source>
+    <rights>Attribution Share Alike (cc by-sa)</rights>
+    <link type="text/html" title="View on Feedbooks" href="http://www.feedbooks.com/book/6642" rel="alternate"/>
+    <link type="text/html" title="Creative Commons" href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"/>
+    <link type="application/epub+zip" href="http://www.feedbooks.com/book/6642.epub" rel="http://opds-spec.org/acquisition"/>
+    <link type="application/x-mobipocket-ebook" href="http://www.feedbooks.com/book/6642.mobi" rel="http://opds-spec.org/acquisition"/>
+    <link type="application/pdf" href="http://www.feedbooks.com/book/6642.pdf" rel="http://opds-spec.org/acquisition"/>
+    <link type="image/jpeg" href="http://covers.feedbooks.net/book/6642.jpg?size=large&amp;t=1391431569" rel="http://opds-spec.org/image"/>
+    <link type="image/jpeg" href="http://covers.feedbooks.net/book/6642.jpg?t=1391431569" rel="http://opds-spec.org/image/thumbnail"/>
+    <link type="application/atom+xml;type=entry;profile=opds-catalog" title="Full entry" href="http://www.feedbooks.com/book/6642.atom" rel="alternate"/>
+  </entry>
+
+  <entry>
+    <link title="Westerns" type="application/atom+xml;profile=opds-catalog;kind=acquisition" rel="http://opds-spec.org/group" href="http://www.feedbooks.com/books/top.atom?category=FBFIC033000"/>
+    <title>The Lone Star Ranger</title>
+    <id>http://www.feedbooks.com/book/1831</id>
+    <author>
+      <name>Zane Grey</name>
+      <uri>http://www.feedbooks.com/author/255</uri>
+    </author>
+    <published>2007-10-24T17:56:39Z</published>
+    <updated>2014-02-25T15:24:16Z</updated>
+    <dcterms:language>en</dcterms:language>
+    <dcterms:issued>1915</dcterms:issued>
+    <category term="FBFIC000000" scheme="http://www.feedbooks.com/categories" label="Fiction"/>
+    <category term="FBFIC033000" scheme="http://www.feedbooks.com/categories" label="Westerns"/>
+    <summary>When he is forced to kill a man after a deadly attack, Buck Duane begins a life on the run while trying to clear his name, and his fortunes are changed by a beautiful woman and a Texas Ranger who offers to pardon him for a price.</summary>
+    <dcterms:extent>94,376 words</dcterms:extent>
+    <dcterms:source>http://gutenberg.org</dcterms:source>
+    <rights>This work is available for countries where copyright is Life+70 and in the USA.</rights>
+    <link type="text/html" title="View on Feedbooks" href="http://www.feedbooks.com/book/1831" rel="alternate"/>
+    <link type="application/epub+zip" href="http://www.feedbooks.com/book/1831.epub" rel="http://opds-spec.org/acquisition"/>
+    <link type="application/x-mobipocket-ebook" href="http://www.feedbooks.com/book/1831.mobi" rel="http://opds-spec.org/acquisition"/>
+    <link type="application/pdf" href="http://www.feedbooks.com/book/1831.pdf" rel="http://opds-spec.org/acquisition"/>
+    <link type="image/jpeg" href="http://covers.feedbooks.net/book/1831.jpg?size=large&amp;t=1393341856" rel="http://opds-spec.org/image"/>
+    <link type="image/jpeg" href="http://covers.feedbooks.net/book/1831.jpg?t=1393341856" rel="http://opds-spec.org/image/thumbnail"/>
+    <link type="application/atom+xml;type=entry;profile=opds-catalog" title="Full entry" href="http://www.feedbooks.com/book/1831.atom" rel="alternate"/>
+  </entry>
+
+  <entry>
+    <link title="Westerns" type="application/atom+xml;profile=opds-catalog;kind=acquisition" rel="http://opds-spec.org/group" href="http://www.feedbooks.com/books/top.atom?category=FBFIC033000"/>
+    <title>Desert Gold</title>
+    <id>http://www.feedbooks.com/book/1817</id>
+    <author>
+      <name>Zane Grey</name>
+      <uri>http://www.feedbooks.com/author/255</uri>
+    </author>
+    <published>2007-10-23T16:36:22Z</published>
+    <updated>2014-02-25T15:03:37Z</updated>
+    <dcterms:language>en</dcterms:language>
+    <dcterms:issued>1913</dcterms:issued>
+    <category term="FBFIC000000" scheme="http://www.feedbooks.com/categories" label="Fiction"/>
+    <category term="FBFIC027000" scheme="http://www.feedbooks.com/categories" label="Romance"/>
+    <category term="FBFIC033000" scheme="http://www.feedbooks.com/categories" label="Westerns"/>
+    <summary>The story describes the recent uprising along the border, and ends with the finding of the gold which two prospectors had willed to the girl who is the story's heroine.</summary>
+    <dcterms:extent>103,633 words</dcterms:extent>
+    <dcterms:source>http://www.gutenberg.org</dcterms:source>
+    <rights>This work is available for countries where copyright is Life+70 and in the USA.</rights>
+    <link type="text/html" title="View on Feedbooks" href="http://www.feedbooks.com/book/1817" rel="alternate"/>
+    <link type="application/epub+zip" href="http://www.feedbooks.com/book/1817.epub" rel="http://opds-spec.org/acquisition"/>
+    <link type="application/x-mobipocket-ebook" href="http://www.feedbooks.com/book/1817.mobi" rel="http://opds-spec.org/acquisition"/>
+    <link type="application/pdf" href="http://www.feedbooks.com/book/1817.pdf" rel="http://opds-spec.org/acquisition"/>
+    <link type="image/jpeg" href="http://covers.feedbooks.net/book/1817.jpg?size=large&amp;t=1393340617" rel="http://opds-spec.org/image"/>
+    <link type="image/jpeg" href="http://covers.feedbooks.net/book/1817.jpg?t=1393340617" rel="http://opds-spec.org/image/thumbnail"/>
+    <link type="application/atom+xml;type=entry;profile=opds-catalog" title="Full entry" href="http://www.feedbooks.com/book/1817.atom" rel="alternate"/>
+  </entry>
+</feed>

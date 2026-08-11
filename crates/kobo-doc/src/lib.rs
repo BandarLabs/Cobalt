@@ -43,6 +43,8 @@ pub mod markdown;
 pub mod text;
 pub mod zip;
 
+use std::collections::BTreeMap;
+
 /// What a file turned out to be.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Format {
@@ -126,6 +128,21 @@ pub const MAX_BLOCKS: usize = 60_000;
 /// far below the point at which holding it is a problem.
 pub const MAX_TEXT: usize = 16 * 1024 * 1024;
 
+/// The most named places one document may hold.
+///
+/// A heavily cross-referenced book names a few thousand: every footnote, every
+/// verse, every entry in an index. This is above that and below the point
+/// where a generated file whose every paragraph carries an identifier can make
+/// the map cost more than the book.
+pub const MAX_ANCHORS: usize = 20_000;
+
+/// The most links one document may hold.
+///
+/// An annotated edition links every other sentence to a note. This is above
+/// that and below the point where the list costs more than the book it is a
+/// list of.
+pub const MAX_LINKS: usize = 20_000;
+
 /// The most text one block may hold.
 ///
 /// A paragraph is a few hundred characters. A "paragraph" of a megabyte is a
@@ -158,6 +175,22 @@ pub enum Block {
     /// is drawn, so that inserting an item cannot leave the list numbered
     /// wrongly.
     Item { ordered: bool, text: String },
+    /// A picture the book set into its text.
+    ///
+    /// Carried as the name it was stored under rather than as pixels, because
+    /// a block is copied and compared all over this crate and an illustrated
+    /// book is twenty-five megabytes of them. The bytes live once, in
+    /// [`Document::images`], and this says which.
+    Picture {
+        /// The key into [`Document::images`].
+        name: String,
+        /// What the book says the picture shows.
+        ///
+        /// Kept even when the picture is drawn: it is what a reader gets when
+        /// the image will not decode, and on a panel that cannot show colour
+        /// a caption is often the more useful of the two.
+        alt: String,
+    },
     /// A break between parts with no words on it.
     Rule,
     /// Where one file of a book ends and the next begins.
@@ -178,7 +211,10 @@ impl Block {
             | Self::Quote(text)
             | Self::Preformatted(text)
             | Self::Item { text, .. } => Some(text),
-            Self::Rule | Self::Break => None,
+            // A picture's description is not the words of the book: returning
+            // it here would put a caption into a search, a highlight and the
+            // count of what a page holds, all of which are about prose.
+            Self::Picture { .. } | Self::Rule | Self::Break => None,
         }
     }
 
@@ -203,6 +239,87 @@ pub struct Document {
     /// silently stops two thirds of the way through looks like a book that
     /// ends abruptly, and the reader has no way to tell the difference.
     pub truncated: bool,
+    /// The book's own table of contents, when it published one.
+    ///
+    /// Empty for a format that has no such thing, and for an EPUB whose
+    /// contents could not be matched to anything in the spine. [`parts`] is
+    /// the fallback and is always available, but it is a guess assembled from
+    /// headings and file seams: it cannot tell a preface from chapter one, and
+    /// it names a part after whatever heading happens to open it. A book that
+    /// states its own contents is stating what its author called each part and
+    /// in what order, which is not something to re-derive when it was given.
+    ///
+    /// [`parts`]: Document::parts
+    pub contents: Vec<Contents>,
+    /// Every named place in the book, and the block it names.
+    ///
+    /// A fragment is how one part of a book points at another: a table of
+    /// contents entry, a footnote marker, a cross-reference. Gutenberg's
+    /// EPUBs make this unavoidable rather than a nicety -- they put a whole
+    /// novel's chapters in one file and tell them apart only by fragment, so
+    /// a reader that resolves an href to a file lands every chapter of Pride
+    /// and Prejudice on the same page.
+    ///
+    /// Keyed as the target is written after resolution, which for an EPUB is
+    /// the archive name and the fragment together, because the same `id` is
+    /// used in every file of most books.
+    pub anchors: BTreeMap<String, usize>,
+    /// The pictures the book set into its text, as they were stored.
+    ///
+    /// Undecoded on purpose. Turning bytes into pixels costs memory this
+    /// device has to share with the reader it is pretending not to be, so the
+    /// decision of how many to decode, and when, belongs to whatever is
+    /// drawing them rather than to the parser. A book of four hundred
+    /// engravings should not cost four hundred decodes to open.
+    pub images: BTreeMap<String, Vec<u8>>,
+    /// The links the book makes from one part of itself to another.
+    ///
+    /// A footnote marker, an endnote's way back, a cross-reference: all of
+    /// them were flattened to plain text, so the words stayed and the going
+    /// there did not. Kept in reading order.
+    pub links: Vec<Link>,
+}
+
+/// Somewhere the book points, and the words it points from.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Link {
+    /// The block the words sit in, as an index into [`Document::blocks`].
+    pub block: usize,
+    pub text: String,
+    /// What it points at, in the same spelling [`Document::anchors`] uses.
+    ///
+    /// A target that is not in the anchors is one this book cannot reach: a
+    /// link out to the web, or into a file the reading order left out. Kept
+    /// rather than dropped, so a reader can be told the difference between a
+    /// link that goes nowhere and a link that was never there.
+    pub target: String,
+}
+
+impl Document {
+    /// Where a link goes, when it goes somewhere in this book.
+    #[must_use]
+    pub fn destination(&self, link: &Link) -> Option<usize> {
+        self.anchors.get(&link.target).copied()
+    }
+}
+
+/// One line of a book's own table of contents.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Contents {
+    pub title: String,
+    /// Where it starts, as an index into [`Document::blocks`].
+    ///
+    /// Resolved when the book is read rather than followed later, because the
+    /// href it came from is relative to the file it was written in and that
+    /// file is inside an archive nobody keeps open. An entry whose target is
+    /// not in the reading order is dropped rather than pointed somewhere else.
+    pub block: usize,
+    /// How deep this entry sits, zero for a top-level part.
+    ///
+    /// Kept so a contents screen can indent rather than present a flat list of
+    /// two hundred sections, which is what a book with numbered subsections
+    /// looks like when the nesting is thrown away.
+    pub depth: u8,
 }
 
 impl Document {
@@ -266,6 +383,74 @@ impl Builder {
         }
     }
 
+    /// How many blocks have been kept so far.
+    ///
+    /// Asked while a book is being assembled, so that a format which knows
+    /// where its own parts begin can record the position of each one as it
+    /// goes. Counting afterwards would not do: blocks are dropped on the way
+    /// in, so the number of blocks pushed and the number kept are different.
+    pub(crate) fn len(&self) -> usize {
+        self.document.blocks.len()
+    }
+
+    /// Records the book's own table of contents.
+    pub(crate) fn set_contents(&mut self, contents: Vec<Contents>) {
+        self.document.contents = contents;
+    }
+
+    /// Notes that a named place in the document starts here.
+    ///
+    /// Recorded against the block that is about to be pushed rather than the
+    /// one just finished, because an `id` sits on the element whose words
+    /// follow it. The first use of a name wins: a book that reuses one has
+    /// already made it ambiguous, and picking the first keeps a link pointing
+    /// backwards rather than to wherever the name was last repeated.
+    pub(crate) fn mark_anchor(&mut self, id: &str) {
+        if id.is_empty() || self.document.anchors.len() >= MAX_ANCHORS {
+            return;
+        }
+        let at = self.document.blocks.len();
+        self.document.anchors.entry(id.to_owned()).or_insert(at);
+    }
+
+    /// The blocks kept so far, for a format that needs to look at what it has
+    /// assembled before it can say what else the book needs.
+    pub(crate) fn blocks(&self) -> &[Block] {
+        &self.document.blocks
+    }
+
+    /// Notes a link from the block being assembled.
+    ///
+    /// Recorded against the block it will become, the same way an anchor is,
+    /// because the words of a link are part of a paragraph that has not been
+    /// pushed yet.
+    pub(crate) fn record_link(&mut self, text: &str, target: &str) {
+        let text = collapse(text);
+        if text.is_empty() || target.trim().is_empty() || self.document.links.len() >= MAX_LINKS {
+            return;
+        }
+        self.document.links.push(Link {
+            block: self.document.blocks.len(),
+            text,
+            target: target.to_owned(),
+        });
+    }
+
+    /// Replaces the links, once a caller has resolved their targets.
+    pub(crate) fn set_links(&mut self, links: Vec<Link>) {
+        self.document.links = links;
+    }
+
+    /// Records the pictures the book refers to.
+    pub(crate) fn set_images(&mut self, images: BTreeMap<String, Vec<u8>>) {
+        self.document.images = images;
+    }
+
+    /// Replaces the anchors, once a caller has re-keyed them.
+    pub(crate) fn set_anchors(&mut self, anchors: BTreeMap<String, usize>) {
+        self.document.anchors = anchors;
+    }
+
     /// Adds a block, trimming its text and dropping it if it says nothing.
     ///
     /// Blank blocks are dropped here rather than by each parser because every
@@ -291,6 +476,15 @@ impl Builder {
                     return;
                 }
                 Block::Preformatted(self.fit(text))
+            }
+            // A picture carries no words to trim and no ceiling to fit it to,
+            // and an empty name is a picture nobody can find, so it is the one
+            // block kept or dropped on its own terms.
+            Block::Picture { ref name, .. } => {
+                if name.trim().is_empty() {
+                    return;
+                }
+                block
             }
             Block::Rule | Block::Break => {
                 // Two rules in a row, or a break with nothing between it and
@@ -321,7 +515,9 @@ impl Builder {
                     Block::Paragraph(_) => Block::Paragraph(text),
                     Block::Quote(_) => Block::Quote(text),
                     Block::Item { ordered, .. } => Block::Item { ordered, text },
-                    Block::Preformatted(_) | Block::Rule | Block::Break => return,
+                    Block::Preformatted(_) | Block::Picture { .. } | Block::Rule | Block::Break => {
+                        return
+                    }
                 }
             }
         };
@@ -362,7 +558,12 @@ impl Builder {
     }
 
     pub(crate) fn finish(mut self) -> Document {
-        strip_boilerplate(&mut self.document.blocks);
+        // The contents were recorded against the blocks as they arrived, and
+        // stripping the licence off the front of a Gutenberg book moves every
+        // one of them. Shifting them here rather than resolving them later is
+        // what keeps a chapter entry pointing at its own first words instead
+        // of somewhere twenty paragraphs along.
+        let removed_from_front = strip_boilerplate(&mut self.document.blocks);
         // A document that ends on a rule or a break ends on a mark pointing at
         // nothing.
         while matches!(
@@ -371,6 +572,33 @@ impl Builder {
         ) {
             self.document.blocks.pop();
         }
+        let kept = self.document.blocks.len();
+        // An entry whose target was inside the licence, or past the end after
+        // the trailing marks came off, no longer names anything in the book.
+        // It is dropped rather than clamped to the nearest block, because a
+        // contents line that silently goes to the wrong chapter is worse than
+        // one that is not offered at all.
+        self.document.contents.retain_mut(|entry| {
+            let Some(block) = entry.block.checked_sub(removed_from_front) else {
+                return false;
+            };
+            entry.block = block;
+            block < kept
+        });
+        self.document.anchors = std::mem::take(&mut self.document.anchors)
+            .into_iter()
+            .filter_map(|(name, at)| {
+                let at = at.checked_sub(removed_from_front)?;
+                (at < kept).then_some((name, at))
+            })
+            .collect();
+        self.document.links.retain_mut(|link| {
+            let Some(block) = link.block.checked_sub(removed_from_front) else {
+                return false;
+            };
+            link.block = block;
+            block < kept
+        });
         self.document
     }
 }
@@ -397,21 +625,32 @@ const GUTENBERG_END: &str = "*** END OF TH";
 ///
 /// A file with no markers is left exactly as it was. Guessing where somebody
 /// else's front matter ends is not something this can do.
-fn strip_boilerplate(blocks: &mut Vec<Block>) {
+/// Removes Project Gutenberg's licence from around the book.
+///
+/// Returns how many blocks came off the *front*, which is the only part that
+/// moves everything after it. Truncating the end removes blocks too, so a
+/// caller measuring the length before and against after would count both and
+/// shift every recorded position by the size of the licence at the end as
+/// well -- which is how a table of contents ends up pointing a chapter or two
+/// early in exactly the books that have both markers.
+fn strip_boilerplate(blocks: &mut Vec<Block>) -> usize {
     let marked = |block: &Block, marker: &str| {
         block
             .text()
             .is_some_and(|text| text.trim_start().starts_with(marker))
     };
+    let mut removed_from_front = 0;
     if let Some(start) = blocks
         .iter()
         .position(|block| marked(block, GUTENBERG_START))
     {
         blocks.drain(..=start);
+        removed_from_front = start + 1;
     }
     if let Some(end) = blocks.iter().position(|block| marked(block, GUTENBERG_END)) {
         blocks.truncate(end);
     }
+    removed_from_front
 }
 
 /// Cuts a string to at most `limit` bytes without splitting a character.

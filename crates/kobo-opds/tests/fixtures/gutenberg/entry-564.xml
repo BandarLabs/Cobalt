@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:opds="http://opds-spec.org/2010/catalog" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:relevance="http://a9.com/-/opensearch/extensions/relevance/1.0/">
+<id>http://www.gutenberg.org/ebooks/564.opds</id>
+<updated>2026-08-10T07:41:27Z</updated>
+<title>The Mystery of Edwin Drood by Charles Dickens</title>
+<subtitle>Free eBooks since 1971.</subtitle>
+<author>
+<name>Project Gutenberg</name>
+<uri>https://www.gutenberg.org</uri>
+<email>webmaster@gutenberg.org</email>
+</author>
+<icon>https://www.gutenberg.org/gutenberg/favicon.ico</icon>
+<link rel="search" type="application/opensearchdescription+xml" title="Project Gutenberg Catalog Search" href="https://www.gutenberg.org/catalog/osd-books.xml"/>
+<link rel="self" title="This Page" type="application/atom+xml;profile=opds-catalog" href="/ebooks/564.opds"/>
+<link rel="alternate" type="text/html" title="HTML Page" href="/ebooks/564"/>
+<link rel="start" title="Start Page" type="application/atom+xml;profile=opds-catalog" href="/ebooks.opds/"/>
+<opensearch:itemsPerPage>25</opensearch:itemsPerPage>
+<opensearch:startIndex>1</opensearch:startIndex>
+<entry>
+<updated>2026-08-10T07:41:27Z</updated>
+<title>The Mystery of Edwin Drood</title>
+<content type="xhtml">
+<div xmlns="http://www.w3.org/1999/xhtml">
+<p>This edition had all images removed.</p>
+<p>
+Title:
+The Mystery of Edwin Drood
+</p>
+<p>
+Note:
+Wikipedia page about this book: https:<a href="//en.wikipedia.org/wiki/The_Mystery_of_Edwin_Drood">//en.wikipedia.org/wiki/The_Mystery_of_Edwin_Drood</a>
+</p>
+<p>
+Summary:
+"The Mystery of Edwin Drood" by Charles Dickens is a novel published in 1870. Dickens's final and unfinished work centers on John Jasper, a cathedral choirmaster and opium addict who desires his pupil Rosa Bud—the fiancée of his nephew Edwin Drood. When Edwin vanishes mysteriously after a tense reconciliation dinner with his rival Neville Landless, suspicion falls on Neville while Jasper's dark obsessions deepen. Set in the cathedral town of Cloisterham, this mystery remains unsolved, as Dickens died before revealing its conclusion. (This is an automatically generated summary.)
+</p>
+<p>
+Reading Level:
+Reading ease score: 80.0 (6th grade). Easy to read.
+</p>
+<p>Author: Dickens, Charles, 1812-1870</p>
+<p>EBook No.: 564</p>
+<p>Published: Jun 1, 1996</p>
+<p>Downloads: 94807</p>
+<p>Language: English</p>
+<p>Subject: England -- Fiction</p><p>Subject: Psychological fiction</p><p>Subject: Triangles (Interpersonal relations) -- Fiction</p><p>Subject: Cathedrals -- Fiction</p><p>Subject: Missing persons -- Fiction</p><p>Subject: Choral conductors -- Fiction</p><p>Subject: Separation (Psychology) -- Fiction</p><p>Subject: Mystery fiction</p>
+<p>LoCC: Language and Literatures: English literature</p>
+<p>Category: Text</p>
+<p>Rights: Public domain in the USA.</p>
+</div>
+</content>
+<id>urn:gutenberg:564:2</id>
+<published>1996-06-01T00:00:00+00:00</published>
+<rights>Public domain in the USA.</rights>
+<author>
+<name>Dickens, Charles</name>
+</author>
+<category scheme="http://purl.org/dc/terms/LCSH" term="England -- Fiction"/><category scheme="http://purl.org/dc/terms/LCSH" term="Psychological fiction"/><category scheme="http://purl.org/dc/terms/LCSH" term="Triangles (Interpersonal relations) -- Fiction"/><category scheme="http://purl.org/dc/terms/LCSH" term="Cathedrals -- Fiction"/><category scheme="http://purl.org/dc/terms/LCSH" term="Missing persons -- Fiction"/><category scheme="http://purl.org/dc/terms/LCSH" term="Choral conductors -- Fiction"/><category scheme="http://purl.org/dc/terms/LCSH" term="Separation (Psychology) -- Fiction"/><category scheme="http://purl.org/dc/terms/LCSH" term="Mystery fiction"/>
+<category scheme="http://purl.org/dc/terms/LCC" term="PR" label="Language and Literatures: English literature"/>
+<category scheme="http://purl.org/dc/terms/DCMIType" term="Text"/>
+<dcterms:language>en</dcterms:language>
+<relevance:score>1</relevance:score>
+<link type="application/epub+zip" rel="http://opds-spec.org/acquisition" title="EPUB (no images, older E-readers)" length="324949" href="https://www.gutenberg.org/ebooks/564.epub.noimages"/>
+<link type="application/x-mobipocket-ebook" rel="http://opds-spec.org/acquisition" title="Kindle (no images)" length="455012" href="https://www.gutenberg.org/ebooks/564.kindle.noimages"/>
+<link type="image/jpeg" rel="http://opds-spec.org/image" href="https://www.gutenberg.org/cache/epub/564/pg564.cover.medium.jpg"/>
+<link type="image/jpeg" rel="http://opds-spec.org/image/thumbnail" href="https://www.gutenberg.org/cache/epub/564/pg564.cover.small.jpg"/>
+<link type="application/atom+xml;profile=opds-catalog" rel="related" href="/ebooks/author/37.opds" title="By Dickens, Charles…"/>
+<link type="application/atom+xml;profile=opds-catalog" rel="related" href="/ebooks/subject/1702.opds" title="On England -- Fiction…"/>
+<link type="application/atom+xml;profile=opds-catalog" rel="related" href="/ebooks/subject/2430.opds" title="On Psychological fiction…"/>
+<link type="application/atom+xml;profile=opds-catalog" rel="related" href="/ebooks/subject/2602.opds" title="On Triangles (Interpersonal relations) -- Fiction…"/>
+<link type="application/atom+xml;profile=opds-catalog" rel="related" href="/ebooks/subject/2833.opds" title="On Cathedrals -- Fiction…"/>
+<link type="application/atom+xml;profile=opds-catalog" rel="related" href="/ebooks/subject/2834.opds" title="On Missing persons -- Fiction…"/>
+<link type="application/atom+xml;profile=opds-catalog" rel="related" href="/ebooks/subject/2835.opds" title="On Choral conductors -- Fiction…"/>
+<link type="application/atom+xml;profile=opds-catalog" rel="related" href="/ebooks/subject/4325.opds" title="On Separation (Psychology) -- Fiction…"/>
+<link type="application/atom+xml;profile=opds-catalog" rel="related" href="/ebooks/subject/7508.opds" title="On Mystery fiction…"/>
+<link type="application/atom+xml;profile=opds-catalog" rel="related" href="/ebooks/bookshelf/51.opds" title="In Mystery Fiction…"/>
+<link type="application/atom+xml;profile=opds-catalog" rel="related" href="/ebooks/bookshelf/640.opds" title="In Category: Crime, Thrillers and Mystery…"/>
+<link type="application/atom+xml;profile=opds-catalog" rel="related" href="/ebooks/bookshelf/645.opds" title="In Category: Novels…"/>
+<link type="application/atom+xml;profile=opds-catalog" rel="related" href="/ebooks/bookshelf/649.opds" title="In Category: Classics of Literature…"/>
+<link type="application/atom+xml;profile=opds-catalog" rel="related" href="/ebooks/bookshelf/653.opds" title="In Category: British Literature…"/>
+</entry>
+<entry>
+<updated>2026-08-10T07:41:27Z</updated>
+<title>The Mystery of Edwin Drood</title>
+<content type="xhtml">
+<div xmlns="http://www.w3.org/1999/xhtml">
+<p>This edition has images.</p>
+<p>
+Title:
+The Mystery of Edwin Drood
+</p>
+<p>
+Note:
+Wikipedia page about this book: https:<a href="//en.wikipedia.org/wiki/The_Mystery_of_Edwin_Drood">//en.wikipedia.org/wiki/The_Mystery_of_Edwin_Drood</a>
+</p>
+<p>
+Summary:
+"The Mystery of Edwin Drood" by Charles Dickens is a novel published in 1870. Dickens's final and unfinished work centers on John Jasper, a cathedral choirmaster and opium addict who desires his pupil Rosa Bud—the fiancée of his nephew Edwin Drood. When Edwin vanishes mysteriously after a tense reconciliation dinner with his rival Neville Landless, suspicion falls on Neville while Jasper's dark obsessions deepen. Set in the cathedral town of Cloisterham, this mystery remains unsolved, as Dickens died before revealing its conclusion. (This is an automatically generated summary.)
+</p>
+<p>
+Reading Level:
+Reading ease score: 80.0 (6th grade). Easy to read.
+</p>
+<p>Author: Dickens, Charles, 1812-1870</p>
+<p>EBook No.: 564</p>
+<p>Published: Jun 1, 1996</p>
+<p>Downloads: 94807</p>
+<p>Language: English</p>
+<p>Subject: England -- Fiction</p><p>Subject: Psychological fiction</p><p>Subject: Triangles (Interpersonal relations) -- Fiction</p><p>Subject: Cathedrals -- Fiction</p><p>Subject: Missing persons -- Fiction</p><p>Subject: Choral conductors -- Fiction</p><p>Subject: Separation (Psychology) -- Fiction</p><p>Subject: Mystery fiction</p>
+<p>LoCC: Language and Literatures: English literature</p>
+<p>Category: Text</p>
+<p>Rights: Public domain in the USA.</p>
+</div>
+</content>
+<id>urn:gutenberg:564:3</id>
+<published>1996-06-01T00:00:00+00:00</published>
+<rights>Public domain in the USA.</rights>
+<author>
+<name>Dickens, Charles</name>
+</author>
+<category scheme="http://purl.org/dc/terms/LCSH" term="England -- Fiction"/><category scheme="http://purl.org/dc/terms/LCSH" term="Psychological fiction"/><category scheme="http://purl.org/dc/terms/LCSH" term="Triangles (Interpersonal relations) -- Fiction"/><category scheme="http://purl.org/dc/terms/LCSH" term="Cathedrals -- Fiction"/><category scheme="http://purl.org/dc/terms/LCSH" term="Missing persons -- Fiction"/><category scheme="http://purl.org/dc/terms/LCSH" term="Choral conductors -- Fiction"/><category scheme="http://purl.org/dc/terms/LCSH" term="Separation (Psychology) -- Fiction"/><category scheme="http://purl.org/dc/terms/LCSH" term="Mystery fiction"/>
+<category scheme="http://purl.org/dc/terms/LCC" term="PR" label="Language and Literatures: English literature"/>
+<category scheme="http://purl.org/dc/terms/DCMIType" term="Text"/>
+<dcterms:language>en</dcterms:language>
+<relevance:score>1</relevance:score>
+<link type="application/epub+zip" rel="http://opds-spec.org/acquisition" title="EPUB3 (E-readers incl. Send-to-Kindle)" length="1798872" href="https://www.gutenberg.org/ebooks/564.epub3.images"/>
+<link type="application/epub+zip" rel="http://opds-spec.org/acquisition" title="EPUB (older E-readers)" length="1797007" href="https://www.gutenberg.org/ebooks/564.epub.images"/>
+<link type="application/x-mobipocket-ebook" rel="http://opds-spec.org/acquisition" title="Kindle" length="1951627" href="https://www.gutenberg.org/ebooks/564.kf8.images"/>
+<link type="application/x-mobipocket-ebook" rel="http://opds-spec.org/acquisition" title="older Kindles" length="1924386" href="https://www.gutenberg.org/ebooks/564.kindle.images"/>
+<link type="image/jpeg" rel="http://opds-spec.org/image" href="https://www.gutenberg.org/cache/epub/564/pg564.cover.medium.jpg"/>
+<link type="image/jpeg" rel="http://opds-spec.org/image/thumbnail" href="https://www.gutenberg.org/cache/epub/564/pg564.cover.small.jpg"/>
+<link type="application/atom+xml;profile=opds-catalog" rel="related" href="/ebooks/author/37.opds" title="By Dickens, Charles…"/>
+<link type="application/atom+xml;profile=opds-catalog" rel="related" href="/ebooks/subject/1702.opds" title="On England -- Fiction…"/>
+<link type="application/atom+xml;profile=opds-catalog" rel="related" href="/ebooks/subject/2430.opds" title="On Psychological fiction…"/>
+<link type="application/atom+xml;profile=opds-catalog" rel="related" href="/ebooks/subject/2602.opds" title="On Triangles (Interpersonal relations) -- Fiction…"/>
+<link type="application/atom+xml;profile=opds-catalog" rel="related" href="/ebooks/subject/2833.opds" title="On Cathedrals -- Fiction…"/>
+<link type="application/atom+xml;profile=opds-catalog" rel="related" href="/ebooks/subject/2834.opds" title="On Missing persons -- Fiction…"/>
+<link type="application/atom+xml;profile=opds-catalog" rel="related" href="/ebooks/subject/2835.opds" title="On Choral conductors -- Fiction…"/>
+<link type="application/atom+xml;profile=opds-catalog" rel="related" href="/ebooks/subject/4325.opds" title="On Separation (Psychology) -- Fiction…"/>
+<link type="application/atom+xml;profile=opds-catalog" rel="related" href="/ebooks/subject/7508.opds" title="On Mystery fiction…"/>
+<link type="application/atom+xml;profile=opds-catalog" rel="related" href="/ebooks/bookshelf/51.opds" title="In Mystery Fiction…"/>
+<link type="application/atom+xml;profile=opds-catalog" rel="related" href="/ebooks/bookshelf/640.opds" title="In Category: Crime, Thrillers and Mystery…"/>
+<link type="application/atom+xml;profile=opds-catalog" rel="related" href="/ebooks/bookshelf/645.opds" title="In Category: Novels…"/>
+<link type="application/atom+xml;profile=opds-catalog" rel="related" href="/ebooks/bookshelf/649.opds" title="In Category: Classics of Literature…"/>
+<link type="application/atom+xml;profile=opds-catalog" rel="related" href="/ebooks/bookshelf/653.opds" title="In Category: British Literature…"/>
+</entry>
+</feed>

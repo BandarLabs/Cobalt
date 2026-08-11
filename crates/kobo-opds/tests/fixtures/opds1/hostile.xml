@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Every URL in a feed is a value chosen by whoever answered the request, and
+  following one unchecked is how a redirected catalog sends the device
+  somewhere it was never pointed. This feed is what a catalog that has been
+  taken over looks like. Nothing in it should ever become a request.
+-->
+<feed xmlns="http://www.w3.org/2005/Atom"
+      xmlns:opds="http://opds-spec.org/2010/catalog">
+  <id>https://catalog.example/hostile.xml</id>
+  <title>A Catalog That Has Been Taken Over</title>
+  <updated>2024-01-01T00:00:00Z</updated>
+
+  <link rel="self" href="hostile.xml"/>
+
+  <!-- Paging that walks off the host the reader chose. -->
+  <link rel="next" type="application/atom+xml" href="https://elsewhere.invalid/page2.xml"/>
+
+  <entry>
+    <title>A Book Downloaded In Clear Text</title>
+    <id>urn:example:cleartext</id>
+    <link rel="http://opds-spec.org/acquisition" type="application/epub+zip" href="http://catalog.example/plain.epub"/>
+  </entry>
+
+  <entry>
+    <title>A Book Whose Download Is A Script</title>
+    <id>urn:example:script</id>
+    <link rel="http://opds-spec.org/acquisition" type="application/epub+zip" href="javascript:alert(1)"/>
+    <link rel="http://opds-spec.org/image" type="image/jpeg" href="javascript:alert(2)"/>
+  </entry>
+
+  <entry>
+    <title>A Book Whose Download Is A Local File</title>
+    <id>urn:example:file</id>
+    <link rel="http://opds-spec.org/acquisition" type="application/epub+zip" href="file:///etc/passwd"/>
+  </entry>
+
+  <entry>
+    <title>A Cover That Is Not An Image</title>
+    <id>urn:example:notimage</id>
+    <link rel="http://opds-spec.org/image/thumbnail" type="text/html" href="data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg=="/>
+    <link rel="http://opds-spec.org/acquisition" type="application/epub+zip" href="https://catalog.example/ok.epub"/>
+  </entry>
+
+  <entry>
+    <title>A Title With Markup In It &lt;script&gt;alert(1)&lt;/script&gt; &amp; an ampersand</title>
+    <id>urn:example:markup</id>
+    <summary type="html">&lt;img src=x onerror=alert(1)&gt; and &amp;amp;lt; which must not become a tag</summary>
+    <link rel="http://opds-spec.org/acquisition" type="application/epub+zip" href="https://catalog.example/markup.epub"/>
+  </entry>
+
+  <entry>
+    <title>An Entry Whose Element Is Never Closed</title>
+    <id>urn:example:unclosed</id>
+    <link rel="http://opds-spec.org/acquisition" type="application/epub+zip" href="https://catalog.example/last.epub"/>
+    <summary type="text">The document ends inside this element.

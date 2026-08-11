@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns:dcterms="http://purl.org/dc/terms/" xmlns:thr="http://purl.org/syndication/thread/1.0" xmlns:opds="http://opds-spec.org/2010/catalog" xml:lang="en" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://www.w3.org/2005/Atom">
+  <id>root.xml</id>
+  <title>Test Catalog Root</title>
+  <updated>2012-10-20T01:11:18Z</updated>
+  <author>
+    <name>Hadrien Gardeur</name>
+    <uri>https://github.com/Feedbooks</uri>
+  </author>
+  <link type="application/atom+xml; profile=opds-catalog; kind=navigation" rel="self" href="root.xml" />
+  <link type="application/atom+xml;profile=opds-catalog;kind=navigation" rel="start" href="root.xml" />
+  <link type="application/opensearchdescription+xml" title="Search on test catalog" rel="search" href="opensearch.xml" />
+  
+  <link type="application/atom+xml;profile=opds-catalog;kind=acquisition" title="Featured" rel="http://opds-spec.org/featured" href="acquisition/main.xml" />
+  <link type="application/atom+xml;profile=opds-catalog;kind=acquisition" title="Recommended" rel="http://opds-spec.org/recommended" href="acquisition/page2.xml" />
+  
+  <entry>
+    <title>First Acquisition feed</title>
+    <id>main.xml</id>
+    <updated>2012-10-20T01:11:18Z</updated>
+    <content>Basic acquisition feed</content>
+    <link rel="subsection" href="acquisition/main.xml" type="application/atom+xml; profile=opds-catalog; kind=acquisition" />
+  </entry>
+
+  <entry>
+    <title>Acquisition with blocks</title>
+    <id>blocks.xml</id>
+    <updated>2012-10-20T01:11:18Z</updated>
+    <content>Feed with blocks</content>
+    <link rel="subsection" href="acquisition/blocks.xml" type="application/atom+xml; profile=opds-catalog; kind=acquisition" />
+  </entry>
+  
+  <entry>
+    <title>Link: Featured</title>
+    <id>featured.xml</id>
+    <updated>2012-10-20T01:11:18Z</updated>
+    <content>Link for additional navigation</content>
+    <link rel="subsection" href="links/featured.xml" type="application/atom+xml; profile=opds-catalog; kind=navigation" />
+  </entry>
+  
+  <entry>
+    <title>Link: Recommended</title>
+    <id>recommended.xml</id>
+    <updated>2012-10-20T01:11:18Z</updated>
+    <content>Link for additional navigation</content>
+    <link rel="subsection" href="links/recommended.xml" type="application/atom+xml; profile=opds-catalog; kind=navigation" />
+  </entry>
+  
+  <entry>
+    <title>Link: New</title>
+    <id>new.xml</id>
+    <updated>2012-10-20T01:11:18Z</updated>
+    <content>Link for additional navigation</content>
+    <link rel="subsection" href="links/new.xml" type="application/atom+xml; profile=opds-catalog; kind=navigation" />
+  </entry>
+  
+  <entry>
+    <title>Link: Popular</title>
+    <id>popular.xml</id>
+    <updated>2012-10-20T01:11:18Z</updated>
+    <content>Link for additional navigation</content>
+    <link rel="subsection" href="links/popular.xml" type="application/atom+xml; profile=opds-catalog; kind=navigation" />
+  </entry>
+
+</feed>

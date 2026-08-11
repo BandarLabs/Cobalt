@@ -277,7 +277,7 @@ version = "0.2.0"
 dependencies = [
  "kobo-doc",
  "kobo-image",
- "kobo-json",
+ "kobo-opds",
  "kobo-read",
  "kobo-sdk",
  "kobo-ui",
@@ -362,6 +362,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-opds"
+version = "0.2.0"
+dependencies = [
+ "kobo-json",
+ "kobo-xml",
+]
+
+[[package]]
 name = "kobo-policy"
 version = "0.2.0"
 dependencies = [
@@ -397,6 +405,7 @@ dependencies = [
  "kobo-json",
  "kobo-sdk",
  "kobo-ui",
+ "kobo-xml",
 ]
 
 [[package]]
@@ -537,6 +546,10 @@ dependencies = [
 
 [[package]]
 name = "kobo-ui"
+version = "0.2.0"
+
+[[package]]
+name = "kobo-xml"
 version = "0.2.0"
 
 [[package]]

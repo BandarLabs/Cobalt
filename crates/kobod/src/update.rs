@@ -56,7 +56,9 @@ pub fn apply(url: &str, sha256: &str) -> Result<(), DeviceError> {
         kobo_protocol::TaskError::TooLarge | kobo_protocol::TaskError::Denied => {
             DeviceError::InvalidInput
         }
-        kobo_protocol::TaskError::NoCredential => DeviceError::Authentication,
+        kobo_protocol::TaskError::NoCredential | kobo_protocol::TaskError::Unauthorized => {
+            DeviceError::Authentication
+        }
     })?;
     install(&archive, sha256, Path::new(ADDS))
 }

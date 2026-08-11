@@ -1,35 +1,51 @@
 # Gutenbird
 
-The Project Gutenberg library, on the device.
+An OPDS client, on the device.
 
-Search sixty thousand public domain books, and read one without leaving the
-application.
+Project Gutenberg, Standard Ebooks, Open Library, the OPDS conformance
+catalogs -- and any other library that speaks the Open Publication
+Distribution System, added by its address. Search, browse, and read a book
+without leaving the application.
 
 | The shelf | A book |
 | --- | --- |
-| ![Six real Gutenberg covers in a three by two grid, with "1 of 6" beneath](screenshots/shelf.png) | ![A cover beside the title and author, a Read button, and a paged summary](screenshots/book.png) |
+| ![Six real covers in a three by two grid, with "1 of 6" beneath](screenshots/shelf.png) | ![A cover beside the title and author, a Read button, and a paged summary](screenshots/book.png) |
 
 *Captured from a Kobo Clara BW over Wi-Fi with `kobo shot --device`. Those are
-the real covers, fetched over the reader's own radio and decoded on the
-device.*
+real covers, fetched over the reader's own radio and decoded on the device.*
 
-## Why plain text rather than EPUB
+## Why OPDS rather than one website's API
 
-Gutenberg publishes every book in several formats, and this reads the plain
-text one. `kobo-doc` can read an EPUB now, so this is no longer a matter of
-what can be parsed: it is that an EPUB is only useful whole, and a
-half-downloaded zip is not a half-downloaded book. The plain text can be read
-from the first byte, which is what lets the first page appear in about a second
-on a radio this slow. What is lost is italics and a table of contents.
+This used to read Gutendex, a JSON front end to Project Gutenberg's own
+metadata -- one service, run by one person, answering in a shape nobody else
+answers in. OPDS is the shape the rest of the open web answers in: Project
+Gutenberg publishes one, and so do Standard Ebooks, Open Library, every
+Calibre server and every library running Library Simplified. Speaking OPDS
+turns this from an application that reads Gutenberg into an application that
+reads libraries, of which Gutenberg is one. See `docs/OPDS.md` for what that
+took and what the real catalogs turned out to actually do.
 
-## Why the book arrives in pieces
+## Why an EPUB is worth the wait
 
-The transport carries half a megabyte at most, and a Victorian novel is more
-than that. Gutenberg honours `Range`, so the book is asked for in chunks: the
-first arrives in about a second and the reader starts reading, and the rest is
-topped up a few pages ahead of where they are. A page turn never waits for the
-radio unless the reader is genuinely at the end of what has arrived, and the
-foot of the page says so when they are.
+This used to stream Gutenberg's plain text, because a zip archive cannot be
+read until its last byte has arrived and the text could be shown from the
+first one. `kobo-doc` can read an EPUB now, and an EPUB carries its own
+italics, headings and table of contents -- everything the plain text path
+threw away in exchange for a first page a few seconds sooner. So an EPUB is
+preferred whenever a catalog offers one: fetched in pieces into a shelf blob
+with real progress on screen, parsed once whole, and only then handed to the
+reader. Plain text remains a fallback, chosen only when a catalog -- and there
+are real ones -- publishes nothing else.
+
+## Why the interface never says which version of OPDS answered
+
+There are two incompatible wire formats in the world at once, Atom for 1.2 and
+JSON for 2.0, and a reader adding a catalog should never have to know which
+one it speaks. `kobo_opds` reads both into one model, and nothing on this
+panel is allowed to ask which parser produced it: no badge, no screen that
+exists for one version and not the other. The parity tests in
+`crates/kobo-opds` and in this application's own test suite exist to keep it
+that way.
 
 ## Why the reading screen is not built here
 

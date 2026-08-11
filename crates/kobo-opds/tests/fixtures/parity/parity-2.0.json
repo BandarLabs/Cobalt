@@ -1,0 +1,76 @@
+{
+  "_comment": "One catalog, written twice. This is the OPDS 2.0 half; parity-1.2.xml is the same catalog in OPDS 1.2, field for field. The two exist so a test can assert that the application draws the same screens from either, because the version a catalog speaks is a fact about the wire and must never reach the panel. Anything added to one must be added to the other, or the test is no longer testing what it claims to.",
+
+  "metadata": {
+    "title": "A Small Library",
+    "subtitle": "Two books and a way to look for more",
+    "modified": "2024-06-01T00:00:00Z",
+    "numberOfItems": 2,
+    "itemsPerPage": 2
+  },
+
+  "links": [
+    {"rel": "self", "href": "https://parity.example/catalog", "type": "application/opds+json"},
+    {"rel": "start", "href": "https://parity.example/catalog", "type": "application/opds+json"},
+    {"rel": "next", "href": "https://parity.example/catalog?page=2", "type": "application/opds+json"}
+  ],
+
+  "publications": [
+    {
+      "metadata": {
+        "@type": "http://schema.org/Book",
+        "identifier": "urn:isbn:9780000000002",
+        "title": "A Journey into the Center of the Earth",
+        "author": "Jules Verne",
+        "language": "en",
+        "published": "1864",
+        "modified": "2024-06-01T00:00:00Z",
+        "description": "A professor, his nephew and their guide descend an Icelandic volcano.",
+        "rights": "Public domain",
+        "subject": [
+          {"name": "Science Fiction", "code": "sf", "scheme": "https://parity.example/subjects"},
+          {"name": "Adventure", "code": "adv", "scheme": "https://parity.example/subjects"}
+        ]
+      },
+      "links": [
+        {
+          "rel": "http://opds-spec.org/acquisition/open-access",
+          "href": "https://parity.example/books/journey.epub",
+          "type": "application/epub+zip",
+          "properties": {"length": 769028}
+        }
+      ],
+      "images": [
+        {"href": "https://parity.example/covers/journey.jpg", "type": "image/jpeg"},
+        {"href": "https://parity.example/covers/journey-small.jpg", "type": "image/jpeg"}
+      ]
+    },
+    {
+      "metadata": {
+        "@type": "http://schema.org/Book",
+        "identifier": "urn:isbn:9780000000019",
+        "title": "The Mystery of Edwin Drood",
+        "author": "Charles Dickens",
+        "language": "en",
+        "published": "1870",
+        "modified": "2024-06-01T00:00:00Z",
+        "description": "A choirmaster covets his nephew's fiancee, and then his nephew disappears.",
+        "rights": "Public domain",
+        "subject": [
+          {"name": "Mystery", "code": "mys", "scheme": "https://parity.example/subjects"}
+        ]
+      },
+      "links": [
+        {
+          "rel": "http://opds-spec.org/acquisition/open-access",
+          "href": "https://parity.example/books/drood.epub",
+          "type": "application/epub+zip",
+          "properties": {"length": 1798872}
+        }
+      ],
+      "images": [
+        {"href": "https://parity.example/covers/drood.jpg", "type": "image/jpeg"}
+      ]
+    }
+  ]
+}

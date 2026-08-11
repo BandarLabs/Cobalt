@@ -639,7 +639,13 @@ fn write_screen(
 }
 
 fn log_app(level: LogLevel, message: &str) {
-    println!("app {level:?}: {}", message.replace(['\r', '\n'], " "));
+    let message = message.replace(['\r', '\n'], " ");
+    println!("app {level:?}: {message}");
+    // An application logs to explain itself, and the times it most needs to be
+    // believed are the times it took the reader down with it. Standard output
+    // does not survive that, so anything an application says goes to the black
+    // box as well; it is a no-op unless the trace is on.
+    crate::blackbox::trace(&format!("app {level:?}: {message}"));
 }
 
 fn validate_simulation_paths(socket: &Path, frame: &Path) -> Result<(), Box<dyn Error>> {

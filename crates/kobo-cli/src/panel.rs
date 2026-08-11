@@ -265,7 +265,7 @@ fn start_script(options: &Present) -> String {
            done\n\
          {settle}\
          fi\n\
-         nohup setsid env {UNLOCK_NAME}={PRESENT_UNLOCK} timeout {seconds} '{daemon}' \
+         nohup setsid env {UNLOCK_NAME}={PRESENT_UNLOCK} {BLACKBOX_NAME}=1 timeout {seconds} '{daemon}' \
            --present '{binary}' > '{log}' 2>&1 < /dev/null &\n\
          sleep 2\n\
          pidof kobod > /dev/null 2>&1 || {{ echo 'the session did not start' >&2; \
@@ -274,6 +274,12 @@ fn start_script(options: &Present) -> String {
         seconds = options.seconds,
         settle = format_args!("  sleep {SETTLE_SECONDS}\n"),
         UNLOCK_NAME = "KOBO_PRESENT_UNLOCK",
+        // The trace is off by default because it writes to the card once per
+        // event, which is not a cost an owner reading a book should pay. A
+        // session driven from a development machine is the opposite case: it
+        // exists to be watched, and the one time anybody wants the record is
+        // after something hung and took the reader with it.
+        BLACKBOX_NAME = "KOBO_BLACKBOX",
     )
 }
 

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns:dcterms="http://purl.org/dc/terms/" xmlns:thr="http://purl.org/syndication/thread/1.0" xmlns:opds="http://opds-spec.org/2010/catalog" xml:lang="en" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://www.w3.org/2005/Atom">
+  <id>featured.xml</id>
+  <title>Test Featured Link</title>
+  <updated>2012-10-20T01:11:18Z</updated>
+  <author>
+    <name>Hadrien Gardeur</name>
+    <uri>https://github.com/Feedbooks</uri>
+  </author>
+  <link type="application/atom+xml; profile=opds-catalog; kind=navigation" rel="self" href="featured.xml"/>
+  <link type="application/atom+xml;profile=opds-catalog;kind=navigation" rel="start" href="../root.xml"/>
+  <link type="application/opensearchdescription+xml" title="Search on test catalog" rel="search" href="../opensearch.xml" />
+  
+  <link type="application/atom+xml;profile=opds-catalog;kind=acquisition" title="Featured" rel="http://opds-spec.org/featured" href="../acquisition/main.xml" />
+  
+  <entry>
+    <title>First Acquisition feed</title>
+    <id>main.xml</id>
+    <updated>2012-10-20T01:11:18Z</updated>
+    <content>Basic acquisition feed</content>
+    <link rel="subsection" href="../acquisition/main.xml" type="application/atom+xml; profile=opds-catalog; kind=acquisition"/>
+  </entry>
+
+</feed>

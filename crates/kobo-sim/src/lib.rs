@@ -833,7 +833,7 @@ impl Default for SimulatedApps {
                     "Audiobooks",
                     "Research, narrate and play an original audiobook about any topic.",
                     kobo_ui::Glyph::Headphones,
-                    &["network", "audio", "bluetooth-audio"],
+                    &["network", "audio", "bluetooth-audio", "bluetooth-control"],
                     true,
                 ),
                 simulated_app(
@@ -2671,6 +2671,8 @@ mod tests {
                         url: "https://example.invalid/x".into(),
                         offset: 0,
                         max_bytes: 16,
+                        credential: None,
+                        headers: Vec::new(),
                     },
                 )
                 .is_ok(),
@@ -2764,6 +2766,8 @@ mod tests {
             url: "https://example.invalid/data".into(),
             offset: 0,
             max_bytes: 32,
+            credential: None,
+            headers: Vec::new(),
         };
         let local = kobo_protocol::Task::ReadFile {
             path: "notes.txt".into(),

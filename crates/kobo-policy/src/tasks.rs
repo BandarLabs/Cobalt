@@ -61,8 +61,11 @@ struct Running {
 ///
 /// It is a named type because the runtime, its builder and the worker all
 /// mention it, and spelling the whole signature in three places invites them
-/// to drift apart.
-pub type Fetcher = dyn Fn(&str, u32, u32) -> Result<Vec<u8>, TaskError> + Send + Sync;
+/// to drift apart. The fourth argument is the non-secret headers the
+/// application asked for, already checked against the ones the runtime owns,
+/// the same guarantee `Poster` makes for `Post`.
+pub type Fetcher =
+    dyn Fn(&str, u32, u32, &[(&str, &str)]) -> Result<Vec<u8>, TaskError> + Send + Sync;
 
 /// The host-provided implementation a `Post` task runs through.
 ///
@@ -102,6 +105,65 @@ const RESERVED_HEADERS: &[&str] = &[
 #[must_use]
 pub fn header_is_the_applications_to_set(name: &str) -> bool {
     !RESERVED_HEADERS.contains(&name.to_ascii_lowercase().as_str())
+}
+
+/// Checks a task's headers against the ones the runtime owns and, if none of
+/// them are reserved, hands back the pairs a network backend can use.
+///
+/// Shared by `Fetch` and `Post` rather than duplicated, because the two
+/// checks have to keep agreeing: `Range` is reserved for exactly the reason
+/// `Authorization` is, and a fork here is how one of them would quietly stop
+/// enforcing it.
+/// Turns a named credential into the header it will be sent as.
+///
+/// The one place that has both the naming convention and the value, so nothing
+/// downstream has to know that Bearer is spelled differently from an API key
+/// or that Basic is encoded at all. Shared by fetch and post: a catalogue
+/// behind a subscription is reached with a GET, and a credential that only
+/// worked on a POST would mean recognising a gated feed and never opening it.
+fn resolved_credential(
+    wanted: Option<&kobo_protocol::Credential>,
+    url: &str,
+    credentials: Option<&CredentialAuthorizer>,
+    secrets: Option<&Path>,
+) -> Result<Option<(String, String)>, TaskError> {
+    let Some(wanted) = wanted else {
+        return Ok(None);
+    };
+    if credentials.is_none_or(|allows| !allows(wanted, url)) {
+        return Err(TaskError::Denied);
+    }
+    // Not `Denied`. The application asked for a key it is allowed to ask for,
+    // by the name the runtime publishes, and the check above already said so.
+    // What is missing is the key itself, which is the reader owner's to
+    // install.
+    let Some(value) = secret(secrets, &wanted.secret) else {
+        return Err(TaskError::NoCredential);
+    };
+    Ok(Some((
+        wanted.header_name().to_owned(),
+        match wanted.header {
+            SecretHeader::Bearer => format!("Bearer {value}"),
+            SecretHeader::Named(_) => value,
+            // Encoded here rather than by the application, which is the whole
+            // point: an application asking for a gated feed never holds the
+            // address or the password that make up the pair.
+            SecretHeader::Basic => format!("Basic {}", base64(value.as_bytes())),
+        },
+    )))
+}
+
+fn own_headers(headers: &[kobo_protocol::Header]) -> Result<Vec<(&str, &str)>, TaskError> {
+    if headers
+        .iter()
+        .any(|header| !header_is_the_applications_to_set(&header.name))
+    {
+        return Err(TaskError::Denied);
+    }
+    Ok(headers
+        .iter()
+        .map(|header| (header.name.as_str(), header.value.as_str()))
+        .collect())
 }
 
 /// Told, from the finishing task's own thread, that a result is now waiting.
@@ -476,12 +538,37 @@ fn run(work: &Task, root: &Path, backends: Backends<'_>, cancel: &AtomicBool) ->
             url,
             offset,
             max_bytes,
+            credential: wanted,
+            headers,
         } => match fetch {
             None => TaskOutcome::Failed(TaskError::Denied),
-            Some(fetch) => match fetch(url, *offset, (*max_bytes).min(MAX_TASK_BYTES_U32)) {
-                Ok(bytes) => TaskOutcome::Completed(bytes),
-                Err(error) => TaskOutcome::Failed(error),
-            },
+            // The same gate `Post` applies to its headers, and for `Fetch` it
+            // is load-bearing rather than tidy: `Range` is how `offset` is
+            // turned into the piece of the document actually asked for, and
+            // an application that could set `Range` itself could read past
+            // the piece the byte ceiling allowed.
+            Some(fetch) => {
+                let extra = match own_headers(headers) {
+                    Ok(extra) => extra,
+                    Err(error) => return TaskOutcome::Failed(error),
+                };
+                // Appended after the gate above rather than before it: the
+                // credential is the runtime's own header, and an application
+                // is refused for setting one by hand.
+                let credential =
+                    match resolved_credential(wanted.as_ref(), url, credentials, secrets) {
+                        Ok(credential) => credential,
+                        Err(error) => return TaskOutcome::Failed(error),
+                    };
+                let mut extra = extra;
+                if let Some((name, value)) = &credential {
+                    extra.push((name.as_str(), value.as_str()));
+                }
+                match fetch(url, *offset, (*max_bytes).min(MAX_TASK_BYTES_U32), &extra) {
+                    Ok(bytes) => TaskOutcome::Completed(bytes),
+                    Err(error) => TaskOutcome::Failed(error),
+                }
+            }
         },
         Task::Post {
             url,
@@ -497,44 +584,19 @@ fn run(work: &Task, root: &Path, backends: Backends<'_>, cancel: &AtomicBool) ->
             // Refused rather than quietly dropped. A request that loses a
             // header the runtime happens to own would fail at the far end with
             // an error the author cannot connect to anything they wrote.
-            if headers
-                .iter()
-                .any(|header| !header_is_the_applications_to_set(&header.name))
-            {
-                return TaskOutcome::Failed(TaskError::Denied);
-            }
+            let extra = match own_headers(headers) {
+                Ok(extra) => extra,
+                Err(error) => return TaskOutcome::Failed(error),
+            };
             // A task that names a credential the runtime does not hold is
             // refused rather than sent without one. Sending it anyway would
             // reach the server as an unauthenticated request, and the
             // application would report whatever the server said about that
             // instead of the real problem.
-            let credential = match wanted {
-                None => None,
-                Some(wanted) if credentials.is_none_or(|allows| !allows(wanted, url)) => {
-                    return TaskOutcome::Failed(TaskError::Denied);
-                }
-                Some(wanted) => match secret(secrets, &wanted.secret) {
-                    // Not `Denied`. The application asked for a key it is
-                    // allowed to ask for, by the name the runtime publishes,
-                    // and the check above already said so. What is missing is
-                    // the key itself, which is the reader owner's to install.
-                    None => return TaskOutcome::Failed(TaskError::NoCredential),
-                    // Assembled here, in the one place that has both the
-                    // convention and the value, so nothing downstream has to
-                    // know that Bearer is spelled differently from an API key.
-                    Some(value) => Some((
-                        wanted.header_name().to_owned(),
-                        match wanted.header {
-                            SecretHeader::Bearer => format!("Bearer {value}"),
-                            SecretHeader::Named(_) => value,
-                        },
-                    )),
-                },
+            let credential = match resolved_credential(wanted.as_ref(), url, credentials, secrets) {
+                Ok(credential) => credential,
+                Err(error) => return TaskOutcome::Failed(error),
             };
-            let extra = headers
-                .iter()
-                .map(|header| (header.name.as_str(), header.value.as_str()))
-                .collect::<Vec<_>>();
             match post(
                 url,
                 body.as_bytes(),
@@ -578,10 +640,37 @@ fn resolve(root: &Path, path: &str) -> Option<PathBuf> {
     Some(resolved)
 }
 
+/// Standard base64, which is how a Basic credential is spelled on the wire.
+///
+/// Written out rather than taken from a crate: it is twenty lines, it runs on
+/// a credential a few dozen bytes long, and a dependency that can see secrets
+/// is a dependency worth not having.
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let mut block = [0u8; 3];
+        block[..chunk.len()].copy_from_slice(chunk);
+        let packed = (u32::from(block[0]) << 16) | (u32::from(block[1]) << 8) | u32::from(block[2]);
+        for index in 0..4 {
+            // Every byte past the ones that were there is padding, and the
+            // count of them is what says how much of the last block is real.
+            if index <= chunk.len() {
+                let shift = 18 - index * 6;
+                let at = usize::try_from((packed >> shift) & 0b0011_1111).unwrap_or(0);
+                out.push(char::from(ALPHABET[at]));
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kobo_protocol::Credential;
+    use kobo_protocol::{Credential, Header};
     use std::sync::atomic::AtomicUsize;
 
     fn temp_root(name: &str) -> PathBuf {
@@ -611,6 +700,8 @@ mod tests {
                     url: "https://example.invalid/catalog".into(),
                     offset: 0,
                     max_bytes: 1024,
+                    credential: None,
+                    headers: Vec::new(),
                 },
             )
             .expect("submitted");
@@ -636,6 +727,8 @@ mod tests {
                     url: "https://example.invalid".into(),
                     offset: 0,
                     max_bytes: 16,
+                    credential: None,
+                    headers: Vec::new(),
                 },
             )
             .expect("submitted");
@@ -676,6 +769,8 @@ mod tests {
                     url: "https://example.invalid".into(),
                     offset: 0,
                     max_bytes: 16,
+                    credential: None,
+                    headers: Vec::new(),
                 },
             )
             .expect("submitted");
@@ -792,7 +887,7 @@ mod tests {
     fn a_granted_fetch_reaches_the_backend() {
         let mut runner = TaskRunner::simulated(temp_root("fetch"))
             .with_capabilities([Capability::Network])
-            .with_fetch(Arc::new(|url: &str, _, _| Ok(url.as_bytes().to_vec())));
+            .with_fetch(Arc::new(|url: &str, _, _, _| Ok(url.as_bytes().to_vec())));
         runner
             .submit(
                 TaskId(1),
@@ -800,6 +895,8 @@ mod tests {
                     url: "https://example.test/a".into(),
                     offset: 0,
                     max_bytes: 128,
+                    credential: None,
+                    headers: Vec::new(),
                 },
             )
             .expect("submitted");
@@ -808,6 +905,62 @@ mod tests {
             finished[0].outcome,
             TaskOutcome::Completed(b"https://example.test/a".to_vec())
         );
+    }
+
+    #[test]
+    fn a_fetch_header_reaches_the_backend_the_application_asked_for_it_by() {
+        let mut runner = TaskRunner::simulated(temp_root("fetch-headers"))
+            .with_capabilities([Capability::Network])
+            .with_fetch(Arc::new(|_, _, _, headers: &[(&str, &str)]| {
+                Ok(headers
+                    .iter()
+                    .map(|(name, value)| format!("{name}: {value}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    .into_bytes())
+            }));
+        runner
+            .submit(
+                TaskId(1),
+                Task::Fetch {
+                    url: "https://example.test/catalog".into(),
+                    offset: 0,
+                    max_bytes: 128,
+                    credential: None,
+                    headers: vec![Header::new("Accept", "application/opds+json")],
+                },
+            )
+            .expect("submitted");
+        let finished = collect(&mut runner, 1);
+        assert_eq!(
+            finished[0].outcome,
+            TaskOutcome::Completed(b"Accept: application/opds+json".to_vec())
+        );
+    }
+
+    #[test]
+    fn an_application_supplied_range_header_cannot_displace_the_byte_offset_the_runtime_sets() {
+        // `offset` is the only thing allowed to become `Range`: it is turned
+        // into the header the runtime sends, not merged with one the
+        // application names, so a fetch naming its own `Range` is refused
+        // outright rather than sent with two.
+        let mut runner = TaskRunner::simulated(temp_root("fetch-range"))
+            .with_capabilities([Capability::Network])
+            .with_fetch(Arc::new(|_, _, _, _| Ok(b"should not run".to_vec())));
+        runner
+            .submit(
+                TaskId(1),
+                Task::Fetch {
+                    url: "https://example.test/book.txt".into(),
+                    offset: 100,
+                    max_bytes: 128,
+                    credential: None,
+                    headers: vec![Header::new("Range", "bytes=0-9999")],
+                },
+            )
+            .expect("submitted");
+        let finished = collect(&mut runner, 1);
+        assert_eq!(finished[0].outcome, TaskOutcome::Failed(TaskError::Denied));
     }
 
     fn secret_dir(name: &str) -> PathBuf {
@@ -991,6 +1144,22 @@ mod tests {
         assert_eq!(
             collect(&mut runner, 1)[0].outcome,
             TaskOutcome::Failed(TaskError::Denied)
+        );
+    }
+    #[test]
+    fn a_basic_credential_is_encoded_by_the_runtime_rather_than_the_application() {
+        // The pairs from RFC 4648, plus the shape Standard Ebooks asks for:
+        // an address as the user and nothing at all as the password.
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        assert_eq!(base64(b"foob"), "Zm9vYg==");
+        assert_eq!(base64(b"fooba"), "Zm9vYmE=");
+        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
+        assert_eq!(
+            base64(b"reader@example.com:"),
+            "cmVhZGVyQGV4YW1wbGUuY29tOg=="
         );
     }
 }

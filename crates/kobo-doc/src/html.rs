@@ -93,6 +93,9 @@ pub(crate) fn skip_bracketed(tail: &str) -> Option<&str> {
 struct State {
     builder: Builder,
     text: String,
+    /// The link being read: where it points, and how much text had been
+    /// collected when it opened, so its own words can be taken back out.
+    link: Option<(String, usize)>,
     /// How many block quotations deep the scan is. See `markdown` for why this
     /// is a count.
     quoted: usize,
@@ -114,6 +117,7 @@ impl State {
     fn new() -> Self {
         Self {
             builder: Builder::new(),
+            link: None,
             text: String::new(),
             quoted: 0,
             pre: 0,
@@ -158,6 +162,39 @@ impl State {
         if self.pre > 0 {
             if name == "br" {
                 self.text.push('\n');
+            }
+            return;
+        }
+        // Noted before the element is interpreted, because whatever this
+        // element becomes is where the name points. A name on an element that
+        // turns out to say nothing lands on the block after it, which is the
+        // next thing a reader sent there would actually read.
+        if let Some(id) = attribute(inside, "id") {
+            self.builder.mark_anchor(&decode_entities(id));
+        }
+        if name == "img" {
+            // Emitted where it stands, so a picture keeps its place among the
+            // paragraphs. The source is left exactly as the book wrote it --
+            // resolving it against the file it came from needs to know what
+            // that file was, which only the format assembling the book does.
+            if let Some(source) = attribute(inside, "src") {
+                self.flush();
+                let alt = attribute(inside, "alt")
+                    .map(decode_entities)
+                    .unwrap_or_default();
+                self.builder.push(Block::Picture {
+                    name: decode_entities(source),
+                    alt,
+                });
+            }
+            return;
+        }
+        if name == "a" {
+            // Where the words of the link start, so they can be taken back
+            // out when it closes: a link's own text is what a reader taps,
+            // and the paragraph around it is not.
+            if let Some(href) = attribute(inside, "href") {
+                self.link = Some((decode_entities(href), self.text.len()));
             }
             return;
         }
@@ -227,6 +264,13 @@ impl State {
 
     fn close(&mut self, name: &str) {
         if self.pre > 0 && name != "pre" {
+            return;
+        }
+        if name == "a" {
+            if let Some((target, from)) = self.link.take() {
+                let words = self.text.get(from..).unwrap_or_default().to_owned();
+                self.builder.record_link(&words, &target);
+            }
             return;
         }
         match name {
@@ -513,17 +557,51 @@ mod tests {
     }
 
     #[test]
-    fn a_picture_leaves_behind_what_it_was_described_as() {
+    fn a_picture_becomes_something_that_can_be_drawn_rather_than_described() {
+        // This used to fold the description into the sentence as "[a cat]",
+        // which was the best a reader could do when a picture could not be
+        // drawn at all. It can be now, so the picture is a block of its own
+        // and keeps its description for the case where it still cannot --
+        // which splits a paragraph an illustration was sitting inside. That
+        // is the right way round for a book: an illustration is nearly always
+        // its own paragraph already, and one genuinely mid-sentence is
+        // decorative.
         let document = parse("<p>Before <img src=\"a.png\" alt=\"a cat\"> after.</p>");
         assert_eq!(
             document.blocks,
-            vec![Block::Paragraph("Before [a cat] after.".to_owned())]
+            vec![
+                Block::Paragraph("Before".to_owned()),
+                Block::Picture {
+                    name: "a.png".to_owned(),
+                    alt: "a cat".to_owned()
+                },
+                Block::Paragraph("after.".to_owned()),
+            ]
         );
     }
 
     #[test]
-    fn a_picture_with_no_description_says_nothing() {
+    fn a_picture_with_no_description_still_has_somewhere_to_be_drawn() {
+        // No description is not nothing: the picture is still there, and a
+        // book whose plates carry no alt text is the ordinary case rather
+        // than the exception.
         let document = parse("<p>Before <img src=\"a.png\" alt=\"\"> after.</p>");
+        assert_eq!(
+            document.blocks,
+            vec![
+                Block::Paragraph("Before".to_owned()),
+                Block::Picture {
+                    name: "a.png".to_owned(),
+                    alt: String::new()
+                },
+                Block::Paragraph("after.".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_picture_with_no_source_is_not_a_picture() {
+        let document = parse("<p>Before <img alt=\"a cat\"> after.</p>");
         assert_eq!(
             document.blocks,
             vec![Block::Paragraph("Before after.".to_owned())]

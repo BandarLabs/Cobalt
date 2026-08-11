@@ -289,6 +289,8 @@ impl Sidekick {
             url,
             offset: 0,
             max_bytes: MAX_REPLY,
+            credential: None,
+            headers: Vec::new(),
         });
     }
 

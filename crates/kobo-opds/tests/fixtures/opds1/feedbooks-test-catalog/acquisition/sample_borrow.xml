@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<entry xmlns:dcterms="http://purl.org/dc/terms/" xmlns:thr="http://purl.org/syndication/thread/1.0" xmlns:opds="http://opds-spec.org/2010/catalog" xml:lang="en" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://www.w3.org/2005/Atom">
+  <title>Acquisition: Sample + Borrow</title>
+  <id>example/sample+borrow</id>
+  <author>
+    <name>Jane Austen</name>
+  </author>
+  <published>2006-12-28T20:00:54Z</published>
+  <updated>2012-10-12T17:43:18Z</updated>
+  <dcterms:language>en</dcterms:language>
+  <dcterms:issued>1813</dcterms:issued>
+  <category label="Fiction" term="FBFIC000000" />
+  <category label="Romance" term="FBFIC027000" />
+  <content type="html">
+    Pride And Prejudice, the story of Mrs. Bennet's attempts to marry off her five daughters is one of the best-loved and most enduring classics in English literature. Excitement fizzes through the Bennet household at Longbourn in Hertfordshire when young, eligible Mr. Charles Bingley rents the fine house nearby. He may have sisters, but he also has male friends, and one of these—the haughty, and even wealthier, Mr. Fitzwilliam Darcy—irks the vivacious Elizabeth Bennet, the second of the Bennet girls. She annoys him. Which is how we know they must one day marry. The romantic clash between the opinionated Elizabeth and Darcy is a splendid rendition of civilized sparring. As the characters dance a delicate quadrille of flirtation and intrigue, Jane Austen's radiantly caustic wit and keen observation sparkle.
+  </content>
+  <link type="text/html" rel="http://opds-spec.org/acquisition/borrow" href="http://www.feedbooks.com/book/52">
+    <opds:indirectAcquisition type="application/epub+zip" />
+  </link>
+  <link type="application/epub+zip" rel="http://opds-spec.org/acquisition/sample" href="http://www.feedbooks.com/book/52.epub" />
+  <link type="image/jpeg" rel="http://opds-spec.org/image" href="../larger.jpg" />
+  <link type="image/jpeg" rel="http://opds-spec.org/image/thumbnail" href="../thumbnail.jpg" />
+</entry>

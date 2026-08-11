@@ -979,7 +979,7 @@ fn host_applications(
         }
     };
     let audio_fetcher: kobo_hal::audio::StreamFetcher = Arc::new(|url, offset, max_bytes| {
-        kobo_net::fetch_from(url, offset, max_bytes).map_err(|error| match error {
+        kobo_net::fetch_from(url, offset, max_bytes, &[]).map_err(|error| match error {
             // A reader with no route and a service that will not answer are
             // different things everywhere else, but `DeviceError` is the radio
             // vocabulary and has one word for both. Unreachable is the honest
@@ -995,7 +995,13 @@ fn host_applications(
             // runtime never has one to be missing. Spelled out rather than
             // caught by a wildcard so that giving fetch a credential later
             // fails here instead of quietly reporting the wrong thing.
-            kobo_protocol::TaskError::NoCredential => kobo_protocol::DeviceError::Authentication,
+            //
+            // A refusal to authenticate is not unreachable in the same way:
+            // the host answered, and what it said was that this stream is not
+            // for whoever asked.
+            kobo_protocol::TaskError::NoCredential | kobo_protocol::TaskError::Unauthorized => {
+                kobo_protocol::DeviceError::Authentication
+            }
         })
     });
     let audio = kobo_hal::audio::Audio::open(Some(audio_fetcher));
@@ -1402,7 +1408,19 @@ fn host_applications(
                             }
                         }
                         Message::DropPicture { handle } => apps[index].pictures.remove(handle),
-                        Message::Log { .. } => {}
+                        // An application logs to explain itself, and the times
+                        // it most needs to be believed are the times it took
+                        // the reader down with it. Dropping the line here left
+                        // the diagnostics an application had gone to the
+                        // trouble of emitting with nowhere to arrive, on the
+                        // one path that actually runs on the device.
+                        Message::Log { level, message } => {
+                            trace(&format!(
+                                "app {} {level:?}: {}",
+                                apps[index].name,
+                                message.replace(['\r', '\n'], " ")
+                            ));
+                        }
                         Message::DeviceRequest(request) => {
                             let not_declared = !system_request_allowed(&apps[index].name, &request)
                                 || kobo_policy::request_capability(&request).is_some_and(

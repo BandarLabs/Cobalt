@@ -35,7 +35,7 @@
 //! renderer, and because the paragraph is *paginated* at that depth as well,
 //! marking one never pushes the foot of the page off the bottom.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use kobo_doc::{Block, Document};
 use kobo_sdk::{BannerLevel, Screen, ScreenBuilder};
@@ -100,6 +100,15 @@ pub enum Chrome {
     Light,
     /// Everything marked in this book, in order, each one a way back to it.
     Highlights,
+    /// Where this page points: footnotes, cross-references, notes back.
+    Links,
+    /// The book's own table of contents, each line a way into it.
+    ///
+    /// Only reachable for a book that published one. The parts worked out
+    /// from headings are a fallback for paging, not something to offer as a
+    /// contents list: a reader who opens one wants the chapters the author
+    /// named, not every heading in the file.
+    Contents,
     /// The paragraphs on this page, to choose one to mark.
     ///
     /// A separate screen because there is no text selection on this panel: a
@@ -128,6 +137,8 @@ enum Kind {
     Quote,
     Preformatted,
     Item,
+    /// A picture the book set into its text.
+    Picture,
     Rule,
     Break,
 }
@@ -152,6 +163,9 @@ impl Kind {
     }
 
     /// Whether this is something to look at rather than something to read.
+    ///
+    /// A picture is not here. Furniture takes one line and carries no words,
+    /// and a picture takes as much room as it takes.
     const fn is_furniture(self) -> bool {
         matches!(self, Kind::Rule | Kind::Break)
     }
@@ -263,6 +277,10 @@ pub mod action {
     pub const MARK: &str = "reader-mark-";
     /// One per stored mark, suffixed with its block index.
     pub const GO: &str = "reader-go-";
+    /// Opens the book's own table of contents.
+    pub const CONTENTS: &str = "reader-contents";
+    /// Opens the links the page being read points at.
+    pub const LINKS: &str = "reader-links";
 }
 
 /// What an application still has to do about an action the reader handled.
@@ -303,6 +321,14 @@ pub struct Reader {
     /// end of the book -- which is the exact confusion the `cut` banner exists
     /// to prevent, and would cause itself if it fired while more was coming.
     pending: bool,
+    /// The pictures an application has handed over, by the name the book
+    /// stored them under.
+    ///
+    /// Empty until something supplies them, which is the ordinary state for a
+    /// caller that has not asked for pictures: the reader then draws each
+    /// one's description instead, and every other part of the book is
+    /// unaffected.
+    pictures: BTreeMap<String, kobo_ui::TilePicture>,
 }
 
 impl Reader {
@@ -314,6 +340,7 @@ impl Reader {
     #[must_use]
     pub fn open(document: Document, memory: Memory, panel: &DisplayMetrics) -> Self {
         let mut reader = Self {
+            pictures: BTreeMap::new(),
             document,
             memory,
             pages: Vec::new(),
@@ -356,7 +383,13 @@ impl Reader {
         // line height both read it -- and the screen carries the same value,
         // so what was measured here is what gets drawn.
         let (mut pages, mut capped) = kobo_ui::with_text_scale(self.memory.scale, || {
-            paginate(&self.document, &self.memory.highlights, &metrics, area)
+            paginate(
+                &self.document,
+                &self.memory.highlights,
+                &self.pictures,
+                &metrics,
+                area,
+            )
         });
         // A book of one page says nothing about where it is, so no strip is
         // drawn and the room it was holding belongs to the words. Deciding it
@@ -364,7 +397,13 @@ impl Reader {
         // never turns one page into two.
         if pages.len() <= 1 {
             let (whole, cut) = kobo_ui::with_text_scale(self.memory.scale, || {
-                paginate(&self.document, &self.memory.highlights, &metrics, full)
+                paginate(
+                    &self.document,
+                    &self.memory.highlights,
+                    &self.pictures,
+                    &metrics,
+                    full,
+                )
             });
             if whole.len() <= 1 {
                 pages = whole;
@@ -758,6 +797,14 @@ impl Reader {
                 self.set_chrome(Chrome::Highlights, panel);
                 Outcome::Repaint
             }
+            action::CONTENTS => {
+                self.set_chrome(Chrome::Contents, panel);
+                Outcome::Repaint
+            }
+            action::LINKS => {
+                self.set_chrome(Chrome::Links, panel);
+                Outcome::Repaint
+            }
             action::MARKING => {
                 self.set_chrome(Chrome::Marking, panel);
                 Outcome::Repaint
@@ -840,6 +887,12 @@ impl Reader {
         for block in self.memory.highlights.iter().chain(&self.memory.bookmarks) {
             names.push(format!("{}{block}", action::GO));
         }
+        for entry in &self.document.contents {
+            names.push(format!("{}{}", action::GO, entry.block));
+        }
+        for (_, block) in self.links_here() {
+            names.push(format!("{}{block}", action::GO));
+        }
         let Some(name) = names
             .into_iter()
             .find(|name| kobo_sdk::action_id(name) == action)
@@ -863,6 +916,8 @@ impl Reader {
     pub fn screen(&self, title: &str) -> Screen {
         match self.chrome {
             Chrome::Highlights => self.marks_screen(title),
+            Chrome::Contents => self.contents_screen(title),
+            Chrome::Links => self.links_screen(title),
             Chrome::Marking => self.marking_screen(title),
             Chrome::Controls | Chrome::Light | Chrome::Hidden => self.book_screen(title),
         }
@@ -907,6 +962,19 @@ impl Reader {
                 Kind::Heading(_) => screen.heading(piece.text.clone()),
                 Kind::Marked | Kind::Quote | Kind::Item => {
                     screen.quote(HIGHLIGHT_DEPTH, piece.text.clone())
+                }
+                Kind::Picture => {
+                    // The handle is the application's to supply, because
+                    // handing pixels to the runtime needs a `Context` and this
+                    // is a view over a document rather than an application.
+                    // Until one arrives, or when the picture will not decode,
+                    // what the book said the picture shows is better than a
+                    // gap the reader cannot account for.
+                    match self.picture_for(piece.block) {
+                        Some(drawn) => screen.picture(drawn, MAX_PICTURE_MM),
+                        None if piece.text.is_empty() => screen,
+                        None => screen.secondary(piece.text.clone()),
+                    }
                 }
                 Kind::Rule => screen.divider(),
                 Kind::Break => screen.spacer(kobo_ui::Space::Small),
@@ -1034,7 +1102,89 @@ impl Reader {
         if !self.markable().is_empty() {
             panel = panel.button(action::MARKING, "Mark a paragraph");
         }
+        // Offered only for a book that published its own contents. A button
+        // that opens an empty list is a dead end somebody has to back out of,
+        // and the parts worked out from headings are not a contents list.
+        if !self.document.contents.is_empty() {
+            panel = panel.button(action::CONTENTS, "Contents");
+        }
+        // Offered only where there is somewhere to go from, so the control
+        // appears on the pages that have footnotes and stays out of the way
+        // on the ones that do not.
+        if !self.links_here().is_empty() {
+            panel = panel.button(action::LINKS, "Links on this page");
+        }
         panel.button(action::HIGHLIGHTS, "Notes")
+    }
+
+    /// Where this page points, each line a way there.
+    ///
+    /// A list rather than words a finger finds in the middle of a paragraph.
+    /// A footnote marker is a single character set above the line, which is
+    /// smaller than any tap this panel can tell apart, and making the prose
+    /// tappable would put a hit target over every sentence a reader is trying
+    /// to read past. The links on the page they are on is the same answer the
+    /// marking screen already gives for choosing a paragraph.
+    fn links_screen(&self, title: &str) -> Screen {
+        let mut screen = ScreenBuilder::new("reader-links").top_bar(title);
+        let here = self.links_here();
+        if here.is_empty() {
+            return screen
+                .secondary("Nothing on this page points anywhere else in the book.")
+                .build();
+        }
+        for (text, block) in here {
+            screen = screen.button(format!("{}{block}", action::GO), text);
+        }
+        screen.build()
+    }
+
+    /// The links whose words are on the page being read, and where they go.
+    ///
+    /// Only the ones that land inside this book. A link out to the web is
+    /// left out rather than offered: there is no browser here, and a button
+    /// that cannot do anything is worse than the absence of one.
+    fn links_here(&self) -> Vec<(String, usize)> {
+        let Some(page) = self.pages.get(self.page) else {
+            return Vec::new();
+        };
+        let (Some(first), Some(last)) = (page.first(), page.last()) else {
+            return Vec::new();
+        };
+        let (from, to) = (first.block, last.block);
+        let mut found: Vec<(String, usize)> = Vec::new();
+        for link in &self.document.links {
+            let Ok(at) = Locator::try_from(link.block) else {
+                continue;
+            };
+            if at < from || at > to {
+                continue;
+            }
+            let Some(block) = self.document.destination(link) else {
+                continue;
+            };
+            if !found.iter().any(|(text, _)| *text == link.text) {
+                found.push((link.text.clone(), block));
+            }
+        }
+        found
+    }
+
+    /// The book's own table of contents, each line a way into it.
+    ///
+    /// Nesting is drawn with an indent rather than a heading per level: a
+    /// reference work nests three deep, and a heading for every part would
+    /// leave a screen that is mostly headings.
+    fn contents_screen(&self, title: &str) -> Screen {
+        let mut screen = ScreenBuilder::new("reader-contents").top_bar(title);
+        for entry in &self.document.contents {
+            let indent = "    ".repeat(entry.depth as usize);
+            screen = screen.button(
+                format!("{}{}", action::GO, entry.block),
+                format!("{indent}{}", entry.title),
+            );
+        }
+        screen.build()
     }
 
     fn marks_screen(&self, title: &str) -> Screen {
@@ -1143,9 +1293,173 @@ fn first_words(text: &str) -> String {
 ///
 /// Returns the pages, and whether it stopped at the ceiling with book left --
 /// which the caller has to say out loud rather than present as an ending.
+impl Reader {
+    /// Hands over the pictures this book's text refers to.
+    ///
+    /// Keyed by the name the book stored each one under, which is what a
+    /// [`Block::Picture`] carries. Supplying pixels needs a runtime handle and
+    /// a handle needs a `Context`, so the work of decoding an image and giving
+    /// it to the runtime belongs to the application; this only draws what it
+    /// is given. A name with nothing against it draws its description instead,
+    /// so an application may supply as few as it likes -- which is what makes
+    /// it possible to decode only the pictures on the page being read rather
+    /// than four hundred engravings at the moment a book opens.
+    ///
+    /// The panel is taken rather than deferred to a later call because pages
+    /// have to be measured again the moment pictures arrive. A plate stands in
+    /// as a single line of its own description until it is handed over and
+    /// takes ninety millimetres afterwards, so pages measured before and drawn
+    /// after hold several times what fits: on the panel, "The Tale of Peter
+    /// Rabbit" came out nine pages long with every illustration running off the
+    /// bottom edge and through the strip that says which page it is.
+    pub fn set_pictures(
+        &mut self,
+        pictures: BTreeMap<String, kobo_ui::TilePicture>,
+        panel: &DisplayMetrics,
+    ) {
+        self.pictures = pictures;
+        self.repaginate(panel);
+    }
+
+    /// Every picture the book refers to, in the order it refers to them.
+    ///
+    /// What an application asks in order to know what to decode.
+    #[must_use]
+    pub fn pictures_wanted(&self) -> Vec<&str> {
+        let mut wanted = Vec::new();
+        for block in &self.document.blocks {
+            if let Block::Picture { name, .. } = block {
+                if !wanted.contains(&name.as_str()) {
+                    wanted.push(name.as_str());
+                }
+            }
+        }
+        wanted
+    }
+
+    /// The picture to draw for a block, when one has been handed over.
+    fn picture_for(&self, block: Locator) -> Option<kobo_ui::TilePicture> {
+        let at = usize::try_from(block).ok()?;
+        let Block::Picture { name, .. } = self.document.blocks.get(at)? else {
+            return None;
+        };
+        self.pictures.get(name).copied()
+    }
+}
+
+/// The tallest a picture inside the text may be drawn, in millimetres.
+///
+/// An illustration is part of the page rather than the whole of it: a plate
+/// that fills the panel turns every page turn around it into a page of white,
+/// and on a screen this size two thirds of the height is already generous. A
+/// picture smaller than this is drawn at its own size rather than stretched,
+/// because enlarging a woodcut printed at three hundred pixels only makes the
+/// grain visible.
+const MAX_PICTURE_MM: u16 = 90;
+
+/// The fraction of a page that must be filled before a chapter may end it.
+///
+/// A quarter. Below that the page is a fragment rather than an opening, and
+/// breaking after it spends a whole sheet on a line or two -- which is what
+/// the notice at the front of every Project Gutenberg book did.
+const MIN_PAGE_FILL: i32 = 4;
+
+/// The page being packed, handed to something that needs to add to it.
+struct Placing<'a> {
+    pages: &'a mut Vec<Vec<Piece>>,
+    page: &'a mut Vec<Piece>,
+    used: &'a mut i32,
+    gap: i32,
+}
+
+/// Puts a picture on the page, or on the next one when it will not fit.
+///
+/// Whole or not at all: there is no half of a picture to leave behind, which
+/// is the one way it differs from the prose around it.
+fn place_picture(
+    drawn: kobo_ui::TilePicture,
+    piece: Piece,
+    placing: &mut Placing<'_>,
+    metrics: &kobo_ui::DisplayMetrics,
+    area: ProseArea,
+) {
+    let height = picture_height(drawn, metrics, area);
+    if !placing.page.is_empty() && *placing.used + placing.gap + height > area.height {
+        placing.pages.push(std::mem::take(placing.page));
+        *placing.used = 0;
+    }
+    *placing.used += if placing.page.is_empty() {
+        height
+    } else {
+        placing.gap + height
+    };
+    placing.page.push(piece);
+}
+
+/// How tall a picture will be drawn, so a page can be packed around it.
+///
+/// The same arithmetic the layout will do: fit it to the column when it is
+/// wider than one, never enlarge it past its own size, and cap it so that no
+/// single illustration takes the page. Working it out here rather than asking
+/// the renderer keeps pagination a pure function of the document, which is
+/// what stops a preview from disagreeing with the panel.
+fn picture_height(
+    picture: kobo_ui::TilePicture,
+    metrics: &kobo_ui::DisplayMetrics,
+    area: ProseArea,
+) -> i32 {
+    let (source_width, source_height) = picture.source;
+    let width = i32::try_from(source_width).unwrap_or(i32::MAX).max(1);
+    let height = i32::try_from(source_height).unwrap_or(i32::MAX).max(1);
+    let fitted = if width > area.width {
+        height.saturating_mul(area.width) / width
+    } else {
+        height
+    };
+    let ceiling = metrics.tenth_mm(i32::from(MAX_PICTURE_MM) * 10);
+    fitted.min(ceiling).min(area.height).max(1)
+}
+
+/// Where the book itself says a chapter begins.
+///
+/// A chapter starting halfway down the page, under the last paragraph of the
+/// one before it, is the tell of something that reflows text rather than sets
+/// a book. It is the difference a reader notices first, and the book already
+/// stated where the boundaries are.
+fn chapter_starts_of(document: &Document) -> BTreeSet<usize> {
+    document.contents.iter().map(|entry| entry.block).collect()
+}
+
+/// Ends the page being filled, if anything is on it.
+///
+/// A page break with nothing above it is not a break, it is a blank page, and
+/// a book whose first chapter is listed in its contents would otherwise open
+/// on one.
+fn break_page(pages: &mut Vec<Vec<Piece>>, page: &mut Vec<Piece>, used: &mut i32, height: i32) {
+    if page.is_empty() {
+        return;
+    }
+    // A page holding two lines and then nothing is not a chapter opening, it
+    // is a fragment that claimed a page. Gutenberg's books begin with one:
+    // a single sentence saying an illustrated edition exists, in a file of
+    // its own, which turned the first page of every one of them into a
+    // notice and a field of white. Something that short keeps the company of
+    // whatever follows it instead.
+    if *used < height / MIN_PAGE_FILL {
+        return;
+    }
+    pages.push(std::mem::take(page));
+    *used = 0;
+}
+
+// A packing loop: measure, place, and break when the page is full. Splitting
+// it would mean handing the same six pieces of state to each half, and the
+// hand-off is where an off-by-one in a page break would hide.
+#[allow(clippy::too_many_lines)]
 fn paginate(
     document: &Document,
     highlights: &BTreeSet<Locator>,
+    pictures: &BTreeMap<String, kobo_ui::TilePicture>,
     metrics: &kobo_ui::DisplayMetrics,
     area: ProseArea,
 ) -> (Vec<Vec<Piece>>, bool) {
@@ -1157,8 +1471,10 @@ fn paginate(
         return (pages, !document.blocks.is_empty());
     }
     let mut capped = false;
+    let chapter_starts = chapter_starts_of(document);
 
     for (index, block) in document.blocks.iter().enumerate() {
+        let starts_chapter = chapter_starts.contains(&index);
         let Ok(index) = Locator::try_from(index) else {
             break;
         };
@@ -1167,6 +1483,14 @@ fn paginate(
             break;
         }
         let kind = kind_of(block, highlights.contains(&index));
+        // A file seam is a chapter boundary in every EPUB, listed in the
+        // contents or not, and it used to draw a small space instead.
+        if kind == Kind::Break || starts_chapter {
+            break_page(&mut pages, &mut page, &mut used, area.height);
+            if kind == Kind::Break {
+                continue;
+            }
+        }
         let size = kind.size();
         let height = size.line_height_in(area.face);
         let (_, width) = quote_offsets(metrics, area.width, kind.depth());
@@ -1192,7 +1516,40 @@ fn paginate(
             continue;
         }
 
-        let Some(text) = block.text() else { continue };
+        // A picture is placed whole or moved to the next page: there is no
+        // half of one to leave behind, which is what the line-by-line packing
+        // below does for prose. A picture nobody has handed over yet falls
+        // through to that packing with its description standing in for it.
+        let described;
+        let text = if let Block::Picture { name, alt } = block {
+            if let Some(drawn) = pictures.get(name.as_str()) {
+                place_picture(
+                    *drawn,
+                    Piece {
+                        block: index,
+                        text: alt.clone(),
+                        kind,
+                    },
+                    &mut Placing {
+                        pages: &mut pages,
+                        page: &mut page,
+                        used: &mut used,
+                        gap,
+                    },
+                    metrics,
+                    area,
+                );
+                continue;
+            }
+            if alt.is_empty() {
+                continue;
+            }
+            described = alt.clone();
+            described.as_str()
+        } else {
+            let Some(text) = block.text() else { continue };
+            text
+        };
         let lines = wrap_text_in(text, width, size, area.face);
         if lines.is_empty() {
             continue;
@@ -1266,6 +1623,7 @@ fn kind_of(block: &Block, marked: bool) -> Kind {
         Block::Quote(_) => Kind::Quote,
         Block::Preformatted(_) => Kind::Preformatted,
         Block::Item { .. } => Kind::Item,
+        Block::Picture { .. } => Kind::Picture,
         Block::Rule => Kind::Rule,
         Block::Break => Kind::Break,
     }
@@ -1300,6 +1658,7 @@ mod tests {
             author: Some("Jane Austen".into()),
             blocks,
             truncated: false,
+            ..Document::default()
         }
     }
 
@@ -1309,6 +1668,299 @@ mod tests {
 
     /// Everything behind the reading bar (type size, front light, bookmarks,
     /// marked passages) was written, tested and shipped while being
+    /// A book whose second chapter is named in its contents.
+    ///
+    /// Short enough that both chapters would sit on one page if nothing put
+    /// them apart, which is the whole point of the test.
+    fn two_chapters() -> Document {
+        Document {
+            title: Some("A Book".into()),
+            blocks: {
+                let mut blocks = vec![Block::Heading {
+                    level: 1,
+                    text: "Chapter One".into(),
+                }];
+                // Enough to fill its page: a chapter that ends two lines in is
+                // a fragment, and a fragment deliberately does not break.
+                blocks.extend((0..14).map(|n| {
+                    Block::Paragraph(format!("Paragraph {n} of the first chapter, at length."))
+                }));
+                blocks.push(Block::Heading {
+                    level: 1,
+                    text: "Chapter Two".into(),
+                });
+                blocks.push(Block::Paragraph("So begins the second.".into()));
+                blocks
+            },
+            contents: vec![
+                kobo_doc::Contents {
+                    title: "Chapter One".into(),
+                    block: 0,
+                    depth: 0,
+                },
+                kobo_doc::Contents {
+                    title: "Chapter Two".into(),
+                    block: 15,
+                    depth: 0,
+                },
+            ],
+            ..Document::default()
+        }
+    }
+
+    fn illustrated() -> Document {
+        Document {
+            blocks: vec![
+                Block::Paragraph("Before the plate.".into()),
+                Block::Picture {
+                    name: "plate.png".into(),
+                    alt: "A cathedral tower at dawn".into(),
+                },
+                Block::Paragraph("After the plate.".into()),
+            ],
+            ..Document::default()
+        }
+    }
+
+    #[test]
+    fn a_picture_nobody_has_handed_over_reads_as_what_it_shows() {
+        // The ordinary state for an application that has not asked for
+        // pictures, and the state for one whose picture would not decode. A
+        // gap the reader cannot account for is worse than a description.
+        let reader = Reader::open(illustrated(), Memory::default(), &panel());
+        let words: Vec<&str> = reader
+            .page()
+            .iter()
+            .map(|piece| piece.text.as_str())
+            .collect();
+        assert!(
+            words.iter().any(|text| text.contains("cathedral tower")),
+            "{words:?}"
+        );
+    }
+
+    #[test]
+    fn a_picture_and_the_prose_around_it_share_a_page() {
+        // An illustrated book is prose with plates set into it, not plates on
+        // pages of their own: Peter Rabbit puts twenty-eight of them beside
+        // the sentences they illustrate. Nothing here asserted that the two
+        // ever land on the same page, so a picture that pushed every line off
+        // its page would have passed every test in this file.
+        let mut blocks = vec![Block::Paragraph(
+            "Once upon a time there were four little rabbits.".into(),
+        )];
+        blocks.push(Block::Picture {
+            name: "plate.png".into(),
+            alt: "Four rabbits under a fir tree".into(),
+        });
+        blocks.push(Block::Paragraph(
+            "They lived with their mother in a sand-bank.".into(),
+        ));
+        let document = Document {
+            blocks,
+            ..Document::default()
+        };
+        let mut reader = Reader::open(document, Memory::default(), &panel());
+        let mut pictures = BTreeMap::new();
+        // Short enough to leave room for the sentences on either side, which
+        // is the case worth pinning: a full-height plate legitimately takes
+        // the page to itself.
+        pictures.insert(
+            "plate.png".to_owned(),
+            kobo_ui::TilePicture::new(kobo_ui::PictureHandle(1), 400, 300),
+        );
+        reader.set_pictures(pictures, &panel());
+        // The screen rather than the page: a described picture and a drawn one
+        // are the same `Kind::Picture` piece carrying the same alt text, and
+        // only the screen distinguishes them -- one becomes a picture node and
+        // the other a line of secondary prose. Asserting on the page passes
+        // whether or not a picture was ever handed over.
+        let screen = reader.screen("The Tale of Peter Rabbit");
+        assert!(
+            screen
+                .nodes
+                .iter()
+                .any(|node| matches!(node, kobo_sdk::Node::Picture { .. })),
+            "the plate was described rather than drawn"
+        );
+        let lines: Vec<String> = screen
+            .layout_with(&panel(), &kobo_ui::Chrome::with_back(true))
+            .nodes
+            .iter()
+            .flat_map(|node| node.text_lines.clone())
+            .collect();
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("four little rabbits")),
+            "the prose before the plate left the page: {lines:?}"
+        );
+        assert!(
+            lines.iter().any(|line| line.contains("sand-bank")),
+            "the prose after the plate left the page: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn a_picture_that_was_handed_over_takes_the_room_it_needs() {
+        // The description stops being drawn once there is a picture to draw
+        // in its place, and the page has to be packed around the picture's
+        // real height rather than a line of text's.
+        // Padded until a page is nearly full, because a picture is capped at
+        // ninety millimetres and an otherwise empty page has room for one.
+        let mut blocks: Vec<Block> = (0..12)
+            .map(|n| {
+                Block::Paragraph(format!(
+                    "Paragraph number {n} of the chapter before the plate."
+                ))
+            })
+            .collect();
+        blocks.push(Block::Picture {
+            name: "plate.png".into(),
+            alt: "A cathedral tower at dawn".into(),
+        });
+        let document = Document {
+            blocks,
+            ..Document::default()
+        };
+        let mut reader = Reader::open(document, Memory::default(), &panel());
+        let plain = reader.page_count();
+        let mut pictures = BTreeMap::new();
+        pictures.insert(
+            "plate.png".to_owned(),
+            kobo_ui::TilePicture::new(kobo_ui::PictureHandle(1), 600, 4000),
+        );
+        // No repaginating here on purpose. Handing pictures over is itself the
+        // thing that has to remeasure: when it did not, an illustrated book
+        // kept the page count it had when every plate was one line of alt text,
+        // and drew the plates off the bottom of the panel.
+        reader.set_pictures(pictures, &panel());
+        assert!(
+            reader.page_count() > plain,
+            "a picture took no more room than the line of text standing in for it"
+        );
+    }
+
+    #[test]
+    fn a_book_says_which_pictures_it_wants() {
+        let reader = Reader::open(illustrated(), Memory::default(), &panel());
+        assert_eq!(reader.pictures_wanted(), vec!["plate.png"]);
+    }
+
+    #[test]
+    fn a_footnote_marker_on_the_page_is_somewhere_a_reader_can_go() {
+        // The words stayed and the going there did not: every link in an
+        // EPUB was flattened to plain text, so a footnote marker was a
+        // superscript number that did nothing.
+        let document = Document {
+            blocks: vec![
+                Block::Paragraph("A sentence with a note.".into()),
+                Block::Paragraph("The note itself.".into()),
+            ],
+            anchors: [("note-1".to_owned(), 1usize)].into_iter().collect(),
+            links: vec![kobo_doc::Link {
+                block: 0,
+                text: "1".into(),
+                target: "note-1".into(),
+            }],
+            ..Document::default()
+        };
+        let mut reader = Reader::open(document, Memory::default(), &panel());
+        assert_eq!(reader.act(action::LINKS, &panel()), Outcome::Repaint);
+        let names = reader
+            .screen("A Book")
+            .layout_with(&panel(), &kobo_ui::Chrome::with_back(true))
+            .nodes
+            .iter()
+            .flat_map(|node| node.text_lines.clone())
+            .collect::<Vec<_>>();
+        assert!(names.iter().any(|text| text == "1"), "{names:?}");
+        assert_eq!(
+            reader.act(&format!("{}1", action::GO), &panel()),
+            Outcome::Save
+        );
+    }
+
+    #[test]
+    fn a_link_out_to_the_web_is_not_offered_as_somewhere_to_go() {
+        // There is no browser here, and a button that cannot do anything is
+        // worse than the absence of one.
+        let document = Document {
+            blocks: vec![Block::Paragraph("A sentence citing a website.".into())],
+            links: vec![kobo_doc::Link {
+                block: 0,
+                text: "the website".into(),
+                target: "https://example.com/".into(),
+            }],
+            ..Document::default()
+        };
+        let reader = Reader::open(document, Memory::default(), &panel());
+        assert!(reader.links_here().is_empty());
+    }
+
+    #[test]
+    fn a_fragment_does_not_claim_a_page_of_its_own() {
+        // Every Project Gutenberg book opens with a single sentence saying an
+        // illustrated edition exists, in a file of its own. Breaking after it
+        // turned the first page of every one of them into a notice and a
+        // field of white.
+        let document = Document {
+            blocks: vec![
+                Block::Paragraph("There is an illustrated edition of this title.".into()),
+                Block::Break,
+                Block::Paragraph("Chapter one begins here, and runs on at length.".into()),
+            ],
+            ..Document::default()
+        };
+        let reader = Reader::open(document, Memory::default(), &panel());
+        assert_eq!(
+            reader.page_count(),
+            1,
+            "two lines and a seam took a page to themselves"
+        );
+    }
+
+    #[test]
+    fn a_chapter_begins_on_a_page_of_its_own() {
+        // Both chapters fit on one page with room to spare, so anything that
+        // does not deliberately break between them will run them together --
+        // which is what a reader sees as "this is not a book".
+        let reader = Reader::open(two_chapters(), Memory::default(), &panel());
+        assert_eq!(reader.page_count(), 2, "the chapters shared a page");
+        let first: Vec<&str> = reader
+            .page()
+            .iter()
+            .map(|piece| piece.text.as_str())
+            .collect();
+        assert!(
+            first.iter().any(|text| text.contains("first chapter")),
+            "{first:?}"
+        );
+        assert!(
+            !first.iter().any(|text| text.contains("Chapter Two")),
+            "the second chapter started on the first chapter's page: {first:?}"
+        );
+    }
+
+    #[test]
+    fn a_file_seam_starts_a_page_rather_than_leaving_a_gap() {
+        // An EPUB's chapters are separate files and the seam between two of
+        // them is a chapter boundary even when the book listed no contents.
+        // It used to draw a small space, so one page held the end of one
+        // chapter and the start of the next.
+        let mut blocks: Vec<Block> = (0..14)
+            .map(|n| Block::Paragraph(format!("Paragraph {n} of the chapter before the seam.")))
+            .collect();
+        blocks.push(Block::Break);
+        blocks.push(Block::Paragraph("The start of the next.".into()));
+        let document = Document {
+            blocks,
+            ..Document::default()
+        };
+        let reader = Reader::open(document, Memory::default(), &panel());
+        assert_eq!(reader.page_count(), 2, "the seam drew a gap instead");
+    }
+
     /// unreachable: the reading screen carries nothing at the foot, and the
     /// whole content area answered a tap with a page turn. This is the way in.
     #[test]
@@ -1391,6 +2043,7 @@ mod tests {
                 author: None,
                 blocks: vec![Block::Paragraph("Short.".into())],
                 truncated: false,
+                ..Document::default()
             },
             Memory::default(),
             &panel(),
@@ -1797,6 +2450,7 @@ mod tests {
                     .map(|index| Block::Paragraph(format!("Paragraph {index}.")))
                     .collect(),
                 truncated: true,
+                ..Document::default()
             },
             Memory::default(),
             &panel(),
@@ -2022,6 +2676,7 @@ mod tests {
                 author: None,
                 blocks: Vec::new(),
                 truncated: false,
+                ..Document::default()
             },
             Memory::default(),
             &panel(),
@@ -2091,6 +2746,7 @@ mod tests {
                 author: None,
                 blocks: vec![Block::Rule],
                 truncated: false,
+                ..Document::default()
             },
             Memory::default(),
             &panel(),
@@ -2189,6 +2845,7 @@ mod tests {
             author: None,
             blocks: vec![Block::Paragraph(giant)],
             truncated: false,
+            ..Document::default()
         };
         let reader = Reader::open(document, Memory::default(), &panel());
         assert!(reader.page_count() > 1);
@@ -2202,6 +2859,7 @@ mod tests {
             author: None,
             blocks: Vec::new(),
             truncated: false,
+            ..Document::default()
         };
         let mut reader = Reader::open(document, Memory::default(), &panel());
         assert_eq!(reader.page_count(), 0);

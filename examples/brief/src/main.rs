@@ -273,6 +273,8 @@ impl Brief {
             url: TOP.to_owned(),
             offset: 0,
             max_bytes: CEILING,
+            credential: None,
+            headers: Vec::new(),
         }) {
             Some(task) => self.fetching = Fetching::Index(task),
             None => self.note = Some("Too much already in flight.".to_owned()),
@@ -292,6 +294,8 @@ impl Brief {
             url,
             offset: 0,
             max_bytes: CEILING,
+            credential: None,
+            headers: Vec::new(),
         }) {
             self.fetching = Fetching::Story(task, position);
         } else {

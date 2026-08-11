@@ -37,7 +37,14 @@ const MANAGED_BUILTINS: &[BuiltinApp] = &[
         summary: "Research, narrate and play an original audiobook about any topic.",
         version: "1.0.0",
         glyph: Glyph::Headphones,
-        capabilities: &["network", "audio", "bluetooth-audio"],
+        // `bluetooth-control` is here because the player this application
+        // opens is `kobo_sdk::audio::AudioPlayer`, and the Clara BW has no
+        // speaker: when no audio device is connected, Play shows the
+        // component's own picker, which scans, pairs and connects. Those are
+        // `bluetooth-control` requests made on the application's behalf, so
+        // declaring only `bluetooth-audio` left Play refused the moment a
+        // reader had nothing paired -- which is every reader, the first time.
+        capabilities: &["network", "audio", "bluetooth-audio", "bluetooth-control"],
     },
     BuiltinApp {
         id: "brief",
@@ -800,7 +807,9 @@ fn network_error(error: kobo_protocol::TaskError) -> DeviceError {
         kobo_protocol::TaskError::TooLarge | kobo_protocol::TaskError::Denied => {
             DeviceError::InvalidInput
         }
-        kobo_protocol::TaskError::NoCredential => DeviceError::Authentication,
+        kobo_protocol::TaskError::NoCredential | kobo_protocol::TaskError::Unauthorized => {
+            DeviceError::Authentication
+        }
     }
 }
 
@@ -965,6 +974,13 @@ mod tests {
         assert!(audiobook.holds(kobo_policy::Capability::Network));
         assert!(audiobook.holds(kobo_policy::Capability::Audio));
         assert!(audiobook.holds(kobo_policy::Capability::BluetoothAudio));
+        // The player is `kobo_sdk::audio::AudioPlayer`, and on a device with
+        // no speaker its picker scans, pairs and connects when nothing is
+        // connected yet. Those are `bluetooth-control` requests, so an
+        // application that shows that player and does not declare it has a
+        // Play button that is refused for every reader who has not already
+        // paired something -- which is every reader, once.
+        assert!(audiobook.holds(kobo_policy::Capability::BluetoothControl));
         assert!(builtin_declared("terminal").is_none());
     }
 

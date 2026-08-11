@@ -1,0 +1,15 @@
+HTTP/2 401 
+www-authenticate: Basic realm="Enter your Patrons Circle email address and leave the password empty."
+strict-transport-security: max-age=15768000
+x-frame-options: sameorigin
+x-content-type-options: nosniff
+x-xss-protection: 1; mode=block
+referrer-policy: no-referrer-when-downgrade
+content-security-policy: default-src 'self'; style-src 'self' 'unsafe-inline';
+permissions-policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), bluetooth=()
+access-control-allow-origin: *
+cache-control: no-store
+content-type: application/xhtml+xml; charset=utf-8
+date: Mon, 10 Aug 2026 07:41:31 GMT
+server: Apache
+

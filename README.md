@@ -49,7 +49,7 @@ utilities.
 </tr>
 <tr>
 <td valign="top"><a href="examples/audiobook/README.md"><img width="230" src="examples/audiobook/screenshots/player.png" alt="An audiobook player with cover art, position and transport controls"></a><br><b><a href="examples/audiobook/README.md">Audiobook Studio</a></b><br>Researches, writes, narrates, and plays an original audiobook.</td>
-<td valign="top"><a href="examples/gutenbird/README.md"><img width="230" src="examples/gutenbird/screenshots/shelf.png" alt="A shelf of Project Gutenberg book covers"></a><br><b><a href="examples/gutenbird/README.md">Gutenbird</a></b><br>Finds, downloads, and reads free Project Gutenberg books.</td>
+<td valign="top"><a href="examples/gutenbird/README.md"><img width="230" src="examples/gutenbird/screenshots/shelf.png" alt="A shelf of book covers from an OPDS catalogue"></a><br><b><a href="examples/gutenbird/README.md">Gutenbird</a></b><br>Reads any OPDS library: Project Gutenberg, Standard Ebooks, Open Library, or one you add.</td>
 <td valign="top"><a href="examples/hn/README.md"><img width="230" src="examples/hn/screenshots/stories.png" alt="A ranked list of Hacker News stories"></a><br><b><a href="examples/hn/README.md">Hacker News</a></b><br>Top, New, Ask, and Show stories with complete comment threads.</td>
 </tr>
 <tr>
