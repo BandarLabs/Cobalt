@@ -366,6 +366,66 @@ because a killed session leaves nobody to do so, and the kernel arms it anyway
 on the next boot. A device that resets every time a developer looks at it has no
 working safety net either.
 
+### Reading the black box
+
+The watchdogs above are only nameable because there is a record of what the
+session was doing when one of them fired. Standard output is not that record.
+It lives on a tmpfs a reboot empties, and the copy on `/mnt/onboard` is VFAT
+with buffered writes, so the last several seconds -- exactly the seconds that
+matter -- are never on the card when the device comes back.
+
+So `crates/kobod/src/blackbox.rs` writes to the book partition and calls
+`fsync` after every single line. That is deliberately expensive, and it is the
+only way to learn *when* the device died and *what it was doing* at the time.
+
+| | |
+| --- | --- |
+| Where | `/mnt/onboard/.kobo-blackbox.log` |
+| Switch | `KOBO_BLACKBOX=1`, off otherwise |
+| Set for you by | `kobo present`, for the whole session |
+| On the device | `kobo shell --device IP "tail -c 2000 /mnt/onboard/.kobo-blackbox.log"` |
+
+It appends and never truncates, so the record of a session that ended in a
+reset survives the run investigating it. It is off by default because a
+synchronous write per event on somebody's only reader is a cost that should be
+paid on purpose; a session driven from a development machine is the opposite
+case, which is why `present` turns it on without being asked.
+
+Every line is two clocks and an event:
+
+```text
+   3209.84  1501.07 session finished, handing the panel back
+   3210.21  1501.43 panel and touch released, restarting the reader
+   3210.69  1501.91 alive
+```
+
+The first column is the kernel's own clock from `/proc/uptime`, the second is
+seconds since this session started. Read the first column when you want to know
+whether the device rebooted and the second when you want to know how far into a
+session something happened.
+
+The kernel clock is the one that answers the question that matters most, and it
+answers it by itself. On this device `/proc/uptime` counts suspended time and
+never resets on its own, so a reading that suddenly drops to single digits is a
+boot and nothing else. A wall clock cannot make that claim, because NTP can step
+it. This is also why a trace that simply stops, with no `session finished` line
+before it, is the signature of a hardware reset rather than an ordinary exit:
+nothing got the chance to write a last line.
+
+Anything an application logs goes to the trace too, prefixed `app`, so a hang
+inside an application can be read back the same way. This is the reason to
+reach for `context.log(...)` around work you suspect: an application logs to
+explain itself, and the times it most needs to be believed are the times it
+took the reader down with it.
+
+The excerpt above is the whole method in three lines. A reader that had returned
+to the stock interface looks identical whether the session ended cleanly or the
+`SoC` watchdog reset the device, and the two have completely different causes.
+Here the session announced its own end at its lease expiry and the next line is
+`alive`, so it was a timed handback and there is nothing to fix. Had it been a
+reset there would be no `session finished` at all, and the following line would
+carry a kernel clock of a few seconds.
+
 ### If you have shipped for Android or iOS
 
 The concepts are the same and only the spelling differs, so the spellings you
