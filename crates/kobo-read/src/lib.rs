@@ -1727,6 +1727,69 @@ mod tests {
     }
 
     #[test]
+    fn a_picture_and_the_prose_around_it_share_a_page() {
+        // An illustrated book is prose with plates set into it, not plates on
+        // pages of their own: Peter Rabbit puts twenty-eight of them beside
+        // the sentences they illustrate. Nothing here asserted that the two
+        // ever land on the same page, so a picture that pushed every line off
+        // its page would have passed every test in this file.
+        let mut blocks = vec![Block::Paragraph(
+            "Once upon a time there were four little rabbits.".into(),
+        )];
+        blocks.push(Block::Picture {
+            name: "plate.png".into(),
+            alt: "Four rabbits under a fir tree".into(),
+        });
+        blocks.push(Block::Paragraph(
+            "They lived with their mother in a sand-bank.".into(),
+        ));
+        let document = Document {
+            blocks,
+            ..Document::default()
+        };
+        let mut reader = Reader::open(document, Memory::default(), &panel());
+        let mut pictures = BTreeMap::new();
+        // Short enough to leave room for the sentences on either side, which
+        // is the case worth pinning: a full-height plate legitimately takes
+        // the page to itself.
+        pictures.insert(
+            "plate.png".to_owned(),
+            kobo_ui::TilePicture::new(kobo_ui::PictureHandle(1), 400, 300),
+        );
+        reader.set_pictures(pictures);
+        reader.repaginate(&panel());
+        // The screen rather than the page: a described picture and a drawn one
+        // are the same `Kind::Picture` piece carrying the same alt text, and
+        // only the screen distinguishes them -- one becomes a picture node and
+        // the other a line of secondary prose. Asserting on the page passes
+        // whether or not a picture was ever handed over.
+        let screen = reader.screen("The Tale of Peter Rabbit");
+        assert!(
+            screen
+                .nodes
+                .iter()
+                .any(|node| matches!(node, kobo_sdk::Node::Picture { .. })),
+            "the plate was described rather than drawn"
+        );
+        let lines: Vec<String> = screen
+            .layout_with(&panel(), &kobo_ui::Chrome::with_back(true))
+            .nodes
+            .iter()
+            .flat_map(|node| node.text_lines.clone())
+            .collect();
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("four little rabbits")),
+            "the prose before the plate left the page: {lines:?}"
+        );
+        assert!(
+            lines.iter().any(|line| line.contains("sand-bank")),
+            "the prose after the plate left the page: {lines:?}"
+        );
+    }
+
+    #[test]
     fn a_picture_that_was_handed_over_takes_the_room_it_needs() {
         // The description stops being drawn once there is a picture to draw
         // in its place, and the page has to be packed around the picture's
