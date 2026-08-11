@@ -739,7 +739,7 @@ mod tests {
         beats, encode, glyph, letter_at, paint, Beat, Morse, AGAIN, CODE, MAX_MESSAGE, STOP,
         TOGGLE_LIGHT,
     };
-    use kobo_sdk::{action_id, AppRunner, Command, DeviceRequest};
+    use kobo_sdk::{action_id, AppRunner, Command, DeviceRequest, TaskOutcome};
     use kobo_ui::{tone, Chrome, CLARA_BW_METRICS};
 
     /// Renders a run of beats as the light would show it, so a test can state
@@ -987,6 +987,79 @@ mod tests {
         let run = beats(&signals);
         for at in 0..run.len() {
             assert_ne!(letter_at(&run, at), Some(space), "at second {at}");
+        }
+    }
+
+    /// Names the letter in a picture by painting every candidate and comparing,
+    /// so a test reads the panel the way somebody across the room does rather
+    /// than trusting the application's own account of what it drew.
+    fn letter_in(grey: &[u8], width: u32, height: u32) -> Option<char> {
+        let room = CLARA_BW_METRICS.tenth_mm(super::LETTER_SENDING_TENTHS_MM);
+        CODE.iter()
+            .map(|(character, _)| *character)
+            .chain([' '])
+            .find(|character| {
+                paint(*character, room).is_some_and(|(drawn_width, drawn_height, pixels)| {
+                    drawn_width == width && drawn_height == height && pixels == grey
+                })
+            })
+    }
+
+    /// Walks a message a second at a time, reporting what the light is doing
+    /// and which letter the panel is carrying at each one.
+    ///
+    /// The picture is only sent when the letter changes, so what is on the
+    /// panel at any second is the last picture sent -- which is exactly the
+    /// thing that can drift out of step with the light.
+    fn watched(message: &str) -> Vec<(bool, Option<char>)> {
+        let mut runner = AppRunner::new(Morse::default());
+        runner.start();
+        runner.app_mut().compose(message);
+        let run = beats(&encode(message).0);
+        let mut commands = runner.action(action_id(AGAIN));
+        let mut panel = None;
+        let mut seen = Vec::new();
+        for beat in &run {
+            for command in &commands {
+                if let Command::PutPicture {
+                    width,
+                    height,
+                    grey,
+                    ..
+                } = command
+                {
+                    panel = letter_in(grey, *width, *height);
+                }
+            }
+            seen.push((beat.lit, panel));
+            let Some(task) = commands.iter().rev().find_map(|command| match command {
+                Command::Spawn { task, .. } => Some(*task),
+                _ => None,
+            }) else {
+                break;
+            };
+            commands = runner.task_outcome(task, TaskOutcome::Completed(Vec::new()));
+        }
+        seen
+    }
+
+    /// The reader across the room is reading the panel and the light together,
+    /// so every second the light is lit, the letter on the panel has to be the
+    /// letter that light is spelling.
+    #[test]
+    fn no_letter_is_ever_flashed_while_another_is_on_the_panel() {
+        for message in ["e t", "sos", "hi there"] {
+            let signals = encode(message).0;
+            let run = beats(&signals);
+            for (second, ((lit, panel), beat)) in watched(message).iter().zip(&run).enumerate() {
+                if *lit {
+                    assert_eq!(
+                        *panel,
+                        Some(signals[beat.signal].character),
+                        "{message} at second {second}"
+                    );
+                }
+            }
         }
     }
 
