@@ -1408,7 +1408,19 @@ fn host_applications(
                             }
                         }
                         Message::DropPicture { handle } => apps[index].pictures.remove(handle),
-                        Message::Log { .. } => {}
+                        // An application logs to explain itself, and the times
+                        // it most needs to be believed are the times it took
+                        // the reader down with it. Dropping the line here left
+                        // the diagnostics an application had gone to the
+                        // trouble of emitting with nowhere to arrive, on the
+                        // one path that actually runs on the device.
+                        Message::Log { level, message } => {
+                            trace(&format!(
+                                "app {} {level:?}: {}",
+                                apps[index].name,
+                                message.replace(['\r', '\n'], " ")
+                            ));
+                        }
                         Message::DeviceRequest(request) => {
                             let not_declared = !system_request_allowed(&apps[index].name, &request)
                                 || kobo_policy::request_capability(&request).is_some_and(
