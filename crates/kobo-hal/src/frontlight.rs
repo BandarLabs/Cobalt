@@ -33,6 +33,34 @@
 //! in. A device whose maximum is 255 and one whose maximum is 100 both take
 //! `50` to mean half, so an application does not have to know which it is
 //! talking to.
+//!
+//! # Why the top of the range is a special case
+//!
+//! The aggregate control is not one lamp but two, and alongside `brightness` it
+//! publishes `color`, which is the balance between them. Measured on a Clara BW,
+//! writing the aggregate with the balance at either end lights one bank and
+//! leaves the other dark:
+//!
+//! | `color` | bank A | bank B |
+//! | ------- | ------ | ------ |
+//! | 0       | 0x00   | 0xfe   |
+//! | 5       | 0xe2   | 0xe4   |
+//! | 10      | 0xfb   | 0x00   |
+//!
+//! The stock reader sits at one end, so its own maximum is half the light the
+//! panel can make -- and the half it uses is the bank wired for the lower
+//! full-scale current. That is fine for reading, where the balance is a
+//! preference about warmth and the brightness on offer is plenty. It is not
+//! fine for an application asking for the top of the range, which is asking for
+//! as much light as this device has: a beacon meant to be read across a room
+//! has nothing else to spend.
+//!
+//! So `100` means every bank, and anything below it leaves the balance the
+//! owner chose alone. The seam is at the top of the scale because that is the
+//! only point where the two readings of "brighter" disagree, and it is the
+//! point where the honest answer is light rather than warmth. The balance is
+//! remembered and put back by [`Frontlight::restore`] exactly as the brightness
+//! is, so a session that ends leaves nothing moved.
 
 use std::fs;
 use std::io;
@@ -58,6 +86,30 @@ pub struct Frontlight {
     control: PathBuf,
     maximum: u32,
     original: u8,
+    /// The balance between the banks, on a control that publishes one.
+    ///
+    /// [`None`] on a light with a single bank, and on any device that does not
+    /// publish the file, which is why nothing here requires it.
+    balance: Option<Balance>,
+}
+
+/// The balance between the two banks of a light that has two.
+#[derive(Clone, Copy, Debug)]
+struct Balance {
+    /// The end of the scale. The banks are lit together in the middle of it.
+    maximum: u32,
+    /// What the owner had it at, which is what gets put back.
+    original: u32,
+}
+
+impl Balance {
+    /// The setting that lights both banks at once.
+    ///
+    /// The middle rather than either end: the ends are where the light is
+    /// entirely one bank, and the whole point of asking is to have both.
+    const fn even(self) -> u32 {
+        self.maximum / 2
+    }
 }
 
 impl Frontlight {
@@ -78,10 +130,22 @@ impl Frontlight {
         }
         let raw = read_number(&control.join("brightness"))?;
         let original = to_percent(raw, maximum);
+        // Two or more, because a scale of 0 and 1 is two ends and no middle:
+        // there is no setting on it that lights both banks, so moving it would
+        // change the warmth and buy no light for it.
+        let balance = read_number(&control.join("max_color"))
+            .filter(|maximum| *maximum >= 2)
+            .and_then(|maximum| {
+                Some(Balance {
+                    maximum,
+                    original: read_number(&control.join("color"))?,
+                })
+            });
         Some(Self {
             control,
             maximum,
             original,
+            balance,
         })
     }
 
@@ -108,24 +172,59 @@ impl Frontlight {
     /// same integer, and an application that redraws a slider from the returned
     /// value stays honest about it.
     ///
+    /// At the top of the range every bank is lit; below it the owner's balance
+    /// between them is left alone. The balance is written on every call rather
+    /// than only on the way past 100, so that stepping back down from the top
+    /// hands the warmth back straight away instead of at the end of the
+    /// session.
+    ///
     /// # Errors
     ///
     /// When the control cannot be written, which on this device means the file
     /// vanished or the process is not root.
     pub fn set(&self, percent: u8) -> io::Result<u8> {
         let percent = percent.min(100);
+        if let Some(balance) = self.balance {
+            self.balance(if percent == 100 {
+                balance.even()
+            } else {
+                balance.original
+            })?;
+        }
+        self.brightness(percent)
+    }
+
+    /// Writes the balance between the banks.
+    ///
+    /// Always before the brightness, never after: the driver works the split
+    /// out when it is handed a level, so a balance written afterwards would sit
+    /// in the file until something else moved the light.
+    fn balance(&self, colour: u32) -> io::Result<()> {
+        fs::write(self.control.join("color"), format!("{colour}\n"))
+    }
+
+    /// Writes the level, and reports what the hardware could make of it.
+    fn brightness(&self, percent: u8) -> io::Result<u8> {
         let raw = to_raw(percent, self.maximum);
         fs::write(self.control.join("brightness"), format!("{raw}\n"))?;
         Ok(to_percent(raw, self.maximum))
     }
 
-    /// Puts the light back to where it was found.
+    /// Puts the light back to where it was found, balance included.
+    ///
+    /// Not [`Self::set`] with the original level, because an owner who had the
+    /// light at the top of its range would have that read as a request for
+    /// every bank and get their warmth changed by the very call meant to undo
+    /// us.
     ///
     /// # Errors
     ///
     /// As [`Self::set`].
     pub fn restore(&self) -> io::Result<u8> {
-        self.set(self.original)
+        if let Some(balance) = self.balance {
+            self.balance(balance.original)?;
+        }
+        self.brightness(self.original)
     }
 }
 
@@ -189,6 +288,21 @@ mod tests {
         fs::create_dir_all(&dir).expect("create");
         fs::write(dir.join("brightness"), brightness).expect("write");
         fs::write(dir.join("max_brightness"), maximum).expect("write");
+    }
+
+    /// Adds the balance between the banks, which only a two bank light has.
+    fn banks(root: &Path, name: &str, colour: &str, maximum: &str) {
+        let dir = root.join(name);
+        fs::write(dir.join("color"), colour).expect("write");
+        fs::write(dir.join("max_color"), maximum).expect("write");
+    }
+
+    /// What the balance file says now.
+    fn colour(root: &Path, name: &str) -> String {
+        fs::read_to_string(root.join(name).join("color"))
+            .expect("read")
+            .trim()
+            .to_owned()
     }
 
     fn scratch(name: &str) -> std::path::PathBuf {
@@ -262,6 +376,86 @@ mod tests {
     fn a_request_past_the_end_is_clamped_rather_than_wrapped() {
         assert_eq!(to_raw(u8::MAX, 100), 100);
         assert_eq!(to_percent(4000, 255), 100);
+    }
+
+    /// The stock reader sits at one end of the balance, where the light is one
+    /// bank and the other is dark. That is half the light the panel can make,
+    /// and an application asking for the top of the range is asking for all of
+    /// it.
+    #[test]
+    fn asking_for_the_top_of_the_range_lights_every_bank_the_panel_has() {
+        let root = scratch("banks");
+        control(&root, "lm3630a_led", "17", "100");
+        banks(&root, "lm3630a_led", "10", "10");
+        let light = Frontlight::open_in(&root).expect("a light");
+        light.set(100).expect("set");
+        assert_eq!(colour(&root, "lm3630a_led"), "5");
+    }
+
+    /// Warmth is the owner's preference and brightness is not a request to
+    /// change it. Only the very top of the scale, where the two readings of
+    /// "brighter" disagree, is answered with light instead.
+    #[test]
+    fn a_level_short_of_the_top_leaves_the_balance_the_owner_chose_alone() {
+        let root = scratch("balance-kept");
+        control(&root, "lm3630a_led", "17", "100");
+        banks(&root, "lm3630a_led", "10", "10");
+        let light = Frontlight::open_in(&root).expect("a light");
+        light.set(99).expect("set");
+        assert_eq!(colour(&root, "lm3630a_led"), "10");
+    }
+
+    /// Stepping back down from the top hands the warmth back there and then,
+    /// rather than leaving the light changed until the session happens to end.
+    #[test]
+    fn coming_down_from_the_top_gives_the_warmth_straight_back() {
+        let root = scratch("balance-returned");
+        control(&root, "lm3630a_led", "17", "100");
+        banks(&root, "lm3630a_led", "10", "10");
+        let light = Frontlight::open_in(&root).expect("a light");
+        light.set(100).expect("set");
+        light.set(40).expect("set");
+        assert_eq!(colour(&root, "lm3630a_led"), "10");
+    }
+
+    /// An owner who already had the light at its maximum would otherwise have
+    /// the call that undoes us read as a request for every bank, and get their
+    /// warmth changed by the restore itself.
+    #[test]
+    fn a_light_found_at_the_top_is_still_restored_to_the_warmth_it_had() {
+        let root = scratch("balance-restore");
+        control(&root, "lm3630a_led", "100", "100");
+        banks(&root, "lm3630a_led", "10", "10");
+        let light = Frontlight::open_in(&root).expect("a light");
+        light.set(100).expect("set");
+        light.restore().expect("restore");
+        assert_eq!(colour(&root, "lm3630a_led"), "10");
+        assert_eq!(light.percent(), Some(100));
+    }
+
+    /// A scale of 0 and 1 is two ends and no middle, so there is no setting on
+    /// it that lights both banks and nothing to be gained by moving it.
+    #[test]
+    fn a_balance_with_no_middle_to_sit_in_is_left_where_it_is() {
+        let root = scratch("no-middle");
+        control(&root, "lm3630a_led", "17", "100");
+        banks(&root, "lm3630a_led", "1", "1");
+        let light = Frontlight::open_in(&root).expect("a light");
+        light.set(100).expect("set");
+        assert_eq!(colour(&root, "lm3630a_led"), "1");
+    }
+
+    /// Nothing here may require the file: a light with one bank does not
+    /// publish it, and a device that publishes neither still has to work.
+    #[test]
+    fn a_light_with_a_single_bank_is_set_the_way_it_always_was() {
+        let root = scratch("one-bank");
+        control(&root, "lm3630a_led", "17", "100");
+        let light = Frontlight::open_in(&root).expect("a light");
+        assert_eq!(light.set(100).expect("set"), 100);
+        assert_eq!(light.percent(), Some(100));
+        light.restore().expect("restore");
+        assert_eq!(light.percent(), Some(17));
     }
 
     #[test]
