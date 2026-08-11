@@ -501,6 +501,7 @@ fn serve_application(
             Message::Hello { .. }
             | Message::Welcome { .. }
             | Message::Action { .. }
+            | Message::TextHold { .. }
             | Message::TaskOutcome { .. }
             | Message::DeviceResult(_)
             | Message::StoreResult(_)

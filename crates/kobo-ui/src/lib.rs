@@ -13,11 +13,13 @@
 use std::cmp::{max, min};
 use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock};
+use unicode_segmentation::UnicodeSegmentation;
 
 pub const DISPLAY_WIDTH: i32 = 1072;
 pub const DISPLAY_HEIGHT: i32 = 1448;
 const MAX_LAYOUT_NODES: usize = 512;
 const MAX_LAYOUT_DEPTH: usize = 16;
+const MAX_TEXT_HITS: usize = 1024;
 /// Beyond a handful of options a list stops being a choice and becomes a menu,
 /// which is what [`Node::PagedList`] is for.
 pub const MAX_CHOICE_OPTIONS: usize = 6;
@@ -2210,6 +2212,9 @@ pub struct TextPresentation {
     pub underline: bool,
     pub superscript: bool,
     pub subscript: bool,
+    /// A reader annotation behind this exact run, rendered as a light ink
+    /// wash that remains distinct from selection focus in grayscale.
+    pub highlighted: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2217,6 +2222,26 @@ pub struct RichTextSpan {
     pub start: usize,
     pub end: usize,
     pub presentation: TextPresentation,
+}
+
+/// Stable document coordinates attached to publisher-styled reading text.
+///
+/// The UI layer deliberately treats `context` as opaque. A reading
+/// application can use it as a block, resource, or document identifier while
+/// the runtime adds the byte offsets resolved from the touched word.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TextSelection {
+    pub context: u64,
+    pub offset: u32,
+}
+
+/// One word under a finger, expressed in the reading application's logical
+/// coordinate system rather than in pixels.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TextHit {
+    pub context: u64,
+    pub start: u32,
+    pub end: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -2274,6 +2299,7 @@ pub enum Node {
         spans: Vec<RichTextSpan>,
         links: Vec<TextLink>,
         presentation: ParagraphPresentation,
+        selection: Option<TextSelection>,
     },
     /// A line about the content rather than the content: a date, an author, a
     /// size, a count, a status.
@@ -3686,6 +3712,10 @@ pub struct Layout {
     pub page_turns: Option<PageTurns>,
     /// Set when the screen asked to hear about a held finger.
     pub hold: Option<ActionId>,
+    /// Word rectangles derived during layout. These are kept outside `nodes`
+    /// so selectable prose does not spend the bounded semantic-node budget on
+    /// every word in a novel.
+    pub text_hits: Vec<(Rect, TextHit)>,
     /// The face this screen's prose was wrapped in, and must be drawn in.
     ///
     /// Kept on the layout rather than on each node because it is a property of
@@ -3977,6 +4007,20 @@ impl Layout {
             return None;
         }
         Some(hold)
+    }
+
+    /// The logical word under a held finger. Controls always win, matching
+    /// ordinary tap hit testing and preventing a held link or toolbar button
+    /// from unexpectedly selecting book text beneath it.
+    #[must_use]
+    pub fn hit_text(&self, x: i32, y: i32) -> Option<TextHit> {
+        if !self.content.contains(x, y) || self.hit_control(x, y).is_some() {
+            return None;
+        }
+        self.text_hits
+            .iter()
+            .rev()
+            .find_map(|(rect, hit)| rect.contains(x, y).then_some(*hit))
     }
 
     /// The page turn a tap on empty content means, if any.
@@ -4552,6 +4596,7 @@ fn layout_node(
             spans,
             links,
             presentation,
+            selection,
         } => {
             let natural = FontSize::Body.line_height_in(prose).max(1);
             let line_height = natural
@@ -4620,6 +4665,35 @@ fn layout_node(
                             kind: LayoutKind::InlineLink(link.action),
                             text_lines: Vec::new(),
                         });
+                    }
+                }
+                if let Some(selection) = selection {
+                    for (relative, word) in line.unicode_word_indices() {
+                        if layout.text_hits.len() >= MAX_TEXT_HITS {
+                            break;
+                        }
+                        let start = from.saturating_add(relative);
+                        let end = start.saturating_add(word.len());
+                        let (Ok(start_offset), Ok(end_offset)) =
+                            (u32::try_from(start), u32::try_from(end))
+                        else {
+                            continue;
+                        };
+                        let before = measure_text_in(&text[from..start], FontSize::Body, prose).0;
+                        let through = measure_text_in(&text[from..end], FontSize::Body, prose).0;
+                        layout.text_hits.push((
+                            Rect {
+                                x: line_x.saturating_add(before),
+                                y: line_y,
+                                width: through.saturating_sub(before).max(1),
+                                height: line_height,
+                            },
+                            TextHit {
+                                context: selection.context,
+                                start: selection.offset.saturating_add(start_offset),
+                                end: selection.offset.saturating_add(end_offset),
+                            },
+                        ));
                     }
                 }
                 line_y = line_y.saturating_add(line_height);
@@ -9787,6 +9861,9 @@ fn render_all_with_selected_font(
             ),
             LayoutKind::RichText(presentation) => {
                 if let Some(text) = node.text_lines.first() {
+                    if presentation.highlighted {
+                        fill_clipped(surface, node.rect, tone::SURFACE, clip);
+                    }
                     draw_rich_text(
                         surface,
                         text,
@@ -11171,6 +11248,7 @@ mod tests {
                     line_height_percent: 140,
                     ..ParagraphPresentation::default()
                 },
+                selection: None,
             }],
         )
         .with_reading(true);
@@ -11189,6 +11267,40 @@ mod tests {
             .find(|node| matches!(node.kind, LayoutKind::RichText(_)))
             .expect("rich run");
         assert!(first.rect.x > CLARA_BW_METRICS.screen_margin());
+    }
+
+    #[test]
+    fn a_held_unicode_word_resolves_to_stable_document_offsets() {
+        let screen = Screen::new(
+            1,
+            vec![Node::RichText {
+                id: NodeId(1),
+                text: "naïve café".into(),
+                spans: Vec::new(),
+                links: Vec::new(),
+                presentation: ParagraphPresentation::default(),
+                selection: Some(TextSelection {
+                    context: 19,
+                    offset: 100,
+                }),
+            }],
+        )
+        .with_reading(true)
+        .with_hold(ActionId(7));
+        let layout = screen.layout();
+        let (rect, expected) = layout.text_hits.last().expect("selectable word");
+        assert_eq!(
+            layout.hit_text(rect.x + rect.width / 2, rect.y + rect.height / 2),
+            Some(*expected)
+        );
+        assert_eq!(
+            *expected,
+            TextHit {
+                context: 19,
+                start: 107,
+                end: 112,
+            }
+        );
     }
 
     #[test]

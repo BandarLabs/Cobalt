@@ -552,6 +552,13 @@ pub enum Message {
     Action {
         action: ActionId,
     },
+    /// A held word in application-defined logical text coordinates.
+    TextHold {
+        action: ActionId,
+        context: u64,
+        start: u32,
+        end: u32,
+    },
     Log {
         level: LogLevel,
         message: String,
@@ -1465,6 +1472,17 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
         Message::Action { action } => {
             push_u32(&mut payload, action.0);
         }
+        Message::TextHold {
+            action,
+            context,
+            start,
+            end,
+        } => {
+            push_u32(&mut payload, action.0);
+            push_u64(&mut payload, *context);
+            push_u32(&mut payload, *start);
+            push_u32(&mut payload, *end);
+        }
         Message::Log { level, message } => {
             payload.push(*level as u8);
             push_string(&mut payload, message)?;
@@ -1999,6 +2017,12 @@ fn encoded_message_layout(message: &Message) -> Result<(u8, usize), ProtocolErro
             Ok((3, encoded_screen_len(screen, 0, &mut count)?))
         }
         Message::Action { .. } => Ok((4, 4)),
+        Message::TextHold { start, end, .. } => {
+            if start >= end {
+                return Err(ProtocolError::InvalidValue("text hold range"));
+            }
+            Ok((26, 20))
+        }
         Message::Log { message, .. } => {
             let mut length = 1;
             add_encoded_len(&mut length, encoded_string_len(message)?)?;
@@ -2949,15 +2973,22 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
             length
         }
         Node::RichText {
-            text, spans, links, ..
+            text,
+            spans,
+            links,
+            selection,
+            ..
         } => {
             if spans.len() > kobo_ui::MAX_RICH_TEXT_SPANS {
                 return Err(ProtocolError::TooManyNodes);
             }
             let mut length = 5;
             add_encoded_len(&mut length, encoded_string_len(text)?)?;
-            add_encoded_len(&mut length, 2 + spans.len() * 9 + 9 + 1)?;
+            add_encoded_len(&mut length, 2 + spans.len() * 9 + 9 + 1 + 1)?;
             for _ in links.iter().take(kobo_ui::MAX_TEXT_LINKS) {
+                add_encoded_len(&mut length, 12)?;
+            }
+            if selection.is_some() {
                 add_encoded_len(&mut length, 12)?;
             }
             length
@@ -3284,6 +3315,21 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
         4 => Message::Action {
             action: ActionId(reader.u32()?),
         },
+        26 => {
+            let action = ActionId(reader.u32()?);
+            let context = reader.u64()?;
+            let start = reader.u32()?;
+            let end = reader.u32()?;
+            if start >= end {
+                return Err(ProtocolError::InvalidValue("text hold range"));
+            }
+            Message::TextHold {
+                action,
+                context,
+                start,
+                end,
+            }
+        }
         5 => Message::Log {
             level: LogLevel::try_from(reader.u8()?)?,
             message: reader.string()?,
@@ -3879,10 +3925,11 @@ fn text_presentation_byte(style: kobo_ui::TextPresentation) -> u8 {
         | (u8::from(style.underline) << 2)
         | (u8::from(style.superscript) << 3)
         | (u8::from(style.subscript) << 4)
+        | (u8::from(style.highlighted) << 5)
 }
 
 fn text_presentation_from_byte(value: u8) -> Result<kobo_ui::TextPresentation, ProtocolError> {
-    if value & !0x1f != 0 {
+    if value & !0x3f != 0 {
         return Err(ProtocolError::InvalidValue("rich text style"));
     }
     Ok(kobo_ui::TextPresentation {
@@ -3891,6 +3938,7 @@ fn text_presentation_from_byte(value: u8) -> Result<kobo_ui::TextPresentation, P
         underline: value & 4 != 0,
         superscript: value & 8 != 0,
         subscript: value & 16 != 0,
+        highlighted: value & 32 != 0,
     })
 }
 
@@ -3932,6 +3980,7 @@ fn encode_node(
             spans,
             links,
             presentation,
+            selection,
         } => {
             if spans.len() > kobo_ui::MAX_RICH_TEXT_SPANS {
                 return Err(ProtocolError::TooManyNodes);
@@ -3980,6 +4029,14 @@ fn encode_node(
                 push_u32(output, link.action.0);
                 push_u32(output, u32::try_from(link.start).unwrap_or(u32::MAX));
                 push_u32(output, u32::try_from(link.end).unwrap_or(u32::MAX));
+            }
+            match selection {
+                Some(selection) => {
+                    output.push(1);
+                    push_u64(output, selection.context);
+                    push_u32(output, selection.offset);
+                }
+                None => output.push(0),
             }
         }
         Node::Secondary { id, text } => {
@@ -4884,12 +4941,21 @@ fn decode_node(
                     links.push(kobo_ui::TextLink { action, start, end });
                 }
             }
+            let selection = match reader.u8()? {
+                0 => None,
+                1 => Some(kobo_ui::TextSelection {
+                    context: reader.u64()?,
+                    offset: reader.u32()?,
+                }),
+                _ => return Err(ProtocolError::InvalidValue("text selection flag")),
+            };
             Ok(Node::RichText {
                 id,
                 text,
                 spans,
                 links,
                 presentation,
+                selection,
             })
         }
         18 => {
@@ -6217,6 +6283,10 @@ mod node_coverage_tests {
                     line_height_percent: 130,
                     ..kobo_ui::ParagraphPresentation::default()
                 },
+                selection: Some(kobo_ui::TextSelection {
+                    context: 3,
+                    offset: 11,
+                }),
             },
             Node::Quote {
                 id: NodeId(30),
@@ -6914,6 +6984,17 @@ mod store_tests {
         };
         let bytes = encode(&frame).expect("encode");
         decode(&bytes).expect("decode").message
+    }
+
+    #[test]
+    fn a_text_hold_survives_the_wire_without_losing_its_range() {
+        let message = Message::TextHold {
+            action: ActionId(9),
+            context: u64::MAX - 1,
+            start: 41,
+            end: 48,
+        };
+        assert_eq!(message_round_trip(message.clone()), message);
     }
 
     #[test]

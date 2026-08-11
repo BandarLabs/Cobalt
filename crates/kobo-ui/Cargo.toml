@@ -10,3 +10,6 @@ description = "Declarative E Ink UI, layout, and rendering primitives for Kobo a
 
 [lints]
 workspace = true
+
+[dependencies]
+unicode-segmentation = "1.13.3"

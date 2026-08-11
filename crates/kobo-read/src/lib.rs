@@ -41,6 +41,7 @@ use kobo_doc::{Block, Document};
 use kobo_sdk::{BannerLevel, Screen, ScreenBuilder};
 use kobo_ui::TextScale;
 use kobo_ui::{quote_offsets, wrap_text_in, DisplayMetrics, Face, FontSize, ProseArea};
+use unicode_segmentation::UnicodeSegmentation;
 
 /// Where something is in a book, independent of how the book is set.
 ///
@@ -48,6 +49,45 @@ use kobo_ui::{quote_offsets, wrap_text_in, DisplayMetrics, Face, FontSize, Prose
 /// character offset into a rendering, and not a percentage: those all move
 /// when the type size does, and a bookmark that moves is not a bookmark.
 pub type Locator = u32;
+
+/// A stable position inside the logical text of one document block.
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+pub struct TextPosition {
+    pub block: Locator,
+    /// UTF-8 byte offset in the canonical block text, always on a grapheme
+    /// boundary. It is independent of pages, fonts, margins and orientation.
+    pub offset: u32,
+}
+
+/// A non-empty logical text range used by highlights, notes and lookups.
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+pub struct TextRange {
+    pub start: TextPosition,
+    pub end: TextPosition,
+}
+
+pub type AnnotationId = u64;
+
+/// Owner-authored marginalia attached to an immutable logical text range.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Annotation {
+    pub id: AnnotationId,
+    pub range: TextRange,
+    pub note: Option<String>,
+}
+
+pub const MAX_ANNOTATIONS: usize = 2_048;
+pub const MAX_NOTE_BYTES: usize = 4_096;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AnnotationFault {
+    MissingText,
+    Reversed,
+    NotGraphemeBoundary,
+    TooMany,
+    NoteTooLarge,
+    NotFound,
+}
 
 /// The depth a highlight's rule is set in. One, because a highlight is not a
 /// reply to anything, it just needs a margin to put the mark in.
@@ -131,6 +171,7 @@ pub struct Piece {
     kind: Kind,
     spans: Vec<kobo_ui::RichTextSpan>,
     presentation: kobo_ui::ParagraphPresentation,
+    source_offset: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -180,16 +221,35 @@ impl Kind {
 /// Small enough for the ordinary key-value store: a position, a type size, a
 /// light level, and two sorted sets of block indices. A book with a thousand
 /// marks in it is still only a few kilobytes.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Memory {
     /// The block that was at the top of the page.
     pub at: Locator,
     pub bookmarks: BTreeSet<Locator>,
     pub highlights: BTreeSet<Locator>,
+    /// Version-1 range annotations. The legacy paragraph set above remains a
+    /// migration input and is written until the platform annotation service
+    /// has shipped to every supported installation.
+    pub annotations: BTreeMap<AnnotationId, Annotation>,
+    pub next_annotation_id: AnnotationId,
     pub scale: TextScale,
     /// `None` means the reader has never set one here, so the device's own
     /// level is left alone. Zero is a real setting and is not the same thing.
     pub light: Option<u8>,
+}
+
+impl Default for Memory {
+    fn default() -> Self {
+        Self {
+            at: 0,
+            bookmarks: BTreeSet::new(),
+            highlights: BTreeSet::new(),
+            annotations: BTreeMap::new(),
+            next_annotation_id: 1,
+            scale: TextScale::default(),
+            light: None,
+        }
+    }
 }
 
 impl Memory {
@@ -215,6 +275,20 @@ impl Memory {
         for highlight in &self.highlights {
             let _ = writeln!(text, "high {highlight}");
         }
+        for annotation in self.annotations.values().take(MAX_ANNOTATIONS) {
+            let note = annotation.note.as_deref().unwrap_or_default();
+            let _ = writeln!(
+                text,
+                "ann {} {} {} {} {} {}",
+                annotation.id,
+                annotation.range.start.block,
+                annotation.range.start.offset,
+                annotation.range.end.block,
+                annotation.range.end.offset,
+                hex_encode(note.as_bytes()),
+            );
+        }
+        let _ = writeln!(text, "next-ann {}", self.next_annotation_id.max(1));
         text.into_bytes()
     }
 
@@ -247,11 +321,90 @@ impl Memory {
                         memory.highlights.insert(at);
                     }
                 }
+                "ann" if memory.annotations.len() < MAX_ANNOTATIONS => {
+                    if let Some(annotation) = decode_annotation(value) {
+                        memory.next_annotation_id = memory
+                            .next_annotation_id
+                            .max(annotation.id.saturating_add(1));
+                        memory
+                            .annotations
+                            .entry(annotation.id)
+                            .or_insert(annotation);
+                    }
+                }
+                "next-ann" => {
+                    memory.next_annotation_id = value.parse().unwrap_or(1).max(1);
+                }
                 _ => {}
             }
         }
         memory
     }
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len().saturating_mul(2));
+    for byte in bytes.iter().take(MAX_NOTE_BYTES) {
+        out.push(char::from(DIGITS[usize::from(byte >> 4)]));
+        out.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
+    }
+    out
+}
+
+fn hex_decode(value: &str) -> Option<Vec<u8>> {
+    if value.len() > MAX_NOTE_BYTES * 2 || value.len() % 2 != 0 {
+        return None;
+    }
+    value
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let high = char::from(pair[0]).to_digit(16)?;
+            let low = char::from(pair[1]).to_digit(16)?;
+            u8::try_from((high << 4) | low).ok()
+        })
+        .collect()
+}
+
+fn decode_annotation(value: &str) -> Option<Annotation> {
+    let mut fields = value.splitn(6, ' ');
+    let id = fields.next()?.parse().ok()?;
+    let start_block = fields.next()?.parse().ok()?;
+    let start_offset = fields.next()?.parse().ok()?;
+    let end_block = fields.next()?.parse().ok()?;
+    let end_offset = fields.next()?.parse().ok()?;
+    let note = String::from_utf8(hex_decode(fields.next().unwrap_or_default())?).ok()?;
+    Some(Annotation {
+        id,
+        range: TextRange {
+            start: TextPosition {
+                block: start_block,
+                offset: start_offset,
+            },
+            end: TextPosition {
+                block: end_block,
+                offset: end_offset,
+            },
+        },
+        note: (!note.is_empty()).then_some(note),
+    })
+}
+
+fn bounded_note(note: Option<&str>) -> Result<Option<String>, AnnotationFault> {
+    let note = note.map(str::trim).filter(|note| !note.is_empty());
+    if note.is_some_and(|note| note.len() > MAX_NOTE_BYTES) {
+        return Err(AnnotationFault::NoteTooLarge);
+    }
+    Ok(note.map(str::to_owned))
+}
+
+fn is_grapheme_boundary(text: &str, offset: usize) -> bool {
+    offset <= text.len()
+        && (offset == text.len()
+            || text
+                .grapheme_indices(true)
+                .any(|(boundary, _)| boundary == offset))
 }
 
 /// The names a reader answers to.
@@ -434,9 +587,147 @@ impl Reader {
                 capped = cut;
             }
         }
+        decorate_annotation_ranges(&self.document, &self.memory.annotations, &mut pages);
         self.pages = pages;
         self.cut = capped || self.document.truncated;
         self.page = self.page_holding(self.memory.at);
+    }
+
+    /// Creates a range highlight or marginal note exactly once for an
+    /// operation identifier supplied by the caller.
+    pub fn create_annotation(
+        &mut self,
+        operation: AnnotationId,
+        range: TextRange,
+        note: Option<&str>,
+        panel: &DisplayMetrics,
+    ) -> Result<&Annotation, AnnotationFault> {
+        if self.memory.annotations.contains_key(&operation) {
+            return Ok(&self.memory.annotations[&operation]);
+        }
+        if self.memory.annotations.len() >= MAX_ANNOTATIONS {
+            return Err(AnnotationFault::TooMany);
+        }
+        self.validate_range(range)?;
+        let note = bounded_note(note)?;
+        self.memory.next_annotation_id = self
+            .memory
+            .next_annotation_id
+            .max(operation.saturating_add(1));
+        self.memory.annotations.insert(
+            operation,
+            Annotation {
+                id: operation,
+                range,
+                note,
+            },
+        );
+        self.repaginate(panel);
+        Ok(&self.memory.annotations[&operation])
+    }
+
+    /// Allocates a local operation identity and creates one annotation.
+    pub fn annotate(
+        &mut self,
+        range: TextRange,
+        note: Option<&str>,
+        panel: &DisplayMetrics,
+    ) -> Result<AnnotationId, AnnotationFault> {
+        let id = self.memory.next_annotation_id.max(1);
+        self.create_annotation(id, range, note, panel)?;
+        Ok(id)
+    }
+
+    /// Changes only an annotation's marginal note, never its selected words.
+    pub fn edit_annotation_note(
+        &mut self,
+        id: AnnotationId,
+        note: Option<&str>,
+    ) -> Result<(), AnnotationFault> {
+        let note = bounded_note(note)?;
+        let annotation = self
+            .memory
+            .annotations
+            .get_mut(&id)
+            .ok_or(AnnotationFault::NotFound)?;
+        annotation.note = note;
+        Ok(())
+    }
+
+    pub fn remove_annotation(
+        &mut self,
+        id: AnnotationId,
+        panel: &DisplayMetrics,
+    ) -> Result<Annotation, AnnotationFault> {
+        let annotation = self
+            .memory
+            .annotations
+            .remove(&id)
+            .ok_or(AnnotationFault::NotFound)?;
+        self.repaginate(panel);
+        Ok(annotation)
+    }
+
+    /// Range annotations sorted by logical location and then stable identity.
+    #[must_use]
+    pub fn annotations(&self) -> Vec<&Annotation> {
+        let mut annotations = self.memory.annotations.values().collect::<Vec<_>>();
+        annotations.sort_by_key(|annotation| (annotation.range, annotation.id));
+        annotations
+    }
+
+    /// Exact selected words, independent of their current page layout.
+    #[must_use]
+    pub fn text_in(&self, range: TextRange) -> Option<String> {
+        self.validate_range(range).ok()?;
+        let mut out = String::new();
+        for block in range.start.block..=range.end.block {
+            let text = self
+                .document
+                .blocks
+                .get(usize::try_from(block).ok()?)?
+                .text()?;
+            let from = if block == range.start.block {
+                usize::try_from(range.start.offset).ok()?
+            } else {
+                0
+            };
+            let to = if block == range.end.block {
+                usize::try_from(range.end.offset).ok()?
+            } else {
+                text.len()
+            };
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            out.push_str(text.get(from..to)?);
+        }
+        Some(out)
+    }
+
+    fn validate_range(&self, range: TextRange) -> Result<(), AnnotationFault> {
+        if range.start >= range.end {
+            return Err(AnnotationFault::Reversed);
+        }
+        let start = self
+            .document
+            .blocks
+            .get(usize::try_from(range.start.block).map_err(|_| AnnotationFault::MissingText)?)
+            .and_then(Block::text)
+            .ok_or(AnnotationFault::MissingText)?;
+        let end = self
+            .document
+            .blocks
+            .get(usize::try_from(range.end.block).map_err(|_| AnnotationFault::MissingText)?)
+            .and_then(Block::text)
+            .ok_or(AnnotationFault::MissingText)?;
+        let start_at =
+            usize::try_from(range.start.offset).map_err(|_| AnnotationFault::MissingText)?;
+        let end_at = usize::try_from(range.end.offset).map_err(|_| AnnotationFault::MissingText)?;
+        if !is_grapheme_boundary(start, start_at) || !is_grapheme_boundary(end, end_at) {
+            return Err(AnnotationFault::NotGraphemeBoundary);
+        }
+        Ok(())
     }
 
     /// The page a block lands on.
@@ -1063,7 +1354,16 @@ impl Reader {
                 Kind::Rule => screen.divider(),
                 Kind::Break => screen.spacer(kobo_ui::Space::Small),
                 Kind::Body | Kind::Preformatted => {
-                    if piece.spans.is_empty()
+                    if let Some(offset) = piece.source_offset {
+                        screen.selectable_rich_text_linking(
+                            piece.text.clone(),
+                            piece.spans.clone(),
+                            piece.presentation,
+                            u64::from(piece.block),
+                            offset,
+                            self.links_in(piece),
+                        )
+                    } else if piece.spans.is_empty()
                         && piece.presentation == kobo_ui::ParagraphPresentation::default()
                     {
                         screen.text_linking(piece.text.clone(), self.links_in(piece))
@@ -1324,10 +1624,27 @@ impl Reader {
         let mut screen = ScreenBuilder::new("reader-marks").top_bar(title);
         let marks = self.highlights();
         let places = self.bookmarks();
-        if marks.is_empty() && places.is_empty() {
+        let annotations = self.annotations();
+        if marks.is_empty() && places.is_empty() && annotations.is_empty() {
             screen = screen.secondary(
                 "Nothing is marked in this book yet. Mark a paragraph to keep the words, or bookmark a page to keep your place.",
             );
+        }
+        if !annotations.is_empty() {
+            screen = screen.heading("Highlights & marginalia");
+            for annotation in annotations {
+                let selected = self.text_in(annotation.range).map_or_else(
+                    || "Unavailable passage".to_owned(),
+                    |text| first_words(&text),
+                );
+                let label = annotation.note.as_ref().map_or(selected.clone(), |note| {
+                    format!("{selected} — {}", first_words(note))
+                });
+                screen = screen.button(
+                    format!("{}{}", action::GO, annotation.range.start.block),
+                    label,
+                );
+            }
         }
         if !marks.is_empty() {
             screen = screen.heading("Marked passages");
@@ -1698,6 +2015,116 @@ fn force_page_break(pages: &mut Vec<Vec<Piece>>, page: &mut Vec<Piece>, used: &m
     }
 }
 
+fn decorate_annotation_ranges(
+    document: &Document,
+    annotations: &BTreeMap<AnnotationId, Annotation>,
+    pages: &mut [Vec<Piece>],
+) {
+    let mut cursors = BTreeMap::<Locator, usize>::new();
+    for piece in pages.iter_mut().flat_map(|page| page.iter_mut()) {
+        let Some(source) = document
+            .blocks
+            .get(usize::try_from(piece.block).unwrap_or(usize::MAX))
+            .and_then(Block::text)
+        else {
+            continue;
+        };
+        let cursor = cursors.entry(piece.block).or_default();
+        let Some(relative) = source
+            .get(*cursor..)
+            .and_then(|rest| rest.find(&piece.text))
+        else {
+            continue;
+        };
+        let piece_from = *cursor + relative;
+        let piece_to = piece_from + piece.text.len();
+        *cursor = piece_to;
+        piece.source_offset = u32::try_from(piece_from).ok();
+        let mut ranges = Vec::new();
+        for annotation in annotations.values() {
+            if piece.block < annotation.range.start.block
+                || piece.block > annotation.range.end.block
+            {
+                continue;
+            }
+            let from = if piece.block == annotation.range.start.block {
+                usize::try_from(annotation.range.start.offset).unwrap_or(usize::MAX)
+            } else {
+                0
+            };
+            let to = if piece.block == annotation.range.end.block {
+                usize::try_from(annotation.range.end.offset).unwrap_or(0)
+            } else {
+                source.len()
+            };
+            let start = from.max(piece_from);
+            let end = to.min(piece_to);
+            if start < end {
+                ranges.push((start - piece_from, end - piece_from));
+            }
+        }
+        if !ranges.is_empty() {
+            piece.spans = highlighted_spans(&piece.spans, piece.text.len(), &ranges);
+        }
+    }
+}
+
+fn highlighted_spans(
+    publisher: &[kobo_ui::RichTextSpan],
+    length: usize,
+    highlights: &[(usize, usize)],
+) -> Vec<kobo_ui::RichTextSpan> {
+    let mut boundaries = BTreeSet::from([0, length]);
+    for span in publisher {
+        boundaries.insert(span.start.min(length));
+        boundaries.insert(span.end.min(length));
+    }
+    for &(start, end) in highlights {
+        boundaries.insert(start.min(length));
+        boundaries.insert(end.min(length));
+    }
+    let boundaries = boundaries.into_iter().collect::<Vec<_>>();
+    let mut spans: Vec<kobo_ui::RichTextSpan> = Vec::new();
+    for window in boundaries.windows(2) {
+        let (start, end) = (window[0], window[1]);
+        if start >= end {
+            continue;
+        }
+        let mut presentation = publisher
+            .iter()
+            .find(|span| span.start <= start && start < span.end)
+            .map_or_else(kobo_ui::TextPresentation::default, |span| span.presentation);
+        presentation.highlighted = highlights
+            .iter()
+            .any(|&(from, to)| from < end && start < to);
+        if presentation == kobo_ui::TextPresentation::default() {
+            continue;
+        }
+        if let Some(last) = spans
+            .last_mut()
+            .filter(|last| last.end == start && last.presentation == presentation)
+        {
+            last.end = end;
+        } else {
+            spans.push(kobo_ui::RichTextSpan {
+                start,
+                end,
+                presentation,
+            });
+        }
+    }
+    if spans.len() > kobo_ui::MAX_RICH_TEXT_SPANS {
+        spans.truncate(kobo_ui::MAX_RICH_TEXT_SPANS);
+        if let Some(last) = spans.last_mut() {
+            last.end = length;
+            last.presentation.highlighted = highlights
+                .iter()
+                .any(|&(from, to)| from < length && last.start < to);
+        }
+    }
+    spans
+}
+
 // A packing loop: measure, place, and break when the page is full. Splitting
 // it would mean handing the same six pieces of state to each half, and the
 // hand-off is where an off-by-one in a page break would hide.
@@ -1783,6 +2210,7 @@ fn paginate(
                 kind,
                 spans: Vec::new(),
                 presentation: kobo_ui::ParagraphPresentation::default(),
+                source_offset: None,
             });
             continue;
         }
@@ -1802,6 +2230,7 @@ fn paginate(
                         kind,
                         spans: Vec::new(),
                         presentation: kobo_ui::ParagraphPresentation::default(),
+                        source_offset: None,
                     },
                     &mut Placing {
                         pages: &mut pages,
@@ -1868,6 +2297,7 @@ fn paginate(
                         kind,
                         spans,
                         presentation,
+                        source_offset: None,
                     });
                     placed = end;
                 }
@@ -1893,6 +2323,7 @@ fn paginate(
                 kind,
                 spans,
                 presentation,
+                source_offset: None,
             });
             placed += take;
         }
@@ -1957,6 +2388,7 @@ fn piece_presentation(
                 underline: span.style.underline,
                 superscript: span.style.superscript,
                 subscript: span.style.subscript,
+                highlighted: false,
             },
         });
     }
@@ -3333,6 +3765,148 @@ mod tests {
         assert_eq!(hits[0].at, 0);
         assert!(!hits[0].excerpt.contains('<'));
         assert!(reader.search("paper lantern", 0).is_empty());
+    }
+
+    #[test]
+    fn range_annotations_keep_exact_unicode_words_across_repagination_and_restart() {
+        let combined = "Cafe\u{301}";
+        let document = Document {
+            blocks: vec![Block::Paragraph(format!(
+                "{combined} and tea by the window."
+            ))],
+            ..Document::default()
+        };
+        let mut reader = Reader::open(document.clone(), Memory::default(), &panel());
+        let range = TextRange {
+            start: TextPosition {
+                block: 0,
+                offset: 0,
+            },
+            end: TextPosition {
+                block: 0,
+                offset: u32::try_from(combined.len()).expect("short fixture"),
+            },
+        };
+        let id = reader
+            .annotate(range, Some("Remember the accent ☕"), &panel())
+            .expect("annotation");
+        assert_eq!(reader.text_in(range).as_deref(), Some(combined));
+        reader.set_scale(TextScale::ExtraLarge, &panel());
+        assert_eq!(reader.annotations()[0].range, range);
+
+        let encoded = reader.memory().encode();
+        let reopened = Reader::open(document, Memory::decode(&encoded), &panel());
+        let annotation = reopened.annotations()[0];
+        assert_eq!(annotation.id, id);
+        assert_eq!(annotation.range, range);
+        assert_eq!(annotation.note.as_deref(), Some("Remember the accent ☕"));
+        assert_eq!(
+            reopened.text_in(annotation.range).as_deref(),
+            Some(combined)
+        );
+    }
+
+    #[test]
+    fn annotation_operations_are_idempotent_and_note_edits_cannot_move_the_range() {
+        let document = Document {
+            blocks: vec![Block::Paragraph("one two three".into())],
+            ..Document::default()
+        };
+        let mut reader = Reader::open(document, Memory::default(), &panel());
+        let range = TextRange {
+            start: TextPosition {
+                block: 0,
+                offset: 4,
+            },
+            end: TextPosition {
+                block: 0,
+                offset: 7,
+            },
+        };
+        reader
+            .create_annotation(42, range, None, &panel())
+            .expect("first delivery");
+        reader
+            .create_annotation(42, range, Some("duplicate"), &panel())
+            .expect("duplicate delivery");
+        assert_eq!(reader.annotations().len(), 1);
+        assert_eq!(reader.annotations()[0].note, None);
+        reader
+            .edit_annotation_note(42, Some("my note"))
+            .expect("edit note");
+        assert_eq!(reader.annotations()[0].range, range);
+        assert_eq!(reader.annotations()[0].note.as_deref(), Some("my note"));
+        assert_eq!(
+            reader
+                .remove_annotation(42, &panel())
+                .expect("remove")
+                .range,
+            range
+        );
+        assert!(reader.annotations().is_empty());
+    }
+
+    #[test]
+    fn a_range_highlight_marks_only_the_selected_words_on_the_page() {
+        let document = Document {
+            blocks: vec![Block::Paragraph("one two three".into())],
+            ..Document::default()
+        };
+        let mut reader = Reader::open(document, Memory::default(), &panel());
+        reader
+            .annotate(
+                TextRange {
+                    start: TextPosition {
+                        block: 0,
+                        offset: 4,
+                    },
+                    end: TextPosition {
+                        block: 0,
+                        offset: 7,
+                    },
+                },
+                None,
+                &panel(),
+            )
+            .expect("highlight");
+        let screen = reader.screen("Book");
+        let (text, spans) = screen
+            .nodes
+            .iter()
+            .find_map(|node| match node {
+                kobo_sdk::Node::RichText { text, spans, .. } => Some((text, spans)),
+                _ => None,
+            })
+            .expect("rich highlighted paragraph");
+        let highlighted = spans
+            .iter()
+            .filter(|span| span.presentation.highlighted)
+            .map(|span| &text[span.start..span.end])
+            .collect::<String>();
+        assert_eq!(highlighted, "two");
+    }
+
+    #[test]
+    fn selection_endpoints_never_split_a_grapheme() {
+        let document = Document {
+            blocks: vec![Block::Paragraph("e\u{301}lan".into())],
+            ..Document::default()
+        };
+        let mut reader = Reader::open(document, Memory::default(), &panel());
+        let split_combining_sequence = TextRange {
+            start: TextPosition {
+                block: 0,
+                offset: 0,
+            },
+            end: TextPosition {
+                block: 0,
+                offset: 1,
+            },
+        };
+        assert_eq!(
+            reader.annotate(split_combining_sequence, None, &panel()),
+            Err(AnnotationFault::NotGraphemeBoundary)
+        );
     }
 
     #[test]

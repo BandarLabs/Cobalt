@@ -1905,6 +1905,7 @@ fn host_applications(
                         Message::Hello { .. }
                         | Message::Welcome { .. }
                         | Message::Action { .. }
+                        | Message::TextHold { .. }
                         | Message::TaskOutcome { .. }
                         | Message::Lifecycle(_)
                         | Message::DeviceResult(_)
@@ -2467,6 +2468,27 @@ fn action_for(
     hit
 }
 
+fn text_hold_for(
+    event: TouchEvent,
+    screen: Option<&Screen>,
+    chrome: &Chrome,
+    held: bool,
+) -> Option<(ActionId, kobo_ui::TextHit)> {
+    if !held {
+        return None;
+    }
+    let TouchEvent::Up { x, y } = event else {
+        return None;
+    };
+    let screen = screen?;
+    let action = screen.hold?;
+    let (Ok(x), Ok(y)) = (i32::try_from(x), i32::try_from(y)) else {
+        return None;
+    };
+    let layout = screen.layout_with(&metrics_for(screen), chrome);
+    layout.hit_text(x, y).map(|hit| (action, hit))
+}
+
 fn trace_picture_evictions(handle: kobo_ui::PictureHandle, evicted: &[kobo_ui::PictureHandle]) {
     if evicted.is_empty() {
         return;
@@ -2582,6 +2604,22 @@ fn deliver_touch(
     chrome: &Chrome,
     held: bool,
 ) -> Result<Tap, String> {
+    if let Some((action, hit)) = text_hold_for(event, current, chrome, held) {
+        kobo_protocol::write_to(
+            stream,
+            &Frame {
+                request_id: 0,
+                message: Message::TextHold {
+                    action,
+                    context: hit.context,
+                    start: hit.start,
+                    end: hit.end,
+                },
+            },
+        )
+        .map_err(|error| format!("deliver a text hold: {error}"))?;
+        return Ok(Tap::Handled);
+    }
     let Some(action) = action_for(event, current, chrome, held) else {
         return Ok(Tap::Handled);
     };

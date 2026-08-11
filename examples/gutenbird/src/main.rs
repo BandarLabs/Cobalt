@@ -371,6 +371,7 @@ enum View {
     Search,
     Details,
     Reading,
+    Note,
 }
 
 /// What a feed answer, once parsed, should become.
@@ -572,6 +573,7 @@ struct Gutenbird {
     /// catalog's own history rather than the application's.
     trail: Vec<View>,
     keyboard: Keyboard,
+    pending_annotation: Option<kobo_read::AnnotationId>,
 
     catalogs: Vec<Catalog>,
     current: usize,
@@ -663,6 +665,7 @@ impl Default for Gutenbird {
             view: View::Catalogs,
             trail: Vec::new(),
             keyboard: Keyboard::new(),
+            pending_annotation: None,
             catalogs: CATALOGS
                 .iter()
                 .map(|(name, root)| Catalog::new(*name, *root, false))
@@ -733,6 +736,7 @@ impl Gutenbird {
             View::Search => self.search_screen(),
             View::Details => self.details_screen(context),
             View::Reading => self.reading_screen(context),
+            View::Note => self.note_screen(),
         };
         // The application draws its own Back wherever it has somewhere to go,
         // which is every screen except the catalog list with nothing open over
@@ -1523,6 +1527,18 @@ impl Gutenbird {
                 screen.keyboard(&self.keyboard, "Search").build()
             }
         }
+    }
+
+    fn note_screen(&self) -> kobo_sdk::Screen {
+        ScreenBuilder::new("gutenbird-note")
+            .top_bar("Marginal note")
+            .secondary(
+                "Write beside the highlighted words. The highlight remains if the note is blank.",
+            )
+            .field("annotation-note", self.keyboard.text(), "Your note")
+            .field_clear("annotation-note-clear")
+            .keyboard(&self.keyboard, "Save note")
+            .build()
     }
 
     // ---------------------------------------------------------------
@@ -3320,6 +3336,38 @@ impl KoboApp for Gutenbird {
         }
     }
 
+    fn on_text_hold(&mut self, context: &mut Context, action: ActionId, hit: kobo_sdk::TextHit) {
+        if self.view != View::Reading || action != kobo_sdk::action_id(kobo_read::action::MARKING) {
+            self.on_action(context, action);
+            return;
+        }
+        let Ok(block) = u32::try_from(hit.context) else {
+            return;
+        };
+        let range = kobo_read::TextRange {
+            start: kobo_read::TextPosition {
+                block,
+                offset: hit.start,
+            },
+            end: kobo_read::TextPosition {
+                block,
+                offset: hit.end,
+            },
+        };
+        let metrics = context.metrics();
+        let created = self
+            .reader
+            .as_mut()
+            .and_then(|reader| reader.annotate(range, None, &metrics).ok());
+        if let Some(id) = created {
+            self.pending_annotation = Some(id);
+            self.keyboard.clear();
+            self.save_place(context);
+            self.go(View::Note);
+            self.show(context);
+        }
+    }
+
     #[allow(clippy::too_many_lines)]
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         if action == ActionId::BACK {
@@ -3381,6 +3429,28 @@ impl KoboApp for Gutenbird {
                 None => {}
             }
         }
+        if self.view == View::Note {
+            match self.keyboard.press(action) {
+                Some(Pressed::Submitted) => {
+                    let note = self.keyboard.take();
+                    if let (Some(id), Some(reader)) =
+                        (self.pending_annotation.take(), self.reader.as_mut())
+                    {
+                        let note = (!note.trim().is_empty()).then_some(note.trim());
+                        let _ = reader.edit_annotation_note(id, note);
+                        self.save_place(context);
+                    }
+                    self.back_to(View::Reading);
+                    self.show(context);
+                    return;
+                }
+                Some(Pressed::Edited | Pressed::Shifted) => {
+                    self.show(context);
+                    return;
+                }
+                None => {}
+            }
+        }
         if self.view == View::AddCatalog {
             match self.keyboard.press(action) {
                 Some(Pressed::Submitted) => {
@@ -3425,6 +3495,11 @@ impl KoboApp for Gutenbird {
             return;
         }
         if action == action_id("catalog-url-clear") {
+            self.keyboard.clear();
+            self.show(context);
+            return;
+        }
+        if action == action_id("annotation-note-clear") {
             self.keyboard.clear();
             self.show(context);
             return;
@@ -3693,9 +3768,9 @@ impl KoboApp for Gutenbird {
 mod tests {
     use super::{
         book_keys, catalog_display_name, decode_registry, download_kind, encode_registry,
-        plate_box, read_offer, readable, Awaiting, BTreeMap, Catalog, DetailBlock, Download,
-        DownloadKind, FeedPurpose, FillStage, Gutenbird, Memory, ReadOffer, Reader, SearchState,
-        SearchWay, StackEntry, View, COVER_TRIES, OPEN_COVER_HANDLE,
+        plate_box, read_offer, readable, Awaiting, BTreeMap, BTreeSet, Catalog, DetailBlock,
+        Download, DownloadKind, FeedPurpose, FillStage, Gutenbird, Memory, ReadOffer, Reader,
+        SearchState, SearchWay, StackEntry, View, COVER_TRIES, OPEN_COVER_HANDLE,
     };
     use kobo_opds::{
         Acquisition, AcquisitionKind, Category, Feed, Image, ImageSource, Link, Navigation,
@@ -5021,8 +5096,10 @@ Please read this before you distribute or use this work.\n";
             let drawn = layout
                 .nodes
                 .iter()
-                .filter(|node| node.kind == LayoutKind::Text)
-                .count();
+                .filter(|node| matches!(node.kind, LayoutKind::Text | LayoutKind::RichText(_)))
+                .map(|node| node.id)
+                .collect::<BTreeSet<_>>()
+                .len();
             assert_eq!(
                 drawn, expected,
                 "page {page} measured as {expected} paragraphs but drew {drawn}"
@@ -5362,6 +5439,32 @@ Please read this before you distribute or use this work.\n";
             let hit = layout.hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2);
             assert_eq!(hit, Some(action));
         }
+    }
+
+    #[test]
+    fn holding_a_word_opens_marginalia_and_saves_the_note_on_that_exact_word() {
+        let mut runner = AppRunner::new(Gutenbird {
+            view: View::Reading,
+            reader: Some(opened("café novel")),
+            complete: true,
+            ..Gutenbird::default()
+        });
+        runner.text_hold(
+            action_id(kobo_read::action::MARKING),
+            kobo_sdk::TextHit {
+                context: 0,
+                start: 0,
+                end: 5,
+            },
+        );
+        assert_eq!(runner.app().view, View::Note);
+        assert_eq!(runner.app().reader.as_ref().unwrap().annotations().len(), 1);
+
+        runner.action(action_id("kb.r0c0"));
+        runner.action(action_id("kb.enter"));
+        assert_eq!(runner.app().view, View::Reading);
+        let annotation = &runner.app().reader.as_ref().unwrap().annotations()[0];
+        assert_eq!(annotation.note.as_deref(), Some("q"));
     }
 
     #[test]

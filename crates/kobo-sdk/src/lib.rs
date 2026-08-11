@@ -22,10 +22,10 @@ pub use kobo_ui::{
     DiagnosticSeverity, DisplayMetrics, Emphasis, Fold, FontHandle, Freeform, Glyph, LayoutIssue,
     LayoutIssueKind, NavBar, Node, NodeId, Overlay, OverlayKind, ParagraphAlignment,
     ParagraphPresentation, Percent, PictureHandle, ProseArea, RichTextSpan, Row, RowLead, RowState,
-    Screen, SlotWidth, Space, TextPresentation, Tile, TilePicture, TileShape, TileState, TopBar,
-    TransferFailure, CLARA_BW_METRICS, MAX_BAND_SLOTS, MAX_CELLS, MAX_CHIPS, MAX_CHOICE_OPTIONS,
-    MAX_COLUMNS, MAX_QUOTE_DEPTH, MAX_ROWS, MAX_TABS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS,
-    TILE_BADGE_LIMIT,
+    Screen, SlotWidth, Space, TextHit, TextPresentation, TextSelection, Tile, TilePicture,
+    TileShape, TileState, TopBar, TransferFailure, CLARA_BW_METRICS, MAX_BAND_SLOTS, MAX_CELLS,
+    MAX_CHIPS, MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_QUOTE_DEPTH, MAX_ROWS, MAX_TABS,
+    MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS, TILE_BADGE_LIMIT,
 };
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
@@ -510,6 +510,7 @@ impl ScreenBuilder {
             spans,
             links: Vec::new(),
             presentation,
+            selection: None,
         });
         self
     }
@@ -550,6 +551,50 @@ impl ScreenBuilder {
             spans,
             links,
             presentation,
+            selection: None,
+        });
+        self
+    }
+
+    /// Publisher-styled reading prose whose words can be resolved on a hold.
+    #[must_use]
+    pub fn selectable_rich_text_linking<I, N>(
+        mut self,
+        text: impl Into<String>,
+        spans: Vec<RichTextSpan>,
+        presentation: ParagraphPresentation,
+        context: u64,
+        offset: u32,
+        links: I,
+    ) -> Self
+    where
+        I: IntoIterator<Item = (N, usize, usize)>,
+        N: AsRef<str>,
+    {
+        let id = self.next_id();
+        let text = text.into();
+        let links = links
+            .into_iter()
+            .take(kobo_ui::MAX_TEXT_LINKS)
+            .filter_map(|(name, start, end)| {
+                (start < end
+                    && end <= text.len()
+                    && text.is_char_boundary(start)
+                    && text.is_char_boundary(end))
+                .then(|| kobo_ui::TextLink {
+                    action: self.register(name.as_ref()),
+                    start,
+                    end,
+                })
+            })
+            .collect();
+        self.nodes.push(Node::RichText {
+            id,
+            text,
+            spans,
+            links,
+            presentation,
+            selection: Some(kobo_ui::TextSelection { context, offset }),
         });
         self
     }
@@ -4053,6 +4098,13 @@ pub trait KoboApp {
     fn on_start(&mut self, context: &mut Context);
     fn on_action(&mut self, context: &mut Context, action: ActionId);
 
+    /// Receives a held word in stable application text coordinates.
+    /// Applications that have not opted into selection retain the historical
+    /// hold action behavior.
+    fn on_text_hold(&mut self, context: &mut Context, action: ActionId, _hit: TextHit) {
+        self.on_action(context, action);
+    }
+
     fn on_resume(&mut self, _context: &mut Context) {}
 
     fn on_suspend(&mut self, _context: &mut Context) {}
@@ -4259,6 +4311,10 @@ impl<A: KoboApp> AppRunner<A> {
             return self.dispatch(|_, context| context.launch(NETWORK_SETTINGS_APP));
         }
         self.dispatch(|app, context| app.on_action(context, action))
+    }
+
+    pub fn text_hold(&mut self, action: ActionId, hit: TextHit) -> Vec<Command> {
+        self.dispatch(|app, context| app.on_text_hold(context, action, hit))
     }
 
     pub fn resume(&mut self) -> Vec<Command> {
@@ -4493,6 +4549,10 @@ impl<A: KoboApp> AppRunner<A> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ClientEvent {
     Action(ActionId),
+    TextHold {
+        action: ActionId,
+        hit: TextHit,
+    },
     Device(DeviceResult),
     Task {
         task: TaskId,
@@ -4688,6 +4748,19 @@ impl Client {
     pub fn next_event(&mut self) -> Result<ClientEvent, ClientError> {
         match kobo_protocol::read_from(&mut self.stream)?.message {
             Message::Action { action } => Ok(ClientEvent::Action(action)),
+            Message::TextHold {
+                action,
+                context,
+                start,
+                end,
+            } => Ok(ClientEvent::TextHold {
+                action,
+                hit: TextHit {
+                    context,
+                    start,
+                    end,
+                },
+            }),
             Message::DeviceResult(result) => Ok(ClientEvent::Device(result)),
             Message::TaskOutcome { task, outcome } => Ok(ClientEvent::Task { task, outcome }),
             Message::StoreResult(result) => Ok(ClientEvent::Store(result)),
@@ -6087,7 +6160,7 @@ pub fn run_on<A: KoboApp>(name: &str, app: A, socket: &Path) -> Result<(), Clien
                 ClientEvent::CoverChanged(present) => {
                     client.send_commands(runner.cover_changed(present))?;
                 }
-                ClientEvent::Action(_) | ClientEvent::Exit => break,
+                ClientEvent::Action(_) | ClientEvent::TextHold { .. } | ClientEvent::Exit => break,
             }
         }
         client.send_commands([Command::Exit])?;
@@ -6097,6 +6170,7 @@ pub fn run_on<A: KoboApp>(name: &str, app: A, socket: &Path) -> Result<(), Clien
     loop {
         let commands = match client.next_event()? {
             ClientEvent::Action(action) => runner.action(action),
+            ClientEvent::TextHold { action, hit } => runner.text_hold(action, hit),
             ClientEvent::Device(result) => runner.device_result(result),
             ClientEvent::Task { task, outcome } => runner.task_outcome(task, outcome),
             ClientEvent::Store(result) => runner.store_result(result),

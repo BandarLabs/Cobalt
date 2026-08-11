@@ -412,6 +412,7 @@ dependencies = [
  "kobo-doc",
  "kobo-sdk",
  "kobo-ui",
+ "unicode-segmentation",
 ]
 
 [[package]]
@@ -564,6 +565,9 @@ dependencies = [
 [[package]]
 name = "kobo-ui"
 version = "0.2.2"
+dependencies = [
+ "unicode-segmentation",
+]
 
 [[package]]
 name = "kobo-xml"

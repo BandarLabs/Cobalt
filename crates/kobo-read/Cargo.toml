@@ -10,6 +10,7 @@ publish = false
 kobo-doc = { path = "../kobo-doc" }
 kobo-sdk = { path = "../kobo-sdk" }
 kobo-ui = { path = "../kobo-ui" }
+unicode-segmentation = "1.13.3"
 
 [lints]
 workspace = true
