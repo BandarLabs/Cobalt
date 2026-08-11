@@ -1304,8 +1304,21 @@ impl Reader {
     /// so an application may supply as few as it likes -- which is what makes
     /// it possible to decode only the pictures on the page being read rather
     /// than four hundred engravings at the moment a book opens.
-    pub fn set_pictures(&mut self, pictures: BTreeMap<String, kobo_ui::TilePicture>) {
+    ///
+    /// The panel is taken rather than deferred to a later call because pages
+    /// have to be measured again the moment pictures arrive. A plate stands in
+    /// as a single line of its own description until it is handed over and
+    /// takes ninety millimetres afterwards, so pages measured before and drawn
+    /// after hold several times what fits: on the panel, "The Tale of Peter
+    /// Rabbit" came out nine pages long with every illustration running off the
+    /// bottom edge and through the strip that says which page it is.
+    pub fn set_pictures(
+        &mut self,
+        pictures: BTreeMap<String, kobo_ui::TilePicture>,
+        panel: &DisplayMetrics,
+    ) {
         self.pictures = pictures;
+        self.repaginate(panel);
     }
 
     /// Every picture the book refers to, in the order it refers to them.
@@ -1756,8 +1769,7 @@ mod tests {
             "plate.png".to_owned(),
             kobo_ui::TilePicture::new(kobo_ui::PictureHandle(1), 400, 300),
         );
-        reader.set_pictures(pictures);
-        reader.repaginate(&panel());
+        reader.set_pictures(pictures, &panel());
         // The screen rather than the page: a described picture and a drawn one
         // are the same `Kind::Picture` piece carrying the same alt text, and
         // only the screen distinguishes them -- one becomes a picture node and
@@ -1818,8 +1830,11 @@ mod tests {
             "plate.png".to_owned(),
             kobo_ui::TilePicture::new(kobo_ui::PictureHandle(1), 600, 4000),
         );
-        reader.set_pictures(pictures);
-        reader.repaginate(&panel());
+        // No repaginating here on purpose. Handing pictures over is itself the
+        // thing that has to remeasure: when it did not, an illustrated book
+        // kept the page count it had when every plate was one line of alt text,
+        // and drew the plates off the bottom of the panel.
+        reader.set_pictures(pictures, &panel());
         assert!(
             reader.page_count() > plain,
             "a picture took no more room than the line of text standing in for it"

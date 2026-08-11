@@ -2222,6 +2222,11 @@ impl Gutenbird {
             let pictures_ms = started.elapsed().as_millis();
             let started = std::time::Instant::now();
             let mut reader = Reader::open(document, memory, &context.metrics());
+            // Before the count is read, because handing the pictures over
+            // measures the book again around them -- and it is that second
+            // count, the one an illustrated book is actually read at, that the
+            // timing line is worth having.
+            reader.set_pictures(pictures, &context.metrics());
             let paginate_ms = started.elapsed().as_millis();
             context.log(
                 LogLevel::Info,
@@ -2232,7 +2237,6 @@ impl Gutenbird {
                     reader.page_count()
                 ),
             );
-            reader.set_pictures(pictures);
             self.reader = Some(reader);
         } else {
             self.problem = Some("This book could not be read.".to_owned());
