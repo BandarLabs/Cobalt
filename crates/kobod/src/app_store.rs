@@ -44,12 +44,7 @@ const MANAGED_BUILTINS: &[BuiltinApp] = &[
         // `bluetooth-control` requests made on the application's behalf, so
         // declaring only `bluetooth-audio` left Play refused the moment a
         // reader had nothing paired -- which is every reader, the first time.
-        capabilities: &[
-            "network",
-            "audio",
-            "bluetooth-audio",
-            "bluetooth-control",
-        ],
+        capabilities: &["network", "audio", "bluetooth-audio", "bluetooth-control"],
     },
     BuiltinApp {
         id: "brief",

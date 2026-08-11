@@ -40,9 +40,9 @@ use kobo_opds::{AcquisitionKind, Category, Feed, ImageSource, Link, Publication,
 use kobo_read::{Memory, Outcome, Reader};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, LogLevel, ActionId, BannerLevel, Chrome, Context, DiagnosticSeverity, Failure, Glyph, Header,
-    KoboApp, PictureHandle, RowLead, ScreenBuilder, ShelfDownload, ShelfProgress, ShelfUpload,
-    StoreResult, Task, TaskId, TaskOutcome, Tile, TilePicture, TileShape, TileState,
+    action_id, ActionId, BannerLevel, Chrome, Context, DiagnosticSeverity, Failure, Glyph, Header,
+    KoboApp, LogLevel, PictureHandle, RowLead, ScreenBuilder, ShelfDownload, ShelfProgress,
+    ShelfUpload, StoreResult, Task, TaskId, TaskOutcome, Tile, TilePicture, TileShape, TileState,
     MAX_STORE_VALUE,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -57,13 +57,19 @@ use std::process::ExitCode;
 /// every launch, so that changing the table changes what a reader sees
 /// without a migration.
 const CATALOGS: &[(&str, &str)] = &[
-    ("Project Gutenberg", "https://www.gutenberg.org/ebooks.opds/"),
+    (
+        "Project Gutenberg",
+        "https://www.gutenberg.org/ebooks.opds/",
+    ),
     (
         "Standard Ebooks",
         "https://standardebooks.org/feeds/atom/new-releases",
     ),
     ("Open Library", "https://openlibrary.org/opds"),
-    ("OPDS 2.0 Test Catalog", "https://test.opds.io/2.0/home.json"),
+    (
+        "OPDS 2.0 Test Catalog",
+        "https://test.opds.io/2.0/home.json",
+    ),
 ];
 
 /// How much of a feed page to accept.
@@ -425,15 +431,15 @@ impl DetailBlock {
         match self {
             Self::Section(title) => screen.section(*title),
             Self::Text(text) => screen.text(text.clone()),
-            Self::Categories(categories) => screen.chips(categories.iter().enumerate().map(
-                |(index, category)| {
+            Self::Categories(categories) => {
+                screen.chips(categories.iter().enumerate().map(|(index, category)| {
                     let label = category
                         .label
                         .clone()
                         .unwrap_or_else(|| category.term.clone());
                     (format!("category-{index}"), label, false)
-                },
-            )),
+                }))
+            }
             Self::Facts(facts) => screen.facts(facts.clone()),
         }
     }
@@ -612,7 +618,12 @@ impl Gutenbird {
     fn awaiting_feed(&self) -> bool {
         matches!(
             self.task,
-            Some((_, Awaiting::Feed(..) | Awaiting::DiscoverRoot { .. } | Awaiting::DiscoverDescription { .. }))
+            Some((
+                _,
+                Awaiting::Feed(..)
+                    | Awaiting::DiscoverRoot { .. }
+                    | Awaiting::DiscoverDescription { .. }
+            ))
         )
     }
 
@@ -669,7 +680,11 @@ impl Gutenbird {
     fn add_catalog_screen(&self) -> kobo_sdk::Screen {
         let mut screen = ScreenBuilder::new("gutenbird-add-catalog")
             .top_bar("Add a catalog")
-            .field("catalog-url", self.keyboard.text(), "https://example.org/opds")
+            .field(
+                "catalog-url",
+                self.keyboard.text(),
+                "https://example.org/opds",
+            )
             .field_clear("catalog-url-clear");
         if let Some(problem) = &self.add_catalog_problem {
             screen = screen.banner(BannerLevel::Attention, problem.clone());
@@ -721,7 +736,13 @@ impl Gutenbird {
         self.view = View::Shelf;
         let root = self.current_catalog().root.clone();
         self.save_last_open(context);
-        self.spawn_feed(context, root, FeedPurpose::Root { catalog: self.current });
+        self.spawn_feed(
+            context,
+            root,
+            FeedPurpose::Root {
+                catalog: self.current,
+            },
+        );
     }
 
     /// Writes the added-catalog registry back, refusing to write past
@@ -739,9 +760,10 @@ impl Gutenbird {
     }
 
     fn save_last_open(&mut self, context: &mut Context) {
-        context
-            .store()
-            .save(LAST_OPEN_KEY, self.current_catalog().root.clone().into_bytes());
+        context.store().save(
+            LAST_OPEN_KEY,
+            self.current_catalog().root.clone().into_bytes(),
+        );
     }
 
     // ---------------------------------------------------------------
@@ -774,7 +796,13 @@ impl Gutenbird {
     /// Follows a navigation row, or the current catalog's own root: fetches
     /// it and pushes the result onto the stack once it lands.
     fn follow(&mut self, context: &mut Context, href: String) {
-        self.spawn_feed(context, href, FeedPurpose::Push { catalog: self.current });
+        self.spawn_feed(
+            context,
+            href,
+            FeedPurpose::Push {
+                catalog: self.current,
+            },
+        );
     }
 
     fn ask_more(&mut self, context: &mut Context) {
@@ -802,7 +830,10 @@ impl Gutenbird {
             0 => None,
             1 => Some(feed.publications[0].clone()),
             _ => {
-                let mut titles = feed.publications.iter().map(|publication| publication.title.as_str());
+                let mut titles = feed
+                    .publications
+                    .iter()
+                    .map(|publication| publication.title.as_str());
                 let first = titles.next()?;
                 if !titles.all(|title| title == first) {
                     return None;
@@ -825,9 +856,9 @@ impl Gutenbird {
                         // Nothing illustrated small enough to read, so the
                         // plainest edition that will open. A book of words is
                         // better than a book that takes the reader down.
-                        feed.publications.iter().find(|publication| {
-                            publication.acquisition.iter().any(affordable)
-                        })
+                        feed.publications
+                            .iter()
+                            .find(|publication| publication.acquisition.iter().any(affordable))
                     })
                     .or_else(|| feed.publications.first())
                     .cloned()
@@ -835,7 +866,13 @@ impl Gutenbird {
         }
     }
 
-    fn took_feed(&mut self, context: &mut Context, bytes: &[u8], purpose: FeedPurpose, base: String) {
+    fn took_feed(
+        &mut self,
+        context: &mut Context,
+        bytes: &[u8],
+        purpose: FeedPurpose,
+        base: String,
+    ) {
         let Ok(mut feed) = kobo_opds::parse(bytes, &base) else {
             context.log(LogLevel::Warn, format!("unreadable answer from {base}"));
             self.problem = Some("That catalog's answer could not be read.".to_owned());
@@ -852,7 +889,7 @@ impl Gutenbird {
                     self.stack = vec![StackEntry::fresh(feed, base)];
                     self.view = View::Shelf;
                     self.want_covers(context);
-        self.hydrate_visible(context);
+                    self.hydrate_visible(context);
                 }
             }
             FeedPurpose::Push { catalog } => {
@@ -863,7 +900,7 @@ impl Gutenbird {
                     self.stack.push(StackEntry::fresh(feed, base));
                     self.view = View::Shelf;
                     self.want_covers(context);
-        self.hydrate_visible(context);
+                    self.hydrate_visible(context);
                 }
             }
             FeedPurpose::More => {
@@ -886,13 +923,14 @@ impl Gutenbird {
                 }
                 self.view = View::Shelf;
                 self.want_covers(context);
-        self.hydrate_visible(context);
+                self.hydrate_visible(context);
             }
             FeedPurpose::Federated { catalog } => {
                 let name = self.catalogs[catalog].name.clone();
                 if let Some(entry) = self.stack.last_mut() {
                     let room = MAX_PUBLICATIONS.saturating_sub(entry.feed.publications.len());
-                    let taken: Vec<Publication> = feed.publications.into_iter().take(room).collect();
+                    let taken: Vec<Publication> =
+                        feed.publications.into_iter().take(room).collect();
                     entry.sources.extend(std::iter::repeat_n(name, taken.len()));
                     entry.feed.publications.extend(taken);
                     entry.covers.resize(entry.feed.publications.len(), None);
@@ -947,7 +985,13 @@ impl Gutenbird {
     // Search
     // ---------------------------------------------------------------
 
-    fn begin_search(&mut self, context: &mut Context, catalog: usize, query: String, federated: bool) {
+    fn begin_search(
+        &mut self,
+        context: &mut Context,
+        catalog: usize,
+        query: String,
+        federated: bool,
+    ) {
         match self.catalogs[catalog].search.clone() {
             SearchState::Known(way) => self.issue_search(context, catalog, &query, &way, federated),
             SearchState::None => self.search_unavailable(context, federated),
@@ -1037,7 +1081,10 @@ impl Gutenbird {
             return;
         }
         let url = link.href.clone();
-        let headers = vec![Header::new("Accept", "application/opensearchdescription+xml")];
+        let headers = vec![Header::new(
+            "Accept",
+            "application/opensearchdescription+xml",
+        )];
         match context.spawn_retrying(Task::Fetch {
             url: url.clone(),
             offset: 0,
@@ -1078,7 +1125,12 @@ impl Gutenbird {
             .iter()
             .enumerate()
             .find(|(index, _)| action == action_id(&format!("category-{index}")))
-            .map(|(_, category)| category.label.clone().unwrap_or_else(|| category.term.clone()))
+            .map(|(_, category)| {
+                category
+                    .label
+                    .clone()
+                    .unwrap_or_else(|| category.term.clone())
+            })
     }
 
     /// Starts a search against every catalog at once: catalogs are queued
@@ -1091,7 +1143,10 @@ impl Gutenbird {
             title: Some(format!("\u{201c}{query}\u{201d} \u{00b7} every catalog")),
             ..Feed::default()
         };
-        self.stack.push(StackEntry::fresh(synthetic, self.current_catalog().root.clone()));
+        self.stack.push(StackEntry::fresh(
+            synthetic,
+            self.current_catalog().root.clone(),
+        ));
         self.view = View::Shelf;
         self.federated_query = Some(query);
         self.federating = true;
@@ -1213,7 +1268,12 @@ impl Gutenbird {
         screen.tile_grid(TileShape::Portrait, tiles)
     }
 
-    fn publication_grid(&self, _context: &Context, entry: &StackEntry, screen: ScreenBuilder) -> ScreenBuilder {
+    fn publication_grid(
+        &self,
+        _context: &Context,
+        entry: &StackEntry,
+        screen: ScreenBuilder,
+    ) -> ScreenBuilder {
         let first = entry.page * SHELF_PAGE;
         let tiles = entry
             .feed
@@ -1238,7 +1298,9 @@ impl Gutenbird {
                     Glyph::Book,
                     move |tile: Tile| {
                         let subtitle = match source {
-                            Some(source) if !author.is_empty() => format!("{author} \u{00b7} {source}"),
+                            Some(source) if !author.is_empty() => {
+                                format!("{author} \u{00b7} {source}")
+                            }
                             Some(source) => source,
                             None => author,
                         };
@@ -1416,7 +1478,9 @@ impl Gutenbird {
         }
         pages.push(current);
         for index in 0..pages.len().saturating_sub(1) {
-            if pages[index].len() > 1 && matches!(pages[index].last(), Some(DetailBlock::Section(_))) {
+            if pages[index].len() > 1
+                && matches!(pages[index].last(), Some(DetailBlock::Section(_)))
+            {
                 let orphan = pages[index].pop().expect("just matched");
                 pages[index + 1].insert(0, orphan);
             }
@@ -1526,7 +1590,10 @@ impl Gutenbird {
     // ---------------------------------------------------------------
 
     fn reading_screen(&self, context: &Context) -> kobo_sdk::Screen {
-        let title = self.open.as_ref().map_or_else(|| "Reading".to_owned(), |publication| publication.title.clone());
+        let title = self.open.as_ref().map_or_else(
+            || "Reading".to_owned(),
+            |publication| publication.title.clone(),
+        );
         let Some(reader) = &self.reader else {
             return self.details_screen(context);
         };
@@ -1653,7 +1720,8 @@ impl Gutenbird {
                 if let Ok(mut picture) = picture.fit_enlarging(width, height) {
                     picture.dither(kobo_image::PANEL_GREYS);
                     let handle = PictureHandle(NAV_COVER_HANDLE_BASE + self.nav_cover_handle);
-                    self.nav_cover_handle = self.nav_cover_handle.wrapping_add(1) % NAV_COVER_HANDLES;
+                    self.nav_cover_handle =
+                        self.nav_cover_handle.wrapping_add(1) % NAV_COVER_HANDLES;
                     let (drawn_width, drawn_height) = (picture.width(), picture.height());
                     if let Some(reference) =
                         context.put_picture(handle, drawn_width, drawn_height, picture.into_grey())
@@ -1691,14 +1759,17 @@ impl Gutenbird {
         let Ok(cell_height) = u32::try_from(cell_height) else {
             return;
         };
-        let shown: Vec<usize> = (first..(first + SHELF_PAGE).min(entry.feed.publications.len())).collect();
+        let shown: Vec<usize> =
+            (first..(first + SHELF_PAGE).min(entry.feed.publications.len())).collect();
 
         // A publication with no image at all is set from its title now,
         // rather than left as a hole nothing will ever fill.
         let coverless: Vec<usize> = shown
             .iter()
             .copied()
-            .filter(|&index| entry.covers[index].is_none() && entry.feed.publications[index].cover().is_none())
+            .filter(|&index| {
+                entry.covers[index].is_none() && entry.feed.publications[index].cover().is_none()
+            })
             .collect();
         for index in coverless {
             self.set_a_cover(context, index, cell_width, cell_height);
@@ -1707,14 +1778,23 @@ impl Gutenbird {
         self.looking.clear();
         let mut inline_queue: Vec<(usize, String, Vec<u8>)> = Vec::new();
         for index in shown {
-            if self.stack.last().is_none_or(|entry| entry.covers[index].is_some()) {
+            if self
+                .stack
+                .last()
+                .is_none_or(|entry| entry.covers[index].is_some())
+            {
                 continue;
             }
-            let Some(image) = self.stack.last().unwrap().feed.publications[index].cover().cloned() else {
+            let Some(image) = self.stack.last().unwrap().feed.publications[index]
+                .cover()
+                .cloned()
+            else {
                 continue;
             };
             match image.href {
-                ImageSource::Inline { bytes, .. } => inline_queue.push((index, String::new(), bytes)),
+                ImageSource::Inline { bytes, .. } => {
+                    inline_queue.push((index, String::new(), bytes))
+                }
                 ImageSource::Url(url) => self.looking.push((cover_key(&url), index)),
             }
         }
@@ -1818,7 +1898,8 @@ impl Gutenbird {
         picture.dither(kobo_image::PANEL_GREYS);
         let handle = PictureHandle(u32::try_from(index).unwrap_or(0));
         let (width, height) = (picture.width(), picture.height());
-        let Some(reference) = context.put_picture(handle, width, height, picture.into_grey()) else {
+        let Some(reference) = context.put_picture(handle, width, height, picture.into_grey())
+        else {
             return false;
         };
         if let Some(entry) = self.stack.last_mut() {
@@ -1829,8 +1910,18 @@ impl Gutenbird {
         true
     }
 
-    fn set_a_cover(&mut self, context: &mut Context, index: usize, width: u32, height: u32) -> bool {
-        let Some(publication) = self.stack.last().and_then(|entry| entry.feed.publications.get(index)) else {
+    fn set_a_cover(
+        &mut self,
+        context: &mut Context,
+        index: usize,
+        width: u32,
+        height: u32,
+    ) -> bool {
+        let Some(publication) = self
+            .stack
+            .last()
+            .and_then(|entry| entry.feed.publications.get(index))
+        else {
             return false;
         };
         let author = publication.authors.first().map(String::as_str);
@@ -1920,7 +2011,8 @@ impl Gutenbird {
         picture.dither(kobo_image::PANEL_GREYS);
         let handle = PictureHandle(u32::MAX);
         let (picture_width, picture_height) = (picture.width(), picture.height());
-        let Some(reference) = context.put_picture(handle, picture_width, picture_height, picture.into_grey())
+        let Some(reference) =
+            context.put_picture(handle, picture_width, picture_height, picture.into_grey())
         else {
             return false;
         };
@@ -1933,7 +2025,10 @@ impl Gutenbird {
     // ---------------------------------------------------------------
 
     fn get_book(&mut self, context: &mut Context) {
-        let kept = self.open.as_ref().is_some_and(|publication| self.is_kept(publication));
+        let kept = self
+            .open
+            .as_ref()
+            .is_some_and(|publication| self.is_kept(publication));
         if kept {
             if let Some((blob, _)) = self.open_keys() {
                 let mut download = ShelfDownload::new(blob);
@@ -1949,12 +2044,21 @@ impl Gutenbird {
     }
 
     fn ask_book(&mut self, context: &mut Context) {
-        let Some(acquisition) = self.open.as_ref().and_then(Publication::best_acquisition).cloned() else {
+        let Some(acquisition) = self
+            .open
+            .as_ref()
+            .and_then(Publication::best_acquisition)
+            .cloned()
+        else {
             self.problem = Some("Nothing here can be read on this device.".to_owned());
             return;
         };
         let kind = download_kind(acquisition.media_type.as_deref());
-        if self.download.as_ref().is_none_or(|download| download.url != acquisition.href) {
+        if self
+            .download
+            .as_ref()
+            .is_none_or(|download| download.url != acquisition.href)
+        {
             self.download = Some(Download {
                 url: acquisition.href.clone(),
                 kind,
@@ -2093,10 +2197,10 @@ impl Gutenbird {
         if download.kind == DownloadKind::Epub && !self.complete {
             return;
         }
-        let memory = self
-            .reader
-            .as_ref()
-            .map_or_else(|| self.place.clone().unwrap_or_default(), |reader| reader.memory().clone());
+        let memory = self.reader.as_ref().map_or_else(
+            || self.place.clone().unwrap_or_default(),
+            |reader| reader.memory().clone(),
+        );
         let (name, result) = match download.kind {
             DownloadKind::Text => {
                 let cleaned = readable(&String::from_utf8_lossy(&download.bytes));
@@ -2178,7 +2282,11 @@ impl Gutenbird {
     }
 
     fn ask_light(&mut self, context: &mut Context) {
-        if self.reader.as_ref().is_some_and(|reader| reader.light().is_none()) {
+        if self
+            .reader
+            .as_ref()
+            .is_some_and(|reader| reader.light().is_none())
+        {
             context.device().read_frontlight();
         }
     }
@@ -2191,7 +2299,10 @@ impl Gutenbird {
         // not begin with a zip's local file signature is refused before it
         // costs the reader a page of raw markup. Open Library publishes
         // open-access links that answer `200` with exactly that.
-        if download.bytes.is_empty() && download.kind == DownloadKind::Epub && !bytes.starts_with(b"PK\x03\x04") {
+        if download.bytes.is_empty()
+            && download.kind == DownloadKind::Epub
+            && !bytes.starts_with(b"PK\x03\x04")
+        {
             self.download = None;
             context.log(
                 LogLevel::Warn,
@@ -2381,7 +2492,11 @@ fn detail_facts(publication: &Publication) -> Vec<(String, String)> {
     if let Some(language) = &publication.language {
         facts.push(("Language".to_owned(), language.clone()));
     }
-    if let Some(issued) = publication.issued.as_ref().or(publication.published.as_ref()) {
+    if let Some(issued) = publication
+        .issued
+        .as_ref()
+        .or(publication.published.as_ref())
+    {
         facts.push(("Published".to_owned(), issued.clone()));
     }
     if let Some(publisher) = &publication.publisher {
@@ -2544,10 +2659,9 @@ impl KoboApp for Gutenbird {
             match upload.advance(context, &result) {
                 ShelfProgress::Done => {
                     let name = upload.name().to_owned();
-                    let size = self
-                        .download
-                        .as_ref()
-                        .map_or(0, |download| u32::try_from(download.bytes.len()).unwrap_or(u32::MAX));
+                    let size = self.download.as_ref().map_or(0, |download| {
+                        u32::try_from(download.bytes.len()).unwrap_or(u32::MAX)
+                    });
                     self.stored.insert(name, size);
                     self.keeping = None;
                     return;
@@ -2615,7 +2729,9 @@ impl KoboApp for Gutenbird {
                 self.show(context);
             }
             StoreResult::Loaded { key, value } if key == REGISTRY_KEY => {
-                let mut added = value.map(|bytes| decode_registry(&bytes)).unwrap_or_default();
+                let mut added = value
+                    .map(|bytes| decode_registry(&bytes))
+                    .unwrap_or_default();
                 self.catalogs.append(&mut added);
             }
             StoreResult::Loaded {
@@ -2623,12 +2739,18 @@ impl KoboApp for Gutenbird {
                 value: Some(value),
             } if key == LAST_OPEN_KEY => {
                 let root = String::from_utf8_lossy(&value).into_owned();
-                if let Some(index) = self.catalogs.iter().position(|catalog| catalog.root == root) {
+                if let Some(index) = self
+                    .catalogs
+                    .iter()
+                    .position(|catalog| catalog.root == root)
+                {
                     self.current = index;
                     self.open_catalog(context);
                 }
             }
-            StoreResult::Loaded { key, value } if self.looking.iter().any(|(held, _)| *held == key) => {
+            StoreResult::Loaded { key, value }
+                if self.looking.iter().any(|(held, _)| *held == key) =>
+            {
                 self.looked_for_cover(context, &key, value);
             }
             StoreResult::Loaded {
@@ -2655,7 +2777,11 @@ impl KoboApp for Gutenbird {
         let kobo_sdk::DeviceResult::Frontlight { percent } = result else {
             return;
         };
-        if self.reader.as_mut().is_some_and(|reader| reader.seed_light(percent)) {
+        if self
+            .reader
+            .as_mut()
+            .is_some_and(|reader| reader.seed_light(percent))
+        {
             self.show(context);
         }
     }
@@ -2684,7 +2810,7 @@ impl KoboApp for Gutenbird {
                         self.stop_federating();
                         self.stack.pop();
                         self.want_covers(context);
-        self.hydrate_visible(context);
+                        self.hydrate_visible(context);
                     }
                 }
             }
@@ -2770,7 +2896,13 @@ impl KoboApp for Gutenbird {
             return;
         }
 
-        for (index, term) in self.current_catalog().recent.clone().into_iter().enumerate() {
+        for (index, term) in self
+            .current_catalog()
+            .recent
+            .clone()
+            .into_iter()
+            .enumerate()
+        {
             if action == action_id(&format!("recent-{index}")) {
                 self.view = View::Search;
                 self.begin_search(context, self.current, term, false);
@@ -2825,7 +2957,7 @@ impl KoboApp for Gutenbird {
             }
             self.show(context);
             self.want_covers(context);
-        self.hydrate_visible(context);
+            self.hydrate_visible(context);
             return;
         }
 
@@ -2909,7 +3041,10 @@ impl KoboApp for Gutenbird {
         let Some((outstanding, awaiting)) = self.task.clone() else {
             context.log(
                 LogLevel::Debug,
-                format!("{task:?} {} arrived with nothing waiting", outcome_name(&outcome)),
+                format!(
+                    "{task:?} {} arrived with nothing waiting",
+                    outcome_name(&outcome)
+                ),
             );
             return;
         };
@@ -2952,11 +3087,14 @@ impl KoboApp for Gutenbird {
                     }
                 }
                 Awaiting::Book => self.took_book(context, &bytes),
-
             },
             TaskOutcome::Failed(error) => match awaiting {
                 Awaiting::Book => {
-                    if self.download.as_ref().is_none_or(|download| download.bytes.is_empty()) {
+                    if self
+                        .download
+                        .as_ref()
+                        .is_none_or(|download| download.bytes.is_empty())
+                    {
                         let failure = Failure::of(error);
                         self.failed = Some(failure.advice.to_owned());
                         self.retryable = failure.retryable;
@@ -2965,8 +3103,12 @@ impl KoboApp for Gutenbird {
                         reader.expect_more(false);
                     }
                 }
-                Awaiting::DiscoverRoot { catalog, federated, .. }
-                | Awaiting::DiscoverDescription { catalog, federated, .. } => {
+                Awaiting::DiscoverRoot {
+                    catalog, federated, ..
+                }
+                | Awaiting::DiscoverDescription {
+                    catalog, federated, ..
+                } => {
                     self.catalogs[catalog].search = SearchState::None;
                     self.search_unavailable(context, federated);
                 }
@@ -2976,7 +3118,6 @@ impl KoboApp for Gutenbird {
                 // A row that could not be followed stays a row. It is already
                 // marked as examined, so the next page turn does not spend
                 // the radio asking again.
-
                 Awaiting::Feed(..) => {
                     let failure = Failure::of(error);
                     self.trouble = Some(failure);
@@ -2993,18 +3134,19 @@ impl KoboApp for Gutenbird {
 
 #[cfg(test)]
 mod tests {
-    use super::{FillStage, 
-        book_keys, catalog_display_name, decode_registry, download_kind, encode_registry, readable,
-        read_offer, Awaiting, Catalog, DetailBlock, Download, DownloadKind, FeedPurpose, Gutenbird,
-        Memory, ReadOffer, Reader, SearchState, SearchWay, StackEntry, View, COVER_TRIES,
+    use super::{
+        book_keys, catalog_display_name, decode_registry, download_kind, encode_registry,
+        read_offer, readable, Awaiting, Catalog, DetailBlock, Download, DownloadKind, FeedPurpose,
+        FillStage, Gutenbird, Memory, ReadOffer, Reader, SearchState, SearchWay, StackEntry, View,
+        COVER_TRIES,
     };
     use kobo_opds::{
         Acquisition, AcquisitionKind, Category, Feed, Image, ImageSource, Link, Navigation,
         Publication, Relation,
     };
     use kobo_sdk::{
-        action_id, AppRunner, Command, Context, DiagnosticSeverity, StoreRequest, StoreResult, Task,
-        TaskError, TaskId, TaskOutcome,
+        action_id, AppRunner, Command, Context, DiagnosticSeverity, StoreRequest, StoreResult,
+        Task, TaskError, TaskId, TaskOutcome,
     };
     use kobo_ui::{Chrome, LayoutKind, PictureHandle, TilePicture, CLARA_BW_METRICS};
 
@@ -3118,15 +3260,13 @@ mod tests {
     /// A solid-colour 40x40 PNG -- big enough to clear `MIN_COVER_PX`, unlike
     /// [`PIXEL`], which exists to be *under* it.
     const LARGE_PIXEL: &[u8] = &[
-        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
-        0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00, 0x28,
-        0x08, 0x02, 0x00, 0x00, 0x00, 0x03, 0x9c, 0x2f, 0x3a, 0x00, 0x00, 0x00,
-        0x30, 0x49, 0x44, 0x41, 0x54, 0x78, 0xda, 0xed, 0xcd, 0x41, 0x09, 0x00,
-        0x00, 0x08, 0x04, 0xb0, 0x0b, 0x66, 0x12, 0x93, 0x18, 0xdf, 0x12, 0x82,
-        0x9f, 0xc1, 0xfe, 0xcb, 0x74, 0xbd, 0x88, 0x58, 0x2c, 0x16, 0x8b, 0xc5,
-        0x62, 0xb1, 0x58, 0x2c, 0x16, 0x8b, 0xc5, 0x62, 0xb1, 0x58, 0x7c, 0x67,
-        0x01, 0x56, 0xe3, 0x97, 0xdb, 0xe1, 0x1b, 0x8a, 0x73, 0x00, 0x00, 0x00,
-        0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00, 0x28, 0x08, 0x02, 0x00, 0x00, 0x00, 0x03,
+        0x9c, 0x2f, 0x3a, 0x00, 0x00, 0x00, 0x30, 0x49, 0x44, 0x41, 0x54, 0x78, 0xda, 0xed, 0xcd,
+        0x41, 0x09, 0x00, 0x00, 0x08, 0x04, 0xb0, 0x0b, 0x66, 0x12, 0x93, 0x18, 0xdf, 0x12, 0x82,
+        0x9f, 0xc1, 0xfe, 0xcb, 0x74, 0xbd, 0x88, 0x58, 0x2c, 0x16, 0x8b, 0xc5, 0x62, 0xb1, 0x58,
+        0x2c, 0x16, 0x8b, 0xc5, 0x62, 0xb1, 0x58, 0x7c, 0x67, 0x01, 0x56, 0xe3, 0x97, 0xdb, 0xe1,
+        0x1b, 0x8a, 0x73, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
     ];
 
     const BASE: &str = "https://example.org/catalog";
@@ -3135,9 +3275,15 @@ mod tests {
     /// shape the cover pipeline tests exercise, mirroring what a real
     /// acquisition feed (Standard Ebooks, the 2.0 catalog) looks like.
     fn two_publication_feed() -> Feed {
-        let mut with_cover = publication("A Journey", vec![epub_acquisition("https://example.org/journey.epub")]);
+        let mut with_cover = publication(
+            "A Journey",
+            vec![epub_acquisition("https://example.org/journey.epub")],
+        );
         with_cover.images = vec![cover_url("https://example.org/covers/journey.jpg")];
-        let bare = publication("A Bare Book", vec![epub_acquisition("https://example.org/bare.epub")]);
+        let bare = publication(
+            "A Bare Book",
+            vec![epub_acquisition("https://example.org/bare.epub")],
+        );
         Feed {
             title: Some("Test Catalog".to_owned()),
             publications: vec![with_cover, bare],
@@ -3158,7 +3304,10 @@ mod tests {
             )),
             ..Gutenbird::default()
         });
-        let _ignored = runner.task_outcome(TaskId(9), TaskOutcome::Completed(two_publication_feed_json().into_bytes()));
+        let _ignored = runner.task_outcome(
+            TaskId(9),
+            TaskOutcome::Completed(two_publication_feed_json().into_bytes()),
+        );
         runner
     }
 
@@ -3224,15 +3373,24 @@ Please read this before you distribute or use this work.\n";
     #[test]
     fn gutenbergs_typesetting_for_a_1971_terminal_is_undone() {
         let clean = readable(RAW);
-        assert!(!clean.contains("almost no restrictions"), "the header survived: {clean}");
-        assert!(!clean.contains("before you distribute"), "the footer survived: {clean}");
+        assert!(
+            !clean.contains("almost no restrictions"),
+            "the header survived: {clean}"
+        );
+        assert!(
+            !clean.contains("before you distribute"),
+            "the footer survived: {clean}"
+        );
         assert!(!clean.contains("*** START"), "the marker is not prose");
         assert!(!clean.contains("*** END"));
         assert!(
             !clean.contains("GEORGE ALLEN") && !clean.contains("Illustration"),
             "the illustration survived: {clean}"
         );
-        assert!(clean.contains("PRIDE. and PREJUDICE"), "the run was not collapsed: {clean}");
+        assert!(
+            clean.contains("PRIDE. and PREJUDICE"),
+            "the run was not collapsed: {clean}"
+        );
         assert!(!clean.contains('_'), "markup is showing: {clean}");
         assert!(clean.contains("declare for Pride and Prejudice unhesitatingly."));
         assert!(clean.contains("a truth universally acknowledged"));
@@ -3286,16 +3444,27 @@ Please read this before you distribute or use this work.\n";
                 "links": [{"rel": "http://opds-spec.org/acquisition/open-access", "href": "https://gutenberg.example/moby.epub", "type": "application/epub+zip"}]
             }]
         }"#;
-        let task = runner.app_mut().task.as_ref().map(|(id, _)| *id).expect("a fetch was started");
+        let task = runner
+            .app_mut()
+            .task
+            .as_ref()
+            .map(|(id, _)| *id)
+            .expect("a fetch was started");
         runner.task_outcome(task, TaskOutcome::Completed(entry.as_bytes().to_vec()));
         assert_eq!(runner.app().view, View::Details);
-        assert_eq!(runner.app().open.as_ref().map(|p| p.title.as_str()), Some("Moby-Dick"));
+        assert_eq!(
+            runner.app().open.as_ref().map(|p| p.title.as_str()),
+            Some("Moby-Dick")
+        );
     }
 
     #[test]
     fn a_feed_holding_one_publication_and_no_navigation_is_taken_as_an_entry_document() {
         let feed = Feed {
-            publications: vec![publication("Solo", vec![epub_acquisition("https://x/solo.epub")])],
+            publications: vec![publication(
+                "Solo",
+                vec![epub_acquisition("https://x/solo.epub")],
+            )],
             ..Feed::default()
         };
         assert!(Gutenbird::resolve_entry(&feed).is_some());
@@ -3305,7 +3474,10 @@ Please read this before you distribute or use this work.\n";
     fn a_feed_with_navigation_and_one_publication_is_not_taken_as_an_entry_document() {
         let feed = Feed {
             navigation: vec![navigation("Elsewhere", "https://x/elsewhere")],
-            publications: vec![publication("Solo", vec![epub_acquisition("https://x/solo.epub")])],
+            publications: vec![publication(
+                "Solo",
+                vec![epub_acquisition("https://x/solo.epub")],
+            )],
             ..Feed::default()
         };
         assert!(Gutenbird::resolve_entry(&feed).is_none());
@@ -3318,8 +3490,20 @@ Please read this before you distribute or use this work.\n";
         // one book is shown rather than the same title twice.
         let feed = Feed {
             publications: vec![
-                publication("Emma", vec![sized_epub("https://gutenberg.example/1.noimages.epub", 558_547)]),
-                publication("Emma", vec![sized_epub("https://gutenberg.example/1.images.epub", 24_846_294)]),
+                publication(
+                    "Emma",
+                    vec![sized_epub(
+                        "https://gutenberg.example/1.noimages.epub",
+                        558_547,
+                    )],
+                ),
+                publication(
+                    "Emma",
+                    vec![sized_epub(
+                        "https://gutenberg.example/1.images.epub",
+                        24_846_294,
+                    )],
+                ),
             ],
             ..Feed::default()
         };
@@ -3335,8 +3519,14 @@ Please read this before you distribute or use this work.\n";
         // one of two identical-looking books is better than neither.
         let feed = Feed {
             publications: vec![
-                publication("Emma", vec![sized_epub("https://elsewhere.example/a.epub", 900_000)]),
-                publication("Emma", vec![sized_epub("https://elsewhere.example/b.epub", 100_000)]),
+                publication(
+                    "Emma",
+                    vec![sized_epub("https://elsewhere.example/a.epub", 900_000)],
+                ),
+                publication(
+                    "Emma",
+                    vec![sized_epub("https://elsewhere.example/b.epub", 100_000)],
+                ),
             ],
             ..Feed::default()
         };
@@ -3354,7 +3544,10 @@ Please read this before you distribute or use this work.\n";
                 title: "Trending Books".to_owned(),
                 href: Some("https://catalog.example/trending".to_owned()),
                 navigation: Vec::new(),
-                publications: vec![publication("Roots", vec![epub_acquisition("https://x/1.epub")])],
+                publications: vec![publication(
+                    "Roots",
+                    vec![epub_acquisition("https://x/1.epub")],
+                )],
             }],
             ..Feed::default()
         };
@@ -3398,7 +3591,10 @@ Please read this before you distribute or use this work.\n";
                 media_type: None,
                 title: None,
             }],
-            publications: vec![publication("One", vec![epub_acquisition("https://x/1.epub")])],
+            publications: vec![publication(
+                "One",
+                vec![epub_acquisition("https://x/1.epub")],
+            )],
             ..Feed::default()
         };
         let entry = StackEntry::fresh(feed, "https://example.org/catalog".to_owned());
@@ -3414,7 +3610,10 @@ Please read this before you distribute or use this work.\n";
                 media_type: None,
                 title: None,
             }],
-            publications: vec![publication("One", vec![epub_acquisition("https://x/1.epub")])],
+            publications: vec![publication(
+                "One",
+                vec![epub_acquisition("https://x/1.epub")],
+            )],
             ..Feed::default()
         };
         let entry = StackEntry::fresh(feed, "https://example.org/catalog".to_owned());
@@ -3441,7 +3640,14 @@ Please read this before you distribute or use this work.\n";
 
     #[test]
     fn a_book_offered_only_for_sale_says_so_instead_of_offering_a_download_that_fails() {
-        let book = publication("For Sale", vec![acquisition(AcquisitionKind::Buy, "https://x/buy", "application/epub+zip")]);
+        let book = publication(
+            "For Sale",
+            vec![acquisition(
+                AcquisitionKind::Buy,
+                "https://x/buy",
+                "application/epub+zip",
+            )],
+        );
         match read_offer(&book) {
             ReadOffer::Unavailable(_) => {}
             other => panic!("expected Unavailable, got {other:?}"),
@@ -3460,7 +3666,14 @@ Please read this before you distribute or use this work.\n";
 
     #[test]
     fn a_sample_is_never_presented_as_the_whole_book() {
-        let book = publication("A Taste", vec![acquisition(AcquisitionKind::Sample, "https://x/sample.epub", "application/epub+zip")]);
+        let book = publication(
+            "A Taste",
+            vec![acquisition(
+                AcquisitionKind::Sample,
+                "https://x/sample.epub",
+                "application/epub+zip",
+            )],
+        );
         assert_eq!(read_offer(&book), ReadOffer::Sample);
         let app = Gutenbird {
             open: Some(book),
@@ -3498,13 +3711,17 @@ Please read this before you distribute or use this work.\n";
         });
         // A first, partial chunk beginning with the zip signature: not
         // enough to be a whole EPUB, and correctly not opened.
-        runner.task_outcome(TaskId(1), TaskOutcome::Completed(b"PK\x03\x04not a whole book".to_vec()));
+        runner.task_outcome(
+            TaskId(1),
+            TaskOutcome::Completed(b"PK\x03\x04not a whole book".to_vec()),
+        );
         assert!(runner.app().reader.is_none(), "a partial EPUB was opened");
         assert!(!runner.app().complete);
     }
 
     #[test]
-    fn a_download_that_does_not_begin_with_the_zip_signature_is_refused_rather_than_shown_as_a_book() {
+    fn a_download_that_does_not_begin_with_the_zip_signature_is_refused_rather_than_shown_as_a_book(
+    ) {
         // Open Library publishes open-access links that answer 200 with an
         // HTML page. The status was fine; the bytes were not a book.
         let book = publication("Mislabelled", vec![epub_acquisition("https://x/book.epub")]);
@@ -3520,8 +3737,14 @@ Please read this before you distribute or use this work.\n";
             }),
             ..Gutenbird::default()
         });
-        runner.task_outcome(TaskId(1), TaskOutcome::Completed(b"<html>not a book</html>".to_vec()));
-        assert_eq!(runner.app().failed.as_deref(), Some("This book did not arrive."));
+        runner.task_outcome(
+            TaskId(1),
+            TaskOutcome::Completed(b"<html>not a book</html>".to_vec()),
+        );
+        assert_eq!(
+            runner.app().failed.as_deref(),
+            Some("This book did not arrive.")
+        );
         assert!(runner.app().reader.is_none());
     }
 
@@ -3553,9 +3776,15 @@ Please read this before you distribute or use this work.\n";
             ..Gutenbird::default()
         });
         let bytes = epub_bytes();
-        assert!(bytes.len() < super::CHUNK_BYTES as usize, "fixture too big for one chunk");
+        assert!(
+            bytes.len() < super::CHUNK_BYTES as usize,
+            "fixture too big for one chunk"
+        );
         runner.task_outcome(TaskId(1), TaskOutcome::Completed(bytes));
-        assert!(runner.app().reader.is_some(), "the finished EPUB was not opened");
+        assert!(
+            runner.app().reader.is_some(),
+            "the finished EPUB was not opened"
+        );
         assert_eq!(runner.app().view, View::Reading);
     }
 
@@ -3570,7 +3799,9 @@ Please read this before you distribute or use this work.\n";
         });
         let commands = runner.action(action_id("read"));
         assert!(
-            !commands.iter().any(|command| matches!(command, Command::Spawn { .. })),
+            !commands
+                .iter()
+                .any(|command| matches!(command, Command::Spawn { .. })),
             "a book already on the device was fetched again"
         );
         assert!(
@@ -3623,7 +3854,10 @@ Please read this before you distribute or use this work.\n";
             )),
             ..Gutenbird::default()
         });
-        let commands = runner.task_outcome(TaskId(9), TaskOutcome::Completed(two_publication_feed_json().into_bytes()));
+        let commands = runner.task_outcome(
+            TaskId(9),
+            TaskOutcome::Completed(two_publication_feed_json().into_bytes()),
+        );
         assert!(
             commands.iter().any(|command| matches!(
                 command,
@@ -3632,7 +3866,9 @@ Please read this before you distribute or use this work.\n";
             "the device was never asked whether it already had the cover"
         );
         assert!(
-            !commands.iter().any(|command| matches!(command, Command::Spawn { .. })),
+            !commands
+                .iter()
+                .any(|command| matches!(command, Command::Spawn { .. })),
             "the radio was used before the card had answered"
         );
     }
@@ -3645,7 +3881,9 @@ Please read this before you distribute or use this work.\n";
             value: Some(LARGE_PIXEL.to_vec()),
         });
         assert!(
-            !commands.iter().any(|command| matches!(command, Command::Spawn { .. })),
+            !commands
+                .iter()
+                .any(|command| matches!(command, Command::Spawn { .. })),
             "a cover already on the device was fetched anyway"
         );
     }
@@ -3658,7 +3896,9 @@ Please read this before you distribute or use this work.\n";
             value: None,
         });
         assert!(
-            commands.iter().any(|command| matches!(command, Command::Spawn { .. })),
+            commands
+                .iter()
+                .any(|command| matches!(command, Command::Spawn { .. })),
             "a cover the device did not have was never fetched"
         );
     }
@@ -3678,7 +3918,9 @@ Please read this before you distribute or use this work.\n";
             "a cached value that is not a picture was kept"
         );
         assert!(
-            commands.iter().any(|command| matches!(command, Command::Spawn { .. })),
+            commands
+                .iter()
+                .any(|command| matches!(command, Command::Spawn { .. })),
             "nothing was fetched to replace it"
         );
     }
@@ -3731,10 +3973,15 @@ Please read this before you distribute or use this work.\n";
         app.want_covers(&mut context);
         let commands = context.take_commands();
         assert!(
-            !commands.iter().any(|command| matches!(command, Command::Spawn { .. })),
+            !commands
+                .iter()
+                .any(|command| matches!(command, Command::Spawn { .. })),
             "an inline cover was fetched over the radio: {commands:?}"
         );
-        assert!(app.stack[0].covers[0].is_some(), "the inline cover was never decoded");
+        assert!(
+            app.stack[0].covers[0].is_some(),
+            "the inline cover was never decoded"
+        );
     }
 
     #[test]
@@ -3760,7 +4007,10 @@ Please read this before you distribute or use this work.\n";
     fn covers_are_filled_in_only_for_the_shelf_page_being_looked_at() {
         let publications: Vec<Publication> = (0..8)
             .map(|index| {
-                let mut book = publication(&format!("Book {index}"), vec![epub_acquisition(&format!("https://x/{index}.epub"))]);
+                let mut book = publication(
+                    &format!("Book {index}"),
+                    vec![epub_acquisition(&format!("https://x/{index}.epub"))],
+                );
                 book.images = vec![cover_url(&format!("https://x/covers/{index}.jpg"))];
                 book
             })
@@ -3786,7 +4036,10 @@ Please read this before you distribute or use this work.\n";
         app.catalogs[0].search = SearchState::None;
         app.view = View::Search;
         let text = screen_text(&app.search_screen());
-        assert!(text.iter().any(|line| line.contains("no search")), "{text:?}");
+        assert!(
+            text.iter().any(|line| line.contains("no search")),
+            "{text:?}"
+        );
     }
 
     #[test]
@@ -3844,7 +4097,10 @@ Please read this before you distribute or use this work.\n";
         app.push_recent(0, "dickens");
         let _ = &mut context;
         assert_eq!(app.catalogs[0].recent, vec!["dickens".to_owned()]);
-        assert!(app.catalogs[1].recent.is_empty(), "a search leaked into another catalog");
+        assert!(
+            app.catalogs[1].recent.is_empty(),
+            "a search leaked into another catalog"
+        );
     }
 
     #[test]
@@ -3860,19 +4116,28 @@ Please read this before you distribute or use this work.\n";
             command,
             Command::Spawn { work: Task::Fetch { url, .. }, .. } if *url == runner.app().catalogs[0].root
         ));
-        assert!(root_fetch, "the first search did not have to discover the catalog's search link");
+        assert!(
+            root_fetch,
+            "the first search did not have to discover the catalog's search link"
+        );
         assert!(runner.app().task.is_some());
 
         // Answer the root with a feed carrying a direct search link.
         let task = runner.app().task.as_ref().map(|(id, _)| *id).unwrap();
         let root_body = r#"{"metadata": {"title": "T"}, "links": [{"rel": "search", "href": "https://example.org/search{?query}", "type": "application/opds+json", "templated": true}]}"#.to_string();
         runner.task_outcome(task, TaskOutcome::Completed(root_body.into_bytes()));
-        assert!(matches!(runner.app().catalogs[0].search, SearchState::Known(_)));
+        assert!(matches!(
+            runner.app().catalogs[0].search,
+            SearchState::Known(_)
+        ));
 
         // A second search against the same catalog goes straight to the
         // search URL -- no second fetch of the root.
         let task = runner.app().task.as_ref().map(|(id, _)| *id).unwrap();
-        runner.task_outcome(task, TaskOutcome::Completed(b"{\"publications\":[]}".to_vec()));
+        runner.task_outcome(
+            task,
+            TaskOutcome::Completed(b"{\"publications\":[]}".to_vec()),
+        );
         let commands = {
             let app = runner.app_mut();
             let mut context = Context::default();
@@ -3880,10 +4145,16 @@ Please read this before you distribute or use this work.\n";
             context.take_commands()
         };
         let asked = commands.iter().find_map(|command| match command {
-            Command::Spawn { work: Task::Fetch { url, .. }, .. } => Some(url.clone()),
+            Command::Spawn {
+                work: Task::Fetch { url, .. },
+                ..
+            } => Some(url.clone()),
             _ => None,
         });
-        assert_eq!(asked.as_deref(), Some("https://example.org/search?query=second"));
+        assert_eq!(
+            asked.as_deref(),
+            Some("https://example.org/search?query=second")
+        );
     }
 
     #[test]
@@ -3893,9 +4164,13 @@ Please read this before you distribute or use this work.\n";
               <Url type="text/html" template="https://example.org/search.html?q={searchTerms}"/>
               <Url type="application/atom+xml" template="https://example.org/search.atom?q={searchTerms}"/>
             </OpenSearchDescription>"#;
-        let template = kobo_opds::parse_opensearch(description, "https://example.org/opensearch.xml")
-            .expect("a template");
-        assert_eq!(template.expand("dickens"), "https://example.org/search.atom?q=dickens");
+        let template =
+            kobo_opds::parse_opensearch(description, "https://example.org/opensearch.xml")
+                .expect("a template");
+        assert_eq!(
+            template.expand("dickens"),
+            "https://example.org/search.atom?q=dickens"
+        );
     }
 
     #[test]
@@ -3904,15 +4179,23 @@ Please read this before you distribute or use this work.\n";
             <OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
               <Url type="application/atom+xml" template="http://example.org/search?q={searchTerms}"/>
             </OpenSearchDescription>"#;
-        let template = kobo_opds::parse_opensearch(description, "https://example.org/opensearch.xml")
-            .expect("a template");
-        assert!(template.expand("x").starts_with("https://"), "{}", template.expand("x"));
+        let template =
+            kobo_opds::parse_opensearch(description, "https://example.org/opensearch.xml")
+                .expect("a template");
+        assert!(
+            template.expand("x").starts_with("https://"),
+            "{}",
+            template.expand("x")
+        );
     }
 
     #[test]
     fn a_search_template_on_another_host_is_followed_but_a_paging_link_on_another_host_is_not() {
         let way = SearchWay::Direct(search_link("https://m.example.org/search{?query}"));
-        assert_eq!(way.expand("x").as_deref(), Some("https://m.example.org/search?query=x"));
+        assert_eq!(
+            way.expand("x").as_deref(),
+            Some("https://m.example.org/search?query=x")
+        );
 
         let feed = Feed {
             links: vec![Link {
@@ -3921,15 +4204,22 @@ Please read this before you distribute or use this work.\n";
                 media_type: None,
                 title: None,
             }],
-            publications: vec![publication("One", vec![epub_acquisition("https://x/1.epub")])],
+            publications: vec![publication(
+                "One",
+                vec![epub_acquisition("https://x/1.epub")],
+            )],
             ..Feed::default()
         };
         let entry = StackEntry::fresh(feed, "https://example.org/catalog".to_owned());
-        assert!(entry.next.is_none(), "paging followed a host the reader never asked for");
+        assert!(
+            entry.next.is_none(),
+            "paging followed a host the reader never asked for"
+        );
     }
 
     #[test]
-    fn searching_every_catalog_appends_each_answer_as_it_arrives_rather_than_waiting_for_all_of_them() {
+    fn searching_every_catalog_appends_each_answer_as_it_arrives_rather_than_waiting_for_all_of_them(
+    ) {
         let mut app = Gutenbird::default();
         known_search(&mut app.catalogs[0], "https://a.example/search{?query}");
         known_search(&mut app.catalogs[1], "https://b.example/search{?query}");
@@ -3942,16 +4232,30 @@ Please read this before you distribute or use this work.\n";
         }
         runner.action(action_id("kb.enter"));
         assert!(runner.app().federating, "a federated search did not start");
-        assert_eq!(runner.app().all_queue.len(), runner.app().catalogs.len() - 1);
+        assert_eq!(
+            runner.app().all_queue.len(),
+            runner.app().catalogs.len() - 1
+        );
 
-        let task = runner.app().task.as_ref().map(|(id, _)| *id).expect("the first catalog was asked");
+        let task = runner
+            .app()
+            .task
+            .as_ref()
+            .map(|(id, _)| *id)
+            .expect("the first catalog was asked");
         let answer = r#"{"publications": [{"metadata": {"title": "From A"}, "links": [{"rel": "http://opds-spec.org/acquisition/open-access", "href": "https://a.example/1.epub", "type": "application/epub+zip"}]}]}"#;
         runner.task_outcome(task, TaskOutcome::Completed(answer.as_bytes().to_vec()));
 
         // The first catalog's book is on the shelf while the second is still
         // being asked.
-        assert_eq!(runner.app().stack.last().unwrap().feed.publications.len(), 1);
-        assert!(runner.app().task.is_some(), "the second catalog was not asked yet");
+        assert_eq!(
+            runner.app().stack.last().unwrap().feed.publications.len(),
+            1
+        );
+        assert!(
+            runner.app().task.is_some(),
+            "the second catalog was not asked yet"
+        );
     }
 
     #[test]
@@ -3978,7 +4282,10 @@ Please read this before you distribute or use this work.\n";
         // Leaving before the results have finished arriving: Back pops the
         // federated results page off the stack.
         runner.action(kobo_sdk::ActionId::BACK);
-        assert!(runner.app().all_queue.is_empty(), "catalogs not yet asked were left queued");
+        assert!(
+            runner.app().all_queue.is_empty(),
+            "catalogs not yet asked were left queued"
+        );
         assert!(!runner.app().federating);
     }
 
@@ -3996,13 +4303,20 @@ Please read this before you distribute or use this work.\n";
 
         // A malformed address.
         app.add_catalog(&mut Context::default(), "not a url");
-        assert_eq!(app.catalogs.len(), before, "a malformed url was stored anyway");
+        assert_eq!(
+            app.catalogs.len(),
+            before,
+            "a malformed url was stored anyway"
+        );
         assert!(app.add_catalog_problem.is_some());
 
         // A well formed one.
         app.add_catalog(&mut Context::default(), "https://example.org/opds");
         assert_eq!(app.catalogs.len(), before + 1);
-        assert_eq!(app.catalogs.last().unwrap().root, "https://example.org/opds");
+        assert_eq!(
+            app.catalogs.last().unwrap().root,
+            "https://example.org/opds"
+        );
         assert!(app.catalogs.last().unwrap().added);
         assert!(app.add_catalog_problem.is_none());
     }
@@ -4026,7 +4340,10 @@ Please read this before you distribute or use this work.\n";
 
     #[test]
     fn a_catalog_display_name_falls_back_to_the_host() {
-        assert_eq!(catalog_display_name("https://www.example.org/opds/root"), "example.org");
+        assert_eq!(
+            catalog_display_name("https://www.example.org/opds/root"),
+            "example.org"
+        );
     }
 
     // -----------------------------------------------------------------
@@ -4038,11 +4355,15 @@ Please read this before you distribute or use this work.\n";
         let mut with_rights = publication("Has Rights", Vec::new());
         with_rights.rights = Some("Public domain in the USA.".to_owned());
         let blocks = Gutenbird::detail_blocks(&with_rights);
-        assert!(blocks.iter().any(|block| matches!(block, DetailBlock::Text(text) if text == "Public domain in the USA.")));
+        assert!(blocks.iter().any(
+            |block| matches!(block, DetailBlock::Text(text) if text == "Public domain in the USA.")
+        ));
 
         let without = publication("No Rights", Vec::new());
         let blocks = Gutenbird::detail_blocks(&without);
-        assert!(!blocks.iter().any(|block| matches!(block, DetailBlock::Section("Rights"))));
+        assert!(!blocks
+            .iter()
+            .any(|block| matches!(block, DetailBlock::Section("Rights"))));
     }
 
     #[test]
@@ -4063,16 +4384,31 @@ Please read this before you distribute or use this work.\n";
 
     #[test]
     fn download_kind_prefers_epub_media_types_over_plain_text() {
-        assert_eq!(download_kind(Some("application/epub+zip")), DownloadKind::Epub);
-        assert_eq!(download_kind(Some("application/kepub+zip")), DownloadKind::Epub);
+        assert_eq!(
+            download_kind(Some("application/epub+zip")),
+            DownloadKind::Epub
+        );
+        assert_eq!(
+            download_kind(Some("application/kepub+zip")),
+            DownloadKind::Epub
+        );
         assert_eq!(download_kind(Some("text/plain")), DownloadKind::Text);
-        assert_eq!(download_kind(Some("text/plain; charset=utf-8")), DownloadKind::Text);
+        assert_eq!(
+            download_kind(Some("text/plain; charset=utf-8")),
+            DownloadKind::Text
+        );
     }
 
     #[test]
     fn book_keys_differ_between_two_editions_and_never_come_from_the_title() {
-        let a = publication("Same Title", vec![epub_acquisition("https://catalog-a.example/book.epub")]);
-        let b = publication("Same Title", vec![epub_acquisition("https://catalog-b.example/book.epub")]);
+        let a = publication(
+            "Same Title",
+            vec![epub_acquisition("https://catalog-a.example/book.epub")],
+        );
+        let b = publication(
+            "Same Title",
+            vec![epub_acquisition("https://catalog-b.example/book.epub")],
+        );
         assert_ne!(book_keys(&a), book_keys(&b));
     }
 
@@ -4099,11 +4435,20 @@ Please read this before you distribute or use this work.\n";
         let prose = "It is a truth universally acknowledged, that a single man in possession \
                      of a good fortune, must be in want of a wife.\n\n"
             .repeat(30);
-        runner.task_outcome(TaskId(1), TaskOutcome::Completed(prose.clone().into_bytes()));
+        runner.task_outcome(
+            TaskId(1),
+            TaskOutcome::Completed(prose.clone().into_bytes()),
+        );
         let application = runner.app_mut();
-        assert!(application.reader.is_some(), "the chunk did not open as a book");
         assert!(
-            application.reader.as_ref().is_some_and(|reader| reader.page_count() > 1),
+            application.reader.is_some(),
+            "the chunk did not open as a book"
+        );
+        assert!(
+            application
+                .reader
+                .as_ref()
+                .is_some_and(|reader| reader.page_count() > 1),
             "the whole chunk fitted a page"
         );
         let metrics = CLARA_BW_METRICS;
@@ -4115,8 +4460,15 @@ Please read this before you distribute or use this work.\n";
             let layout = application
                 .reading_screen(&kobo_sdk::Context::default())
                 .layout_with(&metrics, &Chrome::with_back(true));
-            let drawn = layout.nodes.iter().filter(|node| node.kind == LayoutKind::Text).count();
-            assert_eq!(drawn, expected, "page {page} measured as {expected} paragraphs but drew {drawn}");
+            let drawn = layout
+                .nodes
+                .iter()
+                .filter(|node| node.kind == LayoutKind::Text)
+                .count();
+            assert_eq!(
+                drawn, expected,
+                "page {page} measured as {expected} paragraphs but drew {drawn}"
+            );
             let reader = application.reader.as_mut().expect("a book");
             if !reader.forward() {
                 break;
@@ -4154,7 +4506,10 @@ Please read this before you distribute or use this work.\n";
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert!(controls.len() >= 5, "the reading controls are not all there: {controls:?}");
+        assert!(
+            controls.len() >= 5,
+            "the reading controls are not all there: {controls:?}"
+        );
         for (action, rect) in controls {
             let hit = layout.hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2);
             assert_eq!(hit, Some(action));
@@ -4174,7 +4529,9 @@ Please read this before you distribute or use this work.\n";
         let screen = application.reading_screen(&kobo_sdk::Context::default());
         let bar = screen.top_bar.as_ref().expect("a top bar");
         assert!(
-            bar.actions.iter().any(|action| action.glyph == Some(kobo_ui::Glyph::Light)),
+            bar.actions
+                .iter()
+                .any(|action| action.glyph == Some(kobo_ui::Glyph::Light)),
             "there is no light control in the bar"
         );
         let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
@@ -4183,7 +4540,10 @@ Please read this before you distribute or use this work.\n";
             .iter()
             .filter(|node| matches!(node.kind, LayoutKind::ChoiceOption(..)))
             .count();
-        assert_eq!(steps, 2, "the light panel is not the two steps and nothing else");
+        assert_eq!(
+            steps, 2,
+            "the light panel is not the two steps and nothing else"
+        );
     }
 
     #[test]
@@ -4224,9 +4584,13 @@ Please read this before you distribute or use this work.\n";
         });
         runner.task_outcome(TaskId(1), TaskOutcome::Failed(TaskError::Denied));
         assert!(!runner.app_mut().retryable);
-        let screen = runner.app_mut().details_screen(&kobo_sdk::Context::default());
+        let screen = runner
+            .app_mut()
+            .details_screen(&kobo_sdk::Context::default());
         assert!(
-            !screen_text(&screen).iter().any(|line| line.contains("Try again")),
+            !screen_text(&screen)
+                .iter()
+                .any(|line| line.contains("Try again")),
             "a retry is offered for a failure that retrying cannot help"
         );
     }
@@ -4254,7 +4618,10 @@ Please read this before you distribute or use this work.\n";
             }),
             ..Gutenbird::default()
         });
-        runner.task_outcome(TaskId(1), TaskOutcome::Completed(b"The whole of a very short book.".to_vec()));
+        runner.task_outcome(
+            TaskId(1),
+            TaskOutcome::Completed(b"The whole of a very short book.".to_vec()),
+        );
         assert!(runner.app_mut().complete);
     }
 
@@ -4263,7 +4630,10 @@ Please read this before you distribute or use this work.\n";
         let feed = two_publication_feed();
         let mut runner = AppRunner::new(Gutenbird {
             stack: vec![StackEntry::fresh(feed, BASE.to_owned())],
-            open: Some(publication("Something Else", vec![text_acquisition("https://x/else.txt")])),
+            open: Some(publication(
+                "Something Else",
+                vec![text_acquisition("https://x/else.txt")],
+            )),
             reader: Some(opened("Chapter forty of something else.")),
             complete: true,
             ..Gutenbird::default()
@@ -4274,7 +4644,10 @@ Please read this before you distribute or use this work.\n";
         assert_eq!(application.fetched, 0);
         assert!(application.reader.is_none(), "the last book is still open");
         assert!(!application.complete);
-        assert_eq!(application.open.as_ref().map(|p| p.title.as_str()), Some("A Journey"));
+        assert_eq!(
+            application.open.as_ref().map(|p| p.title.as_str()),
+            Some("A Journey")
+        );
     }
 
     #[test]
@@ -4286,7 +4659,9 @@ Please read this before you distribute or use this work.\n";
         });
         let commands = runner.action(action_id("read"));
         assert!(
-            commands.iter().any(|command| matches!(command, Command::Spawn { .. })),
+            commands
+                .iter()
+                .any(|command| matches!(command, Command::Spawn { .. })),
             "a book that is not here was not fetched"
         );
     }
@@ -4374,7 +4749,10 @@ Please read this before you distribute or use this work.\n";
 
     #[test]
     fn a_download_runs_on_the_books_own_page_not_a_bare_screen() {
-        let book = publication("On Its Own Page", vec![text_acquisition("https://x/own.txt")]);
+        let book = publication(
+            "On Its Own Page",
+            vec![text_acquisition("https://x/own.txt")],
+        );
         let mut runner = AppRunner::new(Gutenbird {
             view: View::Details,
             open: Some(book),
@@ -4404,17 +4782,40 @@ Please read this before you distribute or use this work.\n";
              truths, and unexpected revelations about character and love. (This is an \
              automatically generated summary.)"
             .repeat(2);
-        let mut book = publication("Pride and Prejudice", vec![text_acquisition("https://x/pp.txt")]);
+        let mut book = publication(
+            "Pride and Prejudice",
+            vec![text_acquisition("https://x/pp.txt")],
+        );
         book.summary = Some(long.clone());
         book.language = Some("en".to_owned());
         book.issued = Some("1813".to_owned());
         book.publisher = Some("A Publisher".to_owned());
         book.categories = vec![
-            Category { term: "courtship".to_owned(), label: Some("Courtship -- Fiction".to_owned()), scheme: None },
-            Category { term: "domestic".to_owned(), label: Some("Domestic fiction".to_owned()), scheme: None },
-            Category { term: "england".to_owned(), label: Some("England -- Fiction".to_owned()), scheme: None },
-            Category { term: "love".to_owned(), label: Some("Love stories".to_owned()), scheme: None },
-            Category { term: "sisters".to_owned(), label: Some("Sisters -- Fiction".to_owned()), scheme: None },
+            Category {
+                term: "courtship".to_owned(),
+                label: Some("Courtship -- Fiction".to_owned()),
+                scheme: None,
+            },
+            Category {
+                term: "domestic".to_owned(),
+                label: Some("Domestic fiction".to_owned()),
+                scheme: None,
+            },
+            Category {
+                term: "england".to_owned(),
+                label: Some("England -- Fiction".to_owned()),
+                scheme: None,
+            },
+            Category {
+                term: "love".to_owned(),
+                label: Some("Love stories".to_owned()),
+                scheme: None,
+            },
+            Category {
+                term: "sisters".to_owned(),
+                label: Some("Sisters -- Fiction".to_owned()),
+                scheme: None,
+            },
         ];
         let mut app = Gutenbird {
             view: View::Details,
@@ -4426,7 +4827,10 @@ Please read this before you distribute or use this work.\n";
         let publication = app.open.clone().unwrap();
         let blocks = Gutenbird::detail_blocks(&publication);
         let pages = app.detail_pagination(&context, &publication, &blocks);
-        assert!(pages.len() > 1, "a summary this long should have cost a page turn");
+        assert!(
+            pages.len() > 1,
+            "a summary this long should have cost a page turn"
+        );
         assert_eq!(
             summary_words(pages.iter().flatten()),
             summary_words(blocks.iter()),
@@ -4463,7 +4867,10 @@ Please read this before you distribute or use this work.\n";
         let long = "This is the summary of a book, written by whoever catalogued it, at \
                     whatever length they felt the book deserved. "
             .repeat(12);
-        let mut book = publication("Moby Dick; Or, The Whale", vec![text_acquisition("https://x/moby.txt")]);
+        let mut book = publication(
+            "Moby Dick; Or, The Whale",
+            vec![text_acquisition("https://x/moby.txt")],
+        );
         book.summary = Some(long);
         let mut app = Gutenbird {
             view: View::Details,
@@ -4477,7 +4884,10 @@ Please read this before you distribute or use this work.\n";
         let blocks = Gutenbird::detail_blocks(&publication);
         let pages = app.detail_pagination(&context, &publication, &blocks);
         assert!(pages.len() > 1, "a summary this long should have paged");
-        assert!(!pages[0].is_empty(), "the first page emptied, so the second inherited the cover");
+        assert!(
+            !pages[0].is_empty(),
+            "the first page emptied, so the second inherited the cover"
+        );
         assert_eq!(
             summary_words(pages.iter().flatten()),
             summary_words(blocks.iter()),
@@ -4499,7 +4909,12 @@ Please read this before you distribute or use this work.\n";
     #[test]
     fn every_cover_on_a_shelf_page_is_drawn_whole_between_the_bars() {
         let publications: Vec<Publication> = (0..super::SHELF_PAGE)
-            .map(|index| publication(&format!("Book {index}"), vec![epub_acquisition(&format!("https://x/{index}.epub"))]))
+            .map(|index| {
+                publication(
+                    &format!("Book {index}"),
+                    vec![epub_acquisition(&format!("https://x/{index}.epub"))],
+                )
+            })
             .collect();
         let application = app_with_stack(Feed {
             publications,
@@ -4513,7 +4928,11 @@ Please read this before you distribute or use this work.\n";
             .iter()
             .filter(|node| matches!(node.kind, LayoutKind::Tile(..)))
             .collect::<Vec<_>>();
-        assert_eq!(tiles.len(), super::SHELF_PAGE, "every book on the page has a tile");
+        assert_eq!(
+            tiles.len(),
+            super::SHELF_PAGE,
+            "every book on the page has a tile"
+        );
         let floor = CLARA_BW_METRICS.height - CLARA_BW_METRICS.nav_bar_height();
         for tile in &tiles {
             assert!(
@@ -4535,13 +4954,19 @@ Please read this before you distribute or use this work.\n";
                 media_type: None,
                 title: None,
             }],
-            publications: vec![publication("One", vec![epub_acquisition("https://x/1.epub")])],
+            publications: vec![publication(
+                "One",
+                vec![epub_acquisition("https://x/1.epub")],
+            )],
             ..Feed::default()
         };
         let mut runner = AppRunner::new(app_with_stack(page_one));
         let commands = runner.action(action_id("shelf-next"));
         let asked = commands.iter().find_map(|command| match command {
-            Command::Spawn { work: Task::Fetch { url, .. }, .. } => Some(url.clone()),
+            Command::Spawn {
+                work: Task::Fetch { url, .. },
+                ..
+            } => Some(url.clone()),
             _ => None,
         });
         assert_eq!(asked.as_deref(), Some("https://example.org/catalog?page=2"));
@@ -4550,10 +4975,17 @@ Please read this before you distribute or use this work.\n";
         let page_two = r#"{"publications": [{"metadata": {"title": "Two"}, "links": [{"rel": "http://opds-spec.org/acquisition/open-access", "href": "https://x/2.epub", "type": "application/epub+zip"}]}]}"#;
         runner.task_outcome(task, TaskOutcome::Completed(page_two.as_bytes().to_vec()));
         let entry = runner.app().stack.last().unwrap();
-        assert_eq!(entry.feed.publications.len(), 2, "the second page did not add to the first");
+        assert_eq!(
+            entry.feed.publications.len(),
+            2,
+            "the second page did not add to the first"
+        );
         assert_eq!(entry.feed.publications[0].title, "One");
         assert_eq!(entry.feed.publications[1].title, "Two");
-        assert!(entry.next.is_none(), "a catalog with no next page still says there is more");
+        assert!(
+            entry.next.is_none(),
+            "a catalog with no next page still says there is more"
+        );
     }
 
     // -----------------------------------------------------------------
@@ -4564,7 +4996,8 @@ Please read this before you distribute or use this work.\n";
     const PARITY_JSON: &str = include_str!("../tests/fixtures/parity-2.0.json");
 
     fn parity_app(source: &str) -> Gutenbird {
-        let feed = kobo_opds::parse(source.as_bytes(), "https://parity.example/catalog").expect("both fixtures parse");
+        let feed = kobo_opds::parse(source.as_bytes(), "https://parity.example/catalog")
+            .expect("both fixtures parse");
         app_with_stack(feed)
     }
 
@@ -4614,7 +5047,10 @@ Please read this before you distribute or use this work.\n";
         let mut json_app = Gutenbird::default();
         json_app.catalogs[0].search = SearchState::Known(json_way);
         json_app.view = View::Search;
-        assert_eq!(screen_text(&atom_app.search_screen()), screen_text(&json_app.search_screen()));
+        assert_eq!(
+            screen_text(&atom_app.search_screen()),
+            screen_text(&json_app.search_screen())
+        );
     }
 
     #[test]
@@ -4622,8 +5058,14 @@ Please read this before you distribute or use this work.\n";
         for source in [PARITY_ATOM, PARITY_JSON] {
             let app = parity_app(source);
             let text = screen_text(&app.shelf_screen(&Context::default())).join(" ");
-            assert!(!text.contains("OPDS"), "the shelf mentioned the protocol: {text}");
-            assert!(!text.contains("1.2") && !text.contains("2.0"), "the shelf named a version: {text}");
+            assert!(
+                !text.contains("OPDS"),
+                "the shelf mentioned the protocol: {text}"
+            );
+            assert!(
+                !text.contains("1.2") && !text.contains("2.0"),
+                "the shelf named a version: {text}"
+            );
         }
     }
     #[test]
@@ -4636,11 +5078,17 @@ Please read this before you distribute or use this work.\n";
             publications: vec![
                 publication(
                     "Pride and Prejudice",
-                    vec![sized_epub("https://gutenberg.example/1342.epub3.images", 24_835_612)],
+                    vec![sized_epub(
+                        "https://gutenberg.example/1342.epub3.images",
+                        24_835_612,
+                    )],
                 ),
                 publication(
                     "Pride and Prejudice",
-                    vec![sized_epub("https://gutenberg.example/1342.epub.noimages", 558_547)],
+                    vec![sized_epub(
+                        "https://gutenberg.example/1342.epub.noimages",
+                        558_547,
+                    )],
                 ),
             ],
             ..Feed::default()
@@ -4659,8 +5107,20 @@ Please read this before you distribute or use this work.\n";
         // fit is still the better book.
         let feed = Feed {
             publications: vec![
-                publication("Emma", vec![sized_epub("https://gutenberg.example/1.noimages.epub", 500_000)]),
-                publication("Emma", vec![sized_epub("https://gutenberg.example/1.images.epub", 3_000_000)]),
+                publication(
+                    "Emma",
+                    vec![sized_epub(
+                        "https://gutenberg.example/1.noimages.epub",
+                        500_000,
+                    )],
+                ),
+                publication(
+                    "Emma",
+                    vec![sized_epub(
+                        "https://gutenberg.example/1.images.epub",
+                        3_000_000,
+                    )],
+                ),
             ],
             ..Feed::default()
         };
@@ -4698,7 +5158,10 @@ Please read this before you distribute or use this work.\n";
             ],
             ..Feed::default()
         };
-        runner.app_mut().stack = vec![StackEntry::fresh(feed, "https://gutenberg.example/".to_owned())];
+        runner.app_mut().stack = vec![StackEntry::fresh(
+            feed,
+            "https://gutenberg.example/".to_owned(),
+        )];
         let mut context = runner.context();
         runner.app_mut().took_hydration(
             &mut context,
@@ -4707,8 +5170,15 @@ Please read this before you distribute or use this work.\n";
         );
         let entry = runner.app().stack.last().expect("a shelf");
         assert_eq!(entry.feed.navigation.len(), 2, "the tile left the grid");
-        assert!(entry.feed.publications.is_empty(), "a second collection appeared");
-        assert_eq!(entry.nav_covers.len(), 2, "no room was kept for the pictures");
+        assert!(
+            entry.feed.publications.is_empty(),
+            "a second collection appeared"
+        );
+        assert_eq!(
+            entry.nav_covers.len(),
+            2,
+            "no room was kept for the pictures"
+        );
     }
 
     #[test]
@@ -4723,9 +5193,12 @@ Please read this before you distribute or use this work.\n";
             ..Feed::default()
         };
         let entry = StackEntry::fresh(feed, "https://x/".to_owned());
-        assert_eq!(super::shelf_pages(&entry), 4, "twenty entries, six to a page");
+        assert_eq!(
+            super::shelf_pages(&entry),
+            4,
+            "twenty entries, six to a page"
+        );
     }
-
 
     #[test]
     fn a_tile_that_is_a_list_rather_than_a_book_gets_no_picture() {
@@ -4735,10 +5208,16 @@ Please read this before you distribute or use this work.\n";
         // this finds out.
         let mut runner = AppRunner::new(Gutenbird::default());
         let feed = Feed {
-            navigation: vec![navigation("Authors", "https://gutenberg.example/authors.opds")],
+            navigation: vec![navigation(
+                "Authors",
+                "https://gutenberg.example/authors.opds",
+            )],
             ..Feed::default()
         };
-        runner.app_mut().stack = vec![StackEntry::fresh(feed, "https://gutenberg.example/".to_owned())];
+        runner.app_mut().stack = vec![StackEntry::fresh(
+            feed,
+            "https://gutenberg.example/".to_owned(),
+        )];
         let mut context = runner.context();
         runner.app_mut().took_hydration(
             &mut context,
@@ -4749,7 +5228,6 @@ Please read this before you distribute or use this work.\n";
         assert_eq!(entry.feed.navigation.len(), 1);
         assert!(entry.nav_covers[0].is_none(), "a list was given a cover");
     }
-
 
     #[test]
     fn a_tap_outranks_the_shelf_filling_its_own_tiles() {
@@ -4765,9 +5243,10 @@ Please read this before you distribute or use this work.\n";
             },
         ));
         let mut context = runner.context();
-        runner
-            .app_mut()
-            .follow(&mut context, "https://gutenberg.example/latest.opds".to_owned());
+        runner.app_mut().follow(
+            &mut context,
+            "https://gutenberg.example/latest.opds".to_owned(),
+        );
         let awaiting = runner.app().task.clone();
         assert!(
             matches!(awaiting, Some((_, Awaiting::Feed(..)))),
@@ -4789,7 +5268,10 @@ Please read this before you distribute or use this work.\n";
             navigation: vec![navigation("A Book", "https://gutenberg.example/1.opds")],
             ..Feed::default()
         };
-        runner.app_mut().stack = vec![StackEntry::fresh(feed, "https://gutenberg.example/".to_owned())];
+        runner.app_mut().stack = vec![StackEntry::fresh(
+            feed,
+            "https://gutenberg.example/".to_owned(),
+        )];
         let mut context = runner.context();
         runner.app_mut().hydrate_visible(&mut context);
         assert!(runner.app().filling.is_empty(), "it went looking anyway");
@@ -4824,5 +5306,4 @@ Please read this before you distribute or use this work.\n";
           href="https://gutenberg.example/author/37.opds"/>
   </entry>
 </feed>"#;
-
 }

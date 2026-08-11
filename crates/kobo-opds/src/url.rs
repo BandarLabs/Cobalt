@@ -404,7 +404,6 @@ mod tests {
         ));
     }
 
-
     #[test]
     fn a_default_port_written_out_is_the_same_origin_as_one_left_off() {
         // A catalog that writes itself one way in its feed and the other way

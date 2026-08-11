@@ -593,8 +593,7 @@ fn run(work: &Task, root: &Path, backends: Backends<'_>, cancel: &AtomicBool) ->
             // reach the server as an unauthenticated request, and the
             // application would report whatever the server said about that
             // instead of the real problem.
-            let credential = match resolved_credential(wanted.as_ref(), url, credentials, secrets)
-            {
+            let credential = match resolved_credential(wanted.as_ref(), url, credentials, secrets) {
                 Ok(credential) => credential,
                 Err(error) => return TaskOutcome::Failed(error),
             };
@@ -647,8 +646,7 @@ fn resolve(root: &Path, path: &str) -> Option<PathBuf> {
 /// a credential a few dozen bytes long, and a dependency that can see secrets
 /// is a dependency worth not having.
 fn base64(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
         let mut block = [0u8; 3];
@@ -962,10 +960,7 @@ mod tests {
             )
             .expect("submitted");
         let finished = collect(&mut runner, 1);
-        assert_eq!(
-            finished[0].outcome,
-            TaskOutcome::Failed(TaskError::Denied)
-        );
+        assert_eq!(finished[0].outcome, TaskOutcome::Failed(TaskError::Denied));
     }
 
     fn secret_dir(name: &str) -> PathBuf {
@@ -1162,7 +1157,9 @@ mod tests {
         assert_eq!(base64(b"foob"), "Zm9vYg==");
         assert_eq!(base64(b"fooba"), "Zm9vYmE=");
         assert_eq!(base64(b"foobar"), "Zm9vYmFy");
-        assert_eq!(base64(b"reader@example.com:"), "cmVhZGVyQGV4YW1wbGUuY29tOg==");
+        assert_eq!(
+            base64(b"reader@example.com:"),
+            "cmVhZGVyQGV4YW1wbGUuY29tOg=="
+        );
     }
-
 }

@@ -420,7 +420,8 @@ fn images_of(archive: &Archive<'_>, builder: &Builder) -> BTreeMap<String, Vec<u
         let Ok(bytes) = archive.read(name) else {
             continue;
         };
-        if bytes.len() > MAX_ONE_IMAGE_BYTES || total.saturating_add(bytes.len()) > MAX_IMAGE_BYTES {
+        if bytes.len() > MAX_ONE_IMAGE_BYTES || total.saturating_add(bytes.len()) > MAX_IMAGE_BYTES
+        {
             continue;
         }
         total += bytes.len();
@@ -611,9 +612,9 @@ fn read_package(xml: &str) -> Package {
                     // `properties` is a space-separated list, so `nav` has to
                     // be matched as one of its words: a stylesheet marked
                     // `navigation-only` is not the navigation document.
-                    if attribute(inside, "properties")
-                        .is_some_and(|properties| properties.split_whitespace().any(|word| word == "nav"))
-                    {
+                    if attribute(inside, "properties").is_some_and(|properties| {
+                        properties.split_whitespace().any(|word| word == "nav")
+                    }) {
                         package.nav = Some(id.clone());
                     }
                     package.manifest.insert(
@@ -1102,7 +1103,8 @@ mod tests {
         ])
     }
 
-    const NCX_ITEM: &str = r#"<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>"#;
+    const NCX_ITEM: &str =
+        r#"<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>"#;
 
     #[test]
     fn a_books_own_table_of_contents_is_read_rather_than_guessed_at() {
@@ -1113,7 +1115,8 @@ mod tests {
   <navPoint id="b"><navLabel><text>Chapter Two</text></navLabel>
     <content src="body.xhtml#two"/></navPoint>
 </navMap></ncx>"#;
-        let document = parse(&one_file_with_named_chapters(ncx, NCX_ITEM)).expect("a readable book");
+        let document =
+            parse(&one_file_with_named_chapters(ncx, NCX_ITEM)).expect("a readable book");
         let titles: Vec<&str> = document
             .contents
             .iter()
@@ -1133,7 +1136,8 @@ mod tests {
   <navPoint id="b"><navLabel><text>Chapter Two</text></navLabel>
     <content src="body.xhtml#two"/></navPoint>
 </navMap></ncx>"#;
-        let document = parse(&one_file_with_named_chapters(ncx, NCX_ITEM)).expect("a readable book");
+        let document =
+            parse(&one_file_with_named_chapters(ncx, NCX_ITEM)).expect("a readable book");
         assert_ne!(
             document.contents[0].block, document.contents[1].block,
             "both chapters resolved to the same block"
@@ -1157,7 +1161,8 @@ mod tests {
       <content src="body.xhtml#two"/></navPoint>
   </navPoint>
 </navMap></ncx>"#;
-        let document = parse(&one_file_with_named_chapters(ncx, NCX_ITEM)).expect("a readable book");
+        let document =
+            parse(&one_file_with_named_chapters(ncx, NCX_ITEM)).expect("a readable book");
         let titles: Vec<&str> = document
             .contents
             .iter()
@@ -1275,8 +1280,14 @@ mod tests {
             .iter()
             .filter_map(|block| block.text())
             .collect();
-        assert!(words.iter().any(|text| text.contains("The bell rang")), "{words:?}");
-        assert!(words.iter().any(|text| text.contains("So did this one")), "{words:?}");
+        assert!(
+            words.iter().any(|text| text.contains("The bell rang")),
+            "{words:?}"
+        );
+        assert!(
+            words.iter().any(|text| text.contains("So did this one")),
+            "{words:?}"
+        );
     }
 
     #[test]
@@ -1290,7 +1301,8 @@ mod tests {
   <navPoint id="b"><navLabel><text>A Chapter That Is Not Here</text></navLabel>
     <content src="missing.xhtml"/></navPoint>
 </navMap></ncx>"#;
-        let document = parse(&one_file_with_named_chapters(ncx, NCX_ITEM)).expect("a readable book");
+        let document =
+            parse(&one_file_with_named_chapters(ncx, NCX_ITEM)).expect("a readable book");
         let titles: Vec<&str> = document
             .contents
             .iter()

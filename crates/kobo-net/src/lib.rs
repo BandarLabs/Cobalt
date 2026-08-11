@@ -538,8 +538,9 @@ pub fn fetch_from(
     // The last gate before the socket, and the same one `post` applies to its
     // own headers: both names and values may ultimately originate outside the
     // runtime, so grammar is checked here rather than trusted from upstream.
-    let valid_header =
-        |name: &str, value: &str| name.parse::<http::HeaderName>().is_ok() && value.parse::<http::HeaderValue>().is_ok();
+    let valid_header = |name: &str, value: &str| {
+        name.parse::<http::HeaderName>().is_ok() && value.parse::<http::HeaderValue>().is_ok()
+    };
     if headers
         .iter()
         .any(|(name, value)| !valid_header(name, value))

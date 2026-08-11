@@ -515,10 +515,9 @@ impl Builder {
                     Block::Paragraph(_) => Block::Paragraph(text),
                     Block::Quote(_) => Block::Quote(text),
                     Block::Item { ordered, .. } => Block::Item { ordered, text },
-                    Block::Preformatted(_)
-                    | Block::Picture { .. }
-                    | Block::Rule
-                    | Block::Break => return,
+                    Block::Preformatted(_) | Block::Picture { .. } | Block::Rule | Block::Break => {
+                        return
+                    }
                 }
             }
         };

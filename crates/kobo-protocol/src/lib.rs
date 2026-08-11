@@ -7380,5 +7380,4 @@ mod picture_tests {
         };
         assert_eq!(back, work);
     }
-
 }

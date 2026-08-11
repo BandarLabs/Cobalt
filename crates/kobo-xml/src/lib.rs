@@ -299,7 +299,10 @@ mod tests {
 
     #[test]
     fn a_prefixed_element_name_is_matched_by_its_local_name_and_by_its_qualified_name() {
-        assert_eq!(split_name("dcterms:language"), (Some("dcterms"), "language"));
+        assert_eq!(
+            split_name("dcterms:language"),
+            (Some("dcterms"), "language")
+        );
         let (prefix, local) = split_name("dcterms:language");
         assert_eq!(prefix, Some("dcterms"));
         assert_eq!(local, "language");
@@ -351,11 +354,15 @@ mod tests {
     fn an_element_open_event_answers_its_own_attributes() {
         let mut decoded = Vec::new();
         let mut seen = None;
-        scan(r#"<link href="https://example.com/a &amp; b"/>"#, &mut decoded, |event| {
-            if let Event::Open { .. } = event {
-                seen = event.attribute("href");
-            }
-        });
+        scan(
+            r#"<link href="https://example.com/a &amp; b"/>"#,
+            &mut decoded,
+            |event| {
+                if let Event::Open { .. } = event {
+                    seen = event.attribute("href");
+                }
+            },
+        );
         assert_eq!(seen, Some("https://example.com/a & b".to_owned()));
     }
 }

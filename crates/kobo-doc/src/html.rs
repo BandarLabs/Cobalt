@@ -179,7 +179,9 @@ impl State {
             // that file was, which only the format assembling the book does.
             if let Some(source) = attribute(inside, "src") {
                 self.flush();
-                let alt = attribute(inside, "alt").map(decode_entities).unwrap_or_default();
+                let alt = attribute(inside, "alt")
+                    .map(decode_entities)
+                    .unwrap_or_default();
                 self.builder.push(Block::Picture {
                     name: decode_entities(source),
                     alt,
