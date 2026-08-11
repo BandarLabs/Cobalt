@@ -219,15 +219,6 @@ const MAX_RECENT: usize = 6;
 /// How many steps back the application remembers.
 const MAX_TRAIL: usize = 8;
 
-/// How long one pass at the queued plates may spend before giving the runtime
-/// its thread back.
-///
-/// Comfortably inside the two hundred and fifty millisecond callback deadline,
-/// with room for the redraw that may follow. A single plate can take a hundred
-/// milliseconds on this processor, so this is one or two of them per pass, and
-/// the rest come round again immediately behind a zero-length sleep.
-const PLATE_BUDGET: std::time::Duration = std::time::Duration::from_millis(120);
-
 /// The store key the added-catalog registry is written under.
 const REGISTRY_KEY: &str = "catalogs";
 /// The store key naming which catalog was open when the reader last left.
@@ -641,6 +632,12 @@ struct Gutenbird {
     /// moment it has been decoded, so what an illustrated book costs while it
     /// opens falls as it goes rather than being both copies at once.
     plates: VecDeque<(String, Vec<u8>)>,
+    /// A plate read from the book but not yet reduced to the panel's greys.
+    ///
+    /// The two halves of preparing a plate happen in separate callbacks
+    /// because together they are longer than one is allowed to be, so the
+    /// half-finished picture has to live somewhere in between.
+    dithering: Option<(String, kobo_image::Picture)>,
     /// The sleep that will bring the next pass at the queue.
     plating: Option<TaskId>,
     place: Option<Memory>,
@@ -690,6 +687,7 @@ impl Default for Gutenbird {
             reader: None,
             book_pictures: Vec::new(),
             plates: VecDeque::new(),
+            dithering: None,
             plating: None,
             place: None,
             keeping: None,
@@ -1108,6 +1106,13 @@ impl Gutenbird {
 
     fn open_publication(&mut self, context: &mut Context, publication: Publication) {
         self.open = Some(publication);
+        // Given back, not merely forgotten. Every book's cover is held against
+        // the same handle, and the frame this page reserves names that handle
+        // before any bytes have arrived for it -- so the runtime, still
+        // holding the last book's pixels, drew them. On the panel, opening The
+        // Tale of Peter Rabbit showed Pride and Prejudice's peacock in the
+        // space Beatrix Potter's cover was about to take.
+        context.drop_picture(OPEN_COVER_HANDLE);
         self.open_cover = None;
         self.open_cover_task = None;
         self.detail_page = 0;
@@ -1621,6 +1626,24 @@ impl Gutenbird {
                     continue;
                 }
             }
+            // A list of categories is cut between two of them, on the same
+            // reasoning as a summary. Pride and Prejudice carries eleven, and
+            // as one block they were placed whole whatever the room: on the
+            // panel the last of them was drawn through the "3 of 4" beneath it.
+            if let DetailBlock::Categories(categories) = &block {
+                if let Some((head, tail)) = self.split_categories(
+                    context,
+                    publication,
+                    pages.is_empty(),
+                    &current,
+                    categories,
+                ) {
+                    current.push(DetailBlock::Categories(head));
+                    pages.push(std::mem::take(&mut current));
+                    queue.push_front(DetailBlock::Categories(tail));
+                    continue;
+                }
+            }
             if current.is_empty() {
                 current = candidate;
                 continue;
@@ -1674,6 +1697,43 @@ impl Gutenbird {
             }
         }
         Some((words[..low].join(" "), words[low..].join(" ")))
+    }
+
+    /// How many categories fit here, and the ones that do not.
+    ///
+    /// The same binary search [`Self::split_summary`] runs over words, run
+    /// over rows instead. `None` when there is nothing to cut -- one category,
+    /// or a page with no room for even one -- and the caller then does what it
+    /// does for any block that will not fit: starts a page with it.
+    fn split_categories(
+        &self,
+        context: &Context,
+        publication: &Publication,
+        first_page: bool,
+        current: &[DetailBlock],
+        categories: &[Category],
+    ) -> Option<(Vec<Category>, Vec<Category>)> {
+        if categories.len() < 2 {
+            return None;
+        }
+        let fits = |count: usize| {
+            let mut blocks = current.to_vec();
+            blocks.push(DetailBlock::Categories(categories[..count].to_vec()));
+            self.detail_fits(context, publication, first_page, &blocks)
+        };
+        if !fits(1) {
+            return None;
+        }
+        let (mut low, mut high) = (1usize, categories.len() - 1);
+        while low < high {
+            let middle = low + (high - low).div_ceil(2);
+            if fits(middle) {
+                low = middle;
+            } else {
+                high = middle - 1;
+            }
+        }
+        Some((categories[..low].to_vec(), categories[low..].to_vec()))
     }
 
     fn detail_fits(
@@ -2341,7 +2401,7 @@ impl Gutenbird {
         // is here for the case where the runtime had no room for the sleep
         // that would have carried it, and the plates would otherwise stop
         // arriving with no way to start again.
-        if self.plating.is_none() && !self.plates.is_empty() {
+        if self.plating.is_none() && (!self.plates.is_empty() || self.dithering.is_some()) {
             self.decode_more_plates(context);
         }
         self.show(context);
@@ -2458,7 +2518,12 @@ impl Gutenbird {
                 ),
             );
             self.reader = Some(reader);
-            self.decode_more_plates(context);
+            // Handed to the runtime rather than started here. This callback
+            // has already spent its parse and its pagination; a plate on top
+            // of that is what put it over the deadline.
+            if !self.plates.is_empty() {
+                self.plating = context.spawn(Task::Sleep { seconds: 0 });
+            }
         } else {
             self.problem = Some("This book could not be read.".to_owned());
             if self.complete {
@@ -2493,6 +2558,7 @@ impl Gutenbird {
         // reading any more. The sleep already in flight is left to land and be
         // ignored: cancelling it would cost a message to save nothing.
         self.plates.clear();
+        self.dithering = None;
         self.reader = None;
         self.download = None;
         self.fetched = 0;
@@ -2565,16 +2631,24 @@ impl Gutenbird {
         reserved
     }
 
-    /// Turns some of the queued plates into pixels, and asks to be called again
-    /// if any are left.
+    /// Carries one plate one step further towards the panel, and asks to be
+    /// called again while any step is left.
     ///
-    /// Bounded by a clock rather than by a count, because a plate takes as long
-    /// as it takes: a hundred milliseconds for a Potter watercolour and rather
-    /// more for a full-page engraving, and a budget of "three of them" is a
-    /// budget that means something different in every book. `PLATE_BUDGET` is
-    /// well inside the callback deadline, and what is left goes round again
-    /// behind a zero-length sleep, which is this runtime's way of saying
-    /// "later, but as soon as possible".
+    /// One step, not as many as fit in a time budget. Nothing here can be
+    /// interrupted half way, so a budget can only be checked before starting
+    /// something, and the pass then runs for the budget plus however long that
+    /// something takes: on the panel a hundred and twenty millisecond budget
+    /// produced callbacks of 272, 293 and 311 milliseconds against a deadline
+    /// of 250. One whole plate per pass was no better -- 250 to 311 -- because
+    /// one whole plate is itself over the deadline on this processor.
+    ///
+    /// So a plate is taken in its two natural halves. Reading the file and
+    /// fitting it is one; reducing a million pixels to the sixteen greys the
+    /// panel can hold is the other, and on a development machine the two are
+    /// two milliseconds and three, which on the reader is about a hundred and
+    /// about a hundred and seventy. Either alone is comfortably inside the
+    /// deadline. There is no third half, and the honest fix is a runtime that
+    /// can decode off this thread at all; until then this is where the seam is.
     ///
     /// The page being looked at is decoded first. Everything else can arrive
     /// while it is being read.
@@ -2582,6 +2656,7 @@ impl Gutenbird {
         let metrics = context.metrics();
         let Some((width, height)) = plate_box(&metrics) else {
             self.plates.clear();
+            self.dithering = None;
             return;
         };
         let showing: Vec<String> = self.reader.as_ref().map_or_else(Vec::new, |reader| {
@@ -2591,30 +2666,38 @@ impl Gutenbird {
                 .map(str::to_owned)
                 .collect()
         });
-        self.plates_first(&showing);
-        let started = std::time::Instant::now();
         let mut on_this_page = false;
-        while started.elapsed() < PLATE_BUDGET {
-            let Some((name, bytes)) = self.plates.pop_front() else {
-                break;
-            };
-            let Some(reserved) = self.handed_plate(&name) else {
-                continue;
-            };
-            let Ok(picture) = kobo_image::decode(&bytes) else {
-                continue;
-            };
-            let Ok(mut picture) = picture.fit(width, height) else {
-                continue;
-            };
+        if let Some((name, mut picture)) = self.dithering.take() {
+            // The second half: the greys.
             picture.dither(kobo_image::PANEL_GREYS);
             let (drawn_width, drawn_height) = (picture.width(), picture.height());
-            if context
-                .put_picture(reserved, drawn_width, drawn_height, picture.into_grey())
-                .is_some()
-                && showing.contains(&name)
-            {
-                on_this_page = true;
+            if let Some(reserved) = self.handed_plate(&name) {
+                if context
+                    .put_picture(reserved, drawn_width, drawn_height, picture.into_grey())
+                    .is_some()
+                    && showing.contains(&name)
+                {
+                    on_this_page = true;
+                }
+            }
+        } else {
+            self.plates_first(&showing);
+            // The first half: the file. A plate that will not read costs
+            // nothing, so this goes past it rather than spending a whole round
+            // trip discovering there was nothing to draw, and stops on the
+            // first one that works.
+            while let Some((name, bytes)) = self.plates.pop_front() {
+                if self.handed_plate(&name).is_none() {
+                    continue;
+                }
+                let Ok(picture) = kobo_image::decode(&bytes) else {
+                    continue;
+                };
+                let Ok(picture) = picture.fit(width, height) else {
+                    continue;
+                };
+                self.dithering = Some((name, picture));
+                break;
             }
         }
         // Only when the page in front of somebody actually changed. A plate
@@ -2623,7 +2706,7 @@ impl Gutenbird {
         if on_this_page {
             self.show(context);
         }
-        if self.plates.is_empty() {
+        if self.plates.is_empty() && self.dithering.is_none() {
             self.plating = None;
             return;
         }
@@ -3593,7 +3676,7 @@ mod tests {
         book_keys, catalog_display_name, decode_registry, download_kind, encode_registry,
         plate_box, read_offer, readable, Awaiting, BTreeMap, Catalog, DetailBlock, Download,
         DownloadKind, FeedPurpose, FillStage, Gutenbird, Memory, ReadOffer, Reader, SearchState,
-        SearchWay, StackEntry, View, COVER_TRIES,
+        SearchWay, StackEntry, View, COVER_TRIES, OPEN_COVER_HANDLE,
     };
     use kobo_opds::{
         Acquisition, AcquisitionKind, Category, Feed, Image, ImageSource, Link, Navigation,
@@ -5031,8 +5114,37 @@ Please read this before you distribute or use this work.\n";
         app.plating = Some(TaskId(1));
 
         let mut runner = AppRunner::new(app);
-        let commands = runner.task_outcome(TaskId(1), TaskOutcome::Completed(Vec::new()));
-        let handed: Vec<(PictureHandle, u32, u32)> = commands
+        // The first pass reads the plate and asks for another; the second
+        // reduces it to the panel's greys and hands it over. Neither half is
+        // allowed to take as long as both would.
+        let first = runner.task_outcome(TaskId(1), TaskOutcome::Completed(Vec::new()));
+        assert!(
+            handed_pictures(&first).is_empty(),
+            "a plate was decoded and dithered in one callback"
+        );
+        assert!(
+            runner.app().plates.is_empty() && runner.app().dithering.is_some(),
+            "the plate was not read out of the book"
+        );
+        let plating = runner
+            .app()
+            .plating
+            .expect("another pass was not asked for");
+
+        let second = runner.task_outcome(plating, TaskOutcome::Completed(Vec::new()));
+        assert_eq!(
+            handed_pictures(&second),
+            vec![(claimed.handle, claimed.source.0, claimed.source.1)],
+            "the plate did not fill the frame that was standing in for it"
+        );
+        assert!(
+            runner.app().dithering.is_none(),
+            "the decoded plate was kept after it was drawn"
+        );
+    }
+
+    fn handed_pictures(commands: &[kobo_sdk::Command]) -> Vec<(PictureHandle, u32, u32)> {
+        commands
             .iter()
             .filter_map(|command| match command {
                 kobo_sdk::Command::PutPicture {
@@ -5043,16 +5155,7 @@ Please read this before you distribute or use this work.\n";
                 } => Some((*handle, *width, *height)),
                 _ => None,
             })
-            .collect();
-        assert_eq!(
-            handed,
-            vec![(claimed.handle, claimed.source.0, claimed.source.1)],
-            "the plate did not fill the frame that was standing in for it"
-        );
-        assert!(
-            runner.app().plates.is_empty(),
-            "the source bytes were kept after the plate was drawn"
-        );
+            .collect()
     }
 
     #[test]
@@ -5156,6 +5259,30 @@ Please read this before you distribute or use this work.\n";
             runner.app().view,
             View::Shelf,
             "leaving the list should return to the shelf the globe was pressed on"
+        );
+    }
+
+    /// One book's cover must not be drawn in the frame the next book reserved.
+    ///
+    /// Every book's cover is held against a single handle. The detail page
+    /// claims the room for a cover before the bytes arrive, and names that
+    /// handle to do it -- so with the last book's pixels still against it, the
+    /// runtime drew them. On the panel, The Tale of Peter Rabbit opened with
+    /// Pride and Prejudice's peacock where Beatrix Potter's cover belonged.
+    #[test]
+    fn arriving_at_a_book_gives_back_the_cover_the_last_one_left_behind() {
+        let mut app = Gutenbird::default();
+        let mut context = kobo_sdk::Context::default();
+        app.open_publication(
+            &mut context,
+            publication("The Tale of Peter Rabbit", Vec::new()),
+        );
+        assert!(
+            context.commands().iter().any(|command| matches!(
+                command,
+                kobo_sdk::Command::DropPicture(handle) if *handle == OPEN_COVER_HANDLE
+            )),
+            "the runtime was left holding the cover of whatever was open before"
         );
     }
 
@@ -5562,6 +5689,78 @@ Please read this before you distribute or use this work.\n";
             .flat_map(str::split_whitespace)
             .map(str::to_owned)
             .collect()
+    }
+
+    /// A long list of categories is cut between two of them.
+    ///
+    /// Drawn as rows they take a finger-height band each, and Pride and
+    /// Prejudice carries eleven. Placed whole -- which is what a block that
+    /// fits nowhere used to get -- the last of them was drawn on the panel
+    /// through the "3 of 4" beneath it.
+    #[test]
+    fn a_long_list_of_categories_is_divided_rather_than_drawn_over_the_page_position() {
+        let mut book = publication(
+            "Pride and Prejudice",
+            vec![text_acquisition("https://x/pp")],
+        );
+        book.categories = [
+            "England -- Fiction",
+            "Young women -- Fiction",
+            "Love stories",
+            "Sisters -- Fiction",
+            "Domestic fiction",
+            "Courtship -- Fiction",
+            "Social classes -- Fiction",
+            "Language and Literatures: English literature",
+            "Regency fiction",
+            "Married people -- Fiction",
+            "Class differences -- Fiction",
+        ]
+        .into_iter()
+        .map(|label| Category {
+            term: label.to_owned(),
+            label: Some(label.to_owned()),
+            scheme: None,
+        })
+        .collect();
+        let mut app = Gutenbird {
+            view: View::Details,
+            open: Some(book),
+            complete: true,
+            ..Gutenbird::default()
+        };
+        let context = kobo_sdk::Context::default();
+        let publication = app.open.clone().unwrap();
+        let blocks = Gutenbird::detail_blocks(&publication);
+        let pages = app.detail_pagination(&context, &publication, &blocks);
+
+        let listed: Vec<String> = pages
+            .iter()
+            .flatten()
+            .filter_map(|block| match block {
+                DetailBlock::Categories(categories) => Some(categories.clone()),
+                _ => None,
+            })
+            .flatten()
+            .map(|category| category.term)
+            .collect();
+        assert_eq!(
+            listed.len(),
+            publication.categories.len(),
+            "dividing the list lost categories"
+        );
+
+        for page in 0..pages.len() {
+            app.detail_page = page;
+            let errors: Vec<_> = app
+                .details_screen(&context)
+                .diagnostics(&context.metrics(), &Chrome::with_back(true))
+                .issues
+                .into_iter()
+                .filter(|issue| issue.severity == DiagnosticSeverity::Error)
+                .collect();
+            assert!(errors.is_empty(), "page {page} does not fit: {errors:?}");
+        }
     }
 
     #[test]
