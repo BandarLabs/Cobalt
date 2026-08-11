@@ -487,6 +487,54 @@ impl ScreenBuilder {
         self.nodes.push(Node::Text {
             id,
             text: text.into(),
+            links: Vec::new(),
+        });
+        self
+    }
+
+    /// A paragraph with runs inside it that go somewhere.
+    ///
+    /// Each link is an action name and the half-open range of the paragraph's
+    /// own bytes that names it. Ranges rather than the words themselves,
+    /// because a paragraph often says the same words twice and only one of
+    /// them is the link; a caller that has the words rather than the offsets
+    /// should use `str::find` on the paragraph it is about to pass in, and
+    /// leave out anything it cannot locate.
+    ///
+    /// A range outside the text, or landing inside a character, is dropped
+    /// rather than drawn somewhere approximate: a link in the wrong place is
+    /// worse than a link that is only in the list.
+    #[must_use]
+    pub fn text_linking<I, N>(mut self, text: impl Into<String>, links: I) -> Self
+    where
+        I: IntoIterator<Item = (N, usize, usize)>,
+        N: AsRef<str>,
+    {
+        let id = self.next_id();
+        let text = text.into();
+        let mut runs = Vec::new();
+        let mut source = links.into_iter();
+        for (name, start, end) in source.by_ref().take(kobo_ui::MAX_TEXT_LINKS) {
+            if start >= end
+                || end > text.len()
+                || !text.is_char_boundary(start)
+                || !text.is_char_boundary(end)
+            {
+                continue;
+            }
+            runs.push(kobo_ui::TextLink {
+                action: self.register(name.as_ref()),
+                start,
+                end,
+            });
+        }
+        if source.next().is_some() {
+            self.warn_limit(id, "text links", kobo_ui::MAX_TEXT_LINKS);
+        }
+        self.nodes.push(Node::Text {
+            id,
+            text,
+            links: runs,
         });
         self
     }
@@ -5164,9 +5212,14 @@ mod tests {
 
     impl KoboApp for Tofu {
         fn on_start(&mut self, context: &mut Context) {
+            // An ideograph, and not a tick: neither face on the device carries
+            // one, whereas the tick this used to say has been drawn from the
+            // grid face ever since the interface face got somewhere to fall
+            // back to. A label that comes out fine is not a label worth
+            // failing a build over.
             context.set_screen(
                 ScreenBuilder::new("tofu")
-                    .button("ok", "Chosen \u{2713}")
+                    .button("ok", "Chosen \u{4e2d}")
                     .build(),
             );
         }

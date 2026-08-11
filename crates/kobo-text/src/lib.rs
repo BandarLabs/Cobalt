@@ -348,12 +348,21 @@ impl Typeface {
         })
     }
 
-    /// What this face should actually draw for `character`.
+    /// Whether this face carries a glyph for `character`.
     ///
-    /// Returns the character itself when the face has a glyph for it, a near
-    /// equivalent when it does not but one is available, `None` when the
-    /// character is meant to be invisible, and the original otherwise so that
-    /// the empty box still appears for anything genuinely unrepresentable.
+    /// Index zero is `.notdef`, the empty box, which is the thing worth
+    /// catching before it reaches a panel.
+    fn has(&self, character: char) -> bool {
+        self.font.lookup_glyph_index(character) != 0
+    }
+
+    /// Which face draws `character`, and what it draws.
+    ///
+    /// Returns the character in this face when it has a glyph for it, a near
+    /// equivalent when it does not but one is available, the same character in
+    /// `fallback` when another face carries it, `None` when the character is
+    /// meant to be invisible, and the original otherwise so that the empty box
+    /// still appears for anything genuinely unrepresentable.
     ///
     /// Text off the network is full of characters a text face has no reason to
     /// carry. Atkinson Hyperlegible, the face the reader ships and the one
@@ -362,16 +371,30 @@ impl Typeface {
     /// hyphen drawn for a hyphen is right in every way that matters: it is what
     /// the author wrote, and the only thing lost is that it may now be broken
     /// across lines.
-    fn resolve(&self, character: char) -> Option<char> {
-        if self.font.lookup_glyph_index(character) != 0 {
-            return Some(character);
+    ///
+    /// The other face is the step after that, and it is the one a name needs.
+    /// Atkinson carries eighty-four of the hundred and twenty-eight letters in
+    /// Latin Extended-A and none of the two hundred and fifty-six in Cyrillic,
+    /// so a Project Gutenberg shelf drew the transliterated "Evgeniĭ" with a
+    /// box for its last letter and a Russian title as a row of them. No
+    /// substitution can help there, because there is no near equivalent of a
+    /// letter: an unaccented `i` is a different name and a question mark is an
+    /// apology. Another face that has the letter is the only answer that draws
+    /// what the author wrote, and one is compiled in already.
+    fn pick<'a>(&'a self, character: char, fallback: Option<&'a Self>) -> Option<(&'a Self, char)> {
+        if self.has(character) {
+            return Some((self, character));
         }
         if is_invisible(character) {
             return None;
         }
-        substitute(character)
-            .filter(|glyph| self.font.lookup_glyph_index(*glyph) != 0)
-            .or(Some(character))
+        if let Some(glyph) = substitute(character).filter(|glyph| self.has(*glyph)) {
+            return Some((self, glyph));
+        }
+        if let Some(other) = fallback.filter(|other| other.has(character)) {
+            return Some((other, character));
+        }
+        Some((self, character))
     }
 
     /// The distance from the top of a line to the baseline.
@@ -392,7 +415,13 @@ impl Typeface {
     /// of a line the drift is several pixels. That drift is visible twice over:
     /// as uneven word spacing, and as a disagreement between what wrapping
     /// measured and what the renderer then drew.
-    fn measure_run(&self, text: &str, size: FontSize, cell: Option<i32>) -> (i32, i32) {
+    fn measure_run(
+        &self,
+        text: &str,
+        size: FontSize,
+        cell: Option<i32>,
+        fallback: Option<&Self>,
+    ) -> (i32, i32) {
         if let Some(cell) = cell {
             // A grid is measured by counting, not by adding. The exact sum of
             // 16 advances of 25.875 is 414, but the sixteenth column is drawn
@@ -404,16 +433,20 @@ impl Typeface {
         }
         let pixels = self.pixels(size);
         let mut width = 0f32;
-        let mut previous = None;
+        let mut previous: Option<(&Self, char)> = None;
         for character in text.chars() {
-            let Some(character) = self.resolve(character) else {
+            let Some((face, glyph)) = self.pick(character, fallback) else {
                 continue;
             };
-            if let Some(previous) = previous {
-                width += kern(&self.font, previous, character, pixels);
+            // Kerning is a pair drawn by one designer. Across a face boundary
+            // there is no pair, so there is nothing to ask and nothing to add.
+            if let Some((before, previous)) = previous {
+                if std::ptr::eq(before, face) {
+                    width += kern(&face.font, previous, glyph, pixels);
+                }
             }
-            width += self.font.metrics(character, pixels).advance_width;
-            previous = Some(character);
+            width += face.font.metrics(glyph, pixels).advance_width;
+            previous = Some((face, glyph));
         }
         (width.round() as i32, self.height(size))
     }
@@ -431,6 +464,13 @@ impl Typeface {
     ///
     /// Accumulates the same way [`Self::measure_run`] does, so a run drawn here
     /// ends exactly where measuring said it would.
+    ///
+    /// Eight arguments, and every one of them is a fact about this one run:
+    /// what to draw, where, at what size, on what grid, out of which faces, and
+    /// what to call for each pixel. Gathering the middle three into a struct
+    /// would name the pieces of a run rather than a run, and the only caller is
+    /// twenty lines away.
+    #[allow(clippy::too_many_arguments)]
     fn draw_run(
         &self,
         text: &str,
@@ -438,14 +478,18 @@ impl Typeface {
         y: i32,
         size: FontSize,
         cell: Option<i32>,
+        fallback: Option<&Self>,
         plot: &mut dyn FnMut(i32, i32, u8),
     ) {
         let pixels = self.pixels(size);
+        // Taken from this face rather than from whichever one draws each
+        // glyph, so a letter borrowed from another face sits on the same line
+        // as the letters around it instead of a line of its own.
         let baseline = y.saturating_add(self.ascent(pixels));
         let mut pen = x as f32;
-        let mut previous = None;
+        let mut previous: Option<(&Self, char)> = None;
         for character in text.chars() {
-            let Some(character) = self.resolve(character) else {
+            let Some((face, character)) = self.pick(character, fallback) else {
                 // An invisible character owns a column in a grid and nothing
                 // at all in a proportional run. Advancing here in both cases
                 // would open a hole in the middle of a word.
@@ -456,10 +500,12 @@ impl Typeface {
             };
             // Kerning is a proportional idea. Applying it in a grid would move
             // a character out of its own column depending on its neighbour.
-            if let (Some(previous), None) = (previous, cell) {
-                pen += kern(&self.font, previous, character, pixels);
+            if let (Some((before, previous)), None) = (previous, cell) {
+                if std::ptr::eq(before, face) {
+                    pen += kern(&face.font, previous, character, pixels);
+                }
             }
-            if let Some(raster) = self.raster(character, pixels) {
+            if let Some(raster) = face.raster(character, pixels) {
                 let origin_x = (pen.round() as i32).saturating_add(raster.left);
                 let origin_y = baseline.saturating_add(raster.top);
                 for row in 0..raster.height {
@@ -479,7 +525,7 @@ impl Typeface {
                     }
                 }
                 pen += cell.map_or_else(
-                    || self.font.metrics(character, pixels).advance_width,
+                    || face.font.metrics(character, pixels).advance_width,
                     |cell| cell as f32,
                 );
             } else if let Some(cell) = cell {
@@ -487,7 +533,7 @@ impl Typeface {
                 // its column. Skipping it would shift the rest of the row left.
                 pen += cell as f32;
             }
-            previous = Some(character);
+            previous = Some((face, character));
         }
     }
 
@@ -594,12 +640,30 @@ impl SystemFonts {
             Face::Mono => Some(self.cell_width(size)),
         }
     }
+
+    /// The face asked for a letter the chosen one does not have.
+    ///
+    /// The compiled-in grid face, which is the widest-covering thing on the
+    /// device: every letter of Latin Extended-A, most of Latin Extended-B, and
+    /// the Greek and Cyrillic the interface face has none of. It is a
+    /// monospace cut and one letter of it inside a proportional word is
+    /// visibly a different design -- which is still the right trade, because
+    /// the alternative on screen was an empty box.
+    ///
+    /// Nothing stands behind the grid face itself. It is the end of the chain,
+    /// and there is nothing here that covers more than it does.
+    const fn fallback(&self, face: Face) -> Option<&Typeface> {
+        match face {
+            Face::Text | Face::Reading => Some(&self.mono),
+            Face::Mono => None,
+        }
+    }
 }
 
 impl Typesetter for SystemFonts {
     fn measure(&self, text: &str, size: FontSize, face: Face) -> (i32, i32) {
         self.cut(size, face)
-            .measure_run(text, size, self.cell(size, face))
+            .measure_run(text, size, self.cell(size, face), self.fallback(face))
     }
 
     fn line_height(&self, size: FontSize, face: Face) -> i32 {
@@ -626,21 +690,27 @@ impl Typesetter for SystemFonts {
         face: Face,
         plot: &mut dyn FnMut(i32, i32, u8),
     ) {
-        self.cut(size, face)
-            .draw_run(text, x, y, size, self.cell(size, face), plot);
+        self.cut(size, face).draw_run(
+            text,
+            x,
+            y,
+            size,
+            self.cell(size, face),
+            self.fallback(face),
+            plot,
+        );
     }
 
     fn has_glyph(&self, character: char, face: Face) -> bool {
         // Answers for what would actually reach the panel, not for what the
-        // face happens to contain. A character that is substituted or that is
-        // deliberately invisible draws no empty box, so reporting it as
-        // missing would condemn text that comes out perfectly readable.
+        // face happens to contain. A character that is substituted, borrowed
+        // from another face, or deliberately invisible draws no empty box, so
+        // reporting it as missing would condemn text that comes out perfectly
+        // readable.
         let typeface = self.face(face);
-        // Index zero is `.notdef`, the empty box, which is exactly the thing
-        // worth catching before it reaches a panel.
         typeface
-            .resolve(character)
-            .is_none_or(|glyph| typeface.font.lookup_glyph_index(glyph) != 0)
+            .pick(character, self.fallback(face))
+            .is_none_or(|(drawn, glyph)| drawn.has(glyph))
     }
 
     fn line_breaks(&self, text: &str) -> Vec<(usize, BreakOpportunity)> {
@@ -666,7 +736,7 @@ impl Typesetter for SystemFonts {
         // is very nearly fixed pitch still produces a usable grid.
         self.mono
             .fixed_advance(size)
-            .unwrap_or_else(|| self.mono.measure_run("0", size, None).0.max(1))
+            .unwrap_or_else(|| self.mono.measure_run("0", size, None, None).0.max(1))
     }
 }
 
@@ -979,7 +1049,7 @@ mod tests {
         let at = |scale| {
             kobo_ui::with_text_scale(scale, || {
                 (
-                    face.measure_run("Readable", FontSize::Body, None).0,
+                    face.measure_run("Readable", FontSize::Body, None, None).0,
                     face.height(FontSize::Body),
                 )
             })
@@ -1121,12 +1191,86 @@ mod tests {
             "this test is pointless unless the face really lacks the character"
         );
 
-        let (plain, _) = face.measure_run("one-to-one", FontSize::Body, None);
-        let (fancy, _) = face.measure_run("one\u{2011}to\u{2011}one", FontSize::Body, None);
+        let (plain, _) = face.measure_run("one-to-one", FontSize::Body, None, None);
+        let (fancy, _) = face.measure_run("one\u{2011}to\u{2011}one", FontSize::Body, None, None);
         assert_eq!(plain, fancy, "the substitute must measure as what it draws");
         assert_eq!(
             ink(&face, "one\u{2011}to\u{2011}one"),
             ink(&face, "one-to-one")
+        );
+    }
+
+    /// A letter the interface face lacks is borrowed rather than boxed.
+    ///
+    /// An author shelf drew "Evgeniĭ" with an empty box where the last letter
+    /// belongs, because Atkinson Hyperlegible carries eighty-four of the
+    /// hundred and twenty-eight letters of Latin Extended-A and this is one of
+    /// the forty-four it does not. There is no near equivalent to substitute:
+    /// an unaccented `i` is a different name. The compiled-in grid face has
+    /// the letter, so the letter is what gets drawn.
+    #[test]
+    fn a_letter_missing_from_one_face_is_drawn_from_another() {
+        let face = Typeface::from_bytes(TEXT_FONT, "bundled", CLARA).expect("the compiled-in face");
+        let other = Typeface::from_bytes(MONO_FONT, "grid", CLARA).expect("the compiled-in grid");
+        for missing in ['\u{12d}', '\u{439}', '\u{169}'] {
+            assert_eq!(
+                face.font.lookup_glyph_index(missing),
+                0,
+                "{missing:?} would not exercise the fallback"
+            );
+            let (drawn, glyph) = face
+                .pick(missing, Some(&other))
+                .expect("a letter is not invisible");
+            assert!(
+                std::ptr::eq(drawn, &other) && glyph == missing,
+                "{missing:?} was not borrowed from the face that has it"
+            );
+            let boxed = ink(&face, &missing.to_string());
+            let mut borrowed = Vec::new();
+            face.draw_run(
+                &missing.to_string(),
+                0,
+                0,
+                FontSize::Body,
+                None,
+                Some(&other),
+                &mut |x, y, coverage| {
+                    if coverage > 0 {
+                        borrowed.push((x, y));
+                    }
+                },
+            );
+            assert_ne!(
+                boxed, borrowed,
+                "{missing:?} drew the same marks with and without a face that has it"
+            );
+        }
+    }
+
+    /// Borrowing a letter must not make the line disagree with itself.
+    ///
+    /// Wrapping measures a line and the renderer then draws it. If the two
+    /// consult different faces for the same character the line is measured at
+    /// one width and drawn at another, which puts the end of a page past the
+    /// margin -- the failure that is invisible until it is on hardware.
+    #[test]
+    fn a_borrowed_letter_is_measured_in_the_face_that_draws_it() {
+        let Some(fonts) = fonts() else {
+            return;
+        };
+        let name = "Evgeni\u{12d}";
+        let (measured, _) = fonts.measure(name, FontSize::Body, Face::Text);
+        let mut rightmost = 0;
+        fonts.draw(name, 0, 0, FontSize::Body, Face::Text, &mut |x, _, _| {
+            rightmost = rightmost.max(x);
+        });
+        assert!(
+            rightmost <= measured,
+            "the name was measured at {measured} and drawn to {rightmost}"
+        );
+        assert!(
+            fonts.has_glyph('\u{12d}', Face::Text),
+            "a letter that reaches the panel intact is not a missing one"
         );
     }
 
@@ -1145,8 +1289,8 @@ mod tests {
             );
             let text = format!("wo{invisible}rd");
             assert_eq!(
-                face.measure_run(&text, FontSize::Body, None),
-                face.measure_run("word", FontSize::Body, None),
+                face.measure_run(&text, FontSize::Body, None, None),
+                face.measure_run("word", FontSize::Body, None, None),
                 "{invisible:?} widened the line it should have left alone"
             );
             assert_eq!(ink(&face, &text), ink(&face, "word"));
@@ -1164,7 +1308,7 @@ mod tests {
         let cell = mono.fixed_advance(FontSize::Body).expect("a fixed advance");
         let text = "a\u{200b}b";
         assert_eq!(
-            mono.measure_run(text, FontSize::Body, Some(cell)).0,
+            mono.measure_run(text, FontSize::Body, Some(cell), None).0,
             cell * 3
         );
         let mut columns = Vec::new();
@@ -1174,6 +1318,7 @@ mod tests {
             0,
             FontSize::Body,
             Some(cell),
+            None,
             &mut |x, _, coverage| {
                 if coverage > 0 {
                     columns.push(x);
@@ -1239,11 +1384,19 @@ mod tests {
     /// Every pixel a run puts down, so two runs can be compared exactly.
     fn ink(face: &Typeface, text: &str) -> Vec<(i32, i32)> {
         let mut marks = Vec::new();
-        face.draw_run(text, 0, 0, FontSize::Body, None, &mut |x, y, coverage| {
-            if coverage > 0 {
-                marks.push((x, y));
-            }
-        });
+        face.draw_run(
+            text,
+            0,
+            0,
+            FontSize::Body,
+            None,
+            None,
+            &mut |x, y, coverage| {
+                if coverage > 0 {
+                    marks.push((x, y));
+                }
+            },
+        );
         marks
     }
 
@@ -1252,8 +1405,8 @@ mod tests {
         let Some(face) = face() else {
             return;
         };
-        let lower = face.measure_run("aaaa", FontSize::Body, None);
-        let upper = face.measure_run("AAAA", FontSize::Body, None);
+        let lower = face.measure_run("aaaa", FontSize::Body, None, None);
+        let upper = face.measure_run("AAAA", FontSize::Body, None, None);
         // The built-in bitmap folded case away entirely, so these were equal.
         assert_ne!(lower, upper, "case is still being folded away");
     }
@@ -1263,8 +1416,8 @@ mod tests {
         let Some(face) = face() else {
             return;
         };
-        let narrow = face.measure_run("iiii", FontSize::Body, None);
-        let wide = face.measure_run("mmmm", FontSize::Body, None);
+        let narrow = face.measure_run("iiii", FontSize::Body, None, None);
+        let wide = face.measure_run("mmmm", FontSize::Body, None, None);
         assert!(narrow.0 < wide.0, "text is still monospaced");
     }
 
@@ -1273,8 +1426,8 @@ mod tests {
         let Some(face) = face() else {
             return;
         };
-        let once = face.measure_run("kobo", FontSize::Body, None).0;
-        let twice = face.measure_run("kobokobo", FontSize::Body, None).0;
+        let once = face.measure_run("kobo", FontSize::Body, None, None).0;
+        let twice = face.measure_run("kobokobo", FontSize::Body, None, None).0;
         let drift = (twice - once * 2).abs();
         assert!(
             drift <= once / 10,
@@ -1288,9 +1441,9 @@ mod tests {
             return;
         };
         let text = "Reading";
-        let (width, height) = face.measure_run(text, FontSize::Body, None);
+        let (width, height) = face.measure_run(text, FontSize::Body, None, None);
         let mut out_of_bounds = 0;
-        face.draw_run(text, 0, 0, FontSize::Body, None, &mut |x, y, _| {
+        face.draw_run(text, 0, 0, FontSize::Body, None, None, &mut |x, y, _| {
             if x < 0 || y < 0 || x > width || y > height {
                 out_of_bounds += 1;
             }
@@ -1310,6 +1463,7 @@ mod tests {
             0,
             FontSize::Body,
             None,
+            None,
             &mut |_, _, coverage| {
                 if coverage > 0 {
                     covered += 1;
@@ -1325,11 +1479,19 @@ mod tests {
             return;
         };
         let mut partial = 0;
-        face.draw_run("Ss", 0, 0, FontSize::Title, None, &mut |_, _, coverage| {
-            if coverage > 0 && coverage < 255 {
-                partial += 1;
-            }
-        });
+        face.draw_run(
+            "Ss",
+            0,
+            0,
+            FontSize::Title,
+            None,
+            None,
+            &mut |_, _, coverage| {
+                if coverage > 0 && coverage < 255 {
+                    partial += 1;
+                }
+            },
+        );
         assert!(partial > 0, "no antialiased edge pixels were produced");
     }
 
@@ -1338,8 +1500,8 @@ mod tests {
         let Some(face) = face() else {
             return;
         };
-        let caption = face.measure_run("Chapter", FontSize::Caption, None);
-        let heading = face.measure_run("Chapter", FontSize::Heading, None);
+        let caption = face.measure_run("Chapter", FontSize::Caption, None, None);
+        let heading = face.measure_run("Chapter", FontSize::Heading, None, None);
         assert!(caption.0 < heading.0);
         assert!(caption.1 < heading.1);
     }
@@ -1400,7 +1562,7 @@ mod tests {
         let mono = Typeface::from_bytes(MONO_FONT, "mono", CLARA).expect("mono");
         let cell = mono.fixed_advance(FontSize::Body).expect("fixed pitch");
         for probe in ["i", "m", "W", ".", "0", "|"] {
-            let (width, _) = mono.measure_run(probe, FontSize::Body, Some(cell));
+            let (width, _) = mono.measure_run(probe, FontSize::Body, Some(cell), None);
             assert_eq!(width, cell, "{probe} is not one cell wide");
         }
     }
@@ -1411,7 +1573,7 @@ mod tests {
         let cell = mono.fixed_advance(FontSize::Body).expect("fixed pitch");
         // A grid is addressed by column, so this has to hold exactly rather
         // than approximately, or column 60 is not where column 60 was drawn.
-        let (width, _) = mono.measure_run("cat /proc/uptime", FontSize::Body, Some(cell));
+        let (width, _) = mono.measure_run("cat /proc/uptime", FontSize::Body, Some(cell), None);
         assert_eq!(width, cell * 16);
     }
 
@@ -1453,7 +1615,7 @@ mod tests {
             .chars()
             .map(|character| face.font.metrics(character, pixels).advance_width)
             .sum();
-        let measured = face.measure_run(&line, FontSize::Body, None).0;
+        let measured = face.measure_run(&line, FontSize::Body, None, None).0;
         assert!(
             (measured as f32 - exact).abs() <= 1.0,
             "measured {measured} against an exact {exact}"
@@ -1566,6 +1728,7 @@ mod tests {
                 vec![kobo_ui::Node::Text {
                     id: kobo_ui::NodeId(1),
                     text: "a page".into(),
+                    links: Vec::new(),
                 }],
             );
             let mut surface = kobo_ui::Surface::new(width, height);
@@ -1693,7 +1856,7 @@ mod tests {
         let regular = Typeface::from_bytes(TEXT_FONT, "regular", CLARA).expect("regular");
         for size in [FontSize::Title, FontSize::Heading] {
             let (bold_width, _) = fonts.measure("Connections", size, Face::Text);
-            let (plain_width, _) = regular.measure_run("Connections", size, None);
+            let (plain_width, _) = regular.measure_run("Connections", size, None, None);
             assert!(
                 bold_width > plain_width,
                 "{size:?} was set no wider than the regular cut: {bold_width} against {plain_width}"
@@ -1703,7 +1866,7 @@ mod tests {
         // a screen shouting every word of itself.
         for size in [FontSize::Caption, FontSize::Body] {
             let (through, _) = fonts.measure("Connections", size, Face::Text);
-            let (plain, _) = regular.measure_run("Connections", size, None);
+            let (plain, _) = regular.measure_run("Connections", size, None, None);
             assert_eq!(through, plain, "{size:?} was not set in the regular cut");
         }
     }

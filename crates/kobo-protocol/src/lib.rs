@@ -2896,9 +2896,18 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
     }
 
     let length = match node {
-        Node::Heading { text, .. } | Node::Text { text, .. } | Node::Secondary { text, .. } => {
+        Node::Heading { text, .. } | Node::Secondary { text, .. } => {
             let mut length = 5;
             add_encoded_len(&mut length, encoded_string_len(text)?)?;
+            length
+        }
+        Node::Text { text, links, .. } => {
+            // id, the text, the count, then an action and two offsets each.
+            let mut length = 6;
+            add_encoded_len(&mut length, encoded_string_len(text)?)?;
+            for _ in links.iter().take(kobo_ui::MAX_TEXT_LINKS) {
+                add_encoded_len(&mut length, 12)?;
+            }
             length
         }
         Node::Section { title, value, .. } => {
@@ -3808,10 +3817,17 @@ fn encode_node(
             push_u32(output, id.0);
             push_string(output, text)?;
         }
-        Node::Text { id, text } => {
+        Node::Text { id, text, links } => {
+            let links = &links[..links.len().min(kobo_ui::MAX_TEXT_LINKS)];
             output.push(2);
             push_u32(output, id.0);
             push_string(output, text)?;
+            output.push(u8::try_from(links.len()).map_err(|_| ProtocolError::TooManyNodes)?);
+            for link in links {
+                push_u32(output, link.action.0);
+                push_u32(output, u32::try_from(link.start).unwrap_or(u32::MAX));
+                push_u32(output, u32::try_from(link.end).unwrap_or(u32::MAX));
+            }
         }
         Node::Secondary { id, text } => {
             output.push(19);
@@ -4634,10 +4650,27 @@ fn decode_node(
             id,
             text: reader.string()?,
         }),
-        2 => Ok(Node::Text {
-            id,
-            text: reader.string()?,
-        }),
+        2 => {
+            let text = reader.string()?;
+            let count = usize::from(reader.u8()?);
+            let mut links = Vec::with_capacity(count.min(kobo_ui::MAX_TEXT_LINKS));
+            for _ in 0..count {
+                let action = ActionId(reader.u32()?);
+                let start = reader.u32()? as usize;
+                let end = reader.u32()? as usize;
+                // Checked here rather than trusted, because these index a
+                // string that came off the same wire and a bad pair would
+                // panic the renderer rather than draw something wrong.
+                if start < end
+                    && end <= text.len()
+                    && text.is_char_boundary(start)
+                    && text.is_char_boundary(end)
+                {
+                    links.push(kobo_ui::TextLink { action, start, end });
+                }
+            }
+            Ok(Node::Text { id, text, links })
+        }
         18 => {
             let depth = reader.u8()?;
             let role = reader.u8()?;
@@ -5800,6 +5833,7 @@ mod tests {
             vec![Node::Text {
                 id: NodeId(1),
                 text: "Chapter one".into(),
+                links: Vec::new(),
             }],
         );
         assert!(!screen.owns_back, "not asking for it is the default");
@@ -5907,6 +5941,7 @@ mod tests {
             .map(|id| Node::Text {
                 id: NodeId(id),
                 text: "x".repeat(MAX_STRING_LEN),
+                links: Vec::new(),
             })
             .collect();
         assert_eq!(
@@ -5942,6 +5977,7 @@ mod node_coverage_tests {
             Node::Text {
                 id: NodeId(2),
                 text: "Body".into(),
+                links: Vec::new(),
             },
             Node::Quote {
                 id: NodeId(30),
@@ -5962,6 +5998,7 @@ mod node_coverage_tests {
                 children: vec![Node::Text {
                     id: NodeId(5),
                     text: "Nested".into(),
+                    links: Vec::new(),
                 }],
             },
             Node::Divider { id: NodeId(6) },
@@ -6036,6 +6073,7 @@ mod node_coverage_tests {
                         vec![Node::Text {
                             id: NodeId(26),
                             text: "Cover".into(),
+                            links: Vec::new(),
                         }],
                     ),
                     BandSlot::fill(vec![
@@ -6285,6 +6323,7 @@ mod node_coverage_tests {
             vec![Node::Text {
                 id: NodeId(1),
                 text: "Underneath".to_owned(),
+                links: Vec::new(),
             }],
         )
         .with_overlay(kobo_ui::Overlay::modal(

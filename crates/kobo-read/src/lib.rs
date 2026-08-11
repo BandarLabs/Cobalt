@@ -978,7 +978,9 @@ impl Reader {
                 }
                 Kind::Rule => screen.divider(),
                 Kind::Break => screen.spacer(kobo_ui::Space::Small),
-                Kind::Body | Kind::Preformatted => screen.text(piece.text.clone()),
+                Kind::Body | Kind::Preformatted => {
+                    screen.text_linking(piece.text.clone(), self.links_in(piece))
+                }
             };
         }
         if let Some(problem) = &self.problem {
@@ -1119,12 +1121,13 @@ impl Reader {
 
     /// Where this page points, each line a way there.
     ///
-    /// A list rather than words a finger finds in the middle of a paragraph.
-    /// A footnote marker is a single character set above the line, which is
-    /// smaller than any tap this panel can tell apart, and making the prose
-    /// tappable would put a hit target over every sentence a reader is trying
-    /// to read past. The links on the page they are on is the same answer the
-    /// marking screen already gives for choosing a paragraph.
+    /// The words themselves are tappable now, and this is still here: a
+    /// footnote marker is a single character set above the line, and a finger
+    /// on a reflective panel is a poor instrument for one. What the underlined
+    /// run gives is a target the width of the words rather than the width of
+    /// the marker; what this gives is every destination on the page at a size
+    /// nobody has to aim at, which is the same answer the marking screen
+    /// already gives for choosing a paragraph.
     fn links_screen(&self, title: &str) -> Screen {
         let mut screen = ScreenBuilder::new("reader-links").top_bar(title);
         let here = self.links_here();
@@ -1137,6 +1140,41 @@ impl Reader {
             screen = screen.button(format!("{}{block}", action::GO), text);
         }
         screen.build()
+    }
+
+    /// Where inside one paragraph the links are, and what each one answers.
+    ///
+    /// Found by the words rather than by an offset, because a paragraph cut
+    /// across a page break arrives here as a piece of itself with its lines
+    /// rejoined, so an offset into the block would land in the wrong place or
+    /// off the end. A link whose words cannot be found in this piece -- cut in
+    /// half by the break, or rewritten by the parser -- is simply left out, and
+    /// the list under "Links on this page" still has it.
+    ///
+    /// Only links that land inside this book, on the same reasoning as that
+    /// list: there is no browser here, and a run of underlined words that
+    /// cannot do anything is worse than prose.
+    fn links_in(&self, piece: &Piece) -> Vec<(String, usize, usize)> {
+        let mut found: Vec<(String, usize, usize)> = Vec::new();
+        for link in &self.document.links {
+            if Locator::try_from(link.block) != Ok(piece.block) {
+                continue;
+            }
+            let Some(block) = self.document.destination(link) else {
+                continue;
+            };
+            let Some(start) = piece.text.find(&link.text) else {
+                continue;
+            };
+            let end = start + link.text.len();
+            // Two links over the same words would draw two underlines in the
+            // same place and give the second one a target the first covers.
+            if found.iter().any(|(_, from, to)| start < *to && *from < end) {
+                continue;
+            }
+            found.push((format!("{}{block}", action::GO), start, end));
+        }
+        found
     }
 
     /// The links whose words are on the page being read, and where they go.
@@ -1335,6 +1373,41 @@ impl Reader {
             }
         }
         wanted
+    }
+
+    /// Every picture the page being read refers to, in the order it does.
+    ///
+    /// The subset of [`Self::pictures_wanted`] that is actually on screen, and
+    /// what an application decodes first. A book of plates is a book of
+    /// hundred-millisecond decodes, and doing all of them before the first page
+    /// appears is how opening one froze the panel for three seconds; the page
+    /// being looked at needs one or two of them and nothing else needs to be
+    /// waited for.
+    #[must_use]
+    pub fn pictures_on_page(&self) -> Vec<&str> {
+        let mut wanted = Vec::new();
+        for piece in self.page() {
+            let Some(at) = usize::try_from(piece.block).ok() else {
+                continue;
+            };
+            if let Some(Block::Picture { name, .. }) = self.document.blocks.get(at) {
+                if !wanted.contains(&name.as_str()) {
+                    wanted.push(name.as_str());
+                }
+            }
+        }
+        wanted
+    }
+
+    /// The picture handed over under a name, if one was.
+    ///
+    /// What an application asks in order to fill a picture in later. The room
+    /// a plate takes is settled when the book is measured; the pixels can
+    /// arrive against the same handle afterwards, and this is how the caller
+    /// finds out which handle that is.
+    #[must_use]
+    pub fn picture_named(&self, name: &str) -> Option<kobo_ui::TilePicture> {
+        self.pictures.get(name).copied()
     }
 
     /// The picture to draw for a block, when one has been handed over.
@@ -1879,6 +1952,58 @@ mod tests {
             reader.act(&format!("{}1", action::GO), &panel()),
             Outcome::Save
         );
+    }
+
+    /// The words of a cross-reference answer a finger put on them.
+    ///
+    /// A book's own links were set into the paragraph exactly like the prose
+    /// around them and did nothing at all: reaching one meant opening the
+    /// controls and finding it in a list. A tap on the words themselves is
+    /// what a link is for.
+    #[test]
+    fn a_tap_on_the_words_of_a_link_goes_where_the_link_goes() {
+        let document = Document {
+            blocks: vec![
+                Block::Paragraph("As set out in the appendix, rabbits are numerous.".into()),
+                Block::Paragraph("The appendix itself.".into()),
+            ],
+            anchors: [("appendix".to_owned(), 1usize)].into_iter().collect(),
+            links: vec![kobo_doc::Link {
+                block: 0,
+                text: "the appendix".into(),
+                target: "appendix".into(),
+            }],
+            ..Document::default()
+        };
+        let reader = Reader::open(document, Memory::default(), &panel());
+        let layout = reader
+            .screen("A Book")
+            .layout_with(&panel(), &kobo_ui::Chrome::with_back(true));
+        let run = layout
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, kobo_ui::LayoutKind::InlineLink(_)))
+            .expect("the words of the link were not given a target");
+        assert!(
+            run.rect.width > 0 && run.rect.height > 0,
+            "a target with no area is not one: {:?}",
+            run.rect
+        );
+
+        // A finger in the middle of the words, and the same action the list
+        // under the controls would have sent.
+        let touched = layout
+            .hit_test(
+                run.rect.x + run.rect.width / 2,
+                run.rect.y + run.rect.height / 2,
+            )
+            .expect("the tap fell through to the page turn underneath");
+        assert_eq!(touched, kobo_sdk::action_id(&format!("{}1", action::GO)));
+
+        // And the prose either side of it still turns the page, which is the
+        // thing a hit target over a whole paragraph would have taken away.
+        let elsewhere = layout.hit_test(layout.content.x + layout.content.width - 4, run.rect.y);
+        assert_eq!(elsewhere, Some(kobo_sdk::action_id(action::FORWARD)));
     }
 
     #[test]
