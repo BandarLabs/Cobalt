@@ -25,7 +25,10 @@
 
 use kobo_html::{attribute, decode_entities, element_name, skip_element};
 
-use crate::{Block, Builder, Document, MAX_BLOCK_TEXT};
+use crate::{
+    Block, BlockStyle, Builder, Document, InlineSpan, InlineStyle, RichBlock, TextAlignment,
+    MAX_BLOCK_TEXT,
+};
 
 /// Elements whose contents are instructions rather than words.
 const OPAQUE: [&str; 4] = ["script", "style", "svg", "iframe"];
@@ -33,7 +36,19 @@ const OPAQUE: [&str; 4] = ["script", "style", "svg", "iframe"];
 /// Reads an HTML document.
 #[must_use]
 pub fn parse(source: &str) -> Document {
-    let mut state = State::new();
+    parse_with_css(source, "")
+}
+
+/// Reads HTML with a bounded safe subset of publisher CSS.
+#[must_use]
+pub fn parse_with_css(source: &str, external_css: &str) -> Document {
+    let mut take = external_css.len().min(MAX_CSS_BYTES);
+    while !external_css.is_char_boundary(take) {
+        take -= 1;
+    }
+    let mut css = external_css[..take].to_owned();
+    css.push_str(&embedded_styles(source));
+    let mut state = State::new(StyleSheet::parse(&css));
     let mut rest = source;
     while let Some(at) = rest.find('<') {
         state.words(&rest[..at]);
@@ -74,6 +89,9 @@ pub fn parse(source: &str) -> Document {
     state.finish()
 }
 
+const MAX_CSS_BYTES: usize = 256 * 1024;
+const MAX_CSS_RULES: usize = 4_096;
+
 /// Skips a comment, a doctype or a CDATA section, if `tail` begins with one.
 pub(crate) fn skip_bracketed(tail: &str) -> Option<&str> {
     for (opens, closes) in [("<!--", "-->"), ("<![CDATA[", "]]>")] {
@@ -93,6 +111,12 @@ pub(crate) fn skip_bracketed(tail: &str) -> Option<&str> {
 struct State {
     builder: Builder,
     text: String,
+    spans: Vec<InlineSpan>,
+    inline: InlineStyle,
+    inline_stack: Vec<(String, InlineStyle)>,
+    block_style: BlockStyle,
+    block_stack: Vec<(String, BlockStyle)>,
+    stylesheet: StyleSheet,
     /// The link being read: where it points, and how much text had been
     /// collected when it opened, so its own words can be taken back out.
     link: Option<(String, usize)>,
@@ -114,11 +138,17 @@ struct State {
 }
 
 impl State {
-    fn new() -> Self {
+    fn new(stylesheet: StyleSheet) -> Self {
         Self {
             builder: Builder::new(),
             link: None,
             text: String::new(),
+            spans: Vec::new(),
+            inline: InlineStyle::default(),
+            inline_stack: Vec::new(),
+            block_style: BlockStyle::default(),
+            block_stack: Vec::new(),
+            stylesheet,
             quoted: 0,
             pre: 0,
             lists: Vec::new(),
@@ -141,6 +171,7 @@ impl State {
             return;
         }
         let decoded = decode_entities(text);
+        self.push_span(&decoded);
         if self.pre > 0 {
             // Control characters have no drawing, and the preformatted path
             // does not collapse them away. Tabs and newlines stay: both are
@@ -155,6 +186,25 @@ impl State {
         }
     }
 
+    fn push_span(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        if let Some(last) = self
+            .spans
+            .last_mut()
+            .filter(|last| last.style == self.inline)
+        {
+            last.text.push_str(text);
+        } else {
+            self.spans.push(InlineSpan {
+                text: text.to_owned(),
+                style: self.inline,
+            });
+        }
+    }
+
+    #[allow(clippy::too_many_lines)]
     fn open(&mut self, name: &str, inside: &str) {
         // Inside a `<pre>`, nothing but its own end tag changes anything. A
         // listing full of `<` is a listing, and re-flowing it on a stray tag
@@ -196,6 +246,23 @@ impl State {
             if let Some(href) = attribute(inside, "href") {
                 self.link = Some((decode_entities(href), self.text.len()));
             }
+            return;
+        }
+        if matches!(
+            name,
+            "strong" | "b" | "em" | "i" | "u" | "sup" | "sub" | "span" | "small" | "mark"
+        ) {
+            self.inline_stack.push((name.to_owned(), self.inline));
+            match name {
+                "strong" | "b" => self.inline.strong = true,
+                "em" | "i" => self.inline.emphasis = true,
+                "u" => self.inline.underline = true,
+                "sup" => self.inline.superscript = true,
+                "sub" => self.inline.subscript = true,
+                _ => {}
+            }
+            let declarations = self.stylesheet.declarations_for(name, inside);
+            apply_inline_style(&mut self.inline, Some(&declarations));
             return;
         }
         match name {
@@ -254,9 +321,21 @@ impl State {
             _ => {
                 if let Some(level) = heading_level(name) {
                     self.flush();
+                    let declarations = self.stylesheet.declarations_for(name, inside);
+                    let parent = self.block_style.clone();
+                    self.block_stack.push((name.to_owned(), parent.clone()));
+                    self.block_style = block_style_inheriting(&parent, &declarations);
+                    self.inline_stack.push((name.to_owned(), self.inline));
+                    apply_inline_style(&mut self.inline, Some(&declarations));
                     self.heading = Some(level);
                 } else if breaks_a_block(name) {
                     self.flush();
+                    let declarations = self.stylesheet.declarations_for(name, inside);
+                    let parent = self.block_style.clone();
+                    self.block_stack.push((name.to_owned(), parent.clone()));
+                    self.block_style = block_style_inheriting(&parent, &declarations);
+                    self.inline_stack.push((name.to_owned(), self.inline));
+                    apply_inline_style(&mut self.inline, Some(&declarations));
                 }
             }
         }
@@ -270,6 +349,18 @@ impl State {
             if let Some((target, from)) = self.link.take() {
                 let words = self.text.get(from..).unwrap_or_default().to_owned();
                 self.builder.record_link(&words, &target);
+            }
+            return;
+        }
+        if let Some(at) = self.inline_stack.iter().rposition(|(open, _)| open == name) {
+            if heading_level(name).is_some() || breaks_a_block(name) {
+                self.flush();
+            }
+            let (_, style) = self.inline_stack.remove(at);
+            self.inline = style;
+            if let Some(at) = self.block_stack.iter().rposition(|(open, _)| open == name) {
+                let (_, style) = self.block_stack.remove(at);
+                self.block_style = style;
             }
             return;
         }
@@ -320,6 +411,8 @@ impl State {
 
     fn flush(&mut self) {
         let text = std::mem::take(&mut self.text);
+        let spans = normalise_spans(std::mem::take(&mut self.spans));
+        let style = self.block_style.clone();
         let heading = self.heading.take();
         let item = std::mem::replace(&mut self.item, false);
         if std::mem::replace(&mut self.titling, false) {
@@ -327,7 +420,8 @@ impl State {
             return;
         }
         if self.pre > 0 {
-            self.builder.push(Block::Preformatted(text));
+            self.builder
+                .push_rich(Block::Preformatted(text), RichBlock { spans, style });
             return;
         }
         if text.trim().is_empty() {
@@ -339,14 +433,18 @@ impl State {
             if level == 1 {
                 self.builder.set_title(&text);
             }
-            self.builder.push(Block::Heading { level, text });
+            self.builder
+                .push_rich(Block::Heading { level, text }, RichBlock { spans, style });
         } else if item {
             let ordered = self.lists.last().copied().unwrap_or(false);
-            self.builder.push(Block::Item { ordered, text });
+            self.builder
+                .push_rich(Block::Item { ordered, text }, RichBlock { spans, style });
         } else if self.quoted > 0 {
-            self.builder.push(Block::Quote(text));
+            self.builder
+                .push_rich(Block::Quote(text), RichBlock { spans, style });
         } else {
-            self.builder.push(Block::Paragraph(text));
+            self.builder
+                .push_rich(Block::Paragraph(text), RichBlock { spans, style });
         }
     }
 
@@ -354,6 +452,280 @@ impl State {
         self.flush();
         self.builder.finish()
     }
+}
+
+#[derive(Clone, Debug, Default)]
+struct StyleSheet {
+    rules: Vec<CssRule>,
+}
+
+#[derive(Clone, Debug)]
+struct CssRule {
+    selector: String,
+    declarations: String,
+    specificity: u8,
+    order: usize,
+}
+
+fn embedded_styles(source: &str) -> String {
+    let lower = source.to_ascii_lowercase();
+    let mut out = String::new();
+    let mut at = 0usize;
+    while out.len() < MAX_CSS_BYTES {
+        let Some(open) = lower[at..].find("<style") else {
+            break;
+        };
+        let open = at + open;
+        let Some(tag_end) = lower[open..].find('>') else {
+            break;
+        };
+        let body = open + tag_end + 1;
+        let Some(close) = lower[body..].find("</style") else {
+            break;
+        };
+        let close = body + close;
+        let content = &source[body..close];
+        let mut take = content.len().min(MAX_CSS_BYTES.saturating_sub(out.len()));
+        while !content.is_char_boundary(take) {
+            take -= 1;
+        }
+        out.push_str(&content[..take]);
+        at = close + "</style".len();
+    }
+    out
+}
+
+impl StyleSheet {
+    fn parse(css: &str) -> Self {
+        let mut rules = Vec::new();
+        let mut rest = css;
+        while rules.len() < MAX_CSS_RULES {
+            let Some(open) = rest.find('{') else { break };
+            let selectors = rest[..open].trim();
+            let tail = &rest[open + 1..];
+            let Some(close) = tail.find('}') else { break };
+            let body = tail[..close].trim();
+            rest = &tail[close + 1..];
+            if selectors.starts_with('@') || body.is_empty() {
+                continue;
+            }
+            for selector in selectors.split(',') {
+                let selector = selector.trim().to_ascii_lowercase();
+                if selector.is_empty()
+                    || selector.contains([' ', '>', '+', '~', '[', ':', '*'])
+                    || rules.len() >= MAX_CSS_RULES
+                {
+                    continue;
+                }
+                let specificity = u8::from(selector.contains('#')) * 100
+                    + u8::try_from(selector.matches('.').count())
+                        .unwrap_or(9)
+                        .min(9)
+                        * 10
+                    + u8::from(!selector.starts_with(['.', '#']));
+                rules.push(CssRule {
+                    selector,
+                    declarations: body.to_owned(),
+                    specificity,
+                    order: rules.len(),
+                });
+            }
+        }
+        Self { rules }
+    }
+
+    fn declarations_for(&self, name: &str, inside: &str) -> String {
+        let classes = attribute(inside, "class").unwrap_or_default();
+        let id = attribute(inside, "id").unwrap_or_default();
+        let mut matched: Vec<&CssRule> = self
+            .rules
+            .iter()
+            .filter(|rule| selector_matches(&rule.selector, name, id, classes))
+            .collect();
+        matched.sort_by_key(|rule| (rule.specificity, rule.order));
+        let mut result = String::new();
+        for rule in matched {
+            result.push_str(&rule.declarations);
+            result.push(';');
+        }
+        if let Some(inline) = attribute(inside, "style") {
+            result.push_str(inline);
+        }
+        result
+    }
+}
+
+fn selector_matches(selector: &str, name: &str, id: &str, classes: &str) -> bool {
+    let tag_end = selector.find(['.', '#']).unwrap_or(selector.len());
+    let tag = &selector[..tag_end];
+    if !tag.is_empty() && !tag.eq_ignore_ascii_case(name) {
+        return false;
+    }
+    let class_words: Vec<&str> = classes.split_whitespace().collect();
+    let mut rest = &selector[tag_end..];
+    while !rest.is_empty() {
+        let marker = rest.as_bytes()[0];
+        rest = &rest[1..];
+        let end = rest.find(['.', '#']).unwrap_or(rest.len());
+        let value = &rest[..end];
+        let matches = match marker {
+            b'.' => class_words
+                .iter()
+                .any(|class| class.eq_ignore_ascii_case(value)),
+            b'#' => id.eq_ignore_ascii_case(value),
+            _ => false,
+        };
+        if !matches {
+            return false;
+        }
+        rest = &rest[end..];
+    }
+    true
+}
+
+fn normalise_spans(spans: Vec<InlineSpan>) -> Vec<InlineSpan> {
+    let mut out: Vec<InlineSpan> = Vec::new();
+    let mut pending_space = false;
+    for span in spans {
+        let mut text = String::new();
+        for character in span.text.chars() {
+            if character.is_whitespace() {
+                pending_space = !out.is_empty() || !text.is_empty();
+                continue;
+            }
+            if pending_space {
+                text.push(' ');
+                pending_space = false;
+            }
+            if !character.is_control() {
+                text.push(character);
+            }
+        }
+        if text.is_empty() {
+            continue;
+        }
+        if let Some(last) = out.last_mut().filter(|last| last.style == span.style) {
+            last.text.push_str(&text);
+        } else {
+            out.push(InlineSpan {
+                text,
+                style: span.style,
+            });
+        }
+    }
+    out
+}
+
+fn declarations(style: Option<&str>) -> impl Iterator<Item = (&str, &str)> {
+    style.into_iter().flat_map(|style| {
+        style.split(';').filter_map(|declaration| {
+            let (name, value) = declaration.split_once(':')?;
+            Some((name.trim(), value.trim()))
+        })
+    })
+}
+
+fn apply_inline_style(style: &mut InlineStyle, source: Option<&str>) {
+    for (name, value) in declarations(source) {
+        match name.to_ascii_lowercase().as_str() {
+            "font-weight"
+                if value.eq_ignore_ascii_case("bold")
+                    || value.parse::<u16>().is_ok_and(|weight| weight >= 600) =>
+            {
+                style.strong = true;
+            }
+            "font-style"
+                if value.eq_ignore_ascii_case("italic")
+                    || value.eq_ignore_ascii_case("oblique") =>
+            {
+                style.emphasis = true;
+            }
+            "text-decoration"
+                if value
+                    .split_whitespace()
+                    .any(|word| word.eq_ignore_ascii_case("underline")) =>
+            {
+                style.underline = true;
+            }
+            "vertical-align" if value.eq_ignore_ascii_case("super") => style.superscript = true,
+            "vertical-align" if value.eq_ignore_ascii_case("sub") => style.subscript = true,
+            _ => {}
+        }
+    }
+}
+
+fn block_style_inheriting(parent: &BlockStyle, source: &str) -> BlockStyle {
+    let mut style = BlockStyle {
+        alignment: parent.alignment,
+        line_height_percent: parent.line_height_percent,
+        font_family: parent.font_family.clone(),
+        ..BlockStyle::default()
+    };
+    for (name, value) in declarations(Some(source)) {
+        match name.to_ascii_lowercase().as_str() {
+            "text-align" => {
+                style.alignment = match value.to_ascii_lowercase().as_str() {
+                    "center" => TextAlignment::Center,
+                    "right" | "end" => TextAlignment::End,
+                    "justify" => TextAlignment::Justify,
+                    _ => TextAlignment::Start,
+                };
+            }
+            "line-height" => {
+                if let Some(percent) = percent(value) {
+                    style.line_height_percent = percent.clamp(80, 250);
+                }
+            }
+            "margin-top" => style.margin_before_em = em_hundredths(value).unwrap_or(0),
+            "margin-bottom" => style.margin_after_em = em_hundredths(value).unwrap_or(0),
+            "text-indent" => {
+                style.first_line_indent_em = em_hundredths(value)
+                    .and_then(|value| i16::try_from(value).ok())
+                    .unwrap_or(0);
+            }
+            "font-family" => {
+                let family = value
+                    .split(',')
+                    .next()
+                    .unwrap_or_default()
+                    .trim_matches([' ', '\'', '"']);
+                if !family.is_empty() && family.len() <= 128 {
+                    style.font_family = Some(family.to_owned());
+                }
+            }
+            "page-break-before" | "break-before"
+                if value.eq_ignore_ascii_case("always") || value.eq_ignore_ascii_case("page") =>
+            {
+                style.page_break_before = true;
+            }
+            "page-break-after" | "break-after"
+                if value.eq_ignore_ascii_case("always") || value.eq_ignore_ascii_case("page") =>
+            {
+                style.page_break_after = true;
+            }
+            _ => {}
+        }
+    }
+    style
+}
+
+#[allow(clippy::cast_possible_truncation)]
+fn percent(value: &str) -> Option<u16> {
+    if let Some(value) = value.strip_suffix('%') {
+        return value.trim().parse().ok();
+    }
+    let ratio = value.parse::<f32>().ok()?;
+    u16::try_from((ratio * 100.0).round() as i32).ok()
+}
+
+#[allow(clippy::cast_possible_truncation)]
+fn em_hundredths(value: &str) -> Option<u16> {
+    let value = value.trim().strip_suffix("em")?.trim();
+    let em = value.parse::<f32>().ok()?;
+    if !(0.0..=20.0).contains(&em) {
+        return None;
+    }
+    u16::try_from((em * 100.0).round() as i32).ok()
 }
 
 fn heading_level(name: &str) -> Option<u8> {
@@ -427,6 +799,89 @@ mod tests {
                 Block::Paragraph("It began badly.".to_owned()),
             ]
         );
+    }
+
+    #[test]
+    fn inline_structure_and_safe_publisher_css_survive_parsing() {
+        let document = parse(
+            r#"<style>
+                p.lead { text-align: center; line-height: 140%; margin-bottom: 0.5em; }
+                .accent { font-style: italic; text-decoration: underline; }
+               </style>
+               <p class="lead">Before <strong>bold <span class="accent">both</span></strong>.</p>"#,
+        );
+        assert_eq!(document.blocks[0].text(), Some("Before bold both."));
+        let rich = document.rich.get(&0).expect("rich paragraph");
+        assert_eq!(rich.style.alignment, TextAlignment::Center);
+        assert_eq!(rich.style.line_height_percent, 140);
+        assert_eq!(rich.style.margin_after_em, 50);
+        assert_eq!(
+            rich.spans
+                .iter()
+                .map(|span| span.text.as_str())
+                .collect::<String>(),
+            "Before bold both."
+        );
+        let both = rich
+            .spans
+            .iter()
+            .find(|span| span.text.contains("both"))
+            .expect("styled run");
+        assert!(both.style.strong);
+        assert!(both.style.emphasis);
+        assert!(both.style.underline);
+    }
+
+    #[test]
+    fn unsupported_css_cannot_escape_the_bounded_flow() {
+        let document = parse_with_css(
+            r#"<p class="moved">Words stay readable.</p>"#,
+            ".moved { position: fixed; left: -999999px; color: transparent; text-align: right; }",
+        );
+        assert_eq!(document.blocks[0].text(), Some("Words stay readable."));
+        assert_eq!(
+            document
+                .rich
+                .get(&0)
+                .expect("supported style")
+                .style
+                .alignment,
+            TextAlignment::End
+        );
+    }
+
+    #[test]
+    fn tag_per_character_styling_is_bounded_without_losing_words() {
+        let mut source = String::from("<p>");
+        for index in 0..400 {
+            if index % 2 == 0 {
+                source.push_str("<b>x</b>");
+            } else {
+                source.push_str("<i>y</i>");
+            }
+        }
+        source.push_str("</p>");
+        let document = parse(&source);
+        let text = document.blocks[0].text().expect("paragraph");
+        let rich = document.rich.get(&0).expect("rich paragraph");
+        assert_eq!(text.len(), 400);
+        assert_eq!(
+            rich.spans.iter().map(|span| span.text.len()).sum::<usize>(),
+            400
+        );
+        assert!(rich.spans.len() <= crate::MAX_RICH_SPANS);
+    }
+
+    #[test]
+    fn inherited_body_typography_reaches_ordinary_paragraphs() {
+        let document = parse_with_css(
+            "<body><p>Inherited prose.</p></body>",
+            "body { font-family: Publisher Serif; line-height: 135%; text-align: justify; }",
+        );
+        let style = &document.rich.get(&0).expect("publisher style").style;
+        assert_eq!(style.font_family.as_deref(), Some("Publisher Serif"));
+        assert_eq!(style.line_height_percent, 135);
+        assert_eq!(style.alignment, TextAlignment::Justify);
     }
 
     #[test]

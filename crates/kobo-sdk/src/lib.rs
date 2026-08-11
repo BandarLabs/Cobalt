@@ -10,7 +10,7 @@ pub use kobo_protocol::{
     Credential, DenyReason, DeviceError, DeviceRequest, DeviceResult, Frame, Header, Lifecycle,
     LogLevel, Message, SecretHeader, ShellError, ShellEvent, ShellRequest, StoreError,
     StoreRequest, StoreResult, StreamError, Task, TaskError, TaskId, TaskOutcome, WifiNetwork,
-    CACHE_PREFIX, MAX_CACHE_KEYS, MAX_HEADERS, MAX_HEADER_NAME, MAX_HEADER_VALUE,
+    CACHE_PREFIX, MAX_CACHE_KEYS, MAX_FONT_BYTES, MAX_HEADERS, MAX_HEADER_NAME, MAX_HEADER_VALUE,
     MAX_INLINE_PICTURE_BYTES, MAX_PICTURE_BYTES, MAX_PICTURE_CHUNK_BYTES, MAX_RADIO_DEVICES,
     MAX_RADIO_NAME, MAX_SHELF_CHUNK, MAX_SHELL_CHUNK, MAX_STORE_KEYS, MAX_STORE_VALUE,
     MAX_TASK_BYTES, MAX_URL_LEN,
@@ -19,12 +19,13 @@ pub use kobo_ui::QuoteRole;
 pub use kobo_ui::{
     terminal_grid, terminal_grid_for, typographic_cover, ActionId, BandAlign, BandSlot,
     BannerLevel, BarAction, BarStyle, BottomAction, Caret, Cell, Chip, Chrome, ControlState,
-    DiagnosticSeverity, DisplayMetrics, Emphasis, Fold, Freeform, Glyph, LayoutIssue,
-    LayoutIssueKind, NavBar, Node, NodeId, Overlay, OverlayKind, Percent, PictureHandle, ProseArea,
-    Row, RowLead, RowState, Screen, SlotWidth, Space, Tile, TilePicture, TileShape, TileState,
-    TopBar, TransferFailure, CLARA_BW_METRICS, MAX_BAND_SLOTS, MAX_CELLS, MAX_CHIPS,
-    MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_QUOTE_DEPTH, MAX_ROWS, MAX_TABS, MAX_TERMINAL_COLUMNS,
-    MAX_TERMINAL_ROWS, TILE_BADGE_LIMIT,
+    DiagnosticSeverity, DisplayMetrics, Emphasis, Fold, FontHandle, Freeform, Glyph, LayoutIssue,
+    LayoutIssueKind, NavBar, Node, NodeId, Overlay, OverlayKind, ParagraphAlignment,
+    ParagraphPresentation, Percent, PictureHandle, ProseArea, RichTextSpan, Row, RowLead, RowState,
+    Screen, SlotWidth, Space, TextPresentation, Tile, TilePicture, TileShape, TileState, TopBar,
+    TransferFailure, CLARA_BW_METRICS, MAX_BAND_SLOTS, MAX_CELLS, MAX_CHIPS, MAX_CHOICE_OPTIONS,
+    MAX_COLUMNS, MAX_QUOTE_DEPTH, MAX_ROWS, MAX_TABS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS,
+    TILE_BADGE_LIMIT,
 };
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
@@ -446,6 +447,7 @@ pub struct ScreenBuilder {
     text_scale: Option<kobo_ui::TextScale>,
     overlay: Option<Box<Overlay>>,
     reading: bool,
+    reading_font: Option<FontHandle>,
     actions: Vec<(String, ActionId)>,
     warnings: Vec<LayoutIssue>,
 }
@@ -466,6 +468,7 @@ impl ScreenBuilder {
             text_scale: None,
             overlay: None,
             reading: false,
+            reading_font: None,
             actions: Vec::new(),
             warnings: Vec::new(),
         }
@@ -488,6 +491,65 @@ impl ScreenBuilder {
             id,
             text: text.into(),
             links: Vec::new(),
+        });
+        self
+    }
+
+    /// Adds publisher-styled book prose without exposing arbitrary geometry.
+    #[must_use]
+    pub fn rich_text(
+        mut self,
+        text: impl Into<String>,
+        spans: Vec<RichTextSpan>,
+        presentation: ParagraphPresentation,
+    ) -> Self {
+        let id = self.next_id();
+        self.nodes.push(Node::RichText {
+            id,
+            text: text.into(),
+            spans,
+            links: Vec::new(),
+            presentation,
+        });
+        self
+    }
+
+    /// Publisher-styled prose with tappable inline destinations.
+    #[must_use]
+    pub fn rich_text_linking<I, N>(
+        mut self,
+        text: impl Into<String>,
+        spans: Vec<RichTextSpan>,
+        presentation: ParagraphPresentation,
+        links: I,
+    ) -> Self
+    where
+        I: IntoIterator<Item = (N, usize, usize)>,
+        N: AsRef<str>,
+    {
+        let id = self.next_id();
+        let text = text.into();
+        let links = links
+            .into_iter()
+            .take(kobo_ui::MAX_TEXT_LINKS)
+            .filter_map(|(name, start, end)| {
+                (start < end
+                    && end <= text.len()
+                    && text.is_char_boundary(start)
+                    && text.is_char_boundary(end))
+                .then(|| kobo_ui::TextLink {
+                    action: self.register(name.as_ref()),
+                    start,
+                    end,
+                })
+            })
+            .collect();
+        self.nodes.push(Node::RichText {
+            id,
+            text,
+            spans,
+            links,
+            presentation,
         });
         self
     }
@@ -1192,6 +1254,13 @@ impl ScreenBuilder {
     #[must_use]
     pub const fn reading(mut self, reading: bool) -> Self {
         self.reading = reading;
+        self
+    }
+
+    /// Uses a publisher font previously handed to the runtime for book prose.
+    #[must_use]
+    pub const fn reading_font(mut self, font: FontHandle) -> Self {
+        self.reading_font = Some(font);
         self
     }
 
@@ -2310,6 +2379,7 @@ impl ScreenBuilder {
             text_scale: self.text_scale,
             overlay: self.overlay,
             reading: self.reading,
+            reading_font: self.reading_font,
         }
     }
 
@@ -2437,6 +2507,14 @@ pub enum Command {
     },
     /// Release a picture the runtime is holding.
     DropPicture(PictureHandle),
+    /// Give the runtime a publisher font to hold for reading screens.
+    PutFont {
+        handle: FontHandle,
+        name: String,
+        bytes: Vec<u8>,
+    },
+    /// Release a publisher font and its glyph cache.
+    DropFont(FontHandle),
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -2928,6 +3006,43 @@ impl Context {
     /// application exits, so this is for one that outlives its usefulness.
     pub fn drop_picture(&mut self, handle: PictureHandle) {
         self.commands.push(Command::DropPicture(handle));
+    }
+
+    /// Hands a bounded embedded font to both local pagination and the runtime.
+    ///
+    /// Returns the handle only when the bytes are a supported TrueType or
+    /// OpenType face. Unsupported WOFF data and malformed fonts leave the
+    /// approved system reading face in place.
+    pub fn put_font(
+        &mut self,
+        handle: FontHandle,
+        name: impl Into<String>,
+        bytes: Vec<u8>,
+    ) -> Option<FontHandle> {
+        let name = name.into();
+        if bytes.is_empty()
+            || bytes.len() > MAX_FONT_BYTES
+            || name.len() > kobo_protocol::MAX_STRING_LEN
+        {
+            return None;
+        }
+        #[cfg(feature = "text")]
+        {
+            let font = kobo_text::BookFont::from_bytes(&bytes, &name, self.metrics).ok()?;
+            kobo_ui::put_book_typesetter(handle, Box::new(font));
+        }
+        self.commands.push(Command::PutFont {
+            handle,
+            name,
+            bytes,
+        });
+        Some(handle)
+    }
+
+    /// Releases a publisher font locally and in the runtime.
+    pub fn drop_font(&mut self, handle: FontHandle) {
+        kobo_ui::drop_book_typesetter(handle);
+        self.commands.push(Command::DropFont(handle));
     }
 
     /// Hands work to the runtime so the event loop keeps running.
@@ -4548,6 +4663,16 @@ impl Client {
                 Command::Launch(name) => Message::Launch { name },
                 Command::PutPicture { .. } => unreachable!("handled above"),
                 Command::DropPicture(handle) => Message::DropPicture { handle },
+                Command::PutFont {
+                    handle,
+                    name,
+                    bytes,
+                } => Message::PutFont {
+                    handle,
+                    name,
+                    bytes,
+                },
+                Command::DropFont(handle) => Message::DropFont { handle },
             };
             self.send(message)?;
         }

@@ -44,14 +44,15 @@ use kobo_policy::{Backends, Capability, Declared, DeviceServices, PowerPolicy, T
 use kobo_profile::{DeviceProfile, CLARA_BW_391};
 use kobo_protocol::{Frame, Lifecycle, Message, TaskError, TaskOutcome};
 use kobo_ui::{
-    display_metrics_from_env, render_all, ActionId, Chrome, FramePlanner, PanelWaveform,
-    PictureCache, Screen, Surface,
+    display_metrics_from_env, render_all, ActionId, Chrome, FontHandle, FramePlanner,
+    PanelWaveform, PictureCache, Screen, Surface,
 };
+use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering as AtomicOrdering};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -784,6 +785,7 @@ fn restore_screen(
 /// nobody has looked at in a while is cheaper to start again than a device that
 /// runs out of memory while its owner is reading.
 const MAX_HOSTED: usize = 4;
+static NEXT_RUNTIME_FONT: AtomicU32 = AtomicU32::new(1);
 
 /// One application the runtime is hosting.
 ///
@@ -818,6 +820,8 @@ struct Hosted {
     /// cache cannot evict another's covers, and so that everything is released
     /// together when it exits.
     pictures: PictureCache,
+    /// Application-local font handles mapped onto runtime-global handles.
+    fonts: BTreeMap<FontHandle, FontHandle>,
     painted: u32,
     /// When this was last on the panel, for deciding what to stop first.
     used: Instant,
@@ -1330,7 +1334,10 @@ fn host_applications(
                         continue;
                     };
                     match frame.message {
-                        Message::SetScreen(screen) => {
+                        Message::SetScreen(mut screen) => {
+                            if let Some(local) = screen.reading_font {
+                                screen.reading_font = apps[index].fonts.get(&local).copied();
+                            }
                             let is_front = id == front;
                             if is_front {
                                 last_activity = Instant::now();
@@ -1408,6 +1415,33 @@ fn host_applications(
                             }
                         }
                         Message::DropPicture { handle } => apps[index].pictures.remove(handle),
+                        Message::PutFont {
+                            handle,
+                            name,
+                            bytes,
+                        } => {
+                            let runtime_handle =
+                                *apps[index].fonts.entry(handle).or_insert_with(|| {
+                                    FontHandle(
+                                        NEXT_RUNTIME_FONT.fetch_add(1, AtomicOrdering::Relaxed),
+                                    )
+                                });
+                            match kobo_text::BookFont::from_bytes(
+                                &bytes,
+                                &name,
+                                display_metrics_from_env(),
+                            ) {
+                                Ok(font) => {
+                                    kobo_ui::put_book_typesetter(runtime_handle, Box::new(font));
+                                }
+                                Err(error) => trace(&format!("font {} refused: {error}", handle.0)),
+                            }
+                        }
+                        Message::DropFont { handle } => {
+                            if let Some(runtime_handle) = apps[index].fonts.remove(&handle) {
+                                kobo_ui::drop_book_typesetter(runtime_handle);
+                            }
+                        }
                         // An application logs to explain itself, and the times
                         // it most needs to be believed are the times it took
                         // the reader down with it. Dropping the line here left
@@ -2259,6 +2293,7 @@ fn start_application(
         declared,
         screen: None,
         pictures: PictureCache::default(),
+        fonts: BTreeMap::new(),
         painted: 0,
         used: Instant::now(),
     });
@@ -2267,6 +2302,9 @@ fn start_application(
 
 /// Ends one hosted application and everything it started.
 fn stop_hosted(mut app: Hosted) {
+    for (_, handle) in std::mem::take(&mut app.fonts) {
+        kobo_ui::drop_book_typesetter(handle);
+    }
     app.tasks.shutdown();
     stop_application(&mut app.child, app.jail.as_deref());
     if let Some(root) = app.jail {

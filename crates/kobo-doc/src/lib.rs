@@ -149,6 +149,9 @@ pub const MAX_LINKS: usize = 20_000;
 /// file with no line breaks in it, and cutting it is better than handing the
 /// layout engine a single block it will spend a second wrapping.
 pub const MAX_BLOCK_TEXT: usize = 64 * 1024;
+/// Styled runs retained for one block. Pathological tag-per-character XHTML
+/// degrades into one final run rather than growing the render protocol.
+const MAX_RICH_SPANS: usize = 256;
 
 /// The deepest heading level that means anything.
 ///
@@ -199,6 +202,70 @@ pub enum Block {
     /// asks for the next chapter means the next file, even when the author
     /// never wrote a heading at the top of it.
     Break,
+}
+
+/// Inline emphasis retained from HTML/XHTML instead of flattened away.
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct InlineStyle {
+    pub strong: bool,
+    pub emphasis: bool,
+    pub underline: bool,
+    pub superscript: bool,
+    pub subscript: bool,
+}
+
+/// One styled run inside a block of prose.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct InlineSpan {
+    pub text: String,
+    pub style: InlineStyle,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TextAlignment {
+    #[default]
+    Start,
+    Center,
+    End,
+    Justify,
+}
+
+/// Safe publisher styling that affects one reflowable block.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BlockStyle {
+    pub alignment: TextAlignment,
+    /// Percent of the selected face's natural line height.
+    pub line_height_percent: u16,
+    /// Before/after spacing in hundredths of an em.
+    pub margin_before_em: u16,
+    pub margin_after_em: u16,
+    pub first_line_indent_em: i16,
+    pub font_family: Option<String>,
+    pub page_break_before: bool,
+    pub page_break_after: bool,
+}
+
+impl Default for BlockStyle {
+    fn default() -> Self {
+        Self {
+            alignment: TextAlignment::Start,
+            line_height_percent: 100,
+            margin_before_em: 0,
+            margin_after_em: 0,
+            first_line_indent_em: 0,
+            font_family: None,
+            page_break_before: false,
+            page_break_after: false,
+        }
+    }
+}
+
+/// Structure and publisher styling retained for a text block.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RichBlock {
+    pub spans: Vec<InlineSpan>,
+    pub style: BlockStyle,
 }
 
 impl Block {
@@ -272,12 +339,37 @@ pub struct Document {
     /// drawing them rather than to the parser. A book of four hundred
     /// engravings should not cost four hundred decodes to open.
     pub images: BTreeMap<String, Vec<u8>>,
+    /// Outline fonts embedded by the publisher, keyed by their resolved
+    /// archive name.
+    ///
+    /// Kept as bounded, undecoded bytes for the same reason pictures are: the
+    /// document parser has no panel and no glyph cache, while the reader can
+    /// choose one face and hand it to the runtime only when publisher styling
+    /// is enabled. WOFF/WOFF2 assets are retained for diagnostics but only
+    /// OpenType/TrueType faces are currently usable by the rasterizer.
+    pub fonts: BTreeMap<String, EmbeddedFont>,
+    /// Rich XHTML representation for blocks that carried inline/CSS styling.
+    /// Blocks absent from the map use their ordinary semantic presentation.
+    pub rich: BTreeMap<usize, RichBlock>,
     /// The links the book makes from one part of itself to another.
     ///
     /// A footnote marker, an endnote's way back, a cross-reference: all of
     /// them were flattened to plain text, so the words stayed and the going
     /// there did not. Kept in reading order.
     pub links: Vec<Link>,
+}
+
+/// One font declared by an EPUB package.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct EmbeddedFont {
+    /// MIME type from the package manifest, when it supplied one.
+    pub media_type: String,
+    /// Family named by the publisher's `@font-face`, when one refers to this
+    /// asset. This lets the reader choose the face the book actually asks for
+    /// instead of whichever font filename sorts first.
+    pub family: Option<String>,
+    /// The bounded font bytes exactly as stored in the EPUB.
+    pub bytes: Vec<u8>,
 }
 
 /// Somewhere the book points, and the words it points from.
@@ -446,6 +538,11 @@ impl Builder {
         self.document.images = images;
     }
 
+    /// Records publisher fonts that passed the EPUB resource bounds.
+    pub(crate) fn set_fonts(&mut self, fonts: BTreeMap<String, EmbeddedFont>) {
+        self.document.fonts = fonts;
+    }
+
     /// Replaces the anchors, once a caller has re-keyed them.
     pub(crate) fn set_anchors(&mut self, anchors: BTreeMap<String, usize>) {
         self.document.anchors = anchors;
@@ -528,6 +625,17 @@ impl Builder {
         self.document.blocks.push(block);
     }
 
+    /// Adds a block while retaining its independently bounded XHTML styling.
+    pub(crate) fn push_rich(&mut self, block: Block, mut rich: RichBlock) {
+        let at = self.document.blocks.len();
+        self.push(block);
+        if self.document.blocks.len() == at + 1 && !rich.spans.is_empty() {
+            let canonical = self.document.blocks[at].text().unwrap_or_default();
+            bound_rich_spans(&mut rich.spans, canonical);
+            self.document.rich.insert(at, rich);
+        }
+    }
+
     /// Cuts `text` to what is left of the ceilings.
     fn fit(&mut self, mut text: String) -> String {
         if text.len() > MAX_BLOCK_TEXT {
@@ -599,6 +707,13 @@ impl Builder {
             link.block = block;
             block < kept
         });
+        self.document.rich = std::mem::take(&mut self.document.rich)
+            .into_iter()
+            .filter_map(|(at, rich)| {
+                let at = at.checked_sub(removed_from_front)?;
+                (at < kept).then_some((at, rich))
+            })
+            .collect();
         self.document
     }
 }
@@ -654,6 +769,38 @@ fn strip_boilerplate(blocks: &mut Vec<Block>) -> usize {
 }
 
 /// Cuts a string to at most `limit` bytes without splitting a character.
+fn bound_rich_spans(spans: &mut Vec<InlineSpan>, canonical: &str) {
+    let joined = spans
+        .iter()
+        .map(|span| span.text.as_str())
+        .collect::<String>();
+    if !joined.starts_with(canonical) {
+        *spans = vec![InlineSpan {
+            text: canonical.to_owned(),
+            style: InlineStyle::default(),
+        }];
+        return;
+    }
+    let mut left = canonical.len();
+    for span in spans.iter_mut() {
+        if span.text.len() > left {
+            truncate_to(&mut span.text, left);
+        }
+        left = left.saturating_sub(span.text.len());
+    }
+    spans.retain(|span| !span.text.is_empty());
+    if spans.len() > MAX_RICH_SPANS {
+        let tail = spans
+            .drain(MAX_RICH_SPANS - 1..)
+            .map(|span| span.text)
+            .collect::<String>();
+        spans.push(InlineSpan {
+            text: tail,
+            style: InlineStyle::default(),
+        });
+    }
+}
+
 pub(crate) fn truncate_to(text: &mut String, limit: usize) {
     if text.len() <= limit {
         return;

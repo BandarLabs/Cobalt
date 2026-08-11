@@ -41,9 +41,9 @@ use kobo_read::{Memory, Outcome, Reader};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Chrome, Context, DiagnosticSeverity, DisplayMetrics, Failure,
-    Glyph, Header, KoboApp, LogLevel, PictureHandle, RowLead, ScreenBuilder, ShelfDownload,
-    ShelfProgress, ShelfUpload, StoreResult, Task, TaskId, TaskOutcome, Tile, TilePicture,
-    TileShape, TileState, MAX_STORE_VALUE,
+    FontHandle, Glyph, Header, KoboApp, LogLevel, PictureHandle, RowLead, ScreenBuilder,
+    ShelfDownload, ShelfProgress, ShelfUpload, StoreResult, Task, TaskId, TaskOutcome, Tile,
+    TilePicture, TileShape, TileState, MAX_STORE_VALUE,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::process::ExitCode;
@@ -208,6 +208,7 @@ const OPEN_COVER_PX: (u32, u32) = (DETAILS_COVER_MM as u32 * 8, DETAILS_COVER_MM
 
 /// The handle the open book's cover is always held against.
 const OPEN_COVER_HANDLE: PictureHandle = PictureHandle(u32::MAX);
+const PUBLISHER_FONT_HANDLE: FontHandle = FontHandle(1);
 
 /// How close to the end of what has been downloaded the reader may get before
 /// the next piece of a plain-text fallback book is requested.
@@ -625,6 +626,8 @@ struct Gutenbird {
     /// costing the device several megabytes of decoded greyscale while its
     /// owner was back on the shelf looking at covers.
     book_pictures: Vec<PictureHandle>,
+    /// The embedded face held for the open book, released with its pictures.
+    book_font: Option<FontHandle>,
     /// The open book's plates still to be turned into pixels, in the order the
     /// text refers to them, each with the bytes it was stored as.
     ///
@@ -686,6 +689,7 @@ impl Default for Gutenbird {
             complete: false,
             reader: None,
             book_pictures: Vec::new(),
+            book_font: None,
             plates: VecDeque::new(),
             dithering: None,
             plating: None,
@@ -2493,6 +2497,9 @@ impl Gutenbird {
             for handle in self.book_pictures.drain(..) {
                 context.drop_picture(handle);
             }
+            if let Some(handle) = self.book_font.take() {
+                context.drop_font(handle);
+            }
             // Taken off the document rather than left on it: the reader owns
             // the document from here, and holding the scanned bytes as well as
             // the decoded greyscale meant every plate was paid for twice.
@@ -2500,6 +2507,15 @@ impl Gutenbird {
             let pictures_ms = started.elapsed().as_millis();
             let started = std::time::Instant::now();
             let mut reader = Reader::open(document, memory, &context.metrics());
+            if let Some((name, bytes)) = reader
+                .preferred_publisher_font()
+                .map(|(name, bytes)| (name.to_owned(), bytes.to_vec()))
+            {
+                if let Some(handle) = context.put_font(PUBLISHER_FONT_HANDLE, name, bytes) {
+                    reader.set_publisher_font(Some(handle), &context.metrics());
+                    self.book_font = Some(handle);
+                }
+            }
             // Before the count is read, because the sizes are what an
             // illustrated book is measured at, and it is that count -- the one
             // it will actually be read at -- that the timing line is worth
@@ -2553,6 +2569,9 @@ impl Gutenbird {
         }
         for handle in self.book_pictures.drain(..) {
             context.drop_picture(handle);
+        }
+        if let Some(handle) = self.book_font.take() {
+            context.drop_font(handle);
         }
         // Whatever is still queued is source bytes for a book nobody is
         // reading any more. The sleep already in flight is left to land and be

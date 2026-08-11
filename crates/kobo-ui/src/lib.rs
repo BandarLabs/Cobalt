@@ -11,7 +11,8 @@
 //! A small retained UI tree and grayscale rasterizer for the Kobo display.
 
 use std::cmp::{max, min};
-use std::sync::OnceLock;
+use std::collections::BTreeMap;
+use std::sync::{Mutex, OnceLock};
 
 pub const DISPLAY_WIDTH: i32 = 1072;
 pub const DISPLAY_HEIGHT: i32 = 1448;
@@ -1110,6 +1111,13 @@ pub struct Screen {
     /// misread, which is a different job and a different answer.
     pub reading: bool,
 
+    /// A publisher font already held by the runtime for this application.
+    ///
+    /// Only reading prose uses it; chrome and controls remain in the system
+    /// face so an EPUB cannot make the way out illegible. Missing handles fall
+    /// back to the approved reading face without losing any text.
+    pub reading_font: Option<FontHandle>,
+
     /// A text size this screen asks for, overriding the reader's own setting.
     ///
     /// `None` means inherit, which is what almost every screen should do: the
@@ -1236,6 +1244,7 @@ impl Screen {
             page_turns: None,
             owns_back: false,
             reading: false,
+            reading_font: None,
             text_scale: None,
             hold: None,
             overlay: None,
@@ -1257,6 +1266,13 @@ impl Screen {
     #[must_use]
     pub const fn with_reading(mut self, reading: bool) -> Self {
         self.reading = reading;
+        self
+    }
+
+    /// Selects a runtime-held publisher face for book prose.
+    #[must_use]
+    pub const fn with_reading_font(mut self, font: Option<FontHandle>) -> Self {
+        self.reading_font = font;
         self
     }
 
@@ -1326,6 +1342,12 @@ impl Screen {
     /// Lays the screen out for a panel, including runtime-owned decoration.
     #[must_use]
     pub fn layout_with(&self, metrics: &DisplayMetrics, chrome: &Chrome) -> Layout {
+        with_reading_font(self.reading_font, || {
+            self.layout_with_selected_font(metrics, chrome)
+        })
+    }
+
+    fn layout_with_selected_font(&self, metrics: &DisplayMetrics, chrome: &Chrome) -> Layout {
         let margin = metrics.screen_margin();
         let gap = metrics.space(Space::Tight);
         let prose = if self.reading {
@@ -2178,6 +2200,54 @@ pub struct TextLink {
 /// the layout and a tap target in the hit test. Sixteen is far past any
 /// paragraph anybody reads and well short of a paragraph that costs anything.
 pub const MAX_TEXT_LINKS: usize = 16;
+pub const MAX_RICH_TEXT_SPANS: usize = 256;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct TextPresentation {
+    pub strong: bool,
+    pub emphasis: bool,
+    pub underline: bool,
+    pub superscript: bool,
+    pub subscript: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RichTextSpan {
+    pub start: usize,
+    pub end: usize,
+    pub presentation: TextPresentation,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ParagraphAlignment {
+    #[default]
+    Start,
+    Center,
+    End,
+    Justify,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParagraphPresentation {
+    pub alignment: ParagraphAlignment,
+    pub line_height_percent: u16,
+    pub margin_before_em: u16,
+    pub margin_after_em: u16,
+    pub first_line_indent_em: i16,
+}
+
+impl Default for ParagraphPresentation {
+    fn default() -> Self {
+        Self {
+            alignment: ParagraphAlignment::Start,
+            line_height_percent: 100,
+            margin_before_em: 0,
+            margin_after_em: 0,
+            first_line_indent_em: 0,
+        }
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Node {
@@ -2196,6 +2266,14 @@ pub enum Node {
         /// to be split into three nodes to carry one would wrap, measure and
         /// paginate as three separate paragraphs.
         links: Vec<TextLink>,
+    },
+    /// EPUB prose retaining bounded inline emphasis and paragraph styling.
+    RichText {
+        id: NodeId,
+        text: String,
+        spans: Vec<RichTextSpan>,
+        links: Vec<TextLink>,
+        presentation: ParagraphPresentation,
     },
     /// A line about the content rather than the content: a date, an author, a
     /// size, a count, a status.
@@ -2640,6 +2718,12 @@ impl BandSlot {
 /// applications may use the same number without colliding.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PictureHandle(pub u32);
+
+/// An outline font the runtime is holding on an application's behalf.
+///
+/// Handles are application-local, exactly like [`PictureHandle`]s.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct FontHandle(pub u32);
 
 /// A picture on a tile, together with the size it was handed over at.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -3243,6 +3327,7 @@ impl Node {
         match self {
             Self::Heading { id, .. }
             | Self::Text { id, .. }
+            | Self::RichText { id, .. }
             | Self::Secondary { id, .. }
             | Self::Section { id, .. }
             | Self::Quote { id, .. }
@@ -3402,6 +3487,7 @@ pub enum LayoutKind {
     StatusBattery(Option<Percent>, bool),
     Heading,
     Text,
+    RichText(TextPresentation),
     /// A run inside a paragraph that goes somewhere.
     ///
     /// Drawn as an underline under words the paragraph node has already set,
@@ -4352,6 +4438,21 @@ fn lead_rect(
     }
 }
 
+fn rich_run_at(start: usize, line_end: usize, spans: &[RichTextSpan]) -> (usize, TextPresentation) {
+    for span in spans.iter().take(MAX_RICH_TEXT_SPANS) {
+        if span.start <= start && start < span.end {
+            return (span.end.min(line_end).max(start + 1), span.presentation);
+        }
+        if span.start > start {
+            return (
+                span.start.min(line_end).max(start + 1),
+                TextPresentation::default(),
+            );
+        }
+    }
+    (line_end.max(start + 1), TextPresentation::default())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn layout_node(
     node: &Node,
@@ -4444,6 +4545,86 @@ fn layout_node(
                 }
             }
             y.saturating_add(height)
+        }
+        Node::RichText {
+            id,
+            text,
+            spans,
+            links,
+            presentation,
+        } => {
+            let natural = FontSize::Body.line_height_in(prose).max(1);
+            let line_height = natural
+                .saturating_mul(i32::from(presentation.line_height_percent.clamp(80, 250)))
+                / 100;
+            let before = natural.saturating_mul(i32::from(presentation.margin_before_em)) / 100;
+            let after = natural.saturating_mul(i32::from(presentation.margin_after_em)) / 100;
+            let indent = measure_text_in("M", FontSize::Body, prose)
+                .0
+                .saturating_mul(i32::from(presentation.first_line_indent_em))
+                / 100;
+            let measure = width.saturating_sub(indent.max(0)).max(1);
+            let ranges = wrap_ranges(text, measure, FontSize::Body, prose);
+            let mut line_y = y.saturating_add(before);
+            for (line_index, &(from, to)) in ranges.iter().enumerate() {
+                let line = &text[from..to];
+                let line_width = measure_text_in(line, FontSize::Body, prose).0;
+                let first_indent = if line_index == 0 { indent } else { 0 };
+                let available = width.saturating_sub(first_indent.max(0));
+                let aligned = match presentation.alignment {
+                    ParagraphAlignment::Center => (available - line_width).max(0) / 2,
+                    ParagraphAlignment::End => (available - line_width).max(0),
+                    ParagraphAlignment::Start | ParagraphAlignment::Justify => 0,
+                };
+                let line_x = x.saturating_add(first_indent).saturating_add(aligned);
+                let mut cursor = from;
+                let mut run_x = line_x;
+                while cursor < to {
+                    let (mut end, styled) = rich_run_at(cursor, to, spans);
+                    if end <= cursor || end > to || !text.is_char_boundary(end) {
+                        end = text[cursor..to]
+                            .char_indices()
+                            .nth(1)
+                            .map_or(to, |(offset, _)| cursor + offset);
+                    }
+                    let run = &text[cursor..end];
+                    let run_width = measure_text_in(run, FontSize::Body, prose).0;
+                    layout.nodes.push(LayoutNode {
+                        id: *id,
+                        rect: Rect {
+                            x: run_x,
+                            y: line_y,
+                            width: run_width,
+                            height: line_height,
+                        },
+                        kind: LayoutKind::RichText(styled),
+                        text_lines: vec![run.to_owned()],
+                    });
+                    run_x = run_x.saturating_add(run_width);
+                    cursor = end;
+                }
+                for link in links.iter().take(MAX_TEXT_LINKS) {
+                    let start = max(from, link.start);
+                    let end = min(to, link.end);
+                    if start < end && text.is_char_boundary(start) && text.is_char_boundary(end) {
+                        let before = measure_text_in(&text[from..start], FontSize::Body, prose).0;
+                        let through = measure_text_in(&text[from..end], FontSize::Body, prose).0;
+                        layout.nodes.push(LayoutNode {
+                            id: *id,
+                            rect: Rect {
+                                x: line_x.saturating_add(before),
+                                y: line_y,
+                                width: through.saturating_sub(before),
+                                height: line_height,
+                            },
+                            kind: LayoutKind::InlineLink(link.action),
+                            text_lines: Vec::new(),
+                        });
+                    }
+                }
+                line_y = line_y.saturating_add(line_height);
+            }
+            line_y.saturating_add(after)
         }
         Node::Secondary { id, text } => {
             // Measured at its own size, and with no minimum height. The floor
@@ -6080,10 +6261,8 @@ impl FontSize {
     /// height would overlap its own rows.
     #[must_use]
     pub fn line_height_in(self, face: Face) -> i32 {
-        TYPESETTER.get().map_or_else(
-            || self.fallback_line_height(),
-            |t| t.line_height(self, face),
-        )
+        with_typesetter(face, |typesetter| typesetter.line_height(self, face))
+            .unwrap_or_else(|| self.fallback_line_height())
     }
 
     /// The built-in bitmap's line height, at the current type size.
@@ -6214,6 +6393,70 @@ pub enum BreakOpportunity {
 /// type to arrive without touching a single application or example.
 static TYPESETTER: OnceLock<Box<dyn Typesetter>> = OnceLock::new();
 
+/// Publisher faces uploaded by the active application.
+///
+/// Parsing remains outside this crate; it receives the same bounded
+/// [`Typesetter`] interface as the system face. The map is intentionally
+/// process-local and handles are namespaced by the runtime's application
+/// session, so clearing it when an app leaves releases every glyph cache.
+static BOOK_TYPESETTERS: OnceLock<Mutex<BTreeMap<FontHandle, Box<dyn Typesetter>>>> =
+    OnceLock::new();
+
+thread_local! {
+    static READING_FONT: std::cell::Cell<Option<FontHandle>> = const { std::cell::Cell::new(None) };
+}
+
+/// Installs or replaces one bounded publisher face.
+pub fn put_book_typesetter(handle: FontHandle, typesetter: Box<dyn Typesetter>) {
+    if let Ok(mut fonts) = BOOK_TYPESETTERS
+        .get_or_init(|| Mutex::new(BTreeMap::new()))
+        .lock()
+    {
+        fonts.insert(handle, typesetter);
+    }
+}
+
+/// Releases a publisher face and its raster cache.
+pub fn drop_book_typesetter(handle: FontHandle) {
+    if let Some(fonts) = BOOK_TYPESETTERS.get() {
+        if let Ok(mut fonts) = fonts.lock() {
+            fonts.remove(&handle);
+        }
+    }
+}
+
+/// Runs layout or painting with one publisher face selected for reading prose.
+pub fn with_reading_font<T>(font: Option<FontHandle>, body: impl FnOnce() -> T) -> T {
+    struct Restore(Option<FontHandle>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            READING_FONT.with(|slot| slot.set(self.0));
+        }
+    }
+    let previous = READING_FONT.with(|slot| {
+        let previous = slot.get();
+        slot.set(font);
+        previous
+    });
+    let _restore = Restore(previous);
+    body()
+}
+
+fn with_typesetter<T>(face: Face, body: impl FnOnce(&dyn Typesetter) -> T) -> Option<T> {
+    if face == Face::Reading {
+        if let Some(handle) = READING_FONT.with(std::cell::Cell::get) {
+            if let Some(fonts) = BOOK_TYPESETTERS.get() {
+                if let Ok(fonts) = fonts.lock() {
+                    if let Some(typesetter) = fonts.get(&handle) {
+                        return Some(body(typesetter.as_ref()));
+                    }
+                }
+            }
+        }
+    }
+    TYPESETTER.get().map(|typesetter| body(typesetter.as_ref()))
+}
+
 // The type size everything is currently being measured and drawn at.
 //
 // Why this is ambient rather than a parameter
@@ -6304,8 +6547,9 @@ pub fn measure_text(text: &str, size: FontSize) -> (i32, i32) {
 /// Returns integer pixel dimensions for one face of the installed typeface.
 #[must_use]
 pub fn measure_text_in(text: &str, size: FontSize, face: Face) -> (i32, i32) {
-    if let Some(typesetter) = TYPESETTER.get() {
-        return typesetter.measure(text, size, face);
+    if let Some(measured) = with_typesetter(face, |typesetter| typesetter.measure(text, size, face))
+    {
+        return measured;
     }
     let scale = size.scale();
     let glyphs = i32::try_from(text.chars().count()).unwrap_or(i32::MAX);
@@ -6329,9 +6573,10 @@ pub fn measure_text_in(text: &str, size: FontSize, face: Face) -> (i32, i32) {
 /// would condemn perfectly good text.
 #[must_use]
 pub fn undrawable_in(text: &str, face: Face) -> Option<char> {
-    let typesetter = TYPESETTER.get()?;
-    text.chars()
-        .find(|character| !character.is_whitespace() && !typesetter.has_glyph(*character, face))
+    with_typesetter(face, |typesetter| {
+        text.chars()
+            .find(|character| !character.is_whitespace() && !typesetter.has_glyph(*character, face))
+    })?
 }
 
 /// The size of one monospace cell: what a character grid is built from.
@@ -7285,17 +7530,14 @@ fn wrap_ranges(text: &str, max_width: i32, size: FontSize, face: Face) -> Vec<(u
     if text.is_empty() || max_width <= 0 {
         return Vec::new();
     }
-    let opportunities = TYPESETTER
-        .get()
-        .map_or_else(|| fallback_line_breaks(text), |face| face.line_breaks(text));
-    let graphemes = TYPESETTER.get().map_or_else(
-        || {
+    let opportunities = with_typesetter(face, |typesetter| typesetter.line_breaks(text))
+        .unwrap_or_else(|| fallback_line_breaks(text));
+    let graphemes = with_typesetter(face, |typesetter| typesetter.grapheme_boundaries(text))
+        .unwrap_or_else(|| {
             text.char_indices()
                 .map(|(offset, character)| offset + character.len_utf8())
                 .collect()
-        },
-        |face| face.grapheme_boundaries(text),
-    );
+        });
     let mut lines: Vec<(usize, usize)> = Vec::new();
     let mut start = 0;
     while start < text.len() {
@@ -8269,6 +8511,7 @@ fn validate_node(
     match node {
         Node::Heading { text, .. }
         | Node::Text { text, .. }
+        | Node::RichText { text, .. }
         | Node::Secondary { text, .. }
         | Node::Quote { text, .. }
         | Node::Banner { text, .. } => check_text_coverage(id, text, Face::Text, issues),
@@ -8976,6 +9219,19 @@ pub fn render_all(
     surface: &mut Surface,
     dirty: Option<Rect>,
 ) {
+    with_reading_font(screen.reading_font, || {
+        render_all_with_selected_font(screen, metrics, chrome, pictures, surface, dirty);
+    });
+}
+
+fn render_all_with_selected_font(
+    screen: &Screen,
+    metrics: &DisplayMetrics,
+    chrome: &Chrome,
+    pictures: &dyn Pictures,
+    surface: &mut Surface,
+    dirty: Option<Rect>,
+) {
     let clip = dirty.unwrap_or(Rect {
         x: 0,
         y: 0,
@@ -9529,6 +9785,19 @@ pub fn render_all(
                 tone::INK,
                 clip,
             ),
+            LayoutKind::RichText(presentation) => {
+                if let Some(text) = node.text_lines.first() {
+                    draw_rich_text(
+                        surface,
+                        text,
+                        node.rect,
+                        prose,
+                        presentation,
+                        tone::INK,
+                        clip,
+                    );
+                }
+            }
             // The bars themselves are only a background. Drawing them as
             // separate nodes is what lets a tab switch repaint the content
             // area and two small bands instead of the entire panel.
@@ -10641,15 +10910,82 @@ fn draw_text_in(
     tone: u8,
     clip: Rect,
 ) {
-    if let Some(typesetter) = TYPESETTER.get() {
+    if with_typesetter(face, |typesetter| {
         typesetter.draw(text, x, y, size, face, &mut |pixel_x, pixel_y, coverage| {
             if coverage > 0 && clip.contains(pixel_x, pixel_y) {
                 surface.blend(pixel_x, pixel_y, tone, coverage);
             }
         });
+    })
+    .is_some()
+    {
         return;
     }
     draw_fallback_text(surface, text, x, y, size, tone, clip);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_rich_text(
+    surface: &mut Surface,
+    text: &str,
+    rect: Rect,
+    face: Face,
+    presentation: TextPresentation,
+    tone: u8,
+    clip: Rect,
+) {
+    let line = FontSize::Body.line_height_in(face).max(1);
+    let vertical = if presentation.superscript {
+        -line / 4
+    } else if presentation.subscript {
+        line / 5
+    } else {
+        0
+    };
+    let y = rect.y.saturating_add(vertical);
+    if with_typesetter(face, |typesetter| {
+        typesetter.draw(
+            text,
+            rect.x,
+            y,
+            FontSize::Body,
+            face,
+            &mut |pixel_x, pixel_y, coverage| {
+                let skew = if presentation.emphasis {
+                    (line - (pixel_y - y)).clamp(0, line) / 7
+                } else {
+                    0
+                };
+                let x = pixel_x.saturating_add(skew);
+                if coverage > 0 && clip.contains(x, pixel_y) {
+                    surface.blend(x, pixel_y, tone, coverage);
+                    if presentation.strong && clip.contains(x + 1, pixel_y) {
+                        surface.blend(x + 1, pixel_y, tone, coverage);
+                    }
+                }
+            },
+        );
+    })
+    .is_none()
+    {
+        draw_fallback_text(surface, text, rect.x, y, FontSize::Body, tone, clip);
+        if presentation.strong {
+            draw_fallback_text(surface, text, rect.x + 1, y, FontSize::Body, tone, clip);
+        }
+    }
+    if presentation.underline {
+        fill_clipped(
+            surface,
+            Rect {
+                x: rect.x,
+                y: rect.y.saturating_add(line).saturating_sub(2),
+                width: rect.width,
+                height: 1,
+            },
+            tone,
+            clip,
+        );
+    }
 }
 
 /// Draws with the built-in bitmap when no typeface is installed.
@@ -10812,6 +11148,48 @@ fn glyph(character: char) -> [u8; 7] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn publisher_styled_text_keeps_alignment_and_inline_emphasis() {
+        let screen = Screen::new(
+            1,
+            vec![Node::RichText {
+                id: NodeId(1),
+                text: "ordinary strong".into(),
+                spans: vec![RichTextSpan {
+                    start: 9,
+                    end: 15,
+                    presentation: TextPresentation {
+                        strong: true,
+                        emphasis: true,
+                        ..TextPresentation::default()
+                    },
+                }],
+                links: Vec::new(),
+                presentation: ParagraphPresentation {
+                    alignment: ParagraphAlignment::Center,
+                    line_height_percent: 140,
+                    ..ParagraphPresentation::default()
+                },
+            }],
+        )
+        .with_reading(true);
+        let layout = screen.layout();
+        assert!(layout.nodes.iter().any(|node| matches!(
+            node.kind,
+            LayoutKind::RichText(TextPresentation {
+                strong: true,
+                emphasis: true,
+                ..
+            })
+        )));
+        let first = layout
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::RichText(_)))
+            .expect("rich run");
+        assert!(first.rect.x > CLARA_BW_METRICS.screen_margin());
+    }
 
     #[test]
     fn a_cell_glyph_and_a_bottom_action_glyph_both_reach_the_layout() {

@@ -567,6 +567,74 @@ pub struct SystemFonts {
     reading: Typeface,
 }
 
+/// A bounded publisher face used only for book prose.
+///
+/// EPUB fonts never replace interface chrome. The runtime constructs this
+/// from bytes that already passed document and protocol limits, then installs
+/// it under an application-local handle in `kobo-ui`.
+pub struct BookFont {
+    face: Typeface,
+}
+
+impl BookFont {
+    /// Parses a TrueType/OpenType publisher face from memory.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Malformed`] when the bytes are not an outline font
+    /// supported by the rasterizer (including compressed WOFF assets).
+    pub fn from_bytes(bytes: &[u8], name: &str, metrics: DisplayMetrics) -> Result<Self, Error> {
+        Ok(Self {
+            face: Typeface::from_bytes(bytes, name, metrics)?,
+        })
+    }
+}
+
+impl Typesetter for BookFont {
+    fn measure(&self, text: &str, size: FontSize, _face: Face) -> (i32, i32) {
+        self.face.measure_run(text, size, None, None)
+    }
+
+    fn line_height(&self, size: FontSize, _face: Face) -> i32 {
+        let natural = self.face.height(size);
+        natural + natural / 5
+    }
+
+    fn draw(
+        &self,
+        text: &str,
+        x: i32,
+        y: i32,
+        size: FontSize,
+        _face: Face,
+        plot: &mut dyn FnMut(i32, i32, u8),
+    ) {
+        self.face.draw_run(text, x, y, size, None, None, plot);
+    }
+
+    fn has_glyph(&self, character: char, _face: Face) -> bool {
+        self.face.has(character)
+    }
+
+    fn line_breaks(&self, text: &str) -> Vec<(usize, BreakOpportunity)> {
+        linebreaks(text)
+            .map(|(offset, opportunity)| {
+                let opportunity = match opportunity {
+                    UnicodeBreakOpportunity::Allowed => BreakOpportunity::Allowed,
+                    UnicodeBreakOpportunity::Mandatory => BreakOpportunity::Mandatory,
+                };
+                (offset, opportunity)
+            })
+            .collect()
+    }
+
+    fn grapheme_boundaries(&self, text: &str) -> Vec<usize> {
+        UnicodeSegmentation::grapheme_indices(text, true)
+            .map(|(offset, grapheme)| offset + grapheme.len())
+            .collect()
+    }
+}
+
 impl SystemFonts {
     /// Finds the reader's own face for prose and compiles in the one for grids.
     ///

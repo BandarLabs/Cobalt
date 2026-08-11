@@ -301,7 +301,7 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
             },
         },
     )?;
-    serve_application(&mut stream, frame_path, &name)
+    serve_application(&mut stream, frame_path, &name, metrics)
 }
 
 /// Where a host runtime looks for owner-installed TLS trust roots.
@@ -329,6 +329,7 @@ fn serve_application(
     stream: &mut UnixStream,
     frame_path: &Path,
     name: &str,
+    metrics: kobo_ui::DisplayMetrics,
 ) -> Result<(), Box<dyn Error>> {
     // In simulation the daemon owns no hardware, so every hardware-touching
     // request is answered honestly rather than pretended.
@@ -416,6 +417,15 @@ fn serve_application(
                 Some(_) => {}
             },
             Message::DropPicture { handle } => pictures.remove(handle),
+            Message::PutFont {
+                handle,
+                name,
+                bytes,
+            } => match kobo_text::BookFont::from_bytes(&bytes, &name, metrics) {
+                Ok(font) => kobo_ui::put_book_typesetter(handle, Box::new(font)),
+                Err(error) => println!("font {} refused: {error}", handle.0),
+            },
+            Message::DropFont { handle } => kobo_ui::drop_book_typesetter(handle),
             // This path renders one application to a file and owns no panel to
             // hand over, so the request is reported rather than performed.
             Message::Launch { name } => println!("launch requested: {name}"),

@@ -6,10 +6,11 @@ use std::fmt;
 use std::io::{self, Read, Write};
 
 use kobo_ui::{
-    ActionId, BannerLevel, BarAction, BarStyle, BottomAction, Caret, Cell, ControlState, Freeform,
-    Glyph, NavBar, Node, NodeId, PageTurns, Percent, PictureHandle, Row, RowLead, RowState, Screen,
-    Space, TextScale, Tile, TilePicture, TileShape, TileState, TopBar, TransferFailure,
-    MAX_BAR_ACTIONS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS, MIN_NAV_DESTINATIONS,
+    ActionId, BannerLevel, BarAction, BarStyle, BottomAction, Caret, Cell, ControlState,
+    FontHandle, Freeform, Glyph, NavBar, Node, NodeId, PageTurns, Percent, PictureHandle, Row,
+    RowLead, RowState, Screen, Space, TextScale, Tile, TilePicture, TileShape, TileState, TopBar,
+    TransferFailure, MAX_BAR_ACTIONS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS,
+    MIN_NAV_DESTINATIONS,
 };
 use std::cmp::min;
 
@@ -40,8 +41,9 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// authenticate became an answer of its own rather than being reported as a
 /// missing page. Both are tags an older runtime has no reading for, and the
 /// credential sits ahead of the header count, so a frame it did not expect
-/// would have been misread from that point on rather than refused.
-pub const VERSION: u8 = 8;
+/// would have been misread from that point on rather than refused. Version 9
+/// adds bounded rich EPUB text and runtime-held publisher-font handles.
+pub const VERSION: u8 = 9;
 pub const HEADER_LEN: usize = 14;
 /// The largest single frame either side will read.
 ///
@@ -61,6 +63,8 @@ pub const MAX_INLINE_PICTURE_BYTES: usize = 768 * 1024;
 /// Largest piece of a chunked upload. Small enough to bound transient copies
 /// while still moving a full panel in a handful of local-socket writes.
 pub const MAX_PICTURE_CHUNK_BYTES: usize = 256 * 1024;
+/// Largest embedded outline font one application may hand to the runtime.
+pub const MAX_FONT_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_STRING_LEN: usize = 16_384;
 pub const MAX_NODES: usize = 512;
 /// The byte a nav bar sends when no destination is the current one.
@@ -641,6 +645,16 @@ pub enum Message {
     /// pictures rather than a requirement.
     DropPicture {
         handle: PictureHandle,
+    },
+    /// Hands one bounded TrueType/OpenType publisher face to the runtime.
+    PutFont {
+        handle: FontHandle,
+        name: String,
+        bytes: Vec<u8>,
+    },
+    /// Releases a publisher face and its glyph cache.
+    DropFont {
+        handle: FontHandle,
     },
 }
 
@@ -1498,6 +1512,16 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
         Message::CommitPicture { handle } | Message::DropPicture { handle } => {
             push_u32(&mut payload, handle.0);
         }
+        Message::PutFont {
+            handle,
+            name,
+            bytes,
+        } => {
+            push_u32(&mut payload, handle.0);
+            push_string(&mut payload, name)?;
+            payload.extend_from_slice(bytes);
+        }
+        Message::DropFont { handle } => push_u32(&mut payload, handle.0),
         Message::Lifecycle(state) => payload.push(match state {
             Lifecycle::Foreground => 0,
             Lifecycle::Background => 1,
@@ -2050,6 +2074,16 @@ fn encoded_message_layout(message: &Message) -> Result<(u8, usize), ProtocolErro
         }
         Message::CommitPicture { .. } => Ok((22, 4)),
         Message::CoverChanged { .. } => Ok((23, 1)),
+        Message::PutFont { name, bytes, .. } => {
+            if bytes.is_empty() || bytes.len() > MAX_FONT_BYTES {
+                return Err(ProtocolError::FrameTooLarge);
+            }
+            let mut length = 4;
+            add_encoded_len(&mut length, encoded_string_len(name)?)?;
+            add_encoded_len(&mut length, bytes.len())?;
+            Ok((24, length))
+        }
+        Message::DropFont { .. } => Ok((25, 4)),
     }
 }
 
@@ -2841,8 +2875,12 @@ fn encoded_screen_len(
     }
     // One flag byte for first refusal on the runtime's Back control, one for a
     // text size this screen asks for in place of the reader's own, and one for
-    // whether its text is a book rather than an interface.
-    add_encoded_len(&mut length, 3)?;
+    // whether its text is a book rather than an interface, and one for an
+    // optional runtime-held publisher font.
+    add_encoded_len(&mut length, 4)?;
+    if screen.reading_font.is_some() {
+        add_encoded_len(&mut length, 4)?;
+    }
     if let Some(nav_bar) = &screen.nav_bar {
         if nav_bar.destinations.len() > u8::MAX as usize {
             return Err(ProtocolError::TooManyNodes);
@@ -2905,6 +2943,20 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
             // id, the text, the count, then an action and two offsets each.
             let mut length = 6;
             add_encoded_len(&mut length, encoded_string_len(text)?)?;
+            for _ in links.iter().take(kobo_ui::MAX_TEXT_LINKS) {
+                add_encoded_len(&mut length, 12)?;
+            }
+            length
+        }
+        Node::RichText {
+            text, spans, links, ..
+        } => {
+            if spans.len() > kobo_ui::MAX_RICH_TEXT_SPANS {
+                return Err(ProtocolError::TooManyNodes);
+            }
+            let mut length = 5;
+            add_encoded_len(&mut length, encoded_string_len(text)?)?;
+            add_encoded_len(&mut length, 2 + spans.len() * 9 + 9 + 1)?;
             for _ in links.iter().take(kobo_ui::MAX_TEXT_LINKS) {
                 add_encoded_len(&mut length, 12)?;
             }
@@ -3541,6 +3593,22 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
         23 => Message::CoverChanged {
             magnet_present: read_boolean(&mut reader, "cover magnet present")?,
         },
+        24 => {
+            let handle = FontHandle(reader.u32()?);
+            let name = reader.string()?;
+            let length = reader.remaining();
+            if length == 0 || length > MAX_FONT_BYTES {
+                return Err(ProtocolError::FrameTooLarge);
+            }
+            Message::PutFont {
+                handle,
+                name,
+                bytes: reader.take(length)?.to_vec(),
+            }
+        }
+        25 => Message::DropFont {
+            handle: FontHandle(reader.u32()?),
+        },
         value => return Err(ProtocolError::UnknownMessageType(value)),
     };
     if !reader.is_finished() {
@@ -3611,6 +3679,7 @@ fn encode_top_bar(output: &mut Vec<u8>, top_bar: Option<&TopBar>) -> Result<(), 
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 fn encode_screen(
     output: &mut Vec<u8>,
     screen: &Screen,
@@ -3710,6 +3779,13 @@ fn encode_screen(
     // setting and the byte costs nothing to leave alone.
     output.push(screen.text_scale.map_or(0, |scale| scale.wire_value() + 1));
     output.push(u8::from(screen.reading));
+    match screen.reading_font {
+        None => output.push(0),
+        Some(handle) => {
+            output.push(1);
+            push_u32(output, handle.0);
+        }
+    }
     push_u16(
         output,
         u16::try_from(screen.nodes.len()).map_err(|_| ProtocolError::TooManyNodes)?,
@@ -3797,6 +3873,27 @@ fn decode_bar_action(reader: &mut Reader<'_>) -> Result<BarAction, ProtocolError
 // One exhaustive match over every node kind. Splitting it would only move
 // arms out of reach of the compiler's exhaustiveness check, which is the one
 // thing making it impossible to add a node and forget the wire format.
+fn text_presentation_byte(style: kobo_ui::TextPresentation) -> u8 {
+    u8::from(style.strong)
+        | (u8::from(style.emphasis) << 1)
+        | (u8::from(style.underline) << 2)
+        | (u8::from(style.superscript) << 3)
+        | (u8::from(style.subscript) << 4)
+}
+
+fn text_presentation_from_byte(value: u8) -> Result<kobo_ui::TextPresentation, ProtocolError> {
+    if value & !0x1f != 0 {
+        return Err(ProtocolError::InvalidValue("rich text style"));
+    }
+    Ok(kobo_ui::TextPresentation {
+        strong: value & 1 != 0,
+        emphasis: value & 2 != 0,
+        underline: value & 4 != 0,
+        superscript: value & 8 != 0,
+        subscript: value & 16 != 0,
+    })
+}
+
 #[allow(clippy::too_many_lines)]
 fn encode_node(
     output: &mut Vec<u8>,
@@ -3822,6 +3919,62 @@ fn encode_node(
             output.push(2);
             push_u32(output, id.0);
             push_string(output, text)?;
+            output.push(u8::try_from(links.len()).map_err(|_| ProtocolError::TooManyNodes)?);
+            for link in links {
+                push_u32(output, link.action.0);
+                push_u32(output, u32::try_from(link.start).unwrap_or(u32::MAX));
+                push_u32(output, u32::try_from(link.end).unwrap_or(u32::MAX));
+            }
+        }
+        Node::RichText {
+            id,
+            text,
+            spans,
+            links,
+            presentation,
+        } => {
+            if spans.len() > kobo_ui::MAX_RICH_TEXT_SPANS {
+                return Err(ProtocolError::TooManyNodes);
+            }
+            output.push(28);
+            push_u32(output, id.0);
+            push_string(output, text)?;
+            push_u16(
+                output,
+                u16::try_from(spans.len()).map_err(|_| ProtocolError::TooManyNodes)?,
+            );
+            for span in spans {
+                if span.start >= span.end
+                    || span.end > text.len()
+                    || !text.is_char_boundary(span.start)
+                    || !text.is_char_boundary(span.end)
+                {
+                    return Err(ProtocolError::InvalidValue("rich text span"));
+                }
+                push_u32(
+                    output,
+                    u32::try_from(span.start).map_err(|_| ProtocolError::FrameTooLarge)?,
+                );
+                push_u32(
+                    output,
+                    u32::try_from(span.end).map_err(|_| ProtocolError::FrameTooLarge)?,
+                );
+                output.push(text_presentation_byte(span.presentation));
+            }
+            output.push(match presentation.alignment {
+                kobo_ui::ParagraphAlignment::Start => 0,
+                kobo_ui::ParagraphAlignment::Center => 1,
+                kobo_ui::ParagraphAlignment::End => 2,
+                kobo_ui::ParagraphAlignment::Justify => 3,
+            });
+            push_u16(output, presentation.line_height_percent);
+            push_u16(output, presentation.margin_before_em);
+            push_u16(output, presentation.margin_after_em);
+            push_u16(
+                output,
+                u16::from_ne_bytes(presentation.first_line_indent_em.to_ne_bytes()),
+            );
+            let links = &links[..links.len().min(kobo_ui::MAX_TEXT_LINKS)];
             output.push(u8::try_from(links.len()).map_err(|_| ProtocolError::TooManyNodes)?);
             for link in links {
                 push_u32(output, link.action.0);
@@ -4572,6 +4725,11 @@ fn decode_screen(
         1 => true,
         _ => return Err(ProtocolError::InvalidValue("reading flag")),
     };
+    let reading_font = match reader.u8()? {
+        0 => None,
+        1 => Some(FontHandle(reader.u32()?)),
+        _ => return Err(ProtocolError::InvalidValue("reading font flag")),
+    };
     let count_nodes = usize::from(reader.u16()?);
     if count_nodes > MAX_NODES {
         return Err(ProtocolError::TooManyNodes);
@@ -4624,6 +4782,7 @@ fn decode_screen(
     screen.owns_back = owns_back;
     screen.text_scale = text_scale;
     screen.reading = reading;
+    screen.reading_font = reading_font;
     Ok(screen)
 }
 
@@ -4670,6 +4829,68 @@ fn decode_node(
                 }
             }
             Ok(Node::Text { id, text, links })
+        }
+        28 => {
+            let text = reader.string()?;
+            let span_count = usize::from(reader.u16()?);
+            if span_count > kobo_ui::MAX_RICH_TEXT_SPANS {
+                return Err(ProtocolError::TooManyNodes);
+            }
+            let mut spans = Vec::with_capacity(span_count);
+            for _ in 0..span_count {
+                let start = reader.u32()? as usize;
+                let end = reader.u32()? as usize;
+                let style = text_presentation_from_byte(reader.u8()?)?;
+                if start >= end
+                    || end > text.len()
+                    || !text.is_char_boundary(start)
+                    || !text.is_char_boundary(end)
+                {
+                    return Err(ProtocolError::InvalidValue("rich text span"));
+                }
+                spans.push(kobo_ui::RichTextSpan {
+                    start,
+                    end,
+                    presentation: style,
+                });
+            }
+            let alignment = match reader.u8()? {
+                0 => kobo_ui::ParagraphAlignment::Start,
+                1 => kobo_ui::ParagraphAlignment::Center,
+                2 => kobo_ui::ParagraphAlignment::End,
+                3 => kobo_ui::ParagraphAlignment::Justify,
+                _ => return Err(ProtocolError::InvalidValue("paragraph alignment")),
+            };
+            let presentation = kobo_ui::ParagraphPresentation {
+                alignment,
+                line_height_percent: reader.u16()?.clamp(80, 250),
+                margin_before_em: reader.u16()?.min(2_000),
+                margin_after_em: reader.u16()?.min(2_000),
+                first_line_indent_em: i16::from_ne_bytes(reader.u16()?.to_ne_bytes())
+                    .clamp(-2_000, 2_000),
+            };
+            let link_count = usize::from(reader.u8()?);
+            let mut links = Vec::with_capacity(link_count.min(kobo_ui::MAX_TEXT_LINKS));
+            for _ in 0..link_count {
+                let action = ActionId(reader.u32()?);
+                let start = reader.u32()? as usize;
+                let end = reader.u32()? as usize;
+                if start < end
+                    && end <= text.len()
+                    && text.is_char_boundary(start)
+                    && text.is_char_boundary(end)
+                    && links.len() < kobo_ui::MAX_TEXT_LINKS
+                {
+                    links.push(kobo_ui::TextLink { action, start, end });
+                }
+            }
+            Ok(Node::RichText {
+                id,
+                text,
+                spans,
+                links,
+                presentation,
+            })
         }
         18 => {
             let depth = reader.u8()?;
@@ -5979,6 +6200,24 @@ mod node_coverage_tests {
                 text: "Body".into(),
                 links: Vec::new(),
             },
+            Node::RichText {
+                id: NodeId(52),
+                text: "Styled body".into(),
+                spans: vec![kobo_ui::RichTextSpan {
+                    start: 0,
+                    end: 6,
+                    presentation: kobo_ui::TextPresentation {
+                        strong: true,
+                        ..kobo_ui::TextPresentation::default()
+                    },
+                }],
+                links: Vec::new(),
+                presentation: kobo_ui::ParagraphPresentation {
+                    alignment: kobo_ui::ParagraphAlignment::Center,
+                    line_height_percent: 130,
+                    ..kobo_ui::ParagraphPresentation::default()
+                },
+            },
             Node::Quote {
                 id: NodeId(30),
                 depth: 2,
@@ -6280,6 +6519,21 @@ mod node_coverage_tests {
             Some(Node::Grid { cells: back, .. }) => assert_eq!(back, &cells),
             other => panic!("expected a grid, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_reading_screen_keeps_its_publisher_font_handle() {
+        let screen = Screen::new(
+            1,
+            vec![Node::Text {
+                id: NodeId(1),
+                text: "Publisher prose".into(),
+                links: Vec::new(),
+            }],
+        )
+        .with_reading(true)
+        .with_reading_font(Some(FontHandle(42)));
+        assert_eq!(round_trip(screen.clone()), screen);
     }
 
     #[test]
@@ -7367,6 +7621,34 @@ mod picture_tests {
         };
         let bytes = encode(&frame).expect("encode");
         assert_eq!(decode(&bytes).expect("decode"), frame);
+    }
+
+    #[test]
+    fn a_publisher_font_travels_once_and_is_bounded() {
+        let message = Message::PutFont {
+            handle: FontHandle(7),
+            name: "Book.otf".into(),
+            bytes: b"OTTOfixture".to_vec(),
+        };
+        let frame = Frame {
+            request_id: 1,
+            message: message.clone(),
+        };
+        let bytes = encode(&frame).expect("encode font");
+        assert_eq!(decode(&bytes).expect("decode font").message, message);
+
+        let oversized = Frame {
+            request_id: 1,
+            message: Message::PutFont {
+                handle: FontHandle(8),
+                name: "huge.ttf".into(),
+                bytes: vec![0; MAX_FONT_BYTES + 1],
+            },
+        };
+        assert!(matches!(
+            encode(&oversized),
+            Err(ProtocolError::FrameTooLarge)
+        ));
     }
 
     #[test]
