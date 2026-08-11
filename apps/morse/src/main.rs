@@ -65,13 +65,6 @@ const LETTER: PictureHandle = PictureHandle(1);
 /// Stop off the bottom edge would be a beacon with no way to end it.
 const LETTER_SENDING_TENTHS_MM: i32 = 940;
 
-/// How tall it is while nothing is going out.
-///
-/// Smaller, because the resting screen also carries the code about to be sent
-/// and how long it will take, and those are what somebody is reading before
-/// they press Send.
-const LETTER_RESTING_TENTHS_MM: i32 = 700;
-
 /// What the light does on a lit beat.
 ///
 /// Full rather than a step up from wherever the reader had it: the beacon is
@@ -242,6 +235,18 @@ fn beats(signals: &[Signal]) -> Vec<Beat> {
     beats
 }
 
+/// A number of beats said the way somebody deciding whether to wait would say
+/// it, since a beat is a second and the figure is only there to be weighed
+/// against the reader's patience.
+fn spoken(seconds: usize) -> String {
+    match seconds {
+        0 => "nothing to send".to_owned(),
+        1 => "1 second".to_owned(),
+        seconds if seconds < 60 => format!("{seconds} seconds"),
+        seconds => format!("{} min {} sec", seconds / 60, seconds % 60),
+    }
+}
+
 /// A five by seven block alphabet, one `u8` a row, the fifth bit leftmost.
 ///
 /// Only the characters [`CODE`] can send, plus the space between words, because
@@ -402,13 +407,7 @@ impl Morse {
 
     /// How long the whole message takes, in words rather than a bare number.
     fn duration(&self) -> String {
-        let seconds = self.beats.len();
-        match seconds {
-            0 => "nothing to send".to_owned(),
-            1 => "1 second".to_owned(),
-            seconds if seconds < 60 => format!("{seconds} seconds"),
-            seconds => format!("{} min {} sec", seconds / 60, seconds % 60),
-        }
+        spoken(self.beats.len())
     }
 
     fn writing(&self) -> Screen {
@@ -416,8 +415,17 @@ impl Morse {
         if let Some(trouble) = &self.trouble {
             screen = screen.banner(BannerLevel::Attention, trouble.clone());
         }
+        // The estimate belongs here, beside the Send key, rather than on the
+        // screen that follows it. Send starts the beacon there and then, so
+        // anywhere later is somewhere the reader is already committed, and a
+        // beacon that quietly commits somebody to four minutes is the thing
+        // the estimate exists to prevent. It is measured from what is in the
+        // box rather than from the composed message, because at this point
+        // nothing has been composed.
+        let (signals, _) = encode(self.keyboard.text());
         screen
             .typed(&self.keyboard, "A message to send in light")
+            .secondary(format!("{} to send.", spoken(beats(&signals).len())))
             .keyboard(&self.keyboard, "Send")
             .build()
     }
@@ -441,24 +449,23 @@ impl Morse {
             screen = screen.banner(BannerLevel::Attention, trouble.clone());
         }
         // Sending, the letter is the only thing on the screen and takes the
-        // whole of it. Resting, it gives back the few lines the code and the
-        // estimate need, because at that point the thing worth reading is what
-        // is about to go out rather than what is going out now.
-        let tenths = if self.running {
-            LETTER_SENDING_TENTHS_MM
-        } else {
-            LETTER_RESTING_TENTHS_MM
-        };
-        let room = context.metrics().tenth_mm(tenths);
-        let character = self
+        // whole of it. Resting, there is no letter -- nothing is going out --
+        // and drawing one anyway meant painting the space glyph, which on the
+        // panel is an empty frame the size of the screen sitting where a letter
+        // had just been. So the picture belongs to the run, and the resting
+        // screen carries the code and the estimate in its place.
+        if let Some(character) = self
             .showing
             .and_then(|index| self.signals.get(index))
-            .map_or(' ', |signal| signal.character);
-        if let Some(picture) = paint(character, room)
-            .and_then(|(width, height, grey)| context.put_picture(LETTER, width, height, grey))
+            .map(|signal| signal.character)
         {
-            let millimetres = u16::try_from(tenths / 10).unwrap_or(u16::MAX);
-            screen = screen.picture(picture, millimetres);
+            let room = context.metrics().tenth_mm(LETTER_SENDING_TENTHS_MM);
+            if let Some(picture) = paint(character, room)
+                .and_then(|(width, height, grey)| context.put_picture(LETTER, width, height, grey))
+            {
+                let millimetres = u16::try_from(LETTER_SENDING_TENTHS_MM / 10).unwrap_or(u16::MAX);
+                screen = screen.picture(picture, millimetres);
+            }
         }
         if !self.running {
             screen = screen
@@ -883,6 +890,57 @@ mod tests {
         assert!(
             drawn.contains("27 seconds"),
             "the estimate is not shown: {drawn}"
+        );
+    }
+
+    /// Resting, nothing is going out, and the space glyph the beacon used to
+    /// fall back on paints as an empty frame filling the panel. On the device
+    /// that read as a bug -- a blank box sitting where a letter had been -- so
+    /// the picture is drawn only while a letter is actually being sent.
+    #[test]
+    fn a_resting_beacon_draws_no_letter_at_all() {
+        let mut runner = AppRunner::new(Morse::default());
+        runner.start();
+        runner.action(action_id(AGAIN));
+        let commands = runner.action(action_id(STOP));
+        let screen = commands
+            .iter()
+            .rev()
+            .find_map(|command| match command {
+                Command::SetScreen(screen) => Some(screen.clone()),
+                _ => None,
+            })
+            .expect("a screen");
+        let drawn = format!("{screen:?}");
+        assert!(
+            !drawn.contains("Picture"),
+            "the resting beacon still draws a letter: {drawn}"
+        );
+    }
+
+    /// Send starts the beacon there and then, so the screen the Send key is on
+    /// is the last one where the estimate can still change anybody's mind.
+    #[test]
+    fn the_estimate_is_on_the_screen_the_send_key_is_on() {
+        let mut runner = AppRunner::new(Morse::default());
+        let commands = runner.start();
+        let screen = commands
+            .iter()
+            .rev()
+            .find_map(|command| match command {
+                Command::SetScreen(screen) => Some(screen.clone()),
+                _ => None,
+            })
+            .expect("a writing screen");
+        let drawn = format!("{screen:?}");
+        assert!(
+            drawn.contains("27 seconds"),
+            "the estimate is not on the writing screen: {drawn}"
+        );
+        let issues = screen.diagnostics(&CLARA_BW_METRICS, &Chrome::measuring(true));
+        assert!(
+            !issues.has_errors(),
+            "the writing screen does not fit: {issues:?}"
         );
     }
 

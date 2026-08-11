@@ -14,9 +14,9 @@ which counts whole seconds, and there is no way to run work off the callback
 thread. So the unit here is one second and cannot currently be anything else.
 
 That makes the beacon slow. `SOS` takes twenty-seven seconds; a short sentence
-takes minutes. The estimate is on the screen before you press Send, because a
-beacon that quietly committed you to four minutes would be worse than a slow
-one that said so.
+takes minutes. The estimate sits beside the Send key, updating as you type,
+because Send starts the beacon there and then and a beacon that quietly
+committed you to four minutes would be worse than a slow one that said so.
 
 Slow is also the safe speed. The SDK's own guidance is that flashing the front
 light is a photosensitivity hazard, and the hazard band starts around three
