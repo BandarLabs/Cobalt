@@ -321,6 +321,18 @@ fn host_trust_directory() -> PathBuf {
     )
 }
 
+fn host_dictionary_directory() -> PathBuf {
+    env::var_os("HOME").map_or_else(
+        || PathBuf::from(".kobo-dictionaries"),
+        |home| {
+            PathBuf::from(home)
+                .join(".config")
+                .join("kobo")
+                .join("dictionaries")
+        },
+    )
+}
+
 #[allow(
     clippy::too_many_lines,
     reason = "one arm per message type; splitting the dispatch hides it"
@@ -334,6 +346,8 @@ fn serve_application(
     // In simulation the daemon owns no hardware, so every hardware-touching
     // request is answered honestly rather than pretended.
     let mut services = DeviceServices::simulated();
+    let dictionaries = services.load_dictionaries(&host_dictionary_directory());
+    println!("offline dictionaries loaded: {dictionaries}");
     // There is no bezel here to hold a magnet against, so the state the hall
     // sensor reports is set on the way in. Without this the second half of
     // every cover-aware screen is unreachable off hardware.

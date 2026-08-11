@@ -4,6 +4,7 @@
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
     clippy::cast_sign_loss,
+    clippy::match_same_arms,
     clippy::only_used_in_recursion,
     clippy::too_many_lines
 )]

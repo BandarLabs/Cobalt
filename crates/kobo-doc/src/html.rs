@@ -47,7 +47,12 @@ pub fn parse_with_css(source: &str, external_css: &str) -> Document {
         take -= 1;
     }
     let mut css = external_css[..take].to_owned();
-    css.push_str(&embedded_styles(source));
+    let embedded = embedded_styles(source);
+    let mut remaining = embedded.len().min(MAX_CSS_BYTES.saturating_sub(css.len()));
+    while !embedded.is_char_boundary(remaining) {
+        remaining -= 1;
+    }
+    css.push_str(&embedded[..remaining]);
     let mut state = State::new(StyleSheet::parse(&css));
     let mut rest = source;
     while let Some(at) = rest.find('<') {
@@ -132,6 +137,7 @@ struct State {
     lists: Vec<bool>,
     heading: Option<u8>,
     item: bool,
+    caption: bool,
     /// Whether the words being collected are the document's title rather than
     /// something to draw.
     titling: bool,
@@ -154,6 +160,7 @@ impl State {
             lists: Vec::new(),
             heading: None,
             item: false,
+            caption: false,
             titling: false,
         }
     }
@@ -310,6 +317,16 @@ impl State {
                 self.flush();
                 self.item = true;
             }
+            "figcaption" => {
+                self.flush();
+                let declarations = self.stylesheet.declarations_for(name, inside);
+                let parent = self.block_style.clone();
+                self.block_stack.push((name.to_owned(), parent.clone()));
+                self.block_style = block_style_inheriting(&parent, &declarations);
+                self.inline_stack.push((name.to_owned(), self.inline));
+                apply_inline_style(&mut self.inline, Some(&declarations));
+                self.caption = true;
+            }
             // A cell is not a paragraph of its own; a row is. Running the
             // cells together with a mark that does not occur inside one keeps
             // the row readable in a single column.
@@ -415,6 +432,7 @@ impl State {
         let style = self.block_style.clone();
         let heading = self.heading.take();
         let item = std::mem::replace(&mut self.item, false);
+        let caption = std::mem::replace(&mut self.caption, false);
         if std::mem::replace(&mut self.titling, false) {
             self.builder.set_title(&text);
             return;
@@ -435,6 +453,9 @@ impl State {
             }
             self.builder
                 .push_rich(Block::Heading { level, text }, RichBlock { spans, style });
+        } else if caption {
+            self.builder
+                .push_rich(Block::Caption(text), RichBlock { spans, style });
         } else if item {
             let ordered = self.lists.last().copied().unwrap_or(false);
             self.builder
@@ -851,6 +872,30 @@ mod tests {
     }
 
     #[test]
+    fn external_and_embedded_css_share_one_total_byte_budget() {
+        let mut external = String::from("p { text-align: center; }");
+        external.extend(std::iter::repeat_n(
+            ' ',
+            MAX_CSS_BYTES.saturating_sub(external.len()),
+        ));
+        let document = parse_with_css(
+            "<style>p { text-align: right; }</style><p>Bounded prose.</p>",
+            &external,
+        );
+
+        assert_eq!(
+            document
+                .rich
+                .get(&0)
+                .expect("external style")
+                .style
+                .alignment,
+            TextAlignment::Center,
+            "embedded CSS must not extend the combined stylesheet past its limit"
+        );
+    }
+
+    #[test]
     fn tag_per_character_styling_is_bounded_without_losing_words() {
         let mut source = String::from("<p>");
         for index in 0..400 {
@@ -1061,6 +1106,33 @@ mod tests {
             document.blocks,
             vec![Block::Paragraph("Before after.".to_owned())]
         );
+    }
+
+    #[test]
+    fn a_figure_keeps_its_picture_caption_and_following_heading_in_order() {
+        let document = parse(
+            r#"<p>Before.</p><figure><img src="plate.png" alt="A plate"><figcaption><em>Figure 1.</em> A caption.</figcaption></figure><h2>After</h2>"#,
+        );
+        assert_eq!(
+            document.blocks,
+            vec![
+                Block::Paragraph("Before.".to_owned()),
+                Block::Picture {
+                    name: "plate.png".to_owned(),
+                    alt: "A plate".to_owned(),
+                },
+                Block::Caption("Figure 1. A caption.".to_owned()),
+                Block::Heading {
+                    level: 2,
+                    text: "After".to_owned(),
+                },
+            ]
+        );
+        let caption = document.rich.get(&2).expect("rich caption");
+        assert!(caption
+            .spans
+            .iter()
+            .any(|span| span.text.contains("Figure 1.") && span.style.emphasis));
     }
 
     #[test]

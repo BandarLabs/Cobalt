@@ -371,6 +371,7 @@ enum View {
     Search,
     Details,
     Reading,
+    Lookup,
     Note,
 }
 
@@ -574,6 +575,10 @@ struct Gutenbird {
     trail: Vec<View>,
     keyboard: Keyboard,
     pending_annotation: Option<kobo_read::AnnotationId>,
+    selected_range: Option<kobo_read::TextRange>,
+    lookup_word: String,
+    lookup_entries: Option<Vec<kobo_sdk::DictionaryEntry>>,
+    lookup_page: usize,
 
     catalogs: Vec<Catalog>,
     current: usize,
@@ -666,6 +671,10 @@ impl Default for Gutenbird {
             trail: Vec::new(),
             keyboard: Keyboard::new(),
             pending_annotation: None,
+            selected_range: None,
+            lookup_word: String::new(),
+            lookup_entries: None,
+            lookup_page: 0,
             catalogs: CATALOGS
                 .iter()
                 .map(|(name, root)| Catalog::new(*name, *root, false))
@@ -736,6 +745,7 @@ impl Gutenbird {
             View::Search => self.search_screen(),
             View::Details => self.details_screen(context),
             View::Reading => self.reading_screen(context),
+            View::Lookup => self.lookup_screen(),
             View::Note => self.note_screen(),
         };
         // The application draws its own Back wherever it has somewhere to go,
@@ -1538,6 +1548,46 @@ impl Gutenbird {
             .field("annotation-note", self.keyboard.text(), "Your note")
             .field_clear("annotation-note-clear")
             .keyboard(&self.keyboard, "Save note")
+            .build()
+    }
+
+    fn lookup_screen(&self) -> kobo_sdk::Screen {
+        let mut screen = ScreenBuilder::new("gutenbird-lookup")
+            .top_bar(self.lookup_word.clone())
+            .section("Offline dictionary");
+        match &self.lookup_entries {
+            None => {
+                screen = screen.activity("Looking up the selected word", None);
+            }
+            Some(entries) if entries.is_empty() => {
+                screen = screen.secondary(
+                    "No installed dictionary has this word. Add UTF-8 TSV dictionaries to Cobalt's dictionaries folder.",
+                );
+            }
+            Some(entries) => {
+                if let Some(entry) = entries.get(self.lookup_page.min(entries.len() - 1)) {
+                    screen = screen
+                        .heading(entry.headword.clone())
+                        .secondary(format!(
+                            "{} · {} · {} of {}",
+                            entry.dictionary,
+                            entry.language,
+                            self.lookup_page + 1,
+                            entries.len()
+                        ))
+                        .text(dictionary_excerpt(&entry.definition));
+                    if self.lookup_page > 0 {
+                        screen = screen.button("lookup-previous", "Previous definition");
+                    }
+                    if self.lookup_page + 1 < entries.len() {
+                        screen = screen.button("lookup-next", "Next definition");
+                    }
+                }
+            }
+        }
+        screen
+            .button("lookup-highlight", "Highlight")
+            .button("lookup-note", "Add note")
             .build()
     }
 
@@ -3014,6 +3064,15 @@ fn clean_field(field: &str) -> String {
     field.replace(['\t', '\n', '\r'], " ").trim().to_owned()
 }
 
+fn dictionary_excerpt(definition: &str) -> String {
+    const LIMIT: usize = 700;
+    let mut excerpt = definition.chars().take(LIMIT).collect::<String>();
+    if definition.chars().count() > LIMIT {
+        excerpt.push('…');
+    }
+    excerpt
+}
+
 fn decode_registry(bytes: &[u8]) -> Vec<Catalog> {
     String::from_utf8_lossy(bytes)
         .lines()
@@ -3321,9 +3380,21 @@ impl KoboApp for Gutenbird {
     fn on_device_result(
         &mut self,
         context: &mut Context,
-        _request: kobo_sdk::DeviceRequest,
+        request: kobo_sdk::DeviceRequest,
         result: kobo_sdk::DeviceResult,
     ) {
+        if let (
+            kobo_sdk::DeviceRequest::LookupWord { .. },
+            kobo_sdk::DeviceResult::Dictionary { word, entries },
+        ) = (&request, &result)
+        {
+            if self.view == View::Lookup && *word == self.lookup_word {
+                self.lookup_entries = Some(entries.clone());
+                self.lookup_page = 0;
+                self.show(context);
+            }
+            return;
+        }
         let kobo_sdk::DeviceResult::Frontlight { percent } = result else {
             return;
         };
@@ -3354,18 +3425,18 @@ impl KoboApp for Gutenbird {
                 offset: hit.end,
             },
         };
-        let metrics = context.metrics();
-        let created = self
+        let word = self
             .reader
-            .as_mut()
-            .and_then(|reader| reader.annotate(range, None, &metrics).ok());
-        if let Some(id) = created {
-            self.pending_annotation = Some(id);
-            self.keyboard.clear();
-            self.save_place(context);
-            self.go(View::Note);
-            self.show(context);
-        }
+            .as_ref()
+            .and_then(|reader| reader.text_in(range));
+        let Some(word) = word else { return };
+        self.selected_range = Some(range);
+        self.lookup_word.clone_from(&word);
+        self.lookup_entries = None;
+        self.lookup_page = 0;
+        let _ = context.device().lookup_word(word, None::<String>);
+        self.go(View::Lookup);
+        self.show(context);
     }
 
     #[allow(clippy::too_many_lines)]
@@ -3429,6 +3500,43 @@ impl KoboApp for Gutenbird {
                 None => {}
             }
         }
+        if self.view == View::Lookup
+            && (action == action_id("lookup-highlight") || action == action_id("lookup-note"))
+        {
+            let created = self.selected_range.and_then(|range| {
+                let metrics = context.metrics();
+                self.reader
+                    .as_mut()
+                    .and_then(|reader| reader.annotate(range, None, &metrics).ok())
+            });
+            if let Some(id) = created {
+                self.save_place(context);
+                if action == action_id("lookup-note") {
+                    self.pending_annotation = Some(id);
+                    self.keyboard.clear();
+                    self.go(View::Note);
+                } else {
+                    self.selected_range = None;
+                    self.back_to(View::Reading);
+                }
+                self.show(context);
+            }
+            return;
+        }
+        if self.view == View::Lookup && action == action_id("lookup-previous") {
+            self.lookup_page = self.lookup_page.saturating_sub(1);
+            self.show(context);
+            return;
+        }
+        if self.view == View::Lookup && action == action_id("lookup-next") {
+            let last = self
+                .lookup_entries
+                .as_ref()
+                .map_or(0, |entries| entries.len().saturating_sub(1));
+            self.lookup_page = self.lookup_page.saturating_add(1).min(last);
+            self.show(context);
+            return;
+        }
         if self.view == View::Note {
             match self.keyboard.press(action) {
                 Some(Pressed::Submitted) => {
@@ -3440,7 +3548,9 @@ impl KoboApp for Gutenbird {
                         let _ = reader.edit_annotation_note(id, note);
                         self.save_place(context);
                     }
+                    self.back_to(View::Lookup);
                     self.back_to(View::Reading);
+                    self.selected_range = None;
                     self.show(context);
                     return;
                 }
@@ -5457,6 +5567,25 @@ Please read this before you distribute or use this work.\n";
                 end: 5,
             },
         );
+        assert_eq!(runner.app().view, View::Lookup);
+        assert!(runner
+            .app()
+            .reader
+            .as_ref()
+            .unwrap()
+            .annotations()
+            .is_empty());
+        runner.device_result(kobo_sdk::DeviceResult::Dictionary {
+            word: "café".into(),
+            entries: vec![kobo_sdk::DictionaryEntry {
+                dictionary: "Pocket English".into(),
+                language: "en".into(),
+                headword: "café".into(),
+                definition: "A small coffee house.".into(),
+            }],
+        });
+        assert_eq!(runner.app().lookup_entries.as_ref().unwrap().len(), 1);
+        runner.action(action_id("lookup-note"));
         assert_eq!(runner.app().view, View::Note);
         assert_eq!(runner.app().reader.as_ref().unwrap().annotations().len(), 1);
 

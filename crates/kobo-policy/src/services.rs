@@ -10,7 +10,9 @@
 //!   is willing to pay for.
 
 use crate::{Capability, Declared, Grant, Grants, PowerPolicy};
-use kobo_protocol::{AudioPlaybackState, DenyReason, DeviceError, DeviceRequest, DeviceResult};
+use kobo_protocol::{
+    AudioPlaybackState, DenyReason, DeviceError, DeviceRequest, DeviceResult, DictionaryEntry,
+};
 use std::collections::BTreeSet;
 use std::time::Duration;
 
@@ -91,6 +93,7 @@ pub struct DeviceServices {
     audio_position_ms: u32,
     audio_duration_ms: u32,
     audio_volume: u8,
+    dictionaries: kobo_dict::Index,
 }
 
 impl DeviceServices {
@@ -129,7 +132,21 @@ impl DeviceServices {
             audio_position_ms: 0,
             audio_duration_ms: 0,
             audio_volume: 70,
+            dictionaries: kobo_dict::Index::default(),
         }
+    }
+
+    /// Loads owner-installed offline dictionaries from bounded UTF-8 TSV
+    /// files. Missing or malformed files yield fewer dictionaries rather than
+    /// making the reading service unavailable.
+    pub fn load_dictionaries(&mut self, directory: &std::path::Path) -> usize {
+        self.dictionaries = kobo_dict::Index::load_directory(directory);
+        self.dictionaries.len()
+    }
+
+    #[cfg(test)]
+    pub fn install_dictionary(&mut self, dictionary: kobo_dict::Dictionary) -> bool {
+        self.dictionaries.install(dictionary)
     }
 
     /// Updates the battery state used for both reads and policy decisions.
@@ -290,7 +307,25 @@ impl DeviceServices {
             DeviceRequest::InstallApp { .. } | DeviceRequest::UninstallApp { .. } => {
                 DeviceResult::Done
             }
+            DeviceRequest::LookupWord { word, language } => {
+                self.lookup_word(word, language.as_deref())
+            }
         }
+    }
+
+    fn lookup_word(&self, word: String, language: Option<&str>) -> DeviceResult {
+        let entries = self
+            .dictionaries
+            .lookup(&word, language)
+            .into_iter()
+            .map(|entry| DictionaryEntry {
+                dictionary: entry.dictionary,
+                language: entry.language,
+                headword: entry.headword,
+                definition: entry.definition,
+            })
+            .collect();
+        DeviceResult::Dictionary { word, entries }
     }
 
     /// Returns the policy refusal for a request that a real hardware backend
@@ -553,7 +588,8 @@ pub fn request_capability(request: &DeviceRequest) -> Option<Capability> {
         | DeviceRequest::ReadAppCatalog
         | DeviceRequest::RefreshAppCatalog
         | DeviceRequest::InstallApp { .. }
-        | DeviceRequest::UninstallApp { .. } => return None,
+        | DeviceRequest::UninstallApp { .. }
+        | DeviceRequest::LookupWord { .. } => return None,
     })
 }
 
@@ -569,6 +605,33 @@ mod tests {
 
     fn seconds_of(duration: std::time::Duration) -> u32 {
         u32::try_from(duration.as_secs()).expect("policy fits in u32")
+    }
+
+    #[test]
+    fn dictionary_lookup_is_local_normalized_and_explicit_when_missing() {
+        let mut services = DeviceServices::simulated();
+        assert!(services.install_dictionary(kobo_dict::Dictionary::from_tsv(
+            "Pocket",
+            "# language=en\nstory\tAn account of events.\n",
+        )));
+        assert!(matches!(
+            services.handle(DeviceRequest::LookupWord {
+                word: "stories".into(),
+                language: Some("en".into()),
+            }),
+            DeviceResult::Dictionary { entries, .. }
+                if entries.len() == 1 && entries[0].headword == "story"
+        ));
+        assert_eq!(
+            services.handle(DeviceRequest::LookupWord {
+                word: "absent".into(),
+                language: Some("en".into()),
+            }),
+            DeviceResult::Dictionary {
+                word: "absent".into(),
+                entries: Vec::new(),
+            }
+        );
     }
 
     fn declared(names: &[&str]) -> Declared {

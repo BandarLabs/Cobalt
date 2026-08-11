@@ -1290,7 +1290,7 @@ mod tests {
                 .pick(missing, Some(&other))
                 .expect("a letter is not invisible");
             assert!(
-                std::ptr::eq(drawn, &other) && glyph == missing,
+                std::ptr::eq(drawn, std::ptr::from_ref(&other)) && glyph == missing,
                 "{missing:?} was not borrowed from the face that has it"
             );
             let boxed = ink(&face, &missing.to_string());

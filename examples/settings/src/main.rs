@@ -940,6 +940,7 @@ impl KoboApp for Settings {
             | DeviceResult::Frontlight { .. }
             | DeviceResult::Cover { .. }
             | DeviceResult::Audio { .. }
+            | DeviceResult::Dictionary { .. }
             | DeviceResult::Apps { .. } => {}
         }
         self.show(context);

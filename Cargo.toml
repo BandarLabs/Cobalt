@@ -5,6 +5,7 @@ members = [
     "crates/kobo-cli",
     "crates/kobo-doc",
     "crates/kobo-doctor",
+    "crates/kobo-dict",
     "crates/kobo-hal",
     "crates/kobo-html",
     "crates/kobo-image",

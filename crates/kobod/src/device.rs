@@ -72,6 +72,7 @@ const SECRETS: &str = "/mnt/onboard/.adds/cobalt/secrets";
 /// the same reasons. A certificate here lets the runtime verify a daemon on
 /// the owner's own network exactly as it verifies a public host.
 const TRUST: &str = "/mnt/onboard/.adds/cobalt/trust";
+const DICTIONARIES: &str = "/mnt/onboard/.adds/cobalt/dictionaries";
 
 /// Where each application's own keyed state lives, one directory per name.
 const STATE_ROOT: &str = "/mnt/onboard/.adds/cobalt/state";
@@ -1018,6 +1019,8 @@ fn host_applications(
         PowerPolicy::DEFAULT,
         Backends::with(backends),
     );
+    let dictionaries = services.load_dictionaries(Path::new(DICTIONARIES));
+    println!("offline dictionaries loaded: {dictionaries}");
     if let Some(light) = &frontlight {
         if let Some(percent) = light.percent() {
             services.observe_frontlight(percent);
@@ -1431,8 +1434,11 @@ fn host_applications(
                                 &name,
                                 display_metrics_from_env(),
                             ) {
-                                Ok(font) => {
-                                    kobo_ui::put_book_typesetter(runtime_handle, Box::new(font));
+                                Ok(book_font) => {
+                                    kobo_ui::put_book_typesetter(
+                                        runtime_handle,
+                                        Box::new(book_font),
+                                    );
                                 }
                                 Err(error) => trace(&format!("font {} refused: {error}", handle.0)),
                             }

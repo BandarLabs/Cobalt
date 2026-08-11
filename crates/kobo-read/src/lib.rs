@@ -182,6 +182,7 @@ enum Kind {
     Quote,
     Preformatted,
     Item,
+    Caption,
     /// A picture the book set into its text.
     Picture,
     Rule,
@@ -195,6 +196,7 @@ impl Kind {
             // Level three is already small enough that the title size would
             // barely distinguish it from the text under it.
             Kind::Heading(_) => FontSize::Title,
+            Kind::Caption => FontSize::Caption,
             _ => FontSize::Body,
         }
     }
@@ -595,6 +597,11 @@ impl Reader {
 
     /// Creates a range highlight or marginal note exactly once for an
     /// operation identifier supplied by the caller.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnnotationFault`] when the range is invalid, the annotation
+    /// limit is reached, or the note exceeds its bound.
     pub fn create_annotation(
         &mut self,
         operation: AnnotationId,
@@ -627,6 +634,11 @@ impl Reader {
     }
 
     /// Allocates a local operation identity and creates one annotation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnnotationFault`] when the range is invalid, the annotation
+    /// limit is reached, or the note exceeds its bound.
     pub fn annotate(
         &mut self,
         range: TextRange,
@@ -639,6 +651,11 @@ impl Reader {
     }
 
     /// Changes only an annotation's marginal note, never its selected words.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnnotationFault::NotFound`] for an unknown identity or
+    /// [`AnnotationFault::NoteTooLong`] when the replacement exceeds its bound.
     pub fn edit_annotation_note(
         &mut self,
         id: AnnotationId,
@@ -654,6 +671,11 @@ impl Reader {
         Ok(())
     }
 
+    /// Removes one annotation without changing any other reader state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnnotationFault::NotFound`] for an unknown identity.
     pub fn remove_annotation(
         &mut self,
         id: AnnotationId,
@@ -1338,6 +1360,7 @@ impl Reader {
                 Kind::Marked | Kind::Quote | Kind::Item => {
                     screen.quote(HIGHLIGHT_DEPTH, piece.text.clone())
                 }
+                Kind::Caption => screen.secondary(piece.text.clone()),
                 Kind::Picture => {
                     // The handle is the application's to supply, because
                     // handing pixels to the runtime needs a `Context` and this
@@ -2291,6 +2314,8 @@ fn paginate(
                     let text = lines[placed..end].join(" ");
                     let (spans, presentation) =
                         piece_presentation(rich, text.as_str(), &mut source_at);
+                    let presentation =
+                        fragment_presentation(presentation, placed == 0, end == lines.len());
                     page.push(Piece {
                         block: index,
                         text,
@@ -2311,12 +2336,14 @@ fn paginate(
             if !page.is_empty() {
                 used += gap;
             }
+            let text = lines[placed..placed + take].join(" ");
+            let (spans, presentation) = piece_presentation(rich, text.as_str(), &mut source_at);
+            let presentation =
+                fragment_presentation(presentation, placed == 0, placed + take == lines.len());
             used += i32::try_from(take)
                 .unwrap_or(i32::MAX)
                 .saturating_mul(height)
-                .saturating_add(extra_height);
-            let text = lines[placed..placed + take].join(" ");
-            let (spans, presentation) = piece_presentation(rich, text.as_str(), &mut source_at);
+                .saturating_add(presentation_height(presentation, natural_height));
             page.push(Piece {
                 block: index,
                 text,
@@ -2347,6 +2374,7 @@ fn kind_of(block: &Block, marked: bool) -> Kind {
         Block::Quote(_) => Kind::Quote,
         Block::Preformatted(_) => Kind::Preformatted,
         Block::Item { .. } => Kind::Item,
+        Block::Caption(_) => Kind::Caption,
         Block::Picture { .. } => Kind::Picture,
         Block::Rule => Kind::Rule,
         Block::Break => Kind::Break,
@@ -2408,6 +2436,29 @@ fn paragraph_presentation(style: &kobo_doc::BlockStyle) -> kobo_ui::ParagraphPre
         margin_after_em: style.margin_after_em,
         first_line_indent_em: style.first_line_indent_em,
     }
+}
+
+fn fragment_presentation(
+    mut presentation: kobo_ui::ParagraphPresentation,
+    first: bool,
+    last: bool,
+) -> kobo_ui::ParagraphPresentation {
+    if !first {
+        presentation.margin_before_em = 0;
+        presentation.first_line_indent_em = 0;
+    }
+    if !last {
+        presentation.margin_after_em = 0;
+    }
+    presentation
+}
+
+fn presentation_height(presentation: kobo_ui::ParagraphPresentation, natural_height: i32) -> i32 {
+    natural_height.saturating_mul(i32::from(
+        presentation
+            .margin_before_em
+            .saturating_add(presentation.margin_after_em),
+    )) / 100
 }
 
 #[cfg(test)]
@@ -3945,13 +3996,8 @@ mod tests {
 
     #[test]
     fn publisher_spacing_does_not_push_paginated_prose_off_the_panel() {
-        let source = (0..80)
-            .map(|index| {
-                format!(
-                    r#"<p style="margin-top: 1em; margin-bottom: 1em; line-height: 150%">Paragraph {index} has enough words to wrap across the reading column.</p>"#
-                )
-            })
-            .collect::<String>();
+        let source = r#"<p style="margin-top: 1em; margin-bottom: 1em; line-height: 150%">A paragraph has enough words to wrap across the reading column.</p>"#
+            .repeat(80);
         let reader = Reader::open(kobo_doc::html::parse(&source), Memory::default(), &panel());
         for page in 0..reader.page_count() {
             let mut on_page = reader.clone();
@@ -3990,6 +4036,34 @@ mod tests {
             reader.preferred_publisher_font().map(|(name, _)| name),
             Some("z-intended.otf")
         );
+    }
+
+    #[test]
+    fn paragraph_fragments_only_keep_spacing_at_the_real_edges() {
+        let whole = kobo_ui::ParagraphPresentation {
+            alignment: kobo_ui::ParagraphAlignment::Justify,
+            line_height_percent: 140,
+            margin_before_em: 75,
+            margin_after_em: 50,
+            first_line_indent_em: 125,
+        };
+
+        let first = fragment_presentation(whole, true, false);
+        assert_eq!(first.margin_before_em, 75);
+        assert_eq!(first.first_line_indent_em, 125);
+        assert_eq!(first.margin_after_em, 0);
+
+        let middle = fragment_presentation(whole, false, false);
+        assert_eq!(middle.margin_before_em, 0);
+        assert_eq!(middle.first_line_indent_em, 0);
+        assert_eq!(middle.margin_after_em, 0);
+
+        let last = fragment_presentation(whole, false, true);
+        assert_eq!(last.margin_before_em, 0);
+        assert_eq!(last.first_line_indent_em, 0);
+        assert_eq!(last.margin_after_em, 50);
+        assert_eq!(last.alignment, kobo_ui::ParagraphAlignment::Justify);
+        assert_eq!(last.line_height_percent, 140);
     }
 
     #[test]

@@ -7,13 +7,13 @@
 
 pub use kobo_protocol::{
     AppInfo, AudioPlaybackState, AudioSource, BatteryDetail, BluetoothDevice, BluetoothDeviceKind,
-    Credential, DenyReason, DeviceError, DeviceRequest, DeviceResult, Frame, Header, Lifecycle,
-    LogLevel, Message, SecretHeader, ShellError, ShellEvent, ShellRequest, StoreError,
-    StoreRequest, StoreResult, StreamError, Task, TaskError, TaskId, TaskOutcome, WifiNetwork,
-    CACHE_PREFIX, MAX_CACHE_KEYS, MAX_FONT_BYTES, MAX_HEADERS, MAX_HEADER_NAME, MAX_HEADER_VALUE,
-    MAX_INLINE_PICTURE_BYTES, MAX_PICTURE_BYTES, MAX_PICTURE_CHUNK_BYTES, MAX_RADIO_DEVICES,
-    MAX_RADIO_NAME, MAX_SHELF_CHUNK, MAX_SHELL_CHUNK, MAX_STORE_KEYS, MAX_STORE_VALUE,
-    MAX_TASK_BYTES, MAX_URL_LEN,
+    Credential, DenyReason, DeviceError, DeviceRequest, DeviceResult, DictionaryEntry, Frame,
+    Header, Lifecycle, LogLevel, Message, SecretHeader, ShellError, ShellEvent, ShellRequest,
+    StoreError, StoreRequest, StoreResult, StreamError, Task, TaskError, TaskId, TaskOutcome,
+    WifiNetwork, CACHE_PREFIX, MAX_CACHE_KEYS, MAX_FONT_BYTES, MAX_HEADERS, MAX_HEADER_NAME,
+    MAX_HEADER_VALUE, MAX_INLINE_PICTURE_BYTES, MAX_LOOKUP_WORD_BYTES, MAX_PICTURE_BYTES,
+    MAX_PICTURE_CHUNK_BYTES, MAX_RADIO_DEVICES, MAX_RADIO_NAME, MAX_SHELF_CHUNK, MAX_SHELL_CHUNK,
+    MAX_STORE_KEYS, MAX_STORE_VALUE, MAX_TASK_BYTES, MAX_URL_LEN,
 };
 pub use kobo_ui::QuoteRole;
 pub use kobo_ui::{
@@ -4030,6 +4030,32 @@ impl Device<'_> {
         self.request(DeviceRequest::SetAudioVolume {
             percent: percent.min(100),
         });
+    }
+
+    /// Looks up one word using runtime-installed dictionaries without opening
+    /// the radio. The answer arrives through `on_device_result` as
+    /// `DeviceResult::Dictionary`, including an explicit empty result.
+    pub fn lookup_word(
+        &mut self,
+        word: impl Into<String>,
+        language: Option<impl Into<String>>,
+    ) -> bool {
+        let word = word.into();
+        let language = language.map(Into::into);
+        if word.trim().is_empty()
+            || word.len() > MAX_LOOKUP_WORD_BYTES
+            || language.as_deref().is_some_and(|language| {
+                language.is_empty()
+                    || language.len() > 16
+                    || !language
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+            })
+        {
+            return false;
+        }
+        self.request(DeviceRequest::LookupWord { word, language });
+        true
     }
 
     /// Replaces the installed Cobalt with a published release archive.

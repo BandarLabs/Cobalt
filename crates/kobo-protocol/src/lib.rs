@@ -43,7 +43,9 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// credential sits ahead of the header count, so a frame it did not expect
 /// would have been misread from that point on rather than refused. Version 9
 /// adds bounded rich EPUB text and runtime-held publisher-font handles.
-pub const VERSION: u8 = 9;
+/// Version 10 adds exact text-hold coordinates and typed offline dictionary
+/// requests/results.
+pub const VERSION: u8 = 10;
 pub const HEADER_LEN: usize = 14;
 /// The largest single frame either side will read.
 ///
@@ -172,6 +174,9 @@ pub const MAX_SHELF_BYTES: u64 = 256 * 1024 * 1024;
 
 /// The most blobs one application may keep.
 pub const MAX_SHELF_BLOBS: usize = 4_096;
+pub const MAX_LOOKUP_WORD_BYTES: usize = 128;
+pub const MAX_DICTIONARY_ENTRIES: usize = 8;
+pub const MAX_DICTIONARY_DEFINITION_BYTES: usize = 4_096;
 
 /// How much of the card must stay free whatever an application asks for.
 ///
@@ -1013,6 +1018,19 @@ pub enum DeviceRequest {
     InstallApp { id: String },
     /// Remove one app-store application by stable identity.
     UninstallApp { id: String },
+    /// Look up one selected word using only runtime-installed dictionaries.
+    LookupWord {
+        word: String,
+        language: Option<String>,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DictionaryEntry {
+    pub dictionary: String,
+    pub language: String,
+    pub headword: String,
+    pub definition: String,
 }
 
 /// Everything the gauge publishes that is worth putting in front of a reader.
@@ -1145,6 +1163,12 @@ pub enum DeviceResult {
     },
     /// A bounded app-store or installed-app listing.
     Apps { entries: Vec<AppInfo> },
+    /// Bounded offline definitions in installed dictionary order. An empty
+    /// list is an explicit no-result answer, not a transport failure.
+    Dictionary {
+        word: String,
+        entries: Vec<DictionaryEntry>,
+    },
     /// The backend exists, but the requested operation failed.
     Failed(DeviceError),
     /// The request was refused, with the exact reason.
@@ -1447,6 +1471,7 @@ impl From<io::Error> for StreamError {
 /// # Errors
 ///
 /// Returns an error when a message exceeds protocol limits.
+#[allow(clippy::too_many_lines)]
 pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
     let (kind, payload_len) = encoded_message_layout(&frame.message)?;
     let mut payload = Vec::with_capacity(payload_len);
@@ -2234,6 +2259,12 @@ fn encode_device_request(
         DeviceRequest::InstallApp { .. } | DeviceRequest::UninstallApp { .. } => {
             return Err(ProtocolError::InvalidValue("application id"));
         }
+        DeviceRequest::LookupWord { word, language } => {
+            validate_lookup(word, language.as_deref())?;
+            output.push(37);
+            push_string(output, word)?;
+            push_optional_string(output, language.as_deref())?;
+        }
     }
     Ok(())
 }
@@ -2478,6 +2509,12 @@ fn decode_device_request(reader: &mut Reader<'_>) -> Result<DeviceRequest, Proto
         34 => Ok(DeviceRequest::RefreshAppCatalog),
         35 => decode_app_request(reader, true),
         36 => decode_app_request(reader, false),
+        37 => {
+            let word = reader.string()?;
+            let language = reader.optional_string()?;
+            validate_lookup(&word, language.as_deref())?;
+            Ok(DeviceRequest::LookupWord { word, language })
+        }
         _ => Err(ProtocolError::InvalidValue("device request")),
     }
 }
@@ -2631,6 +2668,22 @@ fn encode_device_result(output: &mut Vec<u8>, result: &DeviceResult) -> Result<(
             );
             for entry in entries {
                 encode_app_info(output, entry)?;
+            }
+        }
+        DeviceResult::Dictionary { word, entries } => {
+            validate_lookup(word, None)?;
+            if entries.len() > MAX_DICTIONARY_ENTRIES {
+                return Err(ProtocolError::InvalidValue("too many dictionary entries"));
+            }
+            output.push(13);
+            push_string(output, word)?;
+            output.push(u8::try_from(entries.len()).map_err(|_| ProtocolError::FrameTooLarge)?);
+            for entry in entries {
+                validate_dictionary_entry(entry)?;
+                push_string(output, &entry.dictionary)?;
+                push_string(output, &entry.language)?;
+                push_string(output, &entry.headword)?;
+                push_string(output, &entry.definition)?;
             }
         }
     }
@@ -2791,8 +2844,61 @@ fn decode_device_result(reader: &mut Reader<'_>) -> Result<DeviceResult, Protoco
         8 => Ok(DeviceResult::Failed(DeviceError::try_from(reader.u8()?)?)),
         9 => decode_audio_result(reader),
         12 => decode_apps_result(reader),
+        13 => decode_dictionary_result(reader),
         _ => Err(ProtocolError::InvalidValue("device result")),
     }
+}
+
+fn validate_lookup(word: &str, language: Option<&str>) -> Result<(), ProtocolError> {
+    if word.trim().is_empty()
+        || word.len() > MAX_LOOKUP_WORD_BYTES
+        || language.is_some_and(|language| {
+            language.is_empty()
+                || language.len() > 16
+                || !language
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        })
+    {
+        return Err(ProtocolError::InvalidValue("dictionary lookup"));
+    }
+    Ok(())
+}
+
+fn validate_dictionary_entry(entry: &DictionaryEntry) -> Result<(), ProtocolError> {
+    if entry.dictionary.is_empty()
+        || entry.dictionary.len() > 96
+        || entry.language.is_empty()
+        || entry.language.len() > 16
+        || entry.headword.is_empty()
+        || entry.headword.len() > MAX_LOOKUP_WORD_BYTES
+        || entry.definition.is_empty()
+        || entry.definition.len() > MAX_DICTIONARY_DEFINITION_BYTES
+    {
+        return Err(ProtocolError::InvalidValue("dictionary entry"));
+    }
+    Ok(())
+}
+
+fn decode_dictionary_result(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
+    let word = reader.string()?;
+    validate_lookup(&word, None)?;
+    let count = usize::from(reader.u8()?);
+    if count > MAX_DICTIONARY_ENTRIES {
+        return Err(ProtocolError::InvalidValue("too many dictionary entries"));
+    }
+    let mut entries = Vec::with_capacity(count);
+    for _ in 0..count {
+        let entry = DictionaryEntry {
+            dictionary: reader.string()?,
+            language: reader.string()?,
+            headword: reader.string()?,
+            definition: reader.string()?,
+        };
+        validate_dictionary_entry(&entry)?;
+        entries.push(entry);
+    }
+    Ok(DeviceResult::Dictionary { word, entries })
 }
 
 fn decode_apps_result(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
@@ -6995,6 +7101,26 @@ mod store_tests {
             end: 48,
         };
         assert_eq!(message_round_trip(message.clone()), message);
+    }
+
+    #[test]
+    fn offline_dictionary_requests_and_entries_are_bounded_and_typed() {
+        let request = Message::DeviceRequest(DeviceRequest::LookupWord {
+            word: "café".into(),
+            language: Some("fr".into()),
+        });
+        assert_eq!(message_round_trip(request.clone()), request);
+
+        let result = Message::DeviceResult(DeviceResult::Dictionary {
+            word: "café".into(),
+            entries: vec![DictionaryEntry {
+                dictionary: "Pocket French".into(),
+                language: "fr".into(),
+                headword: "café".into(),
+                definition: "Établissement où l'on sert des boissons.".into(),
+            }],
+        });
+        assert_eq!(message_round_trip(result.clone()), result);
     }
 
     #[test]

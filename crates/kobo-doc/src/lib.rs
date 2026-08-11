@@ -178,6 +178,8 @@ pub enum Block {
     /// is drawn, so that inserting an item cannot leave the list numbered
     /// wrongly.
     Item { ordered: bool, text: String },
+    /// Text belonging to the illustration immediately before it.
+    Caption(String),
     /// A picture the book set into its text.
     ///
     /// Carried as the name it was stored under rather than as pixels, because
@@ -277,7 +279,8 @@ impl Block {
             | Self::Paragraph(text)
             | Self::Quote(text)
             | Self::Preformatted(text)
-            | Self::Item { text, .. } => Some(text),
+            | Self::Item { text, .. }
+            | Self::Caption(text) => Some(text),
             // A picture's description is not the words of the book: returning
             // it here would put a caption into a search, a highlight and the
             // count of what a page holds, all of which are about prose.
@@ -612,6 +615,7 @@ impl Builder {
                     Block::Paragraph(_) => Block::Paragraph(text),
                     Block::Quote(_) => Block::Quote(text),
                     Block::Item { ordered, .. } => Block::Item { ordered, text },
+                    Block::Caption(_) => Block::Caption(text),
                     Block::Preformatted(_) | Block::Picture { .. } | Block::Rule | Block::Break => {
                         return
                     }
