@@ -2199,6 +2199,13 @@ impl Gutenbird {
             || self.place.clone().unwrap_or_default(),
             |reader| reader.memory().clone(),
         );
+        // Opening a book is the one thing this application does that has ever
+        // blocked the panel for seconds at a time, and which of the three
+        // stages costs that is not guessable from a screenshot: on a
+        // development machine all three together are under thirty
+        // milliseconds. So each is timed and the timings go to the log, which
+        // means the black box, which means they survive the hang.
+        let started = std::time::Instant::now();
         let (name, result) = match download.kind {
             DownloadKind::Text => {
                 let cleaned = readable(&String::from_utf8_lossy(&download.bytes));
@@ -2206,10 +2213,25 @@ impl Gutenbird {
             }
             DownloadKind::Epub => ("book.epub", kobo_doc::read("book.epub", &download.bytes)),
         };
+        let read_ms = started.elapsed().as_millis();
         let _ = name;
         if let Ok(document) = result {
+            let blocks = document.blocks.len();
+            let started = std::time::Instant::now();
             let pictures = Self::hand_over_pictures(context, &document);
+            let pictures_ms = started.elapsed().as_millis();
+            let started = std::time::Instant::now();
             let mut reader = Reader::open(document, memory, &context.metrics());
+            let paginate_ms = started.elapsed().as_millis();
+            context.log(
+                LogLevel::Info,
+                format!(
+                    "opened {} bytes in {read_ms} ms read, {pictures_ms} ms pictures, \
+                     {paginate_ms} ms paginate ({blocks} blocks, {} pages)",
+                    download.bytes.len(),
+                    reader.page_count()
+                ),
+            );
             reader.set_pictures(pictures);
             self.reader = Some(reader);
         } else {
