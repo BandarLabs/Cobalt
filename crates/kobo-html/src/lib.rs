@@ -22,12 +22,20 @@
 //!   control characters are dropped instead of being handed to a renderer that
 //!   would have to decide what a `\u{7}` looks like.
 
+mod math;
+
 /// The most text one converted body may produce.
 ///
 /// An article summary is a few hundred words. This is far above that and far
 /// below the point at which a page of them costs anything, and it exists so
 /// that a single hostile field cannot make one screen's worth of state larger
 /// than the whole response it came from.
+///
+/// It is the ceiling for a *field*, which is what this module was written for.
+/// A whole document is a different question and takes its ceiling from
+/// [`to_text_within`]: a paper converted against this one comes out at a tenth
+/// of itself, cut mid-sentence, which is not a summary of the paper but a
+/// truncation pretending to be one.
 pub const MAX_TEXT: usize = 8 * 1024;
 
 /// The longest entity name this will consider, `&thetasym;` plus room.
@@ -109,34 +117,52 @@ const NAMED: [(&str, &str); 34] = [
 /// blank line, with no markup left in them.
 #[must_use]
 pub fn to_text(html: &str) -> String {
+    to_text_within(html, MAX_TEXT)
+}
+
+/// The same conversion against a ceiling the caller chooses.
+///
+/// [`MAX_TEXT`] is the right bound for a field arriving inside a feed of a
+/// thousand others, and the wrong one for a document somebody asked for by
+/// name: a paper is tens of thousands of characters, and converting one
+/// against the field ceiling returns its opening pages and an ellipsis. The
+/// two are different questions and this is the one that lets the caller say
+/// which it is asking.
+///
+/// The bound is still a bound. What an application may not do is pass a
+/// ceiling it did not get from somewhere -- the size it was willing to fetch,
+/// say -- because the point of having one is that the response cannot decide
+/// how much memory it costs to read it.
+#[must_use]
+pub fn to_text_within(html: &str, ceiling: usize) -> String {
     // Never larger than the input, and never larger than the ceiling. Both
     // bounds matter: the first is what makes the conversion safe on a body
     // that is already at the transport limit, the second is what makes it safe
     // on a body that arrives inside a thread of a thousand others.
-    let mut out = String::with_capacity(html.len().min(MAX_TEXT));
+    let mut out = String::with_capacity(html.len().min(ceiling));
     let mut rest = html;
     while let Some(at) = rest.find(['<', '&']) {
         // `<` and `&` are ASCII, so the offset is always a character boundary
         // and both slices below are valid however the rest of the input is
         // encoded.
-        push_text(&mut out, &rest[..at]);
-        if out.len() >= MAX_TEXT {
+        push_text(&mut out, &rest[..at], ceiling);
+        if out.len() >= ceiling {
             break;
         }
         let tail = &rest[at..];
         rest = if tail.starts_with('<') {
-            take_tag(&mut out, tail)
+            take_tag(&mut out, tail, ceiling)
         } else {
             take_entity(&mut out, tail)
         };
     }
-    if out.len() < MAX_TEXT {
-        push_text(&mut out, rest);
+    if out.len() < ceiling {
+        push_text(&mut out, rest, ceiling);
     }
-    if out.len() >= MAX_TEXT {
+    if out.len() >= ceiling {
         // Cut on a character boundary, then say so. Silently stopping mid-word
         // reads as a comment whose author trailed off.
-        let mut cut = MAX_TEXT;
+        let mut cut = ceiling;
         while !out.is_char_boundary(cut) {
             cut -= 1;
         }
@@ -172,7 +198,7 @@ pub fn decode_entities(text: &str) -> String {
 /// A stray `\u{7}` or `\u{1b}` in a comment has no drawing, and letting one
 /// through means every renderer downstream has to decide what to do with it.
 /// Tabs and newlines are kept because the paginator understands both.
-fn push_text(out: &mut String, text: &str) {
+fn push_text(out: &mut String, text: &str, ceiling: usize) {
     // Space that follows a paragraph break is indentation somebody wrote for a
     // browser, and the paginator emits one node per paragraph: keeping it
     // pushes the first word of a paragraph off its own left margin.
@@ -182,7 +208,7 @@ fn push_text(out: &mut String, text: &str) {
         text
     };
     for character in text.chars() {
-        if out.len() >= MAX_TEXT {
+        if out.len() >= ceiling {
             return;
         }
         if character == '\n' || character == '\t' || !character.is_control() {
@@ -196,7 +222,7 @@ fn push_text(out: &mut String, text: &str) {
 /// Returns what is left afterwards. A `<` that never closes is not a tag at
 /// all: it is emitted as the character it is and scanning continues one byte
 /// later, which is the only reading that cannot lose the rest of a comment.
-fn take_tag<'a>(out: &mut String, tail: &'a str) -> &'a str {
+fn take_tag<'a>(out: &mut String, tail: &'a str, ceiling: usize) -> &'a str {
     let Some(end) = tail.find('>') else {
         out.push('<');
         return &tail[1..];
@@ -205,12 +231,21 @@ fn take_tag<'a>(out: &mut String, tail: &'a str) -> &'a str {
     let after = &tail[end + 1..];
     let name = element_name(inside);
     if breaks_paragraph(&name) {
-        push_break(out);
+        push_break(out, ceiling);
     }
     if name == "img" && !inside.starts_with('/') {
         if let Some(alternative) = attribute(inside, "alt") {
-            push_alternative(out, alternative);
+            push_alternative(out, alternative, ceiling);
         }
+    }
+    // A formula is read rather than stripped. Left to the general path it
+    // arrives as its own rendering and its LaTeX source run together, which is
+    // every number in it printed twice.
+    if name == "math" && !inside.starts_with('/') {
+        let onwards = skip_element(after, &name);
+        let element = &tail[..tail.len() - onwards.len()];
+        push_text(out, &math::render(element), ceiling);
+        return onwards;
     }
     if OPAQUE.contains(&name.as_str()) && !inside.starts_with('/') {
         return skip_element(after, &name);
@@ -230,23 +265,23 @@ fn take_tag<'a>(out: &mut String, tail: &'a str) -> &'a str {
 /// it as though it were is worse than not showing it. An empty `alt` is the
 /// spelling for an image that carries no meaning (a spacer or a tracking
 /// pixel) and is honoured by writing nothing at all.
-fn push_alternative(out: &mut String, value: &str) {
+fn push_alternative(out: &mut String, value: &str, ceiling: usize) {
     let mut decoded = String::with_capacity(value.len());
     let mut rest = value;
     while let Some(at) = rest.find('&') {
-        push_text(&mut decoded, &rest[..at]);
+        push_text(&mut decoded, &rest[..at], ceiling);
         rest = take_entity(&mut decoded, &rest[at..]);
     }
-    push_text(&mut decoded, rest);
+    push_text(&mut decoded, rest, ceiling);
     let decoded = decoded.trim();
-    if decoded.is_empty() || out.len() + decoded.len() + 2 > MAX_TEXT {
+    if decoded.is_empty() || out.len() + decoded.len() + 2 > ceiling {
         return;
     }
-    push_break(out);
+    push_break(out, ceiling);
     out.push('[');
-    push_text(out, decoded);
+    push_text(out, decoded, ceiling);
     out.push(']');
-    push_break(out);
+    push_break(out, ceiling);
 }
 
 /// The value of `wanted` in a tag body, however it happens to be quoted.
@@ -319,8 +354,8 @@ fn breaks_paragraph(name: &str) -> bool {
 }
 
 /// Adds a paragraph break unless there is already one, or nothing yet.
-fn push_break(out: &mut String) {
-    if out.is_empty() || out.ends_with("\n\n") || out.len() + 2 > MAX_TEXT {
+fn push_break(out: &mut String, ceiling: usize) {
+    if out.is_empty() || out.ends_with("\n\n") || out.len() + 2 > ceiling {
         return;
     }
     while out.ends_with(' ') || out.ends_with('\n') {
@@ -475,7 +510,39 @@ mod tests {
         );
     }
 
-    use super::{to_text, MAX_TEXT};
+    use super::{to_text, to_text_within, MAX_TEXT};
+
+    /// A paper is not a feed item, and converting one against the ceiling meant
+    /// for a feed item returns its opening pages and an ellipsis. The arXiv
+    /// reader was showing a tenth of every paper this way, cut mid-sentence,
+    /// with a page count that made the tenth look like the whole thing.
+    #[test]
+    fn a_document_is_converted_against_the_ceiling_its_reader_asked_for() {
+        let paper = "<p>Sentence.</p>".repeat(4000);
+        assert!(
+            paper.len() > MAX_TEXT * 4,
+            "the fixture has to exceed a field"
+        );
+        let as_field = to_text(&paper);
+        assert!(as_field.ends_with('\u{2026}'), "a field is still cut");
+        assert!(as_field.len() <= MAX_TEXT + 4, "{}", as_field.len());
+        let as_document = to_text_within(&paper, 512 * 1024);
+        assert!(
+            !as_document.ends_with('\u{2026}'),
+            "the document was cut anyway"
+        );
+        assert!(as_document.len() > MAX_TEXT * 4, "{}", as_document.len());
+    }
+
+    /// The ceiling is still a ceiling. A caller naming a larger one is saying
+    /// how much it is willing to hold, not handing the decision to the body.
+    #[test]
+    fn a_chosen_ceiling_bounds_the_output_as_firmly_as_the_default_one() {
+        let long = "x".repeat(100_000);
+        let text = to_text_within(&long, 1000);
+        assert!(text.len() <= 1004, "{}", text.len());
+        assert!(text.ends_with('\u{2026}'));
+    }
 
     #[test]
     fn a_paragraph_tag_becomes_a_blank_line_and_everything_else_is_removed() {

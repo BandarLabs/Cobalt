@@ -423,13 +423,22 @@ impl Arxiv {
             self.trouble = Some("That rendering was not text.".to_owned());
             return;
         };
-        let text = kobo_html::to_text(paper_body(html));
+        // Converted against the ceiling this application was already willing to
+        // hold rather than the one meant for a field in a feed. A paper is tens
+        // of thousands of characters and the field ceiling is eight thousand,
+        // so every paper used to arrive as its opening pages and an ellipsis --
+        // about a tenth of the document, with a page count that made the tenth
+        // look like the whole of it.
+        let text = kobo_html::to_text_within(paper_body(html), FULL_TEXT_BYTES as usize);
         if text.trim().is_empty() {
             self.trouble =
                 Some("arXiv has no readable rendering of this paper, only a PDF.".to_owned());
             return;
         }
-        self.truncated = bytes.len() >= FULL_TEXT_BYTES as usize;
+        // What was cut is the text, which is the thing the reader is turning
+        // pages through. The fetched bytes are markup and a paper can be at the
+        // transport limit with every word of it converted.
+        self.truncated = text.ends_with('\u{2026}');
         self.pages = context.paginate_reading(&text, false);
         self.page = 0;
         self.view = View::FullText;
