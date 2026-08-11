@@ -1,0 +1,14 @@
+[package]
+name = "kobo-morse"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+kobo-sdk = { path = "../../crates/kobo-sdk" }
+kobo-ui = { path = "../../crates/kobo-ui" }
+
+[lints]
+workspace = true

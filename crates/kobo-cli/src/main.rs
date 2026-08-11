@@ -60,6 +60,7 @@ const INSTALLED_PACKAGES: &[(&str, Option<&str>)] = &[
 /// Applications released through Store, including the initial built-in copies
 /// that users can update, remove and reinstall independently of Cobalt.
 const STORE_PACKAGES: &[&str] = &[
+    "kobo-arxiv",
     "kobo-audiobook",
     "kobo-brief",
     "kobo-chat",
@@ -67,6 +68,7 @@ const STORE_PACKAGES: &[&str] = &[
     "kobo-gutenbird",
     "kobo-hn",
     "kobo-magnet",
+    "kobo-morse",
     "kobo-rss",
     "kobo-sidekick",
     "kobo-sudoku",

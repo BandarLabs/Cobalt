@@ -2,6 +2,17 @@
   "format_version": 1,
   "apps": [
     {
+      "package": "kobo-arxiv",
+      "id": "arxiv",
+      "display_name": "arXiv",
+      "short_label": "arXiv",
+      "summary": "Browse and search preprints, and read the ones with a rendering.",
+      "version": "1.0.0",
+      "minimum_cobalt_version": "0.2.0",
+      "glyph": "note",
+      "capabilities": ["network"]
+    },
+    {
       "package": "kobo-audiobook",
       "id": "audiobook",
       "display_name": "Audiobook Studio",
@@ -77,6 +88,17 @@
       "minimum_cobalt_version": "0.2.0",
       "glyph": "magnet",
       "capabilities": ["cover-sensor"]
+    },
+    {
+      "package": "kobo-morse",
+      "id": "morse",
+      "display_name": "Morse",
+      "short_label": "Morse",
+      "summary": "Sends a typed message in Morse on the front light, a letter at a time.",
+      "version": "1.0.0",
+      "minimum_cobalt_version": "0.2.0",
+      "glyph": "light",
+      "capabilities": ["frontlight-control", "keep-awake"]
     },
     {
       "package": "kobo-rss",
