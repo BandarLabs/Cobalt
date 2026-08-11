@@ -383,7 +383,13 @@ impl Reader {
         // line height both read it -- and the screen carries the same value,
         // so what was measured here is what gets drawn.
         let (mut pages, mut capped) = kobo_ui::with_text_scale(self.memory.scale, || {
-            paginate(&self.document, &self.memory.highlights, &self.pictures, &metrics, area)
+            paginate(
+                &self.document,
+                &self.memory.highlights,
+                &self.pictures,
+                &metrics,
+                area,
+            )
         });
         // A book of one page says nothing about where it is, so no strip is
         // drawn and the room it was holding belongs to the words. Deciding it
@@ -391,7 +397,13 @@ impl Reader {
         // never turns one page into two.
         if pages.len() <= 1 {
             let (whole, cut) = kobo_ui::with_text_scale(self.memory.scale, || {
-                paginate(&self.document, &self.memory.highlights, &self.pictures, &metrics, full)
+                paginate(
+                    &self.document,
+                    &self.memory.highlights,
+                    &self.pictures,
+                    &metrics,
+                    full,
+                )
             });
             if whole.len() <= 1 {
                 pages = whole;
@@ -1332,6 +1344,13 @@ impl Reader {
 /// grain visible.
 const MAX_PICTURE_MM: u16 = 90;
 
+/// The fraction of a page that must be filled before a chapter may end it.
+///
+/// A quarter. Below that the page is a fragment rather than an opening, and
+/// breaking after it spends a whole sheet on a line or two -- which is what
+/// the notice at the front of every Project Gutenberg book did.
+const MIN_PAGE_FILL: i32 = 4;
+
 /// The page being packed, handed to something that needs to add to it.
 struct Placing<'a> {
     pages: &'a mut Vec<Vec<Piece>>,
@@ -1395,11 +1414,7 @@ fn picture_height(
 /// a book. It is the difference a reader notices first, and the book already
 /// stated where the boundaries are.
 fn chapter_starts_of(document: &Document) -> BTreeSet<usize> {
-    document
-        .contents
-        .iter()
-        .map(|entry| entry.block)
-        .collect()
+    document.contents.iter().map(|entry| entry.block).collect()
 }
 
 /// Ends the page being filled, if anything is on it.
@@ -1407,11 +1422,21 @@ fn chapter_starts_of(document: &Document) -> BTreeSet<usize> {
 /// A page break with nothing above it is not a break, it is a blank page, and
 /// a book whose first chapter is listed in its contents would otherwise open
 /// on one.
-fn break_page(pages: &mut Vec<Vec<Piece>>, page: &mut Vec<Piece>, used: &mut i32) {
-    if !page.is_empty() {
-        pages.push(std::mem::take(page));
-        *used = 0;
+fn break_page(pages: &mut Vec<Vec<Piece>>, page: &mut Vec<Piece>, used: &mut i32, height: i32) {
+    if page.is_empty() {
+        return;
     }
+    // A page holding two lines and then nothing is not a chapter opening, it
+    // is a fragment that claimed a page. Gutenberg's books begin with one:
+    // a single sentence saying an illustrated edition exists, in a file of
+    // its own, which turned the first page of every one of them into a
+    // notice and a field of white. Something that short keeps the company of
+    // whatever follows it instead.
+    if *used < height / MIN_PAGE_FILL {
+        return;
+    }
+    pages.push(std::mem::take(page));
+    *used = 0;
 }
 
 // A packing loop: measure, place, and break when the page is full. Splitting
@@ -1448,7 +1473,7 @@ fn paginate(
         // A file seam is a chapter boundary in every EPUB, listed in the
         // contents or not, and it used to draw a small space instead.
         if kind == Kind::Break || starts_chapter {
-            break_page(&mut pages, &mut page, &mut used);
+            break_page(&mut pages, &mut page, &mut used, area.height);
             if kind == Kind::Break {
                 continue;
             }
@@ -1487,8 +1512,17 @@ fn paginate(
             if let Some(drawn) = pictures.get(name.as_str()) {
                 place_picture(
                     *drawn,
-                    Piece { block: index, text: alt.clone(), kind },
-                    &mut Placing { pages: &mut pages, page: &mut page, used: &mut used, gap },
+                    Piece {
+                        block: index,
+                        text: alt.clone(),
+                        kind,
+                    },
+                    &mut Placing {
+                        pages: &mut pages,
+                        page: &mut page,
+                        used: &mut used,
+                        gap,
+                    },
                     metrics,
                     area,
                 );
@@ -1628,18 +1662,23 @@ mod tests {
     fn two_chapters() -> Document {
         Document {
             title: Some("A Book".into()),
-            blocks: vec![
-                Block::Heading {
+            blocks: {
+                let mut blocks = vec![Block::Heading {
                     level: 1,
                     text: "Chapter One".into(),
-                },
-                Block::Paragraph("The first chapter is short.".into()),
-                Block::Heading {
+                }];
+                // Enough to fill its page: a chapter that ends two lines in is
+                // a fragment, and a fragment deliberately does not break.
+                blocks.extend((0..14).map(|n| {
+                    Block::Paragraph(format!("Paragraph {n} of the first chapter, at length."))
+                }));
+                blocks.push(Block::Heading {
                     level: 1,
                     text: "Chapter Two".into(),
-                },
-                Block::Paragraph("So is the second.".into()),
-            ],
+                });
+                blocks.push(Block::Paragraph("So begins the second.".into()));
+                blocks
+            },
             contents: vec![
                 kobo_doc::Contents {
                     title: "Chapter One".into(),
@@ -1648,7 +1687,7 @@ mod tests {
                 },
                 kobo_doc::Contents {
                     title: "Chapter Two".into(),
-                    block: 2,
+                    block: 15,
                     depth: 0,
                 },
             ],
@@ -1676,7 +1715,11 @@ mod tests {
         // pictures, and the state for one whose picture would not decode. A
         // gap the reader cannot account for is worse than a description.
         let reader = Reader::open(illustrated(), Memory::default(), &panel());
-        let words: Vec<&str> = reader.page().iter().map(|piece| piece.text.as_str()).collect();
+        let words: Vec<&str> = reader
+            .page()
+            .iter()
+            .map(|piece| piece.text.as_str())
+            .collect();
         assert!(
             words.iter().any(|text| text.contains("cathedral tower")),
             "{words:?}"
@@ -1691,7 +1734,11 @@ mod tests {
         // Padded until a page is nearly full, because a picture is capped at
         // ninety millimetres and an otherwise empty page has room for one.
         let mut blocks: Vec<Block> = (0..12)
-            .map(|n| Block::Paragraph(format!("Paragraph number {n} of the chapter before the plate.")))
+            .map(|n| {
+                Block::Paragraph(format!(
+                    "Paragraph number {n} of the chapter before the plate."
+                ))
+            })
             .collect();
         blocks.push(Block::Picture {
             name: "plate.png".into(),
@@ -1717,8 +1764,7 @@ mod tests {
     }
 
     #[test]
-    fn a_book_says_which_pictures_it_wants(
-    ) {
+    fn a_book_says_which_pictures_it_wants() {
         let reader = Reader::open(illustrated(), Memory::default(), &panel());
         assert_eq!(reader.pictures_wanted(), vec!["plate.png"]);
     }
@@ -1751,7 +1797,10 @@ mod tests {
             .flat_map(|node| node.text_lines.clone())
             .collect::<Vec<_>>();
         assert!(names.iter().any(|text| text == "1"), "{names:?}");
-        assert_eq!(reader.act(&format!("{}1", action::GO), &panel()), Outcome::Save);
+        assert_eq!(
+            reader.act(&format!("{}1", action::GO), &panel()),
+            Outcome::Save
+        );
     }
 
     #[test]
@@ -1772,13 +1821,39 @@ mod tests {
     }
 
     #[test]
+    fn a_fragment_does_not_claim_a_page_of_its_own() {
+        // Every Project Gutenberg book opens with a single sentence saying an
+        // illustrated edition exists, in a file of its own. Breaking after it
+        // turned the first page of every one of them into a notice and a
+        // field of white.
+        let document = Document {
+            blocks: vec![
+                Block::Paragraph("There is an illustrated edition of this title.".into()),
+                Block::Break,
+                Block::Paragraph("Chapter one begins here, and runs on at length.".into()),
+            ],
+            ..Document::default()
+        };
+        let reader = Reader::open(document, Memory::default(), &panel());
+        assert_eq!(
+            reader.page_count(),
+            1,
+            "two lines and a seam took a page to themselves"
+        );
+    }
+
+    #[test]
     fn a_chapter_begins_on_a_page_of_its_own() {
         // Both chapters fit on one page with room to spare, so anything that
         // does not deliberately break between them will run them together --
         // which is what a reader sees as "this is not a book".
         let reader = Reader::open(two_chapters(), Memory::default(), &panel());
         assert_eq!(reader.page_count(), 2, "the chapters shared a page");
-        let first: Vec<&str> = reader.page().iter().map(|piece| piece.text.as_str()).collect();
+        let first: Vec<&str> = reader
+            .page()
+            .iter()
+            .map(|piece| piece.text.as_str())
+            .collect();
         assert!(
             first.iter().any(|text| text.contains("first chapter")),
             "{first:?}"
@@ -1795,12 +1870,13 @@ mod tests {
         // them is a chapter boundary even when the book listed no contents.
         // It used to draw a small space, so one page held the end of one
         // chapter and the start of the next.
+        let mut blocks: Vec<Block> = (0..14)
+            .map(|n| Block::Paragraph(format!("Paragraph {n} of the chapter before the seam.")))
+            .collect();
+        blocks.push(Block::Break);
+        blocks.push(Block::Paragraph("The start of the next.".into()));
         let document = Document {
-            blocks: vec![
-                Block::Paragraph("The end of one chapter.".into()),
-                Block::Break,
-                Block::Paragraph("The start of the next.".into()),
-            ],
+            blocks,
             ..Document::default()
         };
         let reader = Reader::open(document, Memory::default(), &panel());
