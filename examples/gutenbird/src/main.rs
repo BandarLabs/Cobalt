@@ -560,6 +560,14 @@ struct Gutenbird {
     fetched: u32,
     complete: bool,
     reader: Option<Reader>,
+    /// The handles the runtime is holding plates against for the open book.
+    ///
+    /// Kept because a handle is the only thing that can give one back. The
+    /// runtime frees every picture when an application exits, which is no help
+    /// at all to an application that stays open: a book of plates was still
+    /// costing the device several megabytes of decoded greyscale while its
+    /// owner was back on the shelf looking at covers.
+    book_pictures: Vec<PictureHandle>,
     place: Option<Memory>,
     keeping: Option<ShelfUpload>,
     loading: Option<ShelfDownload>,
@@ -601,6 +609,7 @@ impl Default for Gutenbird {
             fetched: 0,
             complete: false,
             reader: None,
+            book_pictures: Vec::new(),
             place: None,
             keeping: None,
             loading: None,
@@ -968,6 +977,12 @@ impl Gutenbird {
         self.fetched = 0;
         self.complete = false;
         self.reader = None;
+        // Unconditionally, unlike closing a book: arriving at another
+        // publication abandons whatever was in flight, so there is nothing
+        // left that could ask for these back later.
+        for handle in self.book_pictures.drain(..) {
+            context.drop_picture(handle);
+        }
         self.place = None;
         self.loading = None;
         self.failed = None;
@@ -2215,10 +2230,23 @@ impl Gutenbird {
         };
         let read_ms = started.elapsed().as_millis();
         let _ = name;
-        if let Ok(document) = result {
+        if let Ok(mut document) = result {
             let blocks = document.blocks.len();
             let started = std::time::Instant::now();
+            // Whatever the last reopen handed over is about to be replaced, so
+            // it goes back first. A book read from the shelf reaches here a
+            // second time, and without this the first set stayed decoded in
+            // the runtime with nothing left that could name it.
+            for handle in self.book_pictures.drain(..) {
+                context.drop_picture(handle);
+            }
             let pictures = Self::hand_over_pictures(context, &document);
+            self.book_pictures = pictures.values().map(|picture| picture.handle).collect();
+            // The scanned bytes have done their work. Holding them as well as
+            // the decoded greyscale meant every plate was paid for twice, and
+            // for an illustrated Pride and Prejudice the copy nobody reads is
+            // the larger of the two at four and a half megabytes.
+            document.images = BTreeMap::new();
             let pictures_ms = started.elapsed().as_millis();
             let started = std::time::Instant::now();
             let mut reader = Reader::open(document, memory, &context.metrics());
@@ -2244,6 +2272,34 @@ impl Gutenbird {
                 self.discard_broken_book(context);
             }
         }
+    }
+
+    /// Gives back everything the open book was costing.
+    ///
+    /// Leaving the reader used to release nothing: the `Reader` stayed, and
+    /// with it the whole parsed document; the downloaded bytes stayed; and
+    /// every plate stayed decoded inside the runtime. All of it was only
+    /// dropped when some *other* book was opened, so an owner who read one
+    /// illustrated book and went back to browsing carried it for the rest of
+    /// the session. Peter Rabbit is nine megabytes held that way, Alice with
+    /// the Tenniel plates fourteen, on a device with four hundred and forty.
+    ///
+    /// Nothing here needs the bytes again. A book already on the device is
+    /// re-read from the shelf when its Read control is pressed, which is the
+    /// same path that opened it the first time.
+    fn close_book(&mut self, context: &mut Context) {
+        // A book still arriving is a book still being appended to, and the
+        // chunk that lands next expects to find what came before it.
+        if self.download.is_some() && !self.complete {
+            return;
+        }
+        for handle in self.book_pictures.drain(..) {
+            context.drop_picture(handle);
+        }
+        self.reader = None;
+        self.download = None;
+        self.fetched = 0;
+        self.complete = false;
     }
 
     /// Decodes the book's pictures and hands them to the runtime.
@@ -2824,7 +2880,10 @@ impl KoboApp for Gutenbird {
                 }
             }
             match self.view {
-                View::Reading if self.open.is_some() => self.view = View::Details,
+                View::Reading if self.open.is_some() => {
+                    self.close_book(context);
+                    self.view = View::Details;
+                }
                 View::Details | View::Search | View::AddCatalog | View::Catalogs => {
                     self.stop_federating();
                     self.view = View::Shelf;
@@ -4506,6 +4565,76 @@ Please read this before you distribute or use this work.\n";
             Memory::default(),
             &CLARA_BW_METRICS,
         )
+    }
+
+    #[test]
+    fn leaving_a_book_gives_back_everything_it_was_costing() {
+        // The device this was found on had been reading an illustrated book,
+        // gone back to the shelf, and then answered a tap five seconds later
+        // until it stopped answering at all. Nothing was released on the way
+        // out: the parsed document, the downloaded bytes and every decoded
+        // plate all stayed, and were only dropped when some other book was
+        // opened -- which an owner browsing covers never does.
+        let book = publication("Illustrated", vec![epub_acquisition("https://x/book.epub")]);
+        let mut runner = AppRunner::new(Gutenbird {
+            open: Some(book),
+            view: View::Reading,
+            complete: true,
+            reader: Some(opened("A book with plates in it.")),
+            download: Some(Download {
+                url: "https://x/book.epub".to_owned(),
+                kind: DownloadKind::Epub,
+                bytes: vec![0; 1_510_370],
+                total: None,
+            }),
+            book_pictures: vec![PictureHandle(1000), PictureHandle(1001)],
+            ..Gutenbird::default()
+        });
+        let commands = runner.action(kobo_sdk::ActionId::BACK);
+        let given_back: Vec<PictureHandle> = commands
+            .iter()
+            .filter_map(|command| match command {
+                kobo_sdk::Command::DropPicture(handle) => Some(*handle),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            given_back,
+            vec![PictureHandle(1000), PictureHandle(1001)],
+            "the runtime was left holding the plates"
+        );
+        assert!(runner.app().reader.is_none(), "the parsed book was kept");
+        assert!(
+            runner.app().download.is_none(),
+            "the downloaded bytes were kept"
+        );
+        assert_eq!(runner.app().view, View::Details);
+    }
+
+    #[test]
+    fn a_book_still_arriving_is_not_released_out_from_under_the_chunk_that_is_coming() {
+        // The guard the release needs: a text book is readable while the rest
+        // of it is still downloading, and the next chunk expects to find what
+        // came before it.
+        let book = publication("Streaming", vec![epub_acquisition("https://x/book.txt")]);
+        let mut runner = AppRunner::new(Gutenbird {
+            open: Some(book),
+            view: View::Reading,
+            complete: false,
+            reader: Some(opened("The first chunk of a longer book.")),
+            download: Some(Download {
+                url: "https://x/book.txt".to_owned(),
+                kind: DownloadKind::Text,
+                bytes: b"The first chunk of a longer book.".to_vec(),
+                total: Some(9_000),
+            }),
+            ..Gutenbird::default()
+        });
+        runner.action(kobo_sdk::ActionId::BACK);
+        assert!(
+            runner.app().download.is_some(),
+            "a download still in flight was thrown away"
+        );
     }
 
     #[test]
