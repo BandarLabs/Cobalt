@@ -376,6 +376,13 @@ enum FeedPurpose {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum FillStage {
     /// Following a row to see whether it is a book, and where its picture is.
+    ///
+    /// Project Gutenberg never serves a shelf: every book in it, even in a
+    /// bookshelf or an author's list, is a navigation entry pointing at that
+    /// book's own document, carrying a twenty-two pixel icon and no cover. A
+    /// catalog like that would draw as a page of identical rows, so the
+    /// entries on the page being looked at are followed to see which of them
+    /// are books, and the ones that are move to the shelf.
     Entry { href: String },
     /// Fetching that picture.
     Picture { href: String },
@@ -388,15 +395,6 @@ enum Awaiting {
     /// again once the bytes land, since every relative href inside them
     /// resolves against it.
     Feed(FeedPurpose, String),
-    /// A navigation entry followed to find out whether it is a book.
-    ///
-    /// Project Gutenberg never serves a shelf: every book in it, even in a
-    /// bookshelf or an author's list, is a navigation entry pointing at that
-    /// book's own document, carrying a twenty-two pixel icon and no cover. A
-    /// catalog like that would draw as a page of identical rows, so the
-    /// entries on the page being looked at are followed to see which of them
-    /// are books, and the ones that are move to the shelf.
-
     /// A catalog's root feed, fetched only because nothing about it has been
     /// fetched yet and a search needs to know whether it offers one at all.
     DiscoverRoot {
