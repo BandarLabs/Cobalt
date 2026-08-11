@@ -2149,6 +2149,36 @@ fn layout_nav_bar(nav_bar: &NavBar, metrics: &DisplayMetrics, layout: &mut Layou
     }
 }
 
+/// A run of characters inside a paragraph that goes somewhere.
+///
+/// A footnote marker, a cross-reference, an address: all of them are set into
+/// the line exactly like the words around them, and before this the reader drew
+/// them as text and nothing else. A book's own cross-references were decoration.
+///
+/// Byte offsets into the paragraph's own string, and half-open. Offsets rather
+/// than a copy of the words because the same words often appear twice in a
+/// paragraph and only one of them is the link, and because the layout has to
+/// measure the run against what precedes it on its line to know where it is.
+///
+/// The whole run gets a tap target, which is what makes this workable on a
+/// panel that cannot resolve a superscript: the words of a footnote marker are
+/// a few millimetres wide even where the marker itself is not.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TextLink {
+    pub action: ActionId,
+    /// Where the run starts, as a byte offset into the paragraph.
+    pub start: usize,
+    /// Where it ends, exclusive.
+    pub end: usize,
+}
+
+/// The most links one paragraph may carry.
+///
+/// An annotated edition links every other sentence, and each link is a node in
+/// the layout and a tap target in the hit test. Sixteen is far past any
+/// paragraph anybody reads and well short of a paragraph that costs anything.
+pub const MAX_TEXT_LINKS: usize = 16;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Node {
     Heading {
@@ -2158,6 +2188,14 @@ pub enum Node {
     Text {
         id: NodeId,
         text: String,
+        /// Runs of this paragraph that go somewhere when they are touched.
+        ///
+        /// Empty for almost every paragraph in the system, which is why this
+        /// is a list on the node rather than a node of its own: a link is a
+        /// property of a few characters inside prose, and a paragraph that had
+        /// to be split into three nodes to carry one would wrap, measure and
+        /// paginate as three separate paragraphs.
+        links: Vec<TextLink>,
     },
     /// A line about the content rather than the content: a date, an author, a
     /// size, a count, a status.
@@ -3364,6 +3402,12 @@ pub enum LayoutKind {
     StatusBattery(Option<Percent>, bool),
     Heading,
     Text,
+    /// A run inside a paragraph that goes somewhere.
+    ///
+    /// Drawn as an underline under words the paragraph node has already set,
+    /// and hit-tested ahead of the page turn beneath it because it is pushed
+    /// after the paragraph. One of these per line the run covers.
+    InlineLink(ActionId),
     /// A line of metadata: smaller than the body, and in the muted tone.
     Secondary,
     /// The name of a group, with a hairline to the right margin and an
@@ -3531,6 +3575,7 @@ impl LayoutKind {
             | Self::ChoiceFreeform(action)
             | Self::QuoteFold(action, _)
             | Self::PagePrevious(action)
+            | Self::InlineLink(action)
             | Self::PageNext(action) => Some(action),
             Self::Back | Self::OverlayClose => Some(ActionId::BACK),
             _ => None,
@@ -4343,8 +4388,16 @@ fn layout_node(
             });
             y.saturating_add(height)
         }
-        Node::Text { id, text } => {
-            let lines = wrap_text_in(text, width, FontSize::Body, prose);
+        Node::Text { id, text, links } => {
+            let ranges = wrap_ranges(text, width, FontSize::Body, prose);
+            let lines: Vec<String> = if ranges.is_empty() {
+                vec![String::new()]
+            } else {
+                ranges
+                    .iter()
+                    .map(|line| text[line.0..line.1].to_owned())
+                    .collect()
+            };
             let height = max(
                 MIN_TEXT_HEIGHT,
                 lines.len() as i32 * FontSize::Body.line_height_in(prose),
@@ -4360,6 +4413,36 @@ fn layout_node(
                 kind: LayoutKind::Text,
                 text_lines: lines,
             });
+            // After the paragraph, so the hit test -- which reads the nodes
+            // backwards, on the principle that what is drawn last is what the
+            // finger touched -- finds a link before the page turn underneath
+            // it. A run split across a line break becomes two rectangles, both
+            // naming the same action, which is what a link that wraps should
+            // feel like.
+            for link in links.iter().take(MAX_TEXT_LINKS) {
+                for (index, &(from, to)) in ranges.iter().enumerate() {
+                    let start = max(from, link.start);
+                    let end = min(to, link.end);
+                    if start >= end || !text.is_char_boundary(start) || !text.is_char_boundary(end)
+                    {
+                        continue;
+                    }
+                    let before = measure_text_in(&text[from..start], FontSize::Body, prose).0;
+                    let through = measure_text_in(&text[from..end], FontSize::Body, prose).0;
+                    let line_height = FontSize::Body.line_height_in(prose);
+                    layout.nodes.push(LayoutNode {
+                        id: *id,
+                        rect: Rect {
+                            x: x.saturating_add(before),
+                            y: y.saturating_add(index as i32 * line_height),
+                            width: through.saturating_sub(before),
+                            height: line_height,
+                        },
+                        kind: LayoutKind::InlineLink(link.action),
+                        text_lines: Vec::new(),
+                    });
+                }
+            }
             y.saturating_add(height)
         }
         Node::Secondary { id, text } => {
@@ -7178,8 +7261,29 @@ pub fn wrap_text(text: &str, max_width: i32, size: FontSize) -> Vec<String> {
 /// other puts lines past the margin and loses the end of a page.
 #[must_use]
 pub fn wrap_text_in(text: &str, max_width: i32, size: FontSize, face: Face) -> Vec<String> {
-    if text.is_empty() || max_width <= 0 {
+    let lines = wrap_ranges(text, max_width, size, face);
+    if lines.is_empty() {
         return vec![String::new()];
+    }
+    lines
+        .into_iter()
+        .map(|line| text[line.0..line.1].to_owned())
+        .collect()
+}
+
+/// The same wrapping, as byte offsets into `text` rather than copies of it.
+///
+/// What lets a run inside a paragraph be found on the page: a link is a range
+/// of the paragraph's own bytes, and turning it into a rectangle means knowing
+/// which line it landed on and how much of that line comes before it. Answering
+/// from the strings alone is not possible -- wrapping drops the whitespace at
+/// each break, so the lines put back together are not the paragraph.
+///
+/// Empty for text that wraps to nothing, which [`wrap_text_in`] turns back into
+/// the single empty line every caller downstream expects.
+fn wrap_ranges(text: &str, max_width: i32, size: FontSize, face: Face) -> Vec<(usize, usize)> {
+    if text.is_empty() || max_width <= 0 {
+        return Vec::new();
     }
     let opportunities = TYPESETTER
         .get()
@@ -7192,7 +7296,7 @@ pub fn wrap_text_in(text: &str, max_width: i32, size: FontSize, face: Face) -> V
         },
         |face| face.grapheme_boundaries(text),
     );
-    let mut lines = Vec::new();
+    let mut lines: Vec<(usize, usize)> = Vec::new();
     let mut start = 0;
     while start < text.len() {
         start = skip_soft_whitespace(text, start);
@@ -7200,7 +7304,7 @@ pub fn wrap_text_in(text: &str, max_width: i32, size: FontSize, face: Face) -> V
             break;
         }
 
-        let mut best = None;
+        let mut best: Option<(usize, usize)> = None;
         let mut emitted = false;
         for &(end, opportunity) in opportunities.iter().filter(|entry| entry.0 > start) {
             let visible_end = if opportunity == BreakOpportunity::Mandatory {
@@ -7209,10 +7313,11 @@ pub fn wrap_text_in(text: &str, max_width: i32, size: FontSize, face: Face) -> V
                 end
             };
             let candidate = text[start..visible_end].trim_end_matches(char::is_whitespace);
+            let candidate_end = start + candidate.len();
             if measure_text_in(candidate, size, face).0 <= max_width {
-                best = Some((end, candidate.to_owned()));
+                best = Some((end, candidate_end));
                 if opportunity == BreakOpportunity::Mandatory {
-                    lines.push(candidate.to_owned());
+                    lines.push((start, candidate_end));
                     start = end;
                     emitted = true;
                     break;
@@ -7220,13 +7325,13 @@ pub fn wrap_text_in(text: &str, max_width: i32, size: FontSize, face: Face) -> V
                 continue;
             }
 
-            if let Some((best_end, line)) = best.take() {
-                lines.push(line);
+            if let Some((best_end, line_end)) = best.take() {
+                lines.push((start, line_end));
                 start = best_end;
             } else {
                 let forced_end =
                     force_grapheme_break(text, start, visible_end, max_width, size, &graphemes);
-                lines.push(text[start..forced_end].trim_end().to_owned());
+                lines.push((start, start + text[start..forced_end].trim_end().len()));
                 start = forced_end;
             }
             emitted = true;
@@ -7236,12 +7341,9 @@ pub fn wrap_text_in(text: &str, max_width: i32, size: FontSize, face: Face) -> V
         if !emitted {
             let forced_end =
                 force_grapheme_break(text, start, text.len(), max_width, size, &graphemes);
-            lines.push(text[start..forced_end].trim_end().to_owned());
+            lines.push((start, start + text[start..forced_end].trim_end().len()));
             start = forced_end;
         }
-    }
-    if lines.is_empty() {
-        lines.push(String::new());
     }
     lines
 }
@@ -8469,6 +8571,14 @@ fn validate_layout_nodes(layout: &Layout, metrics: &DisplayMetrics, issues: &mut
     }
 }
 
+/// Which kinds are held to the minimum a finger can reliably hit.
+///
+/// Controls, in other words: something a designer chose the size of, and could
+/// have made larger. [`LayoutKind::InlineLink`] is deliberately absent. Its size
+/// is the size of the words the author wrote, which nobody here chose and
+/// nothing here can change, and reporting every footnote marker in an annotated
+/// edition as a layout error would say only that books have short words in
+/// them.
 const fn is_tappable(kind: LayoutKind) -> bool {
     matches!(
         kind,
@@ -9384,6 +9494,30 @@ pub fn render_all(
                         clip,
                     );
                 }
+            }
+            // The words are already on the panel: the paragraph drew them.
+            // What a link adds is the one mark that has meant "this goes
+            // somewhere" since long before anybody put it on a screen. Set
+            // clear of the descenders rather than through them, and a rule
+            // thick, because a single pixel at this density is not there.
+            LayoutKind::InlineLink(_) => {
+                let thickness = metrics.rule_thickness();
+                let baseline = node
+                    .rect
+                    .y
+                    .saturating_add(FontSize::Body.line_height_in(prose))
+                    .saturating_sub(thickness.saturating_mul(2));
+                fill_clipped(
+                    surface,
+                    Rect {
+                        x: node.rect.x,
+                        y: baseline,
+                        width: node.rect.width,
+                        height: thickness,
+                    },
+                    tone::INK,
+                    clip,
+                );
             }
             LayoutKind::Text | LayoutKind::PagedList => draw_lines_in(
                 surface,
@@ -10758,6 +10892,7 @@ mod tests {
             .map(|index| Node::Text {
                 id: NodeId(index + 1),
                 text: "A paragraph that occupies a real line.".into(),
+                links: Vec::new(),
             })
             .collect();
         let issues = Screen::new(1, nodes).validate(&CLARA_BW_METRICS);
@@ -11300,6 +11435,7 @@ mod page_turn_tests {
             vec![Node::Text {
                 id: NodeId(2),
                 text: "A page of a book.".to_owned(),
+                links: Vec::new(),
             }],
         )
         .with_top_bar(TopBar::new(NodeId(3), "Reading"))
@@ -11602,6 +11738,7 @@ mod chrome_tests {
             .map(|index| Node::Text {
                 id: NodeId(index),
                 text: "A line of body copy that occupies a row".into(),
+                links: Vec::new(),
             })
             .collect();
         let screen =
@@ -12320,6 +12457,7 @@ mod loading_tests {
             Node::Text {
                 id: NodeId(2),
                 text: "Some body text that is long enough to wrap onto a second line.".into(),
+                links: Vec::new(),
             },
             Node::Button {
                 id: NodeId(3),
@@ -12333,6 +12471,7 @@ mod loading_tests {
                 children: vec![Node::Text {
                     id: NodeId(5),
                     text: "Inside a card".into(),
+                    links: Vec::new(),
                 }],
             },
             Node::Divider { id: NodeId(6) },
@@ -12567,6 +12706,7 @@ mod prose_tests {
             .map(|(index, paragraph)| Node::Text {
                 id: NodeId(index as u32 + 1),
                 text: paragraph.clone(),
+                links: Vec::new(),
             })
             .collect();
         let screen = Screen::new(1, nodes)
@@ -12903,6 +13043,7 @@ mod prose_tests {
             vec![Node::Text {
                 id: NodeId(1),
                 text: "A paragraph the reader is meant to be able to read.".to_owned(),
+                links: Vec::new(),
             }],
         )
         .with_top_bar(TopBar::new(NodeId(0), "Feeds"));
@@ -13207,6 +13348,7 @@ mod prose_tests {
                 Node::Text {
                     id: NodeId(1),
                     text: "Twenty Thousand Leagues Under the Sea".to_owned(),
+                    links: Vec::new(),
                 },
                 Node::Secondary {
                     id: NodeId(2),
@@ -13491,6 +13633,7 @@ mod prose_tests {
                 nodes.push(Node::Text {
                     id: NodeId(1),
                     text: before.to_string(),
+                    links: Vec::new(),
                 });
             }
             nodes.push(Node::Button {
@@ -13504,6 +13647,7 @@ mod prose_tests {
                 nodes.push(Node::Text {
                     id: NodeId(3),
                     text: after.to_string(),
+                    links: Vec::new(),
                 });
             }
             Screen::new(1, nodes)
@@ -14469,6 +14613,7 @@ mod prose_tests {
                 vec![Node::Text {
                     id: NodeId(41),
                     text: "Something".to_owned(),
+                    links: Vec::new(),
                 }],
             ));
         let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
@@ -14498,6 +14643,7 @@ mod prose_tests {
             vec![Node::Text {
                 id: NodeId(1),
                 text: "A page of a book.".to_owned(),
+                links: Vec::new(),
             }],
         )
         .with_page_turns(ActionId(2), ActionId(3))
@@ -14531,6 +14677,7 @@ mod prose_tests {
                     nodes: vec![Node::Text {
                         id: NodeId(3),
                         text: "This cannot be undone.".into(),
+                        links: Vec::new(),
                     }],
                 });
                 let layout = screen.layout_with(&metrics, &Chrome::with_back(false));
@@ -14583,6 +14730,7 @@ mod prose_tests {
                 nodes: vec![Node::Text {
                     id: NodeId(3),
                     text: "Standard".into(),
+                    links: Vec::new(),
                 }],
             });
         let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(false));
@@ -14714,6 +14862,7 @@ mod prose_tests {
                 Node::Text {
                     id: NodeId(1),
                     text: "A page of a book.".to_owned(),
+                    links: Vec::new(),
                 },
                 Node::Button {
                     id: NodeId(2),
@@ -14760,6 +14909,7 @@ mod prose_tests {
             vec![Node::Text {
                 id: NodeId(1),
                 text: "A page of a book.".to_owned(),
+                links: Vec::new(),
             }],
         )
         .with_hold(ActionId(9))
@@ -14769,6 +14919,7 @@ mod prose_tests {
             vec![Node::Text {
                 id: NodeId(41),
                 text: "Type size".to_owned(),
+                links: Vec::new(),
             }],
         ));
         let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
@@ -14848,6 +14999,7 @@ mod prose_tests {
                 Node::Text {
                     id: NodeId(1),
                     text: "Nothing to do.".into(),
+                    links: Vec::new(),
                 },
                 Node::Button {
                     id: NodeId(2),
@@ -14879,6 +15031,7 @@ mod prose_tests {
                 vec![Node::Text {
                     id: NodeId(1),
                     text: "A page of prose.".into(),
+                    links: Vec::new(),
                 }],
             )
             .with_page_turns(ActionId(1), ActionId(2));
@@ -14922,6 +15075,7 @@ mod prose_tests {
                 vec![Node::Text {
                     id: NodeId(1),
                     text: "A page of prose.".into(),
+                    links: Vec::new(),
                 }],
             )
             .with_page_turns(ActionId(7), ActionId(9));
@@ -15725,10 +15879,12 @@ mod prose_tests {
                     BandSlot::fill(vec![Node::Text {
                         id: NodeId(2),
                         text: "Left".to_owned(),
+                        links: Vec::new(),
                     }]),
                     BandSlot::fill(vec![Node::Text {
                         id: NodeId(3),
                         text: "Right".to_owned(),
+                        links: Vec::new(),
                     }]),
                 ],
             }],
@@ -15764,10 +15920,12 @@ mod prose_tests {
                     BandSlot::fill(vec![Node::Text {
                         id: NodeId(2),
                         text: "Left".to_owned(),
+                        links: Vec::new(),
                     }]),
                     BandSlot::fill(vec![Node::Text {
                         id: NodeId(3),
                         text: "Right".to_owned(),
+                        links: Vec::new(),
                     }]),
                 ],
             }],
@@ -15848,6 +16006,7 @@ mod prose_tests {
                     BandSlot::fill(vec![Node::Text {
                         id: NodeId(2),
                         text: "A title that wants the whole line to itself".to_owned(),
+                        links: Vec::new(),
                     }]),
                     BandSlot::natural(vec![Node::Secondary {
                         id: NodeId(3),
@@ -16005,6 +16164,7 @@ mod press_feedback_tests {
             vec![Node::Text {
                 id: NodeId(1),
                 text: "Once upon a time".into(),
+                links: Vec::new(),
             }],
         );
         let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
@@ -16542,6 +16702,7 @@ mod press_feedback_tests {
                 Node::Text {
                     id: NodeId(2),
                     text: "Published in 1851.".to_owned(),
+                    links: Vec::new(),
                 },
             ],
         );
@@ -16600,6 +16761,7 @@ mod press_feedback_tests {
                     children: vec![Node::Text {
                         id: NodeId(5),
                         text: "A card is the surface tone.".to_owned(),
+                        links: Vec::new(),
                     }],
                 },
                 Node::Button {
@@ -16899,6 +17061,7 @@ mod figure_tests {
                 vec![Node::Text {
                     id: NodeId(1),
                     text: "body".into(),
+                    links: Vec::new(),
                 }],
             );
             screen

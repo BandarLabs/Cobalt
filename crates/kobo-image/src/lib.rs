@@ -12,6 +12,7 @@
 //! reader with it.
 
 use image::imageops::FilterType;
+use image::metadata::Orientation;
 use image::{DynamicImage, ImageDecoder, ImageEncoder, ImageReader};
 use std::fmt;
 use std::io::Cursor;
@@ -399,6 +400,90 @@ fn nearest_level(value: i32, levels: u32) -> i32 {
     (step * 255 + steps / 2) / steps
 }
 
+/// How large a picture will be, without decoding it.
+///
+/// Reads the header and stops. Every format here states its own dimensions in
+/// the first few dozen bytes, so this costs microseconds where [`decode`] costs
+/// a hundred milliseconds for a plate off a Kobo's processor -- and a layout
+/// that only needs to know how much room to leave should not be paying for
+/// pixels it is not going to draw yet. The reader uses it to measure an
+/// illustrated book at the moment it opens and decode the plates afterwards,
+/// which is the difference between a book opening at once and the panel
+/// freezing for three seconds.
+///
+/// Orientation is applied, so a photograph the camera wrote sideways is
+/// reported the way it will be drawn rather than the way it was stored.
+///
+/// # Errors
+///
+/// The same refusals as [`decode`], for the same reasons: a header claiming
+/// more than [`MAX_PIXELS`] is a header worth refusing before anyone acts on
+/// it.
+pub fn size(bytes: &[u8]) -> Result<(u32, u32), ImageError> {
+    if bytes.len() > MAX_SOURCE_BYTES {
+        return Err(ImageError::TooManyBytes { bytes: bytes.len() });
+    }
+    let reader = ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|error| ImageError::Undecodable(error.to_string()))?;
+    if reader.format().is_none() {
+        return Err(ImageError::UnknownFormat);
+    }
+    let mut decoder = reader
+        .into_decoder()
+        .map_err(|error| ImageError::Undecodable(error.to_string()))?;
+    let orientation = decoder
+        .orientation()
+        .map_err(|error| ImageError::Undecodable(error.to_string()))?;
+    let (width, height) = decoder.dimensions();
+    let pixels = u64::from(width) * u64::from(height);
+    if pixels > MAX_PIXELS {
+        return Err(ImageError::TooManyPixels { pixels });
+    }
+    // A quarter turn swaps the two. Everything else -- the flips, and no
+    // orientation at all -- leaves them as they were stored.
+    Ok(match orientation {
+        Orientation::Rotate90
+        | Orientation::Rotate270
+        | Orientation::Rotate90FlipH
+        | Orientation::Rotate270FlipH => (height, width),
+        _ => (width, height),
+    })
+}
+
+/// What [`Picture::fit`] will make of a picture `source` pixels across.
+///
+/// Answered from dimensions alone, so a caller holding nothing but the reply
+/// from [`size`] can work out how much room the picture will take before
+/// deciding to decode it. That is what lets an illustrated book be measured
+/// the moment it opens and drawn a plate at a time afterwards, with no page
+/// changing size when the pixels arrive.
+///
+/// Not the same answer as [`Picture::size_within`], which scales a small
+/// picture up to its box. `fit` deliberately leaves one alone, so this does
+/// too: this predicts `fit`, and a prediction that disagreed with the thing it
+/// predicts would be worse than none.
+#[must_use]
+pub fn fitted_size(source: (u32, u32), width: u32, height: u32) -> (u32, u32) {
+    let (source_width, source_height) = source;
+    if source_width == 0 || source_height == 0 || width == 0 || height == 0 {
+        return (0, 0);
+    }
+    // A picture already inside the box is left alone, the way `fit` leaves it.
+    if source_width <= width && source_height <= height {
+        return source;
+    }
+    let by_width = u64::from(width) * u64::from(source_height);
+    let by_height = u64::from(height) * u64::from(source_width);
+    if by_width <= by_height {
+        let scaled = by_width / u64::from(source_width);
+        (width, u32::try_from(scaled).unwrap_or(height).max(1))
+    } else {
+        let scaled = by_height / u64::from(source_height);
+        (u32::try_from(scaled).unwrap_or(width).max(1), height)
+    }
+}
+
 /// Reads a picture that arrived over the network.
 ///
 /// # Errors
@@ -460,7 +545,10 @@ pub fn decode(bytes: &[u8]) -> Result<Picture, ImageError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode, FitMode, ImageError, Picture, MAX_ENLARGEMENT, MAX_PIXELS, PANEL_GREYS};
+    use super::{
+        decode, fitted_size, size, FitMode, ImageError, Picture, MAX_ENLARGEMENT, MAX_PIXELS,
+        PANEL_GREYS,
+    };
     use image::{DynamicImage, ImageFormat, RgbImage, RgbaImage};
     use std::io::Cursor;
 
@@ -660,6 +748,44 @@ mod tests {
         let picture = Picture::from_grey(1000, 1000, vec![9; 1_000_000]).expect("build");
         let filled = picture.fit_enlarging(100, 100).expect("fit");
         assert_eq!((filled.width(), filled.height()), (100, 100));
+    }
+
+    /// The whole point of reading a header: the answer has to be the same one
+    /// decoding would have given, or a page measured from it moves when the
+    /// pixels turn up -- which is the thing this was written to stop.
+    #[test]
+    fn the_size_read_from_a_header_is_the_size_the_decoder_returns() {
+        let jpeg = tiny_jpeg();
+        let decoded = decode(&jpeg).expect("decode");
+        assert_eq!(
+            size(&jpeg).expect("header"),
+            (decoded.width(), decoded.height())
+        );
+
+        let png = png(37, 91, vec![200; 37 * 91 * 4]);
+        let decoded = decode(&png).expect("decode");
+        assert_eq!(
+            size(&png).expect("header"),
+            (decoded.width(), decoded.height())
+        );
+    }
+
+    /// And the same for the size it will be drawn at, which is what a layout
+    /// actually reserves room for.
+    #[test]
+    fn a_predicted_fit_is_the_fit_that_happens() {
+        for (width, height) in [(37, 91), (400, 200), (16, 16)] {
+            let picture = Picture::from_grey(width, height, vec![64; (width * height) as usize])
+                .expect("build");
+            for (box_width, box_height) in [(100, 100), (945, 1063), (10, 4000)] {
+                let fitted = picture.fit(box_width, box_height).expect("fit");
+                assert_eq!(
+                    fitted_size((width, height), box_width, box_height),
+                    (fitted.width(), fitted.height()),
+                    "a {width} by {height} picture in a {box_width} by {box_height} box"
+                );
+            }
+        }
     }
 
     #[test]

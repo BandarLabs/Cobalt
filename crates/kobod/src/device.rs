@@ -2939,6 +2939,7 @@ mod tests {
             vec![kobo_ui::Node::Text {
                 id: kobo_ui::NodeId(1),
                 text: "A page of a book.".to_owned(),
+                links: Vec::new(),
             }],
         )
         .with_page_turns(ActionId(11), ActionId(12))

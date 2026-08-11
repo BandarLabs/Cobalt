@@ -281,6 +281,7 @@ impl Simulator {
                 Node::Text {
                     id: NodeId(2),
                     text: format!("Value: {}", self.counter),
+                    links: Vec::new(),
                 },
                 Node::Button {
                     id: NodeId(3),
@@ -2867,6 +2868,7 @@ mod tests {
                 .map(|index| Node::Text {
                     id: NodeId(index + 1),
                     text: "One visible line".into(),
+                    links: Vec::new(),
                 })
                 .collect(),
         );
