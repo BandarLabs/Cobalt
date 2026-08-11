@@ -1793,7 +1793,7 @@ impl Gutenbird {
             };
             match image.href {
                 ImageSource::Inline { bytes, .. } => {
-                    inline_queue.push((index, String::new(), bytes))
+                    inline_queue.push((index, String::new(), bytes));
                 }
                 ImageSource::Url(url) => self.looking.push((cover_key(&url), index)),
             }
