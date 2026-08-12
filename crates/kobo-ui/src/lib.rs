@@ -4967,11 +4967,17 @@ fn layout_node(
                     // A formula is drawn, not written, so it leaves the run
                     // machinery entirely: it takes its own width on the line
                     // and the words standing in for it are skipped over.
-                    if let Some(formula) = formula_at(cursor, formulae) {
+                    // Only while there is a node left to draw it with. Out of
+                    // nodes, the formula falls through to the run machinery
+                    // below and is set as the words it was written as, which
+                    // is how it reads without a picture anywhere else. Skipping
+                    // it here instead would take the mathematics off the page
+                    // and leave the sentence with a hole in it.
+                    if let Some(formula) = formula_at(cursor, formulae)
+                        .filter(|_| layout.nodes.len().saturating_add(1) < MAX_LAYOUT_NODES)
+                    {
                         let end = formula.end.min(to).max(cursor + 1);
-                        if formula.start == cursor
-                            && layout.nodes.len().saturating_add(1) < MAX_LAYOUT_NODES
-                        {
+                        if formula.start == cursor {
                             let (drawn_width, drawn_height) =
                                 inline_formula_size(formula, line_height);
                             // Centred on the line rather than sat on its top,
@@ -5043,8 +5049,28 @@ fn layout_node(
                     let start = max(from, link.start);
                     let end = min(to, link.end);
                     if start < end && text.is_char_boundary(start) && text.is_char_boundary(end) {
-                        let before = measure_text_in(&text[from..start], FontSize::Body, prose).0;
-                        let through = measure_text_in(&text[from..end], FontSize::Body, prose).0;
+                        // Measured the way the line is set, not the way it was
+                        // written: a formula earlier on the line takes the width
+                        // of its picture, and measuring the words it stands for
+                        // instead puts every target after it in the wrong place.
+                        let before = measure_range_in(
+                            text,
+                            from,
+                            start,
+                            FontSize::Body,
+                            prose,
+                            formulae,
+                            line_height,
+                        );
+                        let through = measure_range_in(
+                            text,
+                            from,
+                            end,
+                            FontSize::Body,
+                            prose,
+                            formulae,
+                            line_height,
+                        );
                         layout.nodes.push(LayoutNode {
                             id: *id,
                             rect: Rect {
@@ -5070,8 +5096,24 @@ fn layout_node(
                         else {
                             continue;
                         };
-                        let before = measure_text_in(&text[from..start], FontSize::Body, prose).0;
-                        let through = measure_text_in(&text[from..end], FontSize::Body, prose).0;
+                        let before = measure_range_in(
+                            text,
+                            from,
+                            start,
+                            FontSize::Body,
+                            prose,
+                            formulae,
+                            line_height,
+                        );
+                        let through = measure_range_in(
+                            text,
+                            from,
+                            end,
+                            FontSize::Body,
+                            prose,
+                            formulae,
+                            line_height,
+                        );
                         layout.text_hits.push((
                             Rect {
                                 x: line_x.saturating_add(before),
@@ -6295,7 +6337,7 @@ fn layout_node(
                 // stretched. A stretched face is worse than a smaller one.
                 let (mark, mark_width, mark_height) = if let Some(picture) = tile.picture {
                     let (width, height) = fit_within(picture.source, cell, body);
-                    (LayoutKind::Picture(picture.handle), width, height)
+                    (LayoutKind::FramedPicture(picture.handle), width, height)
                 } else {
                     let size = metrics.tenth_mm(110);
                     (LayoutKind::TileGlyph(tile.glyph), size, size)
@@ -10818,13 +10860,16 @@ fn render_all_with_selected_font(
             LayoutKind::TileGlyph(glyph) | LayoutKind::InlineGlyph(glyph) => {
                 draw_glyph_icon(surface, glyph, node.rect, clip);
             }
-            // Outlined, because a cover with pale edges on white paper has no
-            // boundary at all and reads as text floating in space.
+            // Bare, because a formula is part of a sentence and a rule round
+            // one would read as a box drawn in the middle of the words.
             LayoutKind::Picture(handle) => {
                 if let Some(pixels) = pictures.get(handle) {
                     draw_picture(surface, node.rect, pixels, clip);
                 }
             }
+            // Outlined, because a cover or a plate with pale edges on white
+            // paper has no boundary at all and reads as text floating in
+            // space.
             LayoutKind::FramedPicture(handle) => {
                 if let Some(pixels) = pictures.get(handle) {
                     draw_picture(surface, node.rect, pixels, clip);
@@ -12298,6 +12343,102 @@ mod tests {
         assert!(
             drawn.contains("is small."),
             "the sentence was lost: {drawn}"
+        );
+    }
+
+    /// A link that follows a formula on the same line is where the reader can
+    /// see it, not where the words the formula stands for used to end.
+    ///
+    /// A formula takes the width of its picture rather than the width of its
+    /// TeX, and a tap target measured against the written form is out of place
+    /// by the difference -- so a reader taps a citation and the page does
+    /// nothing, or follows the reference beside it.
+    #[test]
+    fn a_link_after_a_formula_is_where_the_formula_leaves_it() {
+        let text = "at K_G see the note.";
+        let start = text.find("K_G").expect("the formula's words");
+        let note = text.find("the note").expect("the link's words");
+        let link = TextLink {
+            action: ActionId(7),
+            start: note,
+            end: note + "the note".len(),
+        };
+        let target = |formulae: Vec<InlineFormula>| {
+            let screen = Screen::new(
+                1,
+                vec![Node::RichText {
+                    id: NodeId(1),
+                    text: text.to_owned(),
+                    spans: Vec::new(),
+                    links: vec![link],
+                    presentation: ParagraphPresentation::default(),
+                    selection: None,
+                    formulae,
+                }],
+            );
+            screen
+                .layout()
+                .nodes
+                .iter()
+                .find(|node| matches!(node.kind, LayoutKind::InlineLink(ActionId(7))))
+                .expect("the link should have been laid out")
+                .rect
+                .x
+        };
+
+        // Far wider than the three characters it is set in place of, so the
+        // words after it are pushed along and the mistake is visible.
+        let written = target(Vec::new());
+        let drawn = target(vec![InlineFormula {
+            start,
+            end: start + "K_G".len(),
+            handle: PictureHandle(3),
+            source: (240, 30),
+        }]);
+        assert!(
+            drawn > written,
+            "the formula did not move the words after it, so this proves nothing"
+        );
+
+        let screen = Screen::new(
+            1,
+            vec![Node::RichText {
+                id: NodeId(1),
+                text: text.to_owned(),
+                spans: Vec::new(),
+                links: vec![link],
+                presentation: ParagraphPresentation::default(),
+                selection: None,
+                formulae: vec![InlineFormula {
+                    start,
+                    end: start + "K_G".len(),
+                    handle: PictureHandle(3),
+                    source: (240, 30),
+                }],
+            }],
+        );
+        let layout = screen.layout();
+        let words = layout
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, LayoutKind::RichText(_)))
+            .find(|node| node.text_lines.iter().any(|line| line.contains("the note")))
+            .expect("the words after the formula should have been drawn");
+        let target = layout
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::InlineLink(ActionId(7))))
+            .expect("the link should have been laid out")
+            .rect;
+        assert!(
+            target.x >= words.rect.x,
+            "the link was left behind the words it covers: {target:?} against {:?}",
+            words.rect
+        );
+        assert!(
+            target.x < words.rect.x.saturating_add(words.rect.width),
+            "the link fell past the words it covers: {target:?} against {:?}",
+            words.rect
         );
     }
 

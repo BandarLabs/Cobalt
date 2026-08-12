@@ -70,6 +70,44 @@ impl From<zip::Fault> for Fault {
     }
 }
 
+/// Gives one chapter's drawn formulae names the whole book can tell apart.
+///
+/// A formula's picture is drawn while the chapter is read rather than read out
+/// of the archive, so it names no member and is numbered from one in every
+/// file. Two chapters would otherwise both call their first formula the same
+/// thing, and the second would quietly replace the first.
+///
+/// The pictures are moved into `drawn` and the renaming is answered back, so
+/// that the caller can leave these names out of the resolving it does to every
+/// other picture: resolved, a formula would name a member that is not there
+/// and the mathematics would be demoted to its own description.
+fn rename_formulae(
+    part: &mut Document,
+    chapter: usize,
+    drawn: &mut BTreeMap<String, Vec<u8>>,
+) -> BTreeMap<String, String> {
+    let mut renamed = BTreeMap::new();
+    for (formula, png) in std::mem::take(&mut part.images) {
+        let book_wide = format!(
+            "{}{chapter}-{}",
+            crate::FORMULA_PICTURE_PREFIX,
+            formula.trim_start_matches(crate::FORMULA_PICTURE_PREFIX)
+        );
+        renamed.insert(formula, book_wide.clone());
+        drawn.insert(book_wide, png);
+    }
+    for styled in part.rich.values_mut() {
+        for span in &mut styled.spans {
+            if let Some(formula) = &mut span.formula {
+                if let Some(book_wide) = renamed.get(formula.as_str()) {
+                    formula.clone_from(book_wide);
+                }
+            }
+        }
+    }
+    renamed
+}
+
 /// Reads an EPUB.
 ///
 /// # Errors
@@ -102,6 +140,9 @@ pub fn parse(bytes: &[u8]) -> Result<Document, Fault> {
     let mut starts: Vec<(String, usize)> = Vec::new();
     let mut anchors: BTreeMap<String, usize> = BTreeMap::new();
     let mut links: Vec<crate::Link> = Vec::new();
+    // The formulae drawn while the chapters were read, which are pictures the
+    // book carries without the archive holding a member for any of them.
+    let mut drawn: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     for id in package.reading_order() {
         if parts >= MAX_PARTS {
             truncated = true;
@@ -119,7 +160,11 @@ pub fn parse(bytes: &[u8]) -> Result<Document, Fault> {
         let Ok(bytes) = archive.read(&name) else {
             continue;
         };
-        let part = crate::html::parse_with_css(&strip_toc(&text_of(&bytes)), &publisher_styles.css);
+        let part = crate::html::parse_within(
+            &strip_toc(&text_of(&bytes)),
+            &publisher_styles.css,
+            crate::MAX_FORMULA_PICTURES.saturating_sub(drawn.len()),
+        );
         truncated |= part.truncated;
         if part.blocks.is_empty() {
             // An empty file (a cover page holding only an image) should not
@@ -140,9 +185,13 @@ pub fn parse(bytes: &[u8]) -> Result<Document, Fault> {
         // book with a broken link should read as.
         let mut part = part;
         let inside = directory_of(&name);
+        let renamed = rename_formulae(&mut part, parts, &mut drawn);
         for block in &mut part.blocks {
             if let Block::Picture { name: source, .. } = block {
-                *source = resolve(&inside, source);
+                match renamed.get(source.as_str()) {
+                    Some(book_wide) => source.clone_from(book_wide),
+                    None => *source = resolve(&inside, source),
+                }
             }
         }
         // The names inside this file are only unique within it -- most books
@@ -180,7 +229,11 @@ pub fn parse(bytes: &[u8]) -> Result<Document, Fault> {
     builder.set_contents(contents_of(&archive, &package, &base, &starts, &anchors));
     builder.set_anchors(anchors);
     builder.set_links(links);
-    builder.set_images(images_of(&archive, &builder));
+    // The archive's own pictures, and then the ones drawn while reading it,
+    // which no archive member corresponds to.
+    let mut images = images_of(&archive, &builder);
+    images.append(&mut drawn);
+    builder.set_images(images);
     builder.set_fonts(fonts_of(
         &archive,
         &package,
@@ -1241,6 +1294,70 @@ mod tests {
                 "It got worse."
             ]
         );
+    }
+
+    /// A formula in a book keeps the picture drawn for it, in every chapter.
+    ///
+    /// A formula's picture is drawn while the chapter is read rather than read
+    /// out of the archive, so it has no member to be resolved against and it
+    /// is numbered from one in each file. Resolving it named a member that was
+    /// not there and the mathematics was demoted to its own description, and
+    /// keying it by number alone let the second chapter's first formula
+    /// overwrite the first chapter's.
+    #[cfg(feature = "raster")]
+    #[test]
+    fn a_formula_in_a_chapter_keeps_the_picture_drawn_for_it() {
+        let chapter = br#"<html><body><p>where <math alttext="x"><semantics><mi>x</mi>
+            <annotation encoding="application/x-tex">x</annotation></semantics></math>
+            counts.</p><math display="block" alttext="y"><semantics><mi>y</mi>
+            <annotation encoding="application/x-tex">y</annotation></semantics></math>
+            </body></html>"#;
+        let package = opf(
+            r#"<itemref idref="one"/><itemref idref="two"/>"#,
+            r#"<item id="one" href="one.xhtml" media-type="application/xhtml+xml"/>
+               <item id="two" href="two.xhtml" media-type="application/xhtml+xml"/>"#,
+        );
+        let book = archive(&[
+            ("mimetype", b"application/epub+zip"),
+            ("META-INF/container.xml", CONTAINER_XML.as_bytes()),
+            ("OEBPS/book.opf", package.as_bytes()),
+            ("OEBPS/one.xhtml", chapter),
+            ("OEBPS/two.xhtml", chapter),
+        ]);
+        let document = parse(&book).expect("a readable book");
+        let named: Vec<&String> = document
+            .rich
+            .values()
+            .flat_map(|rich| &rich.spans)
+            .filter_map(|span| span.formula.as_ref())
+            .collect();
+        assert_eq!(named.len(), 2, "a chapter lost its formula: {named:?}");
+        assert_ne!(named[0], named[1], "both chapters used one name");
+        // A formula set on a line of its own is a picture in the flow rather
+        // than a span, and travels the other of the two paths through the
+        // renaming; resolving it against the chapter's folder would name a
+        // member of the archive that is not there.
+        let drawn: Vec<&String> = document
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                Block::Picture { name, .. } => Some(name),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(drawn.len(), 2, "a chapter lost its displayed formula");
+        assert_ne!(drawn[0], drawn[1], "both chapters used one name");
+
+        for name in named.into_iter().chain(drawn) {
+            assert!(
+                name.starts_with(crate::FORMULA_PICTURE_PREFIX),
+                "the name stopped saying it was a formula: {name}"
+            );
+            assert!(
+                document.images.contains_key(name),
+                "the picture was dropped: {name}"
+            );
+        }
     }
 
     #[test]

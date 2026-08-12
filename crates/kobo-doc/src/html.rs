@@ -71,6 +71,18 @@ pub fn parse(source: &str) -> Document {
 /// Reads HTML with a bounded safe subset of publisher CSS.
 #[must_use]
 pub fn parse_with_css(source: &str, external_css: &str) -> Document {
+    parse_within(source, external_css, crate::MAX_FORMULA_PICTURES)
+}
+
+/// The same, for one file of a book that has a budget to share.
+///
+/// A book's chapters are read one at a time, and a limit applied to each of
+/// them separately is not a limit on the book: thirty chapters allowed
+/// sixty-four formulae apiece is nineteen hundred, which is the number the
+/// limit exists to prevent. The caller passes in what is left of the book's
+/// own allowance.
+#[must_use]
+pub fn parse_within(source: &str, external_css: &str, formulae: usize) -> Document {
     let mut take = external_css.len().min(MAX_CSS_BYTES);
     while !external_css.is_char_boundary(take) {
         take -= 1;
@@ -82,7 +94,7 @@ pub fn parse_with_css(source: &str, external_css: &str) -> Document {
         remaining -= 1;
     }
     css.push_str(&embedded[..remaining]);
-    let mut state = State::new(StyleSheet::parse(&css));
+    let mut state = State::new(StyleSheet::parse(&css), formulae);
     let mut rest = source;
     while let Some(at) = rest.find('<') {
         state.words(&rest[..at]);
@@ -223,6 +235,8 @@ struct State {
     /// rather than by its bytes, so the bytes wait here until the document is
     /// finished and can be handed over whole.
     formulae: BTreeMap<String, Vec<u8>>,
+    /// How many more formulae this file may be drawn pictures for.
+    allowance: usize,
     /// The table row being read, once `<tr>` has opened one.
     ///
     /// A cell's words are collected by the same machinery as a paragraph's
@@ -245,10 +259,11 @@ struct Row {
 }
 
 impl State {
-    fn new(stylesheet: StyleSheet) -> Self {
+    fn new(stylesheet: StyleSheet, allowance: usize) -> Self {
         Self {
             builder: Builder::new(),
             formulae: BTreeMap::new(),
+            allowance,
             link: None,
             text: String::new(),
             spans: Vec::new(),
@@ -677,7 +692,7 @@ impl State {
     /// text by the caller.
     fn display_formula(&mut self, inside: &str, drawn: &str) -> bool {
         if attribute(inside, "display").is_none_or(|display| display != "block")
-            || self.formulae.len() >= crate::MAX_FORMULA_PICTURES
+            || self.formulae.len() >= self.allowance
         {
             return false;
         }
@@ -710,7 +725,7 @@ impl State {
     ///
     /// Returns whether the formula was taken.
     fn inline_formula(&mut self, inside: &str, drawn: &str) -> bool {
-        if drawn.trim().is_empty() || self.formulae.len() >= crate::MAX_FORMULA_PICTURES {
+        if drawn.trim().is_empty() || self.formulae.len() >= self.allowance {
             return false;
         }
         let Some(latex) = attribute(inside, "alttext") else {

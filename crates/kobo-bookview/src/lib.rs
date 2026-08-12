@@ -594,7 +594,18 @@ impl BookView {
         let Ok(source) = kobo_image::size(bytes) else {
             return false;
         };
-        let (drawn_width, drawn_height) = kobo_image::fitted_size(source, width, height);
+        // The size claimed here is the size the page is laid out at, so it has
+        // to be the size the picture will actually be drawn at. A formula is
+        // sized against the text it stands in rather than fitted to a plate's
+        // box, and fitting one to the box instead leaves it at the pixels it
+        // was drawn at -- half again as large as the words beside it, and
+        // blurred, because the smaller bitmap that arrives later is stretched
+        // back up to fill the rectangle claimed here.
+        let (drawn_width, drawn_height) = if name.starts_with(FORMULA_PICTURE_PREFIX) {
+            formula_box(source, metrics)
+        } else {
+            kobo_image::fitted_size(source, width, height)
+        };
         if drawn_width == 0 || drawn_height == 0 {
             return false;
         }
@@ -680,7 +691,7 @@ impl BookView {
                     continue;
                 };
                 let (box_width, box_height) = if name.starts_with(FORMULA_PICTURE_PREFIX) {
-                    formula_box(&picture, &metrics)
+                    formula_box((picture.width(), picture.height()), &metrics)
                 } else {
                     (width, height)
                 };
@@ -812,10 +823,10 @@ fn host_of(url: &str) -> Option<&str> {
 /// belongs to. A wide displayed equation is then brought back to the column,
 /// keeping its shape, because a formula that overhangs the margin is worse
 /// than a small one.
-fn formula_box(picture: &kobo_image::Picture, metrics: &DisplayMetrics) -> (u32, u32) {
+fn formula_box(source: (u32, u32), metrics: &DisplayMetrics) -> (u32, u32) {
     let em = u32::try_from(kobo_ui::FontSize::Body.em_in(kobo_ui::Face::Reading))
         .unwrap_or(FORMULA_PICTURE_EM);
-    let (mut width, mut height) = kobo_doc::formula_size((picture.width(), picture.height()), em);
+    let (mut width, mut height) = kobo_doc::formula_size(source, em);
     let column = u32::try_from(metrics.width.max(1)).unwrap_or(width);
     if width > column {
         height = (height * column / width.max(1)).max(1);
@@ -909,6 +920,69 @@ mod tests {
         // vouch for nothing, so nothing absolute resolves against it.
         assert!(picture_url("http://example.org/a/", "https://example.org/x.png").is_none());
         assert!(picture_url("https://user@arxiv.org/a/", "https://arxiv.org/x.png").is_none());
+    }
+
+    /// A formula claims the room it will actually be drawn in.
+    ///
+    /// The size claimed when a picture is reserved is the size the page is
+    /// laid out at, and the size it is fitted to when it is decoded is the
+    /// size of the pixels that arrive. A formula that reserved a plate's box
+    /// and then arrived at the size of the text kept the larger rectangle:
+    /// half again as large as the words beside it, and blurred, because the
+    /// smaller bitmap was stretched back up to fill it.
+    #[test]
+    fn a_formula_reserves_the_room_it_is_drawn_in_rather_than_a_plate_box() {
+        let mut context = Context::default();
+        let mut view = BookView::new();
+        // Far smaller than a plate's box, so a plate's fitting would leave it
+        // at the pixels it was drawn at and the mistake would be visible.
+        let source = (120, 60);
+        let name = format!("{}0", kobo_doc::FORMULA_PICTURE_PREFIX);
+        let mut blocks = prose(4);
+        blocks.push(Block::Picture {
+            name: name.clone(),
+            alt: "\\sqrt{N}".to_owned(),
+            illustration: false,
+        });
+        let document = Document {
+            blocks,
+            images: [(
+                name.clone(),
+                kobo_image::encode_png_grey(
+                    source.0,
+                    source.1,
+                    &vec![128; (source.0 * source.1) as usize],
+                )
+                .expect("a png of a formula"),
+            )]
+            .into_iter()
+            .collect(),
+            ..Document::default()
+        };
+        view.open(&mut context, document, Memory::default());
+        let claimed = view
+            .reader()
+            .and_then(|reader| reader.picture_named(&name))
+            .expect("the formula was reserved")
+            .source;
+
+        let metrics = context.metrics();
+        let em = u32::try_from(kobo_ui::FontSize::Body.em_in(kobo_ui::Face::Reading))
+            .expect("a reading em");
+        assert_ne!(
+            kobo_doc::formula_size(source, em),
+            kobo_image::fitted_size(
+                source,
+                super::plate_box(&metrics).expect("a plate box").0,
+                super::plate_box(&metrics).expect("a plate box").1,
+            ),
+            "a plate's box and a formula's are the same size, so this proves nothing"
+        );
+        assert_eq!(
+            claimed,
+            kobo_doc::formula_size(source, em),
+            "a formula reserved room that is not the room it is drawn in"
+        );
     }
 
     /// A page of prose, so that the room a plate takes is the difference
