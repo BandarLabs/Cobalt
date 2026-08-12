@@ -4950,6 +4950,20 @@ fn layout_node(
                 let mut cursor = from;
                 let mut run_x = line_x;
                 while cursor < to {
+                    // Every slice below is by byte, and a paper is full of
+                    // characters that take more than one of them. An offset
+                    // that landed inside a "\u{3c0}" would take the whole
+                    // application down with it, which on a reader means the
+                    // panel going back to the stock software mid-sentence, so
+                    // a stray offset walks forward to the next character
+                    // instead of being trusted.
+                    if !text.is_char_boundary(cursor) {
+                        let Some(next) = (cursor..to).find(|at| text.is_char_boundary(*at)) else {
+                            break;
+                        };
+                        cursor = next;
+                        continue;
+                    }
                     // A formula is drawn, not written, so it leaves the run
                     // machinery entirely: it takes its own width on the line
                     // and the words standing in for it are skipped over.
@@ -12285,6 +12299,49 @@ mod tests {
             drawn.contains("is small."),
             "the sentence was lost: {drawn}"
         );
+    }
+
+    /// A formula whose offsets land inside a character lays the paragraph out
+    /// anyway instead of taking the application down.
+    ///
+    /// A paper is written in a great many characters that take more than one
+    /// byte, and every offset here indexes bytes. Panicking on a bad one does
+    /// not fail politely on a reader: the process dies, the panel goes back to
+    /// the stock software, and the sentence somebody was reading goes with it.
+    #[test]
+    fn a_formula_offset_inside_a_character_does_not_take_the_page_down() {
+        // Every one of these is two bytes, so every odd offset is inside a
+        // character and none of them are anywhere a formula should begin.
+        let text = "\u{3c0}\u{3c0}\u{3c0} and \u{3c0}\u{3c0}\u{3c0}";
+        let screen = Screen::new(
+            1,
+            vec![Node::RichText {
+                id: NodeId(1),
+                text: text.to_owned(),
+                spans: Vec::new(),
+                links: Vec::new(),
+                presentation: ParagraphPresentation::default(),
+                selection: None,
+                formulae: vec![InlineFormula {
+                    start: 1,
+                    end: 5,
+                    handle: PictureHandle(4),
+                    source: (40, 20),
+                }],
+            }],
+        );
+        let layout = screen.layout();
+        assert!(
+            !layout.nodes.is_empty(),
+            "the paragraph was dropped entirely"
+        );
+        let drawn: String = layout
+            .nodes
+            .iter()
+            .flat_map(|node| node.text_lines.iter())
+            .cloned()
+            .collect();
+        assert!(drawn.contains("and"), "the sentence was lost: {drawn}");
     }
 
     /// A formula takes the width of its picture rather than the width of the
