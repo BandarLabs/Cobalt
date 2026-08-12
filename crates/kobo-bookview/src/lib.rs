@@ -214,6 +214,37 @@ impl BookView {
         // spent its parse and its pagination, and a plate on top of that is
         // what puts a lifecycle callback past the watchdog's deadline.
         self.kick(context);
+        self.match_light(context);
+    }
+
+    /// Puts the light panel and the hardware into agreement, both ways round.
+    ///
+    /// The panel used to be seeded from the device only when the book had no
+    /// remembered level, which left the other case wrong in a way nobody could
+    /// see until they were in the dark: a book last read at eighty percent
+    /// opened saying eighty while the lamp was still at ten from the book
+    /// before it, and the first tap on "dimmer" jumped the room to seventy.
+    ///
+    /// So a book that has a level of its own now asserts it, and a book that
+    /// has none takes whatever the lamp is already at. Either way the number
+    /// under the reader's thumb is the number the hardware is holding.
+    fn match_light(&mut self, context: &mut Context) {
+        match self.reader.as_ref().and_then(Reader::light) {
+            Some(level) => context.device().set_frontlight(level),
+            None => context.device().read_frontlight(),
+        }
+    }
+
+    /// Takes a front light reading back from the device.
+    ///
+    /// Returns whether the panel changed and is worth redrawing. Applications
+    /// pass every [`kobo_sdk::DeviceResult::Frontlight`] here rather than
+    /// filtering first: a reading that arrives for a document already closed,
+    /// or that says what the panel already said, is quietly ignored.
+    pub fn took_light(&mut self, percent: u8) -> bool {
+        self.reader
+            .as_mut()
+            .is_some_and(|reader| reader.seed_light(percent))
     }
 
     /// Gives back everything the open document was costing.

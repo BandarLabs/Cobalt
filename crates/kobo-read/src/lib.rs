@@ -40,7 +40,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use kobo_doc::{Block, Document};
 use kobo_sdk::{BannerLevel, Screen, ScreenBuilder};
 use kobo_ui::TextScale;
-use kobo_ui::{quote_offsets, wrap_text_in, DisplayMetrics, Face, FontSize, ProseArea};
+use kobo_ui::{quote_offsets, wrap_text_in, DisplayMetrics, Face, FontSize, Glyph, ProseArea};
 use unicode_segmentation::UnicodeSegmentation;
 
 /// Where something is in a book, independent of how the book is set.
@@ -575,11 +575,14 @@ impl Reader {
             .height
             .saturating_sub(metrics.page_position_band())
             .max(1);
-        // Measured with the type at the size the screen will ask for. The
+        // Measured with the prose at the size the screen will ask for. The
         // scale has to be ambient while this runs, because the wrapper and the
         // line height both read it -- and the screen carries the same value,
-        // so what was measured here is what gets drawn.
-        let (mut pages, mut capped) = kobo_ui::with_text_scale(self.memory.scale, || {
+        // so what was measured here is what gets drawn. It is the reading
+        // scale rather than the interface one, so the bar above the page and
+        // the strip below it stay the size the reader set for the device and
+        // a larger book gets all of the room it asked for.
+        let (mut pages, mut capped) = kobo_ui::with_reading_scale(self.memory.scale, || {
             paginate(
                 &self.document,
                 &self.memory.highlights,
@@ -593,7 +596,7 @@ impl Reader {
         // this way round rather than the other cannot oscillate: more room
         // never turns one page into two.
         if pages.len() <= 1 {
-            let (whole, cut) = kobo_ui::with_text_scale(self.memory.scale, || {
+            let (whole, cut) = kobo_ui::with_reading_scale(self.memory.scale, || {
                 paginate(
                     &self.document,
                     &self.memory.highlights,
@@ -932,10 +935,8 @@ impl Reader {
 
     /// One step larger, if there is one. Returns whether anything changed.
     pub fn larger(&mut self, panel: &DisplayMetrics) -> bool {
-        let next = match self.memory.scale {
-            TextScale::Default => TextScale::Large,
-            TextScale::Large => TextScale::ExtraLarge,
-            TextScale::ExtraLarge => return false,
+        let Some(next) = self.memory.scale.larger() else {
+            return false;
         };
         self.set_scale(next, panel);
         true
@@ -943,10 +944,8 @@ impl Reader {
 
     /// One step smaller, if there is one. Returns whether anything changed.
     pub fn smaller(&mut self, panel: &DisplayMetrics) -> bool {
-        let next = match self.memory.scale {
-            TextScale::ExtraLarge => TextScale::Large,
-            TextScale::Large => TextScale::Default,
-            TextScale::Default => return false,
+        let Some(next) = self.memory.scale.smaller() else {
+            return false;
         };
         self.set_scale(next, panel);
         true
@@ -1294,9 +1293,15 @@ impl Reader {
             action::BOOKMARK.into(),
             action::HIGHLIGHTS.into(),
             action::MARKING.into(),
+            action::CONTENTS.into(),
+            action::LINKS.into(),
         ];
-        for step in 0..3 {
-            names.push(format!("{}{step}", action::SIZE));
+        // Every size there is, rather than a hard-coded three. The stepper's
+        // ends name the size either side of the one in force, so a range that
+        // grew without this list growing with it left the two controls tapping
+        // at nothing.
+        for scale in kobo_ui::TextScale::STEPS {
+            names.push(format!("{}{}", action::SIZE, scale.wire_value()));
         }
         // Only the blocks that are actually on a screen right now, so this
         // stays a few dozen comparisons rather than one per block in a novel.
@@ -1500,67 +1505,85 @@ impl Reader {
 
     /// What the light control opens: the front light and nothing else.
     fn light_panel(&self, panel: ScreenBuilder) -> ScreenBuilder {
-        // The level is drawn as well as stepped, because "dimmer" with no
-        // reading of what it is now tells somebody in a dark room nothing.
+        // The level is drawn as well as stepped, because a control that only
+        // says "dimmer" tells somebody in a dark room nothing about where they
+        // already are. The two ends carry a minus and a plus and no words at
+        // all: brightness is the one setting every device on earth draws the
+        // same way, and the reading between them is the label.
         let light = self.memory.light.unwrap_or(0);
         panel
-            .choose(
-                format!("Front light {light}%"),
-                [(action::DIMMER, "Dimmer"), (action::BRIGHTER, "Brighter")],
+            .stepper(
+                format!("{light}%"),
+                action::DIMMER,
+                Glyph::Minus,
+                action::BRIGHTER,
+                Glyph::Plus,
             )
-            .progress(light)
+            .stepper_ends(light > 0, light < 100)
+            .stepper_track(light)
     }
 
     /// What the "Aa" control opens: everything that is not the book itself.
     fn controls_panel(&self, panel: ScreenBuilder) -> ScreenBuilder {
-        let sizes = [
-            (TextScale::Default, "Standard"),
-            (TextScale::Large, "Large"),
-            (TextScale::ExtraLarge, "Largest"),
-        ];
-        let chosen = sizes
-            .iter()
-            .position(|(scale, _)| *scale == self.memory.scale)
-            .unwrap_or(0);
-        // The three sizes themselves rather than a plus and a minus. A stepper
-        // hides which size is in force and takes two taps and two full-page
-        // refreshes to cross the range; naming them says where the reader is
-        // and gets anywhere in one.
+        // A stepper rather than the three named sizes this used to offer.
+        // Naming them said where the reader was in one glance, which is worth
+        // something, but it cost three full-width boxes stacked down the panel
+        // and it fixed the range at three: somebody who found "Standard" a
+        // shade too small had nowhere to go but a size half again as large.
+        // Nine steps of ten percent, walked a notch at a time, is the shape
+        // every other device gives this setting, and it fits on one line.
+        let scale = self.memory.scale;
+        let smaller = scale.smaller().unwrap_or(scale);
+        let larger = scale.larger().unwrap_or(scale);
         let mut panel = panel
-            .choose(
-                "Type size",
-                sizes
-                    .iter()
-                    .enumerate()
-                    .map(|(step, (_, label))| (format!("{}{step}", action::SIZE), *label)),
+            .stepper(
+                format!("{}%", scale.percent()),
+                format!("{}{}", action::SIZE, smaller.wire_value()),
+                Glyph::Minus,
+                format!("{}{}", action::SIZE, larger.wire_value()),
+                Glyph::Plus,
             )
-            .chosen(chosen);
+            .stepper_ends(scale.smaller().is_some(), scale.larger().is_some())
+            .stepper_track(
+                u8::try_from(scale.step().saturating_mul(100) / (TextScale::STEPS.len() - 1))
+                    .unwrap_or(100),
+            );
 
+        // Everything else the panel holds is one tap that does one thing, and
+        // each of them has a picture the reader has already met somewhere: a
+        // ribbon for a bookmark, a pen for a mark, a book for its own contents.
+        // Set as a row of pictures rather than a column of sentences, the whole
+        // panel now ends about where the type size used to.
         panel = panel.divider();
-        panel = panel.button(
-            action::BOOKMARK,
+        let mut row = vec![(
+            action::BOOKMARK.to_owned(),
             if self.is_bookmarked() {
-                "Remove bookmark"
+                "Bookmarked"
             } else {
-                "Bookmark this page"
+                "Bookmark"
             },
-        );
+            Glyph::Bookmark,
+        )];
         if !self.markable().is_empty() {
-            panel = panel.button(action::MARKING, "Mark a paragraph");
+            row.push((action::MARKING.to_owned(), "Mark", Glyph::Tag));
         }
         // Offered only for a book that published its own contents. A button
         // that opens an empty list is a dead end somebody has to back out of,
         // and the parts worked out from headings are not a contents list.
         if !self.document.contents.is_empty() {
-            panel = panel.button(action::CONTENTS, "Contents");
+            row.push((action::CONTENTS.to_owned(), "Contents", Glyph::Book));
         }
         // Offered only where there is somewhere to go from, so the control
         // appears on the pages that have footnotes and stays out of the way
         // on the ones that do not.
         if !self.links_here().is_empty() {
-            panel = panel.button(action::LINKS, "Links on this page");
+            row.push((action::LINKS.to_owned(), "Links", Glyph::Globe));
         }
-        panel.button(action::HIGHLIGHTS, "Notes")
+        row.push((action::HIGHLIGHTS.to_owned(), "Notes", Glyph::Note));
+        // Four across at most: a fifth control on this panel would be narrower
+        // than a fingertip, and the row wraps rather than shrinking.
+        let columns = u8::try_from(row.len().min(4)).unwrap_or(4);
+        panel.controls(columns, row)
     }
 
     /// Where this page points, each line a way there.
@@ -3128,11 +3151,16 @@ mod tests {
         let layout = screen.layout_with(&panel(), &kobo_ui::Chrome::with_back(true));
         let on_panel = |name: &str| {
             let wanted = kobo_sdk::action_id(name);
-            layout.nodes.iter().any(|node| matches!(
-                node.kind,
-                kobo_ui::LayoutKind::Button(found, ..) | kobo_ui::LayoutKind::ChoiceOption(found, _)
-                if found == wanted
-            ))
+            layout.nodes.iter().any(|node| {
+                matches!(
+                    node.kind,
+                    kobo_ui::LayoutKind::Button(found, ..)
+                        | kobo_ui::LayoutKind::Cell(found, ..)
+                        | kobo_ui::LayoutKind::StepperControl(found, ..)
+                        | kobo_ui::LayoutKind::ChoiceOption(found, _)
+                    if found == wanted
+                )
+            })
         };
         assert!(on_panel(action::DIMMER), "dimmer is not on the light panel");
         assert!(
@@ -3192,6 +3220,8 @@ mod tests {
                 layout.nodes.iter().any(|node| matches!(
                     node.kind,
                     kobo_ui::LayoutKind::Button(found, ..)
+                        | kobo_ui::LayoutKind::Cell(found, ..)
+                        | kobo_ui::LayoutKind::StepperControl(found, ..)
                         | kobo_ui::LayoutKind::ChoiceOption(found, _)
                     if found == action
                 )),
@@ -3210,32 +3240,100 @@ mod tests {
         );
     }
 
-    /// Naming the sizes rather than stepping through them: one tap to any
-    /// size, and the panel says which one is in force.
+    /// Every control the two panels draw is one the reader answers.
+    ///
+    /// The defect this covers: the reverse lookup from a tapped identifier to
+    /// a name listed three type sizes, and the stepper offers nine. Both of
+    /// its ends hashed to something the list did not contain, so the panel
+    /// drew a working control that did nothing at all when tapped -- and the
+    /// same silence would have swallowed the contents and links buttons.
     #[test]
-    fn a_size_can_be_chosen_by_name_and_the_current_one_is_marked() {
+    fn every_control_on_a_panel_is_one_the_reader_answers() {
+        for chrome in [Chrome::Controls, Chrome::Light] {
+            for scale in kobo_ui::TextScale::STEPS {
+                let mut reader = reader(40);
+                reader.set_scale(scale, &panel());
+                reader.set_chrome(chrome, &panel());
+                let screen = reader.screen("Pride and Prejudice");
+                let layout = screen.layout_with(&panel(), &kobo_ui::Chrome::with_back(true));
+                let offered = layout
+                    .nodes
+                    .iter()
+                    .filter_map(|node| node.kind.acts_on())
+                    // The runtime owns its own back and overlay-close marks.
+                    .filter(|action| !action.is_reserved())
+                    .collect::<Vec<_>>();
+                assert!(
+                    !offered.is_empty(),
+                    "{chrome:?} at {scale:?} drew no controls at all"
+                );
+                for action in offered {
+                    let mut reader = reader.clone();
+                    assert_ne!(
+                        reader.act_on(action, &panel()),
+                        Outcome::Elsewhere,
+                        "{chrome:?} at {scale:?} draws {action:?}, which the reader does not answer"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The panel steps the size a notch at a time and says where the reader
+    /// has got to. Naming three sizes was one tap to any of them, which is
+    /// worth something, but it fixed the range at three and stacked three
+    /// full-width boxes down a panel drawn over the page to do it.
+    #[test]
+    fn the_size_is_stepped_a_notch_at_a_time_and_the_panel_says_where_it_is() {
         let mut reader = reader(40);
         reader.act(action::CONTROLS, &panel());
         assert_eq!(reader.scale(), TextScale::Default);
 
-        let outcome = reader.act(&format!("{}2", action::SIZE), &panel());
+        let step_up = format!("{}{}", action::SIZE, TextScale::Medium.wire_value());
+        let outcome = reader.act(&step_up, &panel());
         assert_eq!(outcome, Outcome::Save);
-        assert_eq!(reader.scale(), TextScale::ExtraLarge);
+        assert_eq!(reader.scale(), TextScale::Medium);
 
         let screen = reader.screen("Pride and Prejudice");
         let overlay = screen.overlay.as_ref().expect("a panel");
-        let marked = overlay.nodes.iter().find_map(|node| match node {
-            kobo_ui::Node::Choice { selected, .. } => *selected,
-            _ => None,
-        });
-        assert_eq!(marked, Some(2), "the panel did not mark the size in force");
+        let stepper = overlay
+            .nodes
+            .iter()
+            .find_map(|node| match node {
+                kobo_ui::Node::Stepper {
+                    label, less, more, ..
+                } => Some((label.clone(), less.action, more.action)),
+                _ => None,
+            })
+            .expect("a type size stepper");
+        assert_eq!(
+            stepper.0,
+            format!("{}%", TextScale::Medium.percent()),
+            "the panel did not say the size in force"
+        );
+        // The ends name the neighbouring sizes rather than a verb, so a tap is
+        // a size and the panel keeps no state of its own to know which.
+        assert_eq!(
+            stepper.1,
+            kobo_sdk::action_id(&format!(
+                "{}{}",
+                action::SIZE,
+                TextScale::Default.wire_value()
+            ))
+        );
+        assert_eq!(
+            stepper.2,
+            kobo_sdk::action_id(&format!(
+                "{}{}",
+                action::SIZE,
+                TextScale::Large.wire_value()
+            ))
+        );
 
         // Asking for the size it is already at is not a change to save, and it
-        // is not somebody else's action either.
-        assert_eq!(
-            reader.act(&format!("{}2", action::SIZE), &panel()),
-            Outcome::Repaint
-        );
+        // is not somebody else's action either. That is what the ends do once
+        // the reader has reached one end of the range.
+        assert_eq!(reader.act(&step_up, &panel()), Outcome::Repaint);
         assert_eq!(
             reader.act("reader-size-nonsense", &panel()),
             Outcome::Elsewhere
@@ -3310,14 +3408,25 @@ mod tests {
     #[test]
     fn the_type_size_stops_at_both_ends_rather_than_wrapping() {
         let mut reader = reader(10);
-        assert!(reader.larger(&panel()));
-        assert!(reader.larger(&panel()));
-        assert!(!reader.larger(&panel()), "there was a fourth size");
-        assert_eq!(reader.scale(), TextScale::ExtraLarge);
-        assert!(reader.smaller(&panel()));
-        assert!(reader.smaller(&panel()));
-        assert!(!reader.smaller(&panel()));
-        assert_eq!(reader.scale(), TextScale::Default);
+        // Walked from the middle to the top and back to the bottom, so that
+        // both ends are found by stepping rather than by naming them.
+        let above = TextScale::STEPS.len() - TextScale::Default.step() - 1;
+        for step in 0..above {
+            assert!(reader.larger(&panel()), "no size above step {step}");
+        }
+        assert!(
+            !reader.larger(&panel()),
+            "there was a size above the largest"
+        );
+        assert_eq!(reader.scale(), TextScale::Largest);
+        for step in 0..TextScale::STEPS.len() - 1 {
+            assert!(reader.smaller(&panel()), "no size below step {step}");
+        }
+        assert!(
+            !reader.smaller(&panel()),
+            "there was a size below the smallest"
+        );
+        assert_eq!(reader.scale(), TextScale::Smallest);
     }
 
     #[test]
@@ -3517,8 +3626,9 @@ mod tests {
         reader.toggle_bookmark();
         let target = reader.markable().first().unwrap().0;
         reader.toggle_highlight(target, &panel());
-        reader.larger(&panel());
-        reader.larger(&panel());
+        for _ in 0..4 {
+            reader.larger(&panel());
+        }
         reader.brighter();
 
         let kept = Memory::decode(&reader.memory().encode());
@@ -3779,11 +3889,12 @@ mod tests {
         let screen = reader.screen("Pride and Prejudice");
         let overlay = screen.overlay.as_ref().expect("a panel");
         assert!(
-            overlay.nodes.iter().any(|node| matches!(
-                node,
-                kobo_ui::Node::Button { action, .. }
-                    if *action == kobo_sdk::action_id(action::HIGHLIGHTS)
-            )),
+            overlay.nodes.iter().any(|node| match node {
+                kobo_ui::Node::Grid { cells, .. } => cells
+                    .iter()
+                    .any(|cell| cell.action == kobo_sdk::action_id(action::HIGHLIGHTS)),
+                _ => false,
+            }),
             "there is no way from the book to the marks"
         );
     }

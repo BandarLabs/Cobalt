@@ -888,6 +888,24 @@ impl KoboApp for Arxiv {
         }
     }
 
+    /// The front light level the device is actually holding.
+    ///
+    /// Asked for by the reading surface itself when a paper is opened, so the
+    /// panel's number and the lamp agree from the first tap rather than after
+    /// it.
+    fn on_device_result(
+        &mut self,
+        context: &mut Context,
+        _request: kobo_sdk::DeviceRequest,
+        result: kobo_sdk::DeviceResult,
+    ) {
+        if let kobo_sdk::DeviceResult::Frontlight { percent } = result {
+            if self.book.took_light(percent) {
+                self.show(context);
+            }
+        }
+    }
+
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
         // The reader's own sleep, which is what carries a figure from bytes to
         // pixels a half-step at a time.

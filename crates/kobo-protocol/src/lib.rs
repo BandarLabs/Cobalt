@@ -3259,6 +3259,15 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
             length
         }
         Node::Picture { .. } => 19,
+        Node::Stepper {
+            label, less, more, ..
+        } => {
+            let mut length = 8;
+            add_encoded_len(&mut length, encoded_string_len(label)?)?;
+            add_encoded_len(&mut length, encoded_bar_action_len(less)?)?;
+            add_encoded_len(&mut length, encoded_bar_action_len(more)?)?;
+            length
+        }
         Node::Choice {
             prompt,
             options,
@@ -4429,6 +4438,33 @@ fn encode_node(
             push_u32(output, source.1);
             push_u16(output, *max_height_tenths_mm);
         }
+        Node::Stepper {
+            id,
+            label,
+            less,
+            more,
+            less_state,
+            more_state,
+            fill,
+        } => {
+            output.push(29);
+            push_u32(output, id.0);
+            push_string(output, label)?;
+            encode_bar_action(output, less)?;
+            encode_bar_action(output, more)?;
+            for state in [less_state, more_state] {
+                output.push(match state {
+                    ControlState::Enabled => 0,
+                    ControlState::Disabled => 1,
+                });
+            }
+            // Sent as one past the reading so that "no track" is zero, which is
+            // what a peer that never asks for one produces.
+            output.push(match fill {
+                None => 0,
+                Some(fill) => fill.min(&100).saturating_add(1),
+            });
+        }
         Node::Choice {
             id,
             prompt,
@@ -4721,6 +4757,7 @@ const fn encode_glyph(glyph: Glyph) -> u8 {
         Glyph::Next => 41,
         Glyph::Plus => 42,
         Glyph::Headphones => 43,
+        Glyph::Minus => 44,
     }
 }
 
@@ -4770,6 +4807,7 @@ const fn decode_glyph(tag: u8) -> Option<Glyph> {
         41 => Glyph::Next,
         42 => Glyph::Plus,
         43 => Glyph::Headphones,
+        44 => Glyph::Minus,
 
         _ => return None,
     })
@@ -5367,6 +5405,34 @@ fn decode_node(
                 options,
                 selected,
                 freeform,
+            })
+        }
+        29 => {
+            let label = reader.string()?;
+            let less = decode_bar_action(reader)?;
+            let more = decode_bar_action(reader)?;
+            let mut states = [ControlState::Enabled; 2];
+            for state in &mut states {
+                *state = match reader.u8()? {
+                    0 => ControlState::Enabled,
+                    1 => ControlState::Disabled,
+                    _ => return Err(ProtocolError::InvalidValue("stepper control state")),
+                };
+            }
+            let [less_state, more_state] = states;
+            let fill = match reader.u8()? {
+                0 => None,
+                marked if marked <= 101 => Some(marked - 1),
+                _ => return Err(ProtocolError::InvalidValue("stepper fill")),
+            };
+            Ok(Node::Stepper {
+                id,
+                label,
+                less,
+                more,
+                less_state,
+                more_state,
+                fill,
             })
         }
         11 => {
@@ -6534,6 +6600,15 @@ mod node_coverage_tests {
             Node::Progress {
                 id: NodeId(8),
                 value: Percent::new(40),
+            },
+            Node::Stepper {
+                id: NodeId(96),
+                label: "120%".into(),
+                less: BarAction::new(ActionId(30), String::new()).with_glyph(Glyph::Minus),
+                more: BarAction::new(ActionId(31), String::new()).with_glyph(Glyph::Plus),
+                less_state: ControlState::Enabled,
+                more_state: ControlState::Disabled,
+                fill: Some(75),
             },
             Node::PagedList {
                 id: NodeId(9),

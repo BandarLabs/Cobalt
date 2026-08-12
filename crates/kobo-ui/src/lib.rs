@@ -203,24 +203,78 @@ pub struct DisplayMetrics {
 /// Applications continue to ask for semantic sizes such as [`FontSize::Body`].
 /// The runtime applies this preference to every face, so pagination performed
 /// in an application and rendering performed on the device remain identical.
+///
+/// The steps are close enough together that a reader who finds one size a
+/// little too small has somewhere to go: three sizes meant the only move from
+/// "slightly too small" was a fifth larger, which is a different book. The
+/// wire values of the original three are unchanged, because they are written
+/// into every reading position already saved on every device.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 #[repr(u8)]
 pub enum TextScale {
+    Smallest = 3,
+    Smaller = 4,
     #[default]
     Default = 0,
+    Medium = 5,
     Large = 1,
+    Larger = 6,
     ExtraLarge = 2,
+    Huge = 7,
+    Largest = 8,
 }
 
 impl TextScale {
+    /// Every step, smallest first, which is the order a stepper walks.
+    pub const STEPS: [Self; 9] = [
+        Self::Smallest,
+        Self::Smaller,
+        Self::Default,
+        Self::Medium,
+        Self::Large,
+        Self::Larger,
+        Self::ExtraLarge,
+        Self::Huge,
+        Self::Largest,
+    ];
+
     /// Percentage applied to the physical type size.
     #[must_use]
     pub const fn percent(self) -> i32 {
         match self {
+            Self::Smallest => 80,
+            Self::Smaller => 90,
             Self::Default => 100,
+            Self::Medium => 110,
             Self::Large => 120,
+            Self::Larger => 130,
             Self::ExtraLarge => 140,
+            Self::Huge => 155,
+            Self::Largest => 170,
         }
+    }
+
+    /// Where this size sits among [`Self::STEPS`].
+    #[must_use]
+    pub fn step(self) -> usize {
+        Self::STEPS
+            .iter()
+            .position(|scale| *scale == self)
+            .unwrap_or(2)
+    }
+
+    /// The next size up, or `None` at the top of the range.
+    #[must_use]
+    pub fn larger(self) -> Option<Self> {
+        Self::STEPS.get(self.step().saturating_add(1)).copied()
+    }
+
+    /// The next size down, or `None` at the bottom of the range.
+    #[must_use]
+    pub fn smaller(self) -> Option<Self> {
+        self.step()
+            .checked_sub(1)
+            .and_then(|step| Self::STEPS.get(step).copied())
     }
 
     /// A stable wire representation used by `kobo-protocol`.
@@ -236,19 +290,35 @@ impl TextScale {
             0 => Some(Self::Default),
             1 => Some(Self::Large),
             2 => Some(Self::ExtraLarge),
+            3 => Some(Self::Smallest),
+            4 => Some(Self::Smaller),
+            5 => Some(Self::Medium),
+            6 => Some(Self::Larger),
+            7 => Some(Self::Huge),
+            8 => Some(Self::Largest),
             _ => None,
         }
     }
 
     /// Parses values accepted by the runtime's `KOBO_TEXT_SCALE` setting.
+    ///
+    /// A bare percentage is matched against the steps rather than rounded to
+    /// one, so a setting naming a size that no longer exists is refused and
+    /// falls back to the default instead of silently becoming a neighbour.
     #[must_use]
     pub fn from_name(value: &str) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "default" | "100" | "100%" => Some(Self::Default),
-            "large" | "120" | "120%" => Some(Self::Large),
-            "extra-large" | "extra_large" | "xl" | "140" | "140%" => Some(Self::ExtraLarge),
-            _ => None,
+        let value = value.trim().to_ascii_lowercase();
+        match value.as_str() {
+            "default" | "standard" => return Some(Self::Default),
+            "large" => return Some(Self::Large),
+            "extra-large" | "extra_large" | "xl" => return Some(Self::ExtraLarge),
+            _ => {}
         }
+        let digits = value.strip_suffix('%').unwrap_or(&value);
+        let percent = digits.parse::<i32>().ok()?;
+        Self::STEPS
+            .into_iter()
+            .find(|step| step.percent() == percent)
     }
 }
 
@@ -756,6 +826,14 @@ pub enum CellStyle {
     #[default]
     Board,
     Key,
+    /// A cell that is nothing but the picture in it.
+    ///
+    /// For a row of actions everybody already knows by their drawing. A key
+    /// needs its field because a keyboard is forty-five targets packed edge to
+    /// edge and the eye has to be told where one ends; four icons with a
+    /// finger's width of paper between them are already separate, and putting
+    /// each on a grey slab turns a quiet row into four boxes.
+    Plain,
 }
 
 /// Whether a control can currently be activated.
@@ -2526,6 +2604,37 @@ pub enum Node {
     /// Typing on a device with no keyboard and a refresh measured in tens of
     /// milliseconds is markedly worse than tapping, so the shape of the node
     /// pushes authors toward offering answers rather than demanding prose.
+    /// One quantity, its two directions, and where it stands in its range.
+    ///
+    /// The answer to a setting with an order to it: a type size, a brightness,
+    /// a volume. A [`Node::Choice`] can express the same thing by naming every
+    /// step, and for three steps that was defensible; past that it becomes a
+    /// stack of full-width boxes taller than the page it is covering, and it
+    /// still cannot say that "Large" is one notch above "Standard".
+    ///
+    /// The two controls carry pictures rather than words on purpose. Minus and
+    /// plus are read the same in every language and at a glance in the dark,
+    /// which is when a reader reaches for the light. What the value *is* stays
+    /// written out beside them, because a stepper with no reading is the one
+    /// thing worse than a list: it says which way to go and never says where
+    /// you are.
+    Stepper {
+        id: NodeId,
+        /// What is being adjusted, and its present value, already written for
+        /// reading: "Type size 110%".
+        label: String,
+        /// The two ends, and whether either has anywhere left to go. A
+        /// control at the end of its range is drawn muted rather than removed,
+        /// so the row keeps its shape and the other end does not slide under
+        /// the finger already reaching for it.
+        less: BarAction,
+        more: BarAction,
+        less_state: ControlState,
+        more_state: ControlState,
+        /// How far along the range the value sits, drawn as a filled track
+        /// under the row. `None` for a quantity with no meaningful extent.
+        fill: Option<u8>,
+    },
     Choice {
         id: NodeId,
         prompt: String,
@@ -3290,6 +3399,12 @@ pub enum Glyph {
     /// application wore [`Self::Download`] before this existed, which said
     /// "fetch something" about the one place on the device that plays sound.
     Headphones,
+    /// Take away, and the other half of every stepper on the device.
+    ///
+    /// A single stroke carries no language at all, which is the whole reason
+    /// to draw it: "Dimmer" and "Smaller" are words somebody has to read, and
+    /// a reader adjusting the light in the dark is not reading anything.
+    Minus,
 }
 
 impl Glyph {
@@ -3300,7 +3415,7 @@ impl Glyph {
     /// the set was twenty-one: `Light` and `Close` were authored, shipped, and
     /// covered by none of the tests that walk every glyph. A glyph nobody
     /// rasterises in a test is a blank space beside a label on the panel.
-    pub const ALL: [Self; 44] = [
+    pub const ALL: [Self; 45] = [
         Self::App,
         Self::Book,
         Self::Note,
@@ -3345,6 +3460,7 @@ impl Glyph {
         Self::Next,
         Self::Plus,
         Self::Headphones,
+        Self::Minus,
     ];
 }
 
@@ -3375,6 +3491,7 @@ impl Node {
             | Self::Rows { id, .. }
             | Self::TileGrid { id, .. }
             | Self::Choice { id, .. }
+            | Self::Stepper { id, .. }
             | Self::Banner { id, .. }
             | Self::Skeleton { id, .. }
             | Self::Picture { id, .. }
@@ -3637,6 +3754,17 @@ pub enum LayoutKind {
     /// it to fit only if the application handed over something larger.
     Picture(PictureHandle),
     ChoicePrompt,
+    /// A stepper's reading: what is being adjusted and where it stands. Set in
+    /// the middle of the row, between the two controls, and not itself a
+    /// target -- a stepper has two answers and neither of them is "the label".
+    StepperValue,
+    /// One end of a stepper. The glyph says which way it goes and the
+    /// [`ControlState`] says whether there is anywhere left to go: a control at
+    /// the end of its range is drawn muted and answers nothing, rather than
+    /// disappearing and moving the other one under the reader's finger.
+    StepperControl(ActionId, ControlState, Glyph),
+    /// The track under a stepper, filled as far as the value has gone.
+    StepperTrack(u8),
     ChoiceOption(ActionId, bool),
     ChoiceFreeform(ActionId),
     Banner(BannerLevel),
@@ -3685,6 +3813,7 @@ impl LayoutKind {
             | Self::RowMenu(action)
             | Self::Cell(action, ..)
             | Self::ChoiceOption(action, _)
+            | Self::StepperControl(action, ControlState::Enabled, _)
             | Self::ChoiceFreeform(action)
             | Self::QuoteFold(action, _)
             | Self::PagePrevious(action)
@@ -3948,6 +4077,7 @@ impl Layout {
                         | LayoutKind::Chip(_, _)
                         | LayoutKind::Tab(_, _)
                         | LayoutKind::ChoiceOption(_, _)
+                        | LayoutKind::StepperControl(_, ControlState::Enabled, _)
                         | LayoutKind::ChoiceFreeform(_)
                 )
             })
@@ -4139,6 +4269,7 @@ impl Layout {
                 | LayoutKind::Chip(candidate, _)
                 | LayoutKind::Tab(candidate, _)
                 | LayoutKind::ChoiceOption(candidate, _)
+                | LayoutKind::StepperControl(candidate, ControlState::Enabled, _)
                 | LayoutKind::Cell(candidate, ..)
                 | LayoutKind::ChoiceFreeform(candidate) => candidate == action,
                 _ => false,
@@ -5391,8 +5522,12 @@ fn layout_node(
             // A square cell is what makes a board read as a board. A grid that
             // is not square is a keyboard, and there one row of touch target
             // is exactly right and anything taller wastes the panel.
+            // A row whose every cell carries a picture is a row of actions,
+            // not a keyboard, and it is drawn as the pictures alone.
             let (cell_height, style) = if *square {
                 (cell_width, CellStyle::Board)
+            } else if cells.iter().all(|cell| cell.glyph.is_some()) {
+                (metrics.touch_target_default(), CellStyle::Plain)
             } else {
                 (metrics.touch_target_default(), CellStyle::Key)
             };
@@ -5889,6 +6024,78 @@ fn layout_node(
             layout.nodes[index].rect.height = height;
             y.saturating_add(height)
         }
+        Node::Stepper {
+            id,
+            label,
+            less,
+            more,
+            less_state,
+            more_state,
+            fill,
+        } => {
+            // Square controls at both ends, the reading between them. Square
+            // because a stepper is two targets side by side and a finger is
+            // round: making them the height of the row and no wider is what
+            // keeps the gap between minus and plus wide enough that neither is
+            // hit by accident.
+            let row = metrics.touch_target_default();
+            let side = row.min(width / 3).max(1);
+            let middle = width.saturating_sub(side.saturating_mul(2)).max(1);
+            let control =
+                |action: &BarAction, state: ControlState, fallback: Glyph, at: i32| LayoutNode {
+                    id: *id,
+                    rect: Rect {
+                        x: at,
+                        y,
+                        width: side,
+                        height: row,
+                    },
+                    kind: LayoutKind::StepperControl(
+                        action.action,
+                        state,
+                        action.glyph.unwrap_or(fallback),
+                    ),
+                    text_lines: Vec::new(),
+                };
+            layout
+                .nodes
+                .push(control(less, *less_state, Glyph::Minus, x));
+            layout.nodes.push(LayoutNode {
+                id: *id,
+                rect: Rect {
+                    x: x.saturating_add(side),
+                    y,
+                    width: middle,
+                    height: row,
+                },
+                kind: LayoutKind::StepperValue,
+                text_lines: vec![clamp_lines(label, middle, FontSize::Body, 1)],
+            });
+            layout.nodes.push(control(
+                more,
+                *more_state,
+                Glyph::Plus,
+                x.saturating_add(side).saturating_add(middle),
+            ));
+            let mut cursor = y.saturating_add(row);
+            if let Some(fill) = fill {
+                let track = metrics.tenth_mm(8);
+                cursor = cursor.saturating_add(metrics.space(Space::Tight));
+                layout.nodes.push(LayoutNode {
+                    id: *id,
+                    rect: Rect {
+                        x,
+                        y: cursor,
+                        width,
+                        height: track,
+                    },
+                    kind: LayoutKind::StepperTrack(*fill),
+                    text_lines: Vec::new(),
+                });
+                cursor = cursor.saturating_add(track);
+            }
+            cursor
+        }
         Node::Choice {
             id,
             prompt,
@@ -6347,7 +6554,7 @@ impl FontSize {
     #[must_use]
     pub fn line_height_in(self, face: Face) -> i32 {
         with_typesetter(face, |typesetter| typesetter.line_height(self, face))
-            .unwrap_or_else(|| self.fallback_line_height())
+            .unwrap_or_else(|| self.fallback_line_height_in(face))
     }
 
     /// The built-in bitmap's line height, at the current type size.
@@ -6357,7 +6564,14 @@ impl FontSize {
     /// tested without hardware.
     #[must_use]
     pub fn fallback_line_height(self) -> i32 {
-        (self.unscaled_fallback_line_height() * text_scale().percent() + 50) / 100
+        self.fallback_line_height_in(Face::Text)
+    }
+
+    /// The same, for a named face, so prose follows the reading size and the
+    /// interface around it does not.
+    #[must_use]
+    pub fn fallback_line_height_in(self, face: Face) -> i32 {
+        (self.unscaled_fallback_line_height() * scale_percent(face) + 50) / 100
     }
 
     const fn unscaled_fallback_line_height(self) -> i32 {
@@ -6566,6 +6780,7 @@ fn with_typesetter<T>(face: Face, body: impl FnOnce(&dyn Typesetter) -> T) -> Op
 // it.
 thread_local! {
     static TEXT_SCALE: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
+    static READING_SCALE: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
 }
 
 /// Sets the type size for everything measured or drawn after this.
@@ -6581,6 +6796,40 @@ pub fn set_text_scale(scale: TextScale) {
 #[must_use]
 pub fn text_scale() -> TextScale {
     TextScale::from_wire(TEXT_SCALE.with(std::cell::Cell::get)).unwrap_or_default()
+}
+
+/// Sets the size of book prose, and of nothing else.
+///
+/// Separate from [`set_text_scale`] because the two answer different people.
+/// The text scale is an accessibility preference: somebody has said how large
+/// they need an interface to be, and a title bar, a page number and a button
+/// are all interface. The reading scale is a reader saying how large they want
+/// *this book*, which is a decision about the page and not about the device.
+///
+/// They were one value until a reader on a Clara found that making a novel
+/// larger also grew the book's name in the bar above it, took the height out
+/// of the page to do it, and left less room for the larger type than there had
+/// been for the smaller.
+pub fn set_reading_scale(scale: TextScale) {
+    READING_SCALE.with(|slot| slot.set(scale.wire_value()));
+}
+
+/// The size book prose is currently being set at.
+#[must_use]
+pub fn reading_scale() -> TextScale {
+    TextScale::from_wire(READING_SCALE.with(std::cell::Cell::get)).unwrap_or_default()
+}
+
+/// The percentage in force for one face.
+///
+/// The single place that decides which of the two ambient sizes a face obeys,
+/// so a new caller cannot get the answer half right.
+#[must_use]
+pub fn scale_percent(face: Face) -> i32 {
+    match face {
+        Face::Reading => reading_scale().percent(),
+        Face::Text | Face::Mono => text_scale().percent(),
+    }
 }
 
 /// Runs `body` with the type at `scale`, putting it back afterwards.
@@ -6600,6 +6849,22 @@ pub fn with_text_scale<T>(scale: TextScale, body: impl FnOnce() -> T) -> T {
     }
     let _restore = Restore(text_scale());
     set_text_scale(scale);
+    body()
+}
+
+/// Runs `body` with book prose at `scale`, putting it back afterwards.
+///
+/// What an application calls to measure a book at a size it is not showing
+/// yet, which is every repagination after the reader touches the stepper.
+pub fn with_reading_scale<T>(scale: TextScale, body: impl FnOnce() -> T) -> T {
+    struct Restore(TextScale);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            set_reading_scale(self.0);
+        }
+    }
+    let _restore = Restore(reading_scale());
+    set_reading_scale(scale);
     body()
 }
 
@@ -6638,7 +6903,7 @@ pub fn measure_text_in(text: &str, size: FontSize, face: Face) -> (i32, i32) {
     }
     let scale = size.scale();
     let glyphs = i32::try_from(text.chars().count()).unwrap_or(i32::MAX);
-    let percent = text_scale().percent();
+    let percent = scale_percent(face);
     let width = glyphs.saturating_mul(6).saturating_mul(scale);
     (
         (width.saturating_mul(percent) + 50) / 100,
@@ -6672,7 +6937,7 @@ pub fn undrawable_in(text: &str, face: Face) -> Option<char> {
 #[must_use]
 pub fn mono_cell(size: FontSize) -> (i32, i32) {
     TYPESETTER.get().map_or_else(
-        || (6 * size.scale(), size.fallback_line_height()),
+        || (6 * size.scale(), size.fallback_line_height_in(Face::Mono)),
         |typesetter| {
             (
                 max(1, typesetter.cell_width(size)),
@@ -8679,6 +8944,9 @@ fn validate_node(
                 }
             }
         }
+        Node::Stepper { label, .. } => {
+            check_text_coverage(id, label, Face::Text, issues);
+        }
         Node::Choice {
             prompt,
             options,
@@ -8925,6 +9193,7 @@ const fn is_tappable(kind: LayoutKind) -> bool {
             | LayoutKind::Chip(_, _)
             | LayoutKind::Tab(_, _)
             | LayoutKind::ChoiceOption(_, _)
+            | LayoutKind::StepperControl(_, ControlState::Enabled, _)
             | LayoutKind::ChoiceFreeform(_)
             | LayoutKind::PagePrevious(_)
             | LayoutKind::PageNext(_)
@@ -8971,6 +9240,7 @@ fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
         | LayoutKind::CellLabel
         | LayoutKind::ChoicePrompt
         | LayoutKind::ChoiceOption(_, _)
+        | LayoutKind::StepperValue
         | LayoutKind::ChoiceFreeform(_)
         | LayoutKind::Banner(_)
         | LayoutKind::ActivityLabel => FontSize::Body,
@@ -9641,6 +9911,8 @@ fn render_all_with_selected_font(
             // A key is the field it is printed on, with no rule at all. The
             // gaps between the keys separate them, which is how a keyboard has
             // always been read, and it takes forty-five outlines off the panel.
+            // Nothing at all: the picture is the whole of it.
+            LayoutKind::Cell(_, CellStyle::Plain) => {}
             LayoutKind::Cell(_, CellStyle::Key) => fill_rounded_clipped(
                 surface,
                 node.rect,
@@ -10155,6 +10427,64 @@ fn render_all_with_selected_font(
                 tone::INK,
                 clip,
             ),
+            // The two ends carry a picture and nothing else at all: no word,
+            // no outline and no field. A minus and a plus either side of a
+            // reading are already a stepper on every device ever made, and
+            // drawing a box round each of them turns a quiet line into two
+            // more things to look at. The target stays a full touch target
+            // whatever the picture inside it measures.
+            LayoutKind::StepperControl(_, state, glyph) => {
+                let tone = if state.is_enabled() {
+                    tone::INK
+                } else {
+                    tone::RULE
+                };
+                let size = FontSize::Heading.line_height();
+                draw_glyph_icon_in(
+                    surface,
+                    glyph,
+                    Rect {
+                        x: node.rect.x + (node.rect.width - size) / 2,
+                        y: node.rect.y + (node.rect.height - size) / 2,
+                        width: size,
+                        height: size,
+                    },
+                    clip,
+                    tone,
+                );
+            }
+            // Centred between the two controls, because a reading that sits
+            // against one of them reads as a label for that control.
+            LayoutKind::StepperValue => {
+                let (measured, _) = measure_text(
+                    node.text_lines.first().map_or("", String::as_str),
+                    FontSize::Body,
+                );
+                draw_lines(
+                    surface,
+                    &node.text_lines,
+                    node.rect.x + max(0, (node.rect.width - measured) / 2),
+                    node.rect.y + (node.rect.height - FontSize::Body.line_height()) / 2,
+                    FontSize::Body,
+                    tone::INK,
+                    clip,
+                );
+            }
+            // A hairline track rather than an outlined bar: it says where in
+            // the range the value sits and is not itself a control, so it must
+            // not carry as much ink as the two things that are.
+            LayoutKind::StepperTrack(fill) => {
+                fill_clipped(surface, node.rect, tone::RULE, clip);
+                fill_clipped(
+                    surface,
+                    Rect {
+                        width: node.rect.width.saturating_mul(min(100, i32::from(fill))) / 100,
+                        ..node.rect
+                    },
+                    tone::INK,
+                    clip,
+                );
+            }
             LayoutKind::ChoiceOption(_, chosen) => {
                 stroke_clipped(
                     surface,
@@ -12976,6 +13306,15 @@ mod loading_tests {
                 }],
             },
             Node::Divider { id: NodeId(6) },
+            Node::Stepper {
+                id: NodeId(96),
+                label: "120%".into(),
+                less: BarAction::new(ActionId(30), String::new()).with_glyph(Glyph::Minus),
+                more: BarAction::new(ActionId(31), String::new()).with_glyph(Glyph::Plus),
+                less_state: ControlState::Enabled,
+                more_state: ControlState::Disabled,
+                fill: Some(75),
+            },
             Node::Spacer {
                 id: NodeId(7),
                 space: Space::Medium,
@@ -13104,6 +13443,7 @@ mod loading_tests {
                 | LayoutKind::Row(action)
                 | LayoutKind::Cell(action, ..)
                 | LayoutKind::ChoiceOption(action, _)
+                | LayoutKind::StepperControl(action, ControlState::Enabled, _)
                 | LayoutKind::ChoiceFreeform(action) => Some((action, node.rect)),
                 _ => None,
             })

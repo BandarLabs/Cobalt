@@ -859,6 +859,7 @@ fn glyph(name: &str) -> Option<Glyph> {
         "next" => Glyph::Next,
         "plus" => Glyph::Plus,
         "headphones" => Glyph::Headphones,
+        "minus" => Glyph::Minus,
         _ => return None,
     })
 }

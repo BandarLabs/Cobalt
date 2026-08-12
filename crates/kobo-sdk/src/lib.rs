@@ -2184,6 +2184,80 @@ impl ScreenBuilder {
         self
     }
 
+    /// Offers a value that moves one notch at a time.
+    ///
+    /// This is the shape a setting takes when its values form a line rather
+    /// than a set: type size, brightness, playback speed. A list of named
+    /// options would say the same thing in five rows of full-width boxes, and
+    /// on a panel that repaints in tenths of a second the reader would rather
+    /// tap the same spot twice than read five labels to find the one above the
+    /// one they have.
+    ///
+    /// The two ends carry pictures, not words, so the control needs no
+    /// translating and no room for a label. Whichever end has nowhere further
+    /// to go is drawn muted and stops answering taps.
+    #[must_use]
+    pub fn stepper(
+        mut self,
+        label: impl Into<String>,
+        less: impl AsRef<str>,
+        less_glyph: Glyph,
+        more: impl AsRef<str>,
+        more_glyph: Glyph,
+    ) -> Self {
+        let id = self.next_id();
+        let less =
+            BarAction::new(self.register(less.as_ref()), String::new()).with_glyph(less_glyph);
+        let more =
+            BarAction::new(self.register(more.as_ref()), String::new()).with_glyph(more_glyph);
+        self.nodes.push(Node::Stepper {
+            id,
+            label: label.into(),
+            less,
+            more,
+            less_state: ControlState::Enabled,
+            more_state: ControlState::Enabled,
+            fill: None,
+        });
+        self
+    }
+
+    /// Says which ends of the stepper just declared still have somewhere to go.
+    #[must_use]
+    pub fn stepper_ends(mut self, less: bool, more: bool) -> Self {
+        if let Some(Node::Stepper {
+            less_state,
+            more_state,
+            ..
+        }) = self.nodes.last_mut()
+        {
+            *less_state = if less {
+                ControlState::Enabled
+            } else {
+                ControlState::Disabled
+            };
+            *more_state = if more {
+                ControlState::Enabled
+            } else {
+                ControlState::Disabled
+            };
+        }
+        self
+    }
+
+    /// Draws a hairline under the stepper just declared showing where in its
+    /// range the value sits, as a percentage of the way along.
+    ///
+    /// Worth having where the reading is a number without a natural sense of
+    /// scale: "60%" says little until you can see it is past the middle.
+    #[must_use]
+    pub fn stepper_track(mut self, percent: u8) -> Self {
+        if let Some(Node::Stepper { fill, .. }) = self.nodes.last_mut() {
+            *fill = Some(percent.min(100));
+        }
+        self
+    }
+
     /// Asks a question by offering answers.
     ///
     /// Prefer this over a text field. Typing on this device means summoning a
@@ -2640,11 +2714,13 @@ impl Context {
         nav_bar: bool,
         scale: kobo_ui::TextScale,
     ) -> Vec<Vec<String>> {
-        // Measured with the type actually at that size. Setting it on the
+        // Measured with the prose actually at that size. Setting it on the
         // metrics alone moves the margins and leaves the words the size they
         // were, which is how a page comes out measured for one size and drawn
-        // at another.
-        kobo_ui::with_text_scale(scale, || {
+        // at another. Only the prose moves: the bars above and below are
+        // interface and keep the reader's own size, which is what makes the
+        // page area the same whatever size the book is set at.
+        kobo_ui::with_reading_scale(scale, || {
             let metrics = self.metrics_at(scale);
             let mut area = metrics.prose_area_in(true, nav_bar, kobo_ui::Face::Reading);
             area.height = area

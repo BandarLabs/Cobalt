@@ -107,15 +107,18 @@ const DATA_ROOT: &str = "/mnt/onboard/.adds/cobalt/data";
 /// lays this screen out has to agree, because layout is what decides where the
 /// controls are: rendering at one size and hit-testing at another moves every
 /// control away from where it can be seen.
+///
+/// What the screen asks for is the size of its *prose*. The interface keeps
+/// the reader's own accessibility scale, so a book set larger does not also
+/// grow the bar above it and take the room out of the page.
 fn metrics_for(screen: &Screen) -> kobo_ui::DisplayMetrics {
-    let mut metrics = display_metrics_from_env();
-    let scale = screen.text_scale.unwrap_or(metrics.text_scale);
-    metrics.text_scale = scale;
+    let metrics = display_metrics_from_env();
     // The typeface is installed once and lives as long as the process, so the
     // size it sets at has to be told to it rather than carried in the metrics
     // it was built with. Set here, where the screen's own answer is known, so
     // that measuring and drawing this frame cannot disagree.
-    kobo_ui::set_text_scale(scale);
+    kobo_ui::set_text_scale(metrics.text_scale);
+    kobo_ui::set_reading_scale(screen.text_scale.unwrap_or(metrics.text_scale));
     metrics
 }
 

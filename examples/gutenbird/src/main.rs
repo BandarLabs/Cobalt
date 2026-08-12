@@ -2594,16 +2594,6 @@ impl Gutenbird {
         }
     }
 
-    fn ask_light(&mut self, context: &mut Context) {
-        if self
-            .book
-            .reader()
-            .is_some_and(|reader| reader.light().is_none())
-        {
-            context.device().read_frontlight();
-        }
-    }
-
     fn took_book(&mut self, context: &mut Context, bytes: &[u8]) {
         let Some(download) = &mut self.download else {
             return;
@@ -2648,7 +2638,6 @@ impl Gutenbird {
             .is_some_and(|total| u64::from(self.fetched) >= total);
         self.complete = short || reached_total;
         self.reopen(context);
-        self.ask_light(context);
         if self.complete && self.download.is_some() {
             self.keep_book(context);
         }
@@ -3148,11 +3137,7 @@ impl KoboApp for Gutenbird {
         let kobo_sdk::DeviceResult::Frontlight { percent } = result else {
             return;
         };
-        if self
-            .book
-            .reader_mut()
-            .is_some_and(|reader| reader.seed_light(percent))
-        {
+        if self.book.took_light(percent) {
             self.show(context);
         }
     }
@@ -5155,6 +5140,8 @@ Please read this before you distribute or use this work.\n";
             .iter()
             .filter_map(|node| match node.kind {
                 LayoutKind::Button(action, kobo_ui::ControlState::Enabled, _)
+                | LayoutKind::StepperControl(action, kobo_ui::ControlState::Enabled, _)
+                | LayoutKind::Cell(action, ..)
                 | LayoutKind::ChoiceOption(action, _) => Some((action, node.rect)),
                 _ => None,
             })
@@ -5230,7 +5217,7 @@ Please read this before you distribute or use this work.\n";
         let steps = layout
             .nodes
             .iter()
-            .filter(|node| matches!(node.kind, LayoutKind::ChoiceOption(..)))
+            .filter(|node| matches!(node.kind, LayoutKind::StepperControl(..)))
             .count();
         assert_eq!(
             steps, 2,
