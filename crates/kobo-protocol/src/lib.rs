@@ -3259,6 +3259,23 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
             length
         }
         Node::Picture { .. } => 19,
+        Node::Table { rows, weights, .. } => {
+            if rows.len() > u8::MAX as usize || weights.len() > u8::MAX as usize {
+                return Err(ProtocolError::TooManyNodes);
+            }
+            let mut length = 7;
+            add_encoded_len(&mut length, weights.len().saturating_mul(2))?;
+            for row in rows {
+                if row.cells.len() > u8::MAX as usize {
+                    return Err(ProtocolError::TooManyNodes);
+                }
+                add_encoded_len(&mut length, 2)?;
+                for cell in &row.cells {
+                    add_encoded_len(&mut length, encoded_string_len(cell)?)?;
+                }
+            }
+            length
+        }
         Node::Stepper {
             label, less, more, ..
         } => {
@@ -4438,6 +4455,23 @@ fn encode_node(
             push_u32(output, source.1);
             push_u16(output, *max_height_tenths_mm);
         }
+        Node::Table { id, rows, weights } => {
+            output.push(30);
+            push_u32(output, id.0);
+            output.push(u8::try_from(weights.len()).map_err(|_| ProtocolError::TooManyNodes)?);
+            for weight in weights {
+                push_u16(output, *weight);
+            }
+            output.push(u8::try_from(rows.len()).map_err(|_| ProtocolError::TooManyNodes)?);
+            for row in rows {
+                output.push(u8::from(row.header));
+                output
+                    .push(u8::try_from(row.cells.len()).map_err(|_| ProtocolError::TooManyNodes)?);
+                for cell in &row.cells {
+                    push_string(output, cell)?;
+                }
+            }
+        }
         Node::Stepper {
             id,
             label,
@@ -5406,6 +5440,29 @@ fn decode_node(
                 selected,
                 freeform,
             })
+        }
+        30 => {
+            let count = reader.u8()? as usize;
+            let mut weights = Vec::with_capacity(count.min(MAX_NODES));
+            for _ in 0..count {
+                weights.push(reader.u16()?);
+            }
+            let count = reader.u8()? as usize;
+            let mut rows = Vec::with_capacity(count.min(MAX_NODES));
+            for _ in 0..count {
+                let header = match reader.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(ProtocolError::InvalidValue("table heading flag")),
+                };
+                let cells = reader.u8()? as usize;
+                let mut row = Vec::with_capacity(cells.min(MAX_NODES));
+                for _ in 0..cells {
+                    row.push(reader.string()?);
+                }
+                rows.push(kobo_ui::TableRow { header, cells: row });
+            }
+            Ok(Node::Table { id, rows, weights })
         }
         29 => {
             let label = reader.string()?;
@@ -6429,6 +6486,20 @@ mod node_coverage_tests {
     #[allow(clippy::too_many_lines, reason = "one literal per node variant")]
     fn one_of_every_node() -> Vec<Node> {
         vec![
+            Node::Table {
+                id: NodeId(70),
+                rows: vec![
+                    kobo_ui::TableRow {
+                        header: true,
+                        cells: vec!["Model".into(), "Top-1".into()],
+                    },
+                    kobo_ui::TableRow {
+                        header: false,
+                        cells: vec!["ResNet-50".into(), "76.1".into()],
+                    },
+                ],
+                weights: vec![240, 90],
+            },
             Node::Heading {
                 id: NodeId(1),
                 text: "Heading".into(),

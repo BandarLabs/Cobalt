@@ -149,6 +149,15 @@ pub const MAX_LINKS: usize = 20_000;
 /// file with no line breaks in it, and cutting it is better than handing the
 /// layout engine a single block it will spend a second wrapping.
 pub const MAX_BLOCK_TEXT: usize = 64 * 1024;
+
+/// The most columns one table row is kept at.
+///
+/// A panel seven centimetres across cannot show a dozen columns of prose and
+/// nothing is gained by carrying them: past this the row is not a table any
+/// more, it is a spreadsheet somebody published as a web page. Cells past the
+/// limit are dropped rather than merged, because merging them silently
+/// changes which value sits under which heading.
+pub const MAX_ROW_CELLS: usize = 12;
 /// Styled runs retained for one block. Pathological tag-per-character XHTML
 /// degrades into one final run rather than growing the render protocol.
 const MAX_RICH_SPANS: usize = 256;
@@ -195,6 +204,26 @@ pub enum Block {
         /// the image will not decode, and on a panel that cannot show colour
         /// a caption is often the more useful of the two.
         alt: String,
+    },
+    /// One row of a table.
+    ///
+    /// A table is a run of these, and the run is the table: there is no
+    /// enclosing block, because a document is a flat list and a nested one
+    /// would have to be paginated, searched and highlighted through a second
+    /// shape. Consecutive rows are laid out together, so the columns of a
+    /// table line up without any block having to own the whole of it.
+    ///
+    /// Cells were previously joined into one paragraph with an em dash
+    /// between them, which reads as a sentence made of fragments and loses
+    /// the one thing a table is for: knowing which value belongs to which
+    /// column.
+    Row {
+        /// Whether the row was written with `th` rather than `td`, and so
+        /// names the columns rather than filling them.
+        header: bool,
+        /// Left to right, as written. Empty cells are kept: a gap in a table
+        /// is where the alignment of everything after it comes from.
+        cells: Vec<String>,
     },
     /// A break between parts with no words on it.
     Rule,
@@ -284,8 +313,33 @@ impl Block {
             // A picture's description is not the words of the book: returning
             // it here would put a caption into a search, a highlight and the
             // count of what a page holds, all of which are about prose.
-            Self::Picture { .. } | Self::Rule | Self::Break => None,
+            //
+            // A row has words but no single string of them: joining the cells
+            // to answer this is exactly the flattening this block exists to
+            // stop. What a row reads as is [`Block::row_text`], which the
+            // things that genuinely want prose ask for by name.
+            Self::Picture { .. } | Self::Rule | Self::Break | Self::Row { .. } => None,
         }
+    }
+
+    /// A row read out as one line, for the things that can only take one.
+    ///
+    /// Search and the word count want the words; they do not want the
+    /// columns. The cells are joined with a space rather than with a mark, so
+    /// that a phrase which happens to straddle two cells is still found.
+    #[must_use]
+    pub fn row_text(&self) -> Option<String> {
+        let Self::Row { cells, .. } = self else {
+            return None;
+        };
+        Some(
+            cells
+                .iter()
+                .filter(|cell| !cell.trim().is_empty())
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .join(" "),
+        )
     }
 
     /// Whether this block is where a reader would say a chapter starts.
@@ -586,6 +640,27 @@ impl Builder {
                 }
                 block
             }
+            // A row is normalised cell by cell, because the thing that has
+            // to be bounded is the row's width in columns as well as its
+            // length in characters. A row of nothing but blanks is a spacer
+            // somebody drew with a table and is not kept.
+            Block::Row { header, cells } => {
+                let mut kept: Vec<String> = cells
+                    .into_iter()
+                    .take(MAX_ROW_CELLS)
+                    .map(|cell| self.fit(collapse(&cell)))
+                    .collect();
+                while matches!(kept.last(), Some(cell) if cell.is_empty()) {
+                    kept.pop();
+                }
+                if kept.iter().all(String::is_empty) {
+                    return;
+                }
+                Block::Row {
+                    header,
+                    cells: kept,
+                }
+            }
             Block::Rule | Block::Break => {
                 // Two rules in a row, or a break with nothing between it and
                 // the last one, is a seam in the source rather than something
@@ -616,9 +691,11 @@ impl Builder {
                     Block::Quote(_) => Block::Quote(text),
                     Block::Item { ordered, .. } => Block::Item { ordered, text },
                     Block::Caption(_) => Block::Caption(text),
-                    Block::Preformatted(_) | Block::Picture { .. } | Block::Rule | Block::Break => {
-                        return
-                    }
+                    Block::Preformatted(_)
+                    | Block::Picture { .. }
+                    | Block::Rule
+                    | Block::Break
+                    | Block::Row { .. } => return,
                 }
             }
         };

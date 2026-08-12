@@ -177,6 +177,25 @@ struct State {
     /// Whether the words being collected are the document's title rather than
     /// something to draw.
     titling: bool,
+    /// The table row being read, once `<tr>` has opened one.
+    ///
+    /// A cell's words are collected by the same machinery as a paragraph's
+    /// and taken out again when the cell closes, so everything that already
+    /// worked inside prose -- entities, inline tags, links -- works inside a
+    /// cell without a second implementation of any of it.
+    row: Option<Row>,
+}
+
+/// A table row part way through being read.
+#[derive(Default)]
+struct Row {
+    cells: Vec<String>,
+    /// Set by the first `th` in the row. A row of headings names the columns
+    /// and is drawn differently from one that fills them.
+    header: bool,
+    /// Whether a cell is open, so that the words collected since belong to it
+    /// rather than to the row's stray text.
+    open: bool,
 }
 
 impl State {
@@ -198,6 +217,7 @@ impl State {
             item: false,
             caption: false,
             titling: false,
+            row: None,
         }
     }
 
@@ -376,14 +396,27 @@ impl State {
                 apply_inline_style(&mut self.inline, Some(&declarations));
                 self.caption = true;
             }
-            // A cell is not a paragraph of its own; a row is. Running the
-            // cells together with a mark that does not occur inside one keeps
-            // the row readable in a single column. The mark goes into the
-            // styled runs too, or the runs stop matching the block text and
-            // the row loses every emphasis it had.
+            // A row is one block and a cell is one column of it. Both are
+            // needed: a cell alone cannot be laid out, because how wide it is
+            // depends on every other cell in its column, and a row alone
+            // cannot say where one value ends and the next begins.
+            "tr" => {
+                self.end_row();
+                self.flush();
+                self.row = Some(Row::default());
+            }
             "td" | "th" => {
-                if !self.text.trim_end().is_empty() {
-                    self.synthetic(" \u{2014} ");
+                // A cell outside any row is a cell in a table written without
+                // one, which is common enough in hand-written HTML. It opens
+                // a row so that the cells still line up with each other.
+                if self.row.is_none() {
+                    self.flush();
+                    self.row = Some(Row::default());
+                }
+                self.end_cell();
+                if let Some(row) = &mut self.row {
+                    row.open = true;
+                    row.header |= name == "th";
                 }
             }
             _ => {
@@ -448,6 +481,14 @@ impl State {
                 self.lists.pop();
             }
             "title" => self.flush(),
+            "td" | "th" => self.end_cell(),
+            "tr" => self.end_row(),
+            // A table that ends with a row still open is a table whose last
+            // `</tr>` was never written, which is a page, not a corner.
+            "table" | "thead" | "tbody" | "tfoot" => {
+                self.end_row();
+                self.flush();
+            }
             _ => {
                 if heading_level(name).is_some() || breaks_a_block(name) {
                     self.flush();
@@ -477,7 +518,60 @@ impl State {
         }
     }
 
+    /// Takes the words collected since the cell opened and makes them a cell.
+    ///
+    /// A no-op outside a table, and outside a cell inside one: text loose in
+    /// a row is markup nobody meant, and it stays where it is so that the
+    /// ordinary flush treats it as the stray prose it is.
+    fn end_cell(&mut self) {
+        let Some(row) = &self.row else {
+            return;
+        };
+        if !row.open {
+            return;
+        }
+        let cell = std::mem::take(&mut self.text);
+        self.spans.clear();
+        if let Some(row) = &mut self.row {
+            row.open = false;
+            if row.cells.len() < crate::MAX_ROW_CELLS {
+                row.cells.push(cell);
+            }
+        }
+    }
+
+    /// Closes the row being read and pushes it, if there is one worth pushing.
+    fn end_row(&mut self) {
+        self.end_cell();
+        let Some(row) = self.row.take() else {
+            return;
+        };
+        if row.cells.is_empty() {
+            return;
+        }
+        self.builder.push(Block::Row {
+            header: row.header,
+            cells: row.cells,
+        });
+    }
+
     fn flush(&mut self) {
+        // Inside a cell there is nowhere for a block to go. A cell holding a
+        // paragraph, or three, is one cell of a row and not three blocks of
+        // prose, so the words are kept where they are and the boundary
+        // becomes a space. Without this a `<td><p>...</p></td>` table --
+        // which is most of the tables LaTeX generators emit -- would spill
+        // one paragraph per cell into the body and lose its columns.
+        if self.row.as_ref().is_some_and(|row| row.open) {
+            self.heading = None;
+            self.item = false;
+            self.caption = false;
+            self.titling = false;
+            if !self.text.is_empty() && !self.text.ends_with(char::is_whitespace) {
+                self.text.push(' ');
+            }
+            return;
+        }
         let text = std::mem::take(&mut self.text);
         let spans = normalise_spans(std::mem::take(&mut self.spans));
         let style = self.block_style.clone();
@@ -521,6 +615,7 @@ impl State {
     }
 
     fn finish(mut self) -> Document {
+        self.end_row();
         self.flush();
         self.builder.finish()
     }
@@ -1049,12 +1144,19 @@ mod tests {
         assert!(rich.spans.iter().any(|span| span.style.emphasis));
     }
 
+    // A cell keeps its words but not their weight: the row is a list of
+    // strings, because lining columns up is already as much as the panel can
+    // do with a table, and bold inside a squeezed column buys nothing.
     #[test]
-    fn emphasis_survives_a_table_row() {
+    fn a_table_cell_keeps_its_words_when_they_were_emphasised() {
         let document = parse("<table><tr><td>Plain</td><td><b>Bold</b></td></tr></table>");
-        assert_eq!(document.blocks[0].text(), Some("Plain \u{2014} Bold"));
-        let rich = document.rich.get(&0).expect("retained emphasis");
-        assert!(rich.spans.iter().any(|span| span.style.strong));
+        assert_eq!(
+            document.blocks,
+            vec![Block::Row {
+                header: false,
+                cells: vec!["Plain".to_owned(), "Bold".to_owned()],
+            }]
+        );
     }
 
     #[test]
@@ -1406,14 +1508,69 @@ mod tests {
     }
 
     #[test]
-    fn a_table_row_becomes_one_readable_line() {
+    fn a_table_keeps_one_block_per_row_with_its_cells_apart() {
         let document = parse("<table><tr><td>a</td><td>b</td></tr><tr><td>1</td><td>2</td></tr>");
         assert_eq!(
             document.blocks,
             vec![
-                Block::Paragraph("a \u{2014} b".to_owned()),
-                Block::Paragraph("1 \u{2014} 2".to_owned()),
+                Block::Row {
+                    header: false,
+                    cells: vec!["a".to_owned(), "b".to_owned()],
+                },
+                Block::Row {
+                    header: false,
+                    cells: vec!["1".to_owned(), "2".to_owned()],
+                },
             ]
+        );
+    }
+
+    #[test]
+    fn a_head_row_is_marked_so_the_panel_can_rule_under_it() {
+        let document = parse(
+            "<table><thead><tr><th>Model</th><th>Top-1</th></tr></thead>\
+             <tbody><tr><td>Small</td><td>71.2</td></tr></tbody></table><p>After.</p>",
+        );
+        assert_eq!(
+            document.blocks,
+            vec![
+                Block::Row {
+                    header: true,
+                    cells: vec!["Model".to_owned(), "Top-1".to_owned()],
+                },
+                Block::Row {
+                    header: false,
+                    cells: vec!["Small".to_owned(), "71.2".to_owned()],
+                },
+                Block::Paragraph("After.".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn two_paragraphs_in_one_cell_are_read_as_one_cell() {
+        let document = parse("<table><tr><td><p>First.</p><p>Second.</p></td></tr></table>");
+        assert_eq!(
+            document.blocks,
+            vec![Block::Row {
+                header: false,
+                cells: vec!["First. Second.".to_owned()],
+            }]
+        );
+    }
+
+    // A cell holding a whole paragraph is the shape that used to run the two
+    // cells together; it must still come out as two.
+    #[test]
+    fn a_cell_that_wraps_its_words_in_a_paragraph_stays_one_cell() {
+        let document =
+            parse("<table><tr><td><p>Left words</p></td><td><p>Right words</p></td></tr></table>");
+        assert_eq!(
+            document.blocks,
+            vec![Block::Row {
+                header: false,
+                cells: vec!["Left words".to_owned(), "Right words".to_owned()],
+            }]
         );
     }
 

@@ -172,6 +172,13 @@ pub struct Piece {
     spans: Vec<kobo_ui::RichTextSpan>,
     presentation: kobo_ui::ParagraphPresentation,
     source_offset: Option<u32>,
+    /// The cells of a table row, and what each column of its table wants to
+    /// be. Empty for everything that is not a row.
+    ///
+    /// The widths are measured across the whole table when the first of its
+    /// rows is reached, and carried on every row of it, so a table split over
+    /// two pages keeps the same columns on both.
+    row: Option<(Vec<String>, Vec<u16>)>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -185,6 +192,10 @@ enum Kind {
     Caption,
     /// A picture the book set into its text.
     Picture,
+    /// One row of a table. Consecutive rows are drawn as one table.
+    Row {
+        header: bool,
+    },
     Rule,
     Break,
 }
@@ -884,7 +895,14 @@ impl Reader {
         let limit = limit.min(MAX_SEARCH_RESULTS);
         let mut hits = Vec::new();
         for (index, block) in self.document.blocks.iter().enumerate() {
-            let Some(text) = block.text() else { continue };
+            // A table row has no single string of its own -- that is the
+            // point of it -- but a reader searching for a word does not care
+            // which cell it sat in, so the row is joined for the search and
+            // for the excerpt that names it.
+            let joined = block.row_text();
+            let Some(text) = joined.as_deref().or_else(|| block.text()) else {
+                continue;
+            };
             let Some((from, to)) = find_folded(text, &query) else {
                 continue;
             };
@@ -1398,7 +1416,20 @@ impl Reader {
         if let Some(font) = self.publisher_font {
             screen = screen.reading_font(font);
         }
-        for piece in self.page() {
+        let pieces = self.page();
+        let mut at = 0;
+        while let Some(piece) = pieces.get(at) {
+            at += 1;
+            // Rows are gathered back into the table they were cut out of.
+            // Every row of it has to be handed over at once, because the
+            // columns can only be lined up by something that can see all of
+            // them -- which is the whole reason a table is not just prose.
+            if let Kind::Row { .. } = piece.kind {
+                let (rows, weights, next) = gather_table(pieces, at - 1);
+                at = next;
+                screen = screen.table(rows, weights);
+                continue;
+            }
             screen = match piece.kind {
                 Kind::Heading(_) => screen.heading(piece.text.clone()),
                 Kind::Marked | Kind::Quote | Kind::Item => {
@@ -1443,6 +1474,7 @@ impl Reader {
                         )
                     }
                 }
+                Kind::Row { .. } => screen,
             };
         }
         if let Some(problem) = &self.problem {
@@ -2304,6 +2336,134 @@ fn highlighted_spans(
     spans
 }
 
+/// Gathers the run of rows starting at `from` back into the one table they
+/// were cut out of.
+///
+/// Returns the rows, the widths their columns were measured at, and the index
+/// of the first piece after them.
+fn gather_table(pieces: &[Piece], from: usize) -> (Vec<kobo_ui::TableRow>, Vec<u16>, usize) {
+    let mut rows = Vec::new();
+    let mut weights = Vec::new();
+    let mut at = from;
+    while let Some(piece) = pieces.get(at) {
+        let (Kind::Row { header }, Some((cells, columns))) = (piece.kind, &piece.row) else {
+            break;
+        };
+        if weights.is_empty() {
+            weights.clone_from(columns);
+        }
+        rows.push(kobo_ui::TableRow {
+            header,
+            cells: cells.clone(),
+        });
+        at += 1;
+    }
+    (rows, weights, at)
+}
+
+/// Back to a plain index, for looking at the blocks around one.
+fn index_of(locator: Locator) -> usize {
+    usize::try_from(locator).unwrap_or(usize::MAX)
+}
+
+/// What each column of the table starting at `from` wants to be.
+///
+/// Measured over every row of the table at once, and in pixels, because that
+/// is the only unit both this and the layout agree on. The layout squeezes
+/// these to fit the panel; the point of measuring them here is that a table
+/// split across two pages is squeezed by the same amounts on both.
+fn table_columns(blocks: &[Block], from: usize, area: ProseArea) -> Vec<u16> {
+    let mut wants: Vec<u16> = Vec::new();
+    for block in &blocks[from.min(blocks.len())..] {
+        let Block::Row { cells, .. } = block else {
+            break;
+        };
+        for (column, cell) in cells.iter().take(kobo_ui::MAX_TABLE_COLUMNS).enumerate() {
+            let width = kobo_ui::measure_text_in(cell, FontSize::Body, area.face)
+                .0
+                .clamp(0, i32::from(u16::MAX));
+            let width = u16::try_from(width).unwrap_or(u16::MAX);
+            match wants.get_mut(column) {
+                Some(want) => *want = (*want).max(width),
+                None => wants.push(width),
+            }
+        }
+    }
+    wants
+}
+
+/// The width the layout will give each column of a table, and whether it
+/// gave up on columns and stacked the cells instead.
+///
+/// This repeats the layout's arithmetic rather than asking it, for the same
+/// reason [`picture_height`] repeats the picture's: pagination has to be a
+/// pure function of the document, or the page a row lands on depends on what
+/// happened to be drawn before it.
+fn column_widths(columns: &[u16], metrics: &DisplayMetrics, area: ProseArea) -> (Vec<i32>, bool) {
+    let count = columns.len().min(kobo_ui::MAX_TABLE_COLUMNS);
+    if count == 0 {
+        return (Vec::new(), true);
+    }
+    let gap = metrics.space(kobo_ui::Space::Small);
+    let between = gap.saturating_mul(i32::try_from(count).unwrap_or(1) - 1);
+    let usable = (area.width - between).max(0);
+    let minimum = metrics.tenth_mm(kobo_ui::MIN_TABLE_COLUMN_TENTH_MM);
+    let wants: Vec<i32> = columns[..count]
+        .iter()
+        .map(|want| i32::from(*want))
+        .collect();
+    let total: i32 = wants.iter().copied().fold(0, i32::saturating_add);
+    let widths: Vec<i32> = if total <= usable {
+        wants
+    } else if total > 0 {
+        wants
+            .iter()
+            .map(|want| want.saturating_mul(usable) / total)
+            .collect()
+    } else {
+        vec![usable / i32::try_from(count).unwrap_or(1); count]
+    };
+    let stacked = widths.iter().any(|width| *width < minimum);
+    (widths, stacked)
+}
+
+/// How tall a row will be drawn, so a page can be packed around it.
+fn row_height(cells: &[String], columns: &[u16], metrics: &DisplayMetrics, area: ProseArea) -> i32 {
+    let line = FontSize::Body.line_height_in(area.face).max(1);
+    let (widths, stacked) = column_widths(columns, metrics, area);
+    if widths.is_empty() {
+        return line;
+    }
+    // Past its floor the layout stops drawing columns and sets each cell as
+    // its own full-width lines, so the row is as tall as all of them
+    // together rather than as tall as the tallest of them.
+    if stacked {
+        let mut height = metrics.space(kobo_ui::Space::Small);
+        for cell in cells.iter().take(widths.len()) {
+            if cell.trim().is_empty() {
+                continue;
+            }
+            let lines = wrap_text_in(cell, area.width.max(1), FontSize::Body, area.face);
+            height = height.saturating_add(lines_high(lines.len(), line));
+        }
+        return height.max(line);
+    }
+    let mut tallest = line;
+    for (column, cell) in cells.iter().take(widths.len()).enumerate() {
+        let width = widths.get(column).copied().unwrap_or(0).max(1);
+        let lines = wrap_text_in(cell, width, FontSize::Body, area.face);
+        tallest = tallest.max(lines_high(lines.len(), line));
+    }
+    tallest
+}
+
+fn lines_high(lines: usize, line: i32) -> i32 {
+    i32::try_from(lines)
+        .unwrap_or(1)
+        .max(1)
+        .saturating_mul(line)
+}
+
 // A packing loop: measure, place, and break when the page is full. Splitting
 // it would mean handing the same six pieces of state to each half, and the
 // hand-off is where an off-by-one in a page break would hide.
@@ -2324,6 +2484,10 @@ fn paginate(
     }
     let mut capped = false;
     let chapter_starts = chapter_starts_of(document);
+    // What the columns of the table currently being laid out want to be,
+    // measured over all of its rows at once. Held across the loop so that a
+    // table taller than a page keeps its columns on the page it spills onto.
+    let mut columns: Vec<u16> = Vec::new();
 
     for (index, block) in document.blocks.iter().enumerate() {
         let rich = document.rich.get(&index);
@@ -2398,9 +2562,42 @@ fn paginate(
                 spans: Vec::new(),
                 presentation: kobo_ui::ParagraphPresentation::default(),
                 source_offset: None,
+                row: None,
             });
             continue;
         }
+
+        // A table row is placed whole. Its cells are laid out side by side,
+        // so unlike prose there is no first half of it that reads correctly
+        // on its own: half a row is the top half of several columns at once.
+        if let Block::Row { cells, .. } = block {
+            if columns.is_empty() {
+                columns = table_columns(&document.blocks, index_of(index), area);
+            }
+            let height = row_height(cells, &columns, metrics, area);
+            if !page.is_empty() && used + gap + height > area.height {
+                pages.push(std::mem::take(&mut page));
+                used = 0;
+            }
+            used += if page.is_empty() {
+                height
+            } else {
+                gap + height
+            };
+            page.push(Piece {
+                block: index,
+                text: String::new(),
+                kind,
+                spans: Vec::new(),
+                presentation: kobo_ui::ParagraphPresentation::default(),
+                source_offset: None,
+                row: Some((cells.clone(), columns.clone())),
+            });
+            continue;
+        }
+        // Anything that is not a row ends the table before it, so the next
+        // one is measured afresh.
+        columns.clear();
 
         // A picture is placed whole or moved to the next page: there is no
         // half of one to leave behind, which is what the line-by-line packing
@@ -2418,6 +2615,7 @@ fn paginate(
                         spans: Vec::new(),
                         presentation: kobo_ui::ParagraphPresentation::default(),
                         source_offset: None,
+                        row: None,
                     },
                     &mut Placing {
                         pages: &mut pages,
@@ -2487,6 +2685,7 @@ fn paginate(
                         spans,
                         presentation,
                         source_offset: None,
+                        row: None,
                     });
                     placed = end;
                 }
@@ -2515,6 +2714,7 @@ fn paginate(
                 spans,
                 presentation,
                 source_offset: None,
+                row: None,
             });
             placed += take;
         }
@@ -2540,6 +2740,7 @@ fn kind_of(block: &Block, marked: bool) -> Kind {
         Block::Item { .. } => Kind::Item,
         Block::Caption(_) => Kind::Caption,
         Block::Picture { .. } => Kind::Picture,
+        Block::Row { header, .. } => Kind::Row { header: *header },
         Block::Rule => Kind::Rule,
         Block::Break => Kind::Break,
     }
@@ -4453,5 +4654,200 @@ mod tests {
         );
         assert_eq!(reader.top(), origin);
         assert!(!reader.screen("Book").owns_back);
+    }
+
+    fn table_of(rows: &[(bool, &[&str])]) -> Document {
+        let blocks = rows
+            .iter()
+            .map(|(header, cells)| Block::Row {
+                header: *header,
+                cells: cells.iter().map(|cell| (*cell).to_string()).collect(),
+            })
+            .collect();
+        Document {
+            blocks,
+            ..Document::default()
+        }
+    }
+
+    #[test]
+    fn a_table_reaches_the_screen_as_one_node_with_all_of_its_rows() {
+        let document = table_of(&[
+            (true, &["Model", "Top-1", "Params"]),
+            (false, &["Small", "71.2", "5M"]),
+            (false, &["Large", "84.6", "300M"]),
+        ]);
+        let reader = Reader::open(document, Memory::default(), &panel());
+        let screen = reader.screen("Paper");
+
+        let tables: Vec<_> = screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                kobo_ui::Node::Table { rows, weights, .. } => Some((rows, weights)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(tables.len(), 1, "three rows are one table, not three");
+        let (rows, weights) = tables[0];
+        assert_eq!(rows.len(), 3);
+        assert!(rows[0].header);
+        assert!(!rows[1].header);
+        assert_eq!(rows[1].cells, vec!["Small", "71.2", "5M"]);
+        assert_eq!(weights.len(), 3, "one measured width per column");
+    }
+
+    #[test]
+    fn a_table_split_over_two_pages_keeps_the_same_columns_on_both() {
+        let mut rows: Vec<(bool, Vec<String>)> = vec![(true, vec!["Model".into(), "Score".into()])];
+        for index in 0..200 {
+            rows.push((false, vec![format!("Row {index}"), format!("{index}.5")]));
+        }
+        let blocks = rows
+            .iter()
+            .map(|(header, cells)| Block::Row {
+                header: *header,
+                cells: cells.clone(),
+            })
+            .collect();
+        let mut reader = Reader::open(
+            Document {
+                blocks,
+                ..Document::default()
+            },
+            Memory::default(),
+            &panel(),
+        );
+        assert!(reader.page_count() > 1, "200 rows do not fit on one page");
+
+        let first = columns_on_page(&reader);
+        assert!(!first.is_empty(), "the columns were never measured");
+        assert!(first.iter().all(|width| *width > 0));
+        reader.act("reader-next", &panel());
+        let second = columns_on_page(&reader);
+        assert_eq!(
+            first, second,
+            "columns measured per page would shift on a turn"
+        );
+        no_cell_falls_off_a_page(&reader);
+    }
+
+    /// Checks every page against the layout that will actually draw it.
+    ///
+    /// Pagination guesses how tall a row comes out; only the layout knows.
+    /// A page that agrees with its own wrong guess still pours cells off the
+    /// bottom of the panel, so the guess is never what is measured here.
+    fn no_cell_falls_off_a_page(reader: &Reader) {
+        let panel = panel();
+        let floor = panel.height - panel.page_position_band();
+        let mut turned = reader.clone();
+        turned.go_to(0, &panel);
+        for number in 0..reader.page_count() {
+            let bottom = turned
+                .screen("Paper")
+                .layout_for(&panel)
+                .nodes
+                .iter()
+                .filter(|node| {
+                    matches!(
+                        node.kind,
+                        kobo_ui::LayoutKind::TableCell | kobo_ui::LayoutKind::TableHeaderCell
+                    )
+                })
+                .map(|node| node.rect.y + node.rect.height)
+                .max()
+                .unwrap_or(0);
+            assert!(
+                bottom <= floor,
+                "page {number} sets a cell down to {bottom}, past the {floor} the page ends at"
+            );
+            turned.act("reader-next", &panel);
+        }
+    }
+
+    fn columns_on_page(reader: &Reader) -> Vec<u16> {
+        reader
+            .screen("Paper")
+            .nodes
+            .iter()
+            .find_map(|node| match node {
+                kobo_ui::Node::Table { weights, .. } => Some(weights.clone()),
+                _ => None,
+            })
+            .expect("a table on the page")
+    }
+
+    #[test]
+    fn a_word_inside_a_cell_is_still_found_by_search() {
+        let document = table_of(&[
+            (true, &["Model", "Top-1"]),
+            (false, &["Chinchilla", "70.1"]),
+        ]);
+        let reader = Reader::open(document, Memory::default(), &panel());
+
+        let hits = reader.search("chinchilla", 8);
+        assert_eq!(hits.len(), 1);
+        assert!(hits[0].excerpt.contains("Chinchilla"));
+    }
+
+    // Nine columns cannot be drawn nine columns wide, so the layout stacks
+    // them. Pagination has to know that, or it packs each row as one line
+    // tall and pours nine lines of it off the bottom of the panel.
+    #[test]
+    fn a_table_too_wide_for_columns_is_paginated_as_the_stack_it_becomes() {
+        let blocks = (0..30)
+            .map(|index| Block::Row {
+                header: false,
+                cells: (0..9)
+                    .map(|column| format!("cell {index} column {column} with words"))
+                    .collect(),
+            })
+            .collect();
+        let reader = Reader::open(
+            Document {
+                blocks,
+                ..Document::default()
+            },
+            Memory::default(),
+            &panel(),
+        );
+
+        assert!(reader.page_count() > 1, "thirty stacked rows need pages");
+        // Measured against what the layout actually does, not against the
+        // same guess pagination made: a page that agrees with its own wrong
+        // arithmetic still pours words off the panel.
+        no_cell_falls_off_a_page(&reader);
+    }
+
+    #[test]
+    fn a_row_is_never_cut_in_half_by_a_page_break() {
+        let blocks = (0..400)
+            .map(|index| Block::Row {
+                header: false,
+                cells: vec![format!("Left {index}"), format!("Right {index}")],
+            })
+            .collect();
+        let reader = Reader::open(
+            Document {
+                blocks,
+                ..Document::default()
+            },
+            Memory::default(),
+            &panel(),
+        );
+
+        for page in 0..reader.page_count() {
+            let mut seen = Vec::new();
+            for piece in &reader.pages[page] {
+                if let Some((cells, _)) = &piece.row {
+                    seen.push(cells.len());
+                }
+            }
+            assert!(
+                seen.iter().all(|count| *count == 2),
+                "page {page} holds a row missing a cell"
+            );
+        }
+        no_cell_falls_off_a_page(&reader);
     }
 }

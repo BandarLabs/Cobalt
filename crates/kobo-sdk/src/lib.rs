@@ -2193,6 +2193,19 @@ impl ScreenBuilder {
     /// tap the same spot twice than read five labels to find the one above the
     /// one they have.
     ///
+    /// A table, drawn as columns that line up rather than as a sentence.
+    ///
+    /// Rows are given exactly as the document had them, headings included:
+    /// the widths are worked out from all of them together, which is the only
+    /// way the columns can agree, and that arithmetic belongs to the layout
+    /// rather than to whoever is describing the page.
+    #[must_use]
+    pub fn table(mut self, rows: Vec<kobo_ui::TableRow>, weights: Vec<u16>) -> Self {
+        let id = self.next_id();
+        self.nodes.push(Node::Table { id, rows, weights });
+        self
+    }
+
     /// The two ends carry pictures, not words, so the control needs no
     /// translating and no room for a label. Whichever end has nowhere further
     /// to go is drawn muted and stops answering taps.

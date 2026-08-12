@@ -70,6 +70,23 @@ const FACTS_LABEL_LIMIT_EIGHTHS: i32 = 3;
 /// application is asked to arrange.
 pub const MIN_BAND_SLOT_TENTH_MM: i32 = 120;
 
+/// The narrowest a table column is allowed to be before the table stacks.
+///
+/// Twelve millimetres holds about four characters of body text at the default
+/// size. A column narrower than that wraps every cell to one word a line and
+/// turns a three column table into a tall grey block nobody can read across.
+pub const MIN_TABLE_COLUMN_TENTH_MM: i32 = 120;
+
+/// The most rows one [`Node::Table`] will draw.
+///
+/// A page holds a few dozen lines and a table row is at least one of them, so
+/// a table longer than this cannot be on one page anyway. The reader splits a
+/// long table across pages before it reaches here.
+pub const MAX_TABLE_ROWS: usize = 64;
+
+/// The most columns one [`Node::Table`] will draw.
+pub const MAX_TABLE_COLUMNS: usize = 12;
+
 /// What a paragraph of a threaded discussion is for.
 ///
 /// A comment is two different things printed one above the other: a line
@@ -2593,6 +2610,33 @@ pub enum Node {
         id: NodeId,
         rows: Vec<Row>,
     },
+    /// A table, drawn as columns that line up.
+    ///
+    /// The one arrangement in the reader that cannot be expressed as a
+    /// downward flow of full-width blocks. A table's meaning is entirely in
+    /// which value sits under which heading, and a table read out as prose --
+    /// which is what flattening its cells into a sentence amounts to -- keeps
+    /// every word and loses all of it.
+    ///
+    /// Column widths are shared by every row and worked out from the widest
+    /// cell in each column, then squeezed proportionally to fit the panel.
+    /// When the columns cannot each keep [`MIN_TABLE_COLUMN_TENTH_MM`], the
+    /// table stacks each row as its own short block instead, the way
+    /// [`Node::Band`] does: a stacked row is always readable and a four
+    /// character column never is.
+    Table {
+        id: NodeId,
+        rows: Vec<TableRow>,
+        /// What each column wants to be, measured across the whole table
+        /// rather than across the rows sent here.
+        ///
+        /// A table taller than a page is split, and each part would otherwise
+        /// be measured on its own and come out with different columns -- so a
+        /// reader turning the page would watch the table move under them.
+        /// Empty means "measure the rows given", which is what a caller with
+        /// the whole table in hand can leave it as.
+        weights: Vec<u16>,
+    },
     /// A grid of large tappable tiles, the launcher's primary surface.
     TileGrid {
         id: NodeId,
@@ -3112,6 +3156,16 @@ pub const MAX_CELLS: usize = 81;
 /// The most columns a grid may ask for.
 pub const MAX_COLUMNS: u8 = 12;
 
+/// One row of a [`Node::Table`].
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct TableRow {
+    /// Whether this row names the columns rather than filling them. Drawn in
+    /// the body face rather than a bolder one, and underlined by a rule,
+    /// because on sixteen greys a rule separates more clearly than weight.
+    pub header: bool,
+    pub cells: Vec<String>,
+}
+
 /// One entry in a [`Node::Rows`] list.
 ///
 /// A title identifies, a summary explains and a glyph makes the row findable
@@ -3489,6 +3543,7 @@ impl Node {
             | Self::PagedList { id, .. }
             | Self::Grid { id, .. }
             | Self::Rows { id, .. }
+            | Self::Table { id, .. }
             | Self::TileGrid { id, .. }
             | Self::Choice { id, .. }
             | Self::Stepper { id, .. }
@@ -3723,6 +3778,13 @@ pub enum LayoutKind {
     Row(ActionId),
     Cell(ActionId, CellStyle),
     CellLabel,
+    /// One cell of a table, drawn in the body face.
+    TableCell,
+    /// One cell of a table's heading row, drawn muted so the rule under it
+    /// reads as the edge of the heading rather than an arbitrary line.
+    TableHeaderCell,
+    /// The rule under a table's heading row.
+    TableRule,
     RowTitle,
     /// A title whose work is finished: muted and struck through.
     RowTitleDone,
@@ -5368,6 +5430,139 @@ fn layout_node(
             let height = cursor.saturating_sub(y);
             layout.nodes[index].rect.height = height;
             y.saturating_add(height)
+        }
+        Node::Table { id, rows, weights } => {
+            let rows = &rows[..min(rows.len(), MAX_TABLE_ROWS)];
+            let columns = min(
+                rows.iter().map(|row| row.cells.len()).max().unwrap_or(0),
+                MAX_TABLE_COLUMNS,
+            );
+            if columns == 0 {
+                return y;
+            }
+            // A column is only told apart from the next one by the space
+            // between them, so the gap has to be wider than a word space or
+            // two columns of prose read as one ragged paragraph.
+            let gap = metrics.space(Space::Small);
+            let size = FontSize::Body;
+            let line = size.line_height_in(prose);
+            let between = gap.saturating_mul(i32::try_from(columns).unwrap_or(1) - 1);
+            let usable = max(0, width.saturating_sub(between));
+            let minimum = metrics.tenth_mm(MIN_TABLE_COLUMN_TENTH_MM);
+
+            // One measurement for the whole table. A column is as wide as its
+            // widest cell wants to be, and the columns are then squeezed in
+            // proportion to those wants until they fit -- so a table of one
+            // long sentence and two numbers gives the sentence the room and
+            // does not give a two character column a third of the panel.
+            let mut wants = vec![0_i32; columns];
+            for row in rows {
+                for (column, cell) in row.cells.iter().take(columns).enumerate() {
+                    wants[column] = max(wants[column], measure_text_in(cell, size, prose).0);
+                }
+            }
+            for (column, want) in wants.iter_mut().enumerate() {
+                if let Some(weight) = weights.get(column) {
+                    *want = i32::from(*weight);
+                }
+            }
+            let total: i32 = wants.iter().copied().fold(0, i32::saturating_add);
+            let widths: Vec<i32> = if total <= usable {
+                wants.clone()
+            } else if total > 0 {
+                wants
+                    .iter()
+                    .map(|want| max(minimum, want.saturating_mul(usable) / total))
+                    .collect()
+            } else {
+                vec![usable / i32::try_from(columns).unwrap_or(1); columns]
+            };
+
+            // Squeezing has a floor, and past it a table is not a table any
+            // more. Rather than draw columns four characters wide, each row
+            // is stacked as its own lines, which is always readable.
+            if widths.iter().copied().fold(0, i32::saturating_add) > usable
+                || widths.iter().any(|column| *column < minimum)
+            {
+                let mut cursor = y;
+                for row in rows {
+                    for cell in row.cells.iter().take(columns) {
+                        if cell.trim().is_empty() || layout.nodes.len() >= MAX_LAYOUT_NODES {
+                            continue;
+                        }
+                        let lines = wrap_text_in(cell, width, size, prose);
+                        let height = max(line, lines.len() as i32 * line);
+                        layout.nodes.push(LayoutNode {
+                            id: *id,
+                            rect: Rect {
+                                x,
+                                y: cursor,
+                                width,
+                                height,
+                            },
+                            kind: if row.header {
+                                LayoutKind::TableHeaderCell
+                            } else {
+                                LayoutKind::TableCell
+                            },
+                            text_lines: lines,
+                        });
+                        cursor = cursor.saturating_add(height);
+                    }
+                    cursor = cursor.saturating_add(gap);
+                }
+                return cursor;
+            }
+
+            let mut cursor = y;
+            for row in rows {
+                let mut tallest = line;
+                let mut column_x = x;
+                for (column, width) in widths.iter().enumerate() {
+                    let cell = row.cells.get(column).map_or("", String::as_str);
+                    if !cell.is_empty() && layout.nodes.len() < MAX_LAYOUT_NODES {
+                        let lines = wrap_text_in(cell, *width, size, prose);
+                        let height = max(line, lines.len() as i32 * line);
+                        tallest = max(tallest, height);
+                        layout.nodes.push(LayoutNode {
+                            id: *id,
+                            rect: Rect {
+                                x: column_x,
+                                y: cursor,
+                                width: *width,
+                                height,
+                            },
+                            kind: if row.header {
+                                LayoutKind::TableHeaderCell
+                            } else {
+                                LayoutKind::TableCell
+                            },
+                            text_lines: lines,
+                        });
+                    }
+                    column_x = column_x.saturating_add(*width).saturating_add(gap);
+                }
+                cursor = cursor.saturating_add(tallest);
+                // The rule belongs under the headings, where it says the
+                // table has started rather than that a section has ended.
+                if row.header && layout.nodes.len() < MAX_LAYOUT_NODES {
+                    let thickness = metrics.rule_thickness();
+                    layout.nodes.push(LayoutNode {
+                        id: *id,
+                        rect: Rect {
+                            x,
+                            y: cursor.saturating_add(gap / 2),
+                            width,
+                            height: thickness,
+                        },
+                        kind: LayoutKind::TableRule,
+                        text_lines: Vec::new(),
+                    });
+                    cursor = cursor.saturating_add(gap).saturating_add(thickness);
+                }
+                cursor = cursor.saturating_add(gap / 2);
+            }
+            cursor
         }
         Node::Facts { id, entries } => {
             let entries = &entries[..min(entries.len(), MAX_FACTS)];
@@ -8763,6 +8958,7 @@ fn tones_used(layout: &Layout) -> usize {
             LayoutKind::Secondary
             | LayoutKind::TileSubtitle
             | LayoutKind::RowSummary
+            | LayoutKind::TableHeaderCell
             | LayoutKind::FactLabel
             | LayoutKind::PagePosition
             | LayoutKind::ActivityBytes
@@ -8925,6 +9121,24 @@ fn validate_node(
             }
             for cell in cells {
                 check_text_coverage(id, &cell.label, Face::Text, issues);
+            }
+        }
+        Node::Table { rows, .. } => {
+            if rows.len() > MAX_TABLE_ROWS {
+                issues.push(limit_issue(id, "table rows", rows.len(), MAX_TABLE_ROWS));
+            }
+            for row in rows.iter().take(MAX_TABLE_ROWS) {
+                if row.cells.len() > MAX_TABLE_COLUMNS {
+                    issues.push(limit_issue(
+                        id,
+                        "table columns",
+                        row.cells.len(),
+                        MAX_TABLE_COLUMNS,
+                    ));
+                }
+                for cell in row.cells.iter().take(MAX_TABLE_COLUMNS) {
+                    check_text_coverage(id, cell, Face::Text, issues);
+                }
             }
         }
         Node::Rows { rows, .. } => {
@@ -9215,6 +9429,7 @@ fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
         LayoutKind::OverlayTitle => FontSize::Title,
         LayoutKind::Secondary
         | LayoutKind::Section
+        | LayoutKind::TableHeaderCell
         | LayoutKind::FactLabel
         | LayoutKind::RowTrailing
         | LayoutKind::RowSummary
@@ -9230,6 +9445,7 @@ fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
         | LayoutKind::NavDestinationSelected(..) => FontSize::Caption,
         LayoutKind::Text
         | LayoutKind::FieldValue(_)
+        | LayoutKind::TableCell
         | LayoutKind::FactValue
         | LayoutKind::Quote(..)
         | LayoutKind::Button(..)
@@ -9746,6 +9962,25 @@ fn render_all_with_selected_font(
                 tone::INK,
                 clip,
             ),
+            LayoutKind::TableCell => draw_lines(
+                surface,
+                &node.text_lines,
+                node.rect.x,
+                node.rect.y,
+                FontSize::Body,
+                tone::INK,
+                clip,
+            ),
+            LayoutKind::TableHeaderCell => draw_lines(
+                surface,
+                &node.text_lines,
+                node.rect.x,
+                node.rect.y,
+                FontSize::Body,
+                tone::MUTED,
+                clip,
+            ),
+            LayoutKind::TableRule => fill_clipped(surface, node.rect, tone::RULE, clip),
             // Paper, not surface, and a heavy border. An overlay has to look
             // like a separate sheet laid on the page, and the only two things
             // available to say so without shading everything else are the
