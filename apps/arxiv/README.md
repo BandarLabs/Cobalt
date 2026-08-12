@@ -29,6 +29,31 @@ every one of those outside it, so the article is where the cut is made. A
 rendering with no article in it is used whole: furniture is worse than the
 paper, but nothing is worse than both.
 
+## The mathematics is set, not described
+
+A paper without its mathematics is a paper with holes in it. arXiv's renderings
+carry every formula as MathML, and MathML read as prose gives back the
+alphabet soup that produced it — the reader sees the parts and never the
+expression.
+
+So a formula is typeset. Each one is handed to a TeX layout engine and drawn
+as a picture at the size the surrounding text is set in, so an integral sits on
+the line it belongs to and a fraction has a rule between its halves. A formula
+in the middle of a sentence stays in the sentence; one the author set on its
+own line gets its own line back.
+
+Drawing has a budget, because a survey paper can carry a thousand formulas and
+a reader will not wait for all of them. Past the budget the remaining formulas
+are read as text rather than drawn — the paper still opens, and opens quickly.
+
+## Keeping a paper
+
+**Keep for offline** stores the rendering on the reader, and the paper then
+opens from **Library** with no network at all. The same button becomes **Remove
+from library**, so keeping is a decision the reader can take back. This matters
+on a device that spends most of its life away from Wi-Fi: a paper found on a
+sofa is readable on a train.
+
 ## Newest first, always
 
 A preprint server sorted by relevance is a search engine; sorted by date it is
