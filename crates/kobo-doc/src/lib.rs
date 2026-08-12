@@ -270,9 +270,10 @@ pub const FORMULA_PICTURE_EM: u32 = 48;
 /// A survey paper can carry a thousand pieces of mathematics, and a reader
 /// can only ever reserve room for a few dozen pictures at a time, so the
 /// nine hundred and fiftieth of them was never going to be shown to anybody.
-/// Drawing them all anyway cost five seconds inside the callback that opens a
-/// document on a real reader, against a deadline of a quarter of one, and the
-/// pictures that bought were thrown away unlooked at.
+/// Drawing all one thousand and sixteen in one such paper took fifteen and a
+/// half seconds on a Clara BW — five to typeset them and nine more to turn
+/// them into something the panel could draw — and almost every picture that
+/// bought was thrown away unlooked at.
 ///
 /// Past this many, a formula is read as the line of text it has always fallen
 /// back to. That is a worse-looking page than a drawn one, at the far end of
@@ -282,19 +283,25 @@ pub const MAX_FORMULA_PICTURES: usize = 64;
 
 /// How long one document may spend drawing formulae.
 ///
-/// The count above bounds how many pictures are worth keeping. It says
-/// nothing about how long making them takes, and that turns out to be the
-/// number that matters. Measured on a Clara BW, reading a 1.4 MB paper: the
-/// HTML alone takes 414 ms, and each formula drawn on top of it takes about
-/// 139 ms more, so sixty-four of them cost nine seconds inside the callback
-/// that opens the document. The same work on a development machine takes
-/// fifty milliseconds altogether, which is why a count looked like enough.
+/// The count above bounds how many pictures are worth keeping; it says
+/// nothing about how long making them takes, and a reader with a slower
+/// machine than the one this was written on should not be made to wait for a
+/// count that was chosen elsewhere.
 ///
-/// A clock is the honest limit because it is the thing the reader actually
-/// has: a fast machine draws every formula and never notices this, and a slow
-/// one draws what it can afford and reads the rest as the text it always fell
-/// back to. Neither has to be told which it is.
-pub const FORMULA_DRAWING_BUDGET: core::time::Duration = core::time::Duration::from_millis(150);
+/// Measured on a Clara BW, reading a 1.4 MB paper carrying 1016 formulae:
+/// the markup alone parses in about 290 ms, typesetting a formula costs
+/// 4.7 ms, and turning its picture into something the panel can draw costs
+/// 9.4 ms more. Opening that paper with every formula drawn takes fifteen
+/// and a half seconds. With sixty-four it takes two and a half, against nine
+/// and a half before any of this work — and sixty-four is already more
+/// mathematics than a page of it can show.
+///
+/// So the budget is set above what the count costs on this device — it is
+/// the count that should decide on hardware this work was measured on, and
+/// the clock that should decide on anything slower. A machine that cannot
+/// afford sixty-four draws what it can and reads the rest as the text they
+/// have always fallen back to, without having to be told which machine it is.
+pub const FORMULA_DRAWING_BUDGET: core::time::Duration = core::time::Duration::from_millis(500);
 
 /// The same, for the renderer, which measures type in fractions of a pixel.
 pub(crate) const FORMULA_PICTURE_EM_F32: f32 = 48.0;
