@@ -389,6 +389,27 @@ impl BookView {
         self.reader.as_mut()
     }
 
+    /// Puts a document back to a place that arrived after it opened.
+    ///
+    /// A document and the place it was left at come from different places --
+    /// the text over the radio or off the shelf, the position out of the
+    /// store -- and neither waits for the other. Usually the position wins,
+    /// because the store is on the same machine, and `open` takes it. When it
+    /// does not, this is how it still counts, rather than an owner being put
+    /// back to page one of something they were halfway through.
+    ///
+    /// Answers whether there was a document to put back.
+    pub fn restore(&mut self, context: &Context, memory: Memory) -> bool {
+        let metrics = context.metrics();
+        match self.reader.as_mut() {
+            Some(reader) => {
+                reader.restore(memory, &metrics);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Where the reader had got to, for saving.
     #[must_use]
     pub fn memory(&self) -> Option<&Memory> {
