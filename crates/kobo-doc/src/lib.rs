@@ -265,6 +265,21 @@ pub const FORMULA_PICTURE_PREFIX: &str = "formula:";
 /// The pixels to the em a formula's picture was drawn at.
 pub const FORMULA_PICTURE_EM: u32 = 48;
 
+/// The most formulae one document will be typeset pictures for.
+///
+/// A survey paper can carry a thousand pieces of mathematics, and a reader
+/// can only ever reserve room for a few dozen pictures at a time, so the
+/// nine hundred and fiftieth of them was never going to be shown to anybody.
+/// Drawing them all anyway cost five seconds inside the callback that opens a
+/// document on a real reader, against a deadline of a quarter of one, and the
+/// pictures that bought were thrown away unlooked at.
+///
+/// Past this many, a formula is read as the line of text it has always fallen
+/// back to. That is a worse-looking page than a drawn one, at the far end of
+/// a paper nobody has scrolled to, and it is the difference between a paper
+/// that opens and a paper that does not.
+pub const MAX_FORMULA_PICTURES: usize = 64;
+
 /// The same, for the renderer, which measures type in fractions of a pixel.
 pub(crate) const FORMULA_PICTURE_EM_F32: f32 = 48.0;
 

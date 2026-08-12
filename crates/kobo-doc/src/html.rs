@@ -676,7 +676,9 @@ impl State {
     /// Returns whether the formula was taken; `false` leaves it to be read as
     /// text by the caller.
     fn display_formula(&mut self, inside: &str, drawn: &str) -> bool {
-        if attribute(inside, "display").is_none_or(|display| display != "block") {
+        if attribute(inside, "display").is_none_or(|display| display != "block")
+            || self.formulae.len() >= crate::MAX_FORMULA_PICTURES
+        {
             return false;
         }
         let Some(latex) = attribute(inside, "alttext") else {
@@ -708,7 +710,7 @@ impl State {
     ///
     /// Returns whether the formula was taken.
     fn inline_formula(&mut self, inside: &str, drawn: &str) -> bool {
-        if drawn.trim().is_empty() {
+        if drawn.trim().is_empty() || self.formulae.len() >= crate::MAX_FORMULA_PICTURES {
             return false;
         }
         let Some(latex) = attribute(inside, "alttext") else {
@@ -1330,6 +1332,42 @@ mod tests {
             "the formula ran into its neighbours: {:?}",
             rich.spans
         );
+    }
+
+    /// A paper with more mathematics in it than can ever be shown stops being
+    /// drawn once it passes that point, and reads as words from there on.
+    ///
+    /// A survey with a thousand formulae in it spent five seconds drawing them
+    /// on a real reader, against a deadline of a quarter of one, and threw
+    /// away all but the few dozen it had room to show. The far end of such a
+    /// paper is set less handsomely now, and the paper opens.
+    #[cfg(feature = "raster")]
+    #[test]
+    fn a_paper_with_more_formulae_than_can_be_shown_stops_drawing_them() {
+        let one = "<p>a <math alttext=\"x\"><semantics><mi>x</mi>\
+                   <annotation encoding=\"application/x-tex\">x</annotation>\
+                   </semantics></math> b</p>";
+        let over = crate::MAX_FORMULA_PICTURES + 10;
+        let document = parse(&one.repeat(over));
+        assert_eq!(
+            document.images.len(),
+            crate::MAX_FORMULA_PICTURES,
+            "more pictures were drawn than can ever be shown"
+        );
+        // The ones past the limit are still read: they keep their words, they
+        // simply have no picture set over them.
+        let drawn = document
+            .rich
+            .values()
+            .flat_map(|rich| &rich.spans)
+            .filter(|span| span.formula.is_some())
+            .count();
+        assert_eq!(drawn, crate::MAX_FORMULA_PICTURES);
+        let last = &document.blocks[over - 1];
+        let Block::Paragraph(text) = last else {
+            panic!("not a paragraph: {last:?}");
+        };
+        assert!(text.contains('x'), "the formula was lost entirely: {text}");
     }
 
     #[test]
