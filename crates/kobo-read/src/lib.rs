@@ -184,6 +184,13 @@ pub struct Piece {
     pub text: String,
     kind: Kind,
     spans: Vec<kobo_ui::RichTextSpan>,
+    /// The runs of this piece that are typeset formulas, as the name of the
+    /// picture to draw and the half-open range of `text` it is drawn over.
+    ///
+    /// The words stay in `text`: they are the written form of the formula,
+    /// and they are what a search matches, what a selection copies and what
+    /// the reader sees if the picture never arrives.
+    formulae: Vec<(usize, usize, String)>,
     presentation: kobo_ui::ParagraphPresentation,
     source_offset: Option<u32>,
     /// The cells of a table row, and what each column of its table wants to
@@ -1466,29 +1473,7 @@ impl Reader {
                 }
                 Kind::Rule => screen.divider(),
                 Kind::Break => screen.spacer(kobo_ui::Space::Small),
-                Kind::Body | Kind::Preformatted => {
-                    if let Some(offset) = piece.source_offset {
-                        screen.selectable_rich_text_linking(
-                            piece.text.clone(),
-                            piece.spans.clone(),
-                            piece.presentation,
-                            u64::from(piece.block),
-                            offset,
-                            self.links_in(piece),
-                        )
-                    } else if piece.spans.is_empty()
-                        && piece.presentation == kobo_ui::ParagraphPresentation::default()
-                    {
-                        screen.text_linking(piece.text.clone(), self.links_in(piece))
-                    } else {
-                        screen.rich_text_linking(
-                            piece.text.clone(),
-                            piece.spans.clone(),
-                            piece.presentation,
-                            self.links_in(piece),
-                        )
-                    }
-                }
+                Kind::Body | Kind::Preformatted => self.prose(screen, piece),
                 Kind::Row { .. } => screen,
             };
         }
@@ -2051,6 +2036,18 @@ impl Reader {
                 }
             }
         }
+        // A formula standing inside a sentence is a picture the book refers
+        // to just as much as a plate is; it is simply referred to from inside
+        // a run of prose rather than from a block of its own.
+        for rich in self.document.rich.values() {
+            for span in &rich.spans {
+                if let Some(name) = &span.formula {
+                    if !wanted.contains(&name.as_str()) {
+                        wanted.push(name.as_str());
+                    }
+                }
+            }
+        }
         wanted
     }
 
@@ -2074,6 +2071,11 @@ impl Reader {
                     wanted.push(name.as_str());
                 }
             }
+            for (_, _, name) in &piece.formulae {
+                if !wanted.contains(&name.as_str()) {
+                    wanted.push(name.as_str());
+                }
+            }
         }
         wanted
     }
@@ -2087,6 +2089,60 @@ impl Reader {
     #[must_use]
     pub fn picture_named(&self, name: &str) -> Option<kobo_ui::TilePicture> {
         self.pictures.get(name).copied()
+    }
+
+    /// One paragraph of the book, with whatever is set into it.
+    fn prose(&self, screen: kobo_sdk::ScreenBuilder, piece: &Piece) -> kobo_sdk::ScreenBuilder {
+        let formulae = self.formulae_in(piece);
+        if let Some(offset) = piece.source_offset {
+            screen
+                .selectable_rich_text_linking(
+                    piece.text.clone(),
+                    piece.spans.clone(),
+                    piece.presentation,
+                    u64::from(piece.block),
+                    offset,
+                    self.links_in(piece),
+                )
+                .with_formulae(formulae)
+        } else if piece.spans.is_empty()
+            && formulae.is_empty()
+            && piece.presentation == kobo_ui::ParagraphPresentation::default()
+        {
+            screen.text_linking(piece.text.clone(), self.links_in(piece))
+        } else {
+            screen
+                .rich_text_linking(
+                    piece.text.clone(),
+                    piece.spans.clone(),
+                    piece.presentation,
+                    self.links_in(piece),
+                )
+                .with_formulae(formulae)
+        }
+    }
+
+    /// The typeset formulas of a piece, for those whose pictures have landed.
+    ///
+    /// A formula whose picture has not been handed over is simply left out:
+    /// the written form of it is already in the piece's text, so the sentence
+    /// reads either way and the difference is typesetting rather than
+    /// meaning.
+    fn formulae_in(&self, piece: &Piece) -> Vec<kobo_ui::InlineFormula> {
+        piece
+            .formulae
+            .iter()
+            .take(kobo_ui::MAX_INLINE_FORMULAE)
+            .filter_map(|(start, end, name)| {
+                let drawn = self.pictures.get(name.as_str())?;
+                Some(kobo_ui::InlineFormula {
+                    start: *start,
+                    end: *end,
+                    handle: drawn.handle,
+                    source: drawn.source,
+                })
+            })
+            .collect()
     }
 
     /// The picture to draw for a block, when one has been handed over, and
@@ -2645,6 +2701,7 @@ fn paginate(
                 text: String::new(),
                 kind,
                 spans: Vec::new(),
+                formulae: Vec::new(),
                 presentation: kobo_ui::ParagraphPresentation::default(),
                 source_offset: None,
                 row: None,
@@ -2674,6 +2731,7 @@ fn paginate(
                 text: String::new(),
                 kind,
                 spans: Vec::new(),
+                formulae: Vec::new(),
                 presentation: kobo_ui::ParagraphPresentation::default(),
                 source_offset: None,
                 row: Some((cells.clone(), columns.clone())),
@@ -2698,6 +2756,7 @@ fn paginate(
                         text: alt.clone(),
                         kind,
                         spans: Vec::new(),
+                        formulae: Vec::new(),
                         presentation: kobo_ui::ParagraphPresentation::default(),
                         source_offset: None,
                         row: None,
@@ -2787,7 +2846,7 @@ fn paginate(
                     .max(1);
                     let end = (placed + forced).min(lines.len());
                     let text = lines[placed..end].join(" ");
-                    let (spans, presentation) =
+                    let (spans, formulae, presentation) =
                         piece_presentation(rich, text.as_str(), &mut source_at);
                     let presentation =
                         fragment_presentation(presentation, placed == 0, end == lines.len());
@@ -2796,6 +2855,7 @@ fn paginate(
                         text,
                         kind,
                         spans,
+                        formulae,
                         presentation,
                         source_offset: None,
                         row: None,
@@ -2813,7 +2873,8 @@ fn paginate(
                 used += gap;
             }
             let text = lines[placed..placed + take].join(" ");
-            let (spans, presentation) = piece_presentation(rich, text.as_str(), &mut source_at);
+            let (spans, formulae, presentation) =
+                piece_presentation(rich, text.as_str(), &mut source_at);
             let presentation =
                 fragment_presentation(presentation, placed == 0, placed + take == lines.len());
             used += i32::try_from(take)
@@ -2825,6 +2886,7 @@ fn paginate(
                 text,
                 kind,
                 spans,
+                formulae,
                 presentation,
                 source_offset: None,
                 row: None,
@@ -2859,25 +2921,36 @@ fn kind_of(block: &Block, marked: bool) -> Kind {
     }
 }
 
+type PiecePresentation = (
+    Vec<kobo_ui::RichTextSpan>,
+    Vec<(usize, usize, String)>,
+    kobo_ui::ParagraphPresentation,
+);
+
 fn piece_presentation(
     rich: Option<&kobo_doc::RichBlock>,
     piece: &str,
     source_at: &mut usize,
-) -> (Vec<kobo_ui::RichTextSpan>, kobo_ui::ParagraphPresentation) {
+) -> PiecePresentation {
     let Some(rich) = rich else {
-        return (Vec::new(), kobo_ui::ParagraphPresentation::default());
+        return (
+            Vec::new(),
+            Vec::new(),
+            kobo_ui::ParagraphPresentation::default(),
+        );
     };
     let whole: String = rich.spans.iter().map(|span| span.text.as_str()).collect();
     let Some(relative) = whole.get(*source_at..).and_then(|rest| rest.find(piece)) else {
         // Retire the block rather than leave the cursor behind: a later piece
         // that matched earlier text would be given another piece's emphasis.
         *source_at = whole.len();
-        return (Vec::new(), paragraph_presentation(&rich.style));
+        return (Vec::new(), Vec::new(), paragraph_presentation(&rich.style));
     };
     let from = *source_at + relative;
     let to = from + piece.len();
     *source_at = to;
     let mut spans = Vec::new();
+    let mut formulae = Vec::new();
     let mut cursor = 0usize;
     for span in &rich.spans {
         let span_from = cursor;
@@ -2887,6 +2960,21 @@ fn piece_presentation(
         let end = span_to.min(to);
         if start >= end {
             continue;
+        }
+        // Only a formula that survived the split whole. Half a picture drawn
+        // over half a formula is worse than the written form of it, which is
+        // what the words left in the text already are. Without the spaces
+        // either side, which belong to the sentence: a picture drawn over
+        // those would close the gap between the formula and its neighbour.
+        if let Some(name) = &span.formula {
+            if span_from >= from && span_to <= to {
+                let run = &piece[start - from..end - from];
+                let head = run.len() - run.trim_start().len();
+                let tail = run.len() - run.trim_end().len();
+                if head + tail < run.len() {
+                    formulae.push((start - from + head, end - from - tail, name.clone()));
+                }
+            }
         }
         spans.push(kobo_ui::RichTextSpan {
             start: start - from,
@@ -2901,7 +2989,7 @@ fn piece_presentation(
             },
         });
     }
-    (spans, paragraph_presentation(&rich.style))
+    (spans, formulae, paragraph_presentation(&rich.style))
 }
 
 fn paragraph_presentation(style: &kobo_doc::BlockStyle) -> kobo_ui::ParagraphPresentation {

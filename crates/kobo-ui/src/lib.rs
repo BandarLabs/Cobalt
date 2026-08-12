@@ -2320,6 +2320,116 @@ pub struct RichTextSpan {
     pub presentation: TextPresentation,
 }
 
+/// A formula set into a sentence, drawn rather than written.
+///
+/// Mathematics does not survive being written out in a line: a fraction
+/// stacks, an index sits above the letter it belongs to, and a square root
+/// reaches over what it covers. None of that is expressible as a run of
+/// characters, so the run is typeset into a picture elsewhere and this says
+/// where it goes.
+///
+/// `start..end` is not a hole in the text. It is the best linear reading of
+/// the formula the writer could manage, and it stays in the string: it is
+/// what a search matches, what a selection copies, and what a reader gets
+/// when the picture has not arrived or will not decode. The picture is laid
+/// over it, not instead of it, which is why nothing outside layout and
+/// drawing has to know that this list exists.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InlineFormula {
+    pub start: usize,
+    pub end: usize,
+    pub handle: PictureHandle,
+    /// The typeset picture's own size, in pixels, as handed over.
+    pub source: (u32, u32),
+}
+
+/// How many formulas one paragraph may carry.
+///
+/// A dense page of mathematics runs to a few dozen; beyond that the extras
+/// fall back to their written form, which reads poorly but reads.
+pub const MAX_INLINE_FORMULAE: usize = 64;
+
+/// How big a formula is drawn on the line it sits on.
+///
+/// At the size it was handed over, because the application scaled it against
+/// the reading em when it decoded it, and that is what makes an `x` in a
+/// formula the same size as an `x` in the sentence around it.
+///
+/// The one thing decided here is the ceiling. A fraction stands taller than a
+/// line, and left alone a tall one would push the lines apart and take the
+/// paragraph with it. Two lines is as tall as anything set in a sentence may
+/// be; beyond that it is scaled down, keeping its shape, which is what a
+/// typesetter does with an inline fraction too.
+#[must_use]
+fn inline_formula_size(formula: &InlineFormula, line_height: i32) -> (i32, i32) {
+    let width = i32::try_from(formula.source.0).unwrap_or(i32::MAX);
+    let height = i32::try_from(formula.source.1).unwrap_or(i32::MAX);
+    if width <= 0 || height <= 0 {
+        return (0, 0);
+    }
+    let ceiling = line_height.saturating_mul(2).max(1);
+    if height <= ceiling {
+        return (width, height);
+    }
+    let narrowed = i64::from(width) * i64::from(ceiling) / i64::from(height);
+    (i32::try_from(narrowed).unwrap_or(i32::MAX).max(1), ceiling)
+}
+
+/// The formula covering an offset, if one does.
+fn formula_at(offset: usize, formulae: &[InlineFormula]) -> Option<&InlineFormula> {
+    formulae
+        .iter()
+        .take(MAX_INLINE_FORMULAE)
+        .find(|formula| formula.start <= offset && offset < formula.end)
+}
+
+/// How wide `text[from..to]` is once its formulas are drawn rather than read.
+///
+/// The written form of a formula and its typeset picture are rarely the same
+/// width, so a paragraph carrying formulas cannot be measured as a string.
+/// This walks the range, measuring the prose between formulas as prose and
+/// each formula at the width it will actually be drawn.
+fn measure_range_in(
+    text: &str,
+    from: usize,
+    to: usize,
+    size: FontSize,
+    face: Face,
+    formulae: &[InlineFormula],
+    line_height: i32,
+) -> i32 {
+    if formulae.is_empty() {
+        return measure_text_in(&text[from..to], size, face).0;
+    }
+    let mut total = 0i32;
+    let mut cursor = from;
+    while cursor < to {
+        if let Some(formula) = formula_at(cursor, formulae) {
+            // Only from its own start: a formula cut by a line break is
+            // measured on the line that begins it, and the remainder of it
+            // is not measured twice.
+            if formula.start == cursor {
+                total = total.saturating_add(inline_formula_size(formula, line_height).0);
+            }
+            cursor = formula.end.min(to).max(cursor + 1);
+            continue;
+        }
+        let next = formulae
+            .iter()
+            .take(MAX_INLINE_FORMULAE)
+            .map(|formula| formula.start)
+            .filter(|start| *start > cursor)
+            .min()
+            .unwrap_or(to)
+            .min(to);
+        if text.is_char_boundary(cursor) && text.is_char_boundary(next) {
+            total = total.saturating_add(measure_text_in(&text[cursor..next], size, face).0);
+        }
+        cursor = next.max(cursor + 1);
+    }
+    total
+}
+
 /// Stable document coordinates attached to publisher-styled reading text.
 ///
 /// The UI layer deliberately treats `context` as opaque. A reading
@@ -2396,6 +2506,13 @@ pub enum Node {
         links: Vec<TextLink>,
         presentation: ParagraphPresentation,
         selection: Option<TextSelection>,
+        /// Runs of this paragraph that are typeset pictures rather than words.
+        ///
+        /// Empty for all prose, which is why this is a list on the node in
+        /// the same way links are: a formula is a property of a few
+        /// characters inside a sentence, and a paragraph split into three
+        /// nodes to carry one would wrap and paginate as three paragraphs.
+        formulae: Vec<InlineFormula>,
     },
     /// A line about the content rather than the content: a date, an author, a
     /// size, a count, a status.
@@ -4802,6 +4919,7 @@ fn layout_node(
             links,
             presentation,
             selection,
+            formulae,
         } => {
             let natural = FontSize::Body.line_height_in(prose).max(1);
             let line_height = natural
@@ -4814,11 +4932,13 @@ fn layout_node(
                 .saturating_mul(i32::from(presentation.first_line_indent_em))
                 / 100;
             let measure = width.saturating_sub(indent.max(0)).max(1);
-            let ranges = wrap_ranges(text, measure, FontSize::Body, prose);
+            let ranges =
+                wrap_ranges_with(text, measure, FontSize::Body, prose, formulae, line_height);
             let mut line_y = y.saturating_add(before);
             for (line_index, &(from, to)) in ranges.iter().enumerate() {
                 let line = &text[from..to];
-                let line_width = measure_text_in(line, FontSize::Body, prose).0;
+                let line_width =
+                    measure_range_in(text, from, to, FontSize::Body, prose, formulae, line_height);
                 let first_indent = if line_index == 0 { indent } else { 0 };
                 let available = width.saturating_sub(first_indent.max(0));
                 let aligned = match presentation.alignment {
@@ -4830,7 +4950,49 @@ fn layout_node(
                 let mut cursor = from;
                 let mut run_x = line_x;
                 while cursor < to {
+                    // A formula is drawn, not written, so it leaves the run
+                    // machinery entirely: it takes its own width on the line
+                    // and the words standing in for it are skipped over.
+                    if let Some(formula) = formula_at(cursor, formulae) {
+                        let end = formula.end.min(to).max(cursor + 1);
+                        if formula.start == cursor
+                            && layout.nodes.len().saturating_add(1) < MAX_LAYOUT_NODES
+                        {
+                            let (drawn_width, drawn_height) =
+                                inline_formula_size(formula, line_height);
+                            // Centred on the line rather than sat on its top,
+                            // because a formula is read against the middle of
+                            // the letters beside it and a tall one has to
+                            // stand out of the line evenly at both ends.
+                            layout.nodes.push(LayoutNode {
+                                id: *id,
+                                rect: Rect {
+                                    x: run_x,
+                                    y: line_y + (line_height - drawn_height) / 2,
+                                    width: drawn_width,
+                                    height: drawn_height,
+                                },
+                                kind: LayoutKind::Picture(formula.handle),
+                                text_lines: Vec::new(),
+                            });
+                            run_x = run_x.saturating_add(drawn_width);
+                        }
+                        cursor = end;
+                        continue;
+                    }
                     let (mut end, mut styled) = rich_run_at(cursor, to, spans);
+                    // Never run a styled run across the start of a formula:
+                    // the formula has to be reached at its own offset for the
+                    // branch above to see it.
+                    if let Some(next) = formulae
+                        .iter()
+                        .take(MAX_INLINE_FORMULAE)
+                        .map(|formula| formula.start)
+                        .filter(|start| *start > cursor && *start < end)
+                        .min()
+                    {
+                        end = next;
+                    }
                     if end <= cursor || end > to || !text.is_char_boundary(end) {
                         end = text[cursor..to]
                             .char_indices()
@@ -6768,6 +6930,16 @@ impl FontSize {
             .unwrap_or_else(|| self.fallback_line_height_in(face))
     }
 
+    /// The em in pixels: the size the type is actually set at.
+    ///
+    /// What anything set beside the text rather than in it is scaled against.
+    #[must_use]
+    pub fn em_in(self, face: Face) -> i32 {
+        with_typesetter(face, |typesetter| typesetter.em(self, face))
+            .unwrap_or_else(|| self.fallback_line_height_in(face))
+            .max(1)
+    }
+
     /// The built-in bitmap's line height, at the current type size.
     ///
     /// Scaled like the real one. Without this a host test could not tell two
@@ -6838,6 +7010,18 @@ pub trait Typesetter: Send + Sync {
     fn measure(&self, text: &str, size: FontSize, face: Face) -> (i32, i32);
     /// The baseline-to-baseline distance for a size.
     fn line_height(&self, size: FontSize, face: Face) -> i32;
+    /// The em in pixels for a size: the size the type is actually set at.
+    ///
+    /// Distinct from the line height, which is the em plus whatever the face
+    /// and the reader want between lines. Anything set alongside the text
+    /// rather than in it -- a typeset formula, most of all -- has to be scaled
+    /// against this or it comes out a fifth too large.
+    ///
+    /// The default is the line height, which is wrong but is the right shape:
+    /// a typesetter that cannot say has to say something.
+    fn em(&self, size: FontSize, face: Face) -> i32 {
+        self.line_height(size, face)
+    }
     /// Draws `text` with its top-left corner at `x`, `y`.
     ///
     /// Coverage runs from 0 for untouched to 255 for solid, so a renderer can
@@ -8088,6 +8272,23 @@ pub fn wrap_text_in(text: &str, max_width: i32, size: FontSize, face: Face) -> V
 /// Empty for text that wraps to nothing, which [`wrap_text_in`] turns back into
 /// the single empty line every caller downstream expects.
 fn wrap_ranges(text: &str, max_width: i32, size: FontSize, face: Face) -> Vec<(usize, usize)> {
+    wrap_ranges_with(text, max_width, size, face, &[], 0)
+}
+
+/// The same, for a paragraph with formulas set into it.
+///
+/// A formula is drawn at a width of its own that has nothing to do with the
+/// width of the words standing in for it, so a line that would fit as a
+/// string may not fit as a line, and the other way about. Breaking on the
+/// drawn width is the only way the two agree.
+fn wrap_ranges_with(
+    text: &str,
+    max_width: i32,
+    size: FontSize,
+    face: Face,
+    formulae: &[InlineFormula],
+    line_height: i32,
+) -> Vec<(usize, usize)> {
     if text.is_empty() || max_width <= 0 {
         return Vec::new();
     }
@@ -8117,7 +8318,16 @@ fn wrap_ranges(text: &str, max_width: i32, size: FontSize, face: Face) -> Vec<(u
             };
             let candidate = text[start..visible_end].trim_end_matches(char::is_whitespace);
             let candidate_end = start + candidate.len();
-            if measure_text_in(candidate, size, face).0 <= max_width {
+            if measure_range_in(
+                text,
+                start,
+                candidate_end,
+                size,
+                face,
+                formulae,
+                line_height,
+            ) <= max_width
+            {
                 best = Some((end, candidate_end));
                 if opportunity == BreakOpportunity::Mandatory {
                     lines.push((start, candidate_end));
@@ -11846,6 +12056,7 @@ mod tests {
                     ..ParagraphPresentation::default()
                 },
                 selection: None,
+                formulae: Vec::new(),
             }],
         )
         .with_reading(true);
@@ -11880,6 +12091,7 @@ mod tests {
                     context: 19,
                     offset: 100,
                 }),
+                formulae: Vec::new(),
             }],
         )
         .with_reading(true)
@@ -12022,6 +12234,96 @@ mod tests {
         assert!(issues
             .iter()
             .any(|issue| matches!(issue.kind, LayoutIssueKind::TouchTargetTooSmall { .. })));
+    }
+
+    /// A formula set into a sentence is drawn where its words were, at the
+    /// size it was handed over, and the words underneath it are not drawn
+    /// twice.
+    #[test]
+    fn a_formula_in_a_sentence_is_drawn_in_place_of_the_words_it_stands_for() {
+        let text = "the constant K_G is small.";
+        let start = text.find("K_G").expect("the formula's words");
+        let screen = Screen::new(
+            1,
+            vec![Node::RichText {
+                id: NodeId(1),
+                text: text.to_owned(),
+                spans: Vec::new(),
+                links: Vec::new(),
+                presentation: ParagraphPresentation::default(),
+                selection: None,
+                formulae: vec![InlineFormula {
+                    start,
+                    end: start + "K_G".len(),
+                    handle: PictureHandle(3),
+                    source: (60, 30),
+                }],
+            }],
+        );
+        let layout = screen.layout();
+        let picture = layout
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::Picture(PictureHandle(3))))
+            .expect("the formula should have been laid out");
+        assert_eq!((picture.rect.width, picture.rect.height), (60, 30));
+        // The words are still in the paragraph -- a search and a selection
+        // read them -- but nothing draws them, or they would show through.
+        let drawn: String = layout
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, LayoutKind::RichText(_) | LayoutKind::Text))
+            .flat_map(|node| node.text_lines.iter())
+            .cloned()
+            .collect();
+        assert!(!drawn.contains("K_G"), "the words were drawn too: {drawn}");
+        assert!(
+            drawn.contains("the constant"),
+            "the sentence was lost: {drawn}"
+        );
+        assert!(
+            drawn.contains("is small."),
+            "the sentence was lost: {drawn}"
+        );
+    }
+
+    /// A formula takes the width of its picture rather than the width of the
+    /// words it stands for, and lines have to break on the width that is
+    /// actually drawn or the paragraph runs into the margin.
+    #[test]
+    fn a_wide_formula_pushes_the_line_it_will_not_fit_on() {
+        let text = "aaa bbb X ccc ddd";
+        let start = text.find('X').expect("the formula's words");
+        let paragraph = |source| {
+            Screen::new(
+                1,
+                vec![Node::RichText {
+                    id: NodeId(1),
+                    text: text.to_owned(),
+                    spans: Vec::new(),
+                    links: Vec::new(),
+                    presentation: ParagraphPresentation::default(),
+                    selection: None,
+                    formulae: vec![InlineFormula {
+                        start,
+                        end: start + 1,
+                        handle: PictureHandle(3),
+                        source,
+                    }],
+                }],
+            )
+            .layout()
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, LayoutKind::RichText(_) | LayoutKind::Text))
+            .map(|node| node.rect.y)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+        };
+        assert!(
+            paragraph((4_000, 30)) > paragraph((20, 30)),
+            "a formula wider than the page did not break the line"
+        );
     }
 
     /// An illustration wants an edge and a formula does not, and the two

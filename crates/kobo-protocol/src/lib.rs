@@ -3083,6 +3083,7 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
             spans,
             links,
             selection,
+            formulae,
             ..
         } => {
             if spans.len() > kobo_ui::MAX_RICH_TEXT_SPANS {
@@ -3096,6 +3097,10 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
             }
             if selection.is_some() {
                 add_encoded_len(&mut length, 12)?;
+            }
+            add_encoded_len(&mut length, 1)?;
+            for _ in formulae.iter().take(kobo_ui::MAX_INLINE_FORMULAE) {
+                add_encoded_len(&mut length, 20)?;
             }
             length
         }
@@ -4113,6 +4118,7 @@ fn encode_node(
             links,
             presentation,
             selection,
+            formulae,
         } => {
             if spans.len() > kobo_ui::MAX_RICH_TEXT_SPANS {
                 return Err(ProtocolError::TooManyNodes);
@@ -4169,6 +4175,28 @@ fn encode_node(
                     push_u32(output, selection.offset);
                 }
                 None => output.push(0),
+            }
+            let formulae = &formulae[..formulae.len().min(kobo_ui::MAX_INLINE_FORMULAE)];
+            output.push(u8::try_from(formulae.len()).map_err(|_| ProtocolError::TooManyNodes)?);
+            for formula in formulae {
+                if formula.start >= formula.end
+                    || formula.end > text.len()
+                    || !text.is_char_boundary(formula.start)
+                    || !text.is_char_boundary(formula.end)
+                {
+                    return Err(ProtocolError::InvalidValue("inline formula"));
+                }
+                push_u32(output, formula.handle.0);
+                push_u32(
+                    output,
+                    u32::try_from(formula.start).map_err(|_| ProtocolError::FrameTooLarge)?,
+                );
+                push_u32(
+                    output,
+                    u32::try_from(formula.end).map_err(|_| ProtocolError::FrameTooLarge)?,
+                );
+                push_u32(output, formula.source.0);
+                push_u32(output, formula.source.1);
             }
         }
         Node::Secondary { id, text } => {
@@ -5129,6 +5157,35 @@ fn decode_node(
                 }),
                 _ => return Err(ProtocolError::InvalidValue("text selection flag")),
             };
+            let formula_count = usize::from(reader.u8()?);
+            let mut formulae = Vec::with_capacity(formula_count.min(kobo_ui::MAX_INLINE_FORMULAE));
+            for _ in 0..formula_count {
+                let handle = PictureHandle(reader.u32()?);
+                let start = reader.u32()? as usize;
+                let end = reader.u32()? as usize;
+                let source = (reader.u32()?, reader.u32()?);
+                // A formula that does not land on the text it stands in for
+                // is dropped rather than drawn: the words are still there,
+                // and a picture at the wrong offset would cover the wrong
+                // ones. Formulas are kept in order and never overlapping so
+                // that layout can walk them alongside the string.
+                if start < end
+                    && end <= text.len()
+                    && text.is_char_boundary(start)
+                    && text.is_char_boundary(end)
+                    && formulae.len() < kobo_ui::MAX_INLINE_FORMULAE
+                    && formulae
+                        .last()
+                        .is_none_or(|last: &kobo_ui::InlineFormula| last.end <= start)
+                {
+                    formulae.push(kobo_ui::InlineFormula {
+                        start,
+                        end,
+                        handle,
+                        source,
+                    });
+                }
+            }
             Ok(Node::RichText {
                 id,
                 text,
@@ -5136,6 +5193,7 @@ fn decode_node(
                 links,
                 presentation,
                 selection,
+                formulae,
             })
         }
         18 => {
@@ -6533,6 +6591,12 @@ mod node_coverage_tests {
                     context: 3,
                     offset: 11,
                 }),
+                formulae: vec![kobo_ui::InlineFormula {
+                    start: 7,
+                    end: 11,
+                    handle: PictureHandle(9),
+                    source: (40, 20),
+                }],
             },
             Node::Quote {
                 id: NodeId(30),

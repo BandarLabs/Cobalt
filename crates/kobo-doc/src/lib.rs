@@ -254,11 +254,52 @@ pub struct InlineStyle {
     pub subscript: bool,
 }
 
+/// What a typeset formula's picture is named in [`Document::images`].
+///
+/// A formula is drawn at a fixed [`FORMULA_PICTURE_EM`] pixels to the em so
+/// that it has detail to spare, and set on the page at the size of the text
+/// it belongs to. An application has to be able to tell one apart from an
+/// illustration to size it that way, and the name is how.
+pub const FORMULA_PICTURE_PREFIX: &str = "formula:";
+
+/// The pixels to the em a formula's picture was drawn at.
+pub const FORMULA_PICTURE_EM: u32 = 48;
+
+/// The same, for the renderer, which measures type in fractions of a pixel.
+pub(crate) const FORMULA_PICTURE_EM_F32: f32 = 48.0;
+
+/// How big a formula's picture should be drawn, for a given reading em.
+///
+/// The picture was typeset at [`FORMULA_PICTURE_EM`] pixels to the em, so it
+/// is already in the units type is measured in: setting it beside text of a
+/// given em is a matter of scaling by the ratio of the two. The em rather
+/// than the line height, because the line height is the em plus the space a
+/// reader wants between lines, and a formula scaled to that comes out a fifth
+/// larger than the letters either side of it.
+#[must_use]
+pub fn formula_size(source: (u32, u32), em: u32) -> (u32, u32) {
+    let scaled = |side: u32| {
+        (side.saturating_mul(em.max(1)))
+            .div_ceil(FORMULA_PICTURE_EM)
+            .max(1)
+    };
+    (scaled(source.0), scaled(source.1))
+}
+
 /// One styled run inside a block of prose.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct InlineSpan {
     pub text: String,
     pub style: InlineStyle,
+    /// The typeset picture to draw over this run, keyed into
+    /// [`Document::images`], when the run is a formula.
+    ///
+    /// Mathematics does not survive being written out in a line: a fraction
+    /// stacks and an index sits above its letter, and neither is a sequence
+    /// of characters. So `text` holds the best linear reading of the formula
+    /// -- which is what a search matches and what a reader without the
+    /// picture gets -- and this says what to draw over it instead.
+    pub formula: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -867,6 +908,7 @@ fn bound_rich_spans(spans: &mut Vec<InlineSpan>, canonical: &str) {
         *spans = vec![InlineSpan {
             text: canonical.to_owned(),
             style: InlineStyle::default(),
+            formula: None,
         }];
         return;
     }
@@ -886,6 +928,7 @@ fn bound_rich_spans(spans: &mut Vec<InlineSpan>, canonical: &str) {
         spans.push(InlineSpan {
             text: tail,
             style: InlineStyle::default(),
+            formula: None,
         });
     }
 }

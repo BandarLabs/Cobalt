@@ -39,7 +39,12 @@ use crate::{
 /// looks. Rather more than the body text, so that a subscript inside a
 /// fraction still has strokes of its own on a three-hundred-dot panel.
 #[cfg(feature = "raster")]
-const FORMULA_EM: f32 = 48.0;
+/// The pixels to the em a formula is typeset at, as the renderer wants it.
+///
+/// Deliberately generous: the picture is scaled down to the reading em when
+/// it is set on the page, and detail thrown away in the scaling is detail the
+/// panel never had to draw twice.
+const FORMULA_EM: f32 = crate::FORMULA_PICTURE_EM_F32;
 
 /// Elements whose contents are instructions rather than words.
 const OPAQUE: [&str; 3] = ["script", "style", "iframe"];
@@ -121,7 +126,9 @@ pub fn parse_with_css(source: &str, external_css: &str) -> Document {
                 // sentence, and the tags either side of it carry no
                 // whitespace of their own.
                 state.words(" ");
-                state.words(&drawn);
+                if !state.inline_formula(inside, &drawn) {
+                    state.words(&drawn);
+                }
                 state.words(" ");
             }
             rest = after;
@@ -296,13 +303,14 @@ impl State {
         if let Some(last) = self
             .spans
             .last_mut()
-            .filter(|last| last.style == self.inline)
+            .filter(|last| last.style == self.inline && last.formula.is_none())
         {
             last.text.push_str(text);
         } else {
             self.spans.push(InlineSpan {
                 text: text.to_owned(),
                 style: self.inline,
+                formula: None,
             });
         }
     }
@@ -680,12 +688,50 @@ impl State {
         // Whatever words were being collected belong to the paragraph in front
         // of the formula, not to the formula, so they are put down first.
         self.flush();
-        let name = format!("formula:{}", self.formulae.len());
+        let name = format!("{}{}", crate::FORMULA_PICTURE_PREFIX, self.formulae.len());
         self.formulae.insert(name.clone(), png);
         self.builder.push(Block::Picture {
             name,
             alt: drawn.trim().to_owned(),
             illustration: false,
+        });
+        true
+    }
+
+    /// Sets a formula standing inside a sentence as a picture of itself.
+    ///
+    /// The run keeps the words [`kobo_html::math::render`] made of it, so the
+    /// sentence still reads, still searches and still copies; the picture is
+    /// drawn over those words rather than in place of them. A formula that
+    /// will not typeset simply is not taken, and the words stand on their
+    /// own, which is what happened to every formula before this existed.
+    ///
+    /// Returns whether the formula was taken.
+    fn inline_formula(&mut self, inside: &str, drawn: &str) -> bool {
+        if drawn.trim().is_empty() {
+            return false;
+        }
+        let Some(latex) = attribute(inside, "alttext") else {
+            return false;
+        };
+        let Some(png) = draw_formula(&decode_entities(latex)) else {
+            return false;
+        };
+        if self.text.len() > MAX_BLOCK_TEXT {
+            return false;
+        }
+        let name = format!("{}{}", crate::FORMULA_PICTURE_PREFIX, self.formulae.len());
+        self.formulae.insert(name.clone(), png);
+        // The same two steps [`Self::words`] takes, because the words and the
+        // styled runs have to stay the same string: a run that does not match
+        // the block text costs the block every emphasis it had. Its own run
+        // rather than an append, so the formula covers exactly its own words.
+        let words = decode_entities(drawn.trim());
+        self.text.push_str(&words);
+        self.spans.push(InlineSpan {
+            text: words,
+            style: self.inline,
+            formula: Some(name),
         });
         true
     }
@@ -933,12 +979,17 @@ fn normalise_spans(spans: Vec<InlineSpan>) -> Vec<InlineSpan> {
         if text.is_empty() {
             continue;
         }
-        if let Some(last) = out.last_mut().filter(|last| last.style == span.style) {
+        if let Some(last) = out
+            .last_mut()
+            .filter(|last| last.style == span.style && last.formula.is_none())
+            .filter(|_| span.formula.is_none())
+        {
             last.text.push_str(&text);
         } else {
             out.push(InlineSpan {
                 text,
                 style: span.style,
+                formula: span.formula,
             });
         }
     }
@@ -1237,6 +1288,48 @@ mod tests {
         assert!(!text.contains('{'), "the source leaked: {text}");
         assert!(text.contains("K_G"), "the subscript was lost: {text}");
         assert!(text.contains('\u{3c0}'), "the fraction was lost: {text}");
+    }
+
+    /// A formula inside a sentence is typeset like one on its own line, and
+    /// the words it was written as stay in the paragraph underneath it: they
+    /// are what a search matches and what a reader gets if the picture never
+    /// arrives.
+    #[cfg(feature = "raster")]
+    #[test]
+    fn a_formula_inside_a_sentence_is_drawn_over_the_words_it_was_written_as() {
+        let document = parse(
+            "<p>the constant <math alttext=\"K_{G}\"><semantics>\
+             <msub><mi>K</mi><mi>G</mi></msub>\
+             <annotation encoding=\"application/x-tex\">K_{G}</annotation>\
+             </semantics></math> is small.</p>",
+        );
+        let Block::Paragraph(text) = &document.blocks[0] else {
+            panic!("not a paragraph: {:?}", document.blocks[0]);
+        };
+        assert!(text.contains("K_G"), "the words were lost: {text}");
+        let rich = document.rich.get(&0).expect("styled runs");
+        let formula = rich
+            .spans
+            .iter()
+            .find(|span| span.formula.is_some())
+            .expect("a formula run");
+        assert_eq!(formula.text.trim(), "K_G");
+        let name = formula.formula.as_deref().expect("a picture name");
+        assert!(
+            document.images.contains_key(name),
+            "the picture was never stored: {name}"
+        );
+        // Its own run, so that the picture covers the formula and not the
+        // words either side of it.
+        assert!(
+            rich.spans
+                .iter()
+                .filter(|span| span.formula.is_some())
+                .count()
+                == 1,
+            "the formula ran into its neighbours: {:?}",
+            rich.spans
+        );
     }
 
     #[test]

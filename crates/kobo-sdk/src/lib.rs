@@ -19,13 +19,13 @@ pub use kobo_ui::QuoteRole;
 pub use kobo_ui::{
     terminal_grid, terminal_grid_for, typographic_cover, ActionId, BandAlign, BandSlot,
     BannerLevel, BarAction, BarStyle, BottomAction, Caret, Cell, Chip, Chrome, ControlState,
-    DiagnosticSeverity, DisplayMetrics, Emphasis, Fold, FontHandle, Freeform, Glyph, LayoutIssue,
-    LayoutIssueKind, NavBar, Node, NodeId, Overlay, OverlayKind, ParagraphAlignment,
+    DiagnosticSeverity, DisplayMetrics, Emphasis, Fold, FontHandle, Freeform, Glyph, InlineFormula,
+    LayoutIssue, LayoutIssueKind, NavBar, Node, NodeId, Overlay, OverlayKind, ParagraphAlignment,
     ParagraphPresentation, Percent, PictureHandle, ProseArea, RichTextSpan, Row, RowLead, RowState,
     Screen, SlotWidth, Space, TextHit, TextPresentation, TextSelection, Tile, TilePicture,
     TileShape, TileState, TopBar, TransferFailure, CLARA_BW_METRICS, MAX_BAND_SLOTS, MAX_CELLS,
-    MAX_CHIPS, MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_QUOTE_DEPTH, MAX_ROWS, MAX_TABS,
-    MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS, TILE_BADGE_LIMIT,
+    MAX_CHIPS, MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_INLINE_FORMULAE, MAX_QUOTE_DEPTH, MAX_ROWS,
+    MAX_TABS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS, TILE_BADGE_LIMIT,
 };
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
@@ -511,6 +511,7 @@ impl ScreenBuilder {
             links: Vec::new(),
             presentation,
             selection: None,
+            formulae: Vec::new(),
         });
         self
     }
@@ -552,6 +553,7 @@ impl ScreenBuilder {
             links,
             presentation,
             selection: None,
+            formulae: Vec::new(),
         });
         self
     }
@@ -595,7 +597,42 @@ impl ScreenBuilder {
             links,
             presentation,
             selection: Some(kobo_ui::TextSelection { context, offset }),
+            formulae: Vec::new(),
         });
+        self
+    }
+
+    /// Sets typeset formulas into the paragraph just added.
+    ///
+    /// Separate from the calls that add the paragraph because mathematics is
+    /// rare and those calls already take everything a paragraph normally has.
+    /// Each formula names a picture the application has handed over and the
+    /// half-open range of the paragraph's own bytes it is drawn over -- the
+    /// written form of the formula, which stays in the text so that a search
+    /// still finds it and a reader without the picture still reads it.
+    ///
+    /// Does nothing if the last thing added was not a paragraph, or if a
+    /// range does not land on a character boundary of it.
+    #[must_use]
+    pub fn with_formulae(mut self, formulae: impl IntoIterator<Item = InlineFormula>) -> Self {
+        let Some(Node::RichText {
+            text, formulae: on, ..
+        }) = self.nodes.last_mut()
+        else {
+            return self;
+        };
+        for formula in formulae.into_iter().take(kobo_ui::MAX_INLINE_FORMULAE) {
+            if formula.start < formula.end
+                && formula.end <= text.len()
+                && text.is_char_boundary(formula.start)
+                && text.is_char_boundary(formula.end)
+                && on
+                    .last()
+                    .is_none_or(|last: &InlineFormula| last.end <= formula.start)
+            {
+                on.push(formula);
+            }
+        }
         self
     }
 

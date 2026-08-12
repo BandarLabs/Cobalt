@@ -42,7 +42,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use kobo_doc::{Block, Document};
+use kobo_doc::{Block, Document, FORMULA_PICTURE_EM, FORMULA_PICTURE_PREFIX};
 use kobo_read::{Memory, Outcome, Reader};
 use kobo_sdk::{
     Context, DisplayMetrics, PictureHandle, Screen, Task, TaskId, TaskOutcome, TilePicture,
@@ -679,7 +679,12 @@ impl BookView {
                 let Ok(picture) = kobo_image::decode(&bytes) else {
                     continue;
                 };
-                let Ok(picture) = picture.fit(width, height) else {
+                let (box_width, box_height) = if name.starts_with(FORMULA_PICTURE_PREFIX) {
+                    formula_box(&picture, &metrics)
+                } else {
+                    (width, height)
+                };
+                let Ok(picture) = picture.fit(box_width, box_height) else {
                     continue;
                 };
                 self.dithering = Some((name, picture));
@@ -798,6 +803,27 @@ fn host_of(url: &str) -> Option<&str> {
 ///
 /// `None` on a panel so small the box has no area, which is not a device this
 /// runs on but is a shape the arithmetic can produce.
+/// How big a formula's picture is drawn.
+///
+/// Not the plate box, which is a fraction of the panel: a formula is not an
+/// illustration and must not be blown up to fill one. It was typeset at
+/// [`FORMULA_PICTURE_EM`] pixels to the em, so scaling it by the ratio of the
+/// reading face's em to that one sets it at exactly the size of the text it
+/// belongs to. A wide displayed equation is then brought back to the column,
+/// keeping its shape, because a formula that overhangs the margin is worse
+/// than a small one.
+fn formula_box(picture: &kobo_image::Picture, metrics: &DisplayMetrics) -> (u32, u32) {
+    let em = u32::try_from(kobo_ui::FontSize::Body.em_in(kobo_ui::Face::Reading))
+        .unwrap_or(FORMULA_PICTURE_EM);
+    let (mut width, mut height) = kobo_doc::formula_size((picture.width(), picture.height()), em);
+    let column = u32::try_from(metrics.width.max(1)).unwrap_or(width);
+    if width > column {
+        height = (height * column / width.max(1)).max(1);
+        width = column;
+    }
+    (width, height)
+}
+
 fn plate_box(metrics: &DisplayMetrics) -> Option<(u32, u32)> {
     let width = metrics.tenth_mm(i32::from(PLATE_WIDTH_MM) * 10);
     let height = metrics.tenth_mm(i32::from(PLATE_HEIGHT_MM) * 10);
