@@ -36,14 +36,15 @@
 //! reader who learns them in one should find them in the next. They live in
 //! `kobo-read`.
 
+use kobo_bookview::{BookView, Step};
 use kobo_opds::{AcquisitionKind, Category, Feed, ImageSource, Link, Publication, SearchTemplate};
 use kobo_read::{Memory, Outcome, Reader};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Chrome, Context, DiagnosticSeverity, DisplayMetrics, Failure,
-    FontHandle, Glyph, Header, KoboApp, LogLevel, PictureHandle, RowLead, ScreenBuilder,
-    ShelfDownload, ShelfProgress, ShelfUpload, StoreResult, Task, TaskId, TaskOutcome, Tile,
-    TilePicture, TileShape, TileState, MAX_STORE_VALUE,
+    action_id, ActionId, BannerLevel, Chrome, Context, DiagnosticSeverity, Failure, FontHandle,
+    Glyph, Header, KoboApp, LogLevel, PictureHandle, RowLead, ScreenBuilder, ShelfDownload,
+    ShelfProgress, ShelfUpload, StoreResult, Task, TaskId, TaskOutcome, Tile, TilePicture,
+    TileShape, TileState, MAX_STORE_VALUE,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::process::ExitCode;
@@ -146,30 +147,6 @@ const MIN_COVER_PX: u32 = 32;
 /// who has watched a progress bar for four minutes has already been charged
 /// for the failure.
 const MAX_BOOK_BYTES: u64 = 12 * 1024 * 1024;
-
-/// The most pictures decoded when a book opens.
-///
-/// Every one costs memory the reader shares with the firmware, and a novel's
-/// illustrations run to a few dozen. This is above that and far below the
-/// point where a book of photographs takes the device down with it.
-const MAX_BOOK_PICTURES: usize = 64;
-
-/// How large a picture inside a book is decoded to, in millimetres.
-///
-/// Fitted before it is handed over rather than after, so what the runtime
-/// holds is the size it will be drawn: a plate scanned at print resolution is
-/// several megabytes of pixels the panel has no way to show. The height
-/// matches the ceiling `kobo-read` draws pictures at, and the width is the
-/// column it has to fit inside.
-const PICTURE_WIDTH_MM: u16 = 80;
-const PICTURE_HEIGHT_MM: u16 = 90;
-
-/// Where a book's picture handles start.
-///
-/// The shelf is holding cover handles numbered from zero at the same time, and
-/// two pictures sharing a handle is the sort of fault that shows up as the
-/// wrong illustration rather than as an error.
-const PICTURE_HANDLE_BASE: u32 = 1_000;
 
 /// Where the handles for navigation tile pictures start, and how many of them
 /// are cycled through.
@@ -624,32 +601,17 @@ struct Gutenbird {
     download: Option<Download>,
     fetched: u32,
     complete: bool,
-    reader: Option<Reader>,
-    /// The handles the runtime is holding plates against for the open book.
+    /// The open book, and everything holding one costs the device.
     ///
-    /// Kept because a handle is the only thing that can give one back. The
-    /// runtime frees every picture when an application exits, which is no help
-    /// at all to an application that stays open: a book of plates was still
-    /// costing the device several megabytes of decoded greyscale while its
-    /// owner was back on the shelf looking at covers.
-    book_pictures: Vec<PictureHandle>,
+    /// The reader itself, the room reserved for each plate, the queue of
+    /// plates still to be turned into pixels and the handles the runtime is
+    /// holding them against all live in here, because every one of those is
+    /// the same problem in every application that opens a document. What used
+    /// to be four fields and six methods of this file is now the shared
+    /// [`BookView`], which arXiv reads its papers through as well.
+    book: BookView,
     /// The embedded face held for the open book, released with its pictures.
     book_font: Option<FontHandle>,
-    /// The open book's plates still to be turned into pixels, in the order the
-    /// text refers to them, each with the bytes it was stored as.
-    ///
-    /// Drained rather than iterated: a plate's source bytes are dropped the
-    /// moment it has been decoded, so what an illustrated book costs while it
-    /// opens falls as it goes rather than being both copies at once.
-    plates: VecDeque<(String, Vec<u8>)>,
-    /// A plate read from the book but not yet reduced to the panel's greys.
-    ///
-    /// The two halves of preparing a plate happen in separate callbacks
-    /// because together they are longer than one is allowed to be, so the
-    /// half-finished picture has to live somewhere in between.
-    dithering: Option<(String, kobo_image::Picture)>,
-    /// The sleep that will bring the next pass at the queue.
-    plating: Option<TaskId>,
     place: Option<Memory>,
     keeping: Option<ShelfUpload>,
     loading: Option<ShelfDownload>,
@@ -699,12 +661,8 @@ impl Default for Gutenbird {
             download: None,
             fetched: 0,
             complete: false,
-            reader: None,
-            book_pictures: Vec::new(),
+            book: BookView::new(),
             book_font: None,
-            plates: VecDeque::new(),
-            dithering: None,
-            plating: None,
             place: None,
             keeping: None,
             loading: None,
@@ -1138,13 +1096,10 @@ impl Gutenbird {
         self.download = None;
         self.fetched = 0;
         self.complete = false;
-        self.reader = None;
         // Unconditionally, unlike closing a book: arriving at another
         // publication abandons whatever was in flight, so there is nothing
-        // left that could ask for these back later.
-        for handle in self.book_pictures.drain(..) {
-            context.drop_picture(handle);
-        }
+        // left that could ask these back later.
+        self.book.close(context);
         self.place = None;
         self.loading = None;
         self.failed = None;
@@ -1876,10 +1831,10 @@ impl Gutenbird {
             || "Reading".to_owned(),
             |publication| publication.title.clone(),
         );
-        let Some(reader) = &self.reader else {
+        let Some(screen) = self.book.screen(&title) else {
             return self.details_screen(context);
         };
-        reader.screen(&title)
+        screen
     }
 
     // ---------------------------------------------------------------
@@ -2431,13 +2386,13 @@ impl Gutenbird {
         if self.download.as_ref().map(|download| download.kind) != Some(DownloadKind::Text) {
             return;
         }
-        let left = self.reader.as_ref().map_or(0, |reader| {
+        let left = self.book.reader().map_or(0, |reader| {
             reader.page_count().saturating_sub(reader.page_number())
         });
         if left <= TOP_UP_PAGES {
             self.ask_book(context);
             if self.awaiting_book() {
-                if let Some(reader) = &mut self.reader {
+                if let Some(reader) = self.book.reader_mut() {
                     reader.expect_more(true);
                 }
             }
@@ -2449,12 +2404,15 @@ impl Gutenbird {
     }
 
     fn read_action(&mut self, context: &mut Context, action: ActionId) -> bool {
-        let metrics = context.metrics();
-        let Some(reader) = &mut self.reader else {
+        // Offering the action to the shared view rather than to a reader held
+        // here is also what keeps the plates arriving: a page turn is the
+        // moment a plate on the page turned to is wanted, and the view takes
+        // that as its cue to carry the queue forward.
+        let Some(outcome) = self.book.act(context, action) else {
             return false;
         };
-        match reader.act_on(action, &metrics) {
-            Outcome::Elsewhere => return false,
+        match outcome {
+            Outcome::Elsewhere | Outcome::Repaint => {}
             Outcome::Close => self.back_to(View::Details),
             Outcome::Light(level) => {
                 context.device().set_frontlight(level);
@@ -2464,15 +2422,6 @@ impl Gutenbird {
                 self.save_place(context);
                 self.top_up(context);
             }
-            Outcome::Repaint => {}
-        }
-        // A page turn is also the moment a plate on the page turned to is
-        // wanted. Nothing to do while the queue is already going round; this
-        // is here for the case where the runtime had no room for the sleep
-        // that would have carried it, and the plates would otherwise stop
-        // arriving with no way to start again.
-        if self.plating.is_none() && (!self.plates.is_empty() || self.dithering.is_some()) {
-            self.decode_more_plates(context);
         }
         self.show(context);
         true
@@ -2482,10 +2431,10 @@ impl Gutenbird {
         let Some((_, place)) = self.open_keys() else {
             return;
         };
-        let Some(reader) = &self.reader else {
+        let Some(memory) = self.book.memory() else {
             return;
         };
-        let memory = reader.memory().encode();
+        let memory = memory.encode();
         context.store().save(place, memory);
     }
 
@@ -2532,10 +2481,10 @@ impl Gutenbird {
         if download.kind == DownloadKind::Epub && !self.complete {
             return;
         }
-        let memory = self.reader.as_ref().map_or_else(
-            || self.place.clone().unwrap_or_default(),
-            |reader| reader.memory().clone(),
-        );
+        let memory = self
+            .book
+            .memory()
+            .map_or_else(|| self.place.clone().unwrap_or_default(), Clone::clone);
         // Opening a book is the one thing this application does that has ever
         // blocked the panel for seconds at a time, and which of the three
         // stages costs that is not guessable from a screenshot: on a
@@ -2553,59 +2502,49 @@ impl Gutenbird {
         let read_ms = started.elapsed().as_millis();
         let downloaded = download.bytes.len();
         let _ = name;
-        if let Ok(mut document) = result {
+        if let Ok(document) = result {
             let blocks = document.blocks.len();
             let started = std::time::Instant::now();
             // Whatever the last reopen handed over is about to be replaced, so
             // it goes back first. A book read from the shelf reaches here a
             // second time, and without this the first set stayed decoded in
-            // the runtime with nothing left that could name it.
-            for handle in self.book_pictures.drain(..) {
-                context.drop_picture(handle);
-            }
+            // the runtime with nothing left that could name it. The plates are
+            // the view's to give back; the face is this application's.
             if let Some(handle) = self.book_font.take() {
                 context.drop_font(handle);
             }
-            // Taken off the document rather than left on it: the reader owns
-            // the document from here, and holding the scanned bytes as well as
-            // the decoded greyscale meant every plate was paid for twice.
-            let images = std::mem::take(&mut document.images);
-            let pictures_ms = started.elapsed().as_millis();
-            let started = std::time::Instant::now();
-            let mut reader = Reader::open(document, memory, &context.metrics());
-            if let Some((name, bytes)) = reader
-                .preferred_publisher_font()
-                .map(|(name, bytes)| (name.to_owned(), bytes.to_vec()))
-            {
+            // Parsing, reserving room for every plate and measuring the pages
+            // all happen in here, and none of them decodes a picture: that is
+            // what kept opening an illustrated book inside the watchdog's
+            // deadline.
+            self.book.open(context, document, memory);
+            // After the book is open, because the face is asked for by the
+            // book itself. Setting it measures the pages again, which is the
+            // price of type the publisher chose over type the reader did.
+            let wanted = self
+                .book
+                .reader()
+                .and_then(Reader::preferred_publisher_font)
+                .map(|(name, bytes)| (name.to_owned(), bytes.to_vec()));
+            if let Some((name, bytes)) = wanted {
                 if let Some(handle) = context.put_font(PUBLISHER_FONT_HANDLE, name, bytes) {
-                    reader.set_publisher_font(Some(handle), &context.metrics());
+                    let metrics = context.metrics();
+                    if let Some(reader) = self.book.reader_mut() {
+                        reader.set_publisher_font(Some(handle), &metrics);
+                    }
                     self.book_font = Some(handle);
                 }
             }
-            // Before the count is read, because the sizes are what an
-            // illustrated book is measured at, and it is that count -- the one
-            // it will actually be read at -- that the timing line is worth
-            // having.
-            let reserved = self.reserve_plates(&reader, &images, &context.metrics());
-            reader.set_pictures(reserved, &context.metrics());
-            let paginate_ms = started.elapsed().as_millis();
+            let open_ms = started.elapsed().as_millis();
             context.log(
                 LogLevel::Info,
                 format!(
-                    "opened {} bytes in {read_ms} ms read, {pictures_ms} ms pictures, \
-                     {paginate_ms} ms paginate ({blocks} blocks, {} pages, {} plates queued)",
-                    downloaded,
-                    reader.page_count(),
-                    self.plates.len()
+                    "opened {downloaded} bytes in {read_ms} ms read, {open_ms} ms open \
+                     ({blocks} blocks, {} pages, {} plates queued)",
+                    self.book.reader().map_or(0, Reader::page_count),
+                    self.book.queued()
                 ),
             );
-            self.reader = Some(reader);
-            // Handed to the runtime rather than started here. This callback
-            // has already spent its parse and its pagination; a plate on top
-            // of that is what put it over the deadline.
-            if !self.plates.is_empty() {
-                self.plating = context.spawn(Task::Sleep { seconds: 0 });
-            }
         } else {
             self.problem = Some("This book could not be read.".to_owned());
             if self.complete {
@@ -2633,189 +2572,13 @@ impl Gutenbird {
         if self.download.is_some() && !self.complete {
             return;
         }
-        for handle in self.book_pictures.drain(..) {
-            context.drop_picture(handle);
-        }
+        self.book.close(context);
         if let Some(handle) = self.book_font.take() {
             context.drop_font(handle);
         }
-        // Whatever is still queued is source bytes for a book nobody is
-        // reading any more. The sleep already in flight is left to land and be
-        // ignored: cancelling it would cost a message to save nothing.
-        self.plates.clear();
-        self.dithering = None;
-        self.reader = None;
         self.download = None;
         self.fetched = 0;
         self.complete = false;
-    }
-
-    /// Claims the room every plate in the book will take, decoding none of it.
-    ///
-    /// Opening a book used to decode, fit and dither every image the container
-    /// held before it returned, inside a lifecycle callback with a two hundred
-    /// and fifty millisecond deadline. The Tale of Peter Rabbit is twenty-eight
-    /// plates, and on a Clara BW that was two thousand seven hundred and
-    /// eighty-four milliseconds: parsing the book took ten and paginating it
-    /// thirty-two, so the images were ninety-nine per cent of a stall during
-    /// which nothing drew, no control answered, and three watchdogs counted.
-    ///
-    /// A picture's header states its size in its first few dozen bytes, and
-    /// size is the only thing pagination needs. Reading the headers costs
-    /// microseconds and gives the reader the same page count it would have got
-    /// from the pixels, so the book opens measured and correct and the plates
-    /// are drawn into the room already reserved for them as they decode. Until
-    /// each one does the panel draws an empty frame at exactly the right size,
-    /// which is what stops a page from resizing under somebody reading it.
-    ///
-    /// Only the pictures the text actually refers to, in the order it refers to
-    /// them, and at most `MAX_BOOK_PICTURES` of those: a container's spare
-    /// artwork is not something to spend a decode on, and the order is what
-    /// lets the plates arrive roughly as fast as they are read past.
-    fn reserve_plates(
-        &mut self,
-        reader: &Reader,
-        images: &BTreeMap<String, Vec<u8>>,
-        metrics: &DisplayMetrics,
-    ) -> BTreeMap<String, TilePicture> {
-        self.plates.clear();
-        self.book_pictures.clear();
-        let mut reserved = BTreeMap::new();
-        let Some((width, height)) = plate_box(metrics) else {
-            return reserved;
-        };
-        for (index, name) in reader
-            .pictures_wanted()
-            .into_iter()
-            .take(MAX_BOOK_PICTURES)
-            .enumerate()
-        {
-            let Some(bytes) = images.get(name) else {
-                continue;
-            };
-            // A header that will not parse is a plate that will not decode, so
-            // it is left out here and the page reads its description instead --
-            // which is what a book with a broken plate should look like.
-            let Ok(source) = kobo_image::size(bytes) else {
-                continue;
-            };
-            let (drawn_width, drawn_height) = kobo_image::fitted_size(source, width, height);
-            if drawn_width == 0 || drawn_height == 0 {
-                continue;
-            }
-            // Numbered from a base that cannot collide with the cover handles
-            // the shelf is holding at the same time.
-            let handle = PictureHandle(PICTURE_HANDLE_BASE + u32::try_from(index).unwrap_or(0));
-            reserved.insert(
-                name.to_owned(),
-                TilePicture::new(handle, drawn_width, drawn_height),
-            );
-            self.book_pictures.push(handle);
-            self.plates.push_back((name.to_owned(), bytes.clone()));
-        }
-        reserved
-    }
-
-    /// Carries one plate one step further towards the panel, and asks to be
-    /// called again while any step is left.
-    ///
-    /// One step, not as many as fit in a time budget. Nothing here can be
-    /// interrupted half way, so a budget can only be checked before starting
-    /// something, and the pass then runs for the budget plus however long that
-    /// something takes: on the panel a hundred and twenty millisecond budget
-    /// produced callbacks of 272, 293 and 311 milliseconds against a deadline
-    /// of 250. One whole plate per pass was no better -- 250 to 311 -- because
-    /// one whole plate is itself over the deadline on this processor.
-    ///
-    /// So a plate is taken in its two natural halves. Reading the file and
-    /// fitting it is one; reducing a million pixels to the sixteen greys the
-    /// panel can hold is the other, and on a development machine the two are
-    /// two milliseconds and three, which on the reader is about a hundred and
-    /// about a hundred and seventy. Either alone is comfortably inside the
-    /// deadline. There is no third half, and the honest fix is a runtime that
-    /// can decode off this thread at all; until then this is where the seam is.
-    ///
-    /// The page being looked at is decoded first. Everything else can arrive
-    /// while it is being read.
-    fn decode_more_plates(&mut self, context: &mut Context) {
-        let metrics = context.metrics();
-        let Some((width, height)) = plate_box(&metrics) else {
-            self.plates.clear();
-            self.dithering = None;
-            return;
-        };
-        let showing: Vec<String> = self.reader.as_ref().map_or_else(Vec::new, |reader| {
-            reader
-                .pictures_on_page()
-                .into_iter()
-                .map(str::to_owned)
-                .collect()
-        });
-        let mut on_this_page = false;
-        if let Some((name, mut picture)) = self.dithering.take() {
-            // The second half: the greys.
-            picture.dither(kobo_image::PANEL_GREYS);
-            let (drawn_width, drawn_height) = (picture.width(), picture.height());
-            if let Some(reserved) = self.handed_plate(&name) {
-                if context
-                    .put_picture(reserved, drawn_width, drawn_height, picture.into_grey())
-                    .is_some()
-                    && showing.contains(&name)
-                {
-                    on_this_page = true;
-                }
-            }
-        } else {
-            self.plates_first(&showing);
-            // The first half: the file. A plate that will not read costs
-            // nothing, so this goes past it rather than spending a whole round
-            // trip discovering there was nothing to draw, and stops on the
-            // first one that works.
-            while let Some((name, bytes)) = self.plates.pop_front() {
-                if self.handed_plate(&name).is_none() {
-                    continue;
-                }
-                let Ok(picture) = kobo_image::decode(&bytes) else {
-                    continue;
-                };
-                let Ok(picture) = picture.fit(width, height) else {
-                    continue;
-                };
-                self.dithering = Some((name, picture));
-                break;
-            }
-        }
-        // Only when the page in front of somebody actually changed. A plate
-        // twenty pages ahead landing is not a reason to flash an E Ink panel,
-        // and there are two dozen of them in an illustrated book.
-        if on_this_page {
-            self.show(context);
-        }
-        if self.plates.is_empty() && self.dithering.is_none() {
-            self.plating = None;
-            return;
-        }
-        self.plating = context.spawn(Task::Sleep { seconds: 0 });
-    }
-
-    /// Moves the named plates to the front of the queue, keeping their order.
-    fn plates_first(&mut self, names: &[String]) {
-        if names.is_empty() {
-            return;
-        }
-        let (wanted, rest): (VecDeque<_>, VecDeque<_>) = self
-            .plates
-            .drain(..)
-            .partition(|(name, _)| names.contains(name));
-        self.plates = wanted.into_iter().chain(rest).collect();
-    }
-
-    /// The handle a plate was reserved against, if it was.
-    fn handed_plate(&self, name: &str) -> Option<PictureHandle> {
-        self.reader
-            .as_ref()
-            .and_then(|reader| reader.picture_named(name))
-            .map(|picture| picture.handle)
     }
 
     /// A blob that arrived and will not parse is forgotten rather than kept,
@@ -2833,8 +2596,8 @@ impl Gutenbird {
 
     fn ask_light(&mut self, context: &mut Context) {
         if self
-            .reader
-            .as_ref()
+            .book
+            .reader()
             .is_some_and(|reader| reader.light().is_none())
         {
             context.device().read_frontlight();
@@ -2889,7 +2652,7 @@ impl Gutenbird {
         if self.complete && self.download.is_some() {
             self.keep_book(context);
         }
-        if self.reader.is_some() {
+        if self.book.is_open() {
             self.go(View::Reading);
         }
         // A chunk that lands is what asks for the one after it. Nothing else
@@ -2975,19 +2738,6 @@ fn book_keys(publication: &Publication) -> Option<(String, String)> {
 
 fn cover_key(url: &str) -> String {
     kobo_sdk::cache_key(format!("cover.{:08x}", stamp(url)))
-}
-
-/// The box an illustration inside a book is fitted into, in pixels.
-///
-/// `None` on a panel so small the box has no area, which is not a device this
-/// runs on but is a shape the arithmetic can produce.
-fn plate_box(metrics: &DisplayMetrics) -> Option<(u32, u32)> {
-    let width = metrics.tenth_mm(i32::from(PICTURE_WIDTH_MM) * 10);
-    let height = metrics.tenth_mm(i32::from(PICTURE_HEIGHT_MM) * 10);
-    match (u32::try_from(width), u32::try_from(height)) {
-        (Ok(width), Ok(height)) if width > 0 && height > 0 => Some((width, height)),
-        _ => None,
-    }
 }
 
 /// Centres a picture on a sheet of exactly `width` by `height`.
@@ -3312,7 +3062,7 @@ impl KoboApp for Gutenbird {
                         total,
                     });
                     self.reopen(context);
-                    if self.reader.is_some() {
+                    if self.book.is_open() {
                         self.go(View::Reading);
                     }
                     self.show(context);
@@ -3366,7 +3116,7 @@ impl KoboApp for Gutenbird {
                 value: Some(value), ..
             } => {
                 let memory = Memory::decode(&value);
-                if let Some(reader) = &mut self.reader {
+                if let Some(reader) = self.book.reader_mut() {
                     let metrics = context.metrics();
                     reader.restore(memory.clone(), &metrics);
                     self.show(context);
@@ -3399,8 +3149,8 @@ impl KoboApp for Gutenbird {
             return;
         };
         if self
-            .reader
-            .as_mut()
+            .book
+            .reader_mut()
             .is_some_and(|reader| reader.seed_light(percent))
         {
             self.show(context);
@@ -3425,10 +3175,7 @@ impl KoboApp for Gutenbird {
                 offset: hit.end,
             },
         };
-        let word = self
-            .reader
-            .as_ref()
-            .and_then(|reader| reader.text_in(range));
+        let word = self.book.reader().and_then(|reader| reader.text_in(range));
         let Some(word) = word else { return };
         self.selected_range = Some(range);
         self.lookup_word.clone_from(&word);
@@ -3444,7 +3191,7 @@ impl KoboApp for Gutenbird {
         if action == ActionId::BACK {
             if self.view == View::Reading {
                 let metrics = context.metrics();
-                if let Some(reader) = &mut self.reader {
+                if let Some(reader) = self.book.reader_mut() {
                     if reader.chrome() != kobo_read::Chrome::Hidden {
                         reader.set_chrome(kobo_read::Chrome::Hidden, &metrics);
                         self.show(context);
@@ -3505,8 +3252,8 @@ impl KoboApp for Gutenbird {
         {
             let created = self.selected_range.and_then(|range| {
                 let metrics = context.metrics();
-                self.reader
-                    .as_mut()
+                self.book
+                    .reader_mut()
                     .and_then(|reader| reader.annotate(range, None, &metrics).ok())
             });
             if let Some(id) = created {
@@ -3542,7 +3289,7 @@ impl KoboApp for Gutenbird {
                 Some(Pressed::Submitted) => {
                     let note = self.keyboard.take();
                     if let (Some(id), Some(reader)) =
-                        (self.pending_annotation.take(), self.reader.as_mut())
+                        (self.pending_annotation.take(), self.book.reader_mut())
                     {
                         let note = (!note.trim().is_empty()).then_some(note.trim());
                         let _ = reader.edit_annotation_note(id, note);
@@ -3735,14 +3482,16 @@ impl KoboApp for Gutenbird {
             self.next_cover(context);
             return;
         }
-        if self.plating == Some(task) {
-            self.plating = None;
-            // Only while a book is open. Leaving one empties the queue, and a
-            // sleep that was already in flight when it did lands here.
-            if self.reader.is_some() {
-                self.decode_more_plates(context);
+        // The picture pipeline's own sleep, if this was it. A sleep that was
+        // already in flight when a book was closed lands here too, and the
+        // view knows to do nothing with it.
+        match self.book.woke(context, task) {
+            Step::Elsewhere => {}
+            Step::Quiet => return,
+            Step::Repaint => {
+                self.show(context);
+                return;
             }
-            return;
         }
         if self.open_cover_task.is_some_and(|(id, _)| id == task) {
             let (_, tries) = self.open_cover_task.take().expect("just checked");
@@ -3841,7 +3590,7 @@ impl KoboApp for Gutenbird {
                         self.failed = Some(failure.advice.to_owned());
                         self.retryable = failure.retryable;
                         self.back_to(View::Details);
-                    } else if let Some(reader) = &mut self.reader {
+                    } else if let Some(reader) = self.book.reader_mut() {
                         reader.expect_more(false);
                     }
                 }
@@ -3878,9 +3627,9 @@ impl KoboApp for Gutenbird {
 mod tests {
     use super::{
         book_keys, catalog_display_name, decode_registry, download_kind, encode_registry,
-        plate_box, read_offer, readable, Awaiting, BTreeMap, BTreeSet, Catalog, DetailBlock,
-        Download, DownloadKind, FeedPurpose, FillStage, Gutenbird, Memory, ReadOffer, Reader,
-        SearchState, SearchWay, StackEntry, View, COVER_TRIES, OPEN_COVER_HANDLE,
+        read_offer, readable, Awaiting, BTreeSet, BookView, Catalog, DetailBlock, Download,
+        DownloadKind, FeedPurpose, FillStage, Gutenbird, Memory, ReadOffer, Reader, SearchState,
+        SearchWay, StackEntry, View, COVER_TRIES, OPEN_COVER_HANDLE, PUBLISHER_FONT_HANDLE,
     };
     use kobo_opds::{
         Acquisition, AcquisitionKind, Category, Feed, Image, ImageSource, Link, Navigation,
@@ -4457,7 +4206,7 @@ Please read this before you distribute or use this work.\n";
             TaskId(1),
             TaskOutcome::Completed(b"PK\x03\x04not a whole book".to_vec()),
         );
-        assert!(runner.app().reader.is_none(), "a partial EPUB was opened");
+        assert!(!runner.app().book.is_open(), "a partial EPUB was opened");
         assert!(!runner.app().complete);
     }
 
@@ -4487,7 +4236,7 @@ Please read this before you distribute or use this work.\n";
             runner.app().failed.as_deref(),
             Some("This book did not arrive.")
         );
-        assert!(runner.app().reader.is_none());
+        assert!(!runner.app().book.is_open());
     }
 
     fn epub_bytes() -> Vec<u8> {
@@ -4524,7 +4273,7 @@ Please read this before you distribute or use this work.\n";
         );
         runner.task_outcome(TaskId(1), TaskOutcome::Completed(bytes));
         assert!(
-            runner.app().reader.is_some(),
+            runner.app().book.is_open(),
             "the finished EPUB was not opened"
         );
         assert_eq!(runner.app().view, View::Reading);
@@ -5184,20 +4933,20 @@ Please read this before you distribute or use this work.\n";
         );
         let application = runner.app_mut();
         assert!(
-            application.reader.is_some(),
+            application.book.is_open(),
             "the chunk did not open as a book"
         );
         assert!(
             application
-                .reader
-                .as_ref()
+                .book
+                .reader()
                 .is_some_and(|reader| reader.page_count() > 1),
             "the whole chunk fitted a page"
         );
         let metrics = CLARA_BW_METRICS;
         loop {
             let (page, expected) = {
-                let reader = application.reader.as_ref().expect("a book");
+                let reader = application.book.reader().expect("a book");
                 (reader.page_number(), reader.page().len())
             };
             let layout = application
@@ -5214,7 +4963,7 @@ Please read this before you distribute or use this work.\n";
                 drawn, expected,
                 "page {page} measured as {expected} paragraphs but drew {drawn}"
             );
-            let reader = application.reader.as_mut().expect("a book");
+            let reader = application.book.reader_mut().expect("a book");
             if !reader.forward() {
                 break;
             }
@@ -5227,141 +4976,6 @@ Please read this before you distribute or use this work.\n";
             Memory::default(),
             &CLARA_BW_METRICS,
         )
-    }
-
-    /// A plate is measured from its header and decoded later.
-    ///
-    /// Opening The Tale of Peter Rabbit on the panel decoded twenty-eight
-    /// images inside a lifecycle callback and took 2,784 milliseconds doing
-    /// it, against a deadline of 250. Reading the headers costs microseconds
-    /// and answers the only question pagination has, so the book opens at the
-    /// page count it will be read at and the pixels arrive afterwards.
-    #[test]
-    fn a_book_of_plates_is_measured_from_its_headers_and_decoded_afterwards() {
-        let plate = kobo_image::encode_png_grey(1200, 2000, &vec![128; 1200 * 2000])
-            .expect("a png of a plate");
-        let images: BTreeMap<String, Vec<u8>> = [("plate.png".to_owned(), plate.clone())]
-            .into_iter()
-            .collect();
-        // Enough prose to fill the page it opens on, so that the room the
-        // plate takes is the difference between one page and two.
-        let mut blocks: Vec<kobo_doc::Block> = (0..12)
-            .map(|_| {
-                kobo_doc::Block::Paragraph(
-                    "Once upon a time there were four little rabbits, and their names were \
-                     Flopsy, Mopsy, Cotton-tail and Peter."
-                        .to_owned(),
-                )
-            })
-            .collect();
-        blocks.push(kobo_doc::Block::Picture {
-            name: "plate.png".to_owned(),
-            alt: "Four rabbits".to_owned(),
-        });
-        let document = kobo_doc::Document {
-            blocks,
-            ..kobo_doc::Document::default()
-        };
-        let mut reader = Reader::open(document, Memory::default(), &CLARA_BW_METRICS);
-        let without = reader.page_count();
-
-        let mut app = Gutenbird::default();
-        let reserved = app.reserve_plates(&reader, &images, &CLARA_BW_METRICS);
-
-        // The room, from the header alone, and the same room decoding would
-        // have asked for.
-        let (width, height) = plate_box(&CLARA_BW_METRICS).expect("a panel with room on it");
-        let decoded = kobo_image::decode(&plate)
-            .expect("decode")
-            .fit(width, height)
-            .expect("fit");
-        assert_eq!(
-            reserved.get("plate.png").map(|picture| picture.source),
-            Some((decoded.width(), decoded.height())),
-            "the size claimed from the header is not the size the decoder produces"
-        );
-        assert_eq!(
-            app.plates.len(),
-            1,
-            "the plate should be queued rather than decoded"
-        );
-
-        reader.set_pictures(reserved, &CLARA_BW_METRICS);
-        assert!(
-            reader.page_count() > without,
-            "the book was not measured around the room the plate takes"
-        );
-    }
-
-    /// And the pixels, when they come, go into the room already reserved.
-    #[test]
-    fn a_queued_plate_is_handed_over_against_the_handle_it_was_measured_at() {
-        let plate = kobo_image::encode_png_grey(1200, 2000, &vec![128; 1200 * 2000])
-            .expect("a png of a plate");
-        let images: BTreeMap<String, Vec<u8>> =
-            [("plate.png".to_owned(), plate)].into_iter().collect();
-        let document = kobo_doc::Document {
-            blocks: vec![kobo_doc::Block::Picture {
-                name: "plate.png".to_owned(),
-                alt: "Four rabbits".to_owned(),
-            }],
-            ..kobo_doc::Document::default()
-        };
-        let mut reader = Reader::open(document, Memory::default(), &CLARA_BW_METRICS);
-        let mut app = Gutenbird::default();
-        let reserved = app.reserve_plates(&reader, &images, &CLARA_BW_METRICS);
-        let claimed = reserved
-            .get("plate.png")
-            .copied()
-            .expect("the plate was reserved");
-        reader.set_pictures(reserved, &CLARA_BW_METRICS);
-        app.reader = Some(reader);
-        // The sleep that carries the queue round, answered.
-        app.plating = Some(TaskId(1));
-
-        let mut runner = AppRunner::new(app);
-        // The first pass reads the plate and asks for another; the second
-        // reduces it to the panel's greys and hands it over. Neither half is
-        // allowed to take as long as both would.
-        let first = runner.task_outcome(TaskId(1), TaskOutcome::Completed(Vec::new()));
-        assert!(
-            handed_pictures(&first).is_empty(),
-            "a plate was decoded and dithered in one callback"
-        );
-        assert!(
-            runner.app().plates.is_empty() && runner.app().dithering.is_some(),
-            "the plate was not read out of the book"
-        );
-        let plating = runner
-            .app()
-            .plating
-            .expect("another pass was not asked for");
-
-        let second = runner.task_outcome(plating, TaskOutcome::Completed(Vec::new()));
-        assert_eq!(
-            handed_pictures(&second),
-            vec![(claimed.handle, claimed.source.0, claimed.source.1)],
-            "the plate did not fill the frame that was standing in for it"
-        );
-        assert!(
-            runner.app().dithering.is_none(),
-            "the decoded plate was kept after it was drawn"
-        );
-    }
-
-    fn handed_pictures(commands: &[kobo_sdk::Command]) -> Vec<(PictureHandle, u32, u32)> {
-        commands
-            .iter()
-            .filter_map(|command| match command {
-                kobo_sdk::Command::PutPicture {
-                    handle,
-                    width,
-                    height,
-                    ..
-                } => Some((*handle, *width, *height)),
-                _ => None,
-            })
-            .collect()
     }
 
     #[test]
@@ -5380,30 +4994,34 @@ Please read this before you distribute or use this work.\n";
             // catalog, a shelf, the book's own page, and then reading it.
             trail: vec![View::Catalogs, View::Shelf, View::Details],
             complete: true,
-            reader: Some(opened("A book with plates in it.")),
+            book: BookView::holding(opened("A book with plates in it.")),
+            // A publisher's own face is one of the things a book costs while
+            // it is open, so the fixture is reading one.
+            book_font: Some(PUBLISHER_FONT_HANDLE),
             download: Some(Download {
                 url: "https://x/book.epub".to_owned(),
                 kind: DownloadKind::Epub,
                 bytes: vec![0; 1_510_370],
                 total: None,
             }),
-            book_pictures: vec![PictureHandle(1000), PictureHandle(1001)],
             ..Gutenbird::default()
         });
         let commands = runner.action(kobo_sdk::ActionId::BACK);
-        let given_back: Vec<PictureHandle> = commands
-            .iter()
-            .filter_map(|command| match command {
-                kobo_sdk::Command::DropPicture(handle) => Some(*handle),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(
-            given_back,
-            vec![PictureHandle(1000), PictureHandle(1001)],
-            "the runtime was left holding the plates"
+        // That every reserved handle goes back is `kobo-bookview`'s to prove,
+        // and it does. What matters here is that leaving the book is what asks
+        // it to: the fault this was written for was a Back that released
+        // nothing at all.
+        assert!(!runner.app().book.is_open(), "the parsed book was kept");
+        assert!(
+            commands
+                .iter()
+                .any(|command| matches!(command, kobo_sdk::Command::DropFont(_))),
+            "the embedded face was kept"
         );
-        assert!(runner.app().reader.is_none(), "the parsed book was kept");
+        assert!(
+            runner.app().book_font.is_none(),
+            "the embedded face was still recorded as held"
+        );
         assert!(
             runner.app().download.is_none(),
             "the downloaded bytes were kept"
@@ -5503,7 +5121,7 @@ Please read this before you distribute or use this work.\n";
             view: View::Reading,
             trail: vec![View::Catalogs, View::Shelf, View::Details],
             complete: false,
-            reader: Some(opened("The first chunk of a longer book.")),
+            book: BookView::holding(opened("The first chunk of a longer book.")),
             download: Some(Download {
                 url: "https://x/book.txt".to_owned(),
                 kind: DownloadKind::Text,
@@ -5525,7 +5143,7 @@ Please read this before you distribute or use this work.\n";
         reader.act(kobo_read::action::CONTROLS, &CLARA_BW_METRICS);
         let application = Gutenbird {
             view: View::Reading,
-            reader: Some(reader),
+            book: BookView::holding(reader),
             complete: true,
             ..Gutenbird::default()
         };
@@ -5555,7 +5173,7 @@ Please read this before you distribute or use this work.\n";
     fn holding_a_word_opens_marginalia_and_saves_the_note_on_that_exact_word() {
         let mut runner = AppRunner::new(Gutenbird {
             view: View::Reading,
-            reader: Some(opened("café novel")),
+            book: BookView::holding(opened("café novel")),
             complete: true,
             ..Gutenbird::default()
         });
@@ -5568,13 +5186,7 @@ Please read this before you distribute or use this work.\n";
             },
         );
         assert_eq!(runner.app().view, View::Lookup);
-        assert!(runner
-            .app()
-            .reader
-            .as_ref()
-            .unwrap()
-            .annotations()
-            .is_empty());
+        assert!(runner.app().book.reader().unwrap().annotations().is_empty());
         runner.device_result(kobo_sdk::DeviceResult::Dictionary {
             word: "café".into(),
             entries: vec![kobo_sdk::DictionaryEntry {
@@ -5587,12 +5199,12 @@ Please read this before you distribute or use this work.\n";
         assert_eq!(runner.app().lookup_entries.as_ref().unwrap().len(), 1);
         runner.action(action_id("lookup-note"));
         assert_eq!(runner.app().view, View::Note);
-        assert_eq!(runner.app().reader.as_ref().unwrap().annotations().len(), 1);
+        assert_eq!(runner.app().book.reader().unwrap().annotations().len(), 1);
 
         runner.action(action_id("kb.r0c0"));
         runner.action(action_id("kb.enter"));
         assert_eq!(runner.app().view, View::Reading);
-        let annotation = &runner.app().reader.as_ref().unwrap().annotations()[0];
+        let annotation = &runner.app().book.reader().unwrap().annotations()[0];
         assert_eq!(annotation.note.as_deref(), Some("q"));
     }
 
@@ -5602,7 +5214,7 @@ Please read this before you distribute or use this work.\n";
         reader.act(kobo_read::action::LIGHT, &CLARA_BW_METRICS);
         let application = Gutenbird {
             view: View::Reading,
-            reader: Some(reader),
+            book: BookView::holding(reader),
             complete: true,
             ..Gutenbird::default()
         };
@@ -5714,7 +5326,7 @@ Please read this before you distribute or use this work.\n";
                 "Something Else",
                 vec![text_acquisition("https://x/else.txt")],
             )),
-            reader: Some(opened("Chapter forty of something else.")),
+            book: BookView::holding(opened("Chapter forty of something else.")),
             complete: true,
             ..Gutenbird::default()
         });
@@ -5722,7 +5334,7 @@ Please read this before you distribute or use this work.\n";
         let application = runner.app_mut();
         assert!(application.download.is_none());
         assert_eq!(application.fetched, 0);
-        assert!(application.reader.is_none(), "the last book is still open");
+        assert!(!application.book.is_open(), "the last book is still open");
         assert!(!application.complete);
         assert_eq!(
             application.open.as_ref().map(|p| p.title.as_str()),
@@ -5820,7 +5432,7 @@ Please read this before you distribute or use this work.\n";
             key: place_key,
             value: Some(place.encode()),
         });
-        let reader = runner.app_mut().reader.as_ref().expect("a book");
+        let reader = runner.app_mut().book.reader().expect("a book");
         assert!(
             reader.page().iter().any(|piece| piece.block == 20),
             "the reader was not put back where they were left"

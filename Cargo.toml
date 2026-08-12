@@ -2,6 +2,7 @@
 members = [
     "crates/kobo-abi",
     "crates/kobo-app-store",
+    "crates/kobo-bookview",
     "crates/kobo-cli",
     "crates/kobo-doc",
     "crates/kobo-doctor",

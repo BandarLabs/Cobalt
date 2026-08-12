@@ -206,7 +206,10 @@ dependencies = [
 name = "kobo-arxiv"
 version = "0.2.3"
 dependencies = [
+ "kobo-bookview",
+ "kobo-doc",
  "kobo-html",
+ "kobo-read",
  "kobo-sdk",
  "kobo-xml",
 ]
@@ -218,6 +221,17 @@ dependencies = [
  "kobo-doc",
  "kobo-json",
  "kobo-sdk",
+]
+
+[[package]]
+name = "kobo-bookview"
+version = "0.2.3"
+dependencies = [
+ "kobo-doc",
+ "kobo-image",
+ "kobo-read",
+ "kobo-sdk",
+ "kobo-ui",
 ]
 
 [[package]]
@@ -291,6 +305,7 @@ dependencies = [
 name = "kobo-gutenbird"
 version = "0.2.3"
 dependencies = [
+ "kobo-bookview",
  "kobo-doc",
  "kobo-image",
  "kobo-opds",

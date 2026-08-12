@@ -26,11 +26,14 @@
 mod atom;
 
 use atom::{Paper, Results};
+use kobo_bookview::{BookView, Step};
+use kobo_read::{Memory, Outcome};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, RowLead, Screen, ScreenBuilder,
     Task, TaskError, TaskId, TaskOutcome,
 };
+use std::collections::VecDeque;
 use std::fmt::Write as _;
 use std::process::ExitCode;
 
@@ -51,6 +54,21 @@ const LISTING_BYTES: u32 = 512 * 1024;
 /// page rather than hidden, because a paper that simply stops is otherwise
 /// indistinguishable from one that ended.
 const FULL_TEXT_BYTES: u32 = 768 * 1024;
+
+/// The most figures fetched for one paper.
+///
+/// A rendered paper's figures are separate files, so each one is a fetch of
+/// its own over a connection that is somebody's home wifi at best. A typical
+/// paper has half a dozen; a survey with every experiment plotted has thirty,
+/// and the reader is past the ones that matter long before the last arrives.
+const MAX_FIGURES: usize = 24;
+
+/// The ceiling on one figure.
+///
+/// A plot is tens of kilobytes. The ones that overrun this are photographs at
+/// print resolution, which the panel cannot show anyway: it is sixteen greys
+/// on a screen narrower than the figure's own caption.
+const FIGURE_BYTES: u32 = 512 * 1024;
 
 /// The subjects offered on the way in.
 ///
@@ -162,9 +180,34 @@ struct Arxiv {
     listing_page: usize,
     /// Which paper is open, as an index into `papers`.
     open: Option<usize>,
-    /// The abstract or the full text, already broken into panel pages.
+    /// The abstract, already broken into panel pages.
+    ///
+    /// A summary and its metadata, which is a card rather than a document. The
+    /// paper itself is read through `book`.
     pages: Vec<Vec<String>>,
     page: usize,
+    /// The paper's full text, open in the reader every other application on
+    /// this device reads through.
+    ///
+    /// arXiv used to flatten the rendering to one long string and hand it to a
+    /// line wrapper, which is why a paper had no headings, no emphasis, no
+    /// figures, no captions, no equations set apart from the prose, and none
+    /// of the marking, searching or dictionary a reader has everywhere else.
+    /// The markup arXiv sends says all of that; nothing was reading it.
+    book: BookView,
+    /// Figures named by the rendering and not yet fetched, in the order the
+    /// paper refers to them.
+    ///
+    /// A web page carries no pictures, only the addresses of some. An EPUB
+    /// hands its plates over with the text and `kobo-doc` will not touch the
+    /// network, so fetching these is this application's job and nobody
+    /// else's.
+    figures: VecDeque<String>,
+    /// The figure fetch in flight, and the name it will fill.
+    ///
+    /// Its own slot rather than the one every other fetch shares: a figure
+    /// arriving must never be the reason a listing or a paper is lost.
+    figure: Option<(TaskId, String)>,
     /// Whether the full text arrived cut off at the byte ceiling.
     truncated: bool,
     task: Option<(TaskId, Awaiting)>,
@@ -357,15 +400,25 @@ impl Arxiv {
         for line in self.pages.get(page).map(Vec::as_slice).unwrap_or_default() {
             screen = screen.text(line.clone());
         }
-        screen = screen.fill();
-        screen = match self.view {
-            View::FullText => screen.bottom_action_marked(ABSTRACT, "Abstract", Glyph::Note),
-            _ => screen.bottom_action_marked(FULL_TEXT, "Full text", Glyph::Book),
-        };
         screen
+            .fill()
+            .bottom_action_marked(FULL_TEXT, "Full text", Glyph::Book)
             .page_turns(READ_BACK, READ_NEXT)
             .page_position(page_number(page), page_total(self.pages.len()))
             .build()
+    }
+
+    /// The paper itself, set by the reader the whole device shares.
+    ///
+    /// Its type size, its front light, its table of contents, its highlights
+    /// and its dictionary are the ones somebody already learned in every other
+    /// reading application here, and its Back closes the paper and returns to
+    /// the abstract it was opened from.
+    fn full_text(&self) -> Screen {
+        let title = self
+            .paper()
+            .map_or_else(|| "arXiv".to_owned(), |paper| paper.id.clone());
+        self.book.screen(&title).unwrap_or_else(|| self.reading())
     }
 
     fn waiting_for(&self, what: Awaiting) -> bool {
@@ -377,7 +430,8 @@ impl Arxiv {
             View::Subjects => self.subjects(context),
             View::Search => self.search(),
             View::Listing => self.listing(context),
-            View::Paper | View::FullText => self.reading(),
+            View::Paper => self.reading(),
+            View::FullText => self.full_text(),
         };
         // Every view but the subject list was reached from another one, so
         // Back has somewhere to go from all of them and nowhere to go from it.
@@ -390,8 +444,10 @@ impl Arxiv {
         let page = match self.view {
             View::Subjects => &mut self.subject_page,
             View::Listing => &mut self.listing_page,
-            View::Paper | View::FullText => &mut self.page,
-            View::Search => return,
+            View::Paper => &mut self.page,
+            // The reader turns its own pages, and the taps that ask it to are
+            // its own actions rather than this application's.
+            View::FullText | View::Search => return,
         };
         if forward {
             *page += 1;
@@ -418,31 +474,154 @@ impl Arxiv {
         self.listing_page = 0;
     }
 
-    fn took_full_text(&mut self, context: &Context, bytes: &[u8]) {
+    fn took_full_text(&mut self, context: &mut Context, bytes: &[u8]) {
         let Ok(html) = std::str::from_utf8(bytes) else {
             self.trouble = Some("That rendering was not text.".to_owned());
             return;
         };
-        // Converted against the ceiling this application was already willing to
-        // hold rather than the one meant for a field in a feed. A paper is tens
-        // of thousands of characters and the field ceiling is eight thousand,
-        // so every paper used to arrive as its opening pages and an ellipsis --
-        // about a tenth of the document, with a page count that made the tenth
-        // look like the whole of it.
-        let text = kobo_html::to_text_within(paper_body(html), FULL_TEXT_BYTES as usize);
-        if text.trim().is_empty() {
+        let body = paper_body(html);
+        // Parsed rather than flattened. What comes back is the paper's own
+        // structure -- its sections, its emphasis, its figures and their
+        // captions -- which is what the reader needs in order to set it as a
+        // document rather than as one long paragraph.
+        let mut document = kobo_doc::html::parse(body);
+        if document.blocks.is_empty() {
             self.trouble =
                 Some("arXiv has no readable rendering of this paper, only a PDF.".to_owned());
             return;
         }
-        // What was cut is the text, which is the thing the reader is turning
-        // pages through. The fetched bytes are markup and a paper can be at the
-        // transport limit with every word of it converted.
-        self.truncated = text.ends_with('\u{2026}');
-        self.pages = context.paginate_reading(&text, false);
+        // A rendering cut off at the byte ceiling has no closing tag, which is
+        // the honest signal: the fetched bytes are markup, and a paper can sit
+        // at the transport limit with every word of it delivered.
+        //
+        // Told to the document rather than kept here, because the reader
+        // already says this on the last page and says it better: a paper that
+        // simply stops is otherwise indistinguishable from one that ended.
+        self.truncated = !body.contains("</article>");
+        document.truncated |= self.truncated;
+        self.book.open(context, document, Memory::default());
         self.page = 0;
         self.view = View::FullText;
+        // The addresses of the figures, which arrived as addresses and not as
+        // pictures. The paper is readable now; these fill in behind it.
+        self.figures = self
+            .book
+            .missing_pictures()
+            .into_iter()
+            .take(MAX_FIGURES)
+            .collect();
+        self.next_figure(context);
     }
+
+    /// Asks for the next figure the paper named.
+    ///
+    /// One at a time. A paper with thirty plots is thirty fetches, and asking
+    /// for all of them at once is how an application uses up every lane the
+    /// runtime has and leaves nothing for the next listing.
+    fn next_figure(&mut self, context: &mut Context) {
+        if self.figure.is_some() {
+            return;
+        }
+        let Some(paper) = self.paper() else {
+            return;
+        };
+        let base = format!("https://arxiv.org/html/{}/", escape_path(&paper.id));
+        while let Some(name) = self.figures.pop_front() {
+            let Some(url) = figure_url(&base, &name) else {
+                continue;
+            };
+            // Not retrying: a figure is worth one attempt. The paper is
+            // already readable without it, and a plot that will not come is
+            // not a reason to spend the connection on it three times.
+            if let Some(task) = context.spawn(Task::Fetch {
+                url,
+                offset: 0,
+                max_bytes: FIGURE_BYTES,
+                credential: None,
+                headers: Vec::new(),
+            }) {
+                self.figure = Some((task, name));
+                return;
+            }
+            // No lane free. What is left stays queued, and the next page turn
+            // asks again.
+            self.figures.push_front(name);
+            return;
+        }
+        // Nothing left to ask for, so whatever did arrive is measured in.
+        self.settle_figures(context);
+    }
+
+    /// Measures every figure that arrived, once.
+    ///
+    /// Once rather than on each arrival: measuring is what decides where the
+    /// pages break, and doing it twelve times as twelve plots land would move
+    /// the text under somebody who is reading it. They keep their place across
+    /// it either way -- the reader remembers a paragraph, not a page number --
+    /// but the paragraph should not walk up the screen twelve times.
+    fn settle_figures(&mut self, context: &mut Context) {
+        if self.book.settle_pictures(context) {
+            self.show(context);
+        }
+    }
+
+    fn took_figure(&mut self, context: &mut Context, name: &str, bytes: Vec<u8>) {
+        self.book.provide_picture(name, bytes);
+        self.next_figure(context);
+    }
+
+    /// Gives back everything the open paper was costing.
+    fn close_paper(&mut self, context: &mut Context) {
+        self.book.close(context);
+        self.figures.clear();
+        // The fetch in flight is left to land and be ignored: cancelling it
+        // would cost a message to save nothing, and `provide_picture` refuses
+        // a name no open document mentions.
+        self.figure = None;
+        self.truncated = false;
+    }
+}
+
+/// Resolves a figure's address against the paper it was named in.
+///
+/// `LaTeXML` writes figures as `x1.png`, relative to the rendering's own
+/// address. A rendering is a web page before it is a paper, and its author
+/// wrote it: a figure that names another host would have the device announce
+/// itself to whoever the author chose, or knock on whatever else answers on
+/// the reader's own network. So an absolute address is taken only when it is
+/// arXiv's own, and everything else has to be a name inside the paper.
+fn figure_url(base: &str, name: &str) -> Option<String> {
+    if name.is_empty() || name.len() > 512 {
+        return None;
+    }
+    if let Some(rest) = name.strip_prefix("https://") {
+        let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
+        // A port or credentials before the host are ways of writing an
+        // address that reads as arXiv's and is not, so neither is allowed.
+        let arxiv = host == "arxiv.org" || host.ends_with(".arxiv.org");
+        return if arxiv { Some(name.to_owned()) } else { None };
+    }
+    // Not http, not a data URI, not a protocol-relative address: this
+    // application fetches over TLS and nothing else, and a figure is not worth
+    // making an exception for.
+    if name.contains("://") || name.starts_with("//") || name.starts_with("data:") {
+        return None;
+    }
+    // A rooted path leaves the paper's own directory, which no `LaTeXML`
+    // rendering does, and a walk upwards out of it is a thing only a hostile
+    // page tries. The walk is also refused when it is spelled in percent
+    // escapes or with a backslash, because the address is joined as text here
+    // and resolved as a path somewhere else.
+    let escaped = name.to_ascii_lowercase();
+    if name.starts_with('/')
+        || name.contains('\\')
+        || escaped.contains("%2e")
+        || escaped.contains("%2f")
+        || name.split('/').any(|part| part == "..")
+    {
+        return None;
+    }
+    Some(format!("{base}{name}"))
 }
 
 /// Narrows a rendered paper to the paper.
@@ -591,14 +770,43 @@ impl KoboApp for Arxiv {
                     self.open = None;
                 }
                 // The full text was reached from the abstract, so Back is the
-                // abstract rather than the list two steps behind it.
+                // abstract rather than the list two steps behind it. Leaving
+                // is also the moment the paper stops costing anything: the
+                // document, the picture handles the runtime is holding
+                // against it and the figures still queued for it all go now,
+                // rather than lingering for a paper nobody is reading.
                 View::FullText => {
+                    self.close_paper(context);
                     self.view = View::Paper;
                     self.open_abstract(context);
                 }
             }
             self.show(context);
             return;
+        }
+
+        // The reader first, while a paper is open in it: its page turns, its
+        // type panel, its light, its contents, its marks and its dictionary
+        // are all actions of its own, and none of them is this application's
+        // to recognise.
+        if self.view == View::FullText {
+            if let Some(outcome) = self.book.act(context, action) {
+                match outcome {
+                    Outcome::Close => {
+                        self.close_paper(context);
+                        self.view = View::Paper;
+                        self.open_abstract(context);
+                    }
+                    Outcome::Light(level) => context.device().set_frontlight(level),
+                    Outcome::Elsewhere | Outcome::Repaint | Outcome::Save => {}
+                }
+                // A page turn is also the moment the figures on the page
+                // turned to are wanted, and a lane may have come free since
+                // the last one was asked for.
+                self.next_figure(context);
+                self.show(context);
+                return;
+            }
         }
 
         if action == action_id(SEARCH) {
@@ -642,6 +850,7 @@ impl KoboApp for Arxiv {
         }
 
         if action == action_id(ABSTRACT) {
+            self.close_paper(context);
             self.view = View::Paper;
             self.open_abstract(context);
             self.show(context);
@@ -667,6 +876,9 @@ impl KoboApp for Arxiv {
 
         for index in 0..self.papers.len() {
             if action == action_id(&format!("{PAPER}{index}")) {
+                // Whatever the last paper was costing goes back before another
+                // one starts costing anything.
+                self.close_paper(context);
                 self.open = Some(index);
                 self.view = View::Paper;
                 self.open_abstract(context);
@@ -677,6 +889,30 @@ impl KoboApp for Arxiv {
     }
 
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
+        // The reader's own sleep, which is what carries a figure from bytes to
+        // pixels a half-step at a time.
+        match self.book.woke(context, task) {
+            Step::Elsewhere => {}
+            Step::Quiet => return,
+            Step::Repaint => {
+                self.show(context);
+                return;
+            }
+        }
+
+        if self.figure.as_ref().is_some_and(|(id, _)| *id == task) {
+            let (_, name) = self.figure.take().expect("just checked");
+            match outcome {
+                TaskOutcome::Completed(bytes) => self.took_figure(context, &name, bytes),
+                // A figure that will not come is a figure the paper reads
+                // without: the reader draws what the caption said it shows,
+                // which is what a document with a missing plate should look
+                // like. Nothing is said on screen about it.
+                TaskOutcome::Failed(_) | TaskOutcome::Cancelled => self.next_figure(context),
+            }
+            return;
+        }
+
         let Some((waiting, awaiting)) = self.task else {
             return;
         };
@@ -727,10 +963,11 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        abstract_text, escape, escape_path, paper_body, row_summary, Arxiv, Query, View, SUBJECTS,
+        abstract_text, escape, escape_path, figure_url, paper_body, row_summary, Arxiv, Query,
+        View, ABSTRACT, FULL_TEXT, SUBJECTS,
     };
     use crate::atom::Paper;
-    use kobo_sdk::{action_id, AppRunner, Command, Task};
+    use kobo_sdk::{action_id, ActionId, AppRunner, Command, Task, TaskOutcome};
 
     fn paper() -> Paper {
         Paper {
@@ -863,7 +1100,7 @@ mod tests {
     #[test]
     fn a_rendered_paper_is_narrowed_to_the_paper() {
         let body = paper_body(RENDERED);
-        let text = kobo_html::to_text(body);
+        let text = document_text(&kobo_doc::html::parse(body));
         assert!(text.contains("The first sentence."), "{text}");
         for furniture in [
             "independent nonprofit",
@@ -880,9 +1117,28 @@ mod tests {
     #[test]
     fn a_rendering_cut_off_before_its_closing_tag_is_still_the_paper() {
         let cut = &RENDERED[..RENDERED.find("The first sentence.").unwrap() + 10];
-        let text = kobo_html::to_text(paper_body(cut));
+        let text = document_text(&kobo_doc::html::parse(paper_body(cut)));
         assert!(text.contains("A Paper"), "{text}");
         assert!(!text.contains("Submit without GitHub"), "{text}");
+    }
+
+    /// Everything a parsed document would put on the panel, run together.
+    fn document_text(document: &kobo_doc::Document) -> String {
+        document
+            .blocks
+            .iter()
+            .map(|block| match block {
+                kobo_doc::Block::Heading { text, .. }
+                | kobo_doc::Block::Item { text, .. }
+                | kobo_doc::Block::Paragraph(text)
+                | kobo_doc::Block::Quote(text)
+                | kobo_doc::Block::Preformatted(text)
+                | kobo_doc::Block::Caption(text) => text.clone(),
+                kobo_doc::Block::Picture { alt, .. } => alt.clone(),
+                _ => String::new(),
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
     /// Furniture is worse than the paper; nothing is worse than both.
@@ -923,5 +1179,148 @@ mod tests {
         runner.start();
         runner.action(kobo_sdk::ActionId::BACK);
         assert_eq!(runner.app_mut().view, View::Paper);
+    }
+
+    /// A paper opened for reading and the fetch that puts it there.
+    fn opened_on(runner: &mut AppRunner<Arxiv>, rendering: &str) -> Vec<Command> {
+        runner.app_mut().papers = vec![paper()];
+        runner.app_mut().open = Some(0);
+        runner.start();
+        runner.action(action_id(FULL_TEXT));
+        let task = runner
+            .app()
+            .task
+            .expect("the full text was not asked for")
+            .0;
+        runner.task_outcome(task, TaskOutcome::Completed(rendering.as_bytes().to_vec()))
+    }
+
+    /// The point of all of this: a paper is a document, not a wall of text.
+    ///
+    /// It used to be flattened to one string and handed to a line wrapper, so
+    /// a section heading, an emphasised term and a figure's caption all came
+    /// out as the same undifferentiated prose -- and the figure itself did not
+    /// come out at all.
+    #[test]
+    fn a_paper_is_read_as_a_document_rather_than_as_flattened_text() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        let _ = opened_on(
+            &mut runner,
+            "<article><h2>1 Introduction</h2><p>The <em>first</em> sentence.</p>             <figure><img src=\"x1.png\" alt=\"A plot\"><figcaption>Figure 1.</figcaption>             </figure></article>",
+        );
+
+        assert_eq!(runner.app().view, View::FullText);
+        let reader = runner.app().book.reader().expect("the paper is not open");
+        let kinds: Vec<_> = reader
+            .document()
+            .blocks
+            .iter()
+            .map(std::mem::discriminant)
+            .collect();
+        assert!(
+            kinds.contains(&std::mem::discriminant(&kobo_doc::Block::Heading {
+                level: 2,
+                text: String::new()
+            })),
+            "the section heading was flattened into the prose"
+        );
+        assert!(
+            reader.pictures_wanted().contains(&"x1.png"),
+            "the figure was dropped rather than drawn"
+        );
+    }
+
+    /// And its figures, which live at addresses rather than in the file, are
+    /// fetched against the address the paper itself was fetched from.
+    #[test]
+    fn a_figure_is_fetched_from_beside_the_paper_that_names_it() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        let commands = opened_on(
+            &mut runner,
+            "<article><p>A paper.</p><img src=\"x1.png\" alt=\"A plot\"></article>",
+        );
+
+        let (_, name) = runner
+            .app()
+            .figure
+            .clone()
+            .expect("the figure was never asked for");
+        assert_eq!(name, "x1.png");
+        let asked: Vec<String> = commands
+            .iter()
+            .filter_map(|command| match command {
+                Command::Spawn {
+                    work: Task::Fetch { url, .. },
+                    ..
+                } => Some(url.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            asked
+                .iter()
+                .any(|url| url == "https://arxiv.org/html/2401.00001v2/x1.png"),
+            "the figure was not asked for beside its paper: {asked:?}"
+        );
+    }
+
+    /// A rendering can name anything at all, and most of it is not a figure
+    /// this application is willing to go and get.
+    #[test]
+    fn a_figure_address_that_leaves_the_paper_is_refused() {
+        let base = "https://arxiv.org/html/2401.00001v2/";
+        assert_eq!(
+            figure_url(base, "x1.png").as_deref(),
+            Some("https://arxiv.org/html/2401.00001v2/x1.png")
+        );
+        assert_eq!(
+            figure_url(base, "https://arxiv.org/html/2401.00001v2/x1.png").as_deref(),
+            Some("https://arxiv.org/html/2401.00001v2/x1.png")
+        );
+        for hostile in [
+            "",
+            "/etc/passwd",
+            "../../../secrets.png",
+            "..%2f..%2fsecrets.png",
+            "%2e%2e/secrets.png",
+            "..\\secrets.png",
+            "http://example.org/x1.png",
+            "//example.org/x1.png",
+            "data:image/png;base64,AAAA",
+            // Another host is another host however it is spelled, and a
+            // rendering is written by whoever wrote the paper.
+            "https://example.org/x1.png",
+            "https://arxiv.org.example.org/x1.png",
+            "https://evil.org/?a=arxiv.org",
+        ] {
+            assert!(
+                figure_url(base, hostile).is_none(),
+                "{hostile:?} was allowed"
+            );
+        }
+    }
+
+    /// Leaving a paper gives back what it was costing the device, by whichever
+    /// of the two ways out of the reader the reader took.
+    #[test]
+    fn leaving_a_paper_gives_back_the_figures_it_was_holding() {
+        for way_out in [ActionId::BACK, action_id(ABSTRACT)] {
+            let mut runner = AppRunner::new(Arxiv::default());
+            let _ = opened_on(
+                &mut runner,
+                "<article><p>A paper.</p><img src=\"x1.png\" alt=\"A plot\"></article>",
+            );
+            runner.action(way_out);
+
+            assert_eq!(runner.app().view, View::Paper);
+            assert!(
+                !runner.app().book.is_open(),
+                "the parsed paper was kept after leaving it"
+            );
+            assert!(
+                runner.app().figures.is_empty() && runner.app().figure.is_none(),
+                "figures were still being fetched for a paper nobody is reading"
+            );
+        }
     }
 }
