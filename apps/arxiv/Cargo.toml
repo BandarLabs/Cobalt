@@ -7,7 +7,10 @@ license.workspace = true
 publish = false
 
 [dependencies]
+kobo-bookview = { path = "../../crates/kobo-bookview" }
+kobo-doc = { path = "../../crates/kobo-doc" }
 kobo-html = { path = "../../crates/kobo-html" }
+kobo-read = { path = "../../crates/kobo-read" }
 kobo-sdk = { path = "../../crates/kobo-sdk" }
 kobo-xml = { path = "../../crates/kobo-xml" }
 

@@ -307,7 +307,7 @@ impl Typeface {
     }
 
     /// The em size in pixels for a semantic size on this panel.
-    fn pixels(&self, size: FontSize) -> f32 {
+    fn pixels(&self, size: FontSize, face: Face) -> f32 {
         // `tenth_mm` is the panel-independent definition; this is the only place
         // it becomes a pixel count, so a different panel needs no other change.
         //
@@ -316,7 +316,7 @@ impl Typeface {
         // life of the process, so a reader who makes a book larger would
         // otherwise be changing a value nothing reads: the glyphs would come
         // back the same size while the layout around them moved.
-        let tenths = (size.tenth_mm() * kobo_ui::text_scale().percent() + 50) / 100;
+        let tenths = (size.tenth_mm() * kobo_ui::scale_percent(face) + 50) / 100;
         let pixels = self.metrics.tenth_mm(tenths);
         pixels.max(1) as f32
     }
@@ -419,6 +419,7 @@ impl Typeface {
         &self,
         text: &str,
         size: FontSize,
+        face: Face,
         cell: Option<i32>,
         fallback: Option<&Self>,
     ) -> (i32, i32) {
@@ -429,9 +430,9 @@ impl Typeface {
             // the drawn column disagree is a terminal that corrupts its own
             // display the first time it repaints part of a line.
             let cells = i32::try_from(text.chars().count()).unwrap_or(i32::MAX);
-            return (cells.saturating_mul(cell), self.height(size));
+            return (cells.saturating_mul(cell), self.height(size, face));
         }
-        let pixels = self.pixels(size);
+        let pixels = self.pixels(size, face);
         let mut width = 0f32;
         let mut previous: Option<(&Self, char)> = None;
         for character in text.chars() {
@@ -448,12 +449,12 @@ impl Typeface {
             width += face.font.metrics(glyph, pixels).advance_width;
             previous = Some((face, glyph));
         }
-        (width.round() as i32, self.height(size))
+        (width.round() as i32, self.height(size, face))
     }
 
     /// The baseline-to-baseline distance for this face.
-    fn height(&self, size: FontSize) -> i32 {
-        let pixels = self.pixels(size);
+    fn height(&self, size: FontSize, face: Face) -> i32 {
+        let pixels = self.pixels(size, face);
         self.font.horizontal_line_metrics(pixels).map_or_else(
             || (pixels * 1.3) as i32,
             |line| (line.ascent - line.descent + line.line_gap).ceil() as i32,
@@ -477,11 +478,12 @@ impl Typeface {
         x: i32,
         y: i32,
         size: FontSize,
+        face: Face,
         cell: Option<i32>,
         fallback: Option<&Self>,
         plot: &mut dyn FnMut(i32, i32, u8),
     ) {
-        let pixels = self.pixels(size);
+        let pixels = self.pixels(size, face);
         // Taken from this face rather than from whichever one draws each
         // glyph, so a letter borrowed from another face sits on the same line
         // as the letters around it instead of a line of its own.
@@ -542,8 +544,8 @@ impl Typeface {
     /// Returns `None` for a proportional face rather than an average, because
     /// an average is exactly the wrong answer for a grid: it is right for no
     /// character at all.
-    fn fixed_advance(&self, size: FontSize) -> Option<i32> {
-        let pixels = self.pixels(size);
+    fn fixed_advance(&self, size: FontSize, face: Face) -> Option<i32> {
+        let pixels = self.pixels(size, face);
         let reference = self.font.metrics('0', pixels).advance_width;
         for probe in ['i', 'm', 'W', '.'] {
             let advance = self.font.metrics(probe, pixels).advance_width;
@@ -565,6 +567,78 @@ pub struct SystemFonts {
     display: Typeface,
     mono: Typeface,
     reading: Typeface,
+}
+
+/// A bounded publisher face used only for book prose.
+///
+/// EPUB fonts never replace interface chrome. The runtime constructs this
+/// from bytes that already passed document and protocol limits, then installs
+/// it under an application-local handle in `kobo-ui`.
+pub struct BookFont {
+    face: Typeface,
+}
+
+impl BookFont {
+    /// Parses a TrueType/OpenType publisher face from memory.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Malformed`] when the bytes are not an outline font
+    /// supported by the rasterizer (including compressed WOFF assets).
+    pub fn from_bytes(bytes: &[u8], name: &str, metrics: DisplayMetrics) -> Result<Self, Error> {
+        Ok(Self {
+            face: Typeface::from_bytes(bytes, name, metrics)?,
+        })
+    }
+}
+
+impl Typesetter for BookFont {
+    fn measure(&self, text: &str, size: FontSize, _face: Face) -> (i32, i32) {
+        self.face.measure_run(text, size, Face::Reading, None, None)
+    }
+
+    fn line_height(&self, size: FontSize, _face: Face) -> i32 {
+        let natural = self.face.height(size, Face::Reading);
+        // A publisher font supplies its own metrics, and a structurally valid
+        // face can report an ascent, descent and line gap of zero. Callers
+        // divide a page height by this, so it is never allowed to be zero.
+        (natural + natural / 5).max(1)
+    }
+
+    fn draw(
+        &self,
+        text: &str,
+        x: i32,
+        y: i32,
+        size: FontSize,
+        _face: Face,
+        plot: &mut dyn FnMut(i32, i32, u8),
+    ) {
+        self.face
+            .draw_run(text, x, y, size, Face::Reading, None, None, plot);
+    }
+
+    fn has_glyph(&self, character: char, _face: Face) -> bool {
+        self.face.has(character)
+    }
+
+    fn line_breaks(&self, text: &str) -> Vec<(usize, BreakOpportunity)> {
+        linebreaks(text)
+            .map(|(offset, opportunity)| {
+                let opportunity = match opportunity {
+                    UnicodeBreakOpportunity::Allowed => BreakOpportunity::Allowed,
+                    UnicodeBreakOpportunity::Mandatory => BreakOpportunity::Mandatory,
+                };
+                (offset, opportunity)
+            })
+            .collect()
+    }
+
+    fn grapheme_boundaries(&self, text: &str) -> Vec<usize> {
+        UnicodeSegmentation::grapheme_indices(text, true)
+            .map(|(offset, grapheme)| offset + grapheme.len())
+            .collect()
+    }
 }
 
 impl SystemFonts {
@@ -662,12 +736,17 @@ impl SystemFonts {
 
 impl Typesetter for SystemFonts {
     fn measure(&self, text: &str, size: FontSize, face: Face) -> (i32, i32) {
-        self.cut(size, face)
-            .measure_run(text, size, self.cell(size, face), self.fallback(face))
+        self.cut(size, face).measure_run(
+            text,
+            size,
+            face,
+            self.cell(size, face),
+            self.fallback(face),
+        )
     }
 
     fn line_height(&self, size: FontSize, face: Face) -> i32 {
-        let natural = self.cut(size, face).height(size);
+        let natural = self.cut(size, face).height(size, face);
         match face {
             // A font's own line height is set for a paragraph in a document,
             // not for a page of a novel. Typesetters have always opened books
@@ -695,6 +774,7 @@ impl Typesetter for SystemFonts {
             x,
             y,
             size,
+            face,
             self.cell(size, face),
             self.fallback(face),
             plot,
@@ -735,8 +815,13 @@ impl Typesetter for SystemFonts {
         // Falls back to measuring rather than refusing, so a future face that
         // is very nearly fixed pitch still produces a usable grid.
         self.mono
-            .fixed_advance(size)
-            .unwrap_or_else(|| self.mono.measure_run("0", size, None, None).0.max(1))
+            .fixed_advance(size, Face::Mono)
+            .unwrap_or_else(|| {
+                self.mono
+                    .measure_run("0", size, Face::Mono, None, None)
+                    .0
+                    .max(1)
+            })
     }
 }
 
@@ -1049,8 +1134,9 @@ mod tests {
         let at = |scale| {
             kobo_ui::with_text_scale(scale, || {
                 (
-                    face.measure_run("Readable", FontSize::Body, None, None).0,
-                    face.height(FontSize::Body),
+                    face.measure_run("Readable", FontSize::Body, Face::Text, None, None)
+                        .0,
+                    face.height(FontSize::Body, Face::Text),
                 )
             })
         };
@@ -1191,8 +1277,14 @@ mod tests {
             "this test is pointless unless the face really lacks the character"
         );
 
-        let (plain, _) = face.measure_run("one-to-one", FontSize::Body, None, None);
-        let (fancy, _) = face.measure_run("one\u{2011}to\u{2011}one", FontSize::Body, None, None);
+        let (plain, _) = face.measure_run("one-to-one", FontSize::Body, Face::Text, None, None);
+        let (fancy, _) = face.measure_run(
+            "one\u{2011}to\u{2011}one",
+            FontSize::Body,
+            Face::Text,
+            None,
+            None,
+        );
         assert_eq!(plain, fancy, "the substitute must measure as what it draws");
         assert_eq!(
             ink(&face, "one\u{2011}to\u{2011}one"),
@@ -1222,7 +1314,7 @@ mod tests {
                 .pick(missing, Some(&other))
                 .expect("a letter is not invisible");
             assert!(
-                std::ptr::eq(drawn, &other) && glyph == missing,
+                std::ptr::eq(drawn, std::ptr::from_ref(&other)) && glyph == missing,
                 "{missing:?} was not borrowed from the face that has it"
             );
             let boxed = ink(&face, &missing.to_string());
@@ -1232,6 +1324,7 @@ mod tests {
                 0,
                 0,
                 FontSize::Body,
+                Face::Text,
                 None,
                 Some(&other),
                 &mut |x, y, coverage| {
@@ -1289,8 +1382,8 @@ mod tests {
             );
             let text = format!("wo{invisible}rd");
             assert_eq!(
-                face.measure_run(&text, FontSize::Body, None, None),
-                face.measure_run("word", FontSize::Body, None, None),
+                face.measure_run(&text, FontSize::Body, Face::Text, None, None),
+                face.measure_run("word", FontSize::Body, Face::Text, None, None),
                 "{invisible:?} widened the line it should have left alone"
             );
             assert_eq!(ink(&face, &text), ink(&face, "word"));
@@ -1305,10 +1398,13 @@ mod tests {
     #[test]
     fn a_grid_gives_every_character_a_column_even_an_invisible_one() {
         let mono = Typeface::from_bytes(MONO_FONT, "mono", CLARA).expect("mono");
-        let cell = mono.fixed_advance(FontSize::Body).expect("a fixed advance");
+        let cell = mono
+            .fixed_advance(FontSize::Body, Face::Mono)
+            .expect("a fixed advance");
         let text = "a\u{200b}b";
         assert_eq!(
-            mono.measure_run(text, FontSize::Body, Some(cell), None).0,
+            mono.measure_run(text, FontSize::Body, Face::Text, Some(cell), None)
+                .0,
             cell * 3
         );
         let mut columns = Vec::new();
@@ -1317,6 +1413,7 @@ mod tests {
             0,
             0,
             FontSize::Body,
+            Face::Text,
             Some(cell),
             None,
             &mut |x, _, coverage| {
@@ -1389,6 +1486,7 @@ mod tests {
             0,
             0,
             FontSize::Body,
+            Face::Text,
             None,
             None,
             &mut |x, y, coverage| {
@@ -1405,8 +1503,8 @@ mod tests {
         let Some(face) = face() else {
             return;
         };
-        let lower = face.measure_run("aaaa", FontSize::Body, None, None);
-        let upper = face.measure_run("AAAA", FontSize::Body, None, None);
+        let lower = face.measure_run("aaaa", FontSize::Body, Face::Text, None, None);
+        let upper = face.measure_run("AAAA", FontSize::Body, Face::Text, None, None);
         // The built-in bitmap folded case away entirely, so these were equal.
         assert_ne!(lower, upper, "case is still being folded away");
     }
@@ -1416,8 +1514,8 @@ mod tests {
         let Some(face) = face() else {
             return;
         };
-        let narrow = face.measure_run("iiii", FontSize::Body, None, None);
-        let wide = face.measure_run("mmmm", FontSize::Body, None, None);
+        let narrow = face.measure_run("iiii", FontSize::Body, Face::Text, None, None);
+        let wide = face.measure_run("mmmm", FontSize::Body, Face::Text, None, None);
         assert!(narrow.0 < wide.0, "text is still monospaced");
     }
 
@@ -1426,8 +1524,12 @@ mod tests {
         let Some(face) = face() else {
             return;
         };
-        let once = face.measure_run("kobo", FontSize::Body, None, None).0;
-        let twice = face.measure_run("kobokobo", FontSize::Body, None, None).0;
+        let once = face
+            .measure_run("kobo", FontSize::Body, Face::Text, None, None)
+            .0;
+        let twice = face
+            .measure_run("kobokobo", FontSize::Body, Face::Text, None, None)
+            .0;
         let drift = (twice - once * 2).abs();
         assert!(
             drift <= once / 10,
@@ -1441,13 +1543,22 @@ mod tests {
             return;
         };
         let text = "Reading";
-        let (width, height) = face.measure_run(text, FontSize::Body, None, None);
+        let (width, height) = face.measure_run(text, FontSize::Body, Face::Text, None, None);
         let mut out_of_bounds = 0;
-        face.draw_run(text, 0, 0, FontSize::Body, None, None, &mut |x, y, _| {
-            if x < 0 || y < 0 || x > width || y > height {
-                out_of_bounds += 1;
-            }
-        });
+        face.draw_run(
+            text,
+            0,
+            0,
+            FontSize::Body,
+            Face::Text,
+            None,
+            None,
+            &mut |x, y, _| {
+                if x < 0 || y < 0 || x > width || y > height {
+                    out_of_bounds += 1;
+                }
+            },
+        );
         assert_eq!(out_of_bounds, 0, "glyphs escaped the box they measured");
     }
 
@@ -1462,6 +1573,7 @@ mod tests {
             0,
             0,
             FontSize::Body,
+            Face::Text,
             None,
             None,
             &mut |_, _, coverage| {
@@ -1484,6 +1596,7 @@ mod tests {
             0,
             0,
             FontSize::Title,
+            Face::Text,
             None,
             None,
             &mut |_, _, coverage| {
@@ -1500,8 +1613,8 @@ mod tests {
         let Some(face) = face() else {
             return;
         };
-        let caption = face.measure_run("Chapter", FontSize::Caption, None, None);
-        let heading = face.measure_run("Chapter", FontSize::Heading, None, None);
+        let caption = face.measure_run("Chapter", FontSize::Caption, Face::Text, None, None);
+        let heading = face.measure_run("Chapter", FontSize::Heading, Face::Text, None, None);
         assert!(caption.0 < heading.0);
         assert!(caption.1 < heading.1);
     }
@@ -1560,9 +1673,11 @@ mod tests {
     #[test]
     fn every_monospace_glyph_has_the_same_advance() {
         let mono = Typeface::from_bytes(MONO_FONT, "mono", CLARA).expect("mono");
-        let cell = mono.fixed_advance(FontSize::Body).expect("fixed pitch");
+        let cell = mono
+            .fixed_advance(FontSize::Body, Face::Mono)
+            .expect("fixed pitch");
         for probe in ["i", "m", "W", ".", "0", "|"] {
-            let (width, _) = mono.measure_run(probe, FontSize::Body, Some(cell), None);
+            let (width, _) = mono.measure_run(probe, FontSize::Body, Face::Text, Some(cell), None);
             assert_eq!(width, cell, "{probe} is not one cell wide");
         }
     }
@@ -1570,10 +1685,18 @@ mod tests {
     #[test]
     fn a_monospace_run_is_exactly_its_length_in_cells() {
         let mono = Typeface::from_bytes(MONO_FONT, "mono", CLARA).expect("mono");
-        let cell = mono.fixed_advance(FontSize::Body).expect("fixed pitch");
+        let cell = mono
+            .fixed_advance(FontSize::Body, Face::Mono)
+            .expect("fixed pitch");
         // A grid is addressed by column, so this has to hold exactly rather
         // than approximately, or column 60 is not where column 60 was drawn.
-        let (width, _) = mono.measure_run("cat /proc/uptime", FontSize::Body, Some(cell), None);
+        let (width, _) = mono.measure_run(
+            "cat /proc/uptime",
+            FontSize::Body,
+            Face::Text,
+            Some(cell),
+            None,
+        );
         assert_eq!(width, cell * 16);
     }
 
@@ -1583,7 +1706,7 @@ mod tests {
             return;
         };
         assert!(
-            face.fixed_advance(FontSize::Body).is_none(),
+            face.fixed_advance(FontSize::Body, Face::Mono).is_none(),
             "a proportional face claimed a single cell width"
         );
     }
@@ -1610,12 +1733,14 @@ mod tests {
         // over a line, which shows up as uneven spacing and as wrapping that
         // disagrees with what is drawn.
         let line = "n".repeat(60);
-        let pixels = face.pixels(FontSize::Body);
+        let pixels = face.pixels(FontSize::Body, Face::Text);
         let exact: f32 = line
             .chars()
             .map(|character| face.font.metrics(character, pixels).advance_width)
             .sum();
-        let measured = face.measure_run(&line, FontSize::Body, None, None).0;
+        let measured = face
+            .measure_run(&line, FontSize::Body, Face::Text, None, None)
+            .0;
         assert!(
             (measured as f32 - exact).abs() <= 1.0,
             "measured {measured} against an exact {exact}"
@@ -1628,9 +1753,11 @@ mod tests {
         // Body only 41 columns. Anything much narrower than 50 and ordinary
         // command output wraps into unreadable rubble, so this is the floor a
         // future face change must not silently drop below.
-        let cell = mono.fixed_advance(FontSize::Caption).expect("fixed pitch");
+        let cell = mono
+            .fixed_advance(FontSize::Caption, Face::Mono)
+            .expect("fixed pitch");
         let columns = 1072 / cell;
-        let rows = 1448 / mono.height(FontSize::Caption);
+        let rows = 1448 / mono.height(FontSize::Caption, Face::Text);
         assert!(columns >= 50, "only {columns} columns fit");
         assert!(rows >= 30, "only {rows} rows fit");
     }
@@ -1856,7 +1983,7 @@ mod tests {
         let regular = Typeface::from_bytes(TEXT_FONT, "regular", CLARA).expect("regular");
         for size in [FontSize::Title, FontSize::Heading] {
             let (bold_width, _) = fonts.measure("Connections", size, Face::Text);
-            let (plain_width, _) = regular.measure_run("Connections", size, None, None);
+            let (plain_width, _) = regular.measure_run("Connections", size, Face::Text, None, None);
             assert!(
                 bold_width > plain_width,
                 "{size:?} was set no wider than the regular cut: {bold_width} against {plain_width}"
@@ -1866,7 +1993,7 @@ mod tests {
         // a screen shouting every word of itself.
         for size in [FontSize::Caption, FontSize::Body] {
             let (through, _) = fonts.measure("Connections", size, Face::Text);
-            let (plain, _) = regular.measure_run("Connections", size, None, None);
+            let (plain, _) = regular.measure_run("Connections", size, Face::Text, None, None);
             assert_eq!(through, plain, "{size:?} was not set in the regular cut");
         }
     }

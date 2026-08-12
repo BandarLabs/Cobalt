@@ -34,7 +34,7 @@ use kobo_html::{attribute, decode_entities, element_name, skip_element};
 
 use crate::html::skip_bracketed;
 use crate::zip::{self, Archive};
-use crate::{collapse, Block, Builder, Contents, Document};
+use crate::{collapse, Block, Builder, Contents, Document, EmbeddedFont};
 
 /// Where the container always is. The one path in an EPUB that is fixed.
 const CONTAINER: &str = "META-INF/container.xml";
@@ -81,6 +81,7 @@ pub fn parse(bytes: &[u8]) -> Result<Document, Fault> {
     let package_at = find_package(&archive).ok_or(Fault::NotABook)?;
     let package = read_package(&text_of(&archive.read(&package_at)?));
     let base = directory_of(&package_at);
+    let publisher_styles = stylesheets_of(&archive, &package, &base);
 
     let mut builder = Builder::new();
     // The package's own metadata outranks anything found inside a chapter: the
@@ -118,7 +119,7 @@ pub fn parse(bytes: &[u8]) -> Result<Document, Fault> {
         let Ok(bytes) = archive.read(&name) else {
             continue;
         };
-        let part = crate::html::parse(&strip_toc(&text_of(&bytes)));
+        let part = crate::html::parse_with_css(&strip_toc(&text_of(&bytes)), &publisher_styles.css);
         truncated |= part.truncated;
         if part.blocks.is_empty() {
             // An empty file (a cover page holding only an image) should not
@@ -162,8 +163,13 @@ pub fn parse(bytes: &[u8]) -> Result<Document, Fault> {
             links.push(link);
         }
         starts.push((name, start));
-        for block in part.blocks {
-            builder.push(block);
+        let mut rich = part.rich;
+        for (part_index, block) in part.blocks.into_iter().enumerate() {
+            if let Some(styled) = rich.remove(&part_index) {
+                builder.push_rich(block, styled);
+            } else {
+                builder.push(block);
+            }
         }
         parts += 1;
     }
@@ -175,9 +181,174 @@ pub fn parse(bytes: &[u8]) -> Result<Document, Fault> {
     builder.set_anchors(anchors);
     builder.set_links(links);
     builder.set_images(images_of(&archive, &builder));
+    builder.set_fonts(fonts_of(
+        &archive,
+        &package,
+        &base,
+        &publisher_styles.font_families,
+    ));
     let mut document = builder.finish();
     document.truncated |= truncated;
     Ok(document)
+}
+
+const MAX_STYLESHEET_BYTES: usize = 256 * 1024;
+
+#[derive(Default)]
+struct PublisherStyles {
+    css: String,
+    font_families: BTreeMap<String, String>,
+}
+
+fn stylesheets_of(archive: &Archive<'_>, package: &Package, base: &str) -> PublisherStyles {
+    let mut styles = PublisherStyles::default();
+    let mut css = String::new();
+    for item in package.manifest.values() {
+        let is_css_name = std::path::Path::new(&item.href)
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("css"));
+        if !item.media_type.eq_ignore_ascii_case("text/css") && !is_css_name {
+            continue;
+        }
+        let stylesheet_name = resolve(base, &item.href);
+        let Ok(bytes) = archive.read(&stylesheet_name) else {
+            continue;
+        };
+        let text = text_of(&bytes);
+        read_font_faces(
+            &text,
+            &directory_of(&stylesheet_name),
+            &mut styles.font_families,
+        );
+        let left = MAX_STYLESHEET_BYTES.saturating_sub(css.len());
+        if left == 0 {
+            break;
+        }
+        let mut take = text.len().min(left);
+        while !text.is_char_boundary(take) {
+            take -= 1;
+        }
+        css.push_str(&text[..take]);
+        css.push('\n');
+    }
+    styles.css = css;
+    styles
+}
+
+/// Reads the small part of `@font-face` needed to connect a CSS family name
+/// to its archive asset. Unknown descriptors and remote/data URLs are ignored.
+fn read_font_faces(css: &str, base: &str, families: &mut BTreeMap<String, String>) {
+    let lower = css.to_ascii_lowercase();
+    let mut at = 0usize;
+    while let Some(found) = lower[at..].find("@font-face") {
+        let found = at + found;
+        let Some(open) = lower[found..].find('{').map(|offset| found + offset) else {
+            break;
+        };
+        let Some(close) = lower[open + 1..].find('}').map(|offset| open + 1 + offset) else {
+            break;
+        };
+        let body = &css[open + 1..close];
+        let mut family = None;
+        let mut source = None;
+        for declaration in body.split(';') {
+            let Some((name, value)) = declaration.split_once(':') else {
+                continue;
+            };
+            match name.trim().to_ascii_lowercase().as_str() {
+                "font-family" => {
+                    let value = value.trim().trim_matches(['\'', '"']);
+                    if !value.is_empty() && value.len() <= 128 {
+                        family = Some(value.to_owned());
+                    }
+                }
+                "src" => {
+                    let value_lower = value.to_ascii_lowercase();
+                    if let Some(start) = value_lower.find("url(") {
+                        let inside = &value[start + 4..];
+                        if let Some(end) = inside.find(')') {
+                            let url = inside[..end].trim().trim_matches(['\'', '"']);
+                            if !url.starts_with("data:") && !url.contains("://") {
+                                source = Some(resolve(base, url));
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let (Some(source), Some(family)) = (source, family) {
+            families.entry(source).or_insert(family);
+        }
+        at = close + 1;
+    }
+}
+
+/// The most publisher-font data retained from one book.
+///
+/// Two regular/italic faces in a typical EPUB are comfortably below this.
+/// The cap prevents a package manifest from turning the document model into
+/// an unbounded copy of arbitrary archive members.
+const MAX_FONT_BYTES: usize = 4 * 1024 * 1024;
+
+/// The largest single outline face accepted from a book.
+const MAX_ONE_FONT_BYTES: usize = 2 * 1024 * 1024;
+
+/// Reads bounded font resources named by the package manifest.
+fn fonts_of(
+    archive: &Archive<'_>,
+    package: &Package,
+    base: &str,
+    families: &BTreeMap<String, String>,
+) -> BTreeMap<String, EmbeddedFont> {
+    let mut fonts = BTreeMap::new();
+    let mut total = 0usize;
+    for item in package.manifest.values() {
+        if !is_font(&item.media_type, &item.href) {
+            continue;
+        }
+        let name = resolve(base, &item.href);
+        if fonts.contains_key(&name) {
+            continue;
+        }
+        let Ok(bytes) = archive.read(&name) else {
+            continue;
+        };
+        if bytes.len() > MAX_ONE_FONT_BYTES || total.saturating_add(bytes.len()) > MAX_FONT_BYTES {
+            continue;
+        }
+        total += bytes.len();
+        let family = families.get(&name).cloned();
+        fonts.insert(
+            name,
+            EmbeddedFont {
+                media_type: item.media_type.clone(),
+                family,
+                bytes,
+            },
+        );
+    }
+    fonts
+}
+
+fn is_font(media_type: &str, href: &str) -> bool {
+    let media_type = media_type.to_ascii_lowercase();
+    if matches!(
+        media_type.as_str(),
+        "font/ttf"
+            | "font/otf"
+            | "font/woff"
+            | "font/woff2"
+            | "application/font-sfnt"
+            | "application/font-woff"
+            | "application/vnd.ms-opentype"
+    ) {
+        return true;
+    }
+    let href = href.to_ascii_lowercase();
+    [".ttf", ".otf", ".woff", ".woff2"]
+        .iter()
+        .any(|suffix| href.ends_with(suffix))
 }
 
 /// The most contents entries kept from one book.
@@ -739,13 +910,19 @@ fn unescape(path: &str) -> String {
     let mut at = 0;
     while at < bytes.len() {
         // A `%` that is not followed by two hex digits is a literal `%`, which
-        // is a character a filename is allowed to contain.
+        // is a character a filename is allowed to contain. The two digits are
+        // read as bytes rather than sliced out of the string: `%` followed by
+        // one ASCII byte and a multibyte character would otherwise cut that
+        // character in half, and publisher CSS supplies these names.
         if bytes[at] == b'%' && at + 2 < bytes.len() {
-            let hex = &path[at + 1..at + 3];
-            if let Ok(byte) = u8::from_str_radix(hex, 16) {
-                out.push(byte);
-                at += 3;
-                continue;
+            let high = char::from(bytes[at + 1]).to_digit(16);
+            let low = char::from(bytes[at + 2]).to_digit(16);
+            if let (Some(high), Some(low)) = (high, low) {
+                if let Ok(byte) = u8::try_from(high * 16 + low) {
+                    out.push(byte);
+                    at += 3;
+                    continue;
+                }
             }
         }
         out.push(bytes[at]);
@@ -1064,6 +1241,78 @@ mod tests {
                 "It got worse."
             ]
         );
+    }
+
+    #[test]
+    fn publisher_fonts_are_carried_as_bounded_document_assets() {
+        let package = opf(
+            r#"<itemref idref="one"/>"#,
+            r#"<item id="one" href="one.xhtml" media-type="application/xhtml+xml"/>
+               <item id="css" href="styles/book.css" media-type="text/css"/>
+               <item id="serif" href="fonts/Book.otf" media-type="font/otf"/>"#,
+        );
+        let bytes = b"OTTOindependently-authored-font-fixture";
+        let book = archive(&[
+            ("mimetype", b"application/epub+zip"),
+            ("META-INF/container.xml", CONTAINER_XML.as_bytes()),
+            ("OEBPS/book.opf", package.as_bytes()),
+            ("OEBPS/one.xhtml", b"<p>The words.</p>"),
+            (
+                "OEBPS/styles/book.css",
+                b"@font-face { font-family: 'Publisher Serif'; src: url('../fonts/Book.otf'); }",
+            ),
+            ("OEBPS/fonts/Book.otf", bytes),
+        ]);
+
+        let document = parse(&book).expect("a readable book");
+        let font = document
+            .fonts
+            .get("OEBPS/fonts/Book.otf")
+            .expect("publisher font");
+        assert_eq!(font.media_type, "font/otf");
+        assert_eq!(font.family.as_deref(), Some("Publisher Serif"));
+        assert_eq!(font.bytes, bytes);
+    }
+
+    #[test]
+    fn package_stylesheets_are_applied_to_spine_xhtml() {
+        let package = opf(
+            r#"<itemref idref="one"/>"#,
+            r#"<item id="one" href="one.xhtml" media-type="application/xhtml+xml"/>
+               <item id="css" href="book.css" media-type="text/css"/>"#,
+        );
+        let book = archive(&[
+            ("META-INF/container.xml", CONTAINER_XML.as_bytes()),
+            ("OEBPS/book.opf", package.as_bytes()),
+            (
+                "OEBPS/book.css",
+                b".opening { text-align: center; line-height: 150%; }",
+            ),
+            ("OEBPS/one.xhtml", b"<p class=\"opening\">Styled words.</p>"),
+        ]);
+        let document = parse(&book).expect("a readable book");
+        let rich = document.rich.get(&0).expect("publisher style");
+        assert_eq!(rich.style.alignment, crate::TextAlignment::Center);
+        assert_eq!(rich.style.line_height_percent, 150);
+    }
+
+    #[test]
+    fn an_oversized_publisher_font_is_not_retained() {
+        let package = opf(
+            r#"<itemref idref="one"/>"#,
+            r#"<item id="one" href="one.xhtml" media-type="application/xhtml+xml"/>
+               <item id="serif" href="huge.ttf" media-type="font/ttf"/>"#,
+        );
+        let huge = vec![0; MAX_ONE_FONT_BYTES + 1];
+        let book = archive(&[
+            ("META-INF/container.xml", CONTAINER_XML.as_bytes()),
+            ("OEBPS/book.opf", package.as_bytes()),
+            ("OEBPS/one.xhtml", b"<p>The words.</p>"),
+            ("OEBPS/huge.ttf", &huge),
+        ]);
+
+        let document = parse(&book).expect("the prose remains readable");
+        assert!(document.fonts.is_empty());
     }
 
     #[test]
@@ -1611,6 +1860,12 @@ mod tests {
         assert_eq!(unescape("100%"), "100%");
         assert_eq!(unescape("a%zzb"), "a%zzb");
         assert_eq!(unescape("a%20b"), "a b");
+        // A `%` followed by one ASCII byte and a multibyte character. The two
+        // digits are read as bytes, so this cannot cut the character in half.
+        // Publisher `@font-face` URLs reach this, so a book must not be able
+        // to choose the panic.
+        assert_eq!(unescape("a%bé.otf"), "a%bé.otf");
+        assert_eq!(unescape("%é"), "%é");
     }
 
     #[test]

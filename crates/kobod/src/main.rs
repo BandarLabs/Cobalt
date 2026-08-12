@@ -301,7 +301,7 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
             },
         },
     )?;
-    serve_application(&mut stream, frame_path, &name)
+    serve_application(&mut stream, frame_path, &name, metrics)
 }
 
 /// Where a host runtime looks for owner-installed TLS trust roots.
@@ -321,6 +321,18 @@ fn host_trust_directory() -> PathBuf {
     )
 }
 
+fn host_dictionary_directory() -> PathBuf {
+    env::var_os("HOME").map_or_else(
+        || PathBuf::from(".kobo-dictionaries"),
+        |home| {
+            PathBuf::from(home)
+                .join(".config")
+                .join("kobo")
+                .join("dictionaries")
+        },
+    )
+}
+
 #[allow(
     clippy::too_many_lines,
     reason = "one arm per message type; splitting the dispatch hides it"
@@ -329,10 +341,13 @@ fn serve_application(
     stream: &mut UnixStream,
     frame_path: &Path,
     name: &str,
+    metrics: kobo_ui::DisplayMetrics,
 ) -> Result<(), Box<dyn Error>> {
     // In simulation the daemon owns no hardware, so every hardware-touching
     // request is answered honestly rather than pretended.
     let mut services = DeviceServices::simulated();
+    let dictionaries = services.load_dictionaries(&host_dictionary_directory());
+    println!("offline dictionaries loaded: {dictionaries}");
     // There is no bezel here to hold a magnet against, so the state the hall
     // sensor reports is set on the way in. Without this the second half of
     // every cover-aware screen is unreachable off hardware.
@@ -416,6 +431,15 @@ fn serve_application(
                 Some(_) => {}
             },
             Message::DropPicture { handle } => pictures.remove(handle),
+            Message::PutFont {
+                handle,
+                name,
+                bytes,
+            } => match kobo_text::BookFont::from_bytes(&bytes, &name, metrics) {
+                Ok(font) => kobo_ui::put_book_typesetter(handle, Box::new(font)),
+                Err(error) => println!("font {} refused: {error}", handle.0),
+            },
+            Message::DropFont { handle } => kobo_ui::drop_book_typesetter(handle),
             // This path renders one application to a file and owns no panel to
             // hand over, so the request is reported rather than performed.
             Message::Launch { name } => println!("launch requested: {name}"),
@@ -491,6 +515,7 @@ fn serve_application(
             Message::Hello { .. }
             | Message::Welcome { .. }
             | Message::Action { .. }
+            | Message::TextHold { .. }
             | Message::TaskOutcome { .. }
             | Message::DeviceResult(_)
             | Message::StoreResult(_)
@@ -610,14 +635,13 @@ fn write_screen(
     // was the one part of every screen that could not be looked at without a
     // reader, and it is the part that traps somebody when it is missing.
     let screen = kobo_ui::ensure_way_back(screen, chrome, name);
-    let mut metrics = kobo_ui::display_metrics_from_env();
-    if let Some(scale) = screen.text_scale {
-        metrics.text_scale = scale;
-    }
+    let metrics = kobo_ui::display_metrics_from_env();
     // The same reason as on the device: the typeface sets at the ambient
-    // scale, so a preview of a screen that asked for larger type has to say so
-    // or it is a preview of a screen nobody will see.
+    // scale, so a preview of a screen that asked for larger prose has to say
+    // so or it is a preview of a screen nobody will see. The interface around
+    // the prose keeps the reader's own size either way.
     kobo_ui::set_text_scale(metrics.text_scale);
+    kobo_ui::set_reading_scale(screen.text_scale.unwrap_or(metrics.text_scale));
     kobo_ui::render_all(&screen, &metrics, chrome, pictures, &mut surface, None);
 
     let temporary = path.with_extension(format!("raw.tmp-{}", std::process::id()));

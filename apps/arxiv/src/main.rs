@@ -26,6 +26,8 @@
 mod atom;
 
 use atom::{Paper, Results};
+use kobo_bookview::{BookView, Step};
+use kobo_read::{Memory, Outcome};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, RowLead, Screen, ScreenBuilder,
@@ -162,9 +164,21 @@ struct Arxiv {
     listing_page: usize,
     /// Which paper is open, as an index into `papers`.
     open: Option<usize>,
-    /// The abstract or the full text, already broken into panel pages.
+    /// The abstract, already broken into panel pages.
+    ///
+    /// A summary and its metadata, which is a card rather than a document. The
+    /// paper itself is read through `book`.
     pages: Vec<Vec<String>>,
     page: usize,
+    /// The paper's full text, open in the reader every other application on
+    /// this device reads through.
+    ///
+    /// arXiv used to flatten the rendering to one long string and hand it to a
+    /// line wrapper, which is why a paper had no headings, no emphasis, no
+    /// figures, no captions, no equations set apart from the prose, and none
+    /// of the marking, searching or dictionary a reader has everywhere else.
+    /// The markup arXiv sends says all of that; nothing was reading it.
+    book: BookView,
     /// Whether the full text arrived cut off at the byte ceiling.
     truncated: bool,
     task: Option<(TaskId, Awaiting)>,
@@ -357,15 +371,25 @@ impl Arxiv {
         for line in self.pages.get(page).map(Vec::as_slice).unwrap_or_default() {
             screen = screen.text(line.clone());
         }
-        screen = screen.fill();
-        screen = match self.view {
-            View::FullText => screen.bottom_action_marked(ABSTRACT, "Abstract", Glyph::Note),
-            _ => screen.bottom_action_marked(FULL_TEXT, "Full text", Glyph::Book),
-        };
         screen
+            .fill()
+            .bottom_action_marked(FULL_TEXT, "Full text", Glyph::Book)
             .page_turns(READ_BACK, READ_NEXT)
             .page_position(page_number(page), page_total(self.pages.len()))
             .build()
+    }
+
+    /// The paper itself, set by the reader the whole device shares.
+    ///
+    /// Its type size, its front light, its table of contents, its highlights
+    /// and its dictionary are the ones somebody already learned in every other
+    /// reading application here, and its Back closes the paper and returns to
+    /// the abstract it was opened from.
+    fn full_text(&self) -> Screen {
+        let title = self
+            .paper()
+            .map_or_else(|| "arXiv".to_owned(), |paper| paper.id.clone());
+        self.book.screen(&title).unwrap_or_else(|| self.reading())
     }
 
     fn waiting_for(&self, what: Awaiting) -> bool {
@@ -377,7 +401,8 @@ impl Arxiv {
             View::Subjects => self.subjects(context),
             View::Search => self.search(),
             View::Listing => self.listing(context),
-            View::Paper | View::FullText => self.reading(),
+            View::Paper => self.reading(),
+            View::FullText => self.full_text(),
         };
         // Every view but the subject list was reached from another one, so
         // Back has somewhere to go from all of them and nowhere to go from it.
@@ -390,8 +415,10 @@ impl Arxiv {
         let page = match self.view {
             View::Subjects => &mut self.subject_page,
             View::Listing => &mut self.listing_page,
-            View::Paper | View::FullText => &mut self.page,
-            View::Search => return,
+            View::Paper => &mut self.page,
+            // The reader turns its own pages, and the taps that ask it to are
+            // its own actions rather than this application's.
+            View::FullText | View::Search => return,
         };
         if forward {
             *page += 1;
@@ -418,30 +445,43 @@ impl Arxiv {
         self.listing_page = 0;
     }
 
-    fn took_full_text(&mut self, context: &Context, bytes: &[u8]) {
+    fn took_full_text(&mut self, context: &mut Context, bytes: &[u8]) {
         let Ok(html) = std::str::from_utf8(bytes) else {
             self.trouble = Some("That rendering was not text.".to_owned());
             return;
         };
-        // Converted against the ceiling this application was already willing to
-        // hold rather than the one meant for a field in a feed. A paper is tens
-        // of thousands of characters and the field ceiling is eight thousand,
-        // so every paper used to arrive as its opening pages and an ellipsis --
-        // about a tenth of the document, with a page count that made the tenth
-        // look like the whole of it.
-        let text = kobo_html::to_text_within(paper_body(html), FULL_TEXT_BYTES as usize);
-        if text.trim().is_empty() {
+        let Some(paper) = self.paper().cloned() else {
+            return;
+        };
+        let body = paper_body(html);
+        // Handed to the reader whole. It parses the markup into the paper's
+        // own structure -- its sections, its emphasis, its figures and their
+        // captions -- and fetches the figures itself, one at a time, against
+        // the address the rendering came from. None of that is arXiv's to
+        // know: it is what reading a web page on this device means, and every
+        // application that shows one gets the same answer.
+        let origin = format!("https://arxiv.org/html/{}/", escape_path(&paper.id));
+        if !self
+            .book
+            .open_html(context, body, &origin, Memory::default())
+        {
             self.trouble =
                 Some("arXiv has no readable rendering of this paper, only a PDF.".to_owned());
             return;
         }
-        // What was cut is the text, which is the thing the reader is turning
-        // pages through. The fetched bytes are markup and a paper can be at the
-        // transport limit with every word of it converted.
-        self.truncated = text.ends_with('\u{2026}');
-        self.pages = context.paginate_reading(&text, false);
+        // A rendering cut off at the byte ceiling has no closing tag, which is
+        // the honest signal: the fetched bytes are markup, and a paper can sit
+        // at the transport limit with every word of it delivered.
+        self.truncated = !body.contains("</article>");
+        self.book.mark_truncated(self.truncated);
         self.page = 0;
         self.view = View::FullText;
+    }
+
+    /// Gives back everything the open paper was costing.
+    fn close_paper(&mut self, context: &mut Context) {
+        self.book.close(context);
+        self.truncated = false;
     }
 }
 
@@ -591,14 +631,39 @@ impl KoboApp for Arxiv {
                     self.open = None;
                 }
                 // The full text was reached from the abstract, so Back is the
-                // abstract rather than the list two steps behind it.
+                // abstract rather than the list two steps behind it. Leaving
+                // is also the moment the paper stops costing anything: the
+                // document, the picture handles the runtime is holding
+                // against it and the figures still queued for it all go now,
+                // rather than lingering for a paper nobody is reading.
                 View::FullText => {
+                    self.close_paper(context);
                     self.view = View::Paper;
                     self.open_abstract(context);
                 }
             }
             self.show(context);
             return;
+        }
+
+        // The reader first, while a paper is open in it: its page turns, its
+        // type panel, its light, its contents, its marks and its dictionary
+        // are all actions of its own, and none of them is this application's
+        // to recognise.
+        if self.view == View::FullText {
+            if let Some(outcome) = self.book.act(context, action) {
+                match outcome {
+                    Outcome::Close => {
+                        self.close_paper(context);
+                        self.view = View::Paper;
+                        self.open_abstract(context);
+                    }
+                    Outcome::Light(level) => context.device().set_frontlight(level),
+                    Outcome::Elsewhere | Outcome::Repaint | Outcome::Save => {}
+                }
+                self.show(context);
+                return;
+            }
         }
 
         if action == action_id(SEARCH) {
@@ -642,6 +707,7 @@ impl KoboApp for Arxiv {
         }
 
         if action == action_id(ABSTRACT) {
+            self.close_paper(context);
             self.view = View::Paper;
             self.open_abstract(context);
             self.show(context);
@@ -667,6 +733,9 @@ impl KoboApp for Arxiv {
 
         for index in 0..self.papers.len() {
             if action == action_id(&format!("{PAPER}{index}")) {
+                // Whatever the last paper was costing goes back before another
+                // one starts costing anything.
+                self.close_paper(context);
                 self.open = Some(index);
                 self.view = View::Paper;
                 self.open_abstract(context);
@@ -676,7 +745,36 @@ impl KoboApp for Arxiv {
         }
     }
 
+    /// The front light level the device is actually holding.
+    ///
+    /// Asked for by the reading surface itself when a paper is opened, so the
+    /// panel's number and the lamp agree from the first tap rather than after
+    /// it.
+    fn on_device_result(
+        &mut self,
+        context: &mut Context,
+        _request: kobo_sdk::DeviceRequest,
+        result: kobo_sdk::DeviceResult,
+    ) {
+        if let kobo_sdk::DeviceResult::Frontlight { percent } = result {
+            if self.book.took_light(percent) {
+                self.show(context);
+            }
+        }
+    }
+
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
+        // The reader's own sleep, which is what carries a figure from bytes to
+        // pixels a half-step at a time.
+        match self.book.woke(context, task, &outcome) {
+            Step::Elsewhere => {}
+            Step::Quiet => return,
+            Step::Repaint => {
+                self.show(context);
+                return;
+            }
+        }
+
         let Some((waiting, awaiting)) = self.task else {
             return;
         };
@@ -727,10 +825,11 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        abstract_text, escape, escape_path, paper_body, row_summary, Arxiv, Query, View, SUBJECTS,
+        abstract_text, escape, escape_path, paper_body, row_summary, Arxiv, Query, View, ABSTRACT,
+        FULL_TEXT, SUBJECTS,
     };
     use crate::atom::Paper;
-    use kobo_sdk::{action_id, AppRunner, Command, Task};
+    use kobo_sdk::{action_id, ActionId, AppRunner, Command, Task, TaskOutcome};
 
     fn paper() -> Paper {
         Paper {
@@ -863,7 +962,7 @@ mod tests {
     #[test]
     fn a_rendered_paper_is_narrowed_to_the_paper() {
         let body = paper_body(RENDERED);
-        let text = kobo_html::to_text(body);
+        let text = document_text(&kobo_doc::html::parse(body));
         assert!(text.contains("The first sentence."), "{text}");
         for furniture in [
             "independent nonprofit",
@@ -880,9 +979,28 @@ mod tests {
     #[test]
     fn a_rendering_cut_off_before_its_closing_tag_is_still_the_paper() {
         let cut = &RENDERED[..RENDERED.find("The first sentence.").unwrap() + 10];
-        let text = kobo_html::to_text(paper_body(cut));
+        let text = document_text(&kobo_doc::html::parse(paper_body(cut)));
         assert!(text.contains("A Paper"), "{text}");
         assert!(!text.contains("Submit without GitHub"), "{text}");
+    }
+
+    /// Everything a parsed document would put on the panel, run together.
+    fn document_text(document: &kobo_doc::Document) -> String {
+        document
+            .blocks
+            .iter()
+            .map(|block| match block {
+                kobo_doc::Block::Heading { text, .. }
+                | kobo_doc::Block::Item { text, .. }
+                | kobo_doc::Block::Paragraph(text)
+                | kobo_doc::Block::Quote(text)
+                | kobo_doc::Block::Preformatted(text)
+                | kobo_doc::Block::Caption(text) => text.clone(),
+                kobo_doc::Block::Picture { alt, .. } => alt.clone(),
+                _ => String::new(),
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
     /// Furniture is worse than the paper; nothing is worse than both.
@@ -923,5 +1041,106 @@ mod tests {
         runner.start();
         runner.action(kobo_sdk::ActionId::BACK);
         assert_eq!(runner.app_mut().view, View::Paper);
+    }
+
+    /// A paper opened for reading and the fetch that puts it there.
+    fn opened_on(runner: &mut AppRunner<Arxiv>, rendering: &str) -> Vec<Command> {
+        runner.app_mut().papers = vec![paper()];
+        runner.app_mut().open = Some(0);
+        runner.start();
+        runner.action(action_id(FULL_TEXT));
+        let task = runner
+            .app()
+            .task
+            .expect("the full text was not asked for")
+            .0;
+        runner.task_outcome(task, TaskOutcome::Completed(rendering.as_bytes().to_vec()))
+    }
+
+    /// The point of all of this: a paper is a document, not a wall of text.
+    ///
+    /// It used to be flattened to one string and handed to a line wrapper, so
+    /// a section heading, an emphasised term and a figure's caption all came
+    /// out as the same undifferentiated prose -- and the figure itself did not
+    /// come out at all.
+    #[test]
+    fn a_paper_is_read_as_a_document_rather_than_as_flattened_text() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        let _ = opened_on(
+            &mut runner,
+            "<article><h2>1 Introduction</h2><p>The <em>first</em> sentence.</p>             <figure><img src=\"x1.png\" alt=\"A plot\"><figcaption>Figure 1.</figcaption>             </figure></article>",
+        );
+
+        assert_eq!(runner.app().view, View::FullText);
+        let reader = runner.app().book.reader().expect("the paper is not open");
+        let kinds: Vec<_> = reader
+            .document()
+            .blocks
+            .iter()
+            .map(std::mem::discriminant)
+            .collect();
+        assert!(
+            kinds.contains(&std::mem::discriminant(&kobo_doc::Block::Heading {
+                level: 2,
+                text: String::new()
+            })),
+            "the section heading was flattened into the prose"
+        );
+        assert!(
+            reader.pictures_wanted().contains(&"x1.png"),
+            "the figure was dropped rather than drawn"
+        );
+    }
+
+    /// And its figures, which live at addresses rather than in the file, are
+    /// fetched against the address the paper itself was fetched from.
+    #[test]
+    fn a_figure_is_fetched_from_beside_the_paper_that_names_it() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        let commands = opened_on(
+            &mut runner,
+            "<article><p>A paper.</p><img src=\"x1.png\" alt=\"A plot\"></article>",
+        );
+
+        let asked: Vec<String> = commands
+            .iter()
+            .filter_map(|command| match command {
+                Command::Spawn {
+                    work: Task::Fetch { url, .. },
+                    ..
+                } => Some(url.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            asked
+                .iter()
+                .any(|url| url == "https://arxiv.org/html/2401.00001v2/x1.png"),
+            "the figure was not asked for beside its paper: {asked:?}"
+        );
+    }
+
+    /// Leaving a paper gives back what it was costing the device, by whichever
+    /// of the two ways out of the reader the reader took.
+    #[test]
+    fn leaving_a_paper_gives_back_the_figures_it_was_holding() {
+        for way_out in [ActionId::BACK, action_id(ABSTRACT)] {
+            let mut runner = AppRunner::new(Arxiv::default());
+            let _ = opened_on(
+                &mut runner,
+                "<article><p>A paper.</p><img src=\"x1.png\" alt=\"A plot\"></article>",
+            );
+            runner.action(way_out);
+
+            assert_eq!(runner.app().view, View::Paper);
+            assert!(
+                !runner.app().book.is_open(),
+                "the parsed paper was kept after leaving it"
+            );
+            assert!(
+                runner.app().book.missing_pictures().is_empty(),
+                "figures were still being fetched for a paper nobody is reading"
+            );
+        }
     }
 }

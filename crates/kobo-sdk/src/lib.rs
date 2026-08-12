@@ -7,24 +7,25 @@
 
 pub use kobo_protocol::{
     AppInfo, AudioPlaybackState, AudioSource, BatteryDetail, BluetoothDevice, BluetoothDeviceKind,
-    Credential, DenyReason, DeviceError, DeviceRequest, DeviceResult, Frame, Header, Lifecycle,
-    LogLevel, Message, SecretHeader, ShellError, ShellEvent, ShellRequest, StoreError,
-    StoreRequest, StoreResult, StreamError, Task, TaskError, TaskId, TaskOutcome, WifiNetwork,
-    CACHE_PREFIX, MAX_CACHE_KEYS, MAX_HEADERS, MAX_HEADER_NAME, MAX_HEADER_VALUE,
-    MAX_INLINE_PICTURE_BYTES, MAX_PICTURE_BYTES, MAX_PICTURE_CHUNK_BYTES, MAX_RADIO_DEVICES,
-    MAX_RADIO_NAME, MAX_SHELF_CHUNK, MAX_SHELL_CHUNK, MAX_STORE_KEYS, MAX_STORE_VALUE,
-    MAX_TASK_BYTES, MAX_URL_LEN,
+    Credential, DenyReason, DeviceError, DeviceRequest, DeviceResult, DictionaryEntry, Frame,
+    Header, Lifecycle, LogLevel, Message, SecretHeader, ShellError, ShellEvent, ShellRequest,
+    StoreError, StoreRequest, StoreResult, StreamError, Task, TaskError, TaskId, TaskOutcome,
+    WifiNetwork, CACHE_PREFIX, MAX_CACHE_KEYS, MAX_FONT_BYTES, MAX_HEADERS, MAX_HEADER_NAME,
+    MAX_HEADER_VALUE, MAX_INLINE_PICTURE_BYTES, MAX_LOOKUP_WORD_BYTES, MAX_PICTURE_BYTES,
+    MAX_PICTURE_CHUNK_BYTES, MAX_RADIO_DEVICES, MAX_RADIO_NAME, MAX_SHELF_CHUNK, MAX_SHELL_CHUNK,
+    MAX_STORE_KEYS, MAX_STORE_VALUE, MAX_TASK_BYTES, MAX_URL_LEN,
 };
 pub use kobo_ui::QuoteRole;
 pub use kobo_ui::{
     terminal_grid, terminal_grid_for, typographic_cover, ActionId, BandAlign, BandSlot,
     BannerLevel, BarAction, BarStyle, BottomAction, Caret, Cell, Chip, Chrome, ControlState,
-    DiagnosticSeverity, DisplayMetrics, Emphasis, Fold, Freeform, Glyph, LayoutIssue,
-    LayoutIssueKind, NavBar, Node, NodeId, Overlay, OverlayKind, Percent, PictureHandle, ProseArea,
-    Row, RowLead, RowState, Screen, SlotWidth, Space, Tile, TilePicture, TileShape, TileState,
-    TopBar, TransferFailure, CLARA_BW_METRICS, MAX_BAND_SLOTS, MAX_CELLS, MAX_CHIPS,
-    MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_QUOTE_DEPTH, MAX_ROWS, MAX_TABS, MAX_TERMINAL_COLUMNS,
-    MAX_TERMINAL_ROWS, TILE_BADGE_LIMIT,
+    DiagnosticSeverity, DisplayMetrics, Emphasis, Fold, FontHandle, Freeform, Glyph, LayoutIssue,
+    LayoutIssueKind, NavBar, Node, NodeId, Overlay, OverlayKind, ParagraphAlignment,
+    ParagraphPresentation, Percent, PictureHandle, ProseArea, RichTextSpan, Row, RowLead, RowState,
+    Screen, SlotWidth, Space, TextHit, TextPresentation, TextSelection, Tile, TilePicture,
+    TileShape, TileState, TopBar, TransferFailure, CLARA_BW_METRICS, MAX_BAND_SLOTS, MAX_CELLS,
+    MAX_CHIPS, MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_QUOTE_DEPTH, MAX_ROWS, MAX_TABS,
+    MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS, TILE_BADGE_LIMIT,
 };
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
@@ -446,6 +447,7 @@ pub struct ScreenBuilder {
     text_scale: Option<kobo_ui::TextScale>,
     overlay: Option<Box<Overlay>>,
     reading: bool,
+    reading_font: Option<FontHandle>,
     actions: Vec<(String, ActionId)>,
     warnings: Vec<LayoutIssue>,
 }
@@ -466,6 +468,7 @@ impl ScreenBuilder {
             text_scale: None,
             overlay: None,
             reading: false,
+            reading_font: None,
             actions: Vec::new(),
             warnings: Vec::new(),
         }
@@ -488,6 +491,110 @@ impl ScreenBuilder {
             id,
             text: text.into(),
             links: Vec::new(),
+        });
+        self
+    }
+
+    /// Adds publisher-styled book prose without exposing arbitrary geometry.
+    #[must_use]
+    pub fn rich_text(
+        mut self,
+        text: impl Into<String>,
+        spans: Vec<RichTextSpan>,
+        presentation: ParagraphPresentation,
+    ) -> Self {
+        let id = self.next_id();
+        self.nodes.push(Node::RichText {
+            id,
+            text: text.into(),
+            spans,
+            links: Vec::new(),
+            presentation,
+            selection: None,
+        });
+        self
+    }
+
+    /// Publisher-styled prose with tappable inline destinations.
+    #[must_use]
+    pub fn rich_text_linking<I, N>(
+        mut self,
+        text: impl Into<String>,
+        spans: Vec<RichTextSpan>,
+        presentation: ParagraphPresentation,
+        links: I,
+    ) -> Self
+    where
+        I: IntoIterator<Item = (N, usize, usize)>,
+        N: AsRef<str>,
+    {
+        let id = self.next_id();
+        let text = text.into();
+        let links = links
+            .into_iter()
+            .take(kobo_ui::MAX_TEXT_LINKS)
+            .filter_map(|(name, start, end)| {
+                (start < end
+                    && end <= text.len()
+                    && text.is_char_boundary(start)
+                    && text.is_char_boundary(end))
+                .then(|| kobo_ui::TextLink {
+                    action: self.register(name.as_ref()),
+                    start,
+                    end,
+                })
+            })
+            .collect();
+        self.nodes.push(Node::RichText {
+            id,
+            text,
+            spans,
+            links,
+            presentation,
+            selection: None,
+        });
+        self
+    }
+
+    /// Publisher-styled reading prose whose words can be resolved on a hold.
+    #[must_use]
+    pub fn selectable_rich_text_linking<I, N>(
+        mut self,
+        text: impl Into<String>,
+        spans: Vec<RichTextSpan>,
+        presentation: ParagraphPresentation,
+        context: u64,
+        offset: u32,
+        links: I,
+    ) -> Self
+    where
+        I: IntoIterator<Item = (N, usize, usize)>,
+        N: AsRef<str>,
+    {
+        let id = self.next_id();
+        let text = text.into();
+        let links = links
+            .into_iter()
+            .take(kobo_ui::MAX_TEXT_LINKS)
+            .filter_map(|(name, start, end)| {
+                (start < end
+                    && end <= text.len()
+                    && text.is_char_boundary(start)
+                    && text.is_char_boundary(end))
+                .then(|| kobo_ui::TextLink {
+                    action: self.register(name.as_ref()),
+                    start,
+                    end,
+                })
+            })
+            .collect();
+        self.nodes.push(Node::RichText {
+            id,
+            text,
+            spans,
+            links,
+            presentation,
+            selection: Some(kobo_ui::TextSelection { context, offset }),
         });
         self
     }
@@ -1192,6 +1299,13 @@ impl ScreenBuilder {
     #[must_use]
     pub const fn reading(mut self, reading: bool) -> Self {
         self.reading = reading;
+        self
+    }
+
+    /// Uses a publisher font previously handed to the runtime for book prose.
+    #[must_use]
+    pub const fn reading_font(mut self, font: FontHandle) -> Self {
+        self.reading_font = Some(font);
         self
     }
 
@@ -2070,6 +2184,93 @@ impl ScreenBuilder {
         self
     }
 
+    /// Offers a value that moves one notch at a time.
+    ///
+    /// This is the shape a setting takes when its values form a line rather
+    /// than a set: type size, brightness, playback speed. A list of named
+    /// options would say the same thing in five rows of full-width boxes, and
+    /// on a panel that repaints in tenths of a second the reader would rather
+    /// tap the same spot twice than read five labels to find the one above the
+    /// one they have.
+    ///
+    /// A table, drawn as columns that line up rather than as a sentence.
+    ///
+    /// Rows are given exactly as the document had them, headings included:
+    /// the widths are worked out from all of them together, which is the only
+    /// way the columns can agree, and that arithmetic belongs to the layout
+    /// rather than to whoever is describing the page.
+    #[must_use]
+    pub fn table(mut self, rows: Vec<kobo_ui::TableRow>, weights: Vec<u16>) -> Self {
+        let id = self.next_id();
+        self.nodes.push(Node::Table { id, rows, weights });
+        self
+    }
+
+    /// The two ends carry pictures, not words, so the control needs no
+    /// translating and no room for a label. Whichever end has nowhere further
+    /// to go is drawn muted and stops answering taps.
+    #[must_use]
+    pub fn stepper(
+        mut self,
+        label: impl Into<String>,
+        less: impl AsRef<str>,
+        less_glyph: Glyph,
+        more: impl AsRef<str>,
+        more_glyph: Glyph,
+    ) -> Self {
+        let id = self.next_id();
+        let less =
+            BarAction::new(self.register(less.as_ref()), String::new()).with_glyph(less_glyph);
+        let more =
+            BarAction::new(self.register(more.as_ref()), String::new()).with_glyph(more_glyph);
+        self.nodes.push(Node::Stepper {
+            id,
+            label: label.into(),
+            less,
+            more,
+            less_state: ControlState::Enabled,
+            more_state: ControlState::Enabled,
+            fill: None,
+        });
+        self
+    }
+
+    /// Says which ends of the stepper just declared still have somewhere to go.
+    #[must_use]
+    pub fn stepper_ends(mut self, less: bool, more: bool) -> Self {
+        if let Some(Node::Stepper {
+            less_state,
+            more_state,
+            ..
+        }) = self.nodes.last_mut()
+        {
+            *less_state = if less {
+                ControlState::Enabled
+            } else {
+                ControlState::Disabled
+            };
+            *more_state = if more {
+                ControlState::Enabled
+            } else {
+                ControlState::Disabled
+            };
+        }
+        self
+    }
+
+    /// Draws a hairline under the stepper just declared showing where in its
+    /// range the value sits, as a percentage of the way along.
+    ///
+    /// Worth having where the reading is a number without a natural sense of
+    /// scale: "60%" says little until you can see it is past the middle.
+    #[must_use]
+    pub fn stepper_track(mut self, percent: u8) -> Self {
+        if let Some(Node::Stepper { fill, .. }) = self.nodes.last_mut() {
+            *fill = Some(percent.min(100));
+        }
+        self
+    }
+
     /// Asks a question by offering answers.
     ///
     /// Prefer this over a text field. Typing on this device means summoning a
@@ -2310,6 +2511,7 @@ impl ScreenBuilder {
             text_scale: self.text_scale,
             overlay: self.overlay,
             reading: self.reading,
+            reading_font: self.reading_font,
         }
     }
 
@@ -2437,6 +2639,14 @@ pub enum Command {
     },
     /// Release a picture the runtime is holding.
     DropPicture(PictureHandle),
+    /// Give the runtime a publisher font to hold for reading screens.
+    PutFont {
+        handle: FontHandle,
+        name: String,
+        bytes: Vec<u8>,
+    },
+    /// Release a publisher font and its glyph cache.
+    DropFont(FontHandle),
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -2517,11 +2727,13 @@ impl Context {
         nav_bar: bool,
         scale: kobo_ui::TextScale,
     ) -> Vec<Vec<String>> {
-        // Measured with the type actually at that size. Setting it on the
+        // Measured with the prose actually at that size. Setting it on the
         // metrics alone moves the margins and leaves the words the size they
         // were, which is how a page comes out measured for one size and drawn
-        // at another.
-        kobo_ui::with_text_scale(scale, || {
+        // at another. Only the prose moves: the bars above and below are
+        // interface and keep the reader's own size, which is what makes the
+        // page area the same whatever size the book is set at.
+        kobo_ui::with_reading_scale(scale, || {
             let metrics = self.metrics_at(scale);
             let mut area = metrics.prose_area_in(true, nav_bar, kobo_ui::Face::Reading);
             area.height = area
@@ -2928,6 +3140,43 @@ impl Context {
     /// application exits, so this is for one that outlives its usefulness.
     pub fn drop_picture(&mut self, handle: PictureHandle) {
         self.commands.push(Command::DropPicture(handle));
+    }
+
+    /// Hands a bounded embedded font to both local pagination and the runtime.
+    ///
+    /// Returns the handle only when the bytes are a supported TrueType or
+    /// OpenType face. Unsupported WOFF data and malformed fonts leave the
+    /// approved system reading face in place.
+    pub fn put_font(
+        &mut self,
+        handle: FontHandle,
+        name: impl Into<String>,
+        bytes: Vec<u8>,
+    ) -> Option<FontHandle> {
+        let name = name.into();
+        if bytes.is_empty()
+            || bytes.len() > MAX_FONT_BYTES
+            || name.len() > kobo_protocol::MAX_STRING_LEN
+        {
+            return None;
+        }
+        #[cfg(feature = "text")]
+        {
+            let font = kobo_text::BookFont::from_bytes(&bytes, &name, self.metrics).ok()?;
+            kobo_ui::put_book_typesetter(handle, Box::new(font));
+        }
+        self.commands.push(Command::PutFont {
+            handle,
+            name,
+            bytes,
+        });
+        Some(handle)
+    }
+
+    /// Releases a publisher font locally and in the runtime.
+    pub fn drop_font(&mut self, handle: FontHandle) {
+        kobo_ui::drop_book_typesetter(handle);
+        self.commands.push(Command::DropFont(handle));
     }
 
     /// Hands work to the runtime so the event loop keeps running.
@@ -3872,6 +4121,32 @@ impl Device<'_> {
         });
     }
 
+    /// Looks up one word using runtime-installed dictionaries without opening
+    /// the radio. The answer arrives through `on_device_result` as
+    /// `DeviceResult::Dictionary`, including an explicit empty result.
+    pub fn lookup_word(
+        &mut self,
+        word: impl Into<String>,
+        language: Option<impl Into<String>>,
+    ) -> bool {
+        let word = word.into();
+        let language = language.map(Into::into);
+        if word.trim().is_empty()
+            || word.len() > MAX_LOOKUP_WORD_BYTES
+            || language.as_deref().is_some_and(|language| {
+                language.is_empty()
+                    || language.len() > 16
+                    || !language
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+            })
+        {
+            return false;
+        }
+        self.request(DeviceRequest::LookupWord { word, language });
+        true
+    }
+
     /// Replaces the installed Cobalt with a published release archive.
     ///
     /// The runtime downloads `url`, refuses the bytes unless their SHA-256
@@ -3937,6 +4212,13 @@ fn whole_seconds(duration: Duration) -> u32 {
 pub trait KoboApp {
     fn on_start(&mut self, context: &mut Context);
     fn on_action(&mut self, context: &mut Context, action: ActionId);
+
+    /// Receives a held word in stable application text coordinates.
+    /// Applications that have not opted into selection retain the historical
+    /// hold action behavior.
+    fn on_text_hold(&mut self, context: &mut Context, action: ActionId, _hit: TextHit) {
+        self.on_action(context, action);
+    }
 
     fn on_resume(&mut self, _context: &mut Context) {}
 
@@ -4146,6 +4428,10 @@ impl<A: KoboApp> AppRunner<A> {
         self.dispatch(|app, context| app.on_action(context, action))
     }
 
+    pub fn text_hold(&mut self, action: ActionId, hit: TextHit) -> Vec<Command> {
+        self.dispatch(|app, context| app.on_text_hold(context, action, hit))
+    }
+
     pub fn resume(&mut self) -> Vec<Command> {
         self.dispatch(KoboApp::on_resume)
     }
@@ -4338,8 +4624,16 @@ impl<A: KoboApp> AppRunner<A> {
                 true
             }
             // Anything that can hand the panel to somebody else invalidates
-            // what we believe is on it.
-            Command::Launch(_) | Command::Exit => {
+            // what we believe is on it, and so does handing over pixels. A
+            // screen refers to a picture by handle, so filling that handle in
+            // later changes what is on the panel without changing a byte of
+            // the tree that describes it -- and the tree is all the
+            // comparison above can see. A book of plates opened on an
+            // illustration and showed an empty frame until something
+            // unrelated happened to redraw the page, because every repaint
+            // the pipeline asked for was thrown away here for being identical
+            // to the one already displayed.
+            Command::Launch(_) | Command::Exit | Command::PutPicture { .. } => {
                 self.displayed = None;
                 true
             }
@@ -4378,6 +4672,10 @@ impl<A: KoboApp> AppRunner<A> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ClientEvent {
     Action(ActionId),
+    TextHold {
+        action: ActionId,
+        hit: TextHit,
+    },
     Device(DeviceResult),
     Task {
         task: TaskId,
@@ -4548,6 +4846,16 @@ impl Client {
                 Command::Launch(name) => Message::Launch { name },
                 Command::PutPicture { .. } => unreachable!("handled above"),
                 Command::DropPicture(handle) => Message::DropPicture { handle },
+                Command::PutFont {
+                    handle,
+                    name,
+                    bytes,
+                } => Message::PutFont {
+                    handle,
+                    name,
+                    bytes,
+                },
+                Command::DropFont(handle) => Message::DropFont { handle },
             };
             self.send(message)?;
         }
@@ -4563,6 +4871,19 @@ impl Client {
     pub fn next_event(&mut self) -> Result<ClientEvent, ClientError> {
         match kobo_protocol::read_from(&mut self.stream)?.message {
             Message::Action { action } => Ok(ClientEvent::Action(action)),
+            Message::TextHold {
+                action,
+                context,
+                start,
+                end,
+            } => Ok(ClientEvent::TextHold {
+                action,
+                hit: TextHit {
+                    context,
+                    start,
+                    end,
+                },
+            }),
             Message::DeviceResult(result) => Ok(ClientEvent::Device(result)),
             Message::TaskOutcome { task, outcome } => Ok(ClientEvent::Task { task, outcome }),
             Message::StoreResult(result) => Ok(ClientEvent::Store(result)),
@@ -4667,6 +4988,60 @@ mod tests {
             sent(&runner.action(ActionId(1))),
             1,
             "a transfer that has moved must still repaint"
+        );
+    }
+
+    /// A picture arriving after the screen that refers to it still repaints.
+    ///
+    /// A screen names a picture by handle, so filling that handle in later
+    /// changes the panel without changing the tree. On the reader this was a
+    /// book of plates opening on an illustration and drawing an empty frame:
+    /// the pipeline decoded the plate, handed over the pixels and asked for a
+    /// repaint, and the repaint was thrown away for being identical to the
+    /// screen already displayed. The frame stayed empty until a page turn
+    /// happened to change the tree for some other reason.
+    #[test]
+    fn pixels_handed_over_after_the_screen_that_names_them_still_reach_the_panel() {
+        #[derive(Default)]
+        struct Plate {
+            filled: bool,
+        }
+        impl KoboApp for Plate {
+            fn on_start(&mut self, context: &mut Context) {
+                Self::paint(context);
+            }
+            fn on_action(&mut self, context: &mut Context, _action: ActionId) {
+                if !self.filled {
+                    self.filled = true;
+                    let _ = context.put_picture(PictureHandle(1), 2, 2, vec![0, 1, 2, 3]);
+                }
+                Self::paint(context);
+            }
+        }
+        impl Plate {
+            fn paint(context: &mut Context) {
+                // The same tree either way: what changed is behind the handle.
+                context.set_screen(ScreenBuilder::new("plate").text("A plate.").build());
+            }
+        }
+
+        let mut runner = AppRunner::new(Plate::default());
+        let sent = |commands: &[Command]| {
+            commands
+                .iter()
+                .filter(|command| matches!(command, Command::SetScreen(_)))
+                .count()
+        };
+        assert_eq!(sent(&runner.start()), 1, "the first screen always goes");
+        assert_eq!(
+            sent(&runner.action(ActionId(1))),
+            1,
+            "the plate was handed over and the page was never redrawn to show it"
+        );
+        assert_eq!(
+            sent(&runner.action(ActionId(1))),
+            0,
+            "an unchanged screen with no new pixels still costs nothing"
         );
     }
 
@@ -5962,7 +6337,7 @@ pub fn run_on<A: KoboApp>(name: &str, app: A, socket: &Path) -> Result<(), Clien
                 ClientEvent::CoverChanged(present) => {
                     client.send_commands(runner.cover_changed(present))?;
                 }
-                ClientEvent::Action(_) | ClientEvent::Exit => break,
+                ClientEvent::Action(_) | ClientEvent::TextHold { .. } | ClientEvent::Exit => break,
             }
         }
         client.send_commands([Command::Exit])?;
@@ -5972,6 +6347,7 @@ pub fn run_on<A: KoboApp>(name: &str, app: A, socket: &Path) -> Result<(), Clien
     loop {
         let commands = match client.next_event()? {
             ClientEvent::Action(action) => runner.action(action),
+            ClientEvent::TextHold { action, hit } => runner.text_hold(action, hit),
             ClientEvent::Device(result) => runner.device_result(result),
             ClientEvent::Task { task, outcome } => runner.task_outcome(task, outcome),
             ClientEvent::Store(result) => runner.store_result(result),

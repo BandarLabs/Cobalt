@@ -40,7 +40,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use kobo_doc::{Block, Document};
 use kobo_sdk::{BannerLevel, Screen, ScreenBuilder};
 use kobo_ui::TextScale;
-use kobo_ui::{quote_offsets, wrap_text_in, DisplayMetrics, Face, FontSize, ProseArea};
+use kobo_ui::{quote_offsets, wrap_text_in, DisplayMetrics, Face, FontSize, Glyph, ProseArea};
+use unicode_segmentation::UnicodeSegmentation;
 
 /// Where something is in a book, independent of how the book is set.
 ///
@@ -48,6 +49,45 @@ use kobo_ui::{quote_offsets, wrap_text_in, DisplayMetrics, Face, FontSize, Prose
 /// character offset into a rendering, and not a percentage: those all move
 /// when the type size does, and a bookmark that moves is not a bookmark.
 pub type Locator = u32;
+
+/// A stable position inside the logical text of one document block.
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+pub struct TextPosition {
+    pub block: Locator,
+    /// UTF-8 byte offset in the canonical block text, always on a grapheme
+    /// boundary. It is independent of pages, fonts, margins and orientation.
+    pub offset: u32,
+}
+
+/// A non-empty logical text range used by highlights, notes and lookups.
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+pub struct TextRange {
+    pub start: TextPosition,
+    pub end: TextPosition,
+}
+
+pub type AnnotationId = u64;
+
+/// Owner-authored marginalia attached to an immutable logical text range.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Annotation {
+    pub id: AnnotationId,
+    pub range: TextRange,
+    pub note: Option<String>,
+}
+
+pub const MAX_ANNOTATIONS: usize = 2_048;
+pub const MAX_NOTE_BYTES: usize = 4_096;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AnnotationFault {
+    MissingText,
+    Reversed,
+    NotGraphemeBoundary,
+    TooMany,
+    NoteTooLarge,
+    NotFound,
+}
 
 /// The depth a highlight's rule is set in. One, because a highlight is not a
 /// reply to anything, it just needs a margin to put the mark in.
@@ -66,6 +106,8 @@ const MIN_KEEP_LINES: usize = 2;
 /// document that somehow produced millions of them would take the memory of a
 /// device with 256 MB for everything.
 const MAX_PAGES: usize = 16_384;
+const MAX_NAVIGATION_HISTORY: usize = 64;
+pub const MAX_SEARCH_RESULTS: usize = 256;
 
 /// How near the foot of the downloaded text a chunk-in-flight is worth saying.
 ///
@@ -127,6 +169,16 @@ pub struct Piece {
     pub block: Locator,
     pub text: String,
     kind: Kind,
+    spans: Vec<kobo_ui::RichTextSpan>,
+    presentation: kobo_ui::ParagraphPresentation,
+    source_offset: Option<u32>,
+    /// The cells of a table row, and what each column of its table wants to
+    /// be. Empty for everything that is not a row.
+    ///
+    /// The widths are measured across the whole table when the first of its
+    /// rows is reached, and carried on every row of it, so a table split over
+    /// two pages keeps the same columns on both.
+    row: Option<(Vec<String>, Vec<u16>)>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -137,8 +189,13 @@ enum Kind {
     Quote,
     Preformatted,
     Item,
+    Caption,
     /// A picture the book set into its text.
     Picture,
+    /// One row of a table. Consecutive rows are drawn as one table.
+    Row {
+        header: bool,
+    },
     Rule,
     Break,
 }
@@ -150,6 +207,7 @@ impl Kind {
             // Level three is already small enough that the title size would
             // barely distinguish it from the text under it.
             Kind::Heading(_) => FontSize::Title,
+            Kind::Caption => FontSize::Caption,
             _ => FontSize::Body,
         }
     }
@@ -176,16 +234,35 @@ impl Kind {
 /// Small enough for the ordinary key-value store: a position, a type size, a
 /// light level, and two sorted sets of block indices. A book with a thousand
 /// marks in it is still only a few kilobytes.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Memory {
     /// The block that was at the top of the page.
     pub at: Locator,
     pub bookmarks: BTreeSet<Locator>,
     pub highlights: BTreeSet<Locator>,
+    /// Version-1 range annotations. The legacy paragraph set above remains a
+    /// migration input and is written until the platform annotation service
+    /// has shipped to every supported installation.
+    pub annotations: BTreeMap<AnnotationId, Annotation>,
+    pub next_annotation_id: AnnotationId,
     pub scale: TextScale,
     /// `None` means the reader has never set one here, so the device's own
     /// level is left alone. Zero is a real setting and is not the same thing.
     pub light: Option<u8>,
+}
+
+impl Default for Memory {
+    fn default() -> Self {
+        Self {
+            at: 0,
+            bookmarks: BTreeSet::new(),
+            highlights: BTreeSet::new(),
+            annotations: BTreeMap::new(),
+            next_annotation_id: 1,
+            scale: TextScale::default(),
+            light: None,
+        }
+    }
 }
 
 impl Memory {
@@ -211,6 +288,20 @@ impl Memory {
         for highlight in &self.highlights {
             let _ = writeln!(text, "high {highlight}");
         }
+        for annotation in self.annotations.values().take(MAX_ANNOTATIONS) {
+            let note = annotation.note.as_deref().unwrap_or_default();
+            let _ = writeln!(
+                text,
+                "ann {} {} {} {} {} {}",
+                annotation.id,
+                annotation.range.start.block,
+                annotation.range.start.offset,
+                annotation.range.end.block,
+                annotation.range.end.offset,
+                hex_encode(note.as_bytes()),
+            );
+        }
+        let _ = writeln!(text, "next-ann {}", self.next_annotation_id.max(1));
         text.into_bytes()
     }
 
@@ -243,11 +334,105 @@ impl Memory {
                         memory.highlights.insert(at);
                     }
                 }
+                "ann" if memory.annotations.len() < MAX_ANNOTATIONS => {
+                    if let Some(annotation) = decode_annotation(value) {
+                        memory.next_annotation_id = memory
+                            .next_annotation_id
+                            .max(annotation.id.saturating_add(1));
+                        memory
+                            .annotations
+                            .entry(annotation.id)
+                            .or_insert(annotation);
+                    }
+                }
+                "next-ann" => {
+                    // Never below what the annotations already read require.
+                    // A truncated or hand-edited memory file that names a low
+                    // identity would otherwise make the next new highlight
+                    // collide with an existing one, and creation is
+                    // idempotent by identity, so the new highlight would
+                    // silently never appear.
+                    memory.next_annotation_id = memory
+                        .next_annotation_id
+                        .max(value.parse().unwrap_or(1))
+                        .max(1);
+                }
                 _ => {}
             }
         }
         memory
     }
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len().saturating_mul(2));
+    for byte in bytes.iter().take(MAX_NOTE_BYTES) {
+        out.push(char::from(DIGITS[usize::from(byte >> 4)]));
+        out.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
+    }
+    out
+}
+
+fn hex_decode(value: &str) -> Option<Vec<u8>> {
+    if value.len() > MAX_NOTE_BYTES * 2 || value.len() % 2 != 0 {
+        return None;
+    }
+    value
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let high = char::from(pair[0]).to_digit(16)?;
+            let low = char::from(pair[1]).to_digit(16)?;
+            u8::try_from((high << 4) | low).ok()
+        })
+        .collect()
+}
+
+fn decode_annotation(value: &str) -> Option<Annotation> {
+    let mut fields = value.splitn(6, ' ');
+    let id = fields.next()?.parse().ok()?;
+    let start_block = fields.next()?.parse().ok()?;
+    let start_offset = fields.next()?.parse().ok()?;
+    let end_block = fields.next()?.parse().ok()?;
+    let end_offset = fields.next()?.parse().ok()?;
+    let note = String::from_utf8(hex_decode(fields.next().unwrap_or_default())?).ok()?;
+    let range = TextRange {
+        start: TextPosition {
+            block: start_block,
+            offset: start_offset,
+        },
+        end: TextPosition {
+            block: end_block,
+            offset: end_offset,
+        },
+    };
+    // A stored range that does not select anything cannot be repaired, and
+    // keeping it would hold an identity that a real highlight wants.
+    if range.start >= range.end {
+        return None;
+    }
+    Some(Annotation {
+        id,
+        range,
+        note: (!note.is_empty()).then_some(note),
+    })
+}
+
+fn bounded_note(note: Option<&str>) -> Result<Option<String>, AnnotationFault> {
+    let note = note.map(str::trim).filter(|note| !note.is_empty());
+    if note.is_some_and(|note| note.len() > MAX_NOTE_BYTES) {
+        return Err(AnnotationFault::NoteTooLarge);
+    }
+    Ok(note.map(str::to_owned))
+}
+
+fn is_grapheme_boundary(text: &str, offset: usize) -> bool {
+    offset <= text.len()
+        && (offset == text.len()
+            || text
+                .grapheme_indices(true)
+                .any(|(boundary, _)| boundary == offset))
 }
 
 /// The names a reader answers to.
@@ -281,6 +466,19 @@ pub mod action {
     pub const CONTENTS: &str = "reader-contents";
     /// Opens the links the page being read points at.
     pub const LINKS: &str = "reader-links";
+    /// One internal link target, distinct from a TOC/mark jump because it
+    /// records an origin that Back can return to.
+    pub const LINK: &str = "reader-link-";
+}
+
+/// One bounded in-book search match.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SearchHit {
+    pub at: Locator,
+    /// Byte offset of the match in the block's canonical text, on a character
+    /// boundary. Lets a result be navigated to and marked exactly.
+    pub offset: u32,
+    pub excerpt: String,
 }
 
 /// What an application still has to do about an action the reader handled.
@@ -329,6 +527,10 @@ pub struct Reader {
     /// one's description instead, and every other part of the book is
     /// unaffected.
     pictures: BTreeMap<String, kobo_ui::TilePicture>,
+    /// Publisher face installed by the application for this reading session.
+    publisher_font: Option<kobo_ui::FontHandle>,
+    /// Origins of internal links/search jumps, newest last and session-only.
+    navigation: Vec<Locator>,
 }
 
 impl Reader {
@@ -341,6 +543,8 @@ impl Reader {
     pub fn open(document: Document, memory: Memory, panel: &DisplayMetrics) -> Self {
         let mut reader = Self {
             pictures: BTreeMap::new(),
+            publisher_font: None,
+            navigation: Vec::new(),
             document,
             memory,
             pages: Vec::new(),
@@ -360,6 +564,10 @@ impl Reader {
     /// first, pages second: the block index does not change when the setting
     /// does, which is the whole reason a position is stored the way it is.
     fn repaginate(&mut self, panel: &DisplayMetrics) {
+        kobo_ui::with_reading_font(self.publisher_font, || self.repaginate_selected_font(panel));
+    }
+
+    fn repaginate_selected_font(&mut self, panel: &DisplayMetrics) {
         // The panel measured at the size this reader is set to. A page
         // measured at one size and drawn at another loses its last lines, and
         // the layout engine drops them without saying anything.
@@ -378,11 +586,14 @@ impl Reader {
             .height
             .saturating_sub(metrics.page_position_band())
             .max(1);
-        // Measured with the type at the size the screen will ask for. The
+        // Measured with the prose at the size the screen will ask for. The
         // scale has to be ambient while this runs, because the wrapper and the
         // line height both read it -- and the screen carries the same value,
-        // so what was measured here is what gets drawn.
-        let (mut pages, mut capped) = kobo_ui::with_text_scale(self.memory.scale, || {
+        // so what was measured here is what gets drawn. It is the reading
+        // scale rather than the interface one, so the bar above the page and
+        // the strip below it stay the size the reader set for the device and
+        // a larger book gets all of the room it asked for.
+        let (mut pages, mut capped) = kobo_ui::with_reading_scale(self.memory.scale, || {
             paginate(
                 &self.document,
                 &self.memory.highlights,
@@ -396,7 +607,7 @@ impl Reader {
         // this way round rather than the other cannot oscillate: more room
         // never turns one page into two.
         if pages.len() <= 1 {
-            let (whole, cut) = kobo_ui::with_text_scale(self.memory.scale, || {
+            let (whole, cut) = kobo_ui::with_reading_scale(self.memory.scale, || {
                 paginate(
                     &self.document,
                     &self.memory.highlights,
@@ -410,9 +621,173 @@ impl Reader {
                 capped = cut;
             }
         }
+        decorate_annotation_ranges(&self.document, &self.memory.annotations, &mut pages);
         self.pages = pages;
         self.cut = capped || self.document.truncated;
         self.page = self.page_holding(self.memory.at);
+    }
+
+    /// Creates a range highlight or marginal note exactly once for an
+    /// operation identifier supplied by the caller.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnnotationFault`] when the range is invalid, the annotation
+    /// limit is reached, or the note exceeds its bound.
+    pub fn create_annotation(
+        &mut self,
+        operation: AnnotationId,
+        range: TextRange,
+        note: Option<&str>,
+        panel: &DisplayMetrics,
+    ) -> Result<&Annotation, AnnotationFault> {
+        if self.memory.annotations.contains_key(&operation) {
+            return Ok(&self.memory.annotations[&operation]);
+        }
+        if self.memory.annotations.len() >= MAX_ANNOTATIONS {
+            return Err(AnnotationFault::TooMany);
+        }
+        self.validate_range(range)?;
+        let note = bounded_note(note)?;
+        self.memory.next_annotation_id = self
+            .memory
+            .next_annotation_id
+            .max(operation.saturating_add(1));
+        self.memory.annotations.insert(
+            operation,
+            Annotation {
+                id: operation,
+                range,
+                note,
+            },
+        );
+        self.repaginate(panel);
+        Ok(&self.memory.annotations[&operation])
+    }
+
+    /// Allocates a local operation identity and creates one annotation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnnotationFault`] when the range is invalid, the annotation
+    /// limit is reached, or the note exceeds its bound.
+    pub fn annotate(
+        &mut self,
+        range: TextRange,
+        note: Option<&str>,
+        panel: &DisplayMetrics,
+    ) -> Result<AnnotationId, AnnotationFault> {
+        // Creation is idempotent by identity, so a fresh annotation needs an
+        // identity nothing else holds. Reusing one would quietly return the
+        // annotation already there instead of marking the words just chosen.
+        let mut id = self.memory.next_annotation_id.max(1);
+        while self.memory.annotations.contains_key(&id) {
+            id = id.checked_add(1).ok_or(AnnotationFault::TooMany)?;
+        }
+        self.create_annotation(id, range, note, panel)?;
+        Ok(id)
+    }
+
+    /// Changes only an annotation's marginal note, never its selected words.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnnotationFault::NotFound`] for an unknown identity or
+    /// [`AnnotationFault::NoteTooLong`] when the replacement exceeds its bound.
+    pub fn edit_annotation_note(
+        &mut self,
+        id: AnnotationId,
+        note: Option<&str>,
+    ) -> Result<(), AnnotationFault> {
+        let note = bounded_note(note)?;
+        let annotation = self
+            .memory
+            .annotations
+            .get_mut(&id)
+            .ok_or(AnnotationFault::NotFound)?;
+        annotation.note = note;
+        Ok(())
+    }
+
+    /// Removes one annotation without changing any other reader state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnnotationFault::NotFound`] for an unknown identity.
+    pub fn remove_annotation(
+        &mut self,
+        id: AnnotationId,
+        panel: &DisplayMetrics,
+    ) -> Result<Annotation, AnnotationFault> {
+        let annotation = self
+            .memory
+            .annotations
+            .remove(&id)
+            .ok_or(AnnotationFault::NotFound)?;
+        self.repaginate(panel);
+        Ok(annotation)
+    }
+
+    /// Range annotations sorted by logical location and then stable identity.
+    #[must_use]
+    pub fn annotations(&self) -> Vec<&Annotation> {
+        let mut annotations = self.memory.annotations.values().collect::<Vec<_>>();
+        annotations.sort_by_key(|annotation| (annotation.range, annotation.id));
+        annotations
+    }
+
+    /// Exact selected words, independent of their current page layout.
+    #[must_use]
+    pub fn text_in(&self, range: TextRange) -> Option<String> {
+        self.validate_range(range).ok()?;
+        let mut out = String::new();
+        for block in range.start.block..=range.end.block {
+            let text = self
+                .document
+                .blocks
+                .get(usize::try_from(block).ok()?)?
+                .text()?;
+            let from = if block == range.start.block {
+                usize::try_from(range.start.offset).ok()?
+            } else {
+                0
+            };
+            let to = if block == range.end.block {
+                usize::try_from(range.end.offset).ok()?
+            } else {
+                text.len()
+            };
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            out.push_str(text.get(from..to)?);
+        }
+        Some(out)
+    }
+
+    fn validate_range(&self, range: TextRange) -> Result<(), AnnotationFault> {
+        if range.start >= range.end {
+            return Err(AnnotationFault::Reversed);
+        }
+        let start = self
+            .document
+            .blocks
+            .get(usize::try_from(range.start.block).map_err(|_| AnnotationFault::MissingText)?)
+            .and_then(Block::text)
+            .ok_or(AnnotationFault::MissingText)?;
+        let end = self
+            .document
+            .blocks
+            .get(usize::try_from(range.end.block).map_err(|_| AnnotationFault::MissingText)?)
+            .and_then(Block::text)
+            .ok_or(AnnotationFault::MissingText)?;
+        let start_at =
+            usize::try_from(range.start.offset).map_err(|_| AnnotationFault::MissingText)?;
+        let end_at = usize::try_from(range.end.offset).map_err(|_| AnnotationFault::MissingText)?;
+        if !is_grapheme_boundary(start, start_at) || !is_grapheme_boundary(end, end_at) {
+            return Err(AnnotationFault::NotGraphemeBoundary);
+        }
+        Ok(())
     }
 
     /// The page a block lands on.
@@ -487,6 +862,65 @@ impl Reader {
         self.repaginate(panel);
     }
 
+    /// Goes to a linked/search result while preserving an exact logical way
+    /// back. Page numbers are deliberately never stored here.
+    pub fn follow(&mut self, block: Locator, panel: &DisplayMetrics) {
+        if self.navigation.len() >= MAX_NAVIGATION_HISTORY {
+            self.navigation.remove(0);
+        }
+        self.navigation.push(self.top());
+        self.go_to(block, panel);
+    }
+
+    /// Returns from the most recent internal jump.
+    pub fn return_from_link(&mut self, panel: &DisplayMetrics) -> bool {
+        let Some(origin) = self.navigation.pop() else {
+            return false;
+        };
+        self.go_to(origin, panel);
+        true
+    }
+
+    /// Finds case-insensitive matches across the complete logical text.
+    ///
+    /// Results name blocks and offsets rather than derived pages, remain valid
+    /// after reflow, never include markup, and are capped before a hostile
+    /// query can make an unbounded result list.
+    #[must_use]
+    pub fn search(&self, query: &str, limit: usize) -> Vec<SearchHit> {
+        let query = query.trim().to_lowercase();
+        if query.is_empty() || query.len() > MAX_SEARCH_QUERY_BYTES || limit == 0 {
+            return Vec::new();
+        }
+        let limit = limit.min(MAX_SEARCH_RESULTS);
+        let mut hits = Vec::new();
+        for (index, block) in self.document.blocks.iter().enumerate() {
+            // A table row has no single string of its own -- that is the
+            // point of it -- but a reader searching for a word does not care
+            // which cell it sat in, so the row is joined for the search and
+            // for the excerpt that names it.
+            let joined = block.row_text();
+            let Some(text) = joined.as_deref().or_else(|| block.text()) else {
+                continue;
+            };
+            let Some((from, to)) = find_folded(text, &query) else {
+                continue;
+            };
+            let Ok(at) = Locator::try_from(index) else {
+                break;
+            };
+            hits.push(SearchHit {
+                at,
+                offset: u32::try_from(from).unwrap_or(u32::MAX),
+                excerpt: search_excerpt(text, from, to),
+            });
+            if hits.len() >= limit {
+                break;
+            }
+        }
+        hits
+    }
+
     #[must_use]
     pub const fn page_number(&self) -> usize {
         self.page + 1
@@ -519,10 +953,8 @@ impl Reader {
 
     /// One step larger, if there is one. Returns whether anything changed.
     pub fn larger(&mut self, panel: &DisplayMetrics) -> bool {
-        let next = match self.memory.scale {
-            TextScale::Default => TextScale::Large,
-            TextScale::Large => TextScale::ExtraLarge,
-            TextScale::ExtraLarge => return false,
+        let Some(next) = self.memory.scale.larger() else {
+            return false;
         };
         self.set_scale(next, panel);
         true
@@ -530,10 +962,8 @@ impl Reader {
 
     /// One step smaller, if there is one. Returns whether anything changed.
     pub fn smaller(&mut self, panel: &DisplayMetrics) -> bool {
-        let next = match self.memory.scale {
-            TextScale::ExtraLarge => TextScale::Large,
-            TextScale::Large => TextScale::Default,
-            TextScale::Default => return false,
+        let Some(next) = self.memory.scale.smaller() else {
+            return false;
         };
         self.set_scale(next, panel);
         true
@@ -553,6 +983,19 @@ impl Reader {
     #[must_use]
     pub const fn scale(&self) -> TextScale {
         self.memory.scale
+    }
+
+    /// Says the document stopped short of its own end.
+    ///
+    /// For a document fetched under a byte ceiling, where what arrived is
+    /// every word that was sent and still not every word there is. The last
+    /// page says so, which is the only place anybody could tell the difference
+    /// between a document that ended and one that simply stopped.
+    pub const fn mark_truncated(&mut self, truncated: bool) {
+        self.document.truncated = truncated;
+        if truncated {
+            self.cut = true;
+        }
     }
 
     /// Brightens the front light by one step, stopping at full.
@@ -842,6 +1285,8 @@ impl Reader {
                 if let Some(block) = target_of(other) {
                     if other.starts_with(action::MARK) {
                         self.toggle_highlight(block, panel);
+                    } else if other.starts_with(action::LINK) {
+                        self.follow(block, panel);
                     } else {
                         self.go_to(block, panel);
                     }
@@ -862,6 +1307,10 @@ impl Reader {
     /// would have to keep its own copy of that list in step, and the failure
     /// when it drifted would be a control that silently did nothing.
     pub fn act_on(&mut self, action: kobo_ui::ActionId, panel: &DisplayMetrics) -> Outcome {
+        if action == kobo_ui::ActionId::BACK && !self.navigation.is_empty() {
+            self.return_from_link(panel);
+            return Outcome::Save;
+        }
         let mut names: Vec<String> = vec![
             action::FORWARD.into(),
             action::BACK.into(),
@@ -875,9 +1324,15 @@ impl Reader {
             action::BOOKMARK.into(),
             action::HIGHLIGHTS.into(),
             action::MARKING.into(),
+            action::CONTENTS.into(),
+            action::LINKS.into(),
         ];
-        for step in 0..3 {
-            names.push(format!("{}{step}", action::SIZE));
+        // Every size there is, rather than a hard-coded three. The stepper's
+        // ends name the size either side of the one in force, so a range that
+        // grew without this list growing with it left the two controls tapping
+        // at nothing.
+        for scale in kobo_ui::TextScale::STEPS {
+            names.push(format!("{}{}", action::SIZE, scale.wire_value()));
         }
         // Only the blocks that are actually on a screen right now, so this
         // stays a few dozen comparisons rather than one per block in a novel.
@@ -891,7 +1346,7 @@ impl Reader {
             names.push(format!("{}{}", action::GO, entry.block));
         }
         for (_, block) in self.links_here() {
-            names.push(format!("{}{block}", action::GO));
+            names.push(format!("{}{block}", action::LINK));
         }
         let Some(name) = names
             .into_iter()
@@ -943,6 +1398,7 @@ impl Reader {
     fn book_screen(&self, title: &str) -> Screen {
         let mut screen = ScreenBuilder::new("reader")
             .reading(true)
+            .owns_back(!self.navigation.is_empty())
             .text_scale(self.memory.scale)
             // The book's name, ellipsised if it must be. The place it used to
             // hold moved to the foot, where a Kobo reader looks for it, which
@@ -957,12 +1413,29 @@ impl Reader {
             // is large enough to hide it.
             .top_bar_glyph(action::LIGHT, "Front light", kobo_ui::Glyph::Light)
             .top_bar_action(action::CONTROLS, "Aa");
-        for piece in self.page() {
+        if let Some(font) = self.publisher_font {
+            screen = screen.reading_font(font);
+        }
+        let pieces = self.page();
+        let mut at = 0;
+        while let Some(piece) = pieces.get(at) {
+            at += 1;
+            // Rows are gathered back into the table they were cut out of.
+            // Every row of it has to be handed over at once, because the
+            // columns can only be lined up by something that can see all of
+            // them -- which is the whole reason a table is not just prose.
+            if let Kind::Row { .. } = piece.kind {
+                let (rows, weights, next) = gather_table(pieces, at - 1);
+                at = next;
+                screen = screen.table(rows, weights);
+                continue;
+            }
             screen = match piece.kind {
                 Kind::Heading(_) => screen.heading(piece.text.clone()),
                 Kind::Marked | Kind::Quote | Kind::Item => {
                     screen.quote(HIGHLIGHT_DEPTH, piece.text.clone())
                 }
+                Kind::Caption => screen.secondary(piece.text.clone()),
                 Kind::Picture => {
                     // The handle is the application's to supply, because
                     // handing pixels to the runtime needs a `Context` and this
@@ -979,8 +1452,29 @@ impl Reader {
                 Kind::Rule => screen.divider(),
                 Kind::Break => screen.spacer(kobo_ui::Space::Small),
                 Kind::Body | Kind::Preformatted => {
-                    screen.text_linking(piece.text.clone(), self.links_in(piece))
+                    if let Some(offset) = piece.source_offset {
+                        screen.selectable_rich_text_linking(
+                            piece.text.clone(),
+                            piece.spans.clone(),
+                            piece.presentation,
+                            u64::from(piece.block),
+                            offset,
+                            self.links_in(piece),
+                        )
+                    } else if piece.spans.is_empty()
+                        && piece.presentation == kobo_ui::ParagraphPresentation::default()
+                    {
+                        screen.text_linking(piece.text.clone(), self.links_in(piece))
+                    } else {
+                        screen.rich_text_linking(
+                            piece.text.clone(),
+                            piece.spans.clone(),
+                            piece.presentation,
+                            self.links_in(piece),
+                        )
+                    }
                 }
+                Kind::Row { .. } => screen,
             };
         }
         if let Some(problem) = &self.problem {
@@ -1056,67 +1550,85 @@ impl Reader {
 
     /// What the light control opens: the front light and nothing else.
     fn light_panel(&self, panel: ScreenBuilder) -> ScreenBuilder {
-        // The level is drawn as well as stepped, because "dimmer" with no
-        // reading of what it is now tells somebody in a dark room nothing.
+        // The level is drawn as well as stepped, because a control that only
+        // says "dimmer" tells somebody in a dark room nothing about where they
+        // already are. The two ends carry a minus and a plus and no words at
+        // all: brightness is the one setting every device on earth draws the
+        // same way, and the reading between them is the label.
         let light = self.memory.light.unwrap_or(0);
         panel
-            .choose(
-                format!("Front light {light}%"),
-                [(action::DIMMER, "Dimmer"), (action::BRIGHTER, "Brighter")],
+            .stepper(
+                format!("{light}%"),
+                action::DIMMER,
+                Glyph::Minus,
+                action::BRIGHTER,
+                Glyph::Plus,
             )
-            .progress(light)
+            .stepper_ends(light > 0, light < 100)
+            .stepper_track(light)
     }
 
     /// What the "Aa" control opens: everything that is not the book itself.
     fn controls_panel(&self, panel: ScreenBuilder) -> ScreenBuilder {
-        let sizes = [
-            (TextScale::Default, "Standard"),
-            (TextScale::Large, "Large"),
-            (TextScale::ExtraLarge, "Largest"),
-        ];
-        let chosen = sizes
-            .iter()
-            .position(|(scale, _)| *scale == self.memory.scale)
-            .unwrap_or(0);
-        // The three sizes themselves rather than a plus and a minus. A stepper
-        // hides which size is in force and takes two taps and two full-page
-        // refreshes to cross the range; naming them says where the reader is
-        // and gets anywhere in one.
+        // A stepper rather than the three named sizes this used to offer.
+        // Naming them said where the reader was in one glance, which is worth
+        // something, but it cost three full-width boxes stacked down the panel
+        // and it fixed the range at three: somebody who found "Standard" a
+        // shade too small had nowhere to go but a size half again as large.
+        // Nine steps of ten percent, walked a notch at a time, is the shape
+        // every other device gives this setting, and it fits on one line.
+        let scale = self.memory.scale;
+        let smaller = scale.smaller().unwrap_or(scale);
+        let larger = scale.larger().unwrap_or(scale);
         let mut panel = panel
-            .choose(
-                "Type size",
-                sizes
-                    .iter()
-                    .enumerate()
-                    .map(|(step, (_, label))| (format!("{}{step}", action::SIZE), *label)),
+            .stepper(
+                format!("{}%", scale.percent()),
+                format!("{}{}", action::SIZE, smaller.wire_value()),
+                Glyph::Minus,
+                format!("{}{}", action::SIZE, larger.wire_value()),
+                Glyph::Plus,
             )
-            .chosen(chosen);
+            .stepper_ends(scale.smaller().is_some(), scale.larger().is_some())
+            .stepper_track(
+                u8::try_from(scale.step().saturating_mul(100) / (TextScale::STEPS.len() - 1))
+                    .unwrap_or(100),
+            );
 
+        // Everything else the panel holds is one tap that does one thing, and
+        // each of them has a picture the reader has already met somewhere: a
+        // ribbon for a bookmark, a pen for a mark, a book for its own contents.
+        // Set as a row of pictures rather than a column of sentences, the whole
+        // panel now ends about where the type size used to.
         panel = panel.divider();
-        panel = panel.button(
-            action::BOOKMARK,
+        let mut row = vec![(
+            action::BOOKMARK.to_owned(),
             if self.is_bookmarked() {
-                "Remove bookmark"
+                "Bookmarked"
             } else {
-                "Bookmark this page"
+                "Bookmark"
             },
-        );
+            Glyph::Bookmark,
+        )];
         if !self.markable().is_empty() {
-            panel = panel.button(action::MARKING, "Mark a paragraph");
+            row.push((action::MARKING.to_owned(), "Mark", Glyph::Tag));
         }
         // Offered only for a book that published its own contents. A button
         // that opens an empty list is a dead end somebody has to back out of,
         // and the parts worked out from headings are not a contents list.
         if !self.document.contents.is_empty() {
-            panel = panel.button(action::CONTENTS, "Contents");
+            row.push((action::CONTENTS.to_owned(), "Contents", Glyph::Book));
         }
         // Offered only where there is somewhere to go from, so the control
         // appears on the pages that have footnotes and stays out of the way
         // on the ones that do not.
         if !self.links_here().is_empty() {
-            panel = panel.button(action::LINKS, "Links on this page");
+            row.push((action::LINKS.to_owned(), "Links", Glyph::Globe));
         }
-        panel.button(action::HIGHLIGHTS, "Notes")
+        row.push((action::HIGHLIGHTS.to_owned(), "Notes", Glyph::Note));
+        // Four across at most: a fifth control on this panel would be narrower
+        // than a fingertip, and the row wraps rather than shrinking.
+        let columns = u8::try_from(row.len().min(4)).unwrap_or(4);
+        panel.controls(columns, row)
     }
 
     /// Where this page points, each line a way there.
@@ -1137,7 +1649,7 @@ impl Reader {
                 .build();
         }
         for (text, block) in here {
-            screen = screen.button(format!("{}{block}", action::GO), text);
+            screen = screen.button(format!("{}{block}", action::LINK), text);
         }
         screen.build()
     }
@@ -1172,7 +1684,7 @@ impl Reader {
             if found.iter().any(|(_, from, to)| start < *to && *from < end) {
                 continue;
             }
-            found.push((format!("{}{block}", action::GO), start, end));
+            found.push((format!("{}{block}", action::LINK), start, end));
         }
         found
     }
@@ -1229,10 +1741,27 @@ impl Reader {
         let mut screen = ScreenBuilder::new("reader-marks").top_bar(title);
         let marks = self.highlights();
         let places = self.bookmarks();
-        if marks.is_empty() && places.is_empty() {
+        let annotations = self.annotations();
+        if marks.is_empty() && places.is_empty() && annotations.is_empty() {
             screen = screen.secondary(
                 "Nothing is marked in this book yet. Mark a paragraph to keep the words, or bookmark a page to keep your place.",
             );
+        }
+        if !annotations.is_empty() {
+            screen = screen.heading("Highlights & marginalia");
+            for annotation in annotations {
+                let selected = self.text_in(annotation.range).map_or_else(
+                    || "Unavailable passage".to_owned(),
+                    |text| first_words(&text),
+                );
+                let label = annotation.note.as_ref().map_or(selected.clone(), |note| {
+                    format!("{selected} — {}", first_words(note))
+                });
+                screen = screen.button(
+                    format!("{}{}", action::GO, annotation.range.start.block),
+                    label,
+                );
+            }
         }
         if !marks.is_empty() {
             screen = screen.heading("Marked passages");
@@ -1305,6 +1834,7 @@ impl Reader {
 pub fn target_of(name: &str) -> Option<Locator> {
     name.strip_prefix(action::MARK)
         .or_else(|| name.strip_prefix(action::GO))
+        .or_else(|| name.strip_prefix(action::LINK))
         .and_then(|rest| rest.parse().ok())
 }
 
@@ -1327,11 +1857,145 @@ fn first_words(text: &str) -> String {
     out
 }
 
+/// The longest query the in-book scanner will run.
+///
+/// The scan is proportional to query length, so this is what keeps a hostile
+/// query from turning a page turn into a long walk over the whole book.
+pub const MAX_SEARCH_QUERY_BYTES: usize = 128;
+
+/// The bounds in `text` of the first match of the already-lowercased `query`.
+///
+/// The book's own characters are folded as the scan walks them rather than
+/// searching a lowercased copy of the block: case folding can change a
+/// string's length, and an offset taken from the copy would not name the same
+/// words. A match that would end part-way through a character is not
+/// reported, so a result can never cut a character in half.
+fn find_folded(text: &str, query: &str) -> Option<(usize, usize)> {
+    if query.is_empty() {
+        return None;
+    }
+    'start: for (at, _) in text.char_indices() {
+        let mut needle = query.chars();
+        let mut end = at;
+        for character in text[at..].chars() {
+            for folded in character.to_lowercase() {
+                match needle.next() {
+                    Some(wanted) if wanted == folded => {}
+                    // The characters differ, or the query would end inside
+                    // this one. Neither is a match starting here.
+                    _ => continue 'start,
+                }
+            }
+            end += character.len_utf8();
+            if needle.clone().next().is_none() {
+                return Some((at, end));
+            }
+        }
+    }
+    None
+}
+
+/// Context around one match, with the matched words inside it.
+///
+/// A result is context rather than a second copy of a paragraph, and it is
+/// the words that were searched for that a reader is looking to recognise, so
+/// the window is placed around the match rather than at the start of the
+/// block. Cuts are on character boundaries, and on words where there is one
+/// close enough to cut at.
+fn search_excerpt(text: &str, from: usize, to: usize) -> String {
+    const BEFORE: usize = 24;
+    const AFTER: usize = 48;
+
+    let mut start = from;
+    for (offset, _) in text[..from].char_indices().rev().take(BEFORE) {
+        start = offset;
+    }
+    // Begin at a word, unless that would eat into the match itself.
+    if start > 0 {
+        if let Some(space) = text[start..from].find(' ') {
+            start += space + 1;
+        }
+    }
+    let mut end = to;
+    for (offset, character) in text[to..].char_indices().take(AFTER) {
+        end = to + offset + character.len_utf8();
+    }
+    if end < text.len() {
+        if let Some(space) = text[to..end].rfind(' ') {
+            end = to + space;
+        }
+    }
+    let mut excerpt = String::new();
+    if start > 0 {
+        excerpt.push('\u{2026}');
+    }
+    excerpt.push_str(text[start..end].trim());
+    if end < text.len() {
+        excerpt.push('\u{2026}');
+    }
+    excerpt
+}
+
 /// Breaks a document into pages that fit, at their real sizes.
 ///
 /// Returns the pages, and whether it stopped at the ceiling with book left --
 /// which the caller has to say out loud rather than present as an ending.
 impl Reader {
+    /// Selects a publisher font already installed in the SDK and runtime.
+    ///
+    /// Pagination is rebuilt immediately because a different face changes
+    /// line widths even at the same nominal size.
+    pub fn set_publisher_font(
+        &mut self,
+        font: Option<kobo_ui::FontHandle>,
+        panel: &DisplayMetrics,
+    ) {
+        if self.publisher_font == font {
+            return;
+        }
+        self.publisher_font = font;
+        self.repaginate(panel);
+    }
+
+    /// The first usable TrueType/OpenType face embedded by the publisher.
+    ///
+    /// The map is deterministic, so the same book chooses the same face in
+    /// the simulator and on-device. Compressed web fonts remain available in
+    /// [`Document::fonts`] for diagnostics but are not misreported as usable.
+    #[must_use]
+    pub fn preferred_publisher_font(&self) -> Option<(&str, &[u8])> {
+        let requested = self
+            .document
+            .rich
+            .values()
+            .find_map(|rich| rich.style.font_family.as_deref());
+        self.document
+            .fonts
+            .iter()
+            .filter(|(_, font)| is_outline_font(&font.bytes))
+            .find(|(_, font)| {
+                requested.is_some_and(|requested| {
+                    font.family
+                        .as_deref()
+                        .is_some_and(|family| family.eq_ignore_ascii_case(requested))
+                })
+            })
+            .or_else(|| {
+                self.document
+                    .fonts
+                    .iter()
+                    .filter(|(_, font)| is_outline_font(&font.bytes))
+                    .find(|(_, font)| font.family.is_some())
+            })
+            .or_else(|| {
+                self.document
+                    .fonts
+                    .iter()
+                    .find(|(_, font)| is_outline_font(&font.bytes))
+            })
+            .map(|(name, font)| (name.as_str(), font.bytes.as_slice()))
+    }
+
     /// Hands over the pictures this book's text refers to.
     ///
     /// Keyed by the name the book stored each one under, which is what a
@@ -1418,6 +2082,13 @@ impl Reader {
         };
         self.pictures.get(name).copied()
     }
+}
+
+fn is_outline_font(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"\0\x01\0\0")
+        || bytes.starts_with(b"OTTO")
+        || bytes.starts_with(b"true")
+        || bytes.starts_with(b"typ1")
 }
 
 /// The tallest a picture inside the text may be drawn, in millimetres.
@@ -1525,6 +2196,274 @@ fn break_page(pages: &mut Vec<Vec<Piece>>, page: &mut Vec<Piece>, used: &mut i32
     *used = 0;
 }
 
+/// Ends a non-empty page because the publisher explicitly requested one.
+fn force_page_break(pages: &mut Vec<Vec<Piece>>, page: &mut Vec<Piece>, used: &mut i32) {
+    if !page.is_empty() {
+        pages.push(std::mem::take(page));
+        *used = 0;
+    }
+}
+
+fn decorate_annotation_ranges(
+    document: &Document,
+    annotations: &BTreeMap<AnnotationId, Annotation>,
+    pages: &mut [Vec<Piece>],
+) {
+    let mut cursors = BTreeMap::<Locator, usize>::new();
+    for piece in pages.iter_mut().flat_map(|page| page.iter_mut()) {
+        let Some(source) = document
+            .blocks
+            .get(usize::try_from(piece.block).unwrap_or(usize::MAX))
+            .and_then(Block::text)
+        else {
+            continue;
+        };
+        let cursor = cursors.entry(piece.block).or_default();
+        let Some(relative) = source
+            .get(*cursor..)
+            .and_then(|rest| rest.find(&piece.text))
+        else {
+            // This piece could not be placed in its block. Leaving the cursor
+            // where it is would let a later piece match text this one already
+            // covered, which puts a highlight on the wrong words. Retiring the
+            // block instead costs selection on the rest of it and keeps every
+            // offset that is reported truthful.
+            *cursor = source.len();
+            continue;
+        };
+        let piece_from = *cursor + relative;
+        let piece_to = piece_from + piece.text.len();
+        *cursor = piece_to;
+        piece.source_offset = u32::try_from(piece_from).ok();
+        let mut ranges = Vec::new();
+        for annotation in annotations.values() {
+            if piece.block < annotation.range.start.block
+                || piece.block > annotation.range.end.block
+            {
+                continue;
+            }
+            let from = if piece.block == annotation.range.start.block {
+                usize::try_from(annotation.range.start.offset).unwrap_or(usize::MAX)
+            } else {
+                0
+            };
+            let to = if piece.block == annotation.range.end.block {
+                usize::try_from(annotation.range.end.offset).unwrap_or(0)
+            } else {
+                source.len()
+            };
+            let start = from.max(piece_from);
+            let end = to.min(piece_to);
+            if start < end {
+                ranges.push((start - piece_from, end - piece_from));
+            }
+        }
+        if !ranges.is_empty() {
+            piece.spans = highlighted_spans(&piece.spans, &piece.text, &ranges);
+        }
+    }
+}
+
+/// Moves `offset` back to the nearest character boundary at or before it.
+///
+/// A stored annotation names an offset in the book as it was parsed. If the
+/// bytes behind it change -- a re-downloaded edition, a book re-parsed at a
+/// different boundary -- that offset can land inside a character. A span cut
+/// there is refused by the wire encoding, which would take the reading
+/// application down rather than draw the page.
+fn snapped(text: &str, offset: usize) -> usize {
+    let mut offset = offset.min(text.len());
+    while !text.is_char_boundary(offset) {
+        offset -= 1;
+    }
+    offset
+}
+
+fn highlighted_spans(
+    publisher: &[kobo_ui::RichTextSpan],
+    text: &str,
+    highlights: &[(usize, usize)],
+) -> Vec<kobo_ui::RichTextSpan> {
+    let length = text.len();
+    let mut boundaries = BTreeSet::from([0, length]);
+    for span in publisher {
+        boundaries.insert(snapped(text, span.start));
+        boundaries.insert(snapped(text, span.end));
+    }
+    for &(start, end) in highlights {
+        boundaries.insert(snapped(text, start));
+        boundaries.insert(snapped(text, end));
+    }
+    let boundaries = boundaries.into_iter().collect::<Vec<_>>();
+    let mut spans: Vec<kobo_ui::RichTextSpan> = Vec::new();
+    for window in boundaries.windows(2) {
+        let (start, end) = (window[0], window[1]);
+        if start >= end {
+            continue;
+        }
+        let mut presentation = publisher
+            .iter()
+            .find(|span| span.start <= start && start < span.end)
+            .map_or_else(kobo_ui::TextPresentation::default, |span| span.presentation);
+        presentation.highlighted = highlights
+            .iter()
+            .any(|&(from, to)| from < end && start < to);
+        if presentation == kobo_ui::TextPresentation::default() {
+            continue;
+        }
+        if let Some(last) = spans
+            .last_mut()
+            .filter(|last| last.end == start && last.presentation == presentation)
+        {
+            last.end = end;
+        } else {
+            spans.push(kobo_ui::RichTextSpan {
+                start,
+                end,
+                presentation,
+            });
+        }
+    }
+    if spans.len() > kobo_ui::MAX_RICH_TEXT_SPANS {
+        spans.truncate(kobo_ui::MAX_RICH_TEXT_SPANS);
+        if let Some(last) = spans.last_mut() {
+            last.end = length;
+            last.presentation.highlighted = highlights
+                .iter()
+                .any(|&(from, to)| from < length && last.start < to);
+        }
+    }
+    spans
+}
+
+/// Gathers the run of rows starting at `from` back into the one table they
+/// were cut out of.
+///
+/// Returns the rows, the widths their columns were measured at, and the index
+/// of the first piece after them.
+fn gather_table(pieces: &[Piece], from: usize) -> (Vec<kobo_ui::TableRow>, Vec<u16>, usize) {
+    let mut rows = Vec::new();
+    let mut weights = Vec::new();
+    let mut at = from;
+    while let Some(piece) = pieces.get(at) {
+        let (Kind::Row { header }, Some((cells, columns))) = (piece.kind, &piece.row) else {
+            break;
+        };
+        if weights.is_empty() {
+            weights.clone_from(columns);
+        }
+        rows.push(kobo_ui::TableRow {
+            header,
+            cells: cells.clone(),
+        });
+        at += 1;
+    }
+    (rows, weights, at)
+}
+
+/// Back to a plain index, for looking at the blocks around one.
+fn index_of(locator: Locator) -> usize {
+    usize::try_from(locator).unwrap_or(usize::MAX)
+}
+
+/// What each column of the table starting at `from` wants to be.
+///
+/// Measured over every row of the table at once, and in pixels, because that
+/// is the only unit both this and the layout agree on. The layout squeezes
+/// these to fit the panel; the point of measuring them here is that a table
+/// split across two pages is squeezed by the same amounts on both.
+fn table_columns(blocks: &[Block], from: usize, area: ProseArea) -> Vec<u16> {
+    let mut wants: Vec<u16> = Vec::new();
+    for block in &blocks[from.min(blocks.len())..] {
+        let Block::Row { cells, .. } = block else {
+            break;
+        };
+        for (column, cell) in cells.iter().take(kobo_ui::MAX_TABLE_COLUMNS).enumerate() {
+            let width = kobo_ui::measure_text_in(cell, FontSize::Body, area.face)
+                .0
+                .clamp(0, i32::from(u16::MAX));
+            let width = u16::try_from(width).unwrap_or(u16::MAX);
+            match wants.get_mut(column) {
+                Some(want) => *want = (*want).max(width),
+                None => wants.push(width),
+            }
+        }
+    }
+    wants
+}
+
+/// The width the layout will give each column of a table, and whether it
+/// gave up on columns and stacked the cells instead.
+///
+/// This repeats the layout's arithmetic rather than asking it, for the same
+/// reason [`picture_height`] repeats the picture's: pagination has to be a
+/// pure function of the document, or the page a row lands on depends on what
+/// happened to be drawn before it.
+fn column_widths(columns: &[u16], metrics: &DisplayMetrics, area: ProseArea) -> (Vec<i32>, bool) {
+    let count = columns.len().min(kobo_ui::MAX_TABLE_COLUMNS);
+    if count == 0 {
+        return (Vec::new(), true);
+    }
+    let gap = metrics.space(kobo_ui::Space::Small);
+    let between = gap.saturating_mul(i32::try_from(count).unwrap_or(1) - 1);
+    let usable = (area.width - between).max(0);
+    let minimum = metrics.tenth_mm(kobo_ui::MIN_TABLE_COLUMN_TENTH_MM);
+    let wants: Vec<i32> = columns[..count]
+        .iter()
+        .map(|want| i32::from(*want))
+        .collect();
+    let total: i32 = wants.iter().copied().fold(0, i32::saturating_add);
+    let widths: Vec<i32> = if total <= usable {
+        wants
+    } else if total > 0 {
+        wants
+            .iter()
+            .map(|want| want.saturating_mul(usable) / total)
+            .collect()
+    } else {
+        vec![usable / i32::try_from(count).unwrap_or(1); count]
+    };
+    let stacked = widths.iter().any(|width| *width < minimum);
+    (widths, stacked)
+}
+
+/// How tall a row will be drawn, so a page can be packed around it.
+fn row_height(cells: &[String], columns: &[u16], metrics: &DisplayMetrics, area: ProseArea) -> i32 {
+    let line = FontSize::Body.line_height_in(area.face).max(1);
+    let (widths, stacked) = column_widths(columns, metrics, area);
+    if widths.is_empty() {
+        return line;
+    }
+    // Past its floor the layout stops drawing columns and sets each cell as
+    // its own full-width lines, so the row is as tall as all of them
+    // together rather than as tall as the tallest of them.
+    if stacked {
+        let mut height = metrics.space(kobo_ui::Space::Small);
+        for cell in cells.iter().take(widths.len()) {
+            if cell.trim().is_empty() {
+                continue;
+            }
+            let lines = wrap_text_in(cell, area.width.max(1), FontSize::Body, area.face);
+            height = height.saturating_add(lines_high(lines.len(), line));
+        }
+        return height.max(line);
+    }
+    let mut tallest = line;
+    for (column, cell) in cells.iter().take(widths.len()).enumerate() {
+        let width = widths.get(column).copied().unwrap_or(0).max(1);
+        let lines = wrap_text_in(cell, width, FontSize::Body, area.face);
+        tallest = tallest.max(lines_high(lines.len(), line));
+    }
+    tallest
+}
+
+fn lines_high(lines: usize, line: i32) -> i32 {
+    i32::try_from(lines)
+        .unwrap_or(1)
+        .max(1)
+        .saturating_mul(line)
+}
+
 // A packing loop: measure, place, and break when the page is full. Splitting
 // it would mean handing the same six pieces of state to each half, and the
 // hand-off is where an off-by-one in a page break would hide.
@@ -1545,8 +2484,13 @@ fn paginate(
     }
     let mut capped = false;
     let chapter_starts = chapter_starts_of(document);
+    // What the columns of the table currently being laid out want to be,
+    // measured over all of its rows at once. Held across the loop so that a
+    // table taller than a page keeps its columns on the page it spills onto.
+    let mut columns: Vec<u16> = Vec::new();
 
     for (index, block) in document.blocks.iter().enumerate() {
+        let rich = document.rich.get(&index);
         let starts_chapter = chapter_starts.contains(&index);
         let Ok(index) = Locator::try_from(index) else {
             break;
@@ -1564,9 +2508,39 @@ fn paginate(
                 continue;
             }
         }
+        if rich.is_some_and(|rich| rich.style.page_break_before) {
+            force_page_break(&mut pages, &mut page, &mut used);
+        }
         let size = kind.size();
-        let height = size.line_height_in(area.face);
-        let (_, width) = quote_offsets(metrics, area.width, kind.depth());
+        let natural_height = size.line_height_in(area.face);
+        // A publisher face reports its own metrics, and a structurally valid
+        // font whose ascent, descent and line gap are all zero would make this
+        // a divisor of zero further down. A book must not be able to choose
+        // the panic, so a line is at least one pixel tall.
+        let natural_height = natural_height.max(1);
+        let height = rich
+            .map_or(natural_height, |rich| {
+                natural_height
+                    .saturating_mul(i32::from(rich.style.line_height_percent.clamp(80, 250)))
+                    / 100
+            })
+            .max(1);
+        let (_, mut width) = quote_offsets(metrics, area.width, kind.depth());
+        let rich_layout = rich.filter(|_| matches!(kind, Kind::Body | Kind::Preformatted));
+        let extra_height = rich_layout.map_or(0, |rich| {
+            natural_height.saturating_mul(i32::from(
+                rich.style
+                    .margin_before_em
+                    .saturating_add(rich.style.margin_after_em),
+            )) / 100
+        });
+        if let Some(rich) = rich_layout {
+            let indent = kobo_ui::measure_text_in("M", kobo_ui::FontSize::Body, area.face)
+                .0
+                .saturating_mul(i32::from(rich.style.first_line_indent_em))
+                / 100;
+            width = width.saturating_sub(indent.max(0)).max(1);
+        }
 
         // Furniture takes a line's worth of room and carries no words, so it
         // is placed rather than wrapped -- and never left alone at the top of
@@ -1585,9 +2559,45 @@ fn paginate(
                 block: index,
                 text: String::new(),
                 kind,
+                spans: Vec::new(),
+                presentation: kobo_ui::ParagraphPresentation::default(),
+                source_offset: None,
+                row: None,
             });
             continue;
         }
+
+        // A table row is placed whole. Its cells are laid out side by side,
+        // so unlike prose there is no first half of it that reads correctly
+        // on its own: half a row is the top half of several columns at once.
+        if let Block::Row { cells, .. } = block {
+            if columns.is_empty() {
+                columns = table_columns(&document.blocks, index_of(index), area);
+            }
+            let height = row_height(cells, &columns, metrics, area);
+            if !page.is_empty() && used + gap + height > area.height {
+                pages.push(std::mem::take(&mut page));
+                used = 0;
+            }
+            used += if page.is_empty() {
+                height
+            } else {
+                gap + height
+            };
+            page.push(Piece {
+                block: index,
+                text: String::new(),
+                kind,
+                spans: Vec::new(),
+                presentation: kobo_ui::ParagraphPresentation::default(),
+                source_offset: None,
+                row: Some((cells.clone(), columns.clone())),
+            });
+            continue;
+        }
+        // Anything that is not a row ends the table before it, so the next
+        // one is measured afresh.
+        columns.clear();
 
         // A picture is placed whole or moved to the next page: there is no
         // half of one to leave behind, which is what the line-by-line packing
@@ -1602,6 +2612,10 @@ fn paginate(
                         block: index,
                         text: alt.clone(),
                         kind,
+                        spans: Vec::new(),
+                        presentation: kobo_ui::ParagraphPresentation::default(),
+                        source_offset: None,
+                        row: None,
                     },
                     &mut Placing {
                         pages: &mut pages,
@@ -1629,12 +2643,13 @@ fn paginate(
         }
 
         let mut placed = 0;
+        let mut source_at = 0usize;
         while placed < lines.len() {
             let room = area.height - used - if page.is_empty() { 0 } else { gap };
-            let fits = if room < height {
+            let fits = if room < height.saturating_add(extra_height) {
                 0
             } else {
-                usize::try_from(room / height).unwrap_or(usize::MAX)
+                usize::try_from((room - extra_height) / height).unwrap_or(usize::MAX)
             };
             let left = lines.len() - placed;
             // Either the rest fits, or enough of it fits to be worth breaking:
@@ -1652,12 +2667,25 @@ fn paginate(
                     // One paragraph taller than the whole page. Cutting it
                     // anywhere beats looping forever, and the reader would far
                     // rather see the words than an empty panel.
-                    let forced = usize::try_from(area.height / height).unwrap_or(1).max(1);
+                    let forced = usize::try_from(
+                        area.height.saturating_sub(extra_height).max(height) / height,
+                    )
+                    .unwrap_or(1)
+                    .max(1);
                     let end = (placed + forced).min(lines.len());
+                    let text = lines[placed..end].join(" ");
+                    let (spans, presentation) =
+                        piece_presentation(rich, text.as_str(), &mut source_at);
+                    let presentation =
+                        fragment_presentation(presentation, placed == 0, end == lines.len());
                     page.push(Piece {
                         block: index,
-                        text: lines[placed..end].join(" "),
+                        text,
                         kind,
+                        spans,
+                        presentation,
+                        source_offset: None,
+                        row: None,
                     });
                     placed = end;
                 }
@@ -1671,13 +2699,27 @@ fn paginate(
             if !page.is_empty() {
                 used += gap;
             }
-            used += i32::try_from(take).unwrap_or(i32::MAX) * height;
+            let text = lines[placed..placed + take].join(" ");
+            let (spans, presentation) = piece_presentation(rich, text.as_str(), &mut source_at);
+            let presentation =
+                fragment_presentation(presentation, placed == 0, placed + take == lines.len());
+            used += i32::try_from(take)
+                .unwrap_or(i32::MAX)
+                .saturating_mul(height)
+                .saturating_add(presentation_height(presentation, natural_height));
             page.push(Piece {
                 block: index,
-                text: lines[placed..placed + take].join(" "),
+                text,
                 kind,
+                spans,
+                presentation,
+                source_offset: None,
+                row: None,
             });
             placed += take;
+        }
+        if rich.is_some_and(|rich| rich.style.page_break_after) {
+            force_page_break(&mut pages, &mut page, &mut used);
         }
     }
     if !page.is_empty() {
@@ -1696,10 +2738,95 @@ fn kind_of(block: &Block, marked: bool) -> Kind {
         Block::Quote(_) => Kind::Quote,
         Block::Preformatted(_) => Kind::Preformatted,
         Block::Item { .. } => Kind::Item,
+        Block::Caption(_) => Kind::Caption,
         Block::Picture { .. } => Kind::Picture,
+        Block::Row { header, .. } => Kind::Row { header: *header },
         Block::Rule => Kind::Rule,
         Block::Break => Kind::Break,
     }
+}
+
+fn piece_presentation(
+    rich: Option<&kobo_doc::RichBlock>,
+    piece: &str,
+    source_at: &mut usize,
+) -> (Vec<kobo_ui::RichTextSpan>, kobo_ui::ParagraphPresentation) {
+    let Some(rich) = rich else {
+        return (Vec::new(), kobo_ui::ParagraphPresentation::default());
+    };
+    let whole: String = rich.spans.iter().map(|span| span.text.as_str()).collect();
+    let Some(relative) = whole.get(*source_at..).and_then(|rest| rest.find(piece)) else {
+        // Retire the block rather than leave the cursor behind: a later piece
+        // that matched earlier text would be given another piece's emphasis.
+        *source_at = whole.len();
+        return (Vec::new(), paragraph_presentation(&rich.style));
+    };
+    let from = *source_at + relative;
+    let to = from + piece.len();
+    *source_at = to;
+    let mut spans = Vec::new();
+    let mut cursor = 0usize;
+    for span in &rich.spans {
+        let span_from = cursor;
+        let span_to = cursor + span.text.len();
+        cursor = span_to;
+        let start = span_from.max(from);
+        let end = span_to.min(to);
+        if start >= end {
+            continue;
+        }
+        spans.push(kobo_ui::RichTextSpan {
+            start: start - from,
+            end: end - from,
+            presentation: kobo_ui::TextPresentation {
+                strong: span.style.strong,
+                emphasis: span.style.emphasis,
+                underline: span.style.underline,
+                superscript: span.style.superscript,
+                subscript: span.style.subscript,
+                highlighted: false,
+            },
+        });
+    }
+    (spans, paragraph_presentation(&rich.style))
+}
+
+fn paragraph_presentation(style: &kobo_doc::BlockStyle) -> kobo_ui::ParagraphPresentation {
+    kobo_ui::ParagraphPresentation {
+        alignment: match style.alignment {
+            kobo_doc::TextAlignment::Start => kobo_ui::ParagraphAlignment::Start,
+            kobo_doc::TextAlignment::Center => kobo_ui::ParagraphAlignment::Center,
+            kobo_doc::TextAlignment::End => kobo_ui::ParagraphAlignment::End,
+            kobo_doc::TextAlignment::Justify => kobo_ui::ParagraphAlignment::Justify,
+        },
+        line_height_percent: style.line_height_percent,
+        margin_before_em: style.margin_before_em,
+        margin_after_em: style.margin_after_em,
+        first_line_indent_em: style.first_line_indent_em,
+    }
+}
+
+fn fragment_presentation(
+    mut presentation: kobo_ui::ParagraphPresentation,
+    first: bool,
+    last: bool,
+) -> kobo_ui::ParagraphPresentation {
+    if !first {
+        presentation.margin_before_em = 0;
+        presentation.first_line_indent_em = 0;
+    }
+    if !last {
+        presentation.margin_after_em = 0;
+    }
+    presentation
+}
+
+fn presentation_height(presentation: kobo_ui::ParagraphPresentation, natural_height: i32) -> i32 {
+    natural_height.saturating_mul(i32::from(
+        presentation
+            .margin_before_em
+            .saturating_add(presentation.margin_after_em),
+    )) / 100
 }
 
 #[cfg(test)]
@@ -1998,7 +3125,7 @@ mod tests {
                 run.rect.y + run.rect.height / 2,
             )
             .expect("the tap fell through to the page turn underneath");
-        assert_eq!(touched, kobo_sdk::action_id(&format!("{}1", action::GO)));
+        assert_eq!(touched, kobo_sdk::action_id(&format!("{}1", action::LINK)));
 
         // And the prose either side of it still turns the page, which is the
         // thing a hit target over a whole paragraph would have taken away.
@@ -2238,11 +3365,16 @@ mod tests {
         let layout = screen.layout_with(&panel(), &kobo_ui::Chrome::with_back(true));
         let on_panel = |name: &str| {
             let wanted = kobo_sdk::action_id(name);
-            layout.nodes.iter().any(|node| matches!(
-                node.kind,
-                kobo_ui::LayoutKind::Button(found, ..) | kobo_ui::LayoutKind::ChoiceOption(found, _)
-                if found == wanted
-            ))
+            layout.nodes.iter().any(|node| {
+                matches!(
+                    node.kind,
+                    kobo_ui::LayoutKind::Button(found, ..)
+                        | kobo_ui::LayoutKind::Cell(found, ..)
+                        | kobo_ui::LayoutKind::StepperControl(found, ..)
+                        | kobo_ui::LayoutKind::ChoiceOption(found, _)
+                    if found == wanted
+                )
+            })
         };
         assert!(on_panel(action::DIMMER), "dimmer is not on the light panel");
         assert!(
@@ -2302,6 +3434,8 @@ mod tests {
                 layout.nodes.iter().any(|node| matches!(
                     node.kind,
                     kobo_ui::LayoutKind::Button(found, ..)
+                        | kobo_ui::LayoutKind::Cell(found, ..)
+                        | kobo_ui::LayoutKind::StepperControl(found, ..)
                         | kobo_ui::LayoutKind::ChoiceOption(found, _)
                     if found == action
                 )),
@@ -2320,32 +3454,100 @@ mod tests {
         );
     }
 
-    /// Naming the sizes rather than stepping through them: one tap to any
-    /// size, and the panel says which one is in force.
+    /// Every control the two panels draw is one the reader answers.
+    ///
+    /// The defect this covers: the reverse lookup from a tapped identifier to
+    /// a name listed three type sizes, and the stepper offers nine. Both of
+    /// its ends hashed to something the list did not contain, so the panel
+    /// drew a working control that did nothing at all when tapped -- and the
+    /// same silence would have swallowed the contents and links buttons.
     #[test]
-    fn a_size_can_be_chosen_by_name_and_the_current_one_is_marked() {
+    fn every_control_on_a_panel_is_one_the_reader_answers() {
+        for chrome in [Chrome::Controls, Chrome::Light] {
+            for scale in kobo_ui::TextScale::STEPS {
+                let mut reader = reader(40);
+                reader.set_scale(scale, &panel());
+                reader.set_chrome(chrome, &panel());
+                let screen = reader.screen("Pride and Prejudice");
+                let layout = screen.layout_with(&panel(), &kobo_ui::Chrome::with_back(true));
+                let offered = layout
+                    .nodes
+                    .iter()
+                    .filter_map(|node| node.kind.acts_on())
+                    // The runtime owns its own back and overlay-close marks.
+                    .filter(|action| !action.is_reserved())
+                    .collect::<Vec<_>>();
+                assert!(
+                    !offered.is_empty(),
+                    "{chrome:?} at {scale:?} drew no controls at all"
+                );
+                for action in offered {
+                    let mut reader = reader.clone();
+                    assert_ne!(
+                        reader.act_on(action, &panel()),
+                        Outcome::Elsewhere,
+                        "{chrome:?} at {scale:?} draws {action:?}, which the reader does not answer"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The panel steps the size a notch at a time and says where the reader
+    /// has got to. Naming three sizes was one tap to any of them, which is
+    /// worth something, but it fixed the range at three and stacked three
+    /// full-width boxes down a panel drawn over the page to do it.
+    #[test]
+    fn the_size_is_stepped_a_notch_at_a_time_and_the_panel_says_where_it_is() {
         let mut reader = reader(40);
         reader.act(action::CONTROLS, &panel());
         assert_eq!(reader.scale(), TextScale::Default);
 
-        let outcome = reader.act(&format!("{}2", action::SIZE), &panel());
+        let step_up = format!("{}{}", action::SIZE, TextScale::Medium.wire_value());
+        let outcome = reader.act(&step_up, &panel());
         assert_eq!(outcome, Outcome::Save);
-        assert_eq!(reader.scale(), TextScale::ExtraLarge);
+        assert_eq!(reader.scale(), TextScale::Medium);
 
         let screen = reader.screen("Pride and Prejudice");
         let overlay = screen.overlay.as_ref().expect("a panel");
-        let marked = overlay.nodes.iter().find_map(|node| match node {
-            kobo_ui::Node::Choice { selected, .. } => *selected,
-            _ => None,
-        });
-        assert_eq!(marked, Some(2), "the panel did not mark the size in force");
+        let stepper = overlay
+            .nodes
+            .iter()
+            .find_map(|node| match node {
+                kobo_ui::Node::Stepper {
+                    label, less, more, ..
+                } => Some((label.clone(), less.action, more.action)),
+                _ => None,
+            })
+            .expect("a type size stepper");
+        assert_eq!(
+            stepper.0,
+            format!("{}%", TextScale::Medium.percent()),
+            "the panel did not say the size in force"
+        );
+        // The ends name the neighbouring sizes rather than a verb, so a tap is
+        // a size and the panel keeps no state of its own to know which.
+        assert_eq!(
+            stepper.1,
+            kobo_sdk::action_id(&format!(
+                "{}{}",
+                action::SIZE,
+                TextScale::Default.wire_value()
+            ))
+        );
+        assert_eq!(
+            stepper.2,
+            kobo_sdk::action_id(&format!(
+                "{}{}",
+                action::SIZE,
+                TextScale::Large.wire_value()
+            ))
+        );
 
         // Asking for the size it is already at is not a change to save, and it
-        // is not somebody else's action either.
-        assert_eq!(
-            reader.act(&format!("{}2", action::SIZE), &panel()),
-            Outcome::Repaint
-        );
+        // is not somebody else's action either. That is what the ends do once
+        // the reader has reached one end of the range.
+        assert_eq!(reader.act(&step_up, &panel()), Outcome::Repaint);
         assert_eq!(
             reader.act("reader-size-nonsense", &panel()),
             Outcome::Elsewhere
@@ -2420,14 +3622,25 @@ mod tests {
     #[test]
     fn the_type_size_stops_at_both_ends_rather_than_wrapping() {
         let mut reader = reader(10);
-        assert!(reader.larger(&panel()));
-        assert!(reader.larger(&panel()));
-        assert!(!reader.larger(&panel()), "there was a fourth size");
-        assert_eq!(reader.scale(), TextScale::ExtraLarge);
-        assert!(reader.smaller(&panel()));
-        assert!(reader.smaller(&panel()));
-        assert!(!reader.smaller(&panel()));
-        assert_eq!(reader.scale(), TextScale::Default);
+        // Walked from the middle to the top and back to the bottom, so that
+        // both ends are found by stepping rather than by naming them.
+        let above = TextScale::STEPS.len() - TextScale::Default.step() - 1;
+        for step in 0..above {
+            assert!(reader.larger(&panel()), "no size above step {step}");
+        }
+        assert!(
+            !reader.larger(&panel()),
+            "there was a size above the largest"
+        );
+        assert_eq!(reader.scale(), TextScale::Largest);
+        for step in 0..TextScale::STEPS.len() - 1 {
+            assert!(reader.smaller(&panel()), "no size below step {step}");
+        }
+        assert!(
+            !reader.smaller(&panel()),
+            "there was a size below the smallest"
+        );
+        assert_eq!(reader.scale(), TextScale::Smallest);
     }
 
     #[test]
@@ -2627,8 +3840,9 @@ mod tests {
         reader.toggle_bookmark();
         let target = reader.markable().first().unwrap().0;
         reader.toggle_highlight(target, &panel());
-        reader.larger(&panel());
-        reader.larger(&panel());
+        for _ in 0..4 {
+            reader.larger(&panel());
+        }
         reader.brighter();
 
         let kept = Memory::decode(&reader.memory().encode());
@@ -2889,11 +4103,12 @@ mod tests {
         let screen = reader.screen("Pride and Prejudice");
         let overlay = screen.overlay.as_ref().expect("a panel");
         assert!(
-            overlay.nodes.iter().any(|node| matches!(
-                node,
-                kobo_ui::Node::Button { action, .. }
-                    if *action == kobo_sdk::action_id(action::HIGHLIGHTS)
-            )),
+            overlay.nodes.iter().any(|node| match node {
+                kobo_ui::Node::Grid { cells, .. } => cells
+                    .iter()
+                    .any(|cell| cell.action == kobo_sdk::action_id(action::HIGHLIGHTS)),
+                _ => false,
+            }),
             "there is no way from the book to the marks"
         );
     }
@@ -3033,7 +4248,606 @@ mod tests {
     fn a_targets_block_is_read_back_off_its_action_name() {
         assert_eq!(target_of("reader-mark-17"), Some(17));
         assert_eq!(target_of("reader-go-17"), Some(17));
+        assert_eq!(target_of("reader-link-17"), Some(17));
         assert_eq!(target_of("reader-forward"), None);
         assert_eq!(target_of("reader-go--3"), None);
+    }
+
+    #[test]
+    fn search_returns_bounded_logical_locations_without_markup() {
+        let document = Document {
+            blocks: vec![
+                Block::Paragraph("A paper lantern at the beginning.".into()),
+                Block::Picture {
+                    name: "lantern.png".into(),
+                    alt: "paper lantern".into(),
+                },
+                Block::Paragraph("The PAPER LANTERN at the end.".into()),
+            ],
+            ..Document::default()
+        };
+        let reader = Reader::open(document, Memory::default(), &panel());
+        let hits = reader.search("paper lantern", 1);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].at, 0);
+        assert!(!hits[0].excerpt.contains('<'));
+        assert!(reader.search("paper lantern", 0).is_empty());
+    }
+
+    #[test]
+    fn a_search_result_shows_the_words_that_were_searched_for() {
+        let filler = "word ".repeat(80);
+        let document = Document {
+            blocks: vec![Block::Paragraph(format!(
+                "{filler}the paper lantern was lit{filler}"
+            ))],
+            ..Document::default()
+        };
+        let reader = Reader::open(document, Memory::default(), &panel());
+        let hits = reader.search("PAPER LANTERN", 4);
+        assert_eq!(hits.len(), 1);
+        // The match is deep inside the block, so an excerpt taken from the
+        // start of the paragraph would not contain it.
+        assert!(
+            hits[0].excerpt.to_lowercase().contains("paper lantern"),
+            "excerpt was {:?}",
+            hits[0].excerpt
+        );
+        let offset = usize::try_from(hits[0].offset).expect("an offset");
+        assert_eq!(offset, filler.len() + "the ".len());
+    }
+
+    #[test]
+    fn a_search_offset_names_the_matched_words_exactly() {
+        let document = Document {
+            blocks: vec![Block::Paragraph("A Café au lait, please.".into())],
+            ..Document::default()
+        };
+        let reader = Reader::open(document, Memory::default(), &panel());
+        let hits = reader.search("café", 4);
+        assert_eq!(hits.len(), 1);
+        let at = usize::try_from(hits[0].offset).expect("an offset");
+        let text = "A Café au lait, please.";
+        assert_eq!(&text[at..at + "Café".len()], "Café");
+    }
+
+    #[test]
+    fn a_query_longer_than_its_bound_is_refused_rather_than_walked() {
+        let document = Document {
+            blocks: vec![Block::Paragraph("Short.".into())],
+            ..Document::default()
+        };
+        let reader = Reader::open(document, Memory::default(), &panel());
+        let query = "a".repeat(MAX_SEARCH_QUERY_BYTES + 1);
+        assert!(reader.search(&query, 8).is_empty());
+    }
+
+    #[test]
+    fn a_stale_annotation_offset_inside_a_character_still_draws() {
+        // The stored range names byte 2, which is inside the 'é' of "café"
+        // once the edition behind it has changed. A span cut there is refused
+        // by the wire encoding, so it must never reach one.
+        let document = Document {
+            blocks: vec![Block::Paragraph("café au lait".into())],
+            ..Document::default()
+        };
+        let memory = Memory::decode(b"ann 1 0 2 0 7 \nnext-ann 2\n");
+        assert_eq!(memory.annotations.len(), 1);
+        let reader = Reader::open(document, memory, &panel());
+        for span in reader.pages.iter().flatten().flat_map(|piece| &piece.spans) {
+            let text = &reader
+                .pages
+                .iter()
+                .flatten()
+                .find(|piece| !piece.text.is_empty())
+                .expect("a drawn piece")
+                .text;
+            assert!(text.is_char_boundary(span.start), "start {}", span.start);
+            assert!(text.is_char_boundary(span.end), "end {}", span.end);
+        }
+    }
+
+    #[test]
+    fn a_reversed_stored_annotation_is_dropped_rather_than_kept() {
+        let memory = Memory::decode(b"ann 1 0 9 0 3 \nnext-ann 2\n");
+        assert!(memory.annotations.is_empty());
+    }
+
+    #[test]
+    fn a_memory_naming_a_stale_next_identity_still_creates_new_annotations() {
+        let document = Document {
+            blocks: vec![Block::Paragraph("The words of the book.".into())],
+            ..Document::default()
+        };
+        // `next-ann` names an identity an annotation already holds, which is
+        // what a truncated or hand-edited memory file looks like.
+        let memory = Memory::decode(b"ann 7 0 0 0 3 \nnext-ann 1\n");
+        assert_eq!(memory.next_annotation_id, 8);
+        let mut reader = Reader::open(document, memory, &panel());
+        let id = reader
+            .annotate(
+                TextRange {
+                    start: TextPosition {
+                        block: 0,
+                        offset: 4,
+                    },
+                    end: TextPosition {
+                        block: 0,
+                        offset: 9,
+                    },
+                },
+                None,
+                &panel(),
+            )
+            .expect("a new annotation");
+        assert_ne!(id, 7);
+        assert_eq!(reader.annotations().len(), 2);
+    }
+
+    #[test]
+    fn range_annotations_keep_exact_unicode_words_across_repagination_and_restart() {
+        let combined = "Cafe\u{301}";
+        let document = Document {
+            blocks: vec![Block::Paragraph(format!(
+                "{combined} and tea by the window."
+            ))],
+            ..Document::default()
+        };
+        let mut reader = Reader::open(document.clone(), Memory::default(), &panel());
+        let range = TextRange {
+            start: TextPosition {
+                block: 0,
+                offset: 0,
+            },
+            end: TextPosition {
+                block: 0,
+                offset: u32::try_from(combined.len()).expect("short fixture"),
+            },
+        };
+        let id = reader
+            .annotate(range, Some("Remember the accent ☕"), &panel())
+            .expect("annotation");
+        assert_eq!(reader.text_in(range).as_deref(), Some(combined));
+        reader.set_scale(TextScale::ExtraLarge, &panel());
+        assert_eq!(reader.annotations()[0].range, range);
+
+        let encoded = reader.memory().encode();
+        let reopened = Reader::open(document, Memory::decode(&encoded), &panel());
+        let annotation = reopened.annotations()[0];
+        assert_eq!(annotation.id, id);
+        assert_eq!(annotation.range, range);
+        assert_eq!(annotation.note.as_deref(), Some("Remember the accent ☕"));
+        assert_eq!(
+            reopened.text_in(annotation.range).as_deref(),
+            Some(combined)
+        );
+    }
+
+    #[test]
+    fn annotation_operations_are_idempotent_and_note_edits_cannot_move_the_range() {
+        let document = Document {
+            blocks: vec![Block::Paragraph("one two three".into())],
+            ..Document::default()
+        };
+        let mut reader = Reader::open(document, Memory::default(), &panel());
+        let range = TextRange {
+            start: TextPosition {
+                block: 0,
+                offset: 4,
+            },
+            end: TextPosition {
+                block: 0,
+                offset: 7,
+            },
+        };
+        reader
+            .create_annotation(42, range, None, &panel())
+            .expect("first delivery");
+        reader
+            .create_annotation(42, range, Some("duplicate"), &panel())
+            .expect("duplicate delivery");
+        assert_eq!(reader.annotations().len(), 1);
+        assert_eq!(reader.annotations()[0].note, None);
+        reader
+            .edit_annotation_note(42, Some("my note"))
+            .expect("edit note");
+        assert_eq!(reader.annotations()[0].range, range);
+        assert_eq!(reader.annotations()[0].note.as_deref(), Some("my note"));
+        assert_eq!(
+            reader
+                .remove_annotation(42, &panel())
+                .expect("remove")
+                .range,
+            range
+        );
+        assert!(reader.annotations().is_empty());
+    }
+
+    #[test]
+    fn a_range_highlight_marks_only_the_selected_words_on_the_page() {
+        let document = Document {
+            blocks: vec![Block::Paragraph("one two three".into())],
+            ..Document::default()
+        };
+        let mut reader = Reader::open(document, Memory::default(), &panel());
+        reader
+            .annotate(
+                TextRange {
+                    start: TextPosition {
+                        block: 0,
+                        offset: 4,
+                    },
+                    end: TextPosition {
+                        block: 0,
+                        offset: 7,
+                    },
+                },
+                None,
+                &panel(),
+            )
+            .expect("highlight");
+        let screen = reader.screen("Book");
+        let (text, spans) = screen
+            .nodes
+            .iter()
+            .find_map(|node| match node {
+                kobo_sdk::Node::RichText { text, spans, .. } => Some((text, spans)),
+                _ => None,
+            })
+            .expect("rich highlighted paragraph");
+        let highlighted = spans
+            .iter()
+            .filter(|span| span.presentation.highlighted)
+            .map(|span| &text[span.start..span.end])
+            .collect::<String>();
+        assert_eq!(highlighted, "two");
+    }
+
+    #[test]
+    fn selection_endpoints_never_split_a_grapheme() {
+        let document = Document {
+            blocks: vec![Block::Paragraph("e\u{301}lan".into())],
+            ..Document::default()
+        };
+        let mut reader = Reader::open(document, Memory::default(), &panel());
+        let split_combining_sequence = TextRange {
+            start: TextPosition {
+                block: 0,
+                offset: 0,
+            },
+            end: TextPosition {
+                block: 0,
+                offset: 1,
+            },
+        };
+        assert_eq!(
+            reader.annotate(split_combining_sequence, None, &panel()),
+            Err(AnnotationFault::NotGraphemeBoundary)
+        );
+    }
+
+    #[test]
+    fn xhtml_emphasis_and_paragraph_style_reach_the_reading_screen() {
+        let document = kobo_doc::html::parse(
+            r#"<p style="text-align:center; line-height:140%">plain <strong><em>styled</em></strong></p>"#,
+        );
+        let reader = Reader::open(document, Memory::default(), &panel());
+        let screen = reader.screen("Book");
+        let rich = screen.nodes.iter().find_map(|node| match node {
+            kobo_sdk::Node::RichText {
+                spans,
+                presentation,
+                ..
+            } => Some((spans, presentation)),
+            _ => None,
+        });
+        let (spans, presentation) = rich.expect("rich text node");
+        assert_eq!(presentation.alignment, kobo_ui::ParagraphAlignment::Center);
+        assert_eq!(presentation.line_height_percent, 140);
+        assert!(spans
+            .iter()
+            .any(|span| { span.presentation.strong && span.presentation.emphasis }));
+    }
+
+    #[test]
+    fn an_explicit_publisher_page_break_is_not_discarded_as_a_short_page() {
+        let document = kobo_doc::html::parse(
+            r#"<p style="page-break-after: always">A short title page.</p><p>The chapter.</p>"#,
+        );
+        let reader = Reader::open(document, Memory::default(), &panel());
+        assert_eq!(reader.page_count(), 2);
+        assert_eq!(reader.pages[0][0].text, "A short title page.");
+        assert_eq!(reader.pages[1][0].text, "The chapter.");
+    }
+
+    #[test]
+    fn publisher_spacing_does_not_push_paginated_prose_off_the_panel() {
+        let source = r#"<p style="margin-top: 1em; margin-bottom: 1em; line-height: 150%">A paragraph has enough words to wrap across the reading column.</p>"#
+            .repeat(80);
+        let reader = Reader::open(kobo_doc::html::parse(&source), Memory::default(), &panel());
+        for page in 0..reader.page_count() {
+            let mut on_page = reader.clone();
+            on_page.page = page;
+            let screen = on_page.screen("Book");
+            assert!(
+                screen.validate(&panel()).is_empty(),
+                "page {page}: {:?}",
+                screen.validate(&panel())
+            );
+        }
+    }
+
+    #[test]
+    fn the_font_family_requested_by_the_book_wins_over_filename_order() {
+        let mut document =
+            kobo_doc::html::parse(r#"<p style="font-family: Intended">Publisher prose.</p>"#);
+        document.fonts.insert(
+            "a-wrong.otf".into(),
+            kobo_doc::EmbeddedFont {
+                media_type: "font/otf".into(),
+                family: Some("Other".into()),
+                bytes: b"OTTOfirst".to_vec(),
+            },
+        );
+        document.fonts.insert(
+            "z-intended.otf".into(),
+            kobo_doc::EmbeddedFont {
+                media_type: "font/otf".into(),
+                family: Some("Intended".into()),
+                bytes: b"OTTOsecond".to_vec(),
+            },
+        );
+        let reader = Reader::open(document, Memory::default(), &panel());
+        assert_eq!(
+            reader.preferred_publisher_font().map(|(name, _)| name),
+            Some("z-intended.otf")
+        );
+    }
+
+    #[test]
+    fn paragraph_fragments_only_keep_spacing_at_the_real_edges() {
+        let whole = kobo_ui::ParagraphPresentation {
+            alignment: kobo_ui::ParagraphAlignment::Justify,
+            line_height_percent: 140,
+            margin_before_em: 75,
+            margin_after_em: 50,
+            first_line_indent_em: 125,
+        };
+
+        let first = fragment_presentation(whole, true, false);
+        assert_eq!(first.margin_before_em, 75);
+        assert_eq!(first.first_line_indent_em, 125);
+        assert_eq!(first.margin_after_em, 0);
+
+        let middle = fragment_presentation(whole, false, false);
+        assert_eq!(middle.margin_before_em, 0);
+        assert_eq!(middle.first_line_indent_em, 0);
+        assert_eq!(middle.margin_after_em, 0);
+
+        let last = fragment_presentation(whole, false, true);
+        assert_eq!(last.margin_before_em, 0);
+        assert_eq!(last.first_line_indent_em, 0);
+        assert_eq!(last.margin_after_em, 50);
+        assert_eq!(last.alignment, kobo_ui::ParagraphAlignment::Justify);
+        assert_eq!(last.line_height_percent, 140);
+    }
+
+    #[test]
+    fn following_a_footnote_and_back_preserves_the_logical_origin() {
+        let mut document = book(40);
+        document.anchors.insert("note".into(), 30);
+        document.links.push(kobo_doc::Link {
+            block: 1,
+            text: "footnote".into(),
+            target: "note".into(),
+        });
+        let mut reader = Reader::open(document, Memory::default(), &panel());
+        reader.go_to(1, &panel());
+        let origin = reader.top();
+
+        assert_eq!(reader.act("reader-link-30", &panel()), Outcome::Save);
+        assert_ne!(reader.top(), origin);
+        assert!(reader.screen("Book").owns_back);
+        assert_eq!(
+            reader.act_on(kobo_ui::ActionId::BACK, &panel()),
+            Outcome::Save
+        );
+        assert_eq!(reader.top(), origin);
+        assert!(!reader.screen("Book").owns_back);
+    }
+
+    fn table_of(rows: &[(bool, &[&str])]) -> Document {
+        let blocks = rows
+            .iter()
+            .map(|(header, cells)| Block::Row {
+                header: *header,
+                cells: cells.iter().map(|cell| (*cell).to_string()).collect(),
+            })
+            .collect();
+        Document {
+            blocks,
+            ..Document::default()
+        }
+    }
+
+    #[test]
+    fn a_table_reaches_the_screen_as_one_node_with_all_of_its_rows() {
+        let document = table_of(&[
+            (true, &["Model", "Top-1", "Params"]),
+            (false, &["Small", "71.2", "5M"]),
+            (false, &["Large", "84.6", "300M"]),
+        ]);
+        let reader = Reader::open(document, Memory::default(), &panel());
+        let screen = reader.screen("Paper");
+
+        let tables: Vec<_> = screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                kobo_ui::Node::Table { rows, weights, .. } => Some((rows, weights)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(tables.len(), 1, "three rows are one table, not three");
+        let (rows, weights) = tables[0];
+        assert_eq!(rows.len(), 3);
+        assert!(rows[0].header);
+        assert!(!rows[1].header);
+        assert_eq!(rows[1].cells, vec!["Small", "71.2", "5M"]);
+        assert_eq!(weights.len(), 3, "one measured width per column");
+    }
+
+    #[test]
+    fn a_table_split_over_two_pages_keeps_the_same_columns_on_both() {
+        let mut rows: Vec<(bool, Vec<String>)> = vec![(true, vec!["Model".into(), "Score".into()])];
+        for index in 0..200 {
+            rows.push((false, vec![format!("Row {index}"), format!("{index}.5")]));
+        }
+        let blocks = rows
+            .iter()
+            .map(|(header, cells)| Block::Row {
+                header: *header,
+                cells: cells.clone(),
+            })
+            .collect();
+        let mut reader = Reader::open(
+            Document {
+                blocks,
+                ..Document::default()
+            },
+            Memory::default(),
+            &panel(),
+        );
+        assert!(reader.page_count() > 1, "200 rows do not fit on one page");
+
+        let first = columns_on_page(&reader);
+        assert!(!first.is_empty(), "the columns were never measured");
+        assert!(first.iter().all(|width| *width > 0));
+        reader.act("reader-next", &panel());
+        let second = columns_on_page(&reader);
+        assert_eq!(
+            first, second,
+            "columns measured per page would shift on a turn"
+        );
+        no_cell_falls_off_a_page(&reader);
+    }
+
+    /// Checks every page against the layout that will actually draw it.
+    ///
+    /// Pagination guesses how tall a row comes out; only the layout knows.
+    /// A page that agrees with its own wrong guess still pours cells off the
+    /// bottom of the panel, so the guess is never what is measured here.
+    fn no_cell_falls_off_a_page(reader: &Reader) {
+        let panel = panel();
+        let floor = panel.height - panel.page_position_band();
+        let mut turned = reader.clone();
+        turned.go_to(0, &panel);
+        for number in 0..reader.page_count() {
+            let bottom = turned
+                .screen("Paper")
+                .layout_for(&panel)
+                .nodes
+                .iter()
+                .filter(|node| {
+                    matches!(
+                        node.kind,
+                        kobo_ui::LayoutKind::TableCell | kobo_ui::LayoutKind::TableHeaderCell
+                    )
+                })
+                .map(|node| node.rect.y + node.rect.height)
+                .max()
+                .unwrap_or(0);
+            assert!(
+                bottom <= floor,
+                "page {number} sets a cell down to {bottom}, past the {floor} the page ends at"
+            );
+            turned.act("reader-next", &panel);
+        }
+    }
+
+    fn columns_on_page(reader: &Reader) -> Vec<u16> {
+        reader
+            .screen("Paper")
+            .nodes
+            .iter()
+            .find_map(|node| match node {
+                kobo_ui::Node::Table { weights, .. } => Some(weights.clone()),
+                _ => None,
+            })
+            .expect("a table on the page")
+    }
+
+    #[test]
+    fn a_word_inside_a_cell_is_still_found_by_search() {
+        let document = table_of(&[
+            (true, &["Model", "Top-1"]),
+            (false, &["Chinchilla", "70.1"]),
+        ]);
+        let reader = Reader::open(document, Memory::default(), &panel());
+
+        let hits = reader.search("chinchilla", 8);
+        assert_eq!(hits.len(), 1);
+        assert!(hits[0].excerpt.contains("Chinchilla"));
+    }
+
+    // Nine columns cannot be drawn nine columns wide, so the layout stacks
+    // them. Pagination has to know that, or it packs each row as one line
+    // tall and pours nine lines of it off the bottom of the panel.
+    #[test]
+    fn a_table_too_wide_for_columns_is_paginated_as_the_stack_it_becomes() {
+        let blocks = (0..30)
+            .map(|index| Block::Row {
+                header: false,
+                cells: (0..9)
+                    .map(|column| format!("cell {index} column {column} with words"))
+                    .collect(),
+            })
+            .collect();
+        let reader = Reader::open(
+            Document {
+                blocks,
+                ..Document::default()
+            },
+            Memory::default(),
+            &panel(),
+        );
+
+        assert!(reader.page_count() > 1, "thirty stacked rows need pages");
+        // Measured against what the layout actually does, not against the
+        // same guess pagination made: a page that agrees with its own wrong
+        // arithmetic still pours words off the panel.
+        no_cell_falls_off_a_page(&reader);
+    }
+
+    #[test]
+    fn a_row_is_never_cut_in_half_by_a_page_break() {
+        let blocks = (0..400)
+            .map(|index| Block::Row {
+                header: false,
+                cells: vec![format!("Left {index}"), format!("Right {index}")],
+            })
+            .collect();
+        let reader = Reader::open(
+            Document {
+                blocks,
+                ..Document::default()
+            },
+            Memory::default(),
+            &panel(),
+        );
+
+        for page in 0..reader.page_count() {
+            let mut seen = Vec::new();
+            for piece in &reader.pages[page] {
+                if let Some((cells, _)) = &piece.row {
+                    seen.push(cells.len());
+                }
+            }
+            assert!(
+                seen.iter().all(|count| *count == 2),
+                "page {page} holds a row missing a cell"
+            );
+        }
+        no_cell_falls_off_a_page(&reader);
     }
 }

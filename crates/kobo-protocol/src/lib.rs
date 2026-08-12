@@ -6,10 +6,11 @@ use std::fmt;
 use std::io::{self, Read, Write};
 
 use kobo_ui::{
-    ActionId, BannerLevel, BarAction, BarStyle, BottomAction, Caret, Cell, ControlState, Freeform,
-    Glyph, NavBar, Node, NodeId, PageTurns, Percent, PictureHandle, Row, RowLead, RowState, Screen,
-    Space, TextScale, Tile, TilePicture, TileShape, TileState, TopBar, TransferFailure,
-    MAX_BAR_ACTIONS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS, MIN_NAV_DESTINATIONS,
+    ActionId, BannerLevel, BarAction, BarStyle, BottomAction, Caret, Cell, ControlState,
+    FontHandle, Freeform, Glyph, NavBar, Node, NodeId, PageTurns, Percent, PictureHandle, Row,
+    RowLead, RowState, Screen, Space, TextScale, Tile, TilePicture, TileShape, TileState, TopBar,
+    TransferFailure, MAX_BAR_ACTIONS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS,
+    MIN_NAV_DESTINATIONS,
 };
 use std::cmp::min;
 
@@ -40,8 +41,11 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// authenticate became an answer of its own rather than being reported as a
 /// missing page. Both are tags an older runtime has no reading for, and the
 /// credential sits ahead of the header count, so a frame it did not expect
-/// would have been misread from that point on rather than refused.
-pub const VERSION: u8 = 8;
+/// would have been misread from that point on rather than refused. Version 9
+/// adds bounded rich EPUB text and runtime-held publisher-font handles.
+/// Version 10 adds exact text-hold coordinates and typed offline dictionary
+/// requests/results.
+pub const VERSION: u8 = 10;
 pub const HEADER_LEN: usize = 14;
 /// The largest single frame either side will read.
 ///
@@ -61,6 +65,8 @@ pub const MAX_INLINE_PICTURE_BYTES: usize = 768 * 1024;
 /// Largest piece of a chunked upload. Small enough to bound transient copies
 /// while still moving a full panel in a handful of local-socket writes.
 pub const MAX_PICTURE_CHUNK_BYTES: usize = 256 * 1024;
+/// Largest embedded outline font one application may hand to the runtime.
+pub const MAX_FONT_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_STRING_LEN: usize = 16_384;
 pub const MAX_NODES: usize = 512;
 /// The byte a nav bar sends when no destination is the current one.
@@ -168,6 +174,9 @@ pub const MAX_SHELF_BYTES: u64 = 256 * 1024 * 1024;
 
 /// The most blobs one application may keep.
 pub const MAX_SHELF_BLOBS: usize = 4_096;
+pub const MAX_LOOKUP_WORD_BYTES: usize = 128;
+pub const MAX_DICTIONARY_ENTRIES: usize = 8;
+pub const MAX_DICTIONARY_DEFINITION_BYTES: usize = 4_096;
 
 /// How much of the card must stay free whatever an application asks for.
 ///
@@ -548,6 +557,13 @@ pub enum Message {
     Action {
         action: ActionId,
     },
+    /// A held word in application-defined logical text coordinates.
+    TextHold {
+        action: ActionId,
+        context: u64,
+        start: u32,
+        end: u32,
+    },
     Log {
         level: LogLevel,
         message: String,
@@ -641,6 +657,16 @@ pub enum Message {
     /// pictures rather than a requirement.
     DropPicture {
         handle: PictureHandle,
+    },
+    /// Hands one bounded TrueType/OpenType publisher face to the runtime.
+    PutFont {
+        handle: FontHandle,
+        name: String,
+        bytes: Vec<u8>,
+    },
+    /// Releases a publisher face and its glyph cache.
+    DropFont {
+        handle: FontHandle,
     },
 }
 
@@ -992,6 +1018,19 @@ pub enum DeviceRequest {
     InstallApp { id: String },
     /// Remove one app-store application by stable identity.
     UninstallApp { id: String },
+    /// Look up one selected word using only runtime-installed dictionaries.
+    LookupWord {
+        word: String,
+        language: Option<String>,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DictionaryEntry {
+    pub dictionary: String,
+    pub language: String,
+    pub headword: String,
+    pub definition: String,
 }
 
 /// Everything the gauge publishes that is worth putting in front of a reader.
@@ -1124,6 +1163,12 @@ pub enum DeviceResult {
     },
     /// A bounded app-store or installed-app listing.
     Apps { entries: Vec<AppInfo> },
+    /// Bounded offline definitions in installed dictionary order. An empty
+    /// list is an explicit no-result answer, not a transport failure.
+    Dictionary {
+        word: String,
+        entries: Vec<DictionaryEntry>,
+    },
     /// The backend exists, but the requested operation failed.
     Failed(DeviceError),
     /// The request was refused, with the exact reason.
@@ -1426,6 +1471,7 @@ impl From<io::Error> for StreamError {
 /// # Errors
 ///
 /// Returns an error when a message exceeds protocol limits.
+#[allow(clippy::too_many_lines)]
 pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
     let (kind, payload_len) = encoded_message_layout(&frame.message)?;
     let mut payload = Vec::with_capacity(payload_len);
@@ -1450,6 +1496,17 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
         }
         Message::Action { action } => {
             push_u32(&mut payload, action.0);
+        }
+        Message::TextHold {
+            action,
+            context,
+            start,
+            end,
+        } => {
+            push_u32(&mut payload, action.0);
+            push_u64(&mut payload, *context);
+            push_u32(&mut payload, *start);
+            push_u32(&mut payload, *end);
         }
         Message::Log { level, message } => {
             payload.push(*level as u8);
@@ -1498,6 +1555,16 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
         Message::CommitPicture { handle } | Message::DropPicture { handle } => {
             push_u32(&mut payload, handle.0);
         }
+        Message::PutFont {
+            handle,
+            name,
+            bytes,
+        } => {
+            push_u32(&mut payload, handle.0);
+            push_string(&mut payload, name)?;
+            payload.extend_from_slice(bytes);
+        }
+        Message::DropFont { handle } => push_u32(&mut payload, handle.0),
         Message::Lifecycle(state) => payload.push(match state {
             Lifecycle::Foreground => 0,
             Lifecycle::Background => 1,
@@ -1975,6 +2042,12 @@ fn encoded_message_layout(message: &Message) -> Result<(u8, usize), ProtocolErro
             Ok((3, encoded_screen_len(screen, 0, &mut count)?))
         }
         Message::Action { .. } => Ok((4, 4)),
+        Message::TextHold { start, end, .. } => {
+            if start >= end {
+                return Err(ProtocolError::InvalidValue("text hold range"));
+            }
+            Ok((26, 20))
+        }
         Message::Log { message, .. } => {
             let mut length = 1;
             add_encoded_len(&mut length, encoded_string_len(message)?)?;
@@ -2050,6 +2123,16 @@ fn encoded_message_layout(message: &Message) -> Result<(u8, usize), ProtocolErro
         }
         Message::CommitPicture { .. } => Ok((22, 4)),
         Message::CoverChanged { .. } => Ok((23, 1)),
+        Message::PutFont { name, bytes, .. } => {
+            if bytes.is_empty() || bytes.len() > MAX_FONT_BYTES {
+                return Err(ProtocolError::FrameTooLarge);
+            }
+            let mut length = 4;
+            add_encoded_len(&mut length, encoded_string_len(name)?)?;
+            add_encoded_len(&mut length, bytes.len())?;
+            Ok((24, length))
+        }
+        Message::DropFont { .. } => Ok((25, 4)),
     }
 }
 
@@ -2175,6 +2258,12 @@ fn encode_device_request(
         }
         DeviceRequest::InstallApp { .. } | DeviceRequest::UninstallApp { .. } => {
             return Err(ProtocolError::InvalidValue("application id"));
+        }
+        DeviceRequest::LookupWord { word, language } => {
+            validate_lookup(word, language.as_deref())?;
+            output.push(37);
+            push_string(output, word)?;
+            push_optional_string(output, language.as_deref())?;
         }
     }
     Ok(())
@@ -2420,6 +2509,12 @@ fn decode_device_request(reader: &mut Reader<'_>) -> Result<DeviceRequest, Proto
         34 => Ok(DeviceRequest::RefreshAppCatalog),
         35 => decode_app_request(reader, true),
         36 => decode_app_request(reader, false),
+        37 => {
+            let word = reader.string()?;
+            let language = reader.optional_string()?;
+            validate_lookup(&word, language.as_deref())?;
+            Ok(DeviceRequest::LookupWord { word, language })
+        }
         _ => Err(ProtocolError::InvalidValue("device request")),
     }
 }
@@ -2573,6 +2668,22 @@ fn encode_device_result(output: &mut Vec<u8>, result: &DeviceResult) -> Result<(
             );
             for entry in entries {
                 encode_app_info(output, entry)?;
+            }
+        }
+        DeviceResult::Dictionary { word, entries } => {
+            validate_lookup(word, None)?;
+            if entries.len() > MAX_DICTIONARY_ENTRIES {
+                return Err(ProtocolError::InvalidValue("too many dictionary entries"));
+            }
+            output.push(13);
+            push_string(output, word)?;
+            output.push(u8::try_from(entries.len()).map_err(|_| ProtocolError::FrameTooLarge)?);
+            for entry in entries {
+                validate_dictionary_entry(entry)?;
+                push_string(output, &entry.dictionary)?;
+                push_string(output, &entry.language)?;
+                push_string(output, &entry.headword)?;
+                push_string(output, &entry.definition)?;
             }
         }
     }
@@ -2733,8 +2844,61 @@ fn decode_device_result(reader: &mut Reader<'_>) -> Result<DeviceResult, Protoco
         8 => Ok(DeviceResult::Failed(DeviceError::try_from(reader.u8()?)?)),
         9 => decode_audio_result(reader),
         12 => decode_apps_result(reader),
+        13 => decode_dictionary_result(reader),
         _ => Err(ProtocolError::InvalidValue("device result")),
     }
+}
+
+fn validate_lookup(word: &str, language: Option<&str>) -> Result<(), ProtocolError> {
+    if word.trim().is_empty()
+        || word.len() > MAX_LOOKUP_WORD_BYTES
+        || language.is_some_and(|language| {
+            language.is_empty()
+                || language.len() > 16
+                || !language
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        })
+    {
+        return Err(ProtocolError::InvalidValue("dictionary lookup"));
+    }
+    Ok(())
+}
+
+fn validate_dictionary_entry(entry: &DictionaryEntry) -> Result<(), ProtocolError> {
+    if entry.dictionary.is_empty()
+        || entry.dictionary.len() > 96
+        || entry.language.is_empty()
+        || entry.language.len() > 16
+        || entry.headword.is_empty()
+        || entry.headword.len() > MAX_LOOKUP_WORD_BYTES
+        || entry.definition.is_empty()
+        || entry.definition.len() > MAX_DICTIONARY_DEFINITION_BYTES
+    {
+        return Err(ProtocolError::InvalidValue("dictionary entry"));
+    }
+    Ok(())
+}
+
+fn decode_dictionary_result(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
+    let word = reader.string()?;
+    validate_lookup(&word, None)?;
+    let count = usize::from(reader.u8()?);
+    if count > MAX_DICTIONARY_ENTRIES {
+        return Err(ProtocolError::InvalidValue("too many dictionary entries"));
+    }
+    let mut entries = Vec::with_capacity(count);
+    for _ in 0..count {
+        let entry = DictionaryEntry {
+            dictionary: reader.string()?,
+            language: reader.string()?,
+            headword: reader.string()?,
+            definition: reader.string()?,
+        };
+        validate_dictionary_entry(&entry)?;
+        entries.push(entry);
+    }
+    Ok(DeviceResult::Dictionary { word, entries })
 }
 
 fn decode_apps_result(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
@@ -2841,8 +3005,12 @@ fn encoded_screen_len(
     }
     // One flag byte for first refusal on the runtime's Back control, one for a
     // text size this screen asks for in place of the reader's own, and one for
-    // whether its text is a book rather than an interface.
-    add_encoded_len(&mut length, 3)?;
+    // whether its text is a book rather than an interface, and one for an
+    // optional runtime-held publisher font.
+    add_encoded_len(&mut length, 4)?;
+    if screen.reading_font.is_some() {
+        add_encoded_len(&mut length, 4)?;
+    }
     if let Some(nav_bar) = &screen.nav_bar {
         if nav_bar.destinations.len() > u8::MAX as usize {
             return Err(ProtocolError::TooManyNodes);
@@ -2906,6 +3074,27 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
             let mut length = 6;
             add_encoded_len(&mut length, encoded_string_len(text)?)?;
             for _ in links.iter().take(kobo_ui::MAX_TEXT_LINKS) {
+                add_encoded_len(&mut length, 12)?;
+            }
+            length
+        }
+        Node::RichText {
+            text,
+            spans,
+            links,
+            selection,
+            ..
+        } => {
+            if spans.len() > kobo_ui::MAX_RICH_TEXT_SPANS {
+                return Err(ProtocolError::TooManyNodes);
+            }
+            let mut length = 5;
+            add_encoded_len(&mut length, encoded_string_len(text)?)?;
+            add_encoded_len(&mut length, 2 + spans.len() * 9 + 9 + 1 + 1)?;
+            for _ in links.iter().take(kobo_ui::MAX_TEXT_LINKS) {
+                add_encoded_len(&mut length, 12)?;
+            }
+            if selection.is_some() {
                 add_encoded_len(&mut length, 12)?;
             }
             length
@@ -3070,6 +3259,32 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
             length
         }
         Node::Picture { .. } => 19,
+        Node::Table { rows, weights, .. } => {
+            if rows.len() > u8::MAX as usize || weights.len() > u8::MAX as usize {
+                return Err(ProtocolError::TooManyNodes);
+            }
+            let mut length = 7;
+            add_encoded_len(&mut length, weights.len().saturating_mul(2))?;
+            for row in rows {
+                if row.cells.len() > u8::MAX as usize {
+                    return Err(ProtocolError::TooManyNodes);
+                }
+                add_encoded_len(&mut length, 2)?;
+                for cell in &row.cells {
+                    add_encoded_len(&mut length, encoded_string_len(cell)?)?;
+                }
+            }
+            length
+        }
+        Node::Stepper {
+            label, less, more, ..
+        } => {
+            let mut length = 8;
+            add_encoded_len(&mut length, encoded_string_len(label)?)?;
+            add_encoded_len(&mut length, encoded_bar_action_len(less)?)?;
+            add_encoded_len(&mut length, encoded_bar_action_len(more)?)?;
+            length
+        }
         Node::Choice {
             prompt,
             options,
@@ -3232,6 +3447,21 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
         4 => Message::Action {
             action: ActionId(reader.u32()?),
         },
+        26 => {
+            let action = ActionId(reader.u32()?);
+            let context = reader.u64()?;
+            let start = reader.u32()?;
+            let end = reader.u32()?;
+            if start >= end {
+                return Err(ProtocolError::InvalidValue("text hold range"));
+            }
+            Message::TextHold {
+                action,
+                context,
+                start,
+                end,
+            }
+        }
         5 => Message::Log {
             level: LogLevel::try_from(reader.u8()?)?,
             message: reader.string()?,
@@ -3541,6 +3771,22 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
         23 => Message::CoverChanged {
             magnet_present: read_boolean(&mut reader, "cover magnet present")?,
         },
+        24 => {
+            let handle = FontHandle(reader.u32()?);
+            let name = reader.string()?;
+            let length = reader.remaining();
+            if length == 0 || length > MAX_FONT_BYTES {
+                return Err(ProtocolError::FrameTooLarge);
+            }
+            Message::PutFont {
+                handle,
+                name,
+                bytes: reader.take(length)?.to_vec(),
+            }
+        }
+        25 => Message::DropFont {
+            handle: FontHandle(reader.u32()?),
+        },
         value => return Err(ProtocolError::UnknownMessageType(value)),
     };
     if !reader.is_finished() {
@@ -3611,6 +3857,7 @@ fn encode_top_bar(output: &mut Vec<u8>, top_bar: Option<&TopBar>) -> Result<(), 
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 fn encode_screen(
     output: &mut Vec<u8>,
     screen: &Screen,
@@ -3710,6 +3957,13 @@ fn encode_screen(
     // setting and the byte costs nothing to leave alone.
     output.push(screen.text_scale.map_or(0, |scale| scale.wire_value() + 1));
     output.push(u8::from(screen.reading));
+    match screen.reading_font {
+        None => output.push(0),
+        Some(handle) => {
+            output.push(1);
+            push_u32(output, handle.0);
+        }
+    }
     push_u16(
         output,
         u16::try_from(screen.nodes.len()).map_err(|_| ProtocolError::TooManyNodes)?,
@@ -3797,6 +4051,29 @@ fn decode_bar_action(reader: &mut Reader<'_>) -> Result<BarAction, ProtocolError
 // One exhaustive match over every node kind. Splitting it would only move
 // arms out of reach of the compiler's exhaustiveness check, which is the one
 // thing making it impossible to add a node and forget the wire format.
+fn text_presentation_byte(style: kobo_ui::TextPresentation) -> u8 {
+    u8::from(style.strong)
+        | (u8::from(style.emphasis) << 1)
+        | (u8::from(style.underline) << 2)
+        | (u8::from(style.superscript) << 3)
+        | (u8::from(style.subscript) << 4)
+        | (u8::from(style.highlighted) << 5)
+}
+
+fn text_presentation_from_byte(value: u8) -> Result<kobo_ui::TextPresentation, ProtocolError> {
+    if value & !0x3f != 0 {
+        return Err(ProtocolError::InvalidValue("rich text style"));
+    }
+    Ok(kobo_ui::TextPresentation {
+        strong: value & 1 != 0,
+        emphasis: value & 2 != 0,
+        underline: value & 4 != 0,
+        superscript: value & 8 != 0,
+        subscript: value & 16 != 0,
+        highlighted: value & 32 != 0,
+    })
+}
+
 #[allow(clippy::too_many_lines)]
 fn encode_node(
     output: &mut Vec<u8>,
@@ -3827,6 +4104,71 @@ fn encode_node(
                 push_u32(output, link.action.0);
                 push_u32(output, u32::try_from(link.start).unwrap_or(u32::MAX));
                 push_u32(output, u32::try_from(link.end).unwrap_or(u32::MAX));
+            }
+        }
+        Node::RichText {
+            id,
+            text,
+            spans,
+            links,
+            presentation,
+            selection,
+        } => {
+            if spans.len() > kobo_ui::MAX_RICH_TEXT_SPANS {
+                return Err(ProtocolError::TooManyNodes);
+            }
+            output.push(28);
+            push_u32(output, id.0);
+            push_string(output, text)?;
+            push_u16(
+                output,
+                u16::try_from(spans.len()).map_err(|_| ProtocolError::TooManyNodes)?,
+            );
+            for span in spans {
+                if span.start >= span.end
+                    || span.end > text.len()
+                    || !text.is_char_boundary(span.start)
+                    || !text.is_char_boundary(span.end)
+                {
+                    return Err(ProtocolError::InvalidValue("rich text span"));
+                }
+                push_u32(
+                    output,
+                    u32::try_from(span.start).map_err(|_| ProtocolError::FrameTooLarge)?,
+                );
+                push_u32(
+                    output,
+                    u32::try_from(span.end).map_err(|_| ProtocolError::FrameTooLarge)?,
+                );
+                output.push(text_presentation_byte(span.presentation));
+            }
+            output.push(match presentation.alignment {
+                kobo_ui::ParagraphAlignment::Start => 0,
+                kobo_ui::ParagraphAlignment::Center => 1,
+                kobo_ui::ParagraphAlignment::End => 2,
+                kobo_ui::ParagraphAlignment::Justify => 3,
+            });
+            push_u16(output, presentation.line_height_percent);
+            push_u16(output, presentation.margin_before_em);
+            push_u16(output, presentation.margin_after_em);
+            push_u16(
+                output,
+                u16::from_ne_bytes(presentation.first_line_indent_em.to_ne_bytes()),
+            );
+            let links = &links[..links.len().min(kobo_ui::MAX_TEXT_LINKS)];
+            output.push(u8::try_from(links.len()).map_err(|_| ProtocolError::TooManyNodes)?);
+            for link in links {
+                push_u32(output, link.action.0);
+                push_u32(output, u32::try_from(link.start).unwrap_or(u32::MAX));
+                push_u32(output, u32::try_from(link.end).unwrap_or(u32::MAX));
+            }
+            match selection {
+                Some(selection) => {
+                    output.push(1);
+                    push_u64(output, selection.context);
+                    push_u32(output, selection.offset);
+                }
+                None => output.push(0),
             }
         }
         Node::Secondary { id, text } => {
@@ -4112,6 +4454,50 @@ fn encode_node(
             push_u32(output, source.0);
             push_u32(output, source.1);
             push_u16(output, *max_height_tenths_mm);
+        }
+        Node::Table { id, rows, weights } => {
+            output.push(30);
+            push_u32(output, id.0);
+            output.push(u8::try_from(weights.len()).map_err(|_| ProtocolError::TooManyNodes)?);
+            for weight in weights {
+                push_u16(output, *weight);
+            }
+            output.push(u8::try_from(rows.len()).map_err(|_| ProtocolError::TooManyNodes)?);
+            for row in rows {
+                output.push(u8::from(row.header));
+                output
+                    .push(u8::try_from(row.cells.len()).map_err(|_| ProtocolError::TooManyNodes)?);
+                for cell in &row.cells {
+                    push_string(output, cell)?;
+                }
+            }
+        }
+        Node::Stepper {
+            id,
+            label,
+            less,
+            more,
+            less_state,
+            more_state,
+            fill,
+        } => {
+            output.push(29);
+            push_u32(output, id.0);
+            push_string(output, label)?;
+            encode_bar_action(output, less)?;
+            encode_bar_action(output, more)?;
+            for state in [less_state, more_state] {
+                output.push(match state {
+                    ControlState::Enabled => 0,
+                    ControlState::Disabled => 1,
+                });
+            }
+            // Sent as one past the reading so that "no track" is zero, which is
+            // what a peer that never asks for one produces.
+            output.push(match fill {
+                None => 0,
+                Some(fill) => fill.min(&100).saturating_add(1),
+            });
         }
         Node::Choice {
             id,
@@ -4405,6 +4791,7 @@ const fn encode_glyph(glyph: Glyph) -> u8 {
         Glyph::Next => 41,
         Glyph::Plus => 42,
         Glyph::Headphones => 43,
+        Glyph::Minus => 44,
     }
 }
 
@@ -4454,6 +4841,7 @@ const fn decode_glyph(tag: u8) -> Option<Glyph> {
         41 => Glyph::Next,
         42 => Glyph::Plus,
         43 => Glyph::Headphones,
+        44 => Glyph::Minus,
 
         _ => return None,
     })
@@ -4572,6 +4960,11 @@ fn decode_screen(
         1 => true,
         _ => return Err(ProtocolError::InvalidValue("reading flag")),
     };
+    let reading_font = match reader.u8()? {
+        0 => None,
+        1 => Some(FontHandle(reader.u32()?)),
+        _ => return Err(ProtocolError::InvalidValue("reading font flag")),
+    };
     let count_nodes = usize::from(reader.u16()?);
     if count_nodes > MAX_NODES {
         return Err(ProtocolError::TooManyNodes);
@@ -4624,6 +5017,7 @@ fn decode_screen(
     screen.owns_back = owns_back;
     screen.text_scale = text_scale;
     screen.reading = reading;
+    screen.reading_font = reading_font;
     Ok(screen)
 }
 
@@ -4670,6 +5064,77 @@ fn decode_node(
                 }
             }
             Ok(Node::Text { id, text, links })
+        }
+        28 => {
+            let text = reader.string()?;
+            let span_count = usize::from(reader.u16()?);
+            if span_count > kobo_ui::MAX_RICH_TEXT_SPANS {
+                return Err(ProtocolError::TooManyNodes);
+            }
+            let mut spans = Vec::with_capacity(span_count);
+            for _ in 0..span_count {
+                let start = reader.u32()? as usize;
+                let end = reader.u32()? as usize;
+                let style = text_presentation_from_byte(reader.u8()?)?;
+                if start >= end
+                    || end > text.len()
+                    || !text.is_char_boundary(start)
+                    || !text.is_char_boundary(end)
+                {
+                    return Err(ProtocolError::InvalidValue("rich text span"));
+                }
+                spans.push(kobo_ui::RichTextSpan {
+                    start,
+                    end,
+                    presentation: style,
+                });
+            }
+            let alignment = match reader.u8()? {
+                0 => kobo_ui::ParagraphAlignment::Start,
+                1 => kobo_ui::ParagraphAlignment::Center,
+                2 => kobo_ui::ParagraphAlignment::End,
+                3 => kobo_ui::ParagraphAlignment::Justify,
+                _ => return Err(ProtocolError::InvalidValue("paragraph alignment")),
+            };
+            let presentation = kobo_ui::ParagraphPresentation {
+                alignment,
+                line_height_percent: reader.u16()?.clamp(80, 250),
+                margin_before_em: reader.u16()?.min(2_000),
+                margin_after_em: reader.u16()?.min(2_000),
+                first_line_indent_em: i16::from_ne_bytes(reader.u16()?.to_ne_bytes())
+                    .clamp(-2_000, 2_000),
+            };
+            let link_count = usize::from(reader.u8()?);
+            let mut links = Vec::with_capacity(link_count.min(kobo_ui::MAX_TEXT_LINKS));
+            for _ in 0..link_count {
+                let action = ActionId(reader.u32()?);
+                let start = reader.u32()? as usize;
+                let end = reader.u32()? as usize;
+                if start < end
+                    && end <= text.len()
+                    && text.is_char_boundary(start)
+                    && text.is_char_boundary(end)
+                    && links.len() < kobo_ui::MAX_TEXT_LINKS
+                {
+                    links.push(kobo_ui::TextLink { action, start, end });
+                }
+            }
+            let selection = match reader.u8()? {
+                0 => None,
+                1 => Some(kobo_ui::TextSelection {
+                    context: reader.u64()?,
+                    offset: reader.u32()?,
+                }),
+                _ => return Err(ProtocolError::InvalidValue("text selection flag")),
+            };
+            Ok(Node::RichText {
+                id,
+                text,
+                spans,
+                links,
+                presentation,
+                selection,
+            })
         }
         18 => {
             let depth = reader.u8()?;
@@ -4974,6 +5439,57 @@ fn decode_node(
                 options,
                 selected,
                 freeform,
+            })
+        }
+        30 => {
+            let count = reader.u8()? as usize;
+            let mut weights = Vec::with_capacity(count.min(MAX_NODES));
+            for _ in 0..count {
+                weights.push(reader.u16()?);
+            }
+            let count = reader.u8()? as usize;
+            let mut rows = Vec::with_capacity(count.min(MAX_NODES));
+            for _ in 0..count {
+                let header = match reader.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(ProtocolError::InvalidValue("table heading flag")),
+                };
+                let cells = reader.u8()? as usize;
+                let mut row = Vec::with_capacity(cells.min(MAX_NODES));
+                for _ in 0..cells {
+                    row.push(reader.string()?);
+                }
+                rows.push(kobo_ui::TableRow { header, cells: row });
+            }
+            Ok(Node::Table { id, rows, weights })
+        }
+        29 => {
+            let label = reader.string()?;
+            let less = decode_bar_action(reader)?;
+            let more = decode_bar_action(reader)?;
+            let mut states = [ControlState::Enabled; 2];
+            for state in &mut states {
+                *state = match reader.u8()? {
+                    0 => ControlState::Enabled,
+                    1 => ControlState::Disabled,
+                    _ => return Err(ProtocolError::InvalidValue("stepper control state")),
+                };
+            }
+            let [less_state, more_state] = states;
+            let fill = match reader.u8()? {
+                0 => None,
+                marked if marked <= 101 => Some(marked - 1),
+                _ => return Err(ProtocolError::InvalidValue("stepper fill")),
+            };
+            Ok(Node::Stepper {
+                id,
+                label,
+                less,
+                more,
+                less_state,
+                more_state,
+                fill,
             })
         }
         11 => {
@@ -5970,6 +6486,20 @@ mod node_coverage_tests {
     #[allow(clippy::too_many_lines, reason = "one literal per node variant")]
     fn one_of_every_node() -> Vec<Node> {
         vec![
+            Node::Table {
+                id: NodeId(70),
+                rows: vec![
+                    kobo_ui::TableRow {
+                        header: true,
+                        cells: vec!["Model".into(), "Top-1".into()],
+                    },
+                    kobo_ui::TableRow {
+                        header: false,
+                        cells: vec!["ResNet-50".into(), "76.1".into()],
+                    },
+                ],
+                weights: vec![240, 90],
+            },
             Node::Heading {
                 id: NodeId(1),
                 text: "Heading".into(),
@@ -5978,6 +6508,28 @@ mod node_coverage_tests {
                 id: NodeId(2),
                 text: "Body".into(),
                 links: Vec::new(),
+            },
+            Node::RichText {
+                id: NodeId(52),
+                text: "Styled body".into(),
+                spans: vec![kobo_ui::RichTextSpan {
+                    start: 0,
+                    end: 6,
+                    presentation: kobo_ui::TextPresentation {
+                        strong: true,
+                        ..kobo_ui::TextPresentation::default()
+                    },
+                }],
+                links: Vec::new(),
+                presentation: kobo_ui::ParagraphPresentation {
+                    alignment: kobo_ui::ParagraphAlignment::Center,
+                    line_height_percent: 130,
+                    ..kobo_ui::ParagraphPresentation::default()
+                },
+                selection: Some(kobo_ui::TextSelection {
+                    context: 3,
+                    offset: 11,
+                }),
             },
             Node::Quote {
                 id: NodeId(30),
@@ -6119,6 +6671,15 @@ mod node_coverage_tests {
             Node::Progress {
                 id: NodeId(8),
                 value: Percent::new(40),
+            },
+            Node::Stepper {
+                id: NodeId(96),
+                label: "120%".into(),
+                less: BarAction::new(ActionId(30), String::new()).with_glyph(Glyph::Minus),
+                more: BarAction::new(ActionId(31), String::new()).with_glyph(Glyph::Plus),
+                less_state: ControlState::Enabled,
+                more_state: ControlState::Disabled,
+                fill: Some(75),
             },
             Node::PagedList {
                 id: NodeId(9),
@@ -6280,6 +6841,21 @@ mod node_coverage_tests {
             Some(Node::Grid { cells: back, .. }) => assert_eq!(back, &cells),
             other => panic!("expected a grid, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_reading_screen_keeps_its_publisher_font_handle() {
+        let screen = Screen::new(
+            1,
+            vec![Node::Text {
+                id: NodeId(1),
+                text: "Publisher prose".into(),
+                links: Vec::new(),
+            }],
+        )
+        .with_reading(true)
+        .with_reading_font(Some(FontHandle(42)));
+        assert_eq!(round_trip(screen.clone()), screen);
     }
 
     #[test]
@@ -6660,6 +7236,37 @@ mod store_tests {
         };
         let bytes = encode(&frame).expect("encode");
         decode(&bytes).expect("decode").message
+    }
+
+    #[test]
+    fn a_text_hold_survives_the_wire_without_losing_its_range() {
+        let message = Message::TextHold {
+            action: ActionId(9),
+            context: u64::MAX - 1,
+            start: 41,
+            end: 48,
+        };
+        assert_eq!(message_round_trip(message.clone()), message);
+    }
+
+    #[test]
+    fn offline_dictionary_requests_and_entries_are_bounded_and_typed() {
+        let request = Message::DeviceRequest(DeviceRequest::LookupWord {
+            word: "café".into(),
+            language: Some("fr".into()),
+        });
+        assert_eq!(message_round_trip(request.clone()), request);
+
+        let result = Message::DeviceResult(DeviceResult::Dictionary {
+            word: "café".into(),
+            entries: vec![DictionaryEntry {
+                dictionary: "Pocket French".into(),
+                language: "fr".into(),
+                headword: "café".into(),
+                definition: "Établissement où l'on sert des boissons.".into(),
+            }],
+        });
+        assert_eq!(message_round_trip(result.clone()), result);
     }
 
     #[test]
@@ -7367,6 +7974,34 @@ mod picture_tests {
         };
         let bytes = encode(&frame).expect("encode");
         assert_eq!(decode(&bytes).expect("decode"), frame);
+    }
+
+    #[test]
+    fn a_publisher_font_travels_once_and_is_bounded() {
+        let message = Message::PutFont {
+            handle: FontHandle(7),
+            name: "Book.otf".into(),
+            bytes: b"OTTOfixture".to_vec(),
+        };
+        let frame = Frame {
+            request_id: 1,
+            message: message.clone(),
+        };
+        let bytes = encode(&frame).expect("encode font");
+        assert_eq!(decode(&bytes).expect("decode font").message, message);
+
+        let oversized = Frame {
+            request_id: 1,
+            message: Message::PutFont {
+                handle: FontHandle(8),
+                name: "huge.ttf".into(),
+                bytes: vec![0; MAX_FONT_BYTES + 1],
+            },
+        };
+        assert!(matches!(
+            encode(&oversized),
+            Err(ProtocolError::FrameTooLarge)
+        ));
     }
 
     #[test]

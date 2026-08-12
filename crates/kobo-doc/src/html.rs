@@ -25,15 +25,49 @@
 
 use kobo_html::{attribute, decode_entities, element_name, skip_element};
 
-use crate::{Block, Builder, Document, MAX_BLOCK_TEXT};
+use crate::{
+    Block, BlockStyle, Builder, Document, InlineSpan, InlineStyle, RichBlock, TextAlignment,
+    MAX_BLOCK_TEXT,
+};
 
 /// Elements whose contents are instructions rather than words.
-const OPAQUE: [&str; 4] = ["script", "style", "svg", "iframe"];
+const OPAQUE: [&str; 3] = ["script", "style", "iframe"];
+
+/// Elements that carry their own reading in an attribute.
+///
+/// `MathML` is the case that matters. Every renderer that turns a paper into a
+/// web page -- `LaTeXML`, which is what arXiv uses, above all -- writes an
+/// equation as a tree of `<mi>`, `<mo>` and `<mrow>` whose text nodes are the
+/// individual symbols. Read as prose those come out as a run of unspaced
+/// letters and operators in the middle of a sentence: "where italic-x
+/// plus-or-minus 1" for something that was one formula.
+///
+/// The same renderers put the source of the equation in `alttext`, which is
+/// the line the author actually wrote. It is not typeset, but it is a
+/// mathematician's notation rather than a machine's, and it reads.
+const ALT_TEXT: [&str; 2] = ["math", "svg"];
 
 /// Reads an HTML document.
 #[must_use]
 pub fn parse(source: &str) -> Document {
-    let mut state = State::new();
+    parse_with_css(source, "")
+}
+
+/// Reads HTML with a bounded safe subset of publisher CSS.
+#[must_use]
+pub fn parse_with_css(source: &str, external_css: &str) -> Document {
+    let mut take = external_css.len().min(MAX_CSS_BYTES);
+    while !external_css.is_char_boundary(take) {
+        take -= 1;
+    }
+    let mut css = external_css[..take].to_owned();
+    let embedded = embedded_styles(source);
+    let mut remaining = embedded.len().min(MAX_CSS_BYTES.saturating_sub(css.len()));
+    while !embedded.is_char_boundary(remaining) {
+        remaining -= 1;
+    }
+    css.push_str(&embedded[..remaining]);
+    let mut state = State::new(StyleSheet::parse(&css));
     let mut rest = source;
     while let Some(at) = rest.find('<') {
         state.words(&rest[..at]);
@@ -60,6 +94,28 @@ pub fn parse(source: &str) -> Document {
 
         let name = element_name(inside);
         let closing = inside.starts_with('/');
+        if !closing && ALT_TEXT.contains(&name.as_str()) {
+            // Read from the attribute, never from the children: the point is
+            // that the children are notation and the attribute is the reading
+            // of it. An element with neither is skipped in silence, which is
+            // what a picture with no caption gets too.
+            for spelling in ["alttext", "aria-label", "title"] {
+                let Some(text) = attribute(inside, spelling).map(str::trim) else {
+                    continue;
+                };
+                if !text.is_empty() {
+                    // Spaced on both sides because an equation sits inside a
+                    // sentence, and the tags either side of it carry no
+                    // whitespace of their own.
+                    state.words(" ");
+                    state.words(text);
+                    state.words(" ");
+                    break;
+                }
+            }
+            rest = skip_element(rest, &name);
+            continue;
+        }
         if !closing && OPAQUE.contains(&name.as_str()) {
             rest = skip_element(rest, &name);
             continue;
@@ -73,6 +129,9 @@ pub fn parse(source: &str) -> Document {
     state.words(rest);
     state.finish()
 }
+
+const MAX_CSS_BYTES: usize = 256 * 1024;
+const MAX_CSS_RULES: usize = 4_096;
 
 /// Skips a comment, a doctype or a CDATA section, if `tail` begins with one.
 pub(crate) fn skip_bracketed(tail: &str) -> Option<&str> {
@@ -93,6 +152,12 @@ pub(crate) fn skip_bracketed(tail: &str) -> Option<&str> {
 struct State {
     builder: Builder,
     text: String,
+    spans: Vec<InlineSpan>,
+    inline: InlineStyle,
+    inline_stack: Vec<(String, InlineStyle)>,
+    block_style: BlockStyle,
+    block_stack: Vec<(String, BlockStyle)>,
+    stylesheet: StyleSheet,
     /// The link being read: where it points, and how much text had been
     /// collected when it opened, so its own words can be taken back out.
     link: Option<(String, usize)>,
@@ -108,23 +173,51 @@ struct State {
     lists: Vec<bool>,
     heading: Option<u8>,
     item: bool,
+    caption: bool,
     /// Whether the words being collected are the document's title rather than
     /// something to draw.
     titling: bool,
+    /// The table row being read, once `<tr>` has opened one.
+    ///
+    /// A cell's words are collected by the same machinery as a paragraph's
+    /// and taken out again when the cell closes, so everything that already
+    /// worked inside prose -- entities, inline tags, links -- works inside a
+    /// cell without a second implementation of any of it.
+    row: Option<Row>,
+}
+
+/// A table row part way through being read.
+#[derive(Default)]
+struct Row {
+    cells: Vec<String>,
+    /// Set by the first `th` in the row. A row of headings names the columns
+    /// and is drawn differently from one that fills them.
+    header: bool,
+    /// Whether a cell is open, so that the words collected since belong to it
+    /// rather than to the row's stray text.
+    open: bool,
 }
 
 impl State {
-    fn new() -> Self {
+    fn new(stylesheet: StyleSheet) -> Self {
         Self {
             builder: Builder::new(),
             link: None,
             text: String::new(),
+            spans: Vec::new(),
+            inline: InlineStyle::default(),
+            inline_stack: Vec::new(),
+            block_style: BlockStyle::default(),
+            block_stack: Vec::new(),
+            stylesheet,
             quoted: 0,
             pre: 0,
             lists: Vec::new(),
             heading: None,
             item: false,
+            caption: false,
             titling: false,
+            row: None,
         }
     }
 
@@ -141,6 +234,7 @@ impl State {
             return;
         }
         let decoded = decode_entities(text);
+        self.push_span(&decoded);
         if self.pre > 0 {
             // Control characters have no drawing, and the preformatted path
             // does not collapse them away. Tabs and newlines stay: both are
@@ -155,13 +249,44 @@ impl State {
         }
     }
 
+    fn push_span(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        if let Some(last) = self
+            .spans
+            .last_mut()
+            .filter(|last| last.style == self.inline)
+        {
+            last.text.push_str(text);
+        } else {
+            self.spans.push(InlineSpan {
+                text: text.to_owned(),
+                style: self.inline,
+            });
+        }
+    }
+
+    /// Writes text the document did not literally contain.
+    ///
+    /// A line break's space, a table cell's separator, a picture's bracketed
+    /// description: each has to reach the styled runs as well as the block
+    /// text. If only one of the two receives it the runs stop matching the
+    /// block, and `bound_rich_spans` answers that by throwing away every
+    /// emphasis the block had.
+    fn synthetic(&mut self, text: &str) {
+        self.text.push_str(text);
+        self.push_span(text);
+    }
+
+    #[allow(clippy::too_many_lines)]
     fn open(&mut self, name: &str, inside: &str) {
         // Inside a `<pre>`, nothing but its own end tag changes anything. A
         // listing full of `<` is a listing, and re-flowing it on a stray tag
         // would lose the shape that is the whole point of the element.
         if self.pre > 0 {
             if name == "br" {
-                self.text.push('\n');
+                self.synthetic("\n");
             }
             return;
         }
@@ -198,20 +323,38 @@ impl State {
             }
             return;
         }
+        if matches!(
+            name,
+            "strong" | "b" | "em" | "i" | "u" | "sup" | "sub" | "span" | "small" | "mark"
+        ) {
+            self.inline_stack.push((name.to_owned(), self.inline));
+            match name {
+                "strong" | "b" => self.inline.strong = true,
+                "em" | "i" => self.inline.emphasis = true,
+                "u" => self.inline.underline = true,
+                "sup" => self.inline.superscript = true,
+                "sub" => self.inline.subscript = true,
+                _ => {}
+            }
+            let declarations = self.stylesheet.declarations_for(name, inside);
+            apply_inline_style(&mut self.inline, Some(&declarations));
+            return;
+        }
         match name {
             // A `<br>` is a soft break. One column, and the paginator wraps:
             // honouring it would give a ragged short line in the middle of a
             // paragraph.
-            "br" => self.text.push(' '),
+            "br" => self.synthetic(" "),
             // A picture cannot be drawn inside a run of text, so what it was
             // described as is the only part that can survive. An `<img>` with
             // no description says nothing, and brackets around nothing would
             // be worse than silence.
             "img" | "image" => {
                 if let Some(alt) = attribute(inside, "alt").filter(|alt| !alt.trim().is_empty()) {
-                    self.text.push_str(" [");
-                    self.text.push_str(&decode_entities(alt));
-                    self.text.push_str("] ");
+                    let alt = decode_entities(alt);
+                    self.synthetic(" [");
+                    self.synthetic(&alt);
+                    self.synthetic("] ");
                 }
             }
             "hr" => {
@@ -243,20 +386,57 @@ impl State {
                 self.flush();
                 self.item = true;
             }
-            // A cell is not a paragraph of its own; a row is. Running the
-            // cells together with a mark that does not occur inside one keeps
-            // the row readable in a single column.
+            "figcaption" => {
+                self.flush();
+                let declarations = self.stylesheet.declarations_for(name, inside);
+                let parent = self.block_style.clone();
+                self.block_stack.push((name.to_owned(), parent.clone()));
+                self.block_style = block_style_inheriting(&parent, &declarations);
+                self.inline_stack.push((name.to_owned(), self.inline));
+                apply_inline_style(&mut self.inline, Some(&declarations));
+                self.caption = true;
+            }
+            // A row is one block and a cell is one column of it. Both are
+            // needed: a cell alone cannot be laid out, because how wide it is
+            // depends on every other cell in its column, and a row alone
+            // cannot say where one value ends and the next begins.
+            "tr" => {
+                self.end_row();
+                self.flush();
+                self.row = Some(Row::default());
+            }
             "td" | "th" => {
-                if !self.text.trim_end().is_empty() {
-                    self.text.push_str(" \u{2014} ");
+                // A cell outside any row is a cell in a table written without
+                // one, which is common enough in hand-written HTML. It opens
+                // a row so that the cells still line up with each other.
+                if self.row.is_none() {
+                    self.flush();
+                    self.row = Some(Row::default());
+                }
+                self.end_cell();
+                if let Some(row) = &mut self.row {
+                    row.open = true;
+                    row.header |= name == "th";
                 }
             }
             _ => {
                 if let Some(level) = heading_level(name) {
                     self.flush();
+                    let declarations = self.stylesheet.declarations_for(name, inside);
+                    let parent = self.block_style.clone();
+                    self.block_stack.push((name.to_owned(), parent.clone()));
+                    self.block_style = block_style_inheriting(&parent, &declarations);
+                    self.inline_stack.push((name.to_owned(), self.inline));
+                    apply_inline_style(&mut self.inline, Some(&declarations));
                     self.heading = Some(level);
                 } else if breaks_a_block(name) {
                     self.flush();
+                    let declarations = self.stylesheet.declarations_for(name, inside);
+                    let parent = self.block_style.clone();
+                    self.block_stack.push((name.to_owned(), parent.clone()));
+                    self.block_style = block_style_inheriting(&parent, &declarations);
+                    self.inline_stack.push((name.to_owned(), self.inline));
+                    apply_inline_style(&mut self.inline, Some(&declarations));
                 }
             }
         }
@@ -270,6 +450,18 @@ impl State {
             if let Some((target, from)) = self.link.take() {
                 let words = self.text.get(from..).unwrap_or_default().to_owned();
                 self.builder.record_link(&words, &target);
+            }
+            return;
+        }
+        if let Some(at) = self.inline_stack.iter().rposition(|(open, _)| open == name) {
+            if heading_level(name).is_some() || breaks_a_block(name) {
+                self.flush();
+            }
+            let (_, style) = self.inline_stack.remove(at);
+            self.inline = style;
+            if let Some(at) = self.block_stack.iter().rposition(|(open, _)| open == name) {
+                let (_, style) = self.block_stack.remove(at);
+                self.block_style = style;
             }
             return;
         }
@@ -289,6 +481,14 @@ impl State {
                 self.lists.pop();
             }
             "title" => self.flush(),
+            "td" | "th" => self.end_cell(),
+            "tr" => self.end_row(),
+            // A table that ends with a row still open is a table whose last
+            // `</tr>` was never written, which is a page, not a corner.
+            "table" | "thead" | "tbody" | "tfoot" => {
+                self.end_row();
+                self.flush();
+            }
             _ => {
                 if heading_level(name).is_some() || breaks_a_block(name) {
                     self.flush();
@@ -318,16 +518,73 @@ impl State {
         }
     }
 
+    /// Takes the words collected since the cell opened and makes them a cell.
+    ///
+    /// A no-op outside a table, and outside a cell inside one: text loose in
+    /// a row is markup nobody meant, and it stays where it is so that the
+    /// ordinary flush treats it as the stray prose it is.
+    fn end_cell(&mut self) {
+        let Some(row) = &self.row else {
+            return;
+        };
+        if !row.open {
+            return;
+        }
+        let cell = std::mem::take(&mut self.text);
+        self.spans.clear();
+        if let Some(row) = &mut self.row {
+            row.open = false;
+            if row.cells.len() < crate::MAX_ROW_CELLS {
+                row.cells.push(cell);
+            }
+        }
+    }
+
+    /// Closes the row being read and pushes it, if there is one worth pushing.
+    fn end_row(&mut self) {
+        self.end_cell();
+        let Some(row) = self.row.take() else {
+            return;
+        };
+        if row.cells.is_empty() {
+            return;
+        }
+        self.builder.push(Block::Row {
+            header: row.header,
+            cells: row.cells,
+        });
+    }
+
     fn flush(&mut self) {
+        // Inside a cell there is nowhere for a block to go. A cell holding a
+        // paragraph, or three, is one cell of a row and not three blocks of
+        // prose, so the words are kept where they are and the boundary
+        // becomes a space. Without this a `<td><p>...</p></td>` table --
+        // which is most of the tables LaTeX generators emit -- would spill
+        // one paragraph per cell into the body and lose its columns.
+        if self.row.as_ref().is_some_and(|row| row.open) {
+            self.heading = None;
+            self.item = false;
+            self.caption = false;
+            self.titling = false;
+            if !self.text.is_empty() && !self.text.ends_with(char::is_whitespace) {
+                self.text.push(' ');
+            }
+            return;
+        }
         let text = std::mem::take(&mut self.text);
+        let spans = normalise_spans(std::mem::take(&mut self.spans));
+        let style = self.block_style.clone();
         let heading = self.heading.take();
         let item = std::mem::replace(&mut self.item, false);
+        let caption = std::mem::replace(&mut self.caption, false);
         if std::mem::replace(&mut self.titling, false) {
             self.builder.set_title(&text);
             return;
         }
         if self.pre > 0 {
-            self.builder.push(Block::Preformatted(text));
+            self.builder
+                .push_rich(Block::Preformatted(text), RichBlock { spans, style });
             return;
         }
         if text.trim().is_empty() {
@@ -339,21 +596,384 @@ impl State {
             if level == 1 {
                 self.builder.set_title(&text);
             }
-            self.builder.push(Block::Heading { level, text });
+            self.builder
+                .push_rich(Block::Heading { level, text }, RichBlock { spans, style });
+        } else if caption {
+            self.builder
+                .push_rich(Block::Caption(text), RichBlock { spans, style });
         } else if item {
             let ordered = self.lists.last().copied().unwrap_or(false);
-            self.builder.push(Block::Item { ordered, text });
+            self.builder
+                .push_rich(Block::Item { ordered, text }, RichBlock { spans, style });
         } else if self.quoted > 0 {
-            self.builder.push(Block::Quote(text));
+            self.builder
+                .push_rich(Block::Quote(text), RichBlock { spans, style });
         } else {
-            self.builder.push(Block::Paragraph(text));
+            self.builder
+                .push_rich(Block::Paragraph(text), RichBlock { spans, style });
         }
     }
 
     fn finish(mut self) -> Document {
+        self.end_row();
         self.flush();
         self.builder.finish()
     }
+}
+
+#[derive(Clone, Debug, Default)]
+struct StyleSheet {
+    rules: Vec<CssRule>,
+}
+
+#[derive(Clone, Debug)]
+struct CssRule {
+    selector: String,
+    declarations: String,
+    specificity: u8,
+    order: usize,
+}
+
+fn embedded_styles(source: &str) -> String {
+    let lower = source.to_ascii_lowercase();
+    let mut out = String::new();
+    let mut at = 0usize;
+    while out.len() < MAX_CSS_BYTES {
+        let Some(open) = lower[at..].find("<style") else {
+            break;
+        };
+        let open = at + open;
+        let Some(tag_end) = lower[open..].find('>') else {
+            break;
+        };
+        let body = open + tag_end + 1;
+        let Some(close) = lower[body..].find("</style") else {
+            break;
+        };
+        let close = body + close;
+        let content = &source[body..close];
+        let mut take = content.len().min(MAX_CSS_BYTES.saturating_sub(out.len()));
+        while !content.is_char_boundary(take) {
+            take -= 1;
+        }
+        out.push_str(&content[..take]);
+        at = close + "</style".len();
+    }
+    out
+}
+
+/// At-rules whose body holds further rules rather than declarations.
+///
+/// Their contents have to be read, not skipped: a publisher that wraps its
+/// whole stylesheet in `@media screen` is still styling the book.
+const NESTED_AT_RULES: [&str; 5] = ["media", "supports", "document", "layer", "container"];
+
+/// How deeply conditional groups are followed before the rest is ignored.
+const MAX_AT_RULE_DEPTH: usize = 4;
+
+/// Removes `/* ... */` comments.
+///
+/// A brace inside a comment is not a block, and leaving one in desynchronises
+/// every rule after it. An unterminated comment runs to the end of the sheet,
+/// which is what a browser does with one.
+fn strip_css_comments(css: &str) -> String {
+    let mut out = String::with_capacity(css.len());
+    let mut rest = css;
+    while let Some(open) = rest.find("/*") {
+        out.push_str(&rest[..open]);
+        let after = &rest[open + 2..];
+        let Some(close) = after.find("*/") else {
+            return out;
+        };
+        rest = &after[close + 2..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The byte index of the `}` closing the block that opens at `open`.
+fn matching_brace(css: &str, open: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (at, character) in css[open..].char_indices() {
+        match character {
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(open + at);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The at-rule keyword `@media screen and (...)` begins with, lowercased.
+fn at_rule_keyword(selectors: &str) -> String {
+    selectors
+        .trim_start_matches('@')
+        .chars()
+        .take_while(char::is_ascii_alphabetic)
+        .collect::<String>()
+        .to_ascii_lowercase()
+}
+
+impl StyleSheet {
+    fn parse(css: &str) -> Self {
+        let mut rules = Vec::new();
+        collect_rules(&strip_css_comments(css), 0, &mut rules);
+        Self { rules }
+    }
+
+    fn declarations_for(&self, name: &str, inside: &str) -> String {
+        let classes = attribute(inside, "class").unwrap_or_default();
+        let id = attribute(inside, "id").unwrap_or_default();
+        let mut matched: Vec<&CssRule> = self
+            .rules
+            .iter()
+            .filter(|rule| selector_matches(&rule.selector, name, id, classes))
+            .collect();
+        matched.sort_by_key(|rule| (rule.specificity, rule.order));
+        let mut result = String::new();
+        for rule in matched {
+            result.push_str(&rule.declarations);
+            result.push(';');
+        }
+        if let Some(inline) = attribute(inside, "style") {
+            result.push_str(inline);
+        }
+        result
+    }
+}
+
+/// Reads rules from one stylesheet level, following conditional groups.
+///
+/// Block extents are found by matching braces rather than by the first `}`,
+/// so a nested `@media` body cannot leave the scanner pointing into the
+/// middle of the sheet and silently discard every rule after it.
+fn collect_rules(css: &str, depth: usize, rules: &mut Vec<CssRule>) {
+    let mut rest = css;
+    while rules.len() < MAX_CSS_RULES {
+        let Some(open) = rest.find('{') else { break };
+        let selectors = rest[..open].trim();
+        let Some(close) = matching_brace(rest, open) else {
+            break;
+        };
+        let body = rest[open + 1..close].trim();
+        let tail = &rest[close + 1..];
+        if selectors.starts_with('@') {
+            // A conditional group wraps ordinary rules, so its body is read at
+            // the next level. A flat at-rule such as `@font-face` or `@page`
+            // carries declarations this parser has no selector for, and is
+            // skipped whole.
+            if depth < MAX_AT_RULE_DEPTH
+                && NESTED_AT_RULES.contains(&at_rule_keyword(selectors).as_str())
+            {
+                collect_rules(body, depth + 1, rules);
+            }
+            rest = tail;
+            continue;
+        }
+        rest = tail;
+        if body.is_empty() {
+            continue;
+        }
+        for selector in selectors.split(',') {
+            let selector = selector.trim().to_ascii_lowercase();
+            if selector.is_empty()
+                || selector.contains([' ', '>', '+', '~', '[', ':', '*'])
+                || rules.len() >= MAX_CSS_RULES
+            {
+                continue;
+            }
+            let specificity = u8::from(selector.contains('#')) * 100
+                + u8::try_from(selector.matches('.').count())
+                    .unwrap_or(9)
+                    .min(9)
+                    * 10
+                + u8::from(!selector.starts_with(['.', '#']));
+            rules.push(CssRule {
+                selector,
+                declarations: body.to_owned(),
+                specificity,
+                order: rules.len(),
+            });
+        }
+    }
+}
+
+fn selector_matches(selector: &str, name: &str, id: &str, classes: &str) -> bool {
+    let tag_end = selector.find(['.', '#']).unwrap_or(selector.len());
+    let tag = &selector[..tag_end];
+    if !tag.is_empty() && !tag.eq_ignore_ascii_case(name) {
+        return false;
+    }
+    let class_words: Vec<&str> = classes.split_whitespace().collect();
+    let mut rest = &selector[tag_end..];
+    while !rest.is_empty() {
+        let marker = rest.as_bytes()[0];
+        rest = &rest[1..];
+        let end = rest.find(['.', '#']).unwrap_or(rest.len());
+        let value = &rest[..end];
+        let matches = match marker {
+            b'.' => class_words
+                .iter()
+                .any(|class| class.eq_ignore_ascii_case(value)),
+            b'#' => id.eq_ignore_ascii_case(value),
+            _ => false,
+        };
+        if !matches {
+            return false;
+        }
+        rest = &rest[end..];
+    }
+    true
+}
+
+fn normalise_spans(spans: Vec<InlineSpan>) -> Vec<InlineSpan> {
+    let mut out: Vec<InlineSpan> = Vec::new();
+    let mut pending_space = false;
+    for span in spans {
+        let mut text = String::new();
+        for character in span.text.chars() {
+            if character.is_whitespace() {
+                pending_space = !out.is_empty() || !text.is_empty();
+                continue;
+            }
+            if pending_space {
+                text.push(' ');
+                pending_space = false;
+            }
+            if !character.is_control() {
+                text.push(character);
+            }
+        }
+        if text.is_empty() {
+            continue;
+        }
+        if let Some(last) = out.last_mut().filter(|last| last.style == span.style) {
+            last.text.push_str(&text);
+        } else {
+            out.push(InlineSpan {
+                text,
+                style: span.style,
+            });
+        }
+    }
+    out
+}
+
+fn declarations(style: Option<&str>) -> impl Iterator<Item = (&str, &str)> {
+    style.into_iter().flat_map(|style| {
+        style.split(';').filter_map(|declaration| {
+            let (name, value) = declaration.split_once(':')?;
+            Some((name.trim(), value.trim()))
+        })
+    })
+}
+
+fn apply_inline_style(style: &mut InlineStyle, source: Option<&str>) {
+    for (name, value) in declarations(source) {
+        match name.to_ascii_lowercase().as_str() {
+            "font-weight"
+                if value.eq_ignore_ascii_case("bold")
+                    || value.parse::<u16>().is_ok_and(|weight| weight >= 600) =>
+            {
+                style.strong = true;
+            }
+            "font-style"
+                if value.eq_ignore_ascii_case("italic")
+                    || value.eq_ignore_ascii_case("oblique") =>
+            {
+                style.emphasis = true;
+            }
+            "text-decoration"
+                if value
+                    .split_whitespace()
+                    .any(|word| word.eq_ignore_ascii_case("underline")) =>
+            {
+                style.underline = true;
+            }
+            "vertical-align" if value.eq_ignore_ascii_case("super") => style.superscript = true,
+            "vertical-align" if value.eq_ignore_ascii_case("sub") => style.subscript = true,
+            _ => {}
+        }
+    }
+}
+
+fn block_style_inheriting(parent: &BlockStyle, source: &str) -> BlockStyle {
+    let mut style = BlockStyle {
+        alignment: parent.alignment,
+        line_height_percent: parent.line_height_percent,
+        font_family: parent.font_family.clone(),
+        ..BlockStyle::default()
+    };
+    for (name, value) in declarations(Some(source)) {
+        match name.to_ascii_lowercase().as_str() {
+            "text-align" => {
+                style.alignment = match value.to_ascii_lowercase().as_str() {
+                    "center" => TextAlignment::Center,
+                    "right" | "end" => TextAlignment::End,
+                    "justify" => TextAlignment::Justify,
+                    _ => TextAlignment::Start,
+                };
+            }
+            "line-height" => {
+                if let Some(percent) = percent(value) {
+                    style.line_height_percent = percent.clamp(80, 250);
+                }
+            }
+            "margin-top" => style.margin_before_em = em_hundredths(value).unwrap_or(0),
+            "margin-bottom" => style.margin_after_em = em_hundredths(value).unwrap_or(0),
+            "text-indent" => {
+                style.first_line_indent_em = em_hundredths(value)
+                    .and_then(|value| i16::try_from(value).ok())
+                    .unwrap_or(0);
+            }
+            "font-family" => {
+                let family = value
+                    .split(',')
+                    .next()
+                    .unwrap_or_default()
+                    .trim_matches([' ', '\'', '"']);
+                if !family.is_empty() && family.len() <= 128 {
+                    style.font_family = Some(family.to_owned());
+                }
+            }
+            "page-break-before" | "break-before"
+                if value.eq_ignore_ascii_case("always") || value.eq_ignore_ascii_case("page") =>
+            {
+                style.page_break_before = true;
+            }
+            "page-break-after" | "break-after"
+                if value.eq_ignore_ascii_case("always") || value.eq_ignore_ascii_case("page") =>
+            {
+                style.page_break_after = true;
+            }
+            _ => {}
+        }
+    }
+    style
+}
+
+#[allow(clippy::cast_possible_truncation)]
+fn percent(value: &str) -> Option<u16> {
+    if let Some(value) = value.strip_suffix('%') {
+        return value.trim().parse().ok();
+    }
+    let ratio = value.parse::<f32>().ok()?;
+    u16::try_from((ratio * 100.0).round() as i32).ok()
+}
+
+#[allow(clippy::cast_possible_truncation)]
+fn em_hundredths(value: &str) -> Option<u16> {
+    let value = value.trim().strip_suffix("em")?.trim();
+    let em = value.parse::<f32>().ok()?;
+    if !(0.0..=20.0).contains(&em) {
+        return None;
+    }
+    u16::try_from((em * 100.0).round() as i32).ok()
 }
 
 fn heading_level(name: &str) -> Option<u8> {
@@ -412,6 +1032,140 @@ fn breaks_a_block(name: &str) -> bool {
 mod tests {
     use super::*;
 
+    /// An equation is read from its `alttext`, not from its symbols.
+    ///
+    /// This is the shape `LaTeXML` gives every formula on arXiv. Reading the
+    /// element's children puts each symbol on the page as a separate word;
+    /// reading the attribute puts the line the author wrote.
+    #[test]
+    fn an_equation_is_read_from_the_line_the_author_wrote() {
+        let document = parse(
+            "<p>We take <math alttext=\"x \\pm 1\" display=\"inline\">\
+             <mi>x</mi><mo>&#xB1;</mo><mn>1</mn></math> as given.</p>",
+        );
+        let Block::Paragraph(text) = &document.blocks[0] else {
+            panic!("not a paragraph: {:?}", document.blocks[0]);
+        };
+        assert_eq!(text, "We take x \\pm 1 as given.");
+    }
+
+    /// A formula with no reading of its own says nothing rather than saying
+    /// its own markup.
+    #[test]
+    fn an_equation_with_no_reading_is_left_out() {
+        let document = parse("<p>We take <math><mi>x</mi><mn>1</mn></math> as given.</p>");
+        let Block::Paragraph(text) = &document.blocks[0] else {
+            panic!("not a paragraph: {:?}", document.blocks[0]);
+        };
+        assert_eq!(text, "We take as given.");
+    }
+
+    #[test]
+    fn rules_after_a_conditional_group_are_still_read() {
+        // A publisher that opens with `@media` was previously losing every
+        // rule that followed, because the scanner resumed inside the group.
+        let document = parse_with_css(
+            "<p class=\"opening\">Styled words.</p>",
+            "@media screen { p { text-align: right } }\n.opening { text-align: center; }",
+        );
+        let rich = document.rich.get(&0).expect("publisher style");
+        assert_eq!(rich.style.alignment, TextAlignment::Center);
+    }
+
+    #[test]
+    fn rules_inside_a_conditional_group_apply() {
+        let document = parse_with_css(
+            "<p class=\"opening\">Styled words.</p>",
+            "@media screen and (min-width: 100px) { .opening { text-align: center } }",
+        );
+        let rich = document.rich.get(&0).expect("publisher style");
+        assert_eq!(rich.style.alignment, TextAlignment::Center);
+    }
+
+    #[test]
+    fn a_flat_at_rule_does_not_consume_the_rules_after_it() {
+        let document = parse_with_css(
+            "<p class=\"opening\">Styled words.</p>",
+            "@font-face { font-family: 'X'; src: url(x.otf) }\n.opening { text-align: center; }",
+        );
+        let rich = document.rich.get(&0).expect("publisher style");
+        assert_eq!(rich.style.alignment, TextAlignment::Center);
+    }
+
+    #[test]
+    fn a_comment_holding_a_brace_does_not_swallow_the_stylesheet() {
+        let document = parse_with_css(
+            "<p class=\"opening\">Styled words.</p>",
+            "/* the opening { rule */ .opening { text-align: center; }",
+        );
+        let rich = document.rich.get(&0).expect("publisher style");
+        assert_eq!(rich.style.alignment, TextAlignment::Center);
+    }
+
+    #[test]
+    fn an_unterminated_comment_ends_the_stylesheet_rather_than_the_reader() {
+        let document = parse_with_css(
+            "<p class=\"opening\">Styled words.</p>",
+            ".opening { text-align: center; } /* and then nothing closes",
+        );
+        let rich = document.rich.get(&0).expect("publisher style");
+        assert_eq!(rich.style.alignment, TextAlignment::Center);
+    }
+
+    #[test]
+    fn deeply_nested_conditional_groups_stay_bounded() {
+        let mut css = String::new();
+        for _ in 0..64 {
+            css.push_str("@media screen {");
+        }
+        css.push_str(".opening { text-align: center }");
+        for _ in 0..64 {
+            css.push('}');
+        }
+        // The point is that this returns at all, and without the rule, rather
+        // than recursing once per group.
+        let document = parse_with_css("<p class=\"opening\">Styled words.</p>", &css);
+        let rich = document.rich.get(&0).expect("a block is still produced");
+        assert_eq!(rich.style.alignment, TextAlignment::Start);
+    }
+
+    #[test]
+    fn emphasis_survives_a_line_break_inside_a_paragraph() {
+        // `<br>` writes a space the source never held. When it reached only
+        // the block text, the runs stopped matching it and every emphasis in
+        // the paragraph was thrown away -- which is most EPUB verse.
+        let document = parse("<p><b>One line</b><br>and its <i>continuation</i>.</p>");
+        assert_eq!(
+            document.blocks[0].text(),
+            Some("One line and its continuation.")
+        );
+        let rich = document.rich.get(&0).expect("retained emphasis");
+        assert!(rich.spans.iter().any(|span| span.style.strong));
+        assert!(rich.spans.iter().any(|span| span.style.emphasis));
+    }
+
+    // A cell keeps its words but not their weight: the row is a list of
+    // strings, because lining columns up is already as much as the panel can
+    // do with a table, and bold inside a squeezed column buys nothing.
+    #[test]
+    fn a_table_cell_keeps_its_words_when_they_were_emphasised() {
+        let document = parse("<table><tr><td>Plain</td><td><b>Bold</b></td></tr></table>");
+        assert_eq!(
+            document.blocks,
+            vec![Block::Row {
+                header: false,
+                cells: vec!["Plain".to_owned(), "Bold".to_owned()],
+            }]
+        );
+    }
+
+    #[test]
+    fn emphasis_survives_a_described_picture_in_a_run_of_text() {
+        let document = parse("<p>Before <img alt=\"a lantern\"> and <b>after</b>.</p>");
+        let rich = document.rich.get(&0).expect("retained emphasis");
+        assert!(rich.spans.iter().any(|span| span.style.strong));
+    }
+
     #[test]
     fn a_heading_survives_as_a_heading() {
         // This is the whole reason for a second scanner. `to_text` would give
@@ -427,6 +1181,113 @@ mod tests {
                 Block::Paragraph("It began badly.".to_owned()),
             ]
         );
+    }
+
+    #[test]
+    fn inline_structure_and_safe_publisher_css_survive_parsing() {
+        let document = parse(
+            r#"<style>
+                p.lead { text-align: center; line-height: 140%; margin-bottom: 0.5em; }
+                .accent { font-style: italic; text-decoration: underline; }
+               </style>
+               <p class="lead">Before <strong>bold <span class="accent">both</span></strong>.</p>"#,
+        );
+        assert_eq!(document.blocks[0].text(), Some("Before bold both."));
+        let rich = document.rich.get(&0).expect("rich paragraph");
+        assert_eq!(rich.style.alignment, TextAlignment::Center);
+        assert_eq!(rich.style.line_height_percent, 140);
+        assert_eq!(rich.style.margin_after_em, 50);
+        assert_eq!(
+            rich.spans
+                .iter()
+                .map(|span| span.text.as_str())
+                .collect::<String>(),
+            "Before bold both."
+        );
+        let both = rich
+            .spans
+            .iter()
+            .find(|span| span.text.contains("both"))
+            .expect("styled run");
+        assert!(both.style.strong);
+        assert!(both.style.emphasis);
+        assert!(both.style.underline);
+    }
+
+    #[test]
+    fn unsupported_css_cannot_escape_the_bounded_flow() {
+        let document = parse_with_css(
+            r#"<p class="moved">Words stay readable.</p>"#,
+            ".moved { position: fixed; left: -999999px; color: transparent; text-align: right; }",
+        );
+        assert_eq!(document.blocks[0].text(), Some("Words stay readable."));
+        assert_eq!(
+            document
+                .rich
+                .get(&0)
+                .expect("supported style")
+                .style
+                .alignment,
+            TextAlignment::End
+        );
+    }
+
+    #[test]
+    fn external_and_embedded_css_share_one_total_byte_budget() {
+        let mut external = String::from("p { text-align: center; }");
+        external.extend(std::iter::repeat_n(
+            ' ',
+            MAX_CSS_BYTES.saturating_sub(external.len()),
+        ));
+        let document = parse_with_css(
+            "<style>p { text-align: right; }</style><p>Bounded prose.</p>",
+            &external,
+        );
+
+        assert_eq!(
+            document
+                .rich
+                .get(&0)
+                .expect("external style")
+                .style
+                .alignment,
+            TextAlignment::Center,
+            "embedded CSS must not extend the combined stylesheet past its limit"
+        );
+    }
+
+    #[test]
+    fn tag_per_character_styling_is_bounded_without_losing_words() {
+        let mut source = String::from("<p>");
+        for index in 0..400 {
+            if index % 2 == 0 {
+                source.push_str("<b>x</b>");
+            } else {
+                source.push_str("<i>y</i>");
+            }
+        }
+        source.push_str("</p>");
+        let document = parse(&source);
+        let text = document.blocks[0].text().expect("paragraph");
+        let rich = document.rich.get(&0).expect("rich paragraph");
+        assert_eq!(text.len(), 400);
+        assert_eq!(
+            rich.spans.iter().map(|span| span.text.len()).sum::<usize>(),
+            400
+        );
+        assert!(rich.spans.len() <= crate::MAX_RICH_SPANS);
+    }
+
+    #[test]
+    fn inherited_body_typography_reaches_ordinary_paragraphs() {
+        let document = parse_with_css(
+            "<body><p>Inherited prose.</p></body>",
+            "body { font-family: Publisher Serif; line-height: 135%; text-align: justify; }",
+        );
+        let style = &document.rich.get(&0).expect("publisher style").style;
+        assert_eq!(style.font_family.as_deref(), Some("Publisher Serif"));
+        assert_eq!(style.line_height_percent, 135);
+        assert_eq!(style.alignment, TextAlignment::Justify);
     }
 
     #[test]
@@ -609,6 +1470,33 @@ mod tests {
     }
 
     #[test]
+    fn a_figure_keeps_its_picture_caption_and_following_heading_in_order() {
+        let document = parse(
+            r#"<p>Before.</p><figure><img src="plate.png" alt="A plate"><figcaption><em>Figure 1.</em> A caption.</figcaption></figure><h2>After</h2>"#,
+        );
+        assert_eq!(
+            document.blocks,
+            vec![
+                Block::Paragraph("Before.".to_owned()),
+                Block::Picture {
+                    name: "plate.png".to_owned(),
+                    alt: "A plate".to_owned(),
+                },
+                Block::Caption("Figure 1. A caption.".to_owned()),
+                Block::Heading {
+                    level: 2,
+                    text: "After".to_owned(),
+                },
+            ]
+        );
+        let caption = document.rich.get(&2).expect("rich caption");
+        assert!(caption
+            .spans
+            .iter()
+            .any(|span| span.text.contains("Figure 1.") && span.style.emphasis));
+    }
+
+    #[test]
     fn a_soft_break_does_not_start_a_new_paragraph() {
         let document = parse("<p>One line<br>and its continuation.</p>");
         assert_eq!(
@@ -620,14 +1508,69 @@ mod tests {
     }
 
     #[test]
-    fn a_table_row_becomes_one_readable_line() {
+    fn a_table_keeps_one_block_per_row_with_its_cells_apart() {
         let document = parse("<table><tr><td>a</td><td>b</td></tr><tr><td>1</td><td>2</td></tr>");
         assert_eq!(
             document.blocks,
             vec![
-                Block::Paragraph("a \u{2014} b".to_owned()),
-                Block::Paragraph("1 \u{2014} 2".to_owned()),
+                Block::Row {
+                    header: false,
+                    cells: vec!["a".to_owned(), "b".to_owned()],
+                },
+                Block::Row {
+                    header: false,
+                    cells: vec!["1".to_owned(), "2".to_owned()],
+                },
             ]
+        );
+    }
+
+    #[test]
+    fn a_head_row_is_marked_so_the_panel_can_rule_under_it() {
+        let document = parse(
+            "<table><thead><tr><th>Model</th><th>Top-1</th></tr></thead>\
+             <tbody><tr><td>Small</td><td>71.2</td></tr></tbody></table><p>After.</p>",
+        );
+        assert_eq!(
+            document.blocks,
+            vec![
+                Block::Row {
+                    header: true,
+                    cells: vec!["Model".to_owned(), "Top-1".to_owned()],
+                },
+                Block::Row {
+                    header: false,
+                    cells: vec!["Small".to_owned(), "71.2".to_owned()],
+                },
+                Block::Paragraph("After.".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn two_paragraphs_in_one_cell_are_read_as_one_cell() {
+        let document = parse("<table><tr><td><p>First.</p><p>Second.</p></td></tr></table>");
+        assert_eq!(
+            document.blocks,
+            vec![Block::Row {
+                header: false,
+                cells: vec!["First. Second.".to_owned()],
+            }]
+        );
+    }
+
+    // A cell holding a whole paragraph is the shape that used to run the two
+    // cells together; it must still come out as two.
+    #[test]
+    fn a_cell_that_wraps_its_words_in_a_paragraph_stays_one_cell() {
+        let document =
+            parse("<table><tr><td><p>Left words</p></td><td><p>Right words</p></td></tr></table>");
+        assert_eq!(
+            document.blocks,
+            vec![Block::Row {
+                header: false,
+                cells: vec!["Left words".to_owned(), "Right words".to_owned()],
+            }]
         );
     }
 

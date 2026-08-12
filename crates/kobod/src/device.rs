@@ -44,14 +44,15 @@ use kobo_policy::{Backends, Capability, Declared, DeviceServices, PowerPolicy, T
 use kobo_profile::{DeviceProfile, CLARA_BW_391};
 use kobo_protocol::{Frame, Lifecycle, Message, TaskError, TaskOutcome};
 use kobo_ui::{
-    display_metrics_from_env, render_all, ActionId, Chrome, FramePlanner, PanelWaveform,
-    PictureCache, Screen, Surface,
+    display_metrics_from_env, render_all, ActionId, Chrome, FontHandle, FramePlanner,
+    PanelWaveform, PictureCache, Screen, Surface,
 };
+use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering as AtomicOrdering};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -71,6 +72,16 @@ const SECRETS: &str = "/mnt/onboard/.adds/cobalt/secrets";
 /// the same reasons. A certificate here lets the runtime verify a daemon on
 /// the owner's own network exactly as it verifies a public host.
 const TRUST: &str = "/mnt/onboard/.adds/cobalt/trust";
+const DICTIONARIES: &str = "/mnt/onboard/.adds/cobalt/dictionaries";
+
+/// The most publisher faces one application may hold in the runtime at once.
+///
+/// The protocol bounds a single font frame, not how many frames arrive. A book
+/// needs a regular, an italic, a bold and a bold italic, and a handful more for
+/// small caps or a display face; past that an application is accumulating
+/// rather than typesetting, and every face held is parsed outlines and a glyph
+/// cache inside the privileged runtime.
+const MAX_APP_FONTS: usize = 16;
 
 /// Where each application's own keyed state lives, one directory per name.
 const STATE_ROOT: &str = "/mnt/onboard/.adds/cobalt/state";
@@ -96,15 +107,18 @@ const DATA_ROOT: &str = "/mnt/onboard/.adds/cobalt/data";
 /// lays this screen out has to agree, because layout is what decides where the
 /// controls are: rendering at one size and hit-testing at another moves every
 /// control away from where it can be seen.
+///
+/// What the screen asks for is the size of its *prose*. The interface keeps
+/// the reader's own accessibility scale, so a book set larger does not also
+/// grow the bar above it and take the room out of the page.
 fn metrics_for(screen: &Screen) -> kobo_ui::DisplayMetrics {
-    let mut metrics = display_metrics_from_env();
-    let scale = screen.text_scale.unwrap_or(metrics.text_scale);
-    metrics.text_scale = scale;
+    let metrics = display_metrics_from_env();
     // The typeface is installed once and lives as long as the process, so the
     // size it sets at has to be told to it rather than carried in the metrics
     // it was built with. Set here, where the screen's own answer is known, so
     // that measuring and drawing this frame cannot disagree.
-    kobo_ui::set_text_scale(scale);
+    kobo_ui::set_text_scale(metrics.text_scale);
+    kobo_ui::set_reading_scale(screen.text_scale.unwrap_or(metrics.text_scale));
     metrics
 }
 
@@ -784,6 +798,7 @@ fn restore_screen(
 /// nobody has looked at in a while is cheaper to start again than a device that
 /// runs out of memory while its owner is reading.
 const MAX_HOSTED: usize = 4;
+static NEXT_RUNTIME_FONT: AtomicU32 = AtomicU32::new(1);
 
 /// One application the runtime is hosting.
 ///
@@ -818,6 +833,8 @@ struct Hosted {
     /// cache cannot evict another's covers, and so that everything is released
     /// together when it exits.
     pictures: PictureCache,
+    /// Application-local font handles mapped onto runtime-global handles.
+    fonts: BTreeMap<FontHandle, FontHandle>,
     painted: u32,
     /// When this was last on the panel, for deciding what to stop first.
     used: Instant,
@@ -1014,6 +1031,8 @@ fn host_applications(
         PowerPolicy::DEFAULT,
         Backends::with(backends),
     );
+    let dictionaries = services.load_dictionaries(Path::new(DICTIONARIES));
+    println!("offline dictionaries loaded: {dictionaries}");
     if let Some(light) = &frontlight {
         if let Some(percent) = light.percent() {
             services.observe_frontlight(percent);
@@ -1330,7 +1349,10 @@ fn host_applications(
                         continue;
                     };
                     match frame.message {
-                        Message::SetScreen(screen) => {
+                        Message::SetScreen(mut screen) => {
+                            if let Some(local) = screen.reading_font {
+                                screen.reading_font = apps[index].fonts.get(&local).copied();
+                            }
                             let is_front = id == front;
                             if is_front {
                                 last_activity = Instant::now();
@@ -1408,6 +1430,52 @@ fn host_applications(
                             }
                         }
                         Message::DropPicture { handle } => apps[index].pictures.remove(handle),
+                        Message::PutFont {
+                            handle,
+                            name,
+                            bytes,
+                        } => {
+                            // The map entry is only made once the face parses.
+                            // Creating it first let a refused font hold a slot,
+                            // and nothing bounded how many slots one
+                            // application could take: a loop over fresh handles
+                            // would grow the runtime until the device gave out.
+                            let known = apps[index].fonts.contains_key(&handle);
+                            if !known && apps[index].fonts.len() >= MAX_APP_FONTS {
+                                trace(&format!(
+                                    "font {} refused: {MAX_APP_FONTS} already held",
+                                    handle.0
+                                ));
+                            } else {
+                                match kobo_text::BookFont::from_bytes(
+                                    &bytes,
+                                    &name,
+                                    display_metrics_from_env(),
+                                ) {
+                                    Ok(book_font) => {
+                                        let runtime_handle =
+                                            *apps[index].fonts.entry(handle).or_insert_with(|| {
+                                                FontHandle(
+                                                    NEXT_RUNTIME_FONT
+                                                        .fetch_add(1, AtomicOrdering::Relaxed),
+                                                )
+                                            });
+                                        kobo_ui::put_book_typesetter(
+                                            runtime_handle,
+                                            Box::new(book_font),
+                                        );
+                                    }
+                                    Err(error) => {
+                                        trace(&format!("font {} refused: {error}", handle.0));
+                                    }
+                                }
+                            }
+                        }
+                        Message::DropFont { handle } => {
+                            if let Some(runtime_handle) = apps[index].fonts.remove(&handle) {
+                                kobo_ui::drop_book_typesetter(runtime_handle);
+                            }
+                        }
                         // An application logs to explain itself, and the times
                         // it most needs to be believed are the times it took
                         // the reader down with it. Dropping the line here left
@@ -1871,6 +1939,7 @@ fn host_applications(
                         Message::Hello { .. }
                         | Message::Welcome { .. }
                         | Message::Action { .. }
+                        | Message::TextHold { .. }
                         | Message::TaskOutcome { .. }
                         | Message::Lifecycle(_)
                         | Message::DeviceResult(_)
@@ -2259,6 +2328,7 @@ fn start_application(
         declared,
         screen: None,
         pictures: PictureCache::default(),
+        fonts: BTreeMap::new(),
         painted: 0,
         used: Instant::now(),
     });
@@ -2267,6 +2337,9 @@ fn start_application(
 
 /// Ends one hosted application and everything it started.
 fn stop_hosted(mut app: Hosted) {
+    for (_, handle) in std::mem::take(&mut app.fonts) {
+        kobo_ui::drop_book_typesetter(handle);
+    }
     app.tasks.shutdown();
     stop_application(&mut app.child, app.jail.as_deref());
     if let Some(root) = app.jail {
@@ -2429,6 +2502,27 @@ fn action_for(
     hit
 }
 
+fn text_hold_for(
+    event: TouchEvent,
+    screen: Option<&Screen>,
+    chrome: &Chrome,
+    held: bool,
+) -> Option<(ActionId, kobo_ui::TextHit)> {
+    if !held {
+        return None;
+    }
+    let TouchEvent::Up { x, y } = event else {
+        return None;
+    };
+    let screen = screen?;
+    let action = screen.hold?;
+    let (Ok(x), Ok(y)) = (i32::try_from(x), i32::try_from(y)) else {
+        return None;
+    };
+    let layout = screen.layout_with(&metrics_for(screen), chrome);
+    layout.hit_text(x, y).map(|hit| (action, hit))
+}
+
 fn trace_picture_evictions(handle: kobo_ui::PictureHandle, evicted: &[kobo_ui::PictureHandle]) {
     if evicted.is_empty() {
         return;
@@ -2544,6 +2638,22 @@ fn deliver_touch(
     chrome: &Chrome,
     held: bool,
 ) -> Result<Tap, String> {
+    if let Some((action, hit)) = text_hold_for(event, current, chrome, held) {
+        kobo_protocol::write_to(
+            stream,
+            &Frame {
+                request_id: 0,
+                message: Message::TextHold {
+                    action,
+                    context: hit.context,
+                    start: hit.start,
+                    end: hit.end,
+                },
+            },
+        )
+        .map_err(|error| format!("deliver a text hold: {error}"))?;
+        return Ok(Tap::Handled);
+    }
     let Some(action) = action_for(event, current, chrome, held) else {
         return Ok(Tap::Handled);
     };

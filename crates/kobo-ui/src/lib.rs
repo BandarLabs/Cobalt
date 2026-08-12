@@ -4,6 +4,7 @@
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
     clippy::cast_sign_loss,
+    clippy::match_same_arms,
     clippy::only_used_in_recursion,
     clippy::too_many_lines
 )]
@@ -11,12 +12,15 @@
 //! A small retained UI tree and grayscale rasterizer for the Kobo display.
 
 use std::cmp::{max, min};
-use std::sync::OnceLock;
+use std::collections::BTreeMap;
+use std::sync::{Mutex, OnceLock};
+use unicode_segmentation::UnicodeSegmentation;
 
 pub const DISPLAY_WIDTH: i32 = 1072;
 pub const DISPLAY_HEIGHT: i32 = 1448;
 const MAX_LAYOUT_NODES: usize = 512;
 const MAX_LAYOUT_DEPTH: usize = 16;
+const MAX_TEXT_HITS: usize = 1024;
 /// Beyond a handful of options a list stops being a choice and becomes a menu,
 /// which is what [`Node::PagedList`] is for.
 pub const MAX_CHOICE_OPTIONS: usize = 6;
@@ -65,6 +69,23 @@ const FACTS_LABEL_LIMIT_EIGHTHS: i32 = 3;
 /// better answer, which is why it is automatic rather than something the
 /// application is asked to arrange.
 pub const MIN_BAND_SLOT_TENTH_MM: i32 = 120;
+
+/// The narrowest a table column is allowed to be before the table stacks.
+///
+/// Twelve millimetres holds about four characters of body text at the default
+/// size. A column narrower than that wraps every cell to one word a line and
+/// turns a three column table into a tall grey block nobody can read across.
+pub const MIN_TABLE_COLUMN_TENTH_MM: i32 = 120;
+
+/// The most rows one [`Node::Table`] will draw.
+///
+/// A page holds a few dozen lines and a table row is at least one of them, so
+/// a table longer than this cannot be on one page anyway. The reader splits a
+/// long table across pages before it reaches here.
+pub const MAX_TABLE_ROWS: usize = 64;
+
+/// The most columns one [`Node::Table`] will draw.
+pub const MAX_TABLE_COLUMNS: usize = 12;
 
 /// What a paragraph of a threaded discussion is for.
 ///
@@ -199,24 +220,78 @@ pub struct DisplayMetrics {
 /// Applications continue to ask for semantic sizes such as [`FontSize::Body`].
 /// The runtime applies this preference to every face, so pagination performed
 /// in an application and rendering performed on the device remain identical.
+///
+/// The steps are close enough together that a reader who finds one size a
+/// little too small has somewhere to go: three sizes meant the only move from
+/// "slightly too small" was a fifth larger, which is a different book. The
+/// wire values of the original three are unchanged, because they are written
+/// into every reading position already saved on every device.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 #[repr(u8)]
 pub enum TextScale {
+    Smallest = 3,
+    Smaller = 4,
     #[default]
     Default = 0,
+    Medium = 5,
     Large = 1,
+    Larger = 6,
     ExtraLarge = 2,
+    Huge = 7,
+    Largest = 8,
 }
 
 impl TextScale {
+    /// Every step, smallest first, which is the order a stepper walks.
+    pub const STEPS: [Self; 9] = [
+        Self::Smallest,
+        Self::Smaller,
+        Self::Default,
+        Self::Medium,
+        Self::Large,
+        Self::Larger,
+        Self::ExtraLarge,
+        Self::Huge,
+        Self::Largest,
+    ];
+
     /// Percentage applied to the physical type size.
     #[must_use]
     pub const fn percent(self) -> i32 {
         match self {
+            Self::Smallest => 80,
+            Self::Smaller => 90,
             Self::Default => 100,
+            Self::Medium => 110,
             Self::Large => 120,
+            Self::Larger => 130,
             Self::ExtraLarge => 140,
+            Self::Huge => 155,
+            Self::Largest => 170,
         }
+    }
+
+    /// Where this size sits among [`Self::STEPS`].
+    #[must_use]
+    pub fn step(self) -> usize {
+        Self::STEPS
+            .iter()
+            .position(|scale| *scale == self)
+            .unwrap_or(2)
+    }
+
+    /// The next size up, or `None` at the top of the range.
+    #[must_use]
+    pub fn larger(self) -> Option<Self> {
+        Self::STEPS.get(self.step().saturating_add(1)).copied()
+    }
+
+    /// The next size down, or `None` at the bottom of the range.
+    #[must_use]
+    pub fn smaller(self) -> Option<Self> {
+        self.step()
+            .checked_sub(1)
+            .and_then(|step| Self::STEPS.get(step).copied())
     }
 
     /// A stable wire representation used by `kobo-protocol`.
@@ -232,19 +307,35 @@ impl TextScale {
             0 => Some(Self::Default),
             1 => Some(Self::Large),
             2 => Some(Self::ExtraLarge),
+            3 => Some(Self::Smallest),
+            4 => Some(Self::Smaller),
+            5 => Some(Self::Medium),
+            6 => Some(Self::Larger),
+            7 => Some(Self::Huge),
+            8 => Some(Self::Largest),
             _ => None,
         }
     }
 
     /// Parses values accepted by the runtime's `KOBO_TEXT_SCALE` setting.
+    ///
+    /// A bare percentage is matched against the steps rather than rounded to
+    /// one, so a setting naming a size that no longer exists is refused and
+    /// falls back to the default instead of silently becoming a neighbour.
     #[must_use]
     pub fn from_name(value: &str) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "default" | "100" | "100%" => Some(Self::Default),
-            "large" | "120" | "120%" => Some(Self::Large),
-            "extra-large" | "extra_large" | "xl" | "140" | "140%" => Some(Self::ExtraLarge),
-            _ => None,
+        let value = value.trim().to_ascii_lowercase();
+        match value.as_str() {
+            "default" | "standard" => return Some(Self::Default),
+            "large" => return Some(Self::Large),
+            "extra-large" | "extra_large" | "xl" => return Some(Self::ExtraLarge),
+            _ => {}
         }
+        let digits = value.strip_suffix('%').unwrap_or(&value);
+        let percent = digits.parse::<i32>().ok()?;
+        Self::STEPS
+            .into_iter()
+            .find(|step| step.percent() == percent)
     }
 }
 
@@ -752,6 +843,14 @@ pub enum CellStyle {
     #[default]
     Board,
     Key,
+    /// A cell that is nothing but the picture in it.
+    ///
+    /// For a row of actions everybody already knows by their drawing. A key
+    /// needs its field because a keyboard is forty-five targets packed edge to
+    /// edge and the eye has to be told where one ends; four icons with a
+    /// finger's width of paper between them are already separate, and putting
+    /// each on a grey slab turns a quiet row into four boxes.
+    Plain,
 }
 
 /// Whether a control can currently be activated.
@@ -1110,6 +1209,13 @@ pub struct Screen {
     /// misread, which is a different job and a different answer.
     pub reading: bool,
 
+    /// A publisher font already held by the runtime for this application.
+    ///
+    /// Only reading prose uses it; chrome and controls remain in the system
+    /// face so an EPUB cannot make the way out illegible. Missing handles fall
+    /// back to the approved reading face without losing any text.
+    pub reading_font: Option<FontHandle>,
+
     /// A text size this screen asks for, overriding the reader's own setting.
     ///
     /// `None` means inherit, which is what almost every screen should do: the
@@ -1236,6 +1342,7 @@ impl Screen {
             page_turns: None,
             owns_back: false,
             reading: false,
+            reading_font: None,
             text_scale: None,
             hold: None,
             overlay: None,
@@ -1257,6 +1364,13 @@ impl Screen {
     #[must_use]
     pub const fn with_reading(mut self, reading: bool) -> Self {
         self.reading = reading;
+        self
+    }
+
+    /// Selects a runtime-held publisher face for book prose.
+    #[must_use]
+    pub const fn with_reading_font(mut self, font: Option<FontHandle>) -> Self {
+        self.reading_font = font;
         self
     }
 
@@ -1326,6 +1440,12 @@ impl Screen {
     /// Lays the screen out for a panel, including runtime-owned decoration.
     #[must_use]
     pub fn layout_with(&self, metrics: &DisplayMetrics, chrome: &Chrome) -> Layout {
+        with_reading_font(self.reading_font, || {
+            self.layout_with_selected_font(metrics, chrome)
+        })
+    }
+
+    fn layout_with_selected_font(&self, metrics: &DisplayMetrics, chrome: &Chrome) -> Layout {
         let margin = metrics.screen_margin();
         let gap = metrics.space(Space::Tight);
         let prose = if self.reading {
@@ -2178,6 +2298,77 @@ pub struct TextLink {
 /// the layout and a tap target in the hit test. Sixteen is far past any
 /// paragraph anybody reads and well short of a paragraph that costs anything.
 pub const MAX_TEXT_LINKS: usize = 16;
+pub const MAX_RICH_TEXT_SPANS: usize = 256;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct TextPresentation {
+    pub strong: bool,
+    pub emphasis: bool,
+    pub underline: bool,
+    pub superscript: bool,
+    pub subscript: bool,
+    /// A reader annotation behind this exact run, rendered as a light ink
+    /// wash that remains distinct from selection focus in grayscale.
+    pub highlighted: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RichTextSpan {
+    pub start: usize,
+    pub end: usize,
+    pub presentation: TextPresentation,
+}
+
+/// Stable document coordinates attached to publisher-styled reading text.
+///
+/// The UI layer deliberately treats `context` as opaque. A reading
+/// application can use it as a block, resource, or document identifier while
+/// the runtime adds the byte offsets resolved from the touched word.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TextSelection {
+    pub context: u64,
+    pub offset: u32,
+}
+
+/// One word under a finger, expressed in the reading application's logical
+/// coordinate system rather than in pixels.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TextHit {
+    pub context: u64,
+    pub start: u32,
+    pub end: u32,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ParagraphAlignment {
+    #[default]
+    Start,
+    Center,
+    End,
+    Justify,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParagraphPresentation {
+    pub alignment: ParagraphAlignment,
+    pub line_height_percent: u16,
+    pub margin_before_em: u16,
+    pub margin_after_em: u16,
+    pub first_line_indent_em: i16,
+}
+
+impl Default for ParagraphPresentation {
+    fn default() -> Self {
+        Self {
+            alignment: ParagraphAlignment::Start,
+            line_height_percent: 100,
+            margin_before_em: 0,
+            margin_after_em: 0,
+            first_line_indent_em: 0,
+        }
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Node {
@@ -2196,6 +2387,15 @@ pub enum Node {
         /// to be split into three nodes to carry one would wrap, measure and
         /// paginate as three separate paragraphs.
         links: Vec<TextLink>,
+    },
+    /// EPUB prose retaining bounded inline emphasis and paragraph styling.
+    RichText {
+        id: NodeId,
+        text: String,
+        spans: Vec<RichTextSpan>,
+        links: Vec<TextLink>,
+        presentation: ParagraphPresentation,
+        selection: Option<TextSelection>,
     },
     /// A line about the content rather than the content: a date, an author, a
     /// size, a count, a status.
@@ -2410,6 +2610,33 @@ pub enum Node {
         id: NodeId,
         rows: Vec<Row>,
     },
+    /// A table, drawn as columns that line up.
+    ///
+    /// The one arrangement in the reader that cannot be expressed as a
+    /// downward flow of full-width blocks. A table's meaning is entirely in
+    /// which value sits under which heading, and a table read out as prose --
+    /// which is what flattening its cells into a sentence amounts to -- keeps
+    /// every word and loses all of it.
+    ///
+    /// Column widths are shared by every row and worked out from the widest
+    /// cell in each column, then squeezed proportionally to fit the panel.
+    /// When the columns cannot each keep [`MIN_TABLE_COLUMN_TENTH_MM`], the
+    /// table stacks each row as its own short block instead, the way
+    /// [`Node::Band`] does: a stacked row is always readable and a four
+    /// character column never is.
+    Table {
+        id: NodeId,
+        rows: Vec<TableRow>,
+        /// What each column wants to be, measured across the whole table
+        /// rather than across the rows sent here.
+        ///
+        /// A table taller than a page is split, and each part would otherwise
+        /// be measured on its own and come out with different columns -- so a
+        /// reader turning the page would watch the table move under them.
+        /// Empty means "measure the rows given", which is what a caller with
+        /// the whole table in hand can leave it as.
+        weights: Vec<u16>,
+    },
     /// A grid of large tappable tiles, the launcher's primary surface.
     TileGrid {
         id: NodeId,
@@ -2421,6 +2648,37 @@ pub enum Node {
     /// Typing on a device with no keyboard and a refresh measured in tens of
     /// milliseconds is markedly worse than tapping, so the shape of the node
     /// pushes authors toward offering answers rather than demanding prose.
+    /// One quantity, its two directions, and where it stands in its range.
+    ///
+    /// The answer to a setting with an order to it: a type size, a brightness,
+    /// a volume. A [`Node::Choice`] can express the same thing by naming every
+    /// step, and for three steps that was defensible; past that it becomes a
+    /// stack of full-width boxes taller than the page it is covering, and it
+    /// still cannot say that "Large" is one notch above "Standard".
+    ///
+    /// The two controls carry pictures rather than words on purpose. Minus and
+    /// plus are read the same in every language and at a glance in the dark,
+    /// which is when a reader reaches for the light. What the value *is* stays
+    /// written out beside them, because a stepper with no reading is the one
+    /// thing worse than a list: it says which way to go and never says where
+    /// you are.
+    Stepper {
+        id: NodeId,
+        /// What is being adjusted, and its present value, already written for
+        /// reading: "Type size 110%".
+        label: String,
+        /// The two ends, and whether either has anywhere left to go. A
+        /// control at the end of its range is drawn muted rather than removed,
+        /// so the row keeps its shape and the other end does not slide under
+        /// the finger already reaching for it.
+        less: BarAction,
+        more: BarAction,
+        less_state: ControlState,
+        more_state: ControlState,
+        /// How far along the range the value sits, drawn as a filled track
+        /// under the row. `None` for a quantity with no meaningful extent.
+        fill: Option<u8>,
+    },
     Choice {
         id: NodeId,
         prompt: String,
@@ -2640,6 +2898,12 @@ impl BandSlot {
 /// applications may use the same number without colliding.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PictureHandle(pub u32);
+
+/// An outline font the runtime is holding on an application's behalf.
+///
+/// Handles are application-local, exactly like [`PictureHandle`]s.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct FontHandle(pub u32);
 
 /// A picture on a tile, together with the size it was handed over at.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2891,6 +3155,16 @@ pub const MAX_TABS: usize = 4;
 pub const MAX_CELLS: usize = 81;
 /// The most columns a grid may ask for.
 pub const MAX_COLUMNS: u8 = 12;
+
+/// One row of a [`Node::Table`].
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct TableRow {
+    /// Whether this row names the columns rather than filling them. Drawn in
+    /// the body face rather than a bolder one, and underlined by a rule,
+    /// because on sixteen greys a rule separates more clearly than weight.
+    pub header: bool,
+    pub cells: Vec<String>,
+}
 
 /// One entry in a [`Node::Rows`] list.
 ///
@@ -3179,6 +3453,12 @@ pub enum Glyph {
     /// application wore [`Self::Download`] before this existed, which said
     /// "fetch something" about the one place on the device that plays sound.
     Headphones,
+    /// Take away, and the other half of every stepper on the device.
+    ///
+    /// A single stroke carries no language at all, which is the whole reason
+    /// to draw it: "Dimmer" and "Smaller" are words somebody has to read, and
+    /// a reader adjusting the light in the dark is not reading anything.
+    Minus,
 }
 
 impl Glyph {
@@ -3189,7 +3469,7 @@ impl Glyph {
     /// the set was twenty-one: `Light` and `Close` were authored, shipped, and
     /// covered by none of the tests that walk every glyph. A glyph nobody
     /// rasterises in a test is a blank space beside a label on the panel.
-    pub const ALL: [Self; 44] = [
+    pub const ALL: [Self; 45] = [
         Self::App,
         Self::Book,
         Self::Note,
@@ -3234,6 +3514,7 @@ impl Glyph {
         Self::Next,
         Self::Plus,
         Self::Headphones,
+        Self::Minus,
     ];
 }
 
@@ -3243,6 +3524,7 @@ impl Node {
         match self {
             Self::Heading { id, .. }
             | Self::Text { id, .. }
+            | Self::RichText { id, .. }
             | Self::Secondary { id, .. }
             | Self::Section { id, .. }
             | Self::Quote { id, .. }
@@ -3261,8 +3543,10 @@ impl Node {
             | Self::PagedList { id, .. }
             | Self::Grid { id, .. }
             | Self::Rows { id, .. }
+            | Self::Table { id, .. }
             | Self::TileGrid { id, .. }
             | Self::Choice { id, .. }
+            | Self::Stepper { id, .. }
             | Self::Banner { id, .. }
             | Self::Skeleton { id, .. }
             | Self::Picture { id, .. }
@@ -3402,6 +3686,7 @@ pub enum LayoutKind {
     StatusBattery(Option<Percent>, bool),
     Heading,
     Text,
+    RichText(TextPresentation),
     /// A run inside a paragraph that goes somewhere.
     ///
     /// Drawn as an underline under words the paragraph node has already set,
@@ -3493,6 +3778,13 @@ pub enum LayoutKind {
     Row(ActionId),
     Cell(ActionId, CellStyle),
     CellLabel,
+    /// One cell of a table, drawn in the body face.
+    TableCell,
+    /// One cell of a table's heading row, drawn muted so the rule under it
+    /// reads as the edge of the heading rather than an arbitrary line.
+    TableHeaderCell,
+    /// The rule under a table's heading row.
+    TableRule,
     RowTitle,
     /// A title whose work is finished: muted and struck through.
     RowTitleDone,
@@ -3524,6 +3816,17 @@ pub enum LayoutKind {
     /// it to fit only if the application handed over something larger.
     Picture(PictureHandle),
     ChoicePrompt,
+    /// A stepper's reading: what is being adjusted and where it stands. Set in
+    /// the middle of the row, between the two controls, and not itself a
+    /// target -- a stepper has two answers and neither of them is "the label".
+    StepperValue,
+    /// One end of a stepper. The glyph says which way it goes and the
+    /// [`ControlState`] says whether there is anywhere left to go: a control at
+    /// the end of its range is drawn muted and answers nothing, rather than
+    /// disappearing and moving the other one under the reader's finger.
+    StepperControl(ActionId, ControlState, Glyph),
+    /// The track under a stepper, filled as far as the value has gone.
+    StepperTrack(u8),
     ChoiceOption(ActionId, bool),
     ChoiceFreeform(ActionId),
     Banner(BannerLevel),
@@ -3572,6 +3875,7 @@ impl LayoutKind {
             | Self::RowMenu(action)
             | Self::Cell(action, ..)
             | Self::ChoiceOption(action, _)
+            | Self::StepperControl(action, ControlState::Enabled, _)
             | Self::ChoiceFreeform(action)
             | Self::QuoteFold(action, _)
             | Self::PagePrevious(action)
@@ -3600,6 +3904,10 @@ pub struct Layout {
     pub page_turns: Option<PageTurns>,
     /// Set when the screen asked to hear about a held finger.
     pub hold: Option<ActionId>,
+    /// Word rectangles derived during layout. These are kept outside `nodes`
+    /// so selectable prose does not spend the bounded semantic-node budget on
+    /// every word in a novel.
+    pub text_hits: Vec<(Rect, TextHit)>,
     /// The face this screen's prose was wrapped in, and must be drawn in.
     ///
     /// Kept on the layout rather than on each node because it is a property of
@@ -3831,6 +4139,7 @@ impl Layout {
                         | LayoutKind::Chip(_, _)
                         | LayoutKind::Tab(_, _)
                         | LayoutKind::ChoiceOption(_, _)
+                        | LayoutKind::StepperControl(_, ControlState::Enabled, _)
                         | LayoutKind::ChoiceFreeform(_)
                 )
             })
@@ -3891,6 +4200,20 @@ impl Layout {
             return None;
         }
         Some(hold)
+    }
+
+    /// The logical word under a held finger. Controls always win, matching
+    /// ordinary tap hit testing and preventing a held link or toolbar button
+    /// from unexpectedly selecting book text beneath it.
+    #[must_use]
+    pub fn hit_text(&self, x: i32, y: i32) -> Option<TextHit> {
+        if !self.content.contains(x, y) || self.hit_control(x, y).is_some() {
+            return None;
+        }
+        self.text_hits
+            .iter()
+            .rev()
+            .find_map(|(rect, hit)| rect.contains(x, y).then_some(*hit))
     }
 
     /// The page turn a tap on empty content means, if any.
@@ -4008,6 +4331,7 @@ impl Layout {
                 | LayoutKind::Chip(candidate, _)
                 | LayoutKind::Tab(candidate, _)
                 | LayoutKind::ChoiceOption(candidate, _)
+                | LayoutKind::StepperControl(candidate, ControlState::Enabled, _)
                 | LayoutKind::Cell(candidate, ..)
                 | LayoutKind::ChoiceFreeform(candidate) => candidate == action,
                 _ => false,
@@ -4352,6 +4676,21 @@ fn lead_rect(
     }
 }
 
+fn rich_run_at(start: usize, line_end: usize, spans: &[RichTextSpan]) -> (usize, TextPresentation) {
+    for span in spans.iter().take(MAX_RICH_TEXT_SPANS) {
+        if span.start <= start && start < span.end {
+            return (span.end.min(line_end).max(start + 1), span.presentation);
+        }
+        if span.start > start {
+            return (
+                span.start.min(line_end).max(start + 1),
+                TextPresentation::default(),
+            );
+        }
+    }
+    (line_end.max(start + 1), TextPresentation::default())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn layout_node(
     node: &Node,
@@ -4444,6 +4783,126 @@ fn layout_node(
                 }
             }
             y.saturating_add(height)
+        }
+        Node::RichText {
+            id,
+            text,
+            spans,
+            links,
+            presentation,
+            selection,
+        } => {
+            let natural = FontSize::Body.line_height_in(prose).max(1);
+            let line_height = natural
+                .saturating_mul(i32::from(presentation.line_height_percent.clamp(80, 250)))
+                / 100;
+            let before = natural.saturating_mul(i32::from(presentation.margin_before_em)) / 100;
+            let after = natural.saturating_mul(i32::from(presentation.margin_after_em)) / 100;
+            let indent = measure_text_in("M", FontSize::Body, prose)
+                .0
+                .saturating_mul(i32::from(presentation.first_line_indent_em))
+                / 100;
+            let measure = width.saturating_sub(indent.max(0)).max(1);
+            let ranges = wrap_ranges(text, measure, FontSize::Body, prose);
+            let mut line_y = y.saturating_add(before);
+            for (line_index, &(from, to)) in ranges.iter().enumerate() {
+                let line = &text[from..to];
+                let line_width = measure_text_in(line, FontSize::Body, prose).0;
+                let first_indent = if line_index == 0 { indent } else { 0 };
+                let available = width.saturating_sub(first_indent.max(0));
+                let aligned = match presentation.alignment {
+                    ParagraphAlignment::Center => (available - line_width).max(0) / 2,
+                    ParagraphAlignment::End => (available - line_width).max(0),
+                    ParagraphAlignment::Start | ParagraphAlignment::Justify => 0,
+                };
+                let line_x = x.saturating_add(first_indent).saturating_add(aligned);
+                let mut cursor = from;
+                let mut run_x = line_x;
+                while cursor < to {
+                    let (mut end, mut styled) = rich_run_at(cursor, to, spans);
+                    if end <= cursor || end > to || !text.is_char_boundary(end) {
+                        end = text[cursor..to]
+                            .char_indices()
+                            .nth(1)
+                            .map_or(to, |(offset, _)| cursor + offset);
+                    }
+                    // One node per styled run per line. A block carrying the
+                    // permitted number of runs would otherwise spend the whole
+                    // page's node budget inside this one paragraph, and every
+                    // block after it would be dropped without a word. The rest
+                    // of the line goes out as a single plain run instead, which
+                    // loses emphasis rather than losing the book.
+                    if layout.nodes.len().saturating_add(1) >= MAX_LAYOUT_NODES {
+                        end = to;
+                        styled = TextPresentation::default();
+                    }
+                    let run = &text[cursor..end];
+                    let run_width = measure_text_in(run, FontSize::Body, prose).0;
+                    layout.nodes.push(LayoutNode {
+                        id: *id,
+                        rect: Rect {
+                            x: run_x,
+                            y: line_y,
+                            width: run_width,
+                            height: line_height,
+                        },
+                        kind: LayoutKind::RichText(styled),
+                        text_lines: vec![run.to_owned()],
+                    });
+                    run_x = run_x.saturating_add(run_width);
+                    cursor = end;
+                }
+                for link in links.iter().take(MAX_TEXT_LINKS) {
+                    let start = max(from, link.start);
+                    let end = min(to, link.end);
+                    if start < end && text.is_char_boundary(start) && text.is_char_boundary(end) {
+                        let before = measure_text_in(&text[from..start], FontSize::Body, prose).0;
+                        let through = measure_text_in(&text[from..end], FontSize::Body, prose).0;
+                        layout.nodes.push(LayoutNode {
+                            id: *id,
+                            rect: Rect {
+                                x: line_x.saturating_add(before),
+                                y: line_y,
+                                width: through.saturating_sub(before),
+                                height: line_height,
+                            },
+                            kind: LayoutKind::InlineLink(link.action),
+                            text_lines: Vec::new(),
+                        });
+                    }
+                }
+                if let Some(selection) = selection {
+                    for (relative, word) in line.unicode_word_indices() {
+                        if layout.text_hits.len() >= MAX_TEXT_HITS {
+                            break;
+                        }
+                        let start = from.saturating_add(relative);
+                        let end = start.saturating_add(word.len());
+                        let (Ok(start_offset), Ok(end_offset)) =
+                            (u32::try_from(start), u32::try_from(end))
+                        else {
+                            continue;
+                        };
+                        let before = measure_text_in(&text[from..start], FontSize::Body, prose).0;
+                        let through = measure_text_in(&text[from..end], FontSize::Body, prose).0;
+                        layout.text_hits.push((
+                            Rect {
+                                x: line_x.saturating_add(before),
+                                y: line_y,
+                                width: through.saturating_sub(before).max(1),
+                                height: line_height,
+                            },
+                            TextHit {
+                                context: selection.context,
+                                start: selection.offset.saturating_add(start_offset),
+                                end: selection.offset.saturating_add(end_offset),
+                            },
+                        ));
+                    }
+                }
+                line_y = line_y.saturating_add(line_height);
+            }
+            line_y.saturating_add(after)
         }
         Node::Secondary { id, text } => {
             // Measured at its own size, and with no minimum height. The floor
@@ -4972,6 +5431,139 @@ fn layout_node(
             layout.nodes[index].rect.height = height;
             y.saturating_add(height)
         }
+        Node::Table { id, rows, weights } => {
+            let rows = &rows[..min(rows.len(), MAX_TABLE_ROWS)];
+            let columns = min(
+                rows.iter().map(|row| row.cells.len()).max().unwrap_or(0),
+                MAX_TABLE_COLUMNS,
+            );
+            if columns == 0 {
+                return y;
+            }
+            // A column is only told apart from the next one by the space
+            // between them, so the gap has to be wider than a word space or
+            // two columns of prose read as one ragged paragraph.
+            let gap = metrics.space(Space::Small);
+            let size = FontSize::Body;
+            let line = size.line_height_in(prose);
+            let between = gap.saturating_mul(i32::try_from(columns).unwrap_or(1) - 1);
+            let usable = max(0, width.saturating_sub(between));
+            let minimum = metrics.tenth_mm(MIN_TABLE_COLUMN_TENTH_MM);
+
+            // One measurement for the whole table. A column is as wide as its
+            // widest cell wants to be, and the columns are then squeezed in
+            // proportion to those wants until they fit -- so a table of one
+            // long sentence and two numbers gives the sentence the room and
+            // does not give a two character column a third of the panel.
+            let mut wants = vec![0_i32; columns];
+            for row in rows {
+                for (column, cell) in row.cells.iter().take(columns).enumerate() {
+                    wants[column] = max(wants[column], measure_text_in(cell, size, prose).0);
+                }
+            }
+            for (column, want) in wants.iter_mut().enumerate() {
+                if let Some(weight) = weights.get(column) {
+                    *want = i32::from(*weight);
+                }
+            }
+            let total: i32 = wants.iter().copied().fold(0, i32::saturating_add);
+            let widths: Vec<i32> = if total <= usable {
+                wants.clone()
+            } else if total > 0 {
+                wants
+                    .iter()
+                    .map(|want| max(minimum, want.saturating_mul(usable) / total))
+                    .collect()
+            } else {
+                vec![usable / i32::try_from(columns).unwrap_or(1); columns]
+            };
+
+            // Squeezing has a floor, and past it a table is not a table any
+            // more. Rather than draw columns four characters wide, each row
+            // is stacked as its own lines, which is always readable.
+            if widths.iter().copied().fold(0, i32::saturating_add) > usable
+                || widths.iter().any(|column| *column < minimum)
+            {
+                let mut cursor = y;
+                for row in rows {
+                    for cell in row.cells.iter().take(columns) {
+                        if cell.trim().is_empty() || layout.nodes.len() >= MAX_LAYOUT_NODES {
+                            continue;
+                        }
+                        let lines = wrap_text_in(cell, width, size, prose);
+                        let height = max(line, lines.len() as i32 * line);
+                        layout.nodes.push(LayoutNode {
+                            id: *id,
+                            rect: Rect {
+                                x,
+                                y: cursor,
+                                width,
+                                height,
+                            },
+                            kind: if row.header {
+                                LayoutKind::TableHeaderCell
+                            } else {
+                                LayoutKind::TableCell
+                            },
+                            text_lines: lines,
+                        });
+                        cursor = cursor.saturating_add(height);
+                    }
+                    cursor = cursor.saturating_add(gap);
+                }
+                return cursor;
+            }
+
+            let mut cursor = y;
+            for row in rows {
+                let mut tallest = line;
+                let mut column_x = x;
+                for (column, width) in widths.iter().enumerate() {
+                    let cell = row.cells.get(column).map_or("", String::as_str);
+                    if !cell.is_empty() && layout.nodes.len() < MAX_LAYOUT_NODES {
+                        let lines = wrap_text_in(cell, *width, size, prose);
+                        let height = max(line, lines.len() as i32 * line);
+                        tallest = max(tallest, height);
+                        layout.nodes.push(LayoutNode {
+                            id: *id,
+                            rect: Rect {
+                                x: column_x,
+                                y: cursor,
+                                width: *width,
+                                height,
+                            },
+                            kind: if row.header {
+                                LayoutKind::TableHeaderCell
+                            } else {
+                                LayoutKind::TableCell
+                            },
+                            text_lines: lines,
+                        });
+                    }
+                    column_x = column_x.saturating_add(*width).saturating_add(gap);
+                }
+                cursor = cursor.saturating_add(tallest);
+                // The rule belongs under the headings, where it says the
+                // table has started rather than that a section has ended.
+                if row.header && layout.nodes.len() < MAX_LAYOUT_NODES {
+                    let thickness = metrics.rule_thickness();
+                    layout.nodes.push(LayoutNode {
+                        id: *id,
+                        rect: Rect {
+                            x,
+                            y: cursor.saturating_add(gap / 2),
+                            width,
+                            height: thickness,
+                        },
+                        kind: LayoutKind::TableRule,
+                        text_lines: Vec::new(),
+                    });
+                    cursor = cursor.saturating_add(gap).saturating_add(thickness);
+                }
+                cursor = cursor.saturating_add(gap / 2);
+            }
+            cursor
+        }
         Node::Facts { id, entries } => {
             let entries = &entries[..min(entries.len(), MAX_FACTS)];
             if entries.is_empty() {
@@ -5125,8 +5717,12 @@ fn layout_node(
             // A square cell is what makes a board read as a board. A grid that
             // is not square is a keyboard, and there one row of touch target
             // is exactly right and anything taller wastes the panel.
+            // A row whose every cell carries a picture is a row of actions,
+            // not a keyboard, and it is drawn as the pictures alone.
             let (cell_height, style) = if *square {
                 (cell_width, CellStyle::Board)
+            } else if cells.iter().all(|cell| cell.glyph.is_some()) {
+                (metrics.touch_target_default(), CellStyle::Plain)
             } else {
                 (metrics.touch_target_default(), CellStyle::Key)
             };
@@ -5623,6 +6219,78 @@ fn layout_node(
             layout.nodes[index].rect.height = height;
             y.saturating_add(height)
         }
+        Node::Stepper {
+            id,
+            label,
+            less,
+            more,
+            less_state,
+            more_state,
+            fill,
+        } => {
+            // Square controls at both ends, the reading between them. Square
+            // because a stepper is two targets side by side and a finger is
+            // round: making them the height of the row and no wider is what
+            // keeps the gap between minus and plus wide enough that neither is
+            // hit by accident.
+            let row = metrics.touch_target_default();
+            let side = row.min(width / 3).max(1);
+            let middle = width.saturating_sub(side.saturating_mul(2)).max(1);
+            let control =
+                |action: &BarAction, state: ControlState, fallback: Glyph, at: i32| LayoutNode {
+                    id: *id,
+                    rect: Rect {
+                        x: at,
+                        y,
+                        width: side,
+                        height: row,
+                    },
+                    kind: LayoutKind::StepperControl(
+                        action.action,
+                        state,
+                        action.glyph.unwrap_or(fallback),
+                    ),
+                    text_lines: Vec::new(),
+                };
+            layout
+                .nodes
+                .push(control(less, *less_state, Glyph::Minus, x));
+            layout.nodes.push(LayoutNode {
+                id: *id,
+                rect: Rect {
+                    x: x.saturating_add(side),
+                    y,
+                    width: middle,
+                    height: row,
+                },
+                kind: LayoutKind::StepperValue,
+                text_lines: vec![clamp_lines(label, middle, FontSize::Body, 1)],
+            });
+            layout.nodes.push(control(
+                more,
+                *more_state,
+                Glyph::Plus,
+                x.saturating_add(side).saturating_add(middle),
+            ));
+            let mut cursor = y.saturating_add(row);
+            if let Some(fill) = fill {
+                let track = metrics.tenth_mm(8);
+                cursor = cursor.saturating_add(metrics.space(Space::Tight));
+                layout.nodes.push(LayoutNode {
+                    id: *id,
+                    rect: Rect {
+                        x,
+                        y: cursor,
+                        width,
+                        height: track,
+                    },
+                    kind: LayoutKind::StepperTrack(*fill),
+                    text_lines: Vec::new(),
+                });
+                cursor = cursor.saturating_add(track);
+            }
+            cursor
+        }
         Node::Choice {
             id,
             prompt,
@@ -6080,10 +6748,8 @@ impl FontSize {
     /// height would overlap its own rows.
     #[must_use]
     pub fn line_height_in(self, face: Face) -> i32 {
-        TYPESETTER.get().map_or_else(
-            || self.fallback_line_height(),
-            |t| t.line_height(self, face),
-        )
+        with_typesetter(face, |typesetter| typesetter.line_height(self, face))
+            .unwrap_or_else(|| self.fallback_line_height_in(face))
     }
 
     /// The built-in bitmap's line height, at the current type size.
@@ -6093,7 +6759,14 @@ impl FontSize {
     /// tested without hardware.
     #[must_use]
     pub fn fallback_line_height(self) -> i32 {
-        (self.unscaled_fallback_line_height() * text_scale().percent() + 50) / 100
+        self.fallback_line_height_in(Face::Text)
+    }
+
+    /// The same, for a named face, so prose follows the reading size and the
+    /// interface around it does not.
+    #[must_use]
+    pub fn fallback_line_height_in(self, face: Face) -> i32 {
+        (self.unscaled_fallback_line_height() * scale_percent(face) + 50) / 100
     }
 
     const fn unscaled_fallback_line_height(self) -> i32 {
@@ -6214,6 +6887,70 @@ pub enum BreakOpportunity {
 /// type to arrive without touching a single application or example.
 static TYPESETTER: OnceLock<Box<dyn Typesetter>> = OnceLock::new();
 
+/// Publisher faces uploaded by the active application.
+///
+/// Parsing remains outside this crate; it receives the same bounded
+/// [`Typesetter`] interface as the system face. The map is intentionally
+/// process-local and handles are namespaced by the runtime's application
+/// session, so clearing it when an app leaves releases every glyph cache.
+static BOOK_TYPESETTERS: OnceLock<Mutex<BTreeMap<FontHandle, Box<dyn Typesetter>>>> =
+    OnceLock::new();
+
+thread_local! {
+    static READING_FONT: std::cell::Cell<Option<FontHandle>> = const { std::cell::Cell::new(None) };
+}
+
+/// Installs or replaces one bounded publisher face.
+pub fn put_book_typesetter(handle: FontHandle, typesetter: Box<dyn Typesetter>) {
+    if let Ok(mut fonts) = BOOK_TYPESETTERS
+        .get_or_init(|| Mutex::new(BTreeMap::new()))
+        .lock()
+    {
+        fonts.insert(handle, typesetter);
+    }
+}
+
+/// Releases a publisher face and its raster cache.
+pub fn drop_book_typesetter(handle: FontHandle) {
+    if let Some(fonts) = BOOK_TYPESETTERS.get() {
+        if let Ok(mut fonts) = fonts.lock() {
+            fonts.remove(&handle);
+        }
+    }
+}
+
+/// Runs layout or painting with one publisher face selected for reading prose.
+pub fn with_reading_font<T>(font: Option<FontHandle>, body: impl FnOnce() -> T) -> T {
+    struct Restore(Option<FontHandle>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            READING_FONT.with(|slot| slot.set(self.0));
+        }
+    }
+    let previous = READING_FONT.with(|slot| {
+        let previous = slot.get();
+        slot.set(font);
+        previous
+    });
+    let _restore = Restore(previous);
+    body()
+}
+
+fn with_typesetter<T>(face: Face, body: impl FnOnce(&dyn Typesetter) -> T) -> Option<T> {
+    if face == Face::Reading {
+        if let Some(handle) = READING_FONT.with(std::cell::Cell::get) {
+            if let Some(fonts) = BOOK_TYPESETTERS.get() {
+                if let Ok(fonts) = fonts.lock() {
+                    if let Some(typesetter) = fonts.get(&handle) {
+                        return Some(body(typesetter.as_ref()));
+                    }
+                }
+            }
+        }
+    }
+    TYPESETTER.get().map(|typesetter| body(typesetter.as_ref()))
+}
+
 // The type size everything is currently being measured and drawn at.
 //
 // Why this is ambient rather than a parameter
@@ -6238,6 +6975,7 @@ static TYPESETTER: OnceLock<Box<dyn Typesetter>> = OnceLock::new();
 // it.
 thread_local! {
     static TEXT_SCALE: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
+    static READING_SCALE: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
 }
 
 /// Sets the type size for everything measured or drawn after this.
@@ -6253,6 +6991,40 @@ pub fn set_text_scale(scale: TextScale) {
 #[must_use]
 pub fn text_scale() -> TextScale {
     TextScale::from_wire(TEXT_SCALE.with(std::cell::Cell::get)).unwrap_or_default()
+}
+
+/// Sets the size of book prose, and of nothing else.
+///
+/// Separate from [`set_text_scale`] because the two answer different people.
+/// The text scale is an accessibility preference: somebody has said how large
+/// they need an interface to be, and a title bar, a page number and a button
+/// are all interface. The reading scale is a reader saying how large they want
+/// *this book*, which is a decision about the page and not about the device.
+///
+/// They were one value until a reader on a Clara found that making a novel
+/// larger also grew the book's name in the bar above it, took the height out
+/// of the page to do it, and left less room for the larger type than there had
+/// been for the smaller.
+pub fn set_reading_scale(scale: TextScale) {
+    READING_SCALE.with(|slot| slot.set(scale.wire_value()));
+}
+
+/// The size book prose is currently being set at.
+#[must_use]
+pub fn reading_scale() -> TextScale {
+    TextScale::from_wire(READING_SCALE.with(std::cell::Cell::get)).unwrap_or_default()
+}
+
+/// The percentage in force for one face.
+///
+/// The single place that decides which of the two ambient sizes a face obeys,
+/// so a new caller cannot get the answer half right.
+#[must_use]
+pub fn scale_percent(face: Face) -> i32 {
+    match face {
+        Face::Reading => reading_scale().percent(),
+        Face::Text | Face::Mono => text_scale().percent(),
+    }
 }
 
 /// Runs `body` with the type at `scale`, putting it back afterwards.
@@ -6272,6 +7044,22 @@ pub fn with_text_scale<T>(scale: TextScale, body: impl FnOnce() -> T) -> T {
     }
     let _restore = Restore(text_scale());
     set_text_scale(scale);
+    body()
+}
+
+/// Runs `body` with book prose at `scale`, putting it back afterwards.
+///
+/// What an application calls to measure a book at a size it is not showing
+/// yet, which is every repagination after the reader touches the stepper.
+pub fn with_reading_scale<T>(scale: TextScale, body: impl FnOnce() -> T) -> T {
+    struct Restore(TextScale);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            set_reading_scale(self.0);
+        }
+    }
+    let _restore = Restore(reading_scale());
+    set_reading_scale(scale);
     body()
 }
 
@@ -6304,12 +7092,13 @@ pub fn measure_text(text: &str, size: FontSize) -> (i32, i32) {
 /// Returns integer pixel dimensions for one face of the installed typeface.
 #[must_use]
 pub fn measure_text_in(text: &str, size: FontSize, face: Face) -> (i32, i32) {
-    if let Some(typesetter) = TYPESETTER.get() {
-        return typesetter.measure(text, size, face);
+    if let Some(measured) = with_typesetter(face, |typesetter| typesetter.measure(text, size, face))
+    {
+        return measured;
     }
     let scale = size.scale();
     let glyphs = i32::try_from(text.chars().count()).unwrap_or(i32::MAX);
-    let percent = text_scale().percent();
+    let percent = scale_percent(face);
     let width = glyphs.saturating_mul(6).saturating_mul(scale);
     (
         (width.saturating_mul(percent) + 50) / 100,
@@ -6329,9 +7118,10 @@ pub fn measure_text_in(text: &str, size: FontSize, face: Face) -> (i32, i32) {
 /// would condemn perfectly good text.
 #[must_use]
 pub fn undrawable_in(text: &str, face: Face) -> Option<char> {
-    let typesetter = TYPESETTER.get()?;
-    text.chars()
-        .find(|character| !character.is_whitespace() && !typesetter.has_glyph(*character, face))
+    with_typesetter(face, |typesetter| {
+        text.chars()
+            .find(|character| !character.is_whitespace() && !typesetter.has_glyph(*character, face))
+    })?
 }
 
 /// The size of one monospace cell: what a character grid is built from.
@@ -6342,7 +7132,7 @@ pub fn undrawable_in(text: &str, face: Face) -> Option<char> {
 #[must_use]
 pub fn mono_cell(size: FontSize) -> (i32, i32) {
     TYPESETTER.get().map_or_else(
-        || (6 * size.scale(), size.fallback_line_height()),
+        || (6 * size.scale(), size.fallback_line_height_in(Face::Mono)),
         |typesetter| {
             (
                 max(1, typesetter.cell_width(size)),
@@ -7285,17 +8075,14 @@ fn wrap_ranges(text: &str, max_width: i32, size: FontSize, face: Face) -> Vec<(u
     if text.is_empty() || max_width <= 0 {
         return Vec::new();
     }
-    let opportunities = TYPESETTER
-        .get()
-        .map_or_else(|| fallback_line_breaks(text), |face| face.line_breaks(text));
-    let graphemes = TYPESETTER.get().map_or_else(
-        || {
+    let opportunities = with_typesetter(face, |typesetter| typesetter.line_breaks(text))
+        .unwrap_or_else(|| fallback_line_breaks(text));
+    let graphemes = with_typesetter(face, |typesetter| typesetter.grapheme_boundaries(text))
+        .unwrap_or_else(|| {
             text.char_indices()
                 .map(|(offset, character)| offset + character.len_utf8())
                 .collect()
-        },
-        |face| face.grapheme_boundaries(text),
-    );
+        });
     let mut lines: Vec<(usize, usize)> = Vec::new();
     let mut start = 0;
     while start < text.len() {
@@ -8171,6 +8958,7 @@ fn tones_used(layout: &Layout) -> usize {
             LayoutKind::Secondary
             | LayoutKind::TileSubtitle
             | LayoutKind::RowSummary
+            | LayoutKind::TableHeaderCell
             | LayoutKind::FactLabel
             | LayoutKind::PagePosition
             | LayoutKind::ActivityBytes
@@ -8269,6 +9057,7 @@ fn validate_node(
     match node {
         Node::Heading { text, .. }
         | Node::Text { text, .. }
+        | Node::RichText { text, .. }
         | Node::Secondary { text, .. }
         | Node::Quote { text, .. }
         | Node::Banner { text, .. } => check_text_coverage(id, text, Face::Text, issues),
@@ -8334,6 +9123,24 @@ fn validate_node(
                 check_text_coverage(id, &cell.label, Face::Text, issues);
             }
         }
+        Node::Table { rows, .. } => {
+            if rows.len() > MAX_TABLE_ROWS {
+                issues.push(limit_issue(id, "table rows", rows.len(), MAX_TABLE_ROWS));
+            }
+            for row in rows.iter().take(MAX_TABLE_ROWS) {
+                if row.cells.len() > MAX_TABLE_COLUMNS {
+                    issues.push(limit_issue(
+                        id,
+                        "table columns",
+                        row.cells.len(),
+                        MAX_TABLE_COLUMNS,
+                    ));
+                }
+                for cell in row.cells.iter().take(MAX_TABLE_COLUMNS) {
+                    check_text_coverage(id, cell, Face::Text, issues);
+                }
+            }
+        }
         Node::Rows { rows, .. } => {
             if rows.len() > MAX_ROWS {
                 issues.push(limit_issue(id, "rows", rows.len(), MAX_ROWS));
@@ -8350,6 +9157,9 @@ fn validate_node(
                     check_picture(id, picture.handle, picture.source, pictures, issues);
                 }
             }
+        }
+        Node::Stepper { label, .. } => {
+            check_text_coverage(id, label, Face::Text, issues);
         }
         Node::Choice {
             prompt,
@@ -8597,6 +9407,7 @@ const fn is_tappable(kind: LayoutKind) -> bool {
             | LayoutKind::Chip(_, _)
             | LayoutKind::Tab(_, _)
             | LayoutKind::ChoiceOption(_, _)
+            | LayoutKind::StepperControl(_, ControlState::Enabled, _)
             | LayoutKind::ChoiceFreeform(_)
             | LayoutKind::PagePrevious(_)
             | LayoutKind::PageNext(_)
@@ -8618,6 +9429,7 @@ fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
         LayoutKind::OverlayTitle => FontSize::Title,
         LayoutKind::Secondary
         | LayoutKind::Section
+        | LayoutKind::TableHeaderCell
         | LayoutKind::FactLabel
         | LayoutKind::RowTrailing
         | LayoutKind::RowSummary
@@ -8633,6 +9445,7 @@ fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
         | LayoutKind::NavDestinationSelected(..) => FontSize::Caption,
         LayoutKind::Text
         | LayoutKind::FieldValue(_)
+        | LayoutKind::TableCell
         | LayoutKind::FactValue
         | LayoutKind::Quote(..)
         | LayoutKind::Button(..)
@@ -8643,6 +9456,7 @@ fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
         | LayoutKind::CellLabel
         | LayoutKind::ChoicePrompt
         | LayoutKind::ChoiceOption(_, _)
+        | LayoutKind::StepperValue
         | LayoutKind::ChoiceFreeform(_)
         | LayoutKind::Banner(_)
         | LayoutKind::ActivityLabel => FontSize::Body,
@@ -8976,6 +9790,19 @@ pub fn render_all(
     surface: &mut Surface,
     dirty: Option<Rect>,
 ) {
+    with_reading_font(screen.reading_font, || {
+        render_all_with_selected_font(screen, metrics, chrome, pictures, surface, dirty);
+    });
+}
+
+fn render_all_with_selected_font(
+    screen: &Screen,
+    metrics: &DisplayMetrics,
+    chrome: &Chrome,
+    pictures: &dyn Pictures,
+    surface: &mut Surface,
+    dirty: Option<Rect>,
+) {
     let clip = dirty.unwrap_or(Rect {
         x: 0,
         y: 0,
@@ -9135,6 +9962,25 @@ pub fn render_all(
                 tone::INK,
                 clip,
             ),
+            LayoutKind::TableCell => draw_lines(
+                surface,
+                &node.text_lines,
+                node.rect.x,
+                node.rect.y,
+                FontSize::Body,
+                tone::INK,
+                clip,
+            ),
+            LayoutKind::TableHeaderCell => draw_lines(
+                surface,
+                &node.text_lines,
+                node.rect.x,
+                node.rect.y,
+                FontSize::Body,
+                tone::MUTED,
+                clip,
+            ),
+            LayoutKind::TableRule => fill_clipped(surface, node.rect, tone::RULE, clip),
             // Paper, not surface, and a heavy border. An overlay has to look
             // like a separate sheet laid on the page, and the only two things
             // available to say so without shading everything else are the
@@ -9300,6 +10146,8 @@ pub fn render_all(
             // A key is the field it is printed on, with no rule at all. The
             // gaps between the keys separate them, which is how a keyboard has
             // always been read, and it takes forty-five outlines off the panel.
+            // Nothing at all: the picture is the whole of it.
+            LayoutKind::Cell(_, CellStyle::Plain) => {}
             LayoutKind::Cell(_, CellStyle::Key) => fill_rounded_clipped(
                 surface,
                 node.rect,
@@ -9529,6 +10377,22 @@ pub fn render_all(
                 tone::INK,
                 clip,
             ),
+            LayoutKind::RichText(presentation) => {
+                if let Some(text) = node.text_lines.first() {
+                    if presentation.highlighted {
+                        fill_clipped(surface, node.rect, tone::SURFACE, clip);
+                    }
+                    draw_rich_text(
+                        surface,
+                        text,
+                        node.rect,
+                        prose,
+                        presentation,
+                        tone::INK,
+                        clip,
+                    );
+                }
+            }
             // The bars themselves are only a background. Drawing them as
             // separate nodes is what lets a tab switch repaint the content
             // area and two small bands instead of the entire panel.
@@ -9798,6 +10662,64 @@ pub fn render_all(
                 tone::INK,
                 clip,
             ),
+            // The two ends carry a picture and nothing else at all: no word,
+            // no outline and no field. A minus and a plus either side of a
+            // reading are already a stepper on every device ever made, and
+            // drawing a box round each of them turns a quiet line into two
+            // more things to look at. The target stays a full touch target
+            // whatever the picture inside it measures.
+            LayoutKind::StepperControl(_, state, glyph) => {
+                let tone = if state.is_enabled() {
+                    tone::INK
+                } else {
+                    tone::RULE
+                };
+                let size = FontSize::Heading.line_height();
+                draw_glyph_icon_in(
+                    surface,
+                    glyph,
+                    Rect {
+                        x: node.rect.x + (node.rect.width - size) / 2,
+                        y: node.rect.y + (node.rect.height - size) / 2,
+                        width: size,
+                        height: size,
+                    },
+                    clip,
+                    tone,
+                );
+            }
+            // Centred between the two controls, because a reading that sits
+            // against one of them reads as a label for that control.
+            LayoutKind::StepperValue => {
+                let (measured, _) = measure_text(
+                    node.text_lines.first().map_or("", String::as_str),
+                    FontSize::Body,
+                );
+                draw_lines(
+                    surface,
+                    &node.text_lines,
+                    node.rect.x + max(0, (node.rect.width - measured) / 2),
+                    node.rect.y + (node.rect.height - FontSize::Body.line_height()) / 2,
+                    FontSize::Body,
+                    tone::INK,
+                    clip,
+                );
+            }
+            // A hairline track rather than an outlined bar: it says where in
+            // the range the value sits and is not itself a control, so it must
+            // not carry as much ink as the two things that are.
+            LayoutKind::StepperTrack(fill) => {
+                fill_clipped(surface, node.rect, tone::RULE, clip);
+                fill_clipped(
+                    surface,
+                    Rect {
+                        width: node.rect.width.saturating_mul(min(100, i32::from(fill))) / 100,
+                        ..node.rect
+                    },
+                    tone::INK,
+                    clip,
+                );
+            }
             LayoutKind::ChoiceOption(_, chosen) => {
                 stroke_clipped(
                     surface,
@@ -10641,15 +11563,82 @@ fn draw_text_in(
     tone: u8,
     clip: Rect,
 ) {
-    if let Some(typesetter) = TYPESETTER.get() {
+    if with_typesetter(face, |typesetter| {
         typesetter.draw(text, x, y, size, face, &mut |pixel_x, pixel_y, coverage| {
             if coverage > 0 && clip.contains(pixel_x, pixel_y) {
                 surface.blend(pixel_x, pixel_y, tone, coverage);
             }
         });
+    })
+    .is_some()
+    {
         return;
     }
     draw_fallback_text(surface, text, x, y, size, tone, clip);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_rich_text(
+    surface: &mut Surface,
+    text: &str,
+    rect: Rect,
+    face: Face,
+    presentation: TextPresentation,
+    tone: u8,
+    clip: Rect,
+) {
+    let line = FontSize::Body.line_height_in(face).max(1);
+    let vertical = if presentation.superscript {
+        -line / 4
+    } else if presentation.subscript {
+        line / 5
+    } else {
+        0
+    };
+    let y = rect.y.saturating_add(vertical);
+    if with_typesetter(face, |typesetter| {
+        typesetter.draw(
+            text,
+            rect.x,
+            y,
+            FontSize::Body,
+            face,
+            &mut |pixel_x, pixel_y, coverage| {
+                let skew = if presentation.emphasis {
+                    (line - (pixel_y - y)).clamp(0, line) / 7
+                } else {
+                    0
+                };
+                let x = pixel_x.saturating_add(skew);
+                if coverage > 0 && clip.contains(x, pixel_y) {
+                    surface.blend(x, pixel_y, tone, coverage);
+                    if presentation.strong && clip.contains(x + 1, pixel_y) {
+                        surface.blend(x + 1, pixel_y, tone, coverage);
+                    }
+                }
+            },
+        );
+    })
+    .is_none()
+    {
+        draw_fallback_text(surface, text, rect.x, y, FontSize::Body, tone, clip);
+        if presentation.strong {
+            draw_fallback_text(surface, text, rect.x + 1, y, FontSize::Body, tone, clip);
+        }
+    }
+    if presentation.underline {
+        fill_clipped(
+            surface,
+            Rect {
+                x: rect.x,
+                y: rect.y.saturating_add(line).saturating_sub(2),
+                width: rect.width,
+                height: 1,
+            },
+            tone,
+            clip,
+        );
+    }
 }
 
 /// Draws with the built-in bitmap when no typeface is installed.
@@ -10812,6 +11801,83 @@ fn glyph(character: char) -> [u8; 7] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn publisher_styled_text_keeps_alignment_and_inline_emphasis() {
+        let screen = Screen::new(
+            1,
+            vec![Node::RichText {
+                id: NodeId(1),
+                text: "ordinary strong".into(),
+                spans: vec![RichTextSpan {
+                    start: 9,
+                    end: 15,
+                    presentation: TextPresentation {
+                        strong: true,
+                        emphasis: true,
+                        ..TextPresentation::default()
+                    },
+                }],
+                links: Vec::new(),
+                presentation: ParagraphPresentation {
+                    alignment: ParagraphAlignment::Center,
+                    line_height_percent: 140,
+                    ..ParagraphPresentation::default()
+                },
+                selection: None,
+            }],
+        )
+        .with_reading(true);
+        let layout = screen.layout();
+        assert!(layout.nodes.iter().any(|node| matches!(
+            node.kind,
+            LayoutKind::RichText(TextPresentation {
+                strong: true,
+                emphasis: true,
+                ..
+            })
+        )));
+        let first = layout
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::RichText(_)))
+            .expect("rich run");
+        assert!(first.rect.x > CLARA_BW_METRICS.screen_margin());
+    }
+
+    #[test]
+    fn a_held_unicode_word_resolves_to_stable_document_offsets() {
+        let screen = Screen::new(
+            1,
+            vec![Node::RichText {
+                id: NodeId(1),
+                text: "naïve café".into(),
+                spans: Vec::new(),
+                links: Vec::new(),
+                presentation: ParagraphPresentation::default(),
+                selection: Some(TextSelection {
+                    context: 19,
+                    offset: 100,
+                }),
+            }],
+        )
+        .with_reading(true)
+        .with_hold(ActionId(7));
+        let layout = screen.layout();
+        let (rect, expected) = layout.text_hits.last().expect("selectable word");
+        assert_eq!(
+            layout.hit_text(rect.x + rect.width / 2, rect.y + rect.height / 2),
+            Some(*expected)
+        );
+        assert_eq!(
+            *expected,
+            TextHit {
+                context: 19,
+                start: 107,
+                end: 112,
+            }
+        );
+    }
 
     #[test]
     fn a_cell_glyph_and_a_bottom_action_glyph_both_reach_the_layout() {
@@ -12475,6 +13541,15 @@ mod loading_tests {
                 }],
             },
             Node::Divider { id: NodeId(6) },
+            Node::Stepper {
+                id: NodeId(96),
+                label: "120%".into(),
+                less: BarAction::new(ActionId(30), String::new()).with_glyph(Glyph::Minus),
+                more: BarAction::new(ActionId(31), String::new()).with_glyph(Glyph::Plus),
+                less_state: ControlState::Enabled,
+                more_state: ControlState::Disabled,
+                fill: Some(75),
+            },
             Node::Spacer {
                 id: NodeId(7),
                 space: Space::Medium,
@@ -12603,6 +13678,7 @@ mod loading_tests {
                 | LayoutKind::Row(action)
                 | LayoutKind::Cell(action, ..)
                 | LayoutKind::ChoiceOption(action, _)
+                | LayoutKind::StepperControl(action, ControlState::Enabled, _)
                 | LayoutKind::ChoiceFreeform(action) => Some((action, node.rect)),
                 _ => None,
             })

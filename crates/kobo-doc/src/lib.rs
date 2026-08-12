@@ -150,6 +150,18 @@ pub const MAX_LINKS: usize = 20_000;
 /// layout engine a single block it will spend a second wrapping.
 pub const MAX_BLOCK_TEXT: usize = 64 * 1024;
 
+/// The most columns one table row is kept at.
+///
+/// A panel seven centimetres across cannot show a dozen columns of prose and
+/// nothing is gained by carrying them: past this the row is not a table any
+/// more, it is a spreadsheet somebody published as a web page. Cells past the
+/// limit are dropped rather than merged, because merging them silently
+/// changes which value sits under which heading.
+pub const MAX_ROW_CELLS: usize = 12;
+/// Styled runs retained for one block. Pathological tag-per-character XHTML
+/// degrades into one final run rather than growing the render protocol.
+const MAX_RICH_SPANS: usize = 256;
+
 /// The deepest heading level that means anything.
 ///
 /// HTML has six. Past three the distinction is invisible on a panel this size,
@@ -175,6 +187,8 @@ pub enum Block {
     /// is drawn, so that inserting an item cannot leave the list numbered
     /// wrongly.
     Item { ordered: bool, text: String },
+    /// Text belonging to the illustration immediately before it.
+    Caption(String),
     /// A picture the book set into its text.
     ///
     /// Carried as the name it was stored under rather than as pixels, because
@@ -191,6 +205,26 @@ pub enum Block {
         /// a caption is often the more useful of the two.
         alt: String,
     },
+    /// One row of a table.
+    ///
+    /// A table is a run of these, and the run is the table: there is no
+    /// enclosing block, because a document is a flat list and a nested one
+    /// would have to be paginated, searched and highlighted through a second
+    /// shape. Consecutive rows are laid out together, so the columns of a
+    /// table line up without any block having to own the whole of it.
+    ///
+    /// Cells were previously joined into one paragraph with an em dash
+    /// between them, which reads as a sentence made of fragments and loses
+    /// the one thing a table is for: knowing which value belongs to which
+    /// column.
+    Row {
+        /// Whether the row was written with `th` rather than `td`, and so
+        /// names the columns rather than filling them.
+        header: bool,
+        /// Left to right, as written. Empty cells are kept: a gap in a table
+        /// is where the alignment of everything after it comes from.
+        cells: Vec<String>,
+    },
     /// A break between parts with no words on it.
     Rule,
     /// Where one file of a book ends and the next begins.
@@ -199,6 +233,70 @@ pub enum Block {
     /// asks for the next chapter means the next file, even when the author
     /// never wrote a heading at the top of it.
     Break,
+}
+
+/// Inline emphasis retained from HTML/XHTML instead of flattened away.
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct InlineStyle {
+    pub strong: bool,
+    pub emphasis: bool,
+    pub underline: bool,
+    pub superscript: bool,
+    pub subscript: bool,
+}
+
+/// One styled run inside a block of prose.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct InlineSpan {
+    pub text: String,
+    pub style: InlineStyle,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TextAlignment {
+    #[default]
+    Start,
+    Center,
+    End,
+    Justify,
+}
+
+/// Safe publisher styling that affects one reflowable block.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BlockStyle {
+    pub alignment: TextAlignment,
+    /// Percent of the selected face's natural line height.
+    pub line_height_percent: u16,
+    /// Before/after spacing in hundredths of an em.
+    pub margin_before_em: u16,
+    pub margin_after_em: u16,
+    pub first_line_indent_em: i16,
+    pub font_family: Option<String>,
+    pub page_break_before: bool,
+    pub page_break_after: bool,
+}
+
+impl Default for BlockStyle {
+    fn default() -> Self {
+        Self {
+            alignment: TextAlignment::Start,
+            line_height_percent: 100,
+            margin_before_em: 0,
+            margin_after_em: 0,
+            first_line_indent_em: 0,
+            font_family: None,
+            page_break_before: false,
+            page_break_after: false,
+        }
+    }
+}
+
+/// Structure and publisher styling retained for a text block.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RichBlock {
+    pub spans: Vec<InlineSpan>,
+    pub style: BlockStyle,
 }
 
 impl Block {
@@ -210,12 +308,38 @@ impl Block {
             | Self::Paragraph(text)
             | Self::Quote(text)
             | Self::Preformatted(text)
-            | Self::Item { text, .. } => Some(text),
+            | Self::Item { text, .. }
+            | Self::Caption(text) => Some(text),
             // A picture's description is not the words of the book: returning
             // it here would put a caption into a search, a highlight and the
             // count of what a page holds, all of which are about prose.
-            Self::Picture { .. } | Self::Rule | Self::Break => None,
+            //
+            // A row has words but no single string of them: joining the cells
+            // to answer this is exactly the flattening this block exists to
+            // stop. What a row reads as is [`Block::row_text`], which the
+            // things that genuinely want prose ask for by name.
+            Self::Picture { .. } | Self::Rule | Self::Break | Self::Row { .. } => None,
         }
+    }
+
+    /// A row read out as one line, for the things that can only take one.
+    ///
+    /// Search and the word count want the words; they do not want the
+    /// columns. The cells are joined with a space rather than with a mark, so
+    /// that a phrase which happens to straddle two cells is still found.
+    #[must_use]
+    pub fn row_text(&self) -> Option<String> {
+        let Self::Row { cells, .. } = self else {
+            return None;
+        };
+        Some(
+            cells
+                .iter()
+                .filter(|cell| !cell.trim().is_empty())
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .join(" "),
+        )
     }
 
     /// Whether this block is where a reader would say a chapter starts.
@@ -272,12 +396,37 @@ pub struct Document {
     /// drawing them rather than to the parser. A book of four hundred
     /// engravings should not cost four hundred decodes to open.
     pub images: BTreeMap<String, Vec<u8>>,
+    /// Outline fonts embedded by the publisher, keyed by their resolved
+    /// archive name.
+    ///
+    /// Kept as bounded, undecoded bytes for the same reason pictures are: the
+    /// document parser has no panel and no glyph cache, while the reader can
+    /// choose one face and hand it to the runtime only when publisher styling
+    /// is enabled. WOFF/WOFF2 assets are retained for diagnostics but only
+    /// OpenType/TrueType faces are currently usable by the rasterizer.
+    pub fonts: BTreeMap<String, EmbeddedFont>,
+    /// Rich XHTML representation for blocks that carried inline/CSS styling.
+    /// Blocks absent from the map use their ordinary semantic presentation.
+    pub rich: BTreeMap<usize, RichBlock>,
     /// The links the book makes from one part of itself to another.
     ///
     /// A footnote marker, an endnote's way back, a cross-reference: all of
     /// them were flattened to plain text, so the words stayed and the going
     /// there did not. Kept in reading order.
     pub links: Vec<Link>,
+}
+
+/// One font declared by an EPUB package.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct EmbeddedFont {
+    /// MIME type from the package manifest, when it supplied one.
+    pub media_type: String,
+    /// Family named by the publisher's `@font-face`, when one refers to this
+    /// asset. This lets the reader choose the face the book actually asks for
+    /// instead of whichever font filename sorts first.
+    pub family: Option<String>,
+    /// The bounded font bytes exactly as stored in the EPUB.
+    pub bytes: Vec<u8>,
 }
 
 /// Somewhere the book points, and the words it points from.
@@ -446,6 +595,11 @@ impl Builder {
         self.document.images = images;
     }
 
+    /// Records publisher fonts that passed the EPUB resource bounds.
+    pub(crate) fn set_fonts(&mut self, fonts: BTreeMap<String, EmbeddedFont>) {
+        self.document.fonts = fonts;
+    }
+
     /// Replaces the anchors, once a caller has re-keyed them.
     pub(crate) fn set_anchors(&mut self, anchors: BTreeMap<String, usize>) {
         self.document.anchors = anchors;
@@ -486,6 +640,27 @@ impl Builder {
                 }
                 block
             }
+            // A row is normalised cell by cell, because the thing that has
+            // to be bounded is the row's width in columns as well as its
+            // length in characters. A row of nothing but blanks is a spacer
+            // somebody drew with a table and is not kept.
+            Block::Row { header, cells } => {
+                let mut kept: Vec<String> = cells
+                    .into_iter()
+                    .take(MAX_ROW_CELLS)
+                    .map(|cell| self.fit(collapse(&cell)))
+                    .collect();
+                while matches!(kept.last(), Some(cell) if cell.is_empty()) {
+                    kept.pop();
+                }
+                if kept.iter().all(String::is_empty) {
+                    return;
+                }
+                Block::Row {
+                    header,
+                    cells: kept,
+                }
+            }
             Block::Rule | Block::Break => {
                 // Two rules in a row, or a break with nothing between it and
                 // the last one, is a seam in the source rather than something
@@ -515,9 +690,12 @@ impl Builder {
                     Block::Paragraph(_) => Block::Paragraph(text),
                     Block::Quote(_) => Block::Quote(text),
                     Block::Item { ordered, .. } => Block::Item { ordered, text },
-                    Block::Preformatted(_) | Block::Picture { .. } | Block::Rule | Block::Break => {
-                        return
-                    }
+                    Block::Caption(_) => Block::Caption(text),
+                    Block::Preformatted(_)
+                    | Block::Picture { .. }
+                    | Block::Rule
+                    | Block::Break
+                    | Block::Row { .. } => return,
                 }
             }
         };
@@ -526,6 +704,17 @@ impl Builder {
             return;
         }
         self.document.blocks.push(block);
+    }
+
+    /// Adds a block while retaining its independently bounded XHTML styling.
+    pub(crate) fn push_rich(&mut self, block: Block, mut rich: RichBlock) {
+        let at = self.document.blocks.len();
+        self.push(block);
+        if self.document.blocks.len() == at + 1 && !rich.spans.is_empty() {
+            let canonical = self.document.blocks[at].text().unwrap_or_default();
+            bound_rich_spans(&mut rich.spans, canonical);
+            self.document.rich.insert(at, rich);
+        }
     }
 
     /// Cuts `text` to what is left of the ceilings.
@@ -599,6 +788,13 @@ impl Builder {
             link.block = block;
             block < kept
         });
+        self.document.rich = std::mem::take(&mut self.document.rich)
+            .into_iter()
+            .filter_map(|(at, rich)| {
+                let at = at.checked_sub(removed_from_front)?;
+                (at < kept).then_some((at, rich))
+            })
+            .collect();
         self.document
     }
 }
@@ -654,6 +850,38 @@ fn strip_boilerplate(blocks: &mut Vec<Block>) -> usize {
 }
 
 /// Cuts a string to at most `limit` bytes without splitting a character.
+fn bound_rich_spans(spans: &mut Vec<InlineSpan>, canonical: &str) {
+    let joined = spans
+        .iter()
+        .map(|span| span.text.as_str())
+        .collect::<String>();
+    if !joined.starts_with(canonical) {
+        *spans = vec![InlineSpan {
+            text: canonical.to_owned(),
+            style: InlineStyle::default(),
+        }];
+        return;
+    }
+    let mut left = canonical.len();
+    for span in spans.iter_mut() {
+        if span.text.len() > left {
+            truncate_to(&mut span.text, left);
+        }
+        left = left.saturating_sub(span.text.len());
+    }
+    spans.retain(|span| !span.text.is_empty());
+    if spans.len() > MAX_RICH_SPANS {
+        let tail = spans
+            .drain(MAX_RICH_SPANS - 1..)
+            .map(|span| span.text)
+            .collect::<String>();
+        spans.push(InlineSpan {
+            text: tail,
+            style: InlineStyle::default(),
+        });
+    }
+}
+
 pub(crate) fn truncate_to(text: &mut String, limit: usize) {
     if text.len() <= limit {
         return;

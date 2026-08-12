@@ -1,5 +1,5 @@
 [package]
-name = "kobo-read"
+name = "kobo-bookview"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,9 +8,10 @@ publish = false
 
 [dependencies]
 kobo-doc = { path = "../kobo-doc" }
+kobo-image = { path = "../kobo-image" }
+kobo-read = { path = "../kobo-read" }
 kobo-sdk = { path = "../kobo-sdk" }
 kobo-ui = { path = "../kobo-ui" }
-unicode-segmentation = "1.13.3"
 
 [lints]
 workspace = true

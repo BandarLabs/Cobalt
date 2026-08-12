@@ -690,6 +690,27 @@ fn current_user_id() -> io::Result<u32> {
 /// Split out only so the message loop stays readable; the cache is the same
 /// one the device runtime uses.
 fn hold(state: &Arc<Mutex<AppState>>, message: Message) -> io::Result<()> {
+    match message {
+        Message::PutFont {
+            handle,
+            name,
+            bytes,
+        } => match kobo_text::BookFont::from_bytes(&bytes, &name, profile_metrics()) {
+            Ok(font) => {
+                kobo_ui::put_book_typesetter(handle, Box::new(font));
+                Ok(())
+            }
+            Err(error) => note(state, &format!("font {} refused: {error}", handle.0)),
+        },
+        Message::DropFont { handle } => {
+            kobo_ui::drop_book_typesetter(handle);
+            Ok(())
+        }
+        other => hold_picture(state, other),
+    }
+}
+
+fn hold_picture(state: &Arc<Mutex<AppState>>, message: Message) -> io::Result<()> {
     let diagnostic = {
         let mut held = state
             .lock()
@@ -762,6 +783,8 @@ fn is_picture_message(message: &Message) -> bool {
             | Message::PictureChunk { .. }
             | Message::CommitPicture { .. }
             | Message::DropPicture { .. }
+            | Message::PutFont { .. }
+            | Message::DropFont { .. }
     )
 }
 

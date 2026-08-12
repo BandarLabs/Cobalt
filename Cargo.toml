@@ -2,9 +2,11 @@
 members = [
     "crates/kobo-abi",
     "crates/kobo-app-store",
+    "crates/kobo-bookview",
     "crates/kobo-cli",
     "crates/kobo-doc",
     "crates/kobo-doctor",
+    "crates/kobo-dict",
     "crates/kobo-hal",
     "crates/kobo-html",
     "crates/kobo-image",
@@ -52,7 +54,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.2.3"
+version = "0.2.4"
 edition = "2021"
 rust-version = "1.85"
 license = "AGPL-3.0-only"

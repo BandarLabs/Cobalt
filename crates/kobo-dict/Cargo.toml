@@ -1,15 +1,15 @@
 [package]
-name = "kobo-ui"
+name = "kobo-dict"
 version.workspace = true
 edition.workspace = true
 publish = false
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Declarative E Ink UI, layout, and rendering primitives for Kobo applications"
+description = "Bounded offline dictionary indexes and lookup for Cobalt"
+
+[dependencies]
+unicode-normalization = "0.1.24"
 
 [lints]
 workspace = true
-
-[dependencies]
-unicode-segmentation = "1.13.3"
