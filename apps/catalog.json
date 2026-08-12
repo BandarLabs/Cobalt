@@ -6,8 +6,8 @@
       "id": "arxiv",
       "display_name": "arXiv",
       "short_label": "arXiv",
-      "summary": "Browse and search preprints, and read the ones with a rendering.",
-      "version": "1.1.0",
+      "summary": "Browse, search and keep preprints, and read the ones with a rendering.",
+      "version": "1.2.0",
       "minimum_cobalt_version": "0.2.0",
       "glyph": "note",
       "capabilities": ["network"]

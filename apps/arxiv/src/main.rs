@@ -31,7 +31,7 @@ use kobo_read::{Memory, Outcome};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, RowLead, Screen, ScreenBuilder,
-    Task, TaskError, TaskId, TaskOutcome,
+    ShelfDownload, ShelfProgress, ShelfUpload, StoreResult, Task, TaskError, TaskId, TaskOutcome,
 };
 use std::fmt::Write as _;
 use std::process::ExitCode;
@@ -45,6 +45,20 @@ const PAGE: usize = 25;
 /// The ceiling on a listing. Twenty-five abstracts is well under this; the
 /// margin is for a query that matches papers with long author lists.
 const LISTING_BYTES: u32 = 512 * 1024;
+
+/// The most papers the library will hold.
+///
+/// An application may hold [`kobo_sdk::MAX_STORE_KEYS`] durable keys, and this
+/// library spends two of them on each paper -- the reading position and the
+/// catalogue entry -- alongside a blob on the shelf. The ceiling is what is
+/// left once the registry itself and a margin for the reading positions of
+/// papers merely visited are taken out.
+///
+/// There is deliberately no eviction. A paper is in the library because
+/// somebody put it there, and a library that quietly throws away the oldest
+/// thing you kept is not a library. When it is full it says so and the reader
+/// removes something.
+const MAX_KEPT: usize = 96;
 
 /// The ceiling on one paper's full text.
 ///
@@ -113,12 +127,118 @@ enum Query {
     Words(String),
 }
 
+/// How far back a listing reaches.
+///
+/// arXiv publishes no measure of how widely a paper is read -- no citation
+/// count, no download tally, nothing an application could sort by -- so the
+/// only honest way to offer "what is worth reading" is to narrow the window
+/// and let recency stand in for it. A week of one subject is a few hundred
+/// papers rather than a few hundred thousand, which is the difference
+/// between a list and an archive.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum Window {
+    #[default]
+    Any,
+    Week,
+    Month,
+}
+
+impl Window {
+    /// The next window in the cycle, for a control that has one button.
+    const fn next(self) -> Self {
+        match self {
+            Self::Any => Self::Week,
+            Self::Week => Self::Month,
+            Self::Month => Self::Any,
+        }
+    }
+
+    const fn days(self) -> u64 {
+        match self {
+            Self::Any => 0,
+            Self::Week => 7,
+            Self::Month => 30,
+        }
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Any => "Any time",
+            Self::Week => "This week",
+            Self::Month => "Last 30 days",
+        }
+    }
+
+    /// The `submittedDate:[from TO to]` clause, or nothing for `Any`.
+    ///
+    /// `today` is a count of days since the Unix epoch, taken as an argument
+    /// rather than read from the clock so that the shape of the clause can
+    /// be tested against a date that will not move.
+    fn clause(self, today: u64) -> Option<String> {
+        if self == Self::Any {
+            return None;
+        }
+        let from = stamp(today.saturating_sub(self.days()), false);
+        let to = stamp(today, true);
+        Some(format!("submittedDate:[{from} TO {to}]"))
+    }
+}
+
+/// The `YYYYMMDDHHMM` stamp arXiv wants, at either end of a day.
+fn stamp(day: u64, end: bool) -> String {
+    let (year, month, date) = civil(day);
+    let clock = if end { "2359" } else { "0000" };
+    format!("{year:04}{month:02}{date:02}{clock}")
+}
+
+/// Calendar date from a count of days since 1970-01-01.
+///
+/// Howard Hinnant's `civil_from_days`, which reckons years as starting in
+/// March so that the leap day lands at the end and needs no special case.
+/// Written out here because pulling in a date library to format four
+/// numbers would be a poor trade on a device this size.
+fn civil(day: u64) -> (u64, u64, u64) {
+    let era_day = day + 719_468;
+    let era = era_day / 146_097;
+    let day_of_era = era_day % 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let shifted = (5 * day_of_year + 2) / 153;
+    let date = day_of_year - (153 * shifted + 2) / 5 + 1;
+    let month = if shifted < 10 {
+        shifted + 3
+    } else {
+        shifted - 9
+    };
+    (if month <= 2 { year + 1 } else { year }, month, date)
+}
+
+/// Today, as days since the Unix epoch.
+fn today() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs() / 86_400)
+}
+
 impl Query {
     /// The `search_query` arXiv expects.
-    fn expression(&self) -> String {
-        match self {
+    fn expression(&self, window: Window, today: u64) -> String {
+        let subject = match self {
             Self::Subject { code, .. } => format!("cat:{}", escape(code)),
             Self::Words(words) => format!("all:{}", escape(words)),
+        };
+        // A window narrows whichever question was asked, so it is an AND
+        // against the term rather than a term of its own.
+        // The whole expression goes into a query string, so the separator
+        // has to be encoded along with the clause. An unencoded space here
+        // is a malformed URL, and arXiv answers a malformed URL with an
+        // empty feed rather than an error, which would look like a subject
+        // that had simply stopped publishing.
+        match window.clause(today) {
+            Some(clause) => format!("{subject}{}{}", escape(" AND "), escape(&clause)),
+            None => subject,
         }
     }
 
@@ -145,6 +265,23 @@ enum View {
     Listing,
     Paper,
     FullText,
+    /// The papers kept for reading without a network.
+    Library,
+}
+
+/// One paper the reader kept, as the library lists it.
+///
+/// The title and authors are held here rather than read back out of the stored
+/// rendering, because a library has to be listable with the card out of the
+/// device and the shelf untouched: parsing ninety-six papers to draw one
+/// screen of rows is the kind of thing that makes an application feel broken.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct Kept {
+    id: String,
+    title: String,
+    authors: String,
+    /// How big the stored rendering is, so the library can say what it costs.
+    bytes: u32,
 }
 
 #[derive(Debug, Default)]
@@ -183,6 +320,130 @@ struct Arxiv {
     truncated: bool,
     task: Option<(TaskId, Awaiting)>,
     trouble: Option<String>,
+    /// How far back listings reach.
+    window: Window,
+    /// Set when Keep was pressed from an abstract, so that the fetch it
+    /// started ends in the library rather than only on the screen.
+    keep_when_fetched: bool,
+    /// Every paper kept for offline reading, newest first.
+    library: Vec<Kept>,
+    /// Whether the open paper was reached from the library rather than a
+    /// listing, which is what Back has to know.
+    from_library: bool,
+    library_page: usize,
+    /// The rendering of the open paper, held while it is on the panel so that
+    /// keeping it does not mean fetching it a second time.
+    ///
+    /// Dropped with everything else when the paper closes: a stored copy is
+    /// the point of keeping, and a copy of a paper nobody kept is a megabyte
+    /// spent on nothing.
+    fetched: Option<Vec<u8>>,
+    /// A rendering on its way to or from the shelf.
+    keeping: Option<ShelfUpload>,
+    loading: Option<ShelfDownload>,
+    /// Which paper the transfer in flight is for, since a shelf answer names
+    /// only the blob.
+    transferring: Option<String>,
+    /// The reading position of the open paper, loaded before the paper is and
+    /// held until the reader can be given it.
+    place: Option<Memory>,
+}
+
+/// The store key a paper's reading position is written under.
+fn place_key(id: &str) -> String {
+    format!("place.{}", key_safe(id))
+}
+
+/// The shelf name a paper's kept rendering is written under.
+fn blob_key(id: &str) -> String {
+    format!("paper.{}", key_safe(id))
+}
+
+/// The store key the library's catalogue is written under.
+const LIBRARY_KEY: &str = "library";
+
+/// What a kept paper's row says under its title.
+fn kept_summary(kept: &Kept) -> String {
+    let size = kept.bytes / 1024;
+    if kept.authors.is_empty() {
+        return format!("{} \u{b7} {size} KB", kept.id);
+    }
+    format!("{} \u{b7} {} \u{b7} {size} KB", kept.id, kept.authors)
+}
+
+/// Writes the library catalogue out.
+///
+/// A line per paper, tab separated, for the same reason [`Memory::encode`] is
+/// a line per field: it is readable over the shell when somebody reports
+/// having lost a paper, and a line that cannot be understood costs one paper
+/// rather than the whole library.
+///
+/// A tab is the separator because it is the one character a title, an author
+/// list and an arXiv identifier all cannot contain -- and any that arrives
+/// anyway is turned into a space on the way in, so a hostile title cannot
+/// forge a field.
+fn encode_library(library: &[Kept]) -> Vec<u8> {
+    let mut text = String::new();
+    for kept in library.iter().take(MAX_KEPT) {
+        let _ = writeln!(
+            text,
+            "{}\t{}\t{}\t{}",
+            untabbed(&kept.id),
+            kept.bytes,
+            untabbed(&kept.title),
+            untabbed(&kept.authors)
+        );
+    }
+    text.into_bytes()
+}
+
+fn decode_library(bytes: &[u8]) -> Vec<Kept> {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return Vec::new();
+    };
+    let mut library = Vec::new();
+    for line in text.lines().take(MAX_KEPT) {
+        let mut fields = line.split('\t');
+        let (Some(id), Some(bytes), Some(title)) = (fields.next(), fields.next(), fields.next())
+        else {
+            continue;
+        };
+        if id.is_empty() {
+            continue;
+        }
+        library.push(Kept {
+            id: id.to_owned(),
+            title: title.to_owned(),
+            authors: fields.next().unwrap_or_default().to_owned(),
+            bytes: bytes.parse().unwrap_or(0),
+        });
+    }
+    library
+}
+
+fn untabbed(text: &str) -> String {
+    text.replace(['\t', '\n', '\r'], " ")
+}
+
+/// Narrows an arXiv identifier to what a store key may contain.
+///
+/// An identifier is `2401.00001v2` or, under the numbering arXiv used before
+/// 2007, `math.CO/0601001`. The store takes lower case letters, digits, and
+/// `.`, `-` and `_` only, and it refuses a key outside that set rather than
+/// repairing it -- so the repair happens here, where it can be seen.
+///
+/// The slash becomes an underscore rather than a dash so that it stays
+/// distinguishable from a dash that was already there, and the case is folded
+/// because the store will not take `CO`.
+fn key_safe(id: &str) -> String {
+    id.chars()
+        .map(|character| match character {
+            'a'..='z' | '0'..='9' | '.' | '-' | '_' => character,
+            'A'..='Z' => character.to_ascii_lowercase(),
+            '/' => '_',
+            _ => '-',
+        })
+        .collect()
 }
 
 const SEARCH: &str = "search";
@@ -197,6 +458,13 @@ const FULL_TEXT: &str = "full-text";
 const ABSTRACT: &str = "abstract";
 const SUBJECT: &str = "subject-";
 const PAPER: &str = "paper-";
+const LIBRARY: &str = "library";
+const LIB_BACK: &str = "library-back";
+const LIB_NEXT: &str = "library-next";
+const KEEP: &str = "keep";
+const DISCARD: &str = "discard";
+const KEPT: &str = "kept-";
+const WINDOW: &str = "window";
 
 impl Arxiv {
     fn paper(&self) -> Option<&Paper> {
@@ -212,7 +480,7 @@ impl Arxiv {
         let url = format!(
             "{QUERY}?search_query={}&start={offset}&max_results={PAGE}\
              &sortBy=submittedDate&sortOrder=descending",
-            query.expression()
+            query.expression(self.window, today())
         );
         self.trouble = None;
         match context.spawn_retrying(Task::Fetch {
@@ -237,6 +505,12 @@ impl Arxiv {
             return;
         };
         let url = format!("https://arxiv.org/html/{}", escape_path(&paper.id));
+        // Asked for now rather than when the rendering lands, so that the
+        // place is already in hand by the time there is a document to put
+        // it into. The store is on the same machine and the paper is at the
+        // other end of the internet, so the race is not close.
+        let id = paper.id.clone();
+        self.ask_place(context, &id);
         self.trouble = None;
         self.truncated = false;
         match context.spawn_retrying(Task::Fetch {
@@ -281,6 +555,7 @@ impl Arxiv {
                     )
                 })
             }))
+            .top_bar_glyph(LIBRARY, "Library", Glyph::Bookmark)
             .page_turns(SUBJECTS_BACK, SUBJECTS_NEXT)
             .page_position(page_number(page), page_total(pages.len()))
             .bottom_action_marked(SEARCH, "Search arXiv", Glyph::Search)
@@ -298,6 +573,52 @@ impl Arxiv {
             .build()
     }
 
+    /// The papers kept for reading with no network.
+    ///
+    /// Reachable from the subject list rather than from a paper, because the
+    /// question "what have I kept?" is asked on the way in, before there is
+    /// any paper open to ask it from.
+    fn library(&self, context: &Context) -> Screen {
+        let mut screen = ScreenBuilder::new("arxiv-library").top_bar("Library");
+        if let Some(trouble) = &self.trouble {
+            screen = screen.banner(BannerLevel::Attention, trouble.clone());
+        }
+        if self.library.is_empty() {
+            return screen
+                .empty_state(
+                    "Nothing kept yet. Open a paper's full text and keep it to read it later \
+                     without a network.",
+                )
+                .build();
+        }
+        let rows: Vec<(String, String)> = self
+            .library
+            .iter()
+            .map(|kept| (kept.title.clone(), kept_summary(kept)))
+            .collect();
+        let borrowed: Vec<(&str, &str)> = rows
+            .iter()
+            .map(|(title, summary)| (title.as_str(), summary.as_str()))
+            .collect();
+        let pages = context.paginate_rows(&borrowed, true);
+        let page = self.library_page.min(pages.len().saturating_sub(1));
+        let shown = pages.get(page).map(Vec::as_slice).unwrap_or_default();
+        screen = screen.rows(shown.iter().filter_map(|index| {
+            self.library.get(*index).map(|kept| {
+                (
+                    format!("{KEPT}{index}"),
+                    kept.title.clone(),
+                    kept_summary(kept),
+                    RowLead::Icon(Glyph::Bookmark),
+                )
+            })
+        }));
+        screen
+            .page_turns(LIB_BACK, LIB_NEXT)
+            .page_position(page_number(page), page_total(pages.len()))
+            .build()
+    }
+
     fn listing(&self, context: &Context) -> Screen {
         let title = self
             .query
@@ -310,9 +631,14 @@ impl Arxiv {
         if self.waiting_for(Awaiting::Listing) {
             return screen.skeleton(6).build();
         }
+        // The window control carries its own state as its label, so the
+        // one button is both the way to change the reach of the listing and
+        // the only place that says what the reach currently is.
+        let narrowing = (WINDOW, self.window.label(), Glyph::Filter);
         if self.papers.is_empty() {
             return screen
-                .empty_state("No papers here. Try different words.")
+                .empty_state("No papers here. Try a wider window or different words.")
+                .bottom_action_marked(narrowing.0, narrowing.1, narrowing.2)
                 .build();
         }
         let rows: Vec<(String, String)> = self
@@ -345,6 +671,7 @@ impl Arxiv {
             screen = screen.bottom_action_marked(MORE, "Older papers", Glyph::Download);
         }
         screen
+            .bottom_action_marked(narrowing.0, narrowing.1, narrowing.2)
             .page_turns(LIST_BACK, LIST_NEXT)
             .page_position(page_number(page), page_total(pages.len()))
             .build()
@@ -361,6 +688,9 @@ impl Arxiv {
         if self.waiting_for(Awaiting::FullText) {
             return screen.activity("Fetching the full text", None).build();
         }
+        if self.loading.is_some() {
+            return screen.activity("Opening the kept paper", None).build();
+        }
         if self.truncated {
             screen = screen.banner(
                 BannerLevel::Attention,
@@ -371,8 +701,18 @@ impl Arxiv {
         for line in self.pages.get(page).map(Vec::as_slice).unwrap_or_default() {
             screen = screen.text(line.clone());
         }
+        // Keeping is offered from the paper rather than from the reader,
+        // because the reader's bar belongs to reading and every application
+        // sharing it has the same one. Whether this paper is kept is a fact
+        // about this application's library, not about the page.
+        let kept = self.paper().is_some_and(|paper| self.is_kept(&paper.id));
+        screen = screen.fill();
+        screen = if kept {
+            screen.bottom_action_marked(DISCARD, "Remove from library", Glyph::Trash)
+        } else {
+            screen.bottom_action_marked(KEEP, "Keep for offline", Glyph::Download)
+        };
         screen
-            .fill()
             .bottom_action_marked(FULL_TEXT, "Full text", Glyph::Book)
             .page_turns(READ_BACK, READ_NEXT)
             .page_position(page_number(page), page_total(self.pages.len()))
@@ -403,6 +743,7 @@ impl Arxiv {
             View::Listing => self.listing(context),
             View::Paper => self.reading(),
             View::FullText => self.full_text(),
+            View::Library => self.library(context),
         };
         // Every view but the subject list was reached from another one, so
         // Back has somewhere to go from all of them and nowhere to go from it.
@@ -415,6 +756,7 @@ impl Arxiv {
         let page = match self.view {
             View::Subjects => &mut self.subject_page,
             View::Listing => &mut self.listing_page,
+            View::Library => &mut self.library_page,
             View::Paper => &mut self.page,
             // The reader turns its own pages, and the taps that ask it to are
             // its own actions rather than this application's.
@@ -461,10 +803,13 @@ impl Arxiv {
         // know: it is what reading a web page on this device means, and every
         // application that shows one gets the same answer.
         let origin = format!("https://arxiv.org/html/{}/", escape_path(&paper.id));
-        if !self
-            .book
-            .open_html(context, body, &origin, Memory::default())
-        {
+        // Whatever this paper was left at, if it has been read before. The
+        // load was asked for when the paper was opened, so by the time the
+        // rendering is in hand the answer is usually already here; a paper
+        // that outran it opens at the top, which is where it would have
+        // opened anyway.
+        let memory = self.place.take().unwrap_or_default();
+        if !self.book.open_html(context, body, &origin, memory) {
             self.trouble =
                 Some("arXiv has no readable rendering of this paper, only a PDF.".to_owned());
             return;
@@ -476,12 +821,144 @@ impl Arxiv {
         self.book.mark_truncated(self.truncated);
         self.page = 0;
         self.view = View::FullText;
+        // Held so that keeping the paper does not fetch it a second time.
+        // Only worth holding what could actually be kept: a rendering that
+        // arrived truncated is not a paper, and storing one would make the
+        // library quietly full of halves.
+        self.fetched = if self.truncated {
+            None
+        } else {
+            Some(bytes.to_vec())
+        };
+        if std::mem::take(&mut self.keep_when_fetched) {
+            if self.fetched.is_some() {
+                self.keep_paper(context);
+            } else {
+                // Half a paper is not worth a place in a library that exists
+                // to be read without a network.
+                self.trouble =
+                    Some("Only part of this paper arrived, so it was not kept.".to_owned());
+            }
+        }
+    }
+
+    // ---- the library -------------------------------------------------
+
+    /// Whether the open paper is already kept.
+    fn is_kept(&self, id: &str) -> bool {
+        self.library.iter().any(|kept| kept.id == id)
+    }
+
+    /// Writes the reading position of the open paper.
+    ///
+    /// Called on every save the reader asks for and again when the paper
+    /// closes, because the two do not overlap: the reader asks after a mark or
+    /// a page turn, and closing is the one that catches the paper somebody
+    /// read to the end of and then left.
+    fn save_place(&mut self, context: &mut Context) {
+        let Some(id) = self.paper().map(|paper| paper.id.clone()) else {
+            return;
+        };
+        let Some(memory) = self.book.memory() else {
+            return;
+        };
+        context.store().save(place_key(&id), memory.encode());
+    }
+
+    /// Asks for the reading position of a paper about to be opened.
+    fn ask_place(&mut self, context: &mut Context, id: &str) {
+        self.place = None;
+        context.store().load(place_key(id));
+    }
+
+    /// Keeps the open paper for reading with no network.
+    fn keep_paper(&mut self, context: &mut Context) {
+        let Some(paper) = self.paper().cloned() else {
+            return;
+        };
+        if self.is_kept(&paper.id) {
+            return;
+        }
+        if self.library.len() >= MAX_KEPT {
+            self.trouble = Some(
+                "The library is full. Remove a paper from it before keeping another.".to_owned(),
+            );
+            return;
+        }
+        let Some(bytes) = self.fetched.clone() else {
+            // What gets kept is the rendering, and from the abstract there
+            // is not one yet. Rather than telling somebody to press Full
+            // text and then press Keep again, fetch it and keep it when it
+            // lands: the two taps were always going to be the same errand.
+            self.keep_when_fetched = true;
+            self.ask_full_text(context);
+            return;
+        };
+        let size = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
+        let mut upload = ShelfUpload::new(blob_key(&paper.id), bytes);
+        upload.start(context);
+        self.keeping = Some(upload);
+        self.transferring = Some(paper.id.clone());
+        // Listed as soon as the transfer starts rather than when it finishes,
+        // so the button answers the tap. A transfer that fails takes the entry
+        // back out again, which is the only way round that never leaves a
+        // paper kept with nothing behind it.
+        self.library.insert(
+            0,
+            Kept {
+                id: paper.id.clone(),
+                title: paper.title.clone(),
+                authors: paper.byline(),
+                bytes: size,
+            },
+        );
+        self.save_library(context);
+    }
+
+    /// Takes a paper back out of the library, and its rendering off the shelf.
+    fn discard_paper(&mut self, context: &mut Context, id: &str) {
+        self.library.retain(|kept| kept.id != id);
+        context.shelf().remove(blob_key(id));
+        self.save_library(context);
+    }
+
+    fn save_library(&mut self, context: &mut Context) {
+        context
+            .store()
+            .save(LIBRARY_KEY, encode_library(&self.library));
+    }
+
+    /// Opens a kept paper from the shelf instead of the network.
+    fn open_kept(&mut self, context: &mut Context, index: usize) {
+        let Some(kept) = self.library.get(index).cloned() else {
+            return;
+        };
+        // The library lists papers this application has never seen in a
+        // listing, so the paper being opened is rebuilt from what was kept
+        // beside it rather than looked up.
+        self.papers = vec![Paper {
+            id: kept.id.clone(),
+            title: kept.title.clone(),
+            authors: vec![kept.authors.clone()],
+            ..Paper::default()
+        }];
+        self.open = Some(0);
+        self.trouble = None;
+        self.ask_place(context, &kept.id);
+        let mut download = ShelfDownload::new(blob_key(&kept.id)).at_most(FULL_TEXT_BYTES as usize);
+        download.start(context);
+        self.loading = Some(download);
+        self.transferring = Some(kept.id);
+        self.view = View::Paper;
     }
 
     /// Gives back everything the open paper was costing.
     fn close_paper(&mut self, context: &mut Context) {
+        // The place goes down before the document it points into goes away.
+        self.save_place(context);
         self.book.close(context);
         self.truncated = false;
+        self.fetched = None;
     }
 }
 
@@ -589,6 +1066,7 @@ fn page_total(pages: usize) -> u16 {
 
 impl KoboApp for Arxiv {
     fn on_start(&mut self, context: &mut Context) {
+        context.store().load(LIBRARY_KEY);
         self.show(context);
     }
 
@@ -622,12 +1100,19 @@ impl KoboApp for Arxiv {
             self.trouble = None;
             match self.view {
                 View::Subjects => return,
-                View::Search | View::Listing => {
+                View::Search | View::Listing | View::Library => {
                     self.view = View::Subjects;
                     self.listing_page = 0;
                 }
                 View::Paper => {
-                    self.view = View::Listing;
+                    // A paper opened out of the library goes back to the
+                    // library, because the listing behind it is the one
+                    // synthesised to hold it and has nothing else in it.
+                    self.view = if self.from_library {
+                        View::Library
+                    } else {
+                        View::Listing
+                    };
                     self.open = None;
                 }
                 // The full text was reached from the abstract, so Back is the
@@ -636,6 +1121,14 @@ impl KoboApp for Arxiv {
                 // document, the picture handles the runtime is holding
                 // against it and the figures still queued for it all go now,
                 // rather than lingering for a paper nobody is reading.
+                // A paper read out of the library has no abstract to go
+                // back to -- only the rendering was kept -- so Back is the
+                // library it was opened from.
+                View::FullText if self.from_library => {
+                    self.close_paper(context);
+                    self.view = View::Library;
+                    self.open = None;
+                }
                 View::FullText => {
                     self.close_paper(context);
                     self.view = View::Paper;
@@ -653,17 +1146,58 @@ impl KoboApp for Arxiv {
         if self.view == View::FullText {
             if let Some(outcome) = self.book.act(context, action) {
                 match outcome {
+                    Outcome::Close if self.from_library => {
+                        self.close_paper(context);
+                        self.view = View::Library;
+                        self.open = None;
+                    }
                     Outcome::Close => {
                         self.close_paper(context);
                         self.view = View::Paper;
                         self.open_abstract(context);
                     }
                     Outcome::Light(level) => context.device().set_frontlight(level),
-                    Outcome::Elsewhere | Outcome::Repaint | Outcome::Save => {}
+                    // The reader asks after anything worth keeping: a mark,
+                    // a note, a page turn, a change of type size. Ignoring it
+                    // is what used to lose every highlight in this
+                    // application the moment a paper was closed.
+                    Outcome::Save => self.save_place(context),
+                    Outcome::Elsewhere | Outcome::Repaint => {}
                 }
                 self.show(context);
                 return;
             }
+        }
+
+        if action == action_id(LIBRARY) {
+            self.trouble = None;
+            self.library_page = 0;
+            self.view = View::Library;
+            self.show(context);
+            return;
+        }
+
+        if action == action_id(KEEP) {
+            self.keep_paper(context);
+            self.show(context);
+            return;
+        }
+
+        if action == action_id(DISCARD) {
+            if let Some(id) = self.paper().map(|paper| paper.id.clone()) {
+                self.discard_paper(context, &id);
+            }
+            self.show(context);
+            return;
+        }
+
+        if action == action_id(LIB_BACK) {
+            self.turn(context, false);
+            return;
+        }
+        if action == action_id(LIB_NEXT) {
+            self.turn(context, true);
+            return;
         }
 
         if action == action_id(SEARCH) {
@@ -688,6 +1222,19 @@ impl KoboApp for Arxiv {
         }
         if action == action_id(READ_NEXT) {
             self.turn(context, true);
+            return;
+        }
+
+        if action == action_id(WINDOW) {
+            self.window = self.window.next();
+            // The window is part of the question, so changing it asks the
+            // question again from the beginning rather than filtering what
+            // is already on the screen.
+            if let Some(query) = self.query.clone() {
+                self.listing_page = 0;
+                self.ask_listing(context, query, 0);
+            }
+            self.show(context);
             return;
         }
 
@@ -731,8 +1278,19 @@ impl KoboApp for Arxiv {
             }
         }
 
+        for index in 0..self.library.len() {
+            if action == action_id(&format!("{KEPT}{index}")) {
+                self.close_paper(context);
+                self.from_library = true;
+                self.open_kept(context, index);
+                self.show(context);
+                return;
+            }
+        }
+
         for index in 0..self.papers.len() {
             if action == action_id(&format!("{PAPER}{index}")) {
+                self.from_library = false;
                 // Whatever the last paper was costing goes back before another
                 // one starts costing anything.
                 self.close_paper(context);
@@ -792,6 +1350,83 @@ impl KoboApp for Arxiv {
         }
         self.show(context);
     }
+
+    fn on_store(&mut self, context: &mut Context, result: StoreResult) {
+        // A rendering on its way onto the shelf. Nothing is drawn for it:
+        // the paper is already listed, and a progress bar over a write that
+        // takes two hundred milliseconds is noise.
+        if let Some(upload) = &mut self.keeping {
+            match upload.advance(context, &result) {
+                ShelfProgress::Done => {
+                    self.keeping = None;
+                    self.transferring = None;
+                    return;
+                }
+                ShelfProgress::Failed(_) => {
+                    // The entry went in when the transfer started, so it has
+                    // to come back out: a library naming a paper with nothing
+                    // behind it is worse than one that failed loudly.
+                    if let Some(id) = self.transferring.take() {
+                        self.library.retain(|kept| kept.id != id);
+                        self.save_library(context);
+                    }
+                    self.keeping = None;
+                    self.trouble =
+                        Some("That paper could not be kept. There may be no room.".to_owned());
+                    self.show(context);
+                    return;
+                }
+                ShelfProgress::Moving { .. } => return,
+                ShelfProgress::Elsewhere => {}
+            }
+        }
+        if let Some(download) = &mut self.loading {
+            match download.advance(context, &result) {
+                ShelfProgress::Done => {
+                    let bytes = self.loading.take().expect("a download in progress").take();
+                    self.transferring = None;
+                    self.took_full_text(context, &bytes);
+                    self.show(context);
+                    return;
+                }
+                ShelfProgress::Failed(_) => {
+                    self.loading = None;
+                    self.transferring = None;
+                    self.trouble =
+                        Some("That kept paper could not be read back from the card.".to_owned());
+                    self.show(context);
+                    return;
+                }
+                ShelfProgress::Moving { .. } => return,
+                ShelfProgress::Elsewhere => {}
+            }
+        }
+        if let StoreResult::Loaded { key, value } = result {
+            if key == LIBRARY_KEY {
+                self.library = value.as_deref().map(decode_library).unwrap_or_default();
+                self.show(context);
+            } else if self
+                .paper()
+                .is_some_and(|paper| place_key(&paper.id) == key)
+            {
+                // A miss is the ordinary answer for a paper never opened
+                // before, and `Memory::default` is exactly the right place to
+                // start one.
+                let place = value
+                    .as_deref()
+                    .map_or_else(Memory::default, Memory::decode);
+                // Usually the place gets here first and is waiting when the
+                // paper arrives. When the paper wins the race instead, it is
+                // already open at page one, and putting it back is the whole
+                // point of having stored the place at all.
+                if self.book.restore(context, place.clone()) {
+                    self.show(context);
+                } else {
+                    self.place = Some(place);
+                }
+            }
+        }
+    }
 }
 
 /// Says what went wrong in terms of what was being asked for.
@@ -825,11 +1460,14 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        abstract_text, escape, escape_path, paper_body, row_summary, Arxiv, Query, View, ABSTRACT,
-        FULL_TEXT, SUBJECTS,
+        abstract_text, blob_key, decode_library, encode_library, escape, escape_path, paper_body,
+        place_key, row_summary, stamp, Arxiv, Kept, Query, View, Window, ABSTRACT, DISCARD,
+        FULL_TEXT, KEEP, LIBRARY_KEY, SUBJECTS, WINDOW,
     };
     use crate::atom::Paper;
-    use kobo_sdk::{action_id, ActionId, AppRunner, Command, Task, TaskOutcome};
+    use kobo_read::Memory;
+    use kobo_sdk::StoreResult;
+    use kobo_sdk::{action_id, is_valid_key, ActionId, AppRunner, Command, Task, TaskOutcome};
 
     fn paper() -> Paper {
         Paper {
@@ -868,8 +1506,11 @@ mod tests {
             code: "cs.LG".into(),
             name: "Machine Learning".into(),
         };
-        assert_eq!(subject.expression(), "cat:cs.LG");
-        assert_eq!(Query::Words("qubits".into()).expression(), "all:qubits");
+        assert_eq!(subject.expression(Window::Any, 20_000), "cat:cs.LG");
+        assert_eq!(
+            Query::Words("qubits".into()).expression(Window::Any, 20_000),
+            "all:qubits"
+        );
     }
 
     /// Browsing a subject means reading its newest, so the request has to say
@@ -1142,5 +1783,389 @@ mod tests {
                 "figures were still being fetched for a paper nobody is reading"
             );
         }
+    }
+
+    #[test]
+    fn a_library_survives_being_written_down_and_read_back() {
+        let library = vec![
+            Kept {
+                id: "2401.00001v2".into(),
+                title: "On the Convergence of Things".into(),
+                authors: "A. Author and 3 others".into(),
+                bytes: 91_234,
+            },
+            Kept {
+                id: "math.CO/0601001".into(),
+                title: "An Older Numbering Scheme".into(),
+                authors: "B. Bourbaki".into(),
+                bytes: 12,
+            },
+        ];
+        let read_back = decode_library(&encode_library(&library));
+        assert_eq!(read_back, library);
+    }
+
+    #[test]
+    fn a_title_containing_a_tab_cannot_forge_a_field() {
+        // The catalogue is tab separated, so a title with a tab in it would
+        // otherwise arrive as a title and an author.
+        let library = vec![Kept {
+            id: "2401.00002".into(),
+            title: "Before\tAfter".into(),
+            authors: "C. Cantor".into(),
+            bytes: 7,
+        }];
+        let read_back = decode_library(&encode_library(&library));
+        assert_eq!(read_back.len(), 1, "the entry should still be one entry");
+        assert_eq!(read_back[0].authors, "C. Cantor");
+        assert!(
+            !read_back[0].title.contains('\t'),
+            "the tab should not have survived into the stored title"
+        );
+    }
+
+    #[test]
+    fn a_paper_identifier_with_a_slash_makes_a_key_the_store_accepts() {
+        // The old arXiv numbering puts a slash in the identifier, and the
+        // store refuses keys outside its character set rather than repairing
+        // them, so the repair has to happen here.
+        let key = blob_key("math.CO/0601001");
+        assert_eq!(key, "paper.math.co_0601001");
+        assert!(is_valid_key(&key), "the store would refuse {key}");
+        assert!(
+            is_valid_key(&place_key("math.CO/0601001")),
+            "the store would refuse the place key too"
+        );
+        assert!(
+            is_valid_key(&blob_key("2401.00001v2")),
+            "the store would refuse a modern identifier"
+        );
+        assert_ne!(
+            blob_key("math.CO/0601001"),
+            blob_key("math.CO-0601001"),
+            "a slash and a dash must not collapse onto one key"
+        );
+    }
+
+    #[test]
+    fn a_window_narrows_the_search_to_a_range_of_submission_dates() {
+        // 20 000 days after the epoch is 2024-10-04.
+        let subject = Query::Subject {
+            code: "cs.AI".into(),
+            name: "Artificial Intelligence".into(),
+        };
+        let week = subject.expression(Window::Week, 20_000);
+        assert_eq!(
+            week,
+            "cat:cs.AI%20AND%20submittedDate%3A%5B202409270000%20TO%20202410042359%5D"
+        );
+        // A query string cannot carry a raw space or bracket, and arXiv
+        // answers a malformed one with an empty feed rather than an error.
+        assert!(
+            !week.contains(' '),
+            "the clause must be escaped, got {week}"
+        );
+        assert!(
+            !week.contains('['),
+            "the clause must be escaped, got {week}"
+        );
+    }
+
+    #[test]
+    fn the_dates_a_window_asks_for_are_the_dates_it_means() {
+        assert_eq!(stamp(20_000, false), "202410040000");
+        assert_eq!(stamp(20_000, true), "202410042359");
+        // A month back from 2024-10-04 is 2024-09-04, across a month boundary.
+        let month = Window::Month.clause(20_000).expect("a month has a clause");
+        assert_eq!(month, "submittedDate:[202409040000 TO 202410042359]");
+        // A week back from 2024-03-04 crosses a leap day.
+        let leap = Window::Week.clause(19_786).expect("a week has a clause");
+        assert_eq!(leap, "submittedDate:[202402260000 TO 202403042359]");
+        assert_eq!(Window::Any.clause(20_000), None, "any time has no range");
+    }
+
+    #[test]
+    fn the_window_control_cycles_back_round_to_any_time() {
+        let mut window = Window::default();
+        assert_eq!(window, Window::Any);
+        window = window.next();
+        assert_eq!(window, Window::Week);
+        window = window.next();
+        assert_eq!(window, Window::Month);
+        window = window.next();
+        assert_eq!(window, Window::Any, "the cycle has to close");
+    }
+
+    #[test]
+    fn a_paper_kept_twice_is_kept_once() {
+        let mut app = Arxiv::default();
+        app.library.push(Kept {
+            id: "2401.00003".into(),
+            title: "A Paper".into(),
+            authors: "D. Dedekind".into(),
+            bytes: 5,
+        });
+        assert!(app.is_kept("2401.00003"));
+        assert!(!app.is_kept("2401.00004"));
+    }
+
+    /// The whole point of the persistence work: a paper reopens where it was
+    /// left, rather than at the top.
+    ///
+    /// This used to be dropped on the floor. The reader kept a place
+    /// perfectly well and handed it back on request, but this application
+    /// passed `Memory::default()` on every open and never once wrote one
+    /// down, so every paper opened at page one however far into it somebody
+    /// had got, and every highlight and note went with it.
+    #[test]
+    fn a_paper_reopens_at_the_place_it_was_left() {
+        let long = format!(
+            "<article>{}</article>",
+            "<p>A paragraph of text.</p>".repeat(400)
+        );
+
+        // Read it once, turn some pages, and leave.
+        let mut runner = AppRunner::new(Arxiv::default());
+        let _ = opened_on(&mut runner, &long);
+        for _ in 0..4 {
+            runner.action(action_id("read-next"));
+        }
+        // Marginalia as well as a place, because the reader keeps all of it
+        // in the one record and this application used to discard all of it.
+        {
+            let reader = runner
+                .app_mut()
+                .book
+                .reader_mut()
+                .expect("the paper is not open");
+            let panel = kobo_sdk::CLARA_BW_METRICS;
+            reader.toggle_bookmark();
+            reader.toggle_highlight(2, &panel);
+            reader
+                .create_annotation(
+                    1,
+                    kobo_read::TextRange {
+                        start: kobo_read::TextPosition {
+                            block: 2,
+                            offset: 0,
+                        },
+                        end: kobo_read::TextPosition {
+                            block: 2,
+                            offset: 5,
+                        },
+                    },
+                    Some("Worth coming back to"),
+                    &panel,
+                )
+                .expect("the annotation was refused");
+        }
+        let left_at = runner
+            .app()
+            .book
+            .memory()
+            .expect("the paper is not open")
+            .clone();
+        assert!(
+            left_at.at > 0,
+            "the test did not manage to turn a page, so it proves nothing"
+        );
+        let saved = runner
+            .action(kobo_sdk::ActionId::BACK)
+            .into_iter()
+            .find_map(|command| match command {
+                Command::Store(kobo_sdk::StoreRequest::Save { key, value }) => Some((key, value)),
+                _ => None,
+            })
+            .expect("leaving the paper wrote nothing down");
+        assert_eq!(saved.0, place_key(&paper().id), "saved under the wrong key");
+
+        // Come back to it. The place comes out of the store before the paper
+        // comes off the network, which is the ordinary order.
+        let mut again = AppRunner::new(Arxiv::default());
+        again.app_mut().papers = vec![paper()];
+        again.app_mut().open = Some(0);
+        again.start();
+        again.action(action_id(FULL_TEXT));
+        again.store_result(StoreResult::Loaded {
+            key: saved.0,
+            value: Some(saved.1),
+        });
+        let task = again.app().task.expect("no fetch").0;
+        again.task_outcome(task, TaskOutcome::Completed(long.into_bytes()));
+
+        let reopened = again.app().book.memory().expect("the paper is not open");
+        assert_eq!(
+            reopened.at, left_at.at,
+            "the paper opened at the top instead of where it was left"
+        );
+        assert_eq!(
+            reopened.bookmarks, left_at.bookmarks,
+            "the bookmarks did not come back"
+        );
+        assert_eq!(
+            reopened.highlights, left_at.highlights,
+            "the highlights did not come back"
+        );
+        assert_eq!(
+            reopened.annotations, left_at.annotations,
+            "the notes did not come back"
+        );
+    }
+
+    /// The same thing when the two arrive the other way round.
+    #[test]
+    fn a_place_that_arrives_after_the_paper_still_counts() {
+        let long = format!(
+            "<article>{}</article>",
+            "<p>A paragraph of text.</p>".repeat(400)
+        );
+        let mut runner = AppRunner::new(Arxiv::default());
+        let _ = opened_on(&mut runner, &long);
+        assert_eq!(runner.app().book.memory().expect("open").at, 0);
+
+        let place = Memory {
+            at: 3,
+            ..Memory::default()
+        };
+        runner.store_result(StoreResult::Loaded {
+            key: place_key(&paper().id),
+            value: Some(place.encode()),
+        });
+        assert_eq!(
+            runner.app().book.memory().expect("open").at,
+            3,
+            "a place that lost the race was thrown away"
+        );
+    }
+
+    /// Keeping a paper puts the rendering somewhere it can be read again with
+    /// no network, and says so in the catalogue.
+    #[test]
+    fn keeping_a_paper_writes_it_to_the_shelf_and_lists_it() {
+        let rendering = "<article><h2>1 Introduction</h2><p>Words.</p></article>";
+        let mut runner = AppRunner::new(Arxiv::default());
+        let _ = opened_on(&mut runner, rendering);
+
+        let commands = runner.action(action_id(KEEP));
+        assert!(
+            runner.app().is_kept(&paper().id),
+            "the paper was not listed in the library"
+        );
+        let wrote = commands.iter().any(|command| {
+            matches!(
+                command,
+                Command::Store(kobo_sdk::StoreRequest::ShelfWrite { name, .. })
+                    if *name == blob_key(&paper().id)
+            )
+        });
+        assert!(wrote, "nothing was written to the shelf");
+
+        // And the catalogue goes down too, or the library is empty next time.
+        let listed = commands.iter().any(|command| {
+            matches!(
+                command,
+                Command::Store(kobo_sdk::StoreRequest::Save { key, .. }) if key == LIBRARY_KEY
+            )
+        });
+        assert!(listed, "the catalogue was not saved");
+    }
+
+    /// Discarding takes back the space as well as the entry. A library that
+    /// forgets a paper but keeps its megabyte is a leak with a nice name.
+    #[test]
+    fn discarding_a_paper_takes_its_rendering_off_the_shelf_too() {
+        let rendering = "<article><p>Words.</p></article>";
+        let mut runner = AppRunner::new(Arxiv::default());
+        let _ = opened_on(&mut runner, rendering);
+        runner.action(action_id(KEEP));
+
+        let commands = runner.action(action_id(DISCARD));
+        assert!(!runner.app().is_kept(&paper().id), "still listed");
+        let removed = commands.iter().any(|command| {
+            matches!(
+                command,
+                Command::Store(kobo_sdk::StoreRequest::ShelfRemove { name })
+                    if *name == blob_key(&paper().id)
+            )
+        });
+        assert!(removed, "the rendering was left on the shelf");
+    }
+
+    /// Keeping from the abstract fetches the paper rather than refusing.
+    #[test]
+    fn keeping_from_an_abstract_fetches_the_paper_and_then_keeps_it() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        runner.app_mut().papers = vec![paper()];
+        runner.app_mut().open = Some(0);
+        runner.app_mut().view = View::Paper;
+        runner.start();
+
+        let commands = runner.action(action_id(KEEP));
+        let asked = commands.iter().any(|command| {
+            matches!(command, Command::Spawn { work: Task::Fetch { url, .. }, .. }
+                if url.contains("arxiv.org/html/"))
+        });
+        assert!(asked, "Keep from the abstract fetched nothing");
+        assert!(!runner.app().is_kept(&paper().id), "kept before it arrived");
+
+        let task = runner.app().task.expect("no fetch").0;
+        let commands = runner.task_outcome(
+            task,
+            TaskOutcome::Completed(b"<article><p>Words.</p></article>".to_vec()),
+        );
+        assert!(
+            runner.app().is_kept(&paper().id),
+            "the fetch it started did not end in the library"
+        );
+        assert!(
+            commands.iter().any(|command| matches!(
+                command,
+                Command::Store(kobo_sdk::StoreRequest::ShelfWrite { .. })
+            )),
+            "nothing reached the shelf"
+        );
+    }
+
+    /// A paper that arrived in pieces is not a paper to keep.
+    #[test]
+    fn a_truncated_paper_is_not_put_in_the_library() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        // No closing tag, which is how a rendering cut off at the byte
+        // ceiling arrives.
+        let _ = opened_on(&mut runner, "<article><p>Half of a pa");
+        assert!(runner.app().truncated, "the test did not truncate anything");
+
+        runner.action(action_id(KEEP));
+        assert!(
+            !runner.app().is_kept(&paper().id),
+            "half a paper was put in a library meant for reading offline"
+        );
+    }
+
+    /// Changing the window asks the question again rather than filtering what
+    /// is already on the screen, because the window is part of the question.
+    #[test]
+    fn changing_the_window_asks_arxiv_again_from_the_first_result() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        runner.start();
+        runner.action(action_id("subject-0"));
+        let first = runner.app().task.expect("no listing was asked for").0;
+        runner.task_outcome(first, TaskOutcome::Completed(Vec::new()));
+
+        let commands = runner.action(action_id(WINDOW));
+        assert_eq!(runner.app().window, Window::Week);
+        let asked = commands.iter().find_map(|command| match command {
+            Command::Spawn {
+                work: Task::Fetch { url, .. },
+                ..
+            } => Some(url.clone()),
+            _ => None,
+        });
+        let url = asked.expect("changing the window asked for nothing");
+        assert!(url.contains("submittedDate"), "{url}");
+        assert!(
+            url.contains("start=0"),
+            "the window kept an old offset: {url}"
+        );
     }
 }
