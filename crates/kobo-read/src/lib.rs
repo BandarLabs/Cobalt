@@ -100,6 +100,20 @@ const HIGHLIGHT_DEPTH: u8 = 1;
 /// wrong rather than as prose continuing.
 const MIN_KEEP_LINES: usize = 2;
 
+/// The fewest lines of a section that must share the page with its heading.
+///
+/// A heading is a promise that something follows it, so a heading alone at the
+/// foot of a page breaks the promise: the eye reaches the bottom having been
+/// told a new section is starting and finds nothing of it, and the section
+/// turns out to begin on the other side of a page turn.
+///
+/// Every typesetting system has this rule and they broadly agree on the
+/// number. TeX hangs a large penalty on a break directly after a heading;
+/// CSS calls it `break-after: avoid`; a page layout program calls it "keep
+/// with next" and defaults to two or three lines. Two is the smallest number
+/// that actually reads as a section having started.
+const KEEP_WITH_HEADING: usize = 2;
+
 /// The most pages a book is broken into.
 ///
 /// A ceiling rather than a guess. Pagination allocates per page, and a
@@ -2366,6 +2380,69 @@ fn index_of(locator: Locator) -> usize {
     usize::try_from(locator).unwrap_or(usize::MAX)
 }
 
+/// How much room the start of the section after a heading needs.
+///
+/// Enough of whatever follows the heading to show that the section has begun:
+/// [`KEEP_WITH_HEADING`] lines of prose, or the whole of a shorter block. A
+/// second heading immediately under the first is its subtitle and needs to
+/// come with it rather than be measured as a section of its own, so it is
+/// followed through -- but only for a couple of steps, because a document can
+/// be nothing but headings and this is measuring a page, not walking a book.
+fn following_height(
+    document: &Document,
+    after: usize,
+    metrics: &kobo_ui::DisplayMetrics,
+    area: ProseArea,
+    gap: i32,
+) -> i32 {
+    let mut total = 0;
+    let mut at = after.saturating_add(1);
+    for _ in 0..3 {
+        let Some(block) = document.blocks.get(at) else {
+            // Nothing follows, so nothing has to fit: a heading at the very
+            // end of a document is the one that is allowed to stand alone.
+            return total;
+        };
+        let kind = kind_of(block, false);
+        if matches!(kind, Kind::Break | Kind::Rule) {
+            // A rule or a seam is not the section starting.
+            return total;
+        }
+        let size = kind.size();
+        let height = size.line_height_in(area.face).max(1);
+        let (_, width) = quote_offsets(metrics, area.width, kind.depth());
+        // A picture is placed whole and cannot be measured in lines, and a
+        // table row is a shape rather than prose. Asking for one line's worth
+        // is enough to keep the heading honest without demanding that a whole
+        // illustration share the page with it.
+        let Some(text) = block.text() else {
+            return total.saturating_add(height).saturating_add(gap);
+        };
+        let lines = wrap_text_in(text, width, size, area.face);
+        // How much of the block has to fit before any of it may be placed.
+        // Usually the opening couple of lines, but a block short enough that
+        // splitting it would strand a widow cannot be split at all, so for
+        // those the answer is the whole thing. Asking for two lines of a
+        // three-line paragraph reserves room the paragraph will refuse to
+        // use, and the heading is stranded anyway.
+        let wanted = if lines.len() < MIN_KEEP_LINES.saturating_mul(2) {
+            lines.len()
+        } else {
+            KEEP_WITH_HEADING
+        };
+        total = total.saturating_add(gap).saturating_add(
+            i32::try_from(wanted)
+                .unwrap_or(i32::MAX)
+                .saturating_mul(height),
+        );
+        if !matches!(kind, Kind::Heading(_)) {
+            return total;
+        }
+        at = at.saturating_add(1);
+    }
+    total
+}
+
 /// What each column of the table starting at `from` wants to be.
 ///
 /// Measured over every row of the table at once, and in pixels, because that
@@ -2642,6 +2719,28 @@ fn paginate(
             continue;
         }
 
+        // A heading goes over to the next page rather than sit alone at the
+        // foot of this one. Measured rather than guessed: the heading's own
+        // lines plus the opening lines of whatever follows it have to fit, or
+        // the page ends here and the section starts whole overleaf.
+        if matches!(kind, Kind::Heading(_)) && !page.is_empty() {
+            let wanted = i32::try_from(lines.len())
+                .unwrap_or(i32::MAX)
+                .saturating_mul(height)
+                .saturating_add(gap)
+                .saturating_add(following_height(
+                    document,
+                    index_of(index),
+                    metrics,
+                    area,
+                    gap,
+                ));
+            if used + wanted > area.height {
+                pages.push(std::mem::take(&mut page));
+                used = 0;
+            }
+        }
+
         let mut placed = 0;
         let mut source_at = 0usize;
         while placed < lines.len() {
@@ -2652,13 +2751,19 @@ fn paginate(
                 usize::try_from((room - extra_height) / height).unwrap_or(usize::MAX)
             };
             let left = lines.len() - placed;
-            // Either the rest fits, or enough of it fits to be worth breaking:
-            // two lines here and two over the page. Anything less and the
-            // whole paragraph goes over rather than leaving a widow behind.
+            // Either the rest fits, or enough of it fits to be worth
+            // breaking: two lines here and two over the page.
+            //
+            // When more fits than may be taken, the answer is to take less
+            // rather than to take none. A four-line paragraph with room for
+            // three used to move over whole, because leaving one line behind
+            // is a widow -- and the hole that left at the foot of the page
+            // was big enough to strand the heading above it. Two lines here
+            // and two overleaf breaks nothing and fills the page.
             let take = if fits >= left {
                 left
-            } else if fits >= MIN_KEEP_LINES && left - fits >= MIN_KEEP_LINES {
-                fits
+            } else if fits >= MIN_KEEP_LINES && left >= MIN_KEEP_LINES.saturating_mul(2) {
+                fits.min(left - MIN_KEEP_LINES)
             } else {
                 0
             };
@@ -4073,6 +4178,105 @@ mod tests {
             "the hold reached nothing"
         );
         assert_eq!(reader.chrome(), Chrome::Marking);
+    }
+
+    /// A heading is a promise that a section follows it. Left alone at the
+    /// foot of a page it breaks the promise, and the reader turns over to find
+    /// out what the heading was for.
+    #[test]
+    fn a_heading_is_never_left_alone_at_the_foot_of_a_page() {
+        // Enough prose to fill several pages, with a heading dropped in at
+        // every point where one could land badly. One of these is guaranteed
+        // to fall at the bottom of a page without the rule.
+        let mut blocks = Vec::new();
+        for section in 0..12 {
+            blocks.push(Block::Heading {
+                level: 2,
+                text: format!("Section {section}"),
+            });
+            for paragraph in 0..3 {
+                blocks.push(Block::Paragraph(format!(
+                    "Section {section} paragraph {paragraph}. {}",
+                    "The quick brown fox jumps over the lazy dog. ".repeat(4)
+                )));
+            }
+            // Varying the run length walks the heading through every offset
+            // in the page, so this does not depend on one lucky arrangement.
+            for filler in 0..section {
+                blocks.push(Block::Paragraph(format!(
+                    "Filler {filler}. {}",
+                    "Words to take up a line or two of the page. ".repeat(2)
+                )));
+            }
+        }
+        let count = blocks.len();
+        let reader = Reader::open(
+            Document {
+                title: None,
+                author: None,
+                blocks,
+                truncated: false,
+                ..Document::default()
+            },
+            Memory::default(),
+            &panel(),
+        );
+
+        let pages = reader.page_count();
+        assert!(pages > 4, "the test did not make enough pages: {pages}");
+        let mut checked = 0;
+        for number in 0..pages {
+            let Some(last) = reader.pages[number].last() else {
+                continue;
+            };
+            if !matches!(last.kind, Kind::Heading(_)) {
+                continue;
+            }
+            // The only heading allowed to end a page is one that ends the
+            // book, because nothing follows it to be stranded from.
+            assert_eq!(
+                index_of(last.block),
+                count - 1,
+                "page {number} ends with a heading and the section starts overleaf"
+            );
+            checked += 1;
+        }
+        assert!(
+            checked <= 1,
+            "more than one heading ended a page, so the rule is not being applied"
+        );
+    }
+
+    /// The rule must not do its job by emptying pages instead.
+    #[test]
+    fn keeping_a_heading_with_its_section_does_not_leave_a_blank_page() {
+        let mut blocks = Vec::new();
+        for section in 0..8 {
+            blocks.push(Block::Heading {
+                level: 2,
+                text: format!("Section {section}"),
+            });
+            blocks.push(Block::Paragraph(
+                "The quick brown fox jumps over the lazy dog. ".repeat(6),
+            ));
+        }
+        let reader = Reader::open(
+            Document {
+                title: None,
+                author: None,
+                blocks,
+                truncated: false,
+                ..Document::default()
+            },
+            Memory::default(),
+            &panel(),
+        );
+        for number in 0..reader.page_count() {
+            assert!(
+                !reader.pages[number].is_empty(),
+                "page {number} came out blank"
+            );
+        }
     }
 
     #[test]

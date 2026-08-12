@@ -22,7 +22,8 @@
 //!   control characters are dropped instead of being handed to a renderer that
 //!   would have to decide what a `\u{7}` looks like.
 
-mod math;
+/// Reading `MathML` as a line of text.
+pub mod math;
 
 /// The most text one converted body may produce.
 ///

@@ -35,17 +35,16 @@ const OPAQUE: [&str; 3] = ["script", "style", "iframe"];
 
 /// Elements that carry their own reading in an attribute.
 ///
-/// `MathML` is the case that matters. Every renderer that turns a paper into a
-/// web page -- `LaTeXML`, which is what arXiv uses, above all -- writes an
-/// equation as a tree of `<mi>`, `<mo>` and `<mrow>` whose text nodes are the
-/// individual symbols. Read as prose those come out as a run of unspaced
-/// letters and operators in the middle of a sentence: "where italic-x
-/// plus-or-minus 1" for something that was one formula.
+/// A drawing has no text in it, and what a converter can say about one is
+/// whatever the document said it showed.
 ///
-/// The same renderers put the source of the equation in `alttext`, which is
-/// the line the author actually wrote. It is not typeset, but it is a
-/// mathematician's notation rather than a machine's, and it reads.
-const ALT_TEXT: [&str; 2] = ["math", "svg"];
+/// `MathML` used to be in here too, and it was a mistake. The `alttext` a
+/// renderer writes is the LaTeX *source*, and putting source on a page is not
+/// a rendering of the formula, it is a picture of somebody else's keyboard:
+/// `\mathbb{R}^{k}\to\{\pm 1\}` in the middle of an English sentence.
+/// Formulae now go through [`kobo_html::math`], which reads the presentation
+/// markup the source was rendered into.
+const ALT_TEXT: [&str; 1] = ["svg"];
 
 /// Reads an HTML document.
 #[must_use]
@@ -94,6 +93,25 @@ pub fn parse_with_css(source: &str, external_css: &str) -> Document {
 
         let name = element_name(inside);
         let closing = inside.starts_with('/');
+        if !closing && name == "math" {
+            // The whole element, opening tag included, because the renderer
+            // reads the tree rather than the text: the children are the
+            // symbols and the structure between them is the formula.
+            let after = skip_element(rest, &name);
+            let taken = rest.len().saturating_sub(after.len());
+            let element = &tail[..(end + 1).saturating_add(taken)];
+            let drawn = kobo_html::math::render(element);
+            if !drawn.is_empty() {
+                // Spaced on both sides because an equation sits inside a
+                // sentence, and the tags either side of it carry no
+                // whitespace of their own.
+                state.words(" ");
+                state.words(&drawn);
+                state.words(" ");
+            }
+            rest = after;
+            continue;
+        }
         if !closing && ALT_TEXT.contains(&name.as_str()) {
             // Read from the attribute, never from the children: the point is
             // that the children are notation and the attribute is the reading
@@ -1034,11 +1052,15 @@ mod tests {
 
     /// An equation is read from its `alttext`, not from its symbols.
     ///
-    /// This is the shape `LaTeXML` gives every formula on arXiv. Reading the
-    /// element's children puts each symbol on the page as a separate word;
-    /// reading the attribute puts the line the author wrote.
+    /// This is the shape `LaTeXML` gives every formula on arXiv, and the
+    /// attribute it hangs beside the markup is the LaTeX the author typed.
+    /// The reader once put that attribute on the page, so a paper about the
+    /// Grothendieck constant told its reader `\frac{6\pi}{11}\leq K_{G}`
+    /// where the paper itself had an inequality. The markup says the same
+    /// thing in the characters a mathematician would have written, so we
+    /// read that and leave the source where the typesetter left it.
     #[test]
-    fn an_equation_is_read_from_the_line_the_author_wrote() {
+    fn an_equation_is_read_from_its_markup_rather_than_from_its_source() {
         let document = parse(
             "<p>We take <math alttext=\"x \\pm 1\" display=\"inline\">\
              <mi>x</mi><mo>&#xB1;</mo><mn>1</mn></math> as given.</p>",
@@ -1046,18 +1068,45 @@ mod tests {
         let Block::Paragraph(text) = &document.blocks[0] else {
             panic!("not a paragraph: {:?}", document.blocks[0]);
         };
-        assert_eq!(text, "We take x \\pm 1 as given.");
+        assert_eq!(text, "We take x\u{b1}1 as given.");
     }
 
-    /// A formula with no reading of its own says nothing rather than saying
-    /// its own markup.
+    /// A formula whose author gave no LaTeX still has its markup, and the
+    /// markup is the part we were going to read anyway.
     #[test]
-    fn an_equation_with_no_reading_is_left_out() {
+    fn an_equation_with_no_source_beside_it_is_still_read() {
         let document = parse("<p>We take <math><mi>x</mi><mn>1</mn></math> as given.</p>");
         let Block::Paragraph(text) = &document.blocks[0] else {
             panic!("not a paragraph: {:?}", document.blocks[0]);
         };
-        assert_eq!(text, "We take as given.");
+        assert_eq!(text, "We take x1 as given.");
+    }
+
+    /// Nothing that looks like LaTeX may reach the page.
+    ///
+    /// The photographs that reported this showed `K_{G}`, `\operatorname{sgn}`
+    /// and `\mathbb{R}^{k}\to\{\pm 1\}` set in the running text of a paper.
+    /// A backslash or a brace in a rendered paragraph means the source leaked
+    /// again, whatever else may have changed around it.
+    #[test]
+    fn no_part_of_a_formula_reaches_the_page_as_latex() {
+        let document = parse(
+            "<p>the constant <math alttext=\"K_{G}\"><semantics>\
+             <msub><mi>K</mi><mi>G</mi></msub>\
+             <annotation encoding=\"application/x-tex\">K_{G}</annotation>\
+             </semantics></math> is at least \
+             <math alttext=\"\\frac{6\\pi}{11}\"><semantics>\
+             <mfrac><mrow><mn>6</mn><mi>\u{3c0}</mi></mrow><mn>11</mn></mfrac>\
+             <annotation encoding=\"application/x-tex\">\\frac{6\\pi}{11}</annotation>\
+             </semantics></math>.</p>",
+        );
+        let Block::Paragraph(text) = &document.blocks[0] else {
+            panic!("not a paragraph: {:?}", document.blocks[0]);
+        };
+        assert!(!text.contains('\\'), "the source leaked: {text}");
+        assert!(!text.contains('{'), "the source leaked: {text}");
+        assert!(text.contains("K_G"), "the subscript was lost: {text}");
+        assert!(text.contains('\u{3c0}'), "the fraction was lost: {text}");
     }
 
     #[test]

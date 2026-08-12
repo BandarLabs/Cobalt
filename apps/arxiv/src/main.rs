@@ -118,6 +118,26 @@ fn escape(text: &str) -> String {
     out
 }
 
+/// Wraps a search in quotes when it is more than one word.
+///
+/// arXiv reads an unquoted space as `OR`: `all:machine learning` comes back
+/// from the API as the query `all:machine OR all:learning`, which is every
+/// paper containing either word and is not what anybody typing two words
+/// meant. Quoting asks for the phrase, which is.
+///
+/// A quote somebody typed themselves is dropped rather than escaped. There is
+/// no escape for it in the API's syntax, and an unbalanced one turns the rest
+/// of the query into nonsense.
+fn phrase(words: &str) -> String {
+    let cleaned = words.replace('"', " ");
+    let cleaned = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    if cleaned.contains(' ') {
+        format!("\"{cleaned}\"")
+    } else {
+        cleaned
+    }
+}
+
 /// What a listing is a listing of.
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Query {
@@ -227,7 +247,7 @@ impl Query {
     fn expression(&self, window: Window, today: u64) -> String {
         let subject = match self {
             Self::Subject { code, .. } => format!("cat:{}", escape(code)),
-            Self::Words(words) => format!("all:{}", escape(words)),
+            Self::Words(words) => format!("all:{}", escape(&phrase(words))),
         };
         // A window narrows whichever question was asked, so it is an AND
         // against the term rather than a term of its own.
@@ -1783,6 +1803,38 @@ mod tests {
                 "figures were still being fetched for a paper nobody is reading"
             );
         }
+    }
+
+    /// Two words meant both words, not either.
+    ///
+    /// arXiv reads an unquoted space as `OR` -- the API echoes the query back
+    /// as `all:machine OR all:learning` -- so searching for two words used to
+    /// return every paper containing either of them, which reads as search
+    /// being broken.
+    #[test]
+    fn a_search_for_two_words_asks_for_the_phrase_rather_than_either_word() {
+        let two = Query::Words("machine learning".into());
+        assert_eq!(
+            two.expression(Window::Any, 20_000),
+            "all:%22machine%20learning%22"
+        );
+        // One word needs no quoting, and quoting it would only make the URL
+        // longer and the query stricter than it was asked to be.
+        assert_eq!(
+            Query::Words("transformer".into()).expression(Window::Any, 20_000),
+            "all:transformer"
+        );
+        // Whatever somebody typed, the query has to stay balanced.
+        let hostile = Query::Words("say \"hello\" there".into()).expression(Window::Any, 20_000);
+        assert_eq!(
+            hostile.matches("%22").count() % 2,
+            0,
+            "unbalanced: {hostile}"
+        );
+        assert_eq!(hostile, "all:%22say%20hello%20there%22");
+        // And a window still narrows a phrase.
+        let narrowed = two.expression(Window::Week, 20_000);
+        assert!(narrowed.starts_with("all:%22machine%20learning%22%20AND%20"));
     }
 
     #[test]
