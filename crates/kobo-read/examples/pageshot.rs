@@ -23,7 +23,7 @@ fn main() {
     // paper that opens and an application that goes away mid-sentence. The
     // number is only meaningful on the hardware, which is where this is run.
     let started = Instant::now();
-    let document = kobo_doc::read(&path, &bytes).expect("a readable document");
+    let mut document = kobo_doc::read(&path, &bytes).expect("a readable document");
     println!("parsed in {} ms", started.elapsed().as_millis());
 
     let with_formula = document
@@ -43,6 +43,7 @@ fn main() {
     };
 
     let image_count = document.images.len();
+    load_figures_from_disk(&path, &mut document);
     let mut cache = PictureCache::new(64 * 1024 * 1024);
     let started = Instant::now();
     let tiles = decode_pictures(&document.images, &metrics, &mut cache);
@@ -154,4 +155,38 @@ fn decode_pictures(
         }
     }
     tiles
+}
+
+/// Fills in the pictures a real application would have fetched.
+///
+/// An HTML paper names its figures at addresses rather than carrying them, so
+/// the parser records the names and leaves the bytes to whoever can fetch
+/// them. Without this a page of figures renders as a page of empty frames,
+/// which is exactly the thing worth looking at.
+fn load_figures_from_disk(path: &str, document: &mut kobo_doc::Document) {
+    let Some(folder) = std::path::Path::new(path).parent() else {
+        return;
+    };
+    let wanted: Vec<String> = document
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            kobo_doc::Block::Picture { name, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .collect();
+    let mut found = 0;
+    for name in wanted {
+        if document.images.contains_key(&name) {
+            continue;
+        }
+        let leaf = name.rsplit('/').next().unwrap_or(&name);
+        if let Ok(read) = std::fs::read(folder.join(leaf)) {
+            document.images.insert(name, read);
+            found += 1;
+        }
+    }
+    if found > 0 {
+        println!("{found} figures read from beside the document");
+    }
 }
