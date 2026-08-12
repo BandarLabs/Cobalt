@@ -8317,6 +8317,32 @@ pub fn wrap_text_in(text: &str, max_width: i32, size: FontSize, face: Face) -> V
         .collect()
 }
 
+/// The same, for a paragraph with formulas set into it.
+///
+/// A page is counted before it is drawn, and until now it was counted from
+/// the words a formula was written as rather than the picture drawn over
+/// them. The two are different widths, so a paragraph wrapped one way and
+/// drawn the other came out a line longer than the page had room for, and
+/// that line was drawn over the page number at the foot of it.
+#[must_use]
+pub fn wrap_text_with_formulae(
+    text: &str,
+    max_width: i32,
+    size: FontSize,
+    face: Face,
+    formulae: &[InlineFormula],
+    line_height: i32,
+) -> Vec<String> {
+    let lines = wrap_ranges_with(text, max_width, size, face, formulae, line_height);
+    if lines.is_empty() {
+        return vec![String::new()];
+    }
+    lines
+        .into_iter()
+        .map(|line| text[line.0..line.1].to_owned())
+        .collect()
+}
+
 /// The same wrapping, as byte offsets into `text` rather than copies of it.
 ///
 /// What lets a run inside a paragraph be found on the page: a link is a range
