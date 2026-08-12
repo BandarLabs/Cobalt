@@ -427,6 +427,29 @@ mod tests {
     }
 
     #[test]
+    fn an_application_that_only_store_delivers_can_still_be_presented() {
+        // arXiv and Sudoku are not in the USB platform package, so the list
+        // of built-in applications does not have them. They install to the
+        // same directory and start the same way as everything else, and they
+        // are the newest work on the reader, so refusing to present them
+        // withheld the panel from exactly the applications that needed it.
+        assert_eq!(super::resolve_app("arxiv").unwrap(), "kobo-arxiv");
+        assert_eq!(super::resolve_app("kobo-sudoku").unwrap(), "kobo-sudoku");
+        let listed = super::installed_list();
+        assert!(listed.contains("arxiv"), "{listed}");
+    }
+
+    #[test]
+    fn no_application_is_offered_twice() {
+        let listed = super::installed_list();
+        let names: Vec<&str> = listed.split_whitespace().collect();
+        let mut sorted = names.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), names.len(), "{listed}");
+    }
+
+    #[test]
     fn the_runtime_is_not_an_application() {
         let error = resolve_app("kobod").unwrap_err();
         assert!(error.contains("runtime"), "{error}");
