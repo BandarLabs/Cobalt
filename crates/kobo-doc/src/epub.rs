@@ -108,6 +108,19 @@ fn rename_formulae(
     renamed
 }
 
+/// Puts the book's own name and author on it.
+///
+/// The package's metadata outranks anything found inside a chapter, because
+/// the `<title>` of chapter four is "Chapter Four".
+fn name_the_book(builder: &mut Builder, package: &Package) {
+    if let Some(title) = &package.title {
+        builder.set_title(title);
+    }
+    if let Some(author) = &package.author {
+        builder.set_author(author);
+    }
+}
+
 /// Reads an EPUB.
 ///
 /// # Errors
@@ -122,14 +135,7 @@ pub fn parse(bytes: &[u8]) -> Result<Document, Fault> {
     let publisher_styles = stylesheets_of(&archive, &package, &base);
 
     let mut builder = Builder::new();
-    // The package's own metadata outranks anything found inside a chapter: the
-    // `<title>` of chapter four is "Chapter Four".
-    if let Some(title) = &package.title {
-        builder.set_title(title);
-    }
-    if let Some(author) = &package.author {
-        builder.set_author(author);
-    }
+    name_the_book(&mut builder, &package);
 
     let mut truncated = false;
     let mut parts = 0;
@@ -143,6 +149,10 @@ pub fn parse(bytes: &[u8]) -> Result<Document, Fault> {
     // The formulae drawn while the chapters were read, which are pictures the
     // book carries without the archive holding a member for any of them.
     let mut drawn: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    // One allowance for the whole spine: a clock started afresh on every
+    // chapter is thirty clocks, which is not a limit on how long a book takes
+    // to open.
+    let allowance = crate::html::Allowance::whole();
     for id in package.reading_order() {
         if parts >= MAX_PARTS {
             truncated = true;
@@ -163,7 +173,10 @@ pub fn parse(bytes: &[u8]) -> Result<Document, Fault> {
         let part = crate::html::parse_within(
             &strip_toc(&text_of(&bytes)),
             &publisher_styles.css,
-            crate::MAX_FORMULA_PICTURES.saturating_sub(drawn.len()),
+            crate::html::Allowance {
+                pictures: allowance.pictures.saturating_sub(drawn.len()),
+                ..allowance
+            },
         );
         truncated |= part.truncated;
         if part.blocks.is_empty() {

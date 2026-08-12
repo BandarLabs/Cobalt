@@ -3,6 +3,7 @@
 //! rather than argued about.
 
 use std::collections::BTreeMap;
+use std::time::Instant;
 
 use kobo_read::{Memory, Reader};
 use kobo_ui::{Chrome, DisplayMetrics, PictureCache, PictureHandle, Surface};
@@ -17,7 +18,13 @@ fn main() {
     let _ = kobo_text::install(kobo_ui::display_metrics_from_env());
 
     let bytes = std::fs::read(&path).expect("the document");
+    // Timed because reading a document happens inside one lifecycle callback,
+    // and a callback that overruns on a device is the difference between a
+    // paper that opens and an application that goes away mid-sentence. The
+    // number is only meaningful on the hardware, which is where this is run.
+    let started = Instant::now();
     let document = kobo_doc::read(&path, &bytes).expect("a readable document");
+    println!("parsed in {} ms", started.elapsed().as_millis());
 
     let with_formula = document
         .rich
@@ -37,12 +44,22 @@ fn main() {
 
     let image_count = document.images.len();
     let mut cache = PictureCache::new(64 * 1024 * 1024);
+    let started = Instant::now();
     let tiles = decode_pictures(&document.images, &metrics, &mut cache);
+    println!(
+        "{} pictures decoded of {image_count} images in {} ms",
+        tiles.len(),
+        started.elapsed().as_millis()
+    );
 
-    println!("{} pictures decoded of {} images", tiles.len(), image_count);
+    let started = Instant::now();
     let mut reader = Reader::open(document, Memory::default(), &metrics);
     reader.set_pictures(tiles, &metrics);
-    println!("{} pages", reader.page_count());
+    println!(
+        "{} pages counted in {} ms",
+        reader.page_count(),
+        started.elapsed().as_millis()
+    );
 
     let wanted = if wanted.is_empty() { vec![0] } else { wanted };
     let last = wanted.iter().copied().max().unwrap_or(0);

@@ -24,6 +24,7 @@
 //! a saved web page, and it cannot get stuck, recurse or allocate a tree.
 
 use std::collections::BTreeMap;
+use std::time::Instant;
 
 use kobo_html::{attribute, decode_entities, element_name, skip_element};
 
@@ -71,7 +72,40 @@ pub fn parse(source: &str) -> Document {
 /// Reads HTML with a bounded safe subset of publisher CSS.
 #[must_use]
 pub fn parse_with_css(source: &str, external_css: &str) -> Document {
-    parse_within(source, external_css, crate::MAX_FORMULA_PICTURES)
+    parse_within(source, external_css, Allowance::whole())
+}
+
+/// What a document may still spend on drawing formulae.
+///
+/// Two limits, because they answer different questions. The count is how many
+/// pictures are worth keeping, and a reader can only ever show a few dozen.
+/// The clock is how long the reader is willing to be unresponsive for, and on
+/// real hardware it is the one that runs out first.
+#[derive(Clone, Copy)]
+pub struct Allowance {
+    /// How many more formulae may be drawn pictures.
+    pub pictures: usize,
+    /// When drawing must stop, whatever the count says.
+    ///
+    /// `None` never stops, which is what a test that wants every formula on a
+    /// machine of any speed asks for.
+    pub until: Option<Instant>,
+}
+
+impl Allowance {
+    /// A whole document's worth, starting now.
+    #[must_use]
+    pub fn whole() -> Self {
+        Self {
+            pictures: crate::MAX_FORMULA_PICTURES,
+            until: Instant::now().checked_add(crate::FORMULA_DRAWING_BUDGET),
+        }
+    }
+
+    /// Whether there is anything left to draw a formula with.
+    fn open(self, drawn: usize) -> bool {
+        drawn < self.pictures && self.until.is_none_or(|until| Instant::now() < until)
+    }
 }
 
 /// The same, for one file of a book that has a budget to share.
@@ -79,10 +113,10 @@ pub fn parse_with_css(source: &str, external_css: &str) -> Document {
 /// A book's chapters are read one at a time, and a limit applied to each of
 /// them separately is not a limit on the book: thirty chapters allowed
 /// sixty-four formulae apiece is nineteen hundred, which is the number the
-/// limit exists to prevent. The caller passes in what is left of the book's
-/// own allowance.
+/// limit exists to prevent. The clock is shared for the same reason -- a
+/// budget spent afresh on every chapter is thirty times the budget.
 #[must_use]
-pub fn parse_within(source: &str, external_css: &str, formulae: usize) -> Document {
+pub fn parse_within(source: &str, external_css: &str, allowance: Allowance) -> Document {
     let mut take = external_css.len().min(MAX_CSS_BYTES);
     while !external_css.is_char_boundary(take) {
         take -= 1;
@@ -94,7 +128,7 @@ pub fn parse_within(source: &str, external_css: &str, formulae: usize) -> Docume
         remaining -= 1;
     }
     css.push_str(&embedded[..remaining]);
-    let mut state = State::new(StyleSheet::parse(&css), formulae);
+    let mut state = State::new(StyleSheet::parse(&css), allowance);
     let mut rest = source;
     while let Some(at) = rest.find('<') {
         state.words(&rest[..at]);
@@ -235,8 +269,8 @@ struct State {
     /// rather than by its bytes, so the bytes wait here until the document is
     /// finished and can be handed over whole.
     formulae: BTreeMap<String, Vec<u8>>,
-    /// How many more formulae this file may be drawn pictures for.
-    allowance: usize,
+    /// What this file may still spend drawing formulae.
+    allowance: Allowance,
     /// The table row being read, once `<tr>` has opened one.
     ///
     /// A cell's words are collected by the same machinery as a paragraph's
@@ -259,7 +293,7 @@ struct Row {
 }
 
 impl State {
-    fn new(stylesheet: StyleSheet, allowance: usize) -> Self {
+    fn new(stylesheet: StyleSheet, allowance: Allowance) -> Self {
         Self {
             builder: Builder::new(),
             formulae: BTreeMap::new(),
@@ -692,7 +726,7 @@ impl State {
     /// text by the caller.
     fn display_formula(&mut self, inside: &str, drawn: &str) -> bool {
         if attribute(inside, "display").is_none_or(|display| display != "block")
-            || self.formulae.len() >= self.allowance
+            || !self.allowance.open(self.formulae.len())
         {
             return false;
         }
@@ -725,7 +759,7 @@ impl State {
     ///
     /// Returns whether the formula was taken.
     fn inline_formula(&mut self, inside: &str, drawn: &str) -> bool {
-        if drawn.trim().is_empty() || self.formulae.len() >= self.allowance {
+        if drawn.trim().is_empty() || !self.allowance.open(self.formulae.len()) {
             return false;
         }
         let Some(latex) = attribute(inside, "alttext") else {
@@ -1383,6 +1417,63 @@ mod tests {
             panic!("not a paragraph: {last:?}");
         };
         assert!(text.contains('x'), "the formula was lost entirely: {text}");
+    }
+
+    /// A reader too slow to draw a paper's mathematics reads it as words
+    /// rather than making the reader wait.
+    ///
+    /// The count above is a limit on how many pictures are worth keeping, and
+    /// on a development machine sixty-four of them cost fifty milliseconds
+    /// altogether. On a Clara BW the same sixty-four cost nine seconds, inside
+    /// the one callback that opens the document, because each formula there
+    /// takes about a hundred and forty milliseconds to draw. No count can
+    /// express that, because the right count is a property of the machine.
+    #[cfg(feature = "raster")]
+    #[test]
+    fn a_reader_that_cannot_draw_a_formula_in_time_reads_it_as_words() {
+        let one = "<p>a <math alttext=\"x\"><semantics><mi>x</mi>\
+                   <annotation encoding=\"application/x-tex\">x</annotation>\
+                   </semantics></math> b</p>";
+        let source = one.repeat(4);
+
+        // A clock that has already run out stands for a reader too slow to
+        // draw the first formula, which is the case this exists for.
+        let spent = parse_within(
+            &source,
+            "",
+            Allowance {
+                pictures: crate::MAX_FORMULA_PICTURES,
+                until: Some(Instant::now()),
+            },
+        );
+        assert!(
+            spent.images.is_empty(),
+            "a reader with no time left drew {} formulae anyway",
+            spent.images.len()
+        );
+
+        // And the words are still there, so the paper reads rather than
+        // arriving with holes in it.
+        let Block::Paragraph(text) = &spent.blocks[0] else {
+            panic!("not a paragraph: {:?}", spent.blocks[0]);
+        };
+        assert!(text.contains('x'), "the formula was lost entirely: {text}");
+
+        // A clock with time on it draws them, so the budget is what decided
+        // the difference rather than anything else about the source.
+        let afforded = parse_within(
+            &source,
+            "",
+            Allowance {
+                pictures: crate::MAX_FORMULA_PICTURES,
+                until: None,
+            },
+        );
+        assert_eq!(
+            afforded.images.len(),
+            4,
+            "a reader with time to spare left the mathematics undrawn"
+        );
     }
 
     #[test]

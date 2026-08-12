@@ -280,6 +280,22 @@ pub const FORMULA_PICTURE_EM: u32 = 48;
 /// that opens and a paper that does not.
 pub const MAX_FORMULA_PICTURES: usize = 64;
 
+/// How long one document may spend drawing formulae.
+///
+/// The count above bounds how many pictures are worth keeping. It says
+/// nothing about how long making them takes, and that turns out to be the
+/// number that matters. Measured on a Clara BW, reading a 1.4 MB paper: the
+/// HTML alone takes 414 ms, and each formula drawn on top of it takes about
+/// 139 ms more, so sixty-four of them cost nine seconds inside the callback
+/// that opens the document. The same work on a development machine takes
+/// fifty milliseconds altogether, which is why a count looked like enough.
+///
+/// A clock is the honest limit because it is the thing the reader actually
+/// has: a fast machine draws every formula and never notices this, and a slow
+/// one draws what it can afford and reads the rest as the text it always fell
+/// back to. Neither has to be told which it is.
+pub const FORMULA_DRAWING_BUDGET: core::time::Duration = core::time::Duration::from_millis(150);
+
 /// The same, for the renderer, which measures type in fractions of a pixel.
 pub(crate) const FORMULA_PICTURE_EM_F32: f32 = 48.0;
 

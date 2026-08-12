@@ -19,7 +19,7 @@
 
 use std::time::Duration;
 
-use crate::{run_remote_shell, INSTALLED_PACKAGES};
+use crate::{run_remote_shell, INSTALLED_PACKAGES, STORE_PACKAGES};
 
 /// Where `deploy` and `package` both put the binaries.
 const INSTALL_ROOT: &str = "/mnt/onboard/.adds/cobalt";
@@ -151,13 +151,13 @@ pub fn parse_present(arguments: &[String]) -> Result<Present, String> {
 /// sort of friction that gets a shell alias written instead.
 fn resolve_app(name: &str) -> Result<String, String> {
     let prefixed = format!("kobo-{name}");
-    for (packaged, _) in INSTALLED_PACKAGES {
-        if *packaged == name || *packaged == prefixed {
-            if *packaged == "kobod" {
-                return Err("kobod is the runtime, not an application to present".to_owned());
-            }
-            return Ok((*packaged).to_owned());
+    for packaged in presentable() {
+        if packaged == name || packaged == prefixed {
+            return Ok(packaged.to_owned());
         }
+    }
+    if name == "kobod" || prefixed == "kobod" {
+        return Err("kobod is the runtime, not an application to present".to_owned());
     }
     Err(format!(
         "'{name}' is not an installed application\n{}",
@@ -165,14 +165,27 @@ fn resolve_app(name: &str) -> Result<String, String> {
     ))
 }
 
-fn installed_list() -> String {
-    let names = INSTALLED_PACKAGES
+/// Every application that can be put on the panel, by package name.
+///
+/// An application released through Store is installed to the same place and
+/// started the same way as one built in, so leaving those out only meant that
+/// the applications most in need of a look on real glass were the ones that
+/// could not be given one.
+fn presentable() -> impl Iterator<Item = &'static str> {
+    INSTALLED_PACKAGES
         .iter()
-        .map(|(name, _)| name.trim_start_matches("kobo-"))
+        .map(|(name, _)| *name)
+        .chain(STORE_PACKAGES.iter().copied())
         .filter(|name| *name != "kobod")
-        .collect::<Vec<_>>()
-        .join(" ");
-    format!("installed applications: {names}")
+}
+
+fn installed_list() -> String {
+    let mut names: Vec<&str> = presentable()
+        .map(|name| name.trim_start_matches("kobo-"))
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    format!("installed applications: {}", names.join(" "))
 }
 
 /// Runs a script on the device, tolerating a reader whose radio is dozing.
