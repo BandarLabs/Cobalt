@@ -40,6 +40,7 @@
 /// stand in its place. Anything it cannot make sense of comes back as the
 /// characters it found, which is what the converter would have produced
 /// anyway: this can leave a formula plain but never blanks one.
+#[must_use]
 pub fn render(element: &str) -> String {
     let nodes = parse(inner(element));
     let mut out = String::new();
