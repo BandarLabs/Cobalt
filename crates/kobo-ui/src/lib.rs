@@ -4626,12 +4626,22 @@ fn layout_node(
                 let mut cursor = from;
                 let mut run_x = line_x;
                 while cursor < to {
-                    let (mut end, styled) = rich_run_at(cursor, to, spans);
+                    let (mut end, mut styled) = rich_run_at(cursor, to, spans);
                     if end <= cursor || end > to || !text.is_char_boundary(end) {
                         end = text[cursor..to]
                             .char_indices()
                             .nth(1)
                             .map_or(to, |(offset, _)| cursor + offset);
+                    }
+                    // One node per styled run per line. A block carrying the
+                    // permitted number of runs would otherwise spend the whole
+                    // page's node budget inside this one paragraph, and every
+                    // block after it would be dropped without a word. The rest
+                    // of the line goes out as a single plain run instead, which
+                    // loses emphasis rather than losing the book.
+                    if layout.nodes.len().saturating_add(1) >= MAX_LAYOUT_NODES {
+                        end = to;
+                        styled = TextPresentation::default();
                     }
                     let run = &text[cursor..end];
                     let run_width = measure_text_in(run, FontSize::Body, prose).0;

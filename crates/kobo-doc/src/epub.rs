@@ -910,13 +910,19 @@ fn unescape(path: &str) -> String {
     let mut at = 0;
     while at < bytes.len() {
         // A `%` that is not followed by two hex digits is a literal `%`, which
-        // is a character a filename is allowed to contain.
+        // is a character a filename is allowed to contain. The two digits are
+        // read as bytes rather than sliced out of the string: `%` followed by
+        // one ASCII byte and a multibyte character would otherwise cut that
+        // character in half, and publisher CSS supplies these names.
         if bytes[at] == b'%' && at + 2 < bytes.len() {
-            let hex = &path[at + 1..at + 3];
-            if let Ok(byte) = u8::from_str_radix(hex, 16) {
-                out.push(byte);
-                at += 3;
-                continue;
+            let high = char::from(bytes[at + 1]).to_digit(16);
+            let low = char::from(bytes[at + 2]).to_digit(16);
+            if let (Some(high), Some(low)) = (high, low) {
+                if let Ok(byte) = u8::try_from(high * 16 + low) {
+                    out.push(byte);
+                    at += 3;
+                    continue;
+                }
             }
         }
         out.push(bytes[at]);
@@ -1854,6 +1860,12 @@ mod tests {
         assert_eq!(unescape("100%"), "100%");
         assert_eq!(unescape("a%zzb"), "a%zzb");
         assert_eq!(unescape("a%20b"), "a b");
+        // A `%` followed by one ASCII byte and a multibyte character. The two
+        // digits are read as bytes, so this cannot cut the character in half.
+        // Publisher `@font-face` URLs reach this, so a book must not be able
+        // to choose the panic.
+        assert_eq!(unescape("a%bé.otf"), "a%bé.otf");
+        assert_eq!(unescape("%é"), "%é");
     }
 
     #[test]

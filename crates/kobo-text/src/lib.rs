@@ -597,7 +597,10 @@ impl Typesetter for BookFont {
 
     fn line_height(&self, size: FontSize, _face: Face) -> i32 {
         let natural = self.face.height(size);
-        natural + natural / 5
+        // A publisher font supplies its own metrics, and a structurally valid
+        // face can report an ascent, descent and line gap of zero. Callers
+        // divide a page height by this, so it is never allowed to be zero.
+        (natural + natural / 5).max(1)
     }
 
     fn draw(

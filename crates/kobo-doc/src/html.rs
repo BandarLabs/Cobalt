@@ -211,6 +211,18 @@ impl State {
         }
     }
 
+    /// Writes text the document did not literally contain.
+    ///
+    /// A line break's space, a table cell's separator, a picture's bracketed
+    /// description: each has to reach the styled runs as well as the block
+    /// text. If only one of the two receives it the runs stop matching the
+    /// block, and `bound_rich_spans` answers that by throwing away every
+    /// emphasis the block had.
+    fn synthetic(&mut self, text: &str) {
+        self.text.push_str(text);
+        self.push_span(text);
+    }
+
     #[allow(clippy::too_many_lines)]
     fn open(&mut self, name: &str, inside: &str) {
         // Inside a `<pre>`, nothing but its own end tag changes anything. A
@@ -218,7 +230,7 @@ impl State {
         // would lose the shape that is the whole point of the element.
         if self.pre > 0 {
             if name == "br" {
-                self.text.push('\n');
+                self.synthetic("\n");
             }
             return;
         }
@@ -276,16 +288,17 @@ impl State {
             // A `<br>` is a soft break. One column, and the paginator wraps:
             // honouring it would give a ragged short line in the middle of a
             // paragraph.
-            "br" => self.text.push(' '),
+            "br" => self.synthetic(" "),
             // A picture cannot be drawn inside a run of text, so what it was
             // described as is the only part that can survive. An `<img>` with
             // no description says nothing, and brackets around nothing would
             // be worse than silence.
             "img" | "image" => {
                 if let Some(alt) = attribute(inside, "alt").filter(|alt| !alt.trim().is_empty()) {
-                    self.text.push_str(" [");
-                    self.text.push_str(&decode_entities(alt));
-                    self.text.push_str("] ");
+                    let alt = decode_entities(alt);
+                    self.synthetic(" [");
+                    self.synthetic(&alt);
+                    self.synthetic("] ");
                 }
             }
             "hr" => {
@@ -329,10 +342,12 @@ impl State {
             }
             // A cell is not a paragraph of its own; a row is. Running the
             // cells together with a mark that does not occur inside one keeps
-            // the row readable in a single column.
+            // the row readable in a single column. The mark goes into the
+            // styled runs too, or the runs stop matching the block text and
+            // the row loses every emphasis it had.
             "td" | "th" => {
                 if !self.text.trim_end().is_empty() {
-                    self.text.push_str(" \u{2014} ");
+                    self.synthetic(" \u{2014} ");
                 }
             }
             _ => {
@@ -516,42 +531,67 @@ fn embedded_styles(source: &str) -> String {
     out
 }
 
+/// At-rules whose body holds further rules rather than declarations.
+///
+/// Their contents have to be read, not skipped: a publisher that wraps its
+/// whole stylesheet in `@media screen` is still styling the book.
+const NESTED_AT_RULES: [&str; 5] = ["media", "supports", "document", "layer", "container"];
+
+/// How deeply conditional groups are followed before the rest is ignored.
+const MAX_AT_RULE_DEPTH: usize = 4;
+
+/// Removes `/* ... */` comments.
+///
+/// A brace inside a comment is not a block, and leaving one in desynchronises
+/// every rule after it. An unterminated comment runs to the end of the sheet,
+/// which is what a browser does with one.
+fn strip_css_comments(css: &str) -> String {
+    let mut out = String::with_capacity(css.len());
+    let mut rest = css;
+    while let Some(open) = rest.find("/*") {
+        out.push_str(&rest[..open]);
+        let after = &rest[open + 2..];
+        let Some(close) = after.find("*/") else {
+            return out;
+        };
+        rest = &after[close + 2..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The byte index of the `}` closing the block that opens at `open`.
+fn matching_brace(css: &str, open: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (at, character) in css[open..].char_indices() {
+        match character {
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(open + at);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The at-rule keyword `@media screen and (...)` begins with, lowercased.
+fn at_rule_keyword(selectors: &str) -> String {
+    selectors
+        .trim_start_matches('@')
+        .chars()
+        .take_while(char::is_ascii_alphabetic)
+        .collect::<String>()
+        .to_ascii_lowercase()
+}
+
 impl StyleSheet {
     fn parse(css: &str) -> Self {
         let mut rules = Vec::new();
-        let mut rest = css;
-        while rules.len() < MAX_CSS_RULES {
-            let Some(open) = rest.find('{') else { break };
-            let selectors = rest[..open].trim();
-            let tail = &rest[open + 1..];
-            let Some(close) = tail.find('}') else { break };
-            let body = tail[..close].trim();
-            rest = &tail[close + 1..];
-            if selectors.starts_with('@') || body.is_empty() {
-                continue;
-            }
-            for selector in selectors.split(',') {
-                let selector = selector.trim().to_ascii_lowercase();
-                if selector.is_empty()
-                    || selector.contains([' ', '>', '+', '~', '[', ':', '*'])
-                    || rules.len() >= MAX_CSS_RULES
-                {
-                    continue;
-                }
-                let specificity = u8::from(selector.contains('#')) * 100
-                    + u8::try_from(selector.matches('.').count())
-                        .unwrap_or(9)
-                        .min(9)
-                        * 10
-                    + u8::from(!selector.starts_with(['.', '#']));
-                rules.push(CssRule {
-                    selector,
-                    declarations: body.to_owned(),
-                    specificity,
-                    order: rules.len(),
-                });
-            }
-        }
+        collect_rules(&strip_css_comments(css), 0, &mut rules);
         Self { rules }
     }
 
@@ -573,6 +613,62 @@ impl StyleSheet {
             result.push_str(inline);
         }
         result
+    }
+}
+
+/// Reads rules from one stylesheet level, following conditional groups.
+///
+/// Block extents are found by matching braces rather than by the first `}`,
+/// so a nested `@media` body cannot leave the scanner pointing into the
+/// middle of the sheet and silently discard every rule after it.
+fn collect_rules(css: &str, depth: usize, rules: &mut Vec<CssRule>) {
+    let mut rest = css;
+    while rules.len() < MAX_CSS_RULES {
+        let Some(open) = rest.find('{') else { break };
+        let selectors = rest[..open].trim();
+        let Some(close) = matching_brace(rest, open) else {
+            break;
+        };
+        let body = rest[open + 1..close].trim();
+        let tail = &rest[close + 1..];
+        if selectors.starts_with('@') {
+            // A conditional group wraps ordinary rules, so its body is read at
+            // the next level. A flat at-rule such as `@font-face` or `@page`
+            // carries declarations this parser has no selector for, and is
+            // skipped whole.
+            if depth < MAX_AT_RULE_DEPTH
+                && NESTED_AT_RULES.contains(&at_rule_keyword(selectors).as_str())
+            {
+                collect_rules(body, depth + 1, rules);
+            }
+            rest = tail;
+            continue;
+        }
+        rest = tail;
+        if body.is_empty() {
+            continue;
+        }
+        for selector in selectors.split(',') {
+            let selector = selector.trim().to_ascii_lowercase();
+            if selector.is_empty()
+                || selector.contains([' ', '>', '+', '~', '[', ':', '*'])
+                || rules.len() >= MAX_CSS_RULES
+            {
+                continue;
+            }
+            let specificity = u8::from(selector.contains('#')) * 100
+                + u8::try_from(selector.matches('.').count())
+                    .unwrap_or(9)
+                    .min(9)
+                    * 10
+                + u8::from(!selector.starts_with(['.', '#']));
+            rules.push(CssRule {
+                selector,
+                declarations: body.to_owned(),
+                specificity,
+                order: rules.len(),
+            });
+        }
     }
 }
 
@@ -804,6 +900,105 @@ fn breaks_a_block(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rules_after_a_conditional_group_are_still_read() {
+        // A publisher that opens with `@media` was previously losing every
+        // rule that followed, because the scanner resumed inside the group.
+        let document = parse_with_css(
+            "<p class=\"opening\">Styled words.</p>",
+            "@media screen { p { text-align: right } }\n.opening { text-align: center; }",
+        );
+        let rich = document.rich.get(&0).expect("publisher style");
+        assert_eq!(rich.style.alignment, TextAlignment::Center);
+    }
+
+    #[test]
+    fn rules_inside_a_conditional_group_apply() {
+        let document = parse_with_css(
+            "<p class=\"opening\">Styled words.</p>",
+            "@media screen and (min-width: 100px) { .opening { text-align: center } }",
+        );
+        let rich = document.rich.get(&0).expect("publisher style");
+        assert_eq!(rich.style.alignment, TextAlignment::Center);
+    }
+
+    #[test]
+    fn a_flat_at_rule_does_not_consume_the_rules_after_it() {
+        let document = parse_with_css(
+            "<p class=\"opening\">Styled words.</p>",
+            "@font-face { font-family: 'X'; src: url(x.otf) }\n.opening { text-align: center; }",
+        );
+        let rich = document.rich.get(&0).expect("publisher style");
+        assert_eq!(rich.style.alignment, TextAlignment::Center);
+    }
+
+    #[test]
+    fn a_comment_holding_a_brace_does_not_swallow_the_stylesheet() {
+        let document = parse_with_css(
+            "<p class=\"opening\">Styled words.</p>",
+            "/* the opening { rule */ .opening { text-align: center; }",
+        );
+        let rich = document.rich.get(&0).expect("publisher style");
+        assert_eq!(rich.style.alignment, TextAlignment::Center);
+    }
+
+    #[test]
+    fn an_unterminated_comment_ends_the_stylesheet_rather_than_the_reader() {
+        let document = parse_with_css(
+            "<p class=\"opening\">Styled words.</p>",
+            ".opening { text-align: center; } /* and then nothing closes",
+        );
+        let rich = document.rich.get(&0).expect("publisher style");
+        assert_eq!(rich.style.alignment, TextAlignment::Center);
+    }
+
+    #[test]
+    fn deeply_nested_conditional_groups_stay_bounded() {
+        let mut css = String::new();
+        for _ in 0..64 {
+            css.push_str("@media screen {");
+        }
+        css.push_str(".opening { text-align: center }");
+        for _ in 0..64 {
+            css.push('}');
+        }
+        // The point is that this returns at all, and without the rule, rather
+        // than recursing once per group.
+        let document = parse_with_css("<p class=\"opening\">Styled words.</p>", &css);
+        let rich = document.rich.get(&0).expect("a block is still produced");
+        assert_eq!(rich.style.alignment, TextAlignment::Start);
+    }
+
+    #[test]
+    fn emphasis_survives_a_line_break_inside_a_paragraph() {
+        // `<br>` writes a space the source never held. When it reached only
+        // the block text, the runs stopped matching it and every emphasis in
+        // the paragraph was thrown away -- which is most EPUB verse.
+        let document = parse("<p><b>One line</b><br>and its <i>continuation</i>.</p>");
+        assert_eq!(
+            document.blocks[0].text(),
+            Some("One line and its continuation.")
+        );
+        let rich = document.rich.get(&0).expect("retained emphasis");
+        assert!(rich.spans.iter().any(|span| span.style.strong));
+        assert!(rich.spans.iter().any(|span| span.style.emphasis));
+    }
+
+    #[test]
+    fn emphasis_survives_a_table_row() {
+        let document = parse("<table><tr><td>Plain</td><td><b>Bold</b></td></tr></table>");
+        assert_eq!(document.blocks[0].text(), Some("Plain \u{2014} Bold"));
+        let rich = document.rich.get(&0).expect("retained emphasis");
+        assert!(rich.spans.iter().any(|span| span.style.strong));
+    }
+
+    #[test]
+    fn emphasis_survives_a_described_picture_in_a_run_of_text() {
+        let document = parse("<p>Before <img alt=\"a lantern\"> and <b>after</b>.</p>");
+        let rich = document.rich.get(&0).expect("retained emphasis");
+        assert!(rich.spans.iter().any(|span| span.style.strong));
+    }
 
     #[test]
     fn a_heading_survives_as_a_heading() {

@@ -74,6 +74,15 @@ const SECRETS: &str = "/mnt/onboard/.adds/cobalt/secrets";
 const TRUST: &str = "/mnt/onboard/.adds/cobalt/trust";
 const DICTIONARIES: &str = "/mnt/onboard/.adds/cobalt/dictionaries";
 
+/// The most publisher faces one application may hold in the runtime at once.
+///
+/// The protocol bounds a single font frame, not how many frames arrive. A book
+/// needs a regular, an italic, a bold and a bold italic, and a handful more for
+/// small caps or a display face; past that an application is accumulating
+/// rather than typesetting, and every face held is parsed outlines and a glyph
+/// cache inside the privileged runtime.
+const MAX_APP_FONTS: usize = 16;
+
 /// Where each application's own keyed state lives, one directory per name.
 const STATE_ROOT: &str = "/mnt/onboard/.adds/cobalt/state";
 
@@ -1423,24 +1432,40 @@ fn host_applications(
                             name,
                             bytes,
                         } => {
-                            let runtime_handle =
-                                *apps[index].fonts.entry(handle).or_insert_with(|| {
-                                    FontHandle(
-                                        NEXT_RUNTIME_FONT.fetch_add(1, AtomicOrdering::Relaxed),
-                                    )
-                                });
-                            match kobo_text::BookFont::from_bytes(
-                                &bytes,
-                                &name,
-                                display_metrics_from_env(),
-                            ) {
-                                Ok(book_font) => {
-                                    kobo_ui::put_book_typesetter(
-                                        runtime_handle,
-                                        Box::new(book_font),
-                                    );
+                            // The map entry is only made once the face parses.
+                            // Creating it first let a refused font hold a slot,
+                            // and nothing bounded how many slots one
+                            // application could take: a loop over fresh handles
+                            // would grow the runtime until the device gave out.
+                            let known = apps[index].fonts.contains_key(&handle);
+                            if !known && apps[index].fonts.len() >= MAX_APP_FONTS {
+                                trace(&format!(
+                                    "font {} refused: {MAX_APP_FONTS} already held",
+                                    handle.0
+                                ));
+                            } else {
+                                match kobo_text::BookFont::from_bytes(
+                                    &bytes,
+                                    &name,
+                                    display_metrics_from_env(),
+                                ) {
+                                    Ok(book_font) => {
+                                        let runtime_handle =
+                                            *apps[index].fonts.entry(handle).or_insert_with(|| {
+                                                FontHandle(
+                                                    NEXT_RUNTIME_FONT
+                                                        .fetch_add(1, AtomicOrdering::Relaxed),
+                                                )
+                                            });
+                                        kobo_ui::put_book_typesetter(
+                                            runtime_handle,
+                                            Box::new(book_font),
+                                        );
+                                    }
+                                    Err(error) => {
+                                        trace(&format!("font {} refused: {error}", handle.0));
+                                    }
                                 }
-                                Err(error) => trace(&format!("font {} refused: {error}", handle.0)),
                             }
                         }
                         Message::DropFont { handle } => {

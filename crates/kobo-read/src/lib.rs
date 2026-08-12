@@ -335,7 +335,16 @@ impl Memory {
                     }
                 }
                 "next-ann" => {
-                    memory.next_annotation_id = value.parse().unwrap_or(1).max(1);
+                    // Never below what the annotations already read require.
+                    // A truncated or hand-edited memory file that names a low
+                    // identity would otherwise make the next new highlight
+                    // collide with an existing one, and creation is
+                    // idempotent by identity, so the new highlight would
+                    // silently never appear.
+                    memory.next_annotation_id = memory
+                        .next_annotation_id
+                        .max(value.parse().unwrap_or(1))
+                        .max(1);
                 }
                 _ => {}
             }
@@ -377,18 +386,24 @@ fn decode_annotation(value: &str) -> Option<Annotation> {
     let end_block = fields.next()?.parse().ok()?;
     let end_offset = fields.next()?.parse().ok()?;
     let note = String::from_utf8(hex_decode(fields.next().unwrap_or_default())?).ok()?;
+    let range = TextRange {
+        start: TextPosition {
+            block: start_block,
+            offset: start_offset,
+        },
+        end: TextPosition {
+            block: end_block,
+            offset: end_offset,
+        },
+    };
+    // A stored range that does not select anything cannot be repaired, and
+    // keeping it would hold an identity that a real highlight wants.
+    if range.start >= range.end {
+        return None;
+    }
     Some(Annotation {
         id,
-        range: TextRange {
-            start: TextPosition {
-                block: start_block,
-                offset: start_offset,
-            },
-            end: TextPosition {
-                block: end_block,
-                offset: end_offset,
-            },
-        },
+        range,
         note: (!note.is_empty()).then_some(note),
     })
 }
@@ -449,6 +464,9 @@ pub mod action {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SearchHit {
     pub at: Locator,
+    /// Byte offset of the match in the block's canonical text, on a character
+    /// boundary. Lets a result be navigated to and marked exactly.
+    pub offset: u32,
     pub excerpt: String,
 }
 
@@ -645,7 +663,13 @@ impl Reader {
         note: Option<&str>,
         panel: &DisplayMetrics,
     ) -> Result<AnnotationId, AnnotationFault> {
-        let id = self.memory.next_annotation_id.max(1);
+        // Creation is idempotent by identity, so a fresh annotation needs an
+        // identity nothing else holds. Reusing one would quietly return the
+        // annotation already there instead of marking the words just chosen.
+        let mut id = self.memory.next_annotation_id.max(1);
+        while self.memory.annotations.contains_key(&id) {
+            id = id.checked_add(1).ok_or(AnnotationFault::TooMany)?;
+        }
         self.create_annotation(id, range, note, panel)?;
         Ok(id)
     }
@@ -843,32 +867,34 @@ impl Reader {
         true
     }
 
-    /// Finds case-insensitive matches across the complete logical document.
+    /// Finds case-insensitive matches across the complete logical text.
     ///
-    /// Results name blocks rather than derived pages, remain valid after
-    /// reflow, never include markup, and are capped before a hostile query can
-    /// make an unbounded result list.
+    /// Results name blocks and offsets rather than derived pages, remain valid
+    /// after reflow, never include markup, and are capped before a hostile
+    /// query can make an unbounded result list.
     #[must_use]
     pub fn search(&self, query: &str, limit: usize) -> Vec<SearchHit> {
         let query = query.trim().to_lowercase();
-        if query.is_empty() || limit == 0 {
+        if query.is_empty() || query.len() > MAX_SEARCH_QUERY_BYTES || limit == 0 {
             return Vec::new();
         }
         let limit = limit.min(MAX_SEARCH_RESULTS);
         let mut hits = Vec::new();
         for (index, block) in self.document.blocks.iter().enumerate() {
             let Some(text) = block.text() else { continue };
-            if text.to_lowercase().contains(&query) {
-                let Ok(at) = Locator::try_from(index) else {
-                    break;
-                };
-                hits.push(SearchHit {
-                    at,
-                    excerpt: search_excerpt(text),
-                });
-                if hits.len() >= limit {
-                    break;
-                }
+            let Some((from, to)) = find_folded(text, &query) else {
+                continue;
+            };
+            let Ok(at) = Locator::try_from(index) else {
+                break;
+            };
+            hits.push(SearchHit {
+                at,
+                offset: u32::try_from(from).unwrap_or(u32::MAX),
+                excerpt: search_excerpt(text, from, to),
+            });
+            if hits.len() >= limit {
+                break;
             }
         }
         hits
@@ -1763,11 +1789,83 @@ fn first_words(text: &str) -> String {
     out
 }
 
-fn search_excerpt(text: &str) -> String {
-    // A result is context, not a second copy of a paragraph. Character
-    // iteration keeps the cut on a Unicode scalar boundary and `first_words`
-    // keeps it on a word where possible.
-    first_words(text)
+/// The longest query the in-book scanner will run.
+///
+/// The scan is proportional to query length, so this is what keeps a hostile
+/// query from turning a page turn into a long walk over the whole book.
+pub const MAX_SEARCH_QUERY_BYTES: usize = 128;
+
+/// The bounds in `text` of the first match of the already-lowercased `query`.
+///
+/// The book's own characters are folded as the scan walks them rather than
+/// searching a lowercased copy of the block: case folding can change a
+/// string's length, and an offset taken from the copy would not name the same
+/// words. A match that would end part-way through a character is not
+/// reported, so a result can never cut a character in half.
+fn find_folded(text: &str, query: &str) -> Option<(usize, usize)> {
+    if query.is_empty() {
+        return None;
+    }
+    'start: for (at, _) in text.char_indices() {
+        let mut needle = query.chars();
+        let mut end = at;
+        for character in text[at..].chars() {
+            for folded in character.to_lowercase() {
+                match needle.next() {
+                    Some(wanted) if wanted == folded => {}
+                    // The characters differ, or the query would end inside
+                    // this one. Neither is a match starting here.
+                    _ => continue 'start,
+                }
+            }
+            end += character.len_utf8();
+            if needle.clone().next().is_none() {
+                return Some((at, end));
+            }
+        }
+    }
+    None
+}
+
+/// Context around one match, with the matched words inside it.
+///
+/// A result is context rather than a second copy of a paragraph, and it is
+/// the words that were searched for that a reader is looking to recognise, so
+/// the window is placed around the match rather than at the start of the
+/// block. Cuts are on character boundaries, and on words where there is one
+/// close enough to cut at.
+fn search_excerpt(text: &str, from: usize, to: usize) -> String {
+    const BEFORE: usize = 24;
+    const AFTER: usize = 48;
+
+    let mut start = from;
+    for (offset, _) in text[..from].char_indices().rev().take(BEFORE) {
+        start = offset;
+    }
+    // Begin at a word, unless that would eat into the match itself.
+    if start > 0 {
+        if let Some(space) = text[start..from].find(' ') {
+            start += space + 1;
+        }
+    }
+    let mut end = to;
+    for (offset, character) in text[to..].char_indices().take(AFTER) {
+        end = to + offset + character.len_utf8();
+    }
+    if end < text.len() {
+        if let Some(space) = text[to..end].rfind(' ') {
+            end = to + space;
+        }
+    }
+    let mut excerpt = String::new();
+    if start > 0 {
+        excerpt.push('\u{2026}');
+    }
+    excerpt.push_str(text[start..end].trim());
+    if end < text.len() {
+        excerpt.push('\u{2026}');
+    }
+    excerpt
 }
 
 /// Breaks a document into pages that fit, at their real sizes.
@@ -2057,6 +2155,12 @@ fn decorate_annotation_ranges(
             .get(*cursor..)
             .and_then(|rest| rest.find(&piece.text))
         else {
+            // This piece could not be placed in its block. Leaving the cursor
+            // where it is would let a later piece match text this one already
+            // covered, which puts a highlight on the wrong words. Retiring the
+            // block instead costs selection on the rest of it and keeps every
+            // offset that is reported truthful.
+            *cursor = source.len();
             continue;
         };
         let piece_from = *cursor + relative;
@@ -2087,24 +2191,40 @@ fn decorate_annotation_ranges(
             }
         }
         if !ranges.is_empty() {
-            piece.spans = highlighted_spans(&piece.spans, piece.text.len(), &ranges);
+            piece.spans = highlighted_spans(&piece.spans, &piece.text, &ranges);
         }
     }
 }
 
+/// Moves `offset` back to the nearest character boundary at or before it.
+///
+/// A stored annotation names an offset in the book as it was parsed. If the
+/// bytes behind it change -- a re-downloaded edition, a book re-parsed at a
+/// different boundary -- that offset can land inside a character. A span cut
+/// there is refused by the wire encoding, which would take the reading
+/// application down rather than draw the page.
+fn snapped(text: &str, offset: usize) -> usize {
+    let mut offset = offset.min(text.len());
+    while !text.is_char_boundary(offset) {
+        offset -= 1;
+    }
+    offset
+}
+
 fn highlighted_spans(
     publisher: &[kobo_ui::RichTextSpan],
-    length: usize,
+    text: &str,
     highlights: &[(usize, usize)],
 ) -> Vec<kobo_ui::RichTextSpan> {
+    let length = text.len();
     let mut boundaries = BTreeSet::from([0, length]);
     for span in publisher {
-        boundaries.insert(span.start.min(length));
-        boundaries.insert(span.end.min(length));
+        boundaries.insert(snapped(text, span.start));
+        boundaries.insert(snapped(text, span.end));
     }
     for &(start, end) in highlights {
-        boundaries.insert(start.min(length));
-        boundaries.insert(end.min(length));
+        boundaries.insert(snapped(text, start));
+        boundaries.insert(snapped(text, end));
     }
     let boundaries = boundaries.into_iter().collect::<Vec<_>>();
     let mut spans: Vec<kobo_ui::RichTextSpan> = Vec::new();
@@ -2193,10 +2313,18 @@ fn paginate(
         }
         let size = kind.size();
         let natural_height = size.line_height_in(area.face);
-        let height = rich.map_or(natural_height, |rich| {
-            natural_height.saturating_mul(i32::from(rich.style.line_height_percent.clamp(80, 250)))
-                / 100
-        });
+        // A publisher face reports its own metrics, and a structurally valid
+        // font whose ascent, descent and line gap are all zero would make this
+        // a divisor of zero further down. A book must not be able to choose
+        // the panic, so a line is at least one pixel tall.
+        let natural_height = natural_height.max(1);
+        let height = rich
+            .map_or(natural_height, |rich| {
+                natural_height
+                    .saturating_mul(i32::from(rich.style.line_height_percent.clamp(80, 250)))
+                    / 100
+            })
+            .max(1);
         let (_, mut width) = quote_offsets(metrics, area.width, kind.depth());
         let rich_layout = rich.filter(|_| matches!(kind, Kind::Body | Kind::Preformatted));
         let extra_height = rich_layout.map_or(0, |rich| {
@@ -2391,6 +2519,9 @@ fn piece_presentation(
     };
     let whole: String = rich.spans.iter().map(|span| span.text.as_str()).collect();
     let Some(relative) = whole.get(*source_at..).and_then(|rest| rest.find(piece)) else {
+        // Retire the block rather than leave the cursor behind: a later piece
+        // that matched earlier text would be given another piece's emphasis.
+        *source_at = whole.len();
         return (Vec::new(), paragraph_presentation(&rich.style));
     };
     let from = *source_at + relative;
@@ -3816,6 +3947,116 @@ mod tests {
         assert_eq!(hits[0].at, 0);
         assert!(!hits[0].excerpt.contains('<'));
         assert!(reader.search("paper lantern", 0).is_empty());
+    }
+
+    #[test]
+    fn a_search_result_shows_the_words_that_were_searched_for() {
+        let filler = "word ".repeat(80);
+        let document = Document {
+            blocks: vec![Block::Paragraph(format!(
+                "{filler}the paper lantern was lit{filler}"
+            ))],
+            ..Document::default()
+        };
+        let reader = Reader::open(document, Memory::default(), &panel());
+        let hits = reader.search("PAPER LANTERN", 4);
+        assert_eq!(hits.len(), 1);
+        // The match is deep inside the block, so an excerpt taken from the
+        // start of the paragraph would not contain it.
+        assert!(
+            hits[0].excerpt.to_lowercase().contains("paper lantern"),
+            "excerpt was {:?}",
+            hits[0].excerpt
+        );
+        let offset = usize::try_from(hits[0].offset).expect("an offset");
+        assert_eq!(offset, filler.len() + "the ".len());
+    }
+
+    #[test]
+    fn a_search_offset_names_the_matched_words_exactly() {
+        let document = Document {
+            blocks: vec![Block::Paragraph("A Café au lait, please.".into())],
+            ..Document::default()
+        };
+        let reader = Reader::open(document, Memory::default(), &panel());
+        let hits = reader.search("café", 4);
+        assert_eq!(hits.len(), 1);
+        let at = usize::try_from(hits[0].offset).expect("an offset");
+        let text = "A Café au lait, please.";
+        assert_eq!(&text[at..at + "Café".len()], "Café");
+    }
+
+    #[test]
+    fn a_query_longer_than_its_bound_is_refused_rather_than_walked() {
+        let document = Document {
+            blocks: vec![Block::Paragraph("Short.".into())],
+            ..Document::default()
+        };
+        let reader = Reader::open(document, Memory::default(), &panel());
+        let query = "a".repeat(MAX_SEARCH_QUERY_BYTES + 1);
+        assert!(reader.search(&query, 8).is_empty());
+    }
+
+    #[test]
+    fn a_stale_annotation_offset_inside_a_character_still_draws() {
+        // The stored range names byte 2, which is inside the 'é' of "café"
+        // once the edition behind it has changed. A span cut there is refused
+        // by the wire encoding, so it must never reach one.
+        let document = Document {
+            blocks: vec![Block::Paragraph("café au lait".into())],
+            ..Document::default()
+        };
+        let memory = Memory::decode(b"ann 1 0 2 0 7 \nnext-ann 2\n");
+        assert_eq!(memory.annotations.len(), 1);
+        let reader = Reader::open(document, memory, &panel());
+        for span in reader.pages.iter().flatten().flat_map(|piece| &piece.spans) {
+            let text = &reader
+                .pages
+                .iter()
+                .flatten()
+                .find(|piece| !piece.text.is_empty())
+                .expect("a drawn piece")
+                .text;
+            assert!(text.is_char_boundary(span.start), "start {}", span.start);
+            assert!(text.is_char_boundary(span.end), "end {}", span.end);
+        }
+    }
+
+    #[test]
+    fn a_reversed_stored_annotation_is_dropped_rather_than_kept() {
+        let memory = Memory::decode(b"ann 1 0 9 0 3 \nnext-ann 2\n");
+        assert!(memory.annotations.is_empty());
+    }
+
+    #[test]
+    fn a_memory_naming_a_stale_next_identity_still_creates_new_annotations() {
+        let document = Document {
+            blocks: vec![Block::Paragraph("The words of the book.".into())],
+            ..Document::default()
+        };
+        // `next-ann` names an identity an annotation already holds, which is
+        // what a truncated or hand-edited memory file looks like.
+        let memory = Memory::decode(b"ann 7 0 0 0 3 \nnext-ann 1\n");
+        assert_eq!(memory.next_annotation_id, 8);
+        let mut reader = Reader::open(document, memory, &panel());
+        let id = reader
+            .annotate(
+                TextRange {
+                    start: TextPosition {
+                        block: 0,
+                        offset: 4,
+                    },
+                    end: TextPosition {
+                        block: 0,
+                        offset: 9,
+                    },
+                },
+                None,
+                &panel(),
+            )
+            .expect("a new annotation");
+        assert_ne!(id, 7);
+        assert_eq!(reader.annotations().len(), 2);
     }
 
     #[test]
