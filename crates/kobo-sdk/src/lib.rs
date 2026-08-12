@@ -4611,8 +4611,16 @@ impl<A: KoboApp> AppRunner<A> {
                 true
             }
             // Anything that can hand the panel to somebody else invalidates
-            // what we believe is on it.
-            Command::Launch(_) | Command::Exit => {
+            // what we believe is on it, and so does handing over pixels. A
+            // screen refers to a picture by handle, so filling that handle in
+            // later changes what is on the panel without changing a byte of
+            // the tree that describes it -- and the tree is all the
+            // comparison above can see. A book of plates opened on an
+            // illustration and showed an empty frame until something
+            // unrelated happened to redraw the page, because every repaint
+            // the pipeline asked for was thrown away here for being identical
+            // to the one already displayed.
+            Command::Launch(_) | Command::Exit | Command::PutPicture { .. } => {
                 self.displayed = None;
                 true
             }
@@ -4967,6 +4975,60 @@ mod tests {
             sent(&runner.action(ActionId(1))),
             1,
             "a transfer that has moved must still repaint"
+        );
+    }
+
+    /// A picture arriving after the screen that refers to it still repaints.
+    ///
+    /// A screen names a picture by handle, so filling that handle in later
+    /// changes the panel without changing the tree. On the reader this was a
+    /// book of plates opening on an illustration and drawing an empty frame:
+    /// the pipeline decoded the plate, handed over the pixels and asked for a
+    /// repaint, and the repaint was thrown away for being identical to the
+    /// screen already displayed. The frame stayed empty until a page turn
+    /// happened to change the tree for some other reason.
+    #[test]
+    fn pixels_handed_over_after_the_screen_that_names_them_still_reach_the_panel() {
+        #[derive(Default)]
+        struct Plate {
+            filled: bool,
+        }
+        impl KoboApp for Plate {
+            fn on_start(&mut self, context: &mut Context) {
+                Self::paint(context);
+            }
+            fn on_action(&mut self, context: &mut Context, _action: ActionId) {
+                if !self.filled {
+                    self.filled = true;
+                    let _ = context.put_picture(PictureHandle(1), 2, 2, vec![0, 1, 2, 3]);
+                }
+                Self::paint(context);
+            }
+        }
+        impl Plate {
+            fn paint(context: &mut Context) {
+                // The same tree either way: what changed is behind the handle.
+                context.set_screen(ScreenBuilder::new("plate").text("A plate.").build());
+            }
+        }
+
+        let mut runner = AppRunner::new(Plate::default());
+        let sent = |commands: &[Command]| {
+            commands
+                .iter()
+                .filter(|command| matches!(command, Command::SetScreen(_)))
+                .count()
+        };
+        assert_eq!(sent(&runner.start()), 1, "the first screen always goes");
+        assert_eq!(
+            sent(&runner.action(ActionId(1))),
+            1,
+            "the plate was handed over and the page was never redrawn to show it"
+        );
+        assert_eq!(
+            sent(&runner.action(ActionId(1))),
+            0,
+            "an unchanged screen with no new pixels still costs nothing"
         );
     }
 
