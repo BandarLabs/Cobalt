@@ -15351,6 +15351,33 @@ mod prose_tests {
         );
     }
 
+    /// A cover on a shelf keeps the pale edge that tells it from the page.
+    ///
+    /// The outline lives on the layout's kind rather than on the drawing, so
+    /// it is lost by describing a picture as the unframed sort. A book cover
+    /// is very often white at its margins, and without the edge it bleeds into
+    /// the shelf behind it.
+    #[test]
+    fn a_cover_on_a_shelf_keeps_its_edge() {
+        let screen = Screen::new(
+            1,
+            vec![Node::TileGrid {
+                id: NodeId(1),
+                tiles: vec![Tile::new(ActionId(8), "Arrived", Glyph::Book)
+                    .with_picture(TilePicture::new(PictureHandle(3), 190, 300))],
+                shape: TileShape::Portrait,
+            }],
+        )
+        .layout();
+        assert!(
+            screen
+                .nodes
+                .iter()
+                .any(|node| node.kind == LayoutKind::FramedPicture(PictureHandle(3))),
+            "a cover was drawn without the edge that separates it from the shelf"
+        );
+    }
+
     #[test]
     fn a_tile_without_its_picture_yet_still_shows_its_glyph() {
         // Covers arrive one network request at a time, so most of a shelf's
