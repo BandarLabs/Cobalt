@@ -237,6 +237,8 @@ struct OpenNote {
     depth: usize,
     text_from: usize,
     spans_from: usize,
+    /// Whether the words are worth setting again once they are out.
+    keep: bool,
 }
 
 /// How many footnotes one paragraph may hang off itself.
@@ -245,6 +247,9 @@ struct OpenNote {
 /// scholarship, and the rest are left where they were written.
 const MAX_HOISTED_NOTES: usize = 16;
 
+/// How long a list mark may be before it is prose wearing a mark's clothes.
+const MAX_MARK: usize = 12;
+
 /// Whether an element is the body of a footnote rather than its mark.
 ///
 /// There is no element for this: HTML has never had one, so every generator
@@ -252,10 +257,26 @@ const MAX_HOISTED_NOTES: usize = 16;
 /// practice -- `LaTeXML`'s, which is what an arXiv paper is written in, and the
 /// plain word, which is what everything else uses.
 fn is_a_note_body(inside: &str) -> bool {
+    has_class(inside, &["ltx_note_outer", "footnote-body"])
+}
+
+/// Whether an element is a mark the generator drew for a list itself.
+///
+/// A generator with no list to hand writes the bullet or the number out as
+/// text beside the item. A reader has a list, and draws its own: left in, the
+/// generator's mark is read as an item of its own with nothing in it, and the
+/// words it was supposed to mark are set as ordinary prose with no mark at
+/// all. So the mark comes out and the item keeps its own.
+fn is_a_generators_own_mark(inside: &str) -> bool {
+    has_class(inside, &["ltx_tag_item", "ltx_tag_note"])
+}
+
+fn has_class(inside: &str, wanted: &[&str]) -> bool {
     attribute(inside, "class").is_some_and(|classes| {
         classes.split_whitespace().any(|class| {
-            class.eq_ignore_ascii_case("ltx_note_outer")
-                || class.eq_ignore_ascii_case("footnote-body")
+            wanted
+                .iter()
+                .any(|candidate| class.eq_ignore_ascii_case(candidate))
         })
     })
 }
@@ -307,6 +328,8 @@ struct State {
     note: Option<OpenNote>,
     /// Footnotes lifted out of the paragraph being built, to be set after it.
     notes: Vec<(String, Vec<InlineSpan>)>,
+    /// A list mark taken out of one block, waiting to lead the next.
+    mark: Option<String>,
 }
 
 /// A table row part way through being read.
@@ -345,6 +368,7 @@ impl State {
             row: None,
             note: None,
             notes: Vec::new(),
+            mark: None,
         }
     }
 
@@ -361,6 +385,11 @@ impl State {
             return;
         }
         let decoded = decode_entities(text);
+        if self.text.trim().is_empty() && !decoded.trim().is_empty() {
+            if let Some(mark) = self.mark.take() {
+                self.synthetic(&mark);
+            }
+        }
         self.push_span(&decoded);
         if self.pre > 0 {
             // Control characters have no drawing, and the preformatted path
@@ -436,12 +465,13 @@ impl State {
             if note.tag == name {
                 note.depth += 1;
             }
-        } else if is_a_note_body(inside) {
+        } else if is_a_note_body(inside) || is_a_generators_own_mark(inside) {
             self.note = Some(OpenNote {
                 tag: name.to_owned(),
                 depth: 0,
                 text_from: self.text.len(),
                 spans_from: self.spans.len(),
+                keep: is_a_note_body(inside),
             });
         }
         if name == "img" {
@@ -723,6 +753,16 @@ impl State {
         }
         let text = self.text.split_off(note.text_from);
         let spans = self.spans.split_off(note.spans_from);
+        if !note.keep {
+            // A number or a letter is the only name the item has, and the
+            // page it is set on draws no numbers of its own, so it leads the
+            // item's words instead of being lost. A bullet names nothing.
+            let mark = text.trim();
+            if mark.chars().any(char::is_alphanumeric) && mark.len() <= MAX_MARK {
+                self.mark = Some(format!("{mark} "));
+            }
+            return;
+        }
         if text.trim().is_empty() || self.notes.len() >= MAX_HOISTED_NOTES {
             return;
         }
@@ -2161,6 +2201,46 @@ mod tests {
                     text: "Second.".into()
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn a_generators_own_list_mark_leads_the_item_it_marks() {
+        let document = parse(concat!(
+            r#"<ol><li><span class="ltx_tag ltx_tag_item">1)</span>"#,
+            "<p>Beam search.</p></li>",
+            r#"<li><span class="ltx_tag ltx_tag_item">2)</span>"#,
+            "<p>Lookahead search.</p></li></ol>",
+        ));
+
+        assert_eq!(
+            document.blocks,
+            vec![
+                Block::Item {
+                    ordered: true,
+                    text: "1) Beam search.".into()
+                },
+                Block::Item {
+                    ordered: true,
+                    text: "2) Lookahead search.".into()
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_bullet_the_generator_drew_is_left_out() {
+        let document = parse(concat!(
+            r#"<ul><li><span class="ltx_tag ltx_tag_item">•</span>"#,
+            "<p>An item.</p></li></ul>",
+        ));
+
+        assert_eq!(
+            document.blocks,
+            vec![Block::Item {
+                ordered: false,
+                text: "An item.".into()
+            }]
         );
     }
 
