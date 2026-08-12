@@ -304,6 +304,7 @@ pub const MAX_FORMULA_PICTURES: usize = 64;
 pub const FORMULA_DRAWING_BUDGET: core::time::Duration = core::time::Duration::from_millis(500);
 
 /// The same, for the renderer, which measures type in fractions of a pixel.
+#[cfg(feature = "raster")]
 pub(crate) const FORMULA_PICTURE_EM_F32: f32 = 48.0;
 
 /// How big a formula's picture should be drawn, for a given reading em.

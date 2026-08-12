@@ -37,14 +37,10 @@ use crate::{
 ///
 /// A formula is a picture and is scaled to the space it is given, so this
 /// decides how much detail is there to scale down rather than how big it
-/// looks. Rather more than the body text, so that a subscript inside a
-/// fraction still has strokes of its own on a three-hundred-dot panel.
+/// looks. Deliberately generous, so that a subscript inside a fraction still
+/// has strokes of its own on a three-hundred-dot panel, and so that detail
+/// thrown away in the scaling is detail the panel never had to draw twice.
 #[cfg(feature = "raster")]
-/// The pixels to the em a formula is typeset at, as the renderer wants it.
-///
-/// Deliberately generous: the picture is scaled down to the reading em when
-/// it is set on the page, and detail thrown away in the scaling is detail the
-/// panel never had to draw twice.
 const FORMULA_EM: f32 = crate::FORMULA_PICTURE_EM_F32;
 
 /// Elements whose contents are instructions rather than words.
