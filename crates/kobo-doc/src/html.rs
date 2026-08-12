@@ -231,6 +231,35 @@ pub(crate) fn skip_bracketed(tail: &str) -> Option<&str> {
     None
 }
 
+/// A note body whose text is being kept out of the paragraph around it.
+struct OpenNote {
+    tag: String,
+    depth: usize,
+    text_from: usize,
+    spans_from: usize,
+}
+
+/// How many footnotes one paragraph may hang off itself.
+///
+/// A paragraph with more notes than sentences is a generator misfiring, not
+/// scholarship, and the rest are left where they were written.
+const MAX_HOISTED_NOTES: usize = 16;
+
+/// Whether an element is the body of a footnote rather than its mark.
+///
+/// There is no element for this: HTML has never had one, so every generator
+/// spells it with a class. These are the two spellings that reach a reader in
+/// practice -- `LaTeXML`'s, which is what an arXiv paper is written in, and the
+/// plain word, which is what everything else uses.
+fn is_a_note_body(inside: &str) -> bool {
+    attribute(inside, "class").is_some_and(|classes| {
+        classes.split_whitespace().any(|class| {
+            class.eq_ignore_ascii_case("ltx_note_outer")
+                || class.eq_ignore_ascii_case("footnote-body")
+        })
+    })
+}
+
 struct State {
     builder: Builder,
     text: String,
@@ -274,6 +303,10 @@ struct State {
     /// worked inside prose -- entities, inline tags, links -- works inside a
     /// cell without a second implementation of any of it.
     row: Option<Row>,
+    /// The footnote body currently being read out of the running text.
+    note: Option<OpenNote>,
+    /// Footnotes lifted out of the paragraph being built, to be set after it.
+    notes: Vec<(String, Vec<InlineSpan>)>,
 }
 
 /// A table row part way through being read.
@@ -310,6 +343,8 @@ impl State {
             caption: false,
             titling: false,
             row: None,
+            note: None,
+            notes: Vec::new(),
         }
     }
 
@@ -389,6 +424,25 @@ impl State {
         // next thing a reader sent there would actually read.
         if let Some(id) = attribute(inside, "id") {
             self.builder.mark_anchor(&decode_entities(id));
+        }
+        // A footnote is written where it is referred to, and a generator that
+        // has no page to put it at the foot of leaves the whole of it sitting
+        // in the middle of the sentence. Read straight through, the sentence
+        // breaks off after the word the note hangs on, a paragraph of aside
+        // runs by, and the sentence resumes. The mark stays where it is; the
+        // body is set aside and comes back as its own block after the
+        // paragraph, which is where a reader expects to find it.
+        if let Some(note) = &mut self.note {
+            if note.tag == name {
+                note.depth += 1;
+            }
+        } else if is_a_note_body(inside) {
+            self.note = Some(OpenNote {
+                tag: name.to_owned(),
+                depth: 0,
+                text_from: self.text.len(),
+                spans_from: self.spans.len(),
+            });
         }
         if name == "img" {
             // Emitted where it stands, so a picture keeps its place among the
@@ -540,6 +594,18 @@ impl State {
         if self.pre > 0 && name != "pre" {
             return;
         }
+        // Before the inline stack is unwound, because a footnote is spelt
+        // with the same element as the emphasis around it and that branch
+        // returns without ever reaching the rest of this.
+        if let Some(note) = &mut self.note {
+            if note.tag == name {
+                if note.depth == 0 {
+                    self.end_note();
+                } else {
+                    note.depth -= 1;
+                }
+            }
+        }
         if name == "a" {
             if let Some((target, from)) = self.link.take() {
                 let words = self.text.get(from..).unwrap_or_default().to_owned();
@@ -649,7 +715,49 @@ impl State {
         });
     }
 
+    /// Takes the footnote body back out of the running text.
+    fn end_note(&mut self) {
+        let Some(note) = self.note.take() else { return };
+        if note.text_from > self.text.len() || note.spans_from > self.spans.len() {
+            return;
+        }
+        let text = self.text.split_off(note.text_from);
+        let spans = self.spans.split_off(note.spans_from);
+        if text.trim().is_empty() || self.notes.len() >= MAX_HOISTED_NOTES {
+            return;
+        }
+        self.notes.push((text, spans));
+    }
+
+    /// Sets the footnotes lifted out of the paragraph just written.
+    fn flush_notes(&mut self) {
+        if self.notes.is_empty() || self.row.as_ref().is_some_and(|row| row.open) {
+            return;
+        }
+        let style = self.block_style.clone();
+        for (text, spans) in std::mem::take(&mut self.notes) {
+            let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+            if text.is_empty() {
+                continue;
+            }
+            // Set as a quotation: an aside, marked off from the argument it
+            // hangs on, which is what a footnote is.
+            self.builder.push_rich(
+                Block::Quote(text),
+                RichBlock {
+                    spans: normalise_spans(spans),
+                    style: style.clone(),
+                },
+            );
+        }
+    }
+
     fn flush(&mut self) {
+        self.flush_block();
+        self.flush_notes();
+    }
+
+    fn flush_block(&mut self) {
         // Inside a cell there is nowhere for a block to go. A cell holding a
         // paragraph, or three, is one cell of a row and not three blocks of
         // prose, so the words are kept where they are and the boundary
@@ -669,9 +777,6 @@ impl State {
         let text = std::mem::take(&mut self.text);
         let spans = normalise_spans(std::mem::take(&mut self.spans));
         let style = self.block_style.clone();
-        let heading = self.heading.take();
-        let item = std::mem::replace(&mut self.item, false);
-        let caption = std::mem::replace(&mut self.caption, false);
         if std::mem::replace(&mut self.titling, false) {
             self.builder.set_title(&text);
             return;
@@ -681,9 +786,17 @@ impl State {
                 .push_rich(Block::Preformatted(text), RichBlock { spans, style });
             return;
         }
+        // Nothing was written, so nothing is set -- and what this block was
+        // going to be is still waiting to be said. A list item written the way
+        // a LaTeX generator writes one, `<li><p>...`, opens the paragraph
+        // before a single word has been read, and taking the mark here would
+        // set the item as an ordinary paragraph with no bullet at all.
         if text.trim().is_empty() {
             return;
         }
+        let heading = self.heading.take();
+        let item = std::mem::replace(&mut self.item, false);
+        let caption = std::mem::replace(&mut self.caption, false);
         if let Some(level) = heading {
             // A page with no `<title>` is usually still named by the one
             // heading at the top of it.
@@ -2030,5 +2143,50 @@ mod tests {
         let document = parse(&"word ".repeat(200_000));
         assert!(document.truncated);
         assert!(document.blocks[0].text().unwrap_or_default().len() <= MAX_BLOCK_TEXT);
+    }
+
+    #[test]
+    fn a_list_item_written_as_a_paragraph_is_still_a_list_item() {
+        let document = parse("<ul><li><p>First.</p></li><li><p>Second.</p></li></ul>");
+
+        assert_eq!(
+            document.blocks,
+            vec![
+                Block::Item {
+                    ordered: false,
+                    text: "First.".into()
+                },
+                Block::Item {
+                    ordered: false,
+                    text: "Second.".into()
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_footnote_is_set_after_the_paragraph_rather_than_inside_it() {
+        let document = parse(
+            r#"<p>Fine-tuned<span class="ltx_note ltx_role_footnote"><sup class="ltx_note_mark">1</sup><span class="ltx_note_outer"><span class="ltx_note_content"><span class="ltx_tag">1</span> Capability-specific finetuning</span> is necessary.</span></span> to either revise.</p>"#,
+        );
+        assert_eq!(
+            document.blocks.first().and_then(Block::text),
+            Some("Fine-tuned1 to either revise."),
+            "the sentence has to read straight through the mark"
+        );
+        assert_eq!(
+            document.blocks.get(1).and_then(Block::text),
+            Some("1 Capability-specific finetuning is necessary."),
+            "and the note has to come back as its own block after it"
+        );
+        // The mark stays where it was written, raised, because it is what
+        // points at the note.
+        let spans = &document.rich[&0].spans;
+        assert!(
+            spans
+                .iter()
+                .any(|span| span.text.trim() == "1" && span.style.superscript),
+            "{spans:?}"
+        );
     }
 }
