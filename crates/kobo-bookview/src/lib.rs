@@ -44,7 +44,9 @@ use std::collections::{BTreeMap, VecDeque};
 
 use kobo_doc::{Block, Document};
 use kobo_read::{Memory, Outcome, Reader};
-use kobo_sdk::{Context, DisplayMetrics, PictureHandle, Screen, Task, TaskId, TilePicture};
+use kobo_sdk::{
+    Context, DisplayMetrics, PictureHandle, Screen, Task, TaskId, TaskOutcome, TilePicture,
+};
 
 /// The most pictures one document may have room reserved for.
 ///
@@ -63,6 +65,16 @@ pub const MAX_PICTURES: usize = 64;
 /// numbers its own pictures past this can move them with
 /// [`BookView::numbered_from`].
 pub const PICTURE_HANDLE_BASE: u32 = 1_000;
+
+/// The ceiling on one fetched picture.
+///
+/// A plot is tens of kilobytes. The ones that overrun this are photographs at
+/// print resolution, which the panel cannot show anyway: it is sixteen greys
+/// on a screen narrower than the figure's own caption.
+pub const MAX_PICTURE_BYTES: u32 = 512 * 1024;
+
+/// The longest a picture's address may be.
+const MAX_PICTURE_NAME: usize = 512;
 
 /// The width a plate is fitted into, in millimetres.
 const PLATE_WIDTH_MM: u16 = 80;
@@ -117,10 +129,21 @@ pub struct BookView {
     offered: BTreeMap<String, Vec<u8>>,
     /// Every handle the runtime is holding pixels against for this document.
     handles: Vec<PictureHandle>,
+    /// Whether the last settle changed what is on the page.
+    settled: bool,
     /// The next handle to reserve against.
     next_handle: u32,
     /// The handle plates are numbered from.
     base: u32,
+    /// Where the open document was fetched from, when it came off the web.
+    ///
+    /// Every picture it names is resolved against this, and only pictures that
+    /// resolve to the same host are asked for.
+    origin: Option<String>,
+    /// Pictures named by the document that have still to be asked for.
+    wanted: VecDeque<String>,
+    /// The fetch in flight, and what it is for.
+    fetching: Option<(TaskId, String)>,
 }
 
 impl BookView {
@@ -247,6 +270,97 @@ impl BookView {
             .is_some_and(|reader| reader.seed_light(percent))
     }
 
+    /// Opens a web page, and fetches the pictures it names.
+    ///
+    /// This is the whole of what an application has to do to put a page on the
+    /// panel: hand over the markup and the address it came from. The markup is
+    /// parsed into the page's own structure -- its headings, its emphasis, its
+    /// figures and their captions -- rather than flattened into a wall of
+    /// text, and the pictures, which arrived as addresses and not as pixels,
+    /// are asked for one at a time behind the words. The reader is legible
+    /// from the first paint and fills in as they land.
+    ///
+    /// It used to be the application's job, and the application it was written
+    /// in got it subtly wrong in ways nothing else could see: a paper left
+    /// without going back through the door it came in leaked every figure it
+    /// was holding, and the pipeline it left running never started again.
+    /// There is one copy of it now, here, where the document already is.
+    ///
+    /// `origin` is the address the markup was fetched from. Pictures are
+    /// resolved against it, and a picture that resolves anywhere else is not
+    /// asked for -- see [`picture_url`] for exactly what that admits and why.
+    ///
+    /// Returns whether anything readable came out of the markup. `false` is a
+    /// page with no prose in it at all, and the view is left holding nothing.
+    pub fn open_html(
+        &mut self,
+        context: &mut Context,
+        html: &str,
+        origin: &str,
+        memory: Memory,
+    ) -> bool {
+        let document = kobo_doc::html::parse(html);
+        if document.blocks.is_empty() {
+            return false;
+        }
+        self.open(context, document, memory);
+        self.origin = Some(origin.to_owned());
+        self.wanted = self.missing_pictures().into_iter().collect();
+        self.fetch_next(context);
+        true
+    }
+
+    /// Says the document stopped short of its own end.
+    ///
+    /// For a page fetched under a byte ceiling. The reader says so on the last
+    /// page, which is the only place it matters and the only place somebody is
+    /// looking when it does.
+    pub fn mark_truncated(&mut self, truncated: bool) {
+        if let Some(reader) = &mut self.reader {
+            reader.mark_truncated(truncated);
+        }
+    }
+
+    /// Asks for the next picture the document named.
+    ///
+    /// One at a time. A page with thirty plots is thirty fetches, and asking
+    /// for all of them at once is how an application uses up every lane the
+    /// runtime has and leaves nothing for whatever the reader does next.
+    fn fetch_next(&mut self, context: &mut Context) {
+        if self.fetching.is_some() {
+            return;
+        }
+        let Some(origin) = self.origin.clone() else {
+            return;
+        };
+        while let Some(name) = self.wanted.pop_front() {
+            let Some(url) = picture_url(&origin, &name) else {
+                continue;
+            };
+            // Not retried: a picture is worth one attempt. The page is already
+            // readable without it, and a plot that will not come is not a
+            // reason to spend the connection on it three times.
+            if let Some(task) = context.spawn(Task::Fetch {
+                url,
+                offset: 0,
+                max_bytes: MAX_PICTURE_BYTES,
+                credential: None,
+                headers: Vec::new(),
+            }) {
+                self.fetching = Some((task, name));
+                return;
+            }
+            // No lane free. What is left stays queued, and the next page turn
+            // asks again.
+            self.wanted.push_front(name);
+            return;
+        }
+        // Nothing left to ask for, so whatever did arrive is measured in.
+        if self.settle_pictures(context) {
+            self.settled = true;
+        }
+    }
+
     /// Gives back everything the open document was costing.
     ///
     /// Leaving a book used to release nothing, so an owner who read one
@@ -312,14 +426,38 @@ impl BookView {
         if self.plating.is_none() && (!self.plates.is_empty() || self.dithering.is_some()) {
             self.decode_more(context);
         }
+        // A page turn is also the moment the pictures on the page turned to
+        // are wanted, and a lane may have come free since the last one was
+        // asked for.
+        self.fetch_next(context);
         Some(outcome)
     }
 
-    /// Carries the picture pipeline forward when its task lands.
+    /// Carries the picture pipeline forward when one of its tasks lands.
     ///
     /// An application passes every finished task here; a task that was not
-    /// this view's comes back as [`Step::Elsewhere`] and costs a comparison.
-    pub fn woke(&mut self, context: &mut Context, task: TaskId) -> Step {
+    /// this view's comes back as [`Step::Elsewhere`] and costs two
+    /// comparisons. Two kinds of task are this view's: the sleep that carries
+    /// a plate from bytes to pixels a half-step at a time, and the fetch of a
+    /// picture a web page named but did not carry.
+    pub fn woke(&mut self, context: &mut Context, task: TaskId, outcome: &TaskOutcome) -> Step {
+        if let Some((_, name)) = self.fetching.take_if(|(id, _)| *id == task) {
+            // A picture that will not come is a picture the page reads
+            // without: the reader draws what the caption said it shows, which
+            // is what a document with a missing plate should look like.
+            // Nothing is said on screen about it.
+            if let TaskOutcome::Completed(bytes) = outcome {
+                self.provide_picture(&name, bytes.clone());
+            }
+            self.settled = false;
+            self.fetch_next(context);
+            return if self.settled {
+                self.settled = false;
+                Step::Repaint
+            } else {
+                Step::Quiet
+            };
+        }
         if self.plating != Some(task) {
             return Step::Elsewhere;
         }
@@ -567,7 +705,72 @@ impl BookView {
         self.dithering = None;
         self.plating = None;
         self.next_handle = self.base;
+        self.origin = None;
+        self.wanted.clear();
+        self.settled = false;
+        // The fetch in flight is left to land and be ignored rather than
+        // cancelled: cancelling costs a message to save nothing, and
+        // `provide_picture` refuses a name no open document mentions anyway.
+        self.fetching = None;
     }
+}
+
+/// Resolves a picture's address against the page that named it.
+///
+/// A web page is a web page before it is a document, and somebody else wrote
+/// it. A picture that named another host would have the device announce itself
+/// to whoever the author chose -- a read receipt saying this reader opened
+/// this page at this moment -- or knock on whatever else answers at that
+/// address on the reader's own network. So an absolute address is taken only
+/// when it is the page's own host or a sub-domain of it, and everything else
+/// has to be a name inside the page.
+///
+/// A port or credentials written before the host are ways of spelling an
+/// address that reads as the page's and is not, so neither is allowed. A
+/// rooted path leaves the page's own directory and a walk upwards climbs out
+/// of it; both are refused, including when they are spelled in percent escapes
+/// or with a backslash, because the address is joined as text here and
+/// resolved as a path somewhere else.
+#[must_use]
+pub fn picture_url(origin: &str, name: &str) -> Option<String> {
+    if name.is_empty() || name.len() > MAX_PICTURE_NAME {
+        return None;
+    }
+    let base = origin.rsplit_once('/').map_or(origin, |(head, _)| head);
+    if let Some(rest) = name.strip_prefix("https://") {
+        let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
+        let home = host_of(origin)?;
+        let same = host == home || host.ends_with(&format!(".{home}"));
+        return same.then(|| name.to_owned());
+    }
+    // Not http, not a data URI, not a protocol-relative address: a document is
+    // fetched over TLS and nothing else, and a picture is not worth making an
+    // exception for.
+    if name.contains("://") || name.starts_with("//") || name.starts_with("data:") {
+        return None;
+    }
+    let escaped = name.to_ascii_lowercase();
+    if name.starts_with('/')
+        || name.contains('\\')
+        || escaped.contains("%2e")
+        || escaped.contains("%2f")
+        || name.split('/').any(|part| part == "..")
+    {
+        return None;
+    }
+    Some(format!("{base}/{name}"))
+}
+
+/// The host an address is at, if it is one this device would fetch.
+fn host_of(url: &str) -> Option<&str> {
+    let rest = url.strip_prefix("https://")?;
+    let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    // Credentials or a port make the host something other than what it reads
+    // as, and neither belongs in an address a document was fetched from.
+    if host.is_empty() || host.contains('@') || host.contains(':') {
+        return None;
+    }
+    Some(host)
 }
 
 /// The box an illustration is fitted into, in pixels.
@@ -603,10 +806,63 @@ pub fn pictures_in(document: &Document) -> Vec<&str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{pictures_in, BookView, Step};
+
+    use super::{picture_url, pictures_in, BookView, Step};
     use kobo_doc::{Block, Document};
     use kobo_read::{Memory, Reader};
-    use kobo_sdk::{Command, Context, PictureHandle, TaskId};
+    use kobo_sdk::{Command, Context, PictureHandle, Task, TaskError, TaskId, TaskOutcome};
+
+    /// A page can name anything at all, and most of it is not a picture this
+    /// device is willing to go and get. The rule is the page's own host: what
+    /// a document refers to is fetched from where the document came from.
+    #[test]
+    fn a_picture_address_that_leaves_the_page_is_refused() {
+        let origin = "https://arxiv.org/html/2401.00001v2/";
+        assert_eq!(
+            picture_url(origin, "x1.png").as_deref(),
+            Some("https://arxiv.org/html/2401.00001v2/x1.png")
+        );
+        // A name beside a page whose address does not end in a slash resolves
+        // against the directory it is in, which is what every browser does.
+        assert_eq!(
+            picture_url("https://example.org/a/page.html", "x1.png").as_deref(),
+            Some("https://example.org/a/x1.png")
+        );
+        // The page's own host, and a sub-domain of it, are the page.
+        assert_eq!(
+            picture_url(origin, "https://arxiv.org/x1.png").as_deref(),
+            Some("https://arxiv.org/x1.png")
+        );
+        assert_eq!(
+            picture_url(origin, "https://static.arxiv.org/x1.png").as_deref(),
+            Some("https://static.arxiv.org/x1.png")
+        );
+        for hostile in [
+            "",
+            "/etc/passwd",
+            "../../../secrets.png",
+            "..%2f..%2fsecrets.png",
+            "%2e%2e/secrets.png",
+            "..\\secrets.png",
+            "http://example.org/x1.png",
+            "//example.org/x1.png",
+            "data:image/png;base64,AAAA",
+            // Another host is another host however it is spelled, and the page
+            // is written by whoever wrote the page.
+            "https://example.org/x1.png",
+            "https://arxiv.org.example.org/x1.png",
+            "https://evil.org/?a=arxiv.org",
+        ] {
+            assert!(
+                picture_url(origin, hostile).is_none(),
+                "{hostile:?} was allowed"
+            );
+        }
+        // A page fetched from somewhere this device would not fetch from can
+        // vouch for nothing, so nothing absolute resolves against it.
+        assert!(picture_url("http://example.org/a/", "https://example.org/x.png").is_none());
+        assert!(picture_url("https://user@arxiv.org/a/", "https://arxiv.org/x.png").is_none());
+    }
 
     /// A page of prose, so that the room a plate takes is the difference
     /// between one page and two.
@@ -656,6 +912,19 @@ mod tests {
             .collect()
     }
 
+    fn fetched(commands: &[Command]) -> Vec<String> {
+        commands
+            .iter()
+            .filter_map(|command| match command {
+                Command::Spawn {
+                    work: Task::Fetch { url, .. },
+                    ..
+                } => Some(url.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
     fn dropped(commands: &[Command]) -> Vec<PictureHandle> {
         commands
             .iter()
@@ -664,6 +933,91 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    /// A page of markup opens the same reader a book does.
+    ///
+    /// This is the whole point of the shared surface: an application that has
+    /// some HTML hands it over and is done, rather than flattening it to a
+    /// string of its own and losing every heading, link and figure the page
+    /// had. The pictures a page names live at addresses instead of inside a
+    /// file, so opening one also starts going and getting them.
+    #[test]
+    fn a_page_of_markup_opens_the_reader_and_goes_after_what_it_names() {
+        let mut context = Context::default();
+        let mut view = BookView::new();
+
+        assert!(view.open_html(
+            &mut context,
+            "<h1>A paper</h1><p>A body.</p><img src=\"x1.png\" alt=\"A plot\">",
+            "https://arxiv.org/html/2401.00001v2/",
+            Memory::default(),
+        ));
+        assert!(view.is_open(), "the page did not open the reader");
+
+        let asked = fetched(&context.take_commands());
+        assert_eq!(
+            asked,
+            vec!["https://arxiv.org/html/2401.00001v2/x1.png".to_owned()],
+            "the figure was not asked for beside the page that names it"
+        );
+    }
+
+    /// Markup with nothing in it is not a document, and opening the reader on
+    /// it would leave somebody staring at a blank page with no way to tell
+    /// that the fetch, rather than the paper, was the thing that was empty.
+    #[test]
+    fn a_page_with_nothing_in_it_does_not_open() {
+        let mut context = Context::default();
+        let mut view = BookView::new();
+
+        assert!(!view.open_html(
+            &mut context,
+            "<html><head><style>p { color: red }</style></head><body></body></html>",
+            "https://example.org/a/",
+            Memory::default(),
+        ));
+        assert!(!view.is_open(), "an empty page opened the reader");
+        assert!(fetched(&context.take_commands()).is_empty());
+    }
+
+    /// Pictures are fetched one at a time, and a picture that will not come is
+    /// not allowed to stop the ones behind it.
+    #[test]
+    fn pictures_are_asked_for_one_at_a_time_and_a_failure_does_not_stall_the_rest() {
+        let mut context = Context::default();
+        let mut view = BookView::new();
+
+        assert!(view.open_html(
+            &mut context,
+            "<p>A body.</p><img src=\"x1.png\"><img src=\"https://evil.example/x2.png\">\
+             <img src=\"x3.png\">",
+            "https://arxiv.org/html/2401.00001v2/",
+            Memory::default(),
+        ));
+        assert_eq!(
+            fetched(&context.take_commands()),
+            vec!["https://arxiv.org/html/2401.00001v2/x1.png".to_owned()],
+            "more than one picture was asked for at once"
+        );
+
+        let first = view
+            .fetching
+            .as_ref()
+            .expect("the first fetch was not remembered")
+            .0;
+        let _ = view.woke(
+            &mut context,
+            first,
+            &TaskOutcome::Failed(TaskError::Unreachable),
+        );
+        // The second is another host's, so it is skipped without being asked
+        // for at all and the third is what comes next.
+        assert_eq!(
+            fetched(&context.take_commands()),
+            vec!["https://arxiv.org/html/2401.00001v2/x3.png".to_owned()],
+            "a refused address stopped the pictures behind it"
+        );
     }
 
     /// A plate is measured from its header and decoded later.
@@ -752,7 +1106,7 @@ mod tests {
         // The first pass reads the plate and asks for another; the second
         // reduces it to the panel's greys and hands it over. Neither half is
         // allowed to take as long as both would.
-        let step = view.woke(&mut context, first_task);
+        let step = view.woke(&mut context, first_task, &TaskOutcome::Cancelled);
         assert!(
             handed(&context.take_commands()).is_empty(),
             "a plate was decoded and dithered in one callback"
@@ -764,7 +1118,7 @@ mod tests {
         );
         let next = view.plating.expect("another pass was not asked for");
 
-        let step = view.woke(&mut context, next);
+        let step = view.woke(&mut context, next, &TaskOutcome::Cancelled);
         assert_eq!(
             handed(&context.take_commands()),
             vec![(claimed.handle, claimed.source.0, claimed.source.1)],
@@ -787,7 +1141,7 @@ mod tests {
         let mut context = Context::default();
         let mut view = BookView::new();
         assert_eq!(
-            view.woke(&mut context, TaskId(7)),
+            view.woke(&mut context, TaskId(7), &TaskOutcome::Cancelled),
             Step::Elsewhere,
             "an unrelated task was taken for a plate"
         );

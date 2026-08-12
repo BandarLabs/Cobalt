@@ -31,7 +31,21 @@ use crate::{
 };
 
 /// Elements whose contents are instructions rather than words.
-const OPAQUE: [&str; 4] = ["script", "style", "svg", "iframe"];
+const OPAQUE: [&str; 3] = ["script", "style", "iframe"];
+
+/// Elements that carry their own reading in an attribute.
+///
+/// `MathML` is the case that matters. Every renderer that turns a paper into a
+/// web page -- `LaTeXML`, which is what arXiv uses, above all -- writes an
+/// equation as a tree of `<mi>`, `<mo>` and `<mrow>` whose text nodes are the
+/// individual symbols. Read as prose those come out as a run of unspaced
+/// letters and operators in the middle of a sentence: "where italic-x
+/// plus-or-minus 1" for something that was one formula.
+///
+/// The same renderers put the source of the equation in `alttext`, which is
+/// the line the author actually wrote. It is not typeset, but it is a
+/// mathematician's notation rather than a machine's, and it reads.
+const ALT_TEXT: [&str; 2] = ["math", "svg"];
 
 /// Reads an HTML document.
 #[must_use]
@@ -80,6 +94,28 @@ pub fn parse_with_css(source: &str, external_css: &str) -> Document {
 
         let name = element_name(inside);
         let closing = inside.starts_with('/');
+        if !closing && ALT_TEXT.contains(&name.as_str()) {
+            // Read from the attribute, never from the children: the point is
+            // that the children are notation and the attribute is the reading
+            // of it. An element with neither is skipped in silence, which is
+            // what a picture with no caption gets too.
+            for spelling in ["alttext", "aria-label", "title"] {
+                let Some(text) = attribute(inside, spelling).map(str::trim) else {
+                    continue;
+                };
+                if !text.is_empty() {
+                    // Spaced on both sides because an equation sits inside a
+                    // sentence, and the tags either side of it carry no
+                    // whitespace of their own.
+                    state.words(" ");
+                    state.words(text);
+                    state.words(" ");
+                    break;
+                }
+            }
+            rest = skip_element(rest, &name);
+            continue;
+        }
         if !closing && OPAQUE.contains(&name.as_str()) {
             rest = skip_element(rest, &name);
             continue;
@@ -900,6 +936,34 @@ fn breaks_a_block(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An equation is read from its `alttext`, not from its symbols.
+    ///
+    /// This is the shape `LaTeXML` gives every formula on arXiv. Reading the
+    /// element's children puts each symbol on the page as a separate word;
+    /// reading the attribute puts the line the author wrote.
+    #[test]
+    fn an_equation_is_read_from_the_line_the_author_wrote() {
+        let document = parse(
+            "<p>We take <math alttext=\"x \\pm 1\" display=\"inline\">\
+             <mi>x</mi><mo>&#xB1;</mo><mn>1</mn></math> as given.</p>",
+        );
+        let Block::Paragraph(text) = &document.blocks[0] else {
+            panic!("not a paragraph: {:?}", document.blocks[0]);
+        };
+        assert_eq!(text, "We take x \\pm 1 as given.");
+    }
+
+    /// A formula with no reading of its own says nothing rather than saying
+    /// its own markup.
+    #[test]
+    fn an_equation_with_no_reading_is_left_out() {
+        let document = parse("<p>We take <math><mi>x</mi><mn>1</mn></math> as given.</p>");
+        let Block::Paragraph(text) = &document.blocks[0] else {
+            panic!("not a paragraph: {:?}", document.blocks[0]);
+        };
+        assert_eq!(text, "We take as given.");
+    }
 
     #[test]
     fn rules_after_a_conditional_group_are_still_read() {

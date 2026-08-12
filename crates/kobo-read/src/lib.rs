@@ -967,6 +967,19 @@ impl Reader {
         self.memory.scale
     }
 
+    /// Says the document stopped short of its own end.
+    ///
+    /// For a document fetched under a byte ceiling, where what arrived is
+    /// every word that was sent and still not every word there is. The last
+    /// page says so, which is the only place anybody could tell the difference
+    /// between a document that ended and one that simply stopped.
+    pub const fn mark_truncated(&mut self, truncated: bool) {
+        self.document.truncated = truncated;
+        if truncated {
+            self.cut = true;
+        }
+    }
+
     /// Brightens the front light by one step, stopping at full.
     pub fn brighter(&mut self) -> u8 {
         let level = self

@@ -3470,7 +3470,7 @@ impl KoboApp for Gutenbird {
         // The picture pipeline's own sleep, if this was it. A sleep that was
         // already in flight when a book was closed lands here too, and the
         // view knows to do nothing with it.
-        match self.book.woke(context, task) {
+        match self.book.woke(context, task, &outcome) {
             Step::Elsewhere => {}
             Step::Quiet => return,
             Step::Repaint => {

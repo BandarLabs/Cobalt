@@ -33,7 +33,6 @@ use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, RowLead, Screen, ScreenBuilder,
     Task, TaskError, TaskId, TaskOutcome,
 };
-use std::collections::VecDeque;
 use std::fmt::Write as _;
 use std::process::ExitCode;
 
@@ -54,21 +53,6 @@ const LISTING_BYTES: u32 = 512 * 1024;
 /// page rather than hidden, because a paper that simply stops is otherwise
 /// indistinguishable from one that ended.
 const FULL_TEXT_BYTES: u32 = 768 * 1024;
-
-/// The most figures fetched for one paper.
-///
-/// A rendered paper's figures are separate files, so each one is a fetch of
-/// its own over a connection that is somebody's home wifi at best. A typical
-/// paper has half a dozen; a survey with every experiment plotted has thirty,
-/// and the reader is past the ones that matter long before the last arrives.
-const MAX_FIGURES: usize = 24;
-
-/// The ceiling on one figure.
-///
-/// A plot is tens of kilobytes. The ones that overrun this are photographs at
-/// print resolution, which the panel cannot show anyway: it is sixteen greys
-/// on a screen narrower than the figure's own caption.
-const FIGURE_BYTES: u32 = 512 * 1024;
 
 /// The subjects offered on the way in.
 ///
@@ -195,19 +179,6 @@ struct Arxiv {
     /// of the marking, searching or dictionary a reader has everywhere else.
     /// The markup arXiv sends says all of that; nothing was reading it.
     book: BookView,
-    /// Figures named by the rendering and not yet fetched, in the order the
-    /// paper refers to them.
-    ///
-    /// A web page carries no pictures, only the addresses of some. An EPUB
-    /// hands its plates over with the text and `kobo-doc` will not touch the
-    /// network, so fetching these is this application's job and nobody
-    /// else's.
-    figures: VecDeque<String>,
-    /// The figure fetch in flight, and the name it will fill.
-    ///
-    /// Its own slot rather than the one every other fetch shares: a figure
-    /// arriving must never be the reason a listing or a paper is lost.
-    figure: Option<(TaskId, String)>,
     /// Whether the full text arrived cut off at the byte ceiling.
     truncated: bool,
     task: Option<(TaskId, Awaiting)>,
@@ -479,13 +450,21 @@ impl Arxiv {
             self.trouble = Some("That rendering was not text.".to_owned());
             return;
         };
+        let Some(paper) = self.paper().cloned() else {
+            return;
+        };
         let body = paper_body(html);
-        // Parsed rather than flattened. What comes back is the paper's own
-        // structure -- its sections, its emphasis, its figures and their
-        // captions -- which is what the reader needs in order to set it as a
-        // document rather than as one long paragraph.
-        let mut document = kobo_doc::html::parse(body);
-        if document.blocks.is_empty() {
+        // Handed to the reader whole. It parses the markup into the paper's
+        // own structure -- its sections, its emphasis, its figures and their
+        // captions -- and fetches the figures itself, one at a time, against
+        // the address the rendering came from. None of that is arXiv's to
+        // know: it is what reading a web page on this device means, and every
+        // application that shows one gets the same answer.
+        let origin = format!("https://arxiv.org/html/{}/", escape_path(&paper.id));
+        if !self
+            .book
+            .open_html(context, body, &origin, Memory::default())
+        {
             self.trouble =
                 Some("arXiv has no readable rendering of this paper, only a PDF.".to_owned());
             return;
@@ -493,135 +472,17 @@ impl Arxiv {
         // A rendering cut off at the byte ceiling has no closing tag, which is
         // the honest signal: the fetched bytes are markup, and a paper can sit
         // at the transport limit with every word of it delivered.
-        //
-        // Told to the document rather than kept here, because the reader
-        // already says this on the last page and says it better: a paper that
-        // simply stops is otherwise indistinguishable from one that ended.
         self.truncated = !body.contains("</article>");
-        document.truncated |= self.truncated;
-        self.book.open(context, document, Memory::default());
+        self.book.mark_truncated(self.truncated);
         self.page = 0;
         self.view = View::FullText;
-        // The addresses of the figures, which arrived as addresses and not as
-        // pictures. The paper is readable now; these fill in behind it.
-        self.figures = self
-            .book
-            .missing_pictures()
-            .into_iter()
-            .take(MAX_FIGURES)
-            .collect();
-        self.next_figure(context);
-    }
-
-    /// Asks for the next figure the paper named.
-    ///
-    /// One at a time. A paper with thirty plots is thirty fetches, and asking
-    /// for all of them at once is how an application uses up every lane the
-    /// runtime has and leaves nothing for the next listing.
-    fn next_figure(&mut self, context: &mut Context) {
-        if self.figure.is_some() {
-            return;
-        }
-        let Some(paper) = self.paper() else {
-            return;
-        };
-        let base = format!("https://arxiv.org/html/{}/", escape_path(&paper.id));
-        while let Some(name) = self.figures.pop_front() {
-            let Some(url) = figure_url(&base, &name) else {
-                continue;
-            };
-            // Not retrying: a figure is worth one attempt. The paper is
-            // already readable without it, and a plot that will not come is
-            // not a reason to spend the connection on it three times.
-            if let Some(task) = context.spawn(Task::Fetch {
-                url,
-                offset: 0,
-                max_bytes: FIGURE_BYTES,
-                credential: None,
-                headers: Vec::new(),
-            }) {
-                self.figure = Some((task, name));
-                return;
-            }
-            // No lane free. What is left stays queued, and the next page turn
-            // asks again.
-            self.figures.push_front(name);
-            return;
-        }
-        // Nothing left to ask for, so whatever did arrive is measured in.
-        self.settle_figures(context);
-    }
-
-    /// Measures every figure that arrived, once.
-    ///
-    /// Once rather than on each arrival: measuring is what decides where the
-    /// pages break, and doing it twelve times as twelve plots land would move
-    /// the text under somebody who is reading it. They keep their place across
-    /// it either way -- the reader remembers a paragraph, not a page number --
-    /// but the paragraph should not walk up the screen twelve times.
-    fn settle_figures(&mut self, context: &mut Context) {
-        if self.book.settle_pictures(context) {
-            self.show(context);
-        }
-    }
-
-    fn took_figure(&mut self, context: &mut Context, name: &str, bytes: Vec<u8>) {
-        self.book.provide_picture(name, bytes);
-        self.next_figure(context);
     }
 
     /// Gives back everything the open paper was costing.
     fn close_paper(&mut self, context: &mut Context) {
         self.book.close(context);
-        self.figures.clear();
-        // The fetch in flight is left to land and be ignored: cancelling it
-        // would cost a message to save nothing, and `provide_picture` refuses
-        // a name no open document mentions.
-        self.figure = None;
         self.truncated = false;
     }
-}
-
-/// Resolves a figure's address against the paper it was named in.
-///
-/// `LaTeXML` writes figures as `x1.png`, relative to the rendering's own
-/// address. A rendering is a web page before it is a paper, and its author
-/// wrote it: a figure that names another host would have the device announce
-/// itself to whoever the author chose, or knock on whatever else answers on
-/// the reader's own network. So an absolute address is taken only when it is
-/// arXiv's own, and everything else has to be a name inside the paper.
-fn figure_url(base: &str, name: &str) -> Option<String> {
-    if name.is_empty() || name.len() > 512 {
-        return None;
-    }
-    if let Some(rest) = name.strip_prefix("https://") {
-        let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
-        // A port or credentials before the host are ways of writing an
-        // address that reads as arXiv's and is not, so neither is allowed.
-        let arxiv = host == "arxiv.org" || host.ends_with(".arxiv.org");
-        return if arxiv { Some(name.to_owned()) } else { None };
-    }
-    // Not http, not a data URI, not a protocol-relative address: this
-    // application fetches over TLS and nothing else, and a figure is not worth
-    // making an exception for.
-    if name.contains("://") || name.starts_with("//") || name.starts_with("data:") {
-        return None;
-    }
-    // A rooted path leaves the paper's own directory, which no `LaTeXML`
-    // rendering does, and a walk upwards out of it is a thing only a hostile
-    // page tries. The walk is also refused when it is spelled in percent
-    // escapes or with a backslash, because the address is joined as text here
-    // and resolved as a path somewhere else.
-    let escaped = name.to_ascii_lowercase();
-    if name.starts_with('/')
-        || name.contains('\\')
-        || escaped.contains("%2e")
-        || escaped.contains("%2f")
-        || name.split('/').any(|part| part == "..")
-    {
-        return None;
-    }
-    Some(format!("{base}{name}"))
 }
 
 /// Narrows a rendered paper to the paper.
@@ -800,10 +661,6 @@ impl KoboApp for Arxiv {
                     Outcome::Light(level) => context.device().set_frontlight(level),
                     Outcome::Elsewhere | Outcome::Repaint | Outcome::Save => {}
                 }
-                // A page turn is also the moment the figures on the page
-                // turned to are wanted, and a lane may have come free since
-                // the last one was asked for.
-                self.next_figure(context);
                 self.show(context);
                 return;
             }
@@ -909,26 +766,13 @@ impl KoboApp for Arxiv {
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
         // The reader's own sleep, which is what carries a figure from bytes to
         // pixels a half-step at a time.
-        match self.book.woke(context, task) {
+        match self.book.woke(context, task, &outcome) {
             Step::Elsewhere => {}
             Step::Quiet => return,
             Step::Repaint => {
                 self.show(context);
                 return;
             }
-        }
-
-        if self.figure.as_ref().is_some_and(|(id, _)| *id == task) {
-            let (_, name) = self.figure.take().expect("just checked");
-            match outcome {
-                TaskOutcome::Completed(bytes) => self.took_figure(context, &name, bytes),
-                // A figure that will not come is a figure the paper reads
-                // without: the reader draws what the caption said it shows,
-                // which is what a document with a missing plate should look
-                // like. Nothing is said on screen about it.
-                TaskOutcome::Failed(_) | TaskOutcome::Cancelled => self.next_figure(context),
-            }
-            return;
         }
 
         let Some((waiting, awaiting)) = self.task else {
@@ -981,8 +825,8 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        abstract_text, escape, escape_path, figure_url, paper_body, row_summary, Arxiv, Query,
-        View, ABSTRACT, FULL_TEXT, SUBJECTS,
+        abstract_text, escape, escape_path, paper_body, row_summary, Arxiv, Query, View, ABSTRACT,
+        FULL_TEXT, SUBJECTS,
     };
     use crate::atom::Paper;
     use kobo_sdk::{action_id, ActionId, AppRunner, Command, Task, TaskOutcome};
@@ -1258,12 +1102,6 @@ mod tests {
             "<article><p>A paper.</p><img src=\"x1.png\" alt=\"A plot\"></article>",
         );
 
-        let (_, name) = runner
-            .app()
-            .figure
-            .clone()
-            .expect("the figure was never asked for");
-        assert_eq!(name, "x1.png");
         let asked: Vec<String> = commands
             .iter()
             .filter_map(|command| match command {
@@ -1280,42 +1118,6 @@ mod tests {
                 .any(|url| url == "https://arxiv.org/html/2401.00001v2/x1.png"),
             "the figure was not asked for beside its paper: {asked:?}"
         );
-    }
-
-    /// A rendering can name anything at all, and most of it is not a figure
-    /// this application is willing to go and get.
-    #[test]
-    fn a_figure_address_that_leaves_the_paper_is_refused() {
-        let base = "https://arxiv.org/html/2401.00001v2/";
-        assert_eq!(
-            figure_url(base, "x1.png").as_deref(),
-            Some("https://arxiv.org/html/2401.00001v2/x1.png")
-        );
-        assert_eq!(
-            figure_url(base, "https://arxiv.org/html/2401.00001v2/x1.png").as_deref(),
-            Some("https://arxiv.org/html/2401.00001v2/x1.png")
-        );
-        for hostile in [
-            "",
-            "/etc/passwd",
-            "../../../secrets.png",
-            "..%2f..%2fsecrets.png",
-            "%2e%2e/secrets.png",
-            "..\\secrets.png",
-            "http://example.org/x1.png",
-            "//example.org/x1.png",
-            "data:image/png;base64,AAAA",
-            // Another host is another host however it is spelled, and a
-            // rendering is written by whoever wrote the paper.
-            "https://example.org/x1.png",
-            "https://arxiv.org.example.org/x1.png",
-            "https://evil.org/?a=arxiv.org",
-        ] {
-            assert!(
-                figure_url(base, hostile).is_none(),
-                "{hostile:?} was allowed"
-            );
-        }
     }
 
     /// Leaving a paper gives back what it was costing the device, by whichever
@@ -1336,7 +1138,7 @@ mod tests {
                 "the parsed paper was kept after leaving it"
             );
             assert!(
-                runner.app().figures.is_empty() && runner.app().figure.is_none(),
+                runner.app().book.missing_pictures().is_empty(),
                 "figures were still being fetched for a paper nobody is reading"
             );
         }
