@@ -2750,6 +2750,14 @@ pub enum Node {
         /// portrait picture cannot take a whole panel on one device and a
         /// third of it on another.
         max_height_tenths_mm: u16,
+        /// Whether to draw a rule around it.
+        ///
+        /// An illustration is a thing set into the page and wants an edge, so
+        /// that a pale sky is not mistaken for the margin. A formula is not a
+        /// picture of anything, it is a line of the text that happens to be
+        /// drawn rather than written, and a box around it would be as odd as
+        /// a box around a sentence.
+        framed: bool,
     },
     /// Work in flight, typically a network request.
     ///
@@ -3815,6 +3823,9 @@ pub enum LayoutKind {
     /// A picture, already placed. `rect` is where it goes; the renderer scales
     /// it to fit only if the application handed over something larger.
     Picture(PictureHandle),
+    /// A picture with a rule drawn around it, which is what an illustration
+    /// set into a page wants and what a formula does not.
+    FramedPicture(PictureHandle),
     ChoicePrompt,
     /// A stepper's reading: what is being adjusted and where it stands. Set in
     /// the middle of the row, between the two controls, and not itself a
@@ -5965,6 +5976,7 @@ fn layout_node(
             handle,
             source,
             max_height_tenths_mm,
+            framed,
         } => {
             let ceiling = metrics.tenth_mm(i32::from(*max_height_tenths_mm));
             let (drawn_width, drawn_height) = fit_within(*source, width, ceiling);
@@ -5976,7 +5988,11 @@ fn layout_node(
                     width: drawn_width,
                     height: drawn_height,
                 },
-                kind: LayoutKind::Picture(*handle),
+                kind: if *framed {
+                    LayoutKind::FramedPicture(*handle)
+                } else {
+                    LayoutKind::Picture(*handle)
+                },
                 text_lines: Vec::new(),
             });
             y.saturating_add(drawn_height)
@@ -10584,6 +10600,11 @@ fn render_all_with_selected_font(
                 if let Some(pixels) = pictures.get(handle) {
                     draw_picture(surface, node.rect, pixels, clip);
                 }
+            }
+            LayoutKind::FramedPicture(handle) => {
+                if let Some(pixels) = pictures.get(handle) {
+                    draw_picture(surface, node.rect, pixels, clip);
+                }
                 stroke_clipped(
                     surface,
                     node.rect,
@@ -12003,6 +12024,35 @@ mod tests {
             .any(|issue| matches!(issue.kind, LayoutIssueKind::TouchTargetTooSmall { .. })));
     }
 
+    /// An illustration wants an edge and a formula does not, and the two
+    /// have to be distinguishable after layout, because that is the only
+    /// place the renderer looks.
+    #[test]
+    fn a_picture_asked_for_without_a_frame_lays_out_without_one() {
+        let picture = |framed| {
+            Screen::new(
+                1,
+                vec![Node::Picture {
+                    id: NodeId(1),
+                    handle: PictureHandle(7),
+                    source: (10, 10),
+                    max_height_tenths_mm: 100,
+                    framed,
+                }],
+            )
+            .layout()
+            .nodes
+            .into_iter()
+            .find_map(|node| match node.kind {
+                LayoutKind::Picture(_) | LayoutKind::FramedPicture(_) => Some(node.kind),
+                _ => None,
+            })
+            .expect("the picture should have been laid out")
+        };
+        assert!(matches!(picture(true), LayoutKind::FramedPicture(_)));
+        assert!(matches!(picture(false), LayoutKind::Picture(_)));
+    }
+
     #[test]
     fn validation_can_distinguish_a_missing_picture_from_layout() {
         let screen = Screen::new(
@@ -12012,6 +12062,7 @@ mod tests {
                 handle: PictureHandle(7),
                 source: (10, 10),
                 max_height_tenths_mm: 100,
+                framed: true,
             }],
         );
         let diagnostics = screen.diagnostics_with_pictures(
@@ -14831,7 +14882,12 @@ mod prose_tests {
             screen
                 .nodes
                 .iter()
-                .filter(|node| matches!(node.kind, LayoutKind::Picture(_)))
+                .filter(|node| {
+                    matches!(
+                        node.kind,
+                        LayoutKind::Picture(_) | LayoutKind::FramedPicture(_)
+                    )
+                })
                 .count(),
             1
         );

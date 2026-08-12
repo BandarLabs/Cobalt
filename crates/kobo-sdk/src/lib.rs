@@ -1894,13 +1894,31 @@ impl ScreenBuilder {
     /// the same screen gives a picture the same share of the panel on a Clara
     /// and on an Elipsa.
     #[must_use]
-    pub fn picture(mut self, picture: TilePicture, max_height_mm: u16) -> Self {
+    pub fn picture(self, picture: TilePicture, max_height_mm: u16) -> Self {
+        self.drawn_picture(picture, max_height_mm, true)
+    }
+
+    /// The same, without a rule around it.
+    ///
+    /// For a picture that is part of the text rather than an illustration of
+    /// it -- a formula set on its own line, say. An edge tells a reader where
+    /// an illustration stops; drawn around a line of mathematics it only says
+    /// that the line was drawn rather than written, which is not something the
+    /// reader needs to know.
+    #[must_use]
+    pub fn unframed_picture(self, picture: TilePicture, max_height_mm: u16) -> Self {
+        self.drawn_picture(picture, max_height_mm, false)
+    }
+
+    #[must_use]
+    fn drawn_picture(mut self, picture: TilePicture, max_height_mm: u16, framed: bool) -> Self {
         let id = self.next_id();
         self.nodes.push(Node::Picture {
             id,
             handle: picture.handle,
             source: picture.source,
             max_height_tenths_mm: max_height_mm.saturating_mul(10),
+            framed,
         });
         self
     }

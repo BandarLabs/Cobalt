@@ -204,6 +204,14 @@ pub enum Block {
         /// the image will not decode, and on a panel that cannot show colour
         /// a caption is often the more useful of the two.
         alt: String,
+        /// Whether this is an illustration rather than a piece of the text.
+        ///
+        /// An illustration is a thing set into the page, and a reader gets a
+        /// rule around it so that a pale sky is not mistaken for the margin.
+        /// A formula set on its own line is not an illustration of the text,
+        /// it *is* the text, drawn rather than written, and a box around it
+        /// would read as oddly as a box around a sentence.
+        illustration: bool,
     },
     /// One row of a table.
     ///

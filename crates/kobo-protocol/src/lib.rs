@@ -3258,7 +3258,7 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
             }
             length
         }
-        Node::Picture { .. } => 19,
+        Node::Picture { .. } => 20,
         Node::Table { rows, weights, .. } => {
             if rows.len() > u8::MAX as usize || weights.len() > u8::MAX as usize {
                 return Err(ProtocolError::TooManyNodes);
@@ -4447,6 +4447,7 @@ fn encode_node(
             handle,
             source,
             max_height_tenths_mm,
+            framed,
         } => {
             output.push(17);
             push_u32(output, id.0);
@@ -4454,6 +4455,7 @@ fn encode_node(
             push_u32(output, source.0);
             push_u32(output, source.1);
             push_u16(output, *max_height_tenths_mm);
+            output.push(u8::from(*framed));
         }
         Node::Table { id, rows, weights } => {
             output.push(30);
@@ -5400,6 +5402,7 @@ fn decode_node(
             handle: PictureHandle(reader.u32()?),
             source: (reader.u32()?, reader.u32()?),
             max_height_tenths_mm: reader.u16()?,
+            framed: reader.u8()? != 0,
         }),
         10 => {
             let prompt = reader.string()?;
@@ -7868,6 +7871,7 @@ mod picture_tests {
                     handle: PictureHandle(7),
                     source: (190, 300),
                     max_height_tenths_mm: 600,
+                    framed: true,
                 },
             ],
         );

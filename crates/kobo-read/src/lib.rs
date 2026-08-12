@@ -1458,7 +1458,8 @@ impl Reader {
                     // what the book said the picture shows is better than a
                     // gap the reader cannot account for.
                     match self.picture_for(piece.block) {
-                        Some(drawn) => screen.picture(drawn, MAX_PICTURE_MM),
+                        Some((drawn, true)) => screen.picture(drawn, MAX_PICTURE_MM),
+                        Some((drawn, false)) => screen.unframed_picture(drawn, MAX_PICTURE_MM),
                         None if piece.text.is_empty() => screen,
                         None => screen.secondary(piece.text.clone()),
                     }
@@ -2088,13 +2089,20 @@ impl Reader {
         self.pictures.get(name).copied()
     }
 
-    /// The picture to draw for a block, when one has been handed over.
-    fn picture_for(&self, block: Locator) -> Option<kobo_ui::TilePicture> {
+    /// The picture to draw for a block, when one has been handed over, and
+    /// whether it is an illustration rather than a drawn piece of the text.
+    fn picture_for(&self, block: Locator) -> Option<(kobo_ui::TilePicture, bool)> {
         let at = usize::try_from(block).ok()?;
-        let Block::Picture { name, .. } = self.document.blocks.get(at)? else {
+        let Block::Picture {
+            name, illustration, ..
+        } = self.document.blocks.get(at)?
+        else {
             return None;
         };
-        self.pictures.get(name).copied()
+        self.pictures
+            .get(name)
+            .copied()
+            .map(|drawn| (drawn, *illustration))
     }
 }
 
@@ -2681,7 +2689,7 @@ fn paginate(
         // below does for prose. A picture nobody has handed over yet falls
         // through to that packing with its description standing in for it.
         let described;
-        let text = if let Block::Picture { name, alt } = block {
+        let text = if let Block::Picture { name, alt, .. } = block {
             if let Some(drawn) = pictures.get(name.as_str()) {
                 place_picture(
                     *drawn,
@@ -3020,6 +3028,7 @@ mod tests {
                 Block::Picture {
                     name: "plate.png".into(),
                     alt: "A cathedral tower at dawn".into(),
+                    illustration: true,
                 },
                 Block::Paragraph("After the plate.".into()),
             ],
@@ -3057,6 +3066,7 @@ mod tests {
         blocks.push(Block::Picture {
             name: "plate.png".into(),
             alt: "Four rabbits under a fir tree".into(),
+            illustration: true,
         });
         blocks.push(Block::Paragraph(
             "They lived with their mother in a sand-bank.".into(),
@@ -3123,6 +3133,7 @@ mod tests {
         blocks.push(Block::Picture {
             name: "plate.png".into(),
             alt: "A cathedral tower at dawn".into(),
+            illustration: true,
         });
         let document = Document {
             blocks,
@@ -4465,6 +4476,7 @@ mod tests {
                 Block::Picture {
                     name: "lantern.png".into(),
                     alt: "paper lantern".into(),
+                    illustration: true,
                 },
                 Block::Paragraph("The PAPER LANTERN at the end.".into()),
             ],

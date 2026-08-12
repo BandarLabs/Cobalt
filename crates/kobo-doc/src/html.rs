@@ -350,6 +350,7 @@ impl State {
                 self.builder.push(Block::Picture {
                     name: decode_entities(source),
                     alt,
+                    illustration: true,
                 });
             }
             return;
@@ -684,6 +685,7 @@ impl State {
         self.builder.push(Block::Picture {
             name,
             alt: drawn.trim().to_owned(),
+            illustration: false,
         });
         true
     }
@@ -1170,7 +1172,7 @@ mod tests {
             "<p>and so</p><math display=\"block\" alttext=\"\\frac{6\\pi}{11}\">\
              <mfrac><mrow><mn>6</mn><mi>\u{3c0}</mi></mrow><mn>11</mn></mfrac></math>",
         );
-        let Some(Block::Picture { name, alt }) = document
+        let Some(Block::Picture { name, alt, .. }) = document
             .blocks
             .iter()
             .find(|block| matches!(block, Block::Picture { .. }))
@@ -1611,7 +1613,8 @@ mod tests {
                 Block::Paragraph("Before".to_owned()),
                 Block::Picture {
                     name: "a.png".to_owned(),
-                    alt: "a cat".to_owned()
+                    alt: "a cat".to_owned(),
+                    illustration: true
                 },
                 Block::Paragraph("after.".to_owned()),
             ]
@@ -1630,7 +1633,8 @@ mod tests {
                 Block::Paragraph("Before".to_owned()),
                 Block::Picture {
                     name: "a.png".to_owned(),
-                    alt: String::new()
+                    alt: String::new(),
+                    illustration: true
                 },
                 Block::Paragraph("after.".to_owned()),
             ]
@@ -1658,6 +1662,7 @@ mod tests {
                 Block::Picture {
                     name: "plate.png".to_owned(),
                     alt: "A plate".to_owned(),
+                    illustration: true,
                 },
                 Block::Caption("Figure 1. A caption.".to_owned()),
                 Block::Heading {

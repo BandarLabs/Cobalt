@@ -908,6 +908,7 @@ mod tests {
         blocks.push(Block::Picture {
             name: "plate.png".to_owned(),
             alt: "Four rabbits".to_owned(),
+            illustration: true,
         });
         Document {
             blocks,
@@ -1112,6 +1113,7 @@ mod tests {
             blocks: vec![Block::Picture {
                 name: "plate.png".to_owned(),
                 alt: "Four rabbits".to_owned(),
+                illustration: true,
             }],
             images: [("plate.png".to_owned(), plate)].into_iter().collect(),
             ..Document::default()
