@@ -2553,8 +2553,33 @@ fn column_widths(columns: &[u16], metrics: &DisplayMetrics, area: ProseArea) -> 
     kobo_ui::table_column_widths(&wants, usable, minimum)
 }
 
+/// One row of a table, ready to be put on a page.
+fn row_piece(block: usize, kind: Kind, cells: &[String], columns: &[u16]) -> Piece {
+    Piece {
+        block: Locator::try_from(block).unwrap_or(Locator::MAX),
+        text: String::new(),
+        kind,
+        spans: Vec::new(),
+        formulae: Vec::new(),
+        presentation: kobo_ui::ParagraphPresentation::default(),
+        source_offset: None,
+        row: Some((cells.to_vec(), columns.to_vec())),
+    }
+}
+
 /// How tall a row will be drawn, so a page can be packed around it.
-fn row_height(cells: &[String], columns: &[u16], metrics: &DisplayMetrics, area: ProseArea) -> i32 {
+///
+/// `labels` is the row that names the table's columns and `index` where this
+/// row sits under it, because a stacked cell is drawn with its heading
+/// written beside it and a label nobody measured is a line nobody counted.
+fn row_height(
+    cells: &[String],
+    columns: &[u16],
+    labels: &[String],
+    index: usize,
+    metrics: &DisplayMetrics,
+    area: ProseArea,
+) -> i32 {
     let line = FontSize::Body.line_height_in(area.face).max(1);
     let (widths, stacked) = column_widths(columns, metrics, area);
     if widths.is_empty() {
@@ -2565,10 +2590,12 @@ fn row_height(cells: &[String], columns: &[u16], metrics: &DisplayMetrics, area:
     // together rather than as tall as the tallest of them.
     if stacked {
         let mut height = metrics.space(kobo_ui::Space::Small);
-        for cell in cells.iter().take(widths.len()) {
+        for (column, cell) in cells.iter().take(widths.len()).enumerate() {
             if cell.trim().is_empty() {
                 continue;
             }
+            let labelled = kobo_ui::stacked_cell(labels, index, column, cell);
+            let cell = labelled.as_deref().unwrap_or(cell);
             let lines = wrap_text_in(cell, area.width.max(1), FontSize::Body, area.face);
             height = height.saturating_add(lines_high(lines.len(), line));
         }
@@ -2614,6 +2641,12 @@ fn paginate(
     // measured over all of its rows at once. Held across the loop so that a
     // table taller than a page keeps its columns on the page it spills onto.
     let mut columns: Vec<u16> = Vec::new();
+    // The row that names a table's columns, kept for as long as the table
+    // runs so that it can be repeated at the top of every page the table
+    // spills onto -- a column of figures under no heading at all is the one
+    // thing a table cannot survive losing.
+    let mut head: Option<(usize, Vec<String>)> = None;
+    let mut row_index = 0_usize;
 
     for (index, block) in document.blocks.iter().enumerate() {
         let rich = document.rich.get(&index);
@@ -2719,32 +2752,53 @@ fn paginate(
         if let Block::Row { cells, .. } = block {
             if columns.is_empty() {
                 columns = table_columns(&document.blocks, index_of(index), area);
+                head =
+                    kobo_ui::row_names_the_columns(cells).then(|| (index_of(index), cells.clone()));
+                row_index = 0;
             }
-            let height = row_height(cells, &columns, metrics, area);
+            let labels = head.as_ref().map_or(&[][..], |(_, cells)| cells.as_slice());
+            let stacked = column_widths(&columns, metrics, area).1;
+            // Stacked, the heading row is not drawn at all: its headings are
+            // written beside the values instead, so it takes no room.
+            let height = if stacked && row_index == 0 && !labels.is_empty() {
+                0
+            } else {
+                row_height(cells, &columns, labels, row_index, metrics, area)
+            };
             if !page.is_empty() && used + gap + height > area.height {
                 pages.push(std::mem::take(&mut page));
                 used = 0;
+                // The heading row goes at the top of the continuation, drawn
+                // and charged for exactly as the layout will draw it.
+                if let Some((at, cells)) = head.clone().filter(|(at, _)| *at != index_of(index)) {
+                    if !stacked {
+                        used += row_height(&cells, &columns, &[], 0, metrics, area);
+                    }
+                    page.push(row_piece(at, Kind::Row { header: true }, &cells, &columns));
+                }
             }
             used += if page.is_empty() {
                 height
             } else {
                 gap + height
             };
-            page.push(Piece {
-                block: index,
-                text: String::new(),
-                kind,
-                spans: Vec::new(),
-                formulae: Vec::new(),
-                presentation: kobo_ui::ParagraphPresentation::default(),
-                source_offset: None,
-                row: Some((cells.clone(), columns.clone())),
-            });
+            // Marked as the heading it is, whatever the markup called it:
+            // LaTeXML writes every cell as data, and the layout has to know
+            // which row names the others before it can say so beside them.
+            let kind = if row_index == 0 && head.is_some() {
+                Kind::Row { header: true }
+            } else {
+                kind
+            };
+            page.push(row_piece(index_of(index), kind, cells, &columns));
+            row_index += 1;
             continue;
         }
         // Anything that is not a row ends the table before it, so the next
         // one is measured afresh.
         columns.clear();
+        head = None;
+        row_index = 0;
 
         // A picture is placed whole or moved to the next page: there is no
         // half of one to leave behind, which is what the line-by-line packing
@@ -5363,6 +5417,73 @@ mod tests {
 
         no_words_fall_off_a_page(&reader);
         kobo_ui::drop_book_typesetter(handle);
+    }
+
+    /// A results table that spilled onto a second page left its headings on
+    /// the first, so a page of a paper read as a ladder of bare numbers with
+    /// nothing saying which column any of them came from. Every value carries
+    /// the heading it sat under, on whichever page it lands on.
+    #[test]
+    fn a_stacked_table_names_its_values_on_every_page_it_runs_onto() {
+        let mut rows: Vec<(bool, Vec<String>)> = vec![(
+            false,
+            [
+                "Scaffold builder",
+                "BigToM",
+                "Hi-ToM",
+                "MMToM",
+                "MuMA",
+                "Avg.",
+                "R",
+                "Delta",
+            ]
+            .map(str::to_owned)
+            .to_vec(),
+        )];
+        for index in 0..24 {
+            rows.push((
+                false,
+                std::iter::once(format!("Opus-4.7 (x-high) run {index}"))
+                    .chain((1..8).map(|c| format!("0.{index}{c}5 \u{b1} 0.0{c}6")))
+                    .collect(),
+            ));
+        }
+        let blocks = rows
+            .iter()
+            .map(|(header, cells)| Block::Row {
+                header: *header,
+                cells: cells.clone(),
+            })
+            .collect();
+        let mut reader = Reader::open(
+            Document {
+                blocks,
+                ..Document::default()
+            },
+            Memory::default(),
+            &panel(),
+        );
+
+        let panel = panel();
+        let pages = reader.page_count();
+        assert!(pages > 1, "the table was meant to run onto a second page");
+        reader.go_to(0, &panel);
+        for number in 0..pages {
+            let drawn: Vec<String> = reader
+                .screen("Paper")
+                .layout_for(&panel)
+                .nodes
+                .iter()
+                .flat_map(|node| node.text_lines.clone())
+                .collect();
+            assert!(
+                drawn.iter().any(|line| line.contains("BigToM: ")),
+                "page {number} of the table says nowhere which column a \
+                 value came from: {drawn:?}"
+            );
+            reader.forward();
+        }
+        no_cell_falls_off_a_page(&reader);
     }
 
     fn columns_on_page(reader: &Reader) -> Vec<u16> {

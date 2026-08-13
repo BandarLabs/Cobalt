@@ -101,6 +101,43 @@ pub const MIN_TABLE_COLUMN_TENTH_MM: i32 = 120;
 /// Both the layout that draws a table and the pagination that measures one
 /// ask this, because the two must agree on whether a table stacked before
 /// either can say how tall a row is.
+/// Whether a table's first row names its columns rather than holding data.
+///
+/// `LaTeXML`, which is what renders a paper on arXiv, writes every cell as a
+/// `<td>` and marks none of them as a heading, so a table's own header row
+/// arrives looking exactly like its data. The row that names columns is
+/// words; the rows underneath are numbers. A table whose top row is already
+/// figures is left alone rather than having its first measurement turned
+/// into a set of labels for the rest.
+#[must_use]
+pub fn row_names_the_columns(cells: &[String]) -> bool {
+    let named = cells
+        .iter()
+        .filter(|cell| cell.chars().any(char::is_alphabetic))
+        .count();
+    let filled = cells.iter().filter(|cell| !cell.trim().is_empty()).count();
+    filled > 1 && named * 2 > filled
+}
+
+/// A stacked cell written with the heading its column was under.
+///
+/// A table's meaning is entirely in which value sits under which heading, so
+/// a stacked table that kept every figure and dropped the headings kept
+/// nothing: a page of a paper's results read as a ladder of eighty bare
+/// numbers. Returns `None` for the header row itself, which is read as
+/// written, and for a cell whose own column has no name.
+#[must_use]
+pub fn stacked_cell(labels: &[String], row: usize, column: usize, cell: &str) -> Option<String> {
+    if row == 0 {
+        return None;
+    }
+    let label = labels.get(column)?.trim();
+    if label.is_empty() || cell.trim().is_empty() {
+        return None;
+    }
+    Some(format!("{label}: {cell}"))
+}
+
 #[must_use]
 pub fn table_column_widths(wants: &[i32], usable: i32, minimum: i32) -> (Vec<i32>, bool) {
     if wants.is_empty() {
@@ -5775,12 +5812,29 @@ fn layout_node(
             // more. Rather than draw columns four characters wide, each row
             // is stacked as its own lines, which is always readable.
             if stacked {
+                // The first row of a table on this screen is the row that
+                // names its columns -- the reader repeats it at the top of
+                // every page a long table runs onto -- so each value below it
+                // can be written with the heading it sat under.
+                let labels = rows
+                    .first()
+                    .filter(|first| first.header)
+                    .map_or(&[][..], |first| first.cells.as_slice());
                 let mut cursor = y;
-                for row in rows {
-                    for cell in row.cells.iter().take(columns) {
+                for (index, row) in rows.iter().enumerate() {
+                    // The heading row is not drawn on its own: every value
+                    // below carries its heading beside it, so setting the
+                    // headings again above them is eight lines saying what
+                    // the next eighty already say.
+                    if index == 0 && !labels.is_empty() {
+                        continue;
+                    }
+                    for (column, cell) in row.cells.iter().take(columns).enumerate() {
                         if cell.trim().is_empty() || layout.nodes.len() >= MAX_LAYOUT_NODES {
                             continue;
                         }
+                        let labelled = stacked_cell(labels, index, column, cell);
+                        let cell = labelled.as_deref().unwrap_or(cell);
                         let lines = wrap_text_in(cell, width, size, prose);
                         let height = max(line, lines.len() as i32 * line);
                         layout.nodes.push(LayoutNode {
@@ -12195,6 +12249,46 @@ fn glyph(character: char) -> [u8; 7] {
 
 #[cfg(test)]
 mod tests {
+
+    /// A stacked value is written with the heading it sat under.
+    #[test]
+    fn a_stacked_value_keeps_the_heading_it_sat_under() {
+        let labels = vec!["BigToM".to_owned(), "Hi-ToM".to_owned()];
+        assert_eq!(
+            super::stacked_cell(&labels, 1, 0, "0.803").as_deref(),
+            Some("BigToM: 0.803"),
+            "a bare number says nothing about which column it came from"
+        );
+        assert_eq!(
+            super::stacked_cell(&labels, 0, 0, "BigToM"),
+            None,
+            "the heading row is read as written"
+        );
+        assert_eq!(
+            super::stacked_cell(&labels, 1, 9, "0.803"),
+            None,
+            "a column with no heading has nothing to say"
+        );
+    }
+
+    /// The row that names columns is words; the rows under it are numbers.
+    #[test]
+    fn a_row_of_numbers_is_not_mistaken_for_a_row_of_headings() {
+        let words = ["Scaffold builder", "BigToM", "Hi-ToM", "Avg."]
+            .map(str::to_owned)
+            .to_vec();
+        assert!(
+            super::row_names_the_columns(&words),
+            "a row of names names the columns"
+        );
+        let numbers = ["6", "0.803", "0.842", "+0.387"]
+            .map(str::to_owned)
+            .to_vec();
+        assert!(
+            !super::row_names_the_columns(&numbers),
+            "a table whose top row is already data has no headings to give"
+        );
+    }
 
     /// A narrow column keeps the digits it asked for.
     ///
