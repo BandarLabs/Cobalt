@@ -3064,7 +3064,13 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
     }
 
     let length = match node {
-        Node::Heading { text, .. } | Node::Secondary { text, .. } => {
+        // The tag, the id, the text, and one byte for the heading's level.
+        Node::Heading { text, .. } => {
+            let mut length = 6;
+            add_encoded_len(&mut length, encoded_string_len(text)?)?;
+            length
+        }
+        Node::Secondary { text, .. } => {
             let mut length = 5;
             add_encoded_len(&mut length, encoded_string_len(text)?)?;
             length
@@ -4094,10 +4100,11 @@ fn encode_node(
         return Err(ProtocolError::TooManyNodes);
     }
     match node {
-        Node::Heading { id, text } => {
+        Node::Heading { id, text, level } => {
             output.push(1);
             push_u32(output, id.0);
             push_string(output, text)?;
+            output.push(*level);
         }
         Node::Text { id, text, links } => {
             let links = &links[..links.len().min(kobo_ui::MAX_TEXT_LINKS)];
@@ -5073,6 +5080,7 @@ fn decode_node(
         1 => Ok(Node::Heading {
             id,
             text: reader.string()?,
+            level: reader.u8()?,
         }),
         2 => {
             let text = reader.string()?;
@@ -6564,6 +6572,7 @@ mod node_coverage_tests {
             Node::Heading {
                 id: NodeId(1),
                 text: "Heading".into(),
+                level: 1,
             },
             Node::Text {
                 id: NodeId(2),
@@ -6699,6 +6708,7 @@ mod node_coverage_tests {
                         Node::Heading {
                             id: NodeId(27),
                             text: "Moby Dick".into(),
+                            level: 1,
                         },
                         Node::Secondary {
                             id: NodeId(28),

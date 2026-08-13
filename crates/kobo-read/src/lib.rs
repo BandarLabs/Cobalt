@@ -224,10 +224,7 @@ enum Kind {
 impl Kind {
     const fn size(self) -> FontSize {
         match self {
-            Kind::Heading(1) => FontSize::Heading,
-            // Level three is already small enough that the title size would
-            // barely distinguish it from the text under it.
-            Kind::Heading(_) => FontSize::Title,
+            Kind::Heading(level) => FontSize::for_heading_level(level),
             Kind::Caption => FontSize::Caption,
             _ => FontSize::Body,
         }
@@ -1452,7 +1449,7 @@ impl Reader {
                 continue;
             }
             screen = match piece.kind {
-                Kind::Heading(_) => screen.heading(piece.text.clone()),
+                Kind::Heading(level) => screen.heading_at_level(level, piece.text.clone()),
                 Kind::Marked | Kind::Quote | Kind::Item => {
                     screen.quote(HIGHLIGHT_DEPTH, piece.text.clone())
                 }
@@ -2653,14 +2650,14 @@ fn paginate(
             force_page_break(&mut pages, &mut page, &mut used);
         }
         let size = kind.size();
-        // A heading is drawn by the toolkit at one size in the interface
-        // face, whatever its level and whatever face the book asked for, so
+        // A heading is drawn by the toolkit in the interface face, whatever
+        // face the book asked for, and at the size its level is set at, so
         // that is what it has to be measured at here. Measuring it as the
         // book's own type set a two-line heading that was drawn as three,
         // and the line that made was drawn over the page number.
         let heading = matches!(kind, Kind::Heading(_));
-        let wrap_size = if heading {
-            kobo_ui::FontSize::Heading
+        let wrap_size = if let Kind::Heading(level) = kind {
+            kobo_ui::FontSize::for_heading_level(level)
         } else {
             size
         };
@@ -5154,7 +5151,7 @@ mod tests {
                     node.kind,
                     kobo_ui::LayoutKind::Text
                         | kobo_ui::LayoutKind::RichText(_)
-                        | kobo_ui::LayoutKind::Heading
+                        | kobo_ui::LayoutKind::Heading(_)
                 )
             })
             .map(|node| node.rect.y + node.rect.height)
@@ -5225,7 +5222,7 @@ mod tests {
         no_words_fall_off_a_page(&reader);
         assert_eq!(
             reader.page_count(),
-            3,
+            2,
             "the headings were kept room the page does not spend on them"
         );
     }
@@ -5314,6 +5311,35 @@ mod tests {
             _plot: &mut dyn FnMut(i32, i32, u8),
         ) {
         }
+    }
+
+    // A section heading inside a paper used to be drawn as display type, the
+    // same size the paper's own title was set at, so a page carrying one had
+    // two titles on it and no hierarchy at all. The level a heading sits at
+    // now reaches the toolkit, and the toolkit sets the deeper ones smaller.
+    #[test]
+    fn a_section_heading_is_set_smaller_than_the_title_above_it() {
+        let title = "Estimating Question Difficulty for Compute-Optimal Scaling";
+        let page_of = |level: u8| {
+            let reader = Reader::open(
+                Document {
+                    blocks: vec![Block::Heading {
+                        level,
+                        text: title.to_owned(),
+                    }],
+                    ..Document::default()
+                },
+                Memory::default(),
+                &panel(),
+            );
+            text_bottom_on_page(&reader, &panel())
+        };
+        let title_deep = page_of(1);
+        let section_deep = page_of(2);
+        assert!(
+            section_deep < title_deep,
+            "a section heading took {section_deep} px, as much as the title's {title_deep} px"
+        );
     }
 
     // Pagination once wrapped a heading in the face the book had asked for

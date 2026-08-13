@@ -475,11 +475,24 @@ impl ScreenBuilder {
     }
 
     #[must_use]
-    pub fn heading(mut self, text: impl Into<String>) -> Self {
+    pub fn heading(self, text: impl Into<String>) -> Self {
+        self.heading_at_level(1, text)
+    }
+
+    /// A heading at a given depth in a document's hierarchy, counting from
+    /// one.
+    ///
+    /// A screen has one heading and calls [`Self::heading`]. This is for
+    /// prose that carries real structure -- a book, a paper -- where setting
+    /// every level as display type gives a page several titles and no
+    /// hierarchy.
+    #[must_use]
+    pub fn heading_at_level(mut self, level: u8, text: impl Into<String>) -> Self {
         let id = self.next_id();
         self.nodes.push(Node::Heading {
             id,
             text: text.into(),
+            level: level.max(1),
         });
         self
     }

@@ -2485,6 +2485,17 @@ pub enum Node {
     Heading {
         id: NodeId,
         text: String,
+        /// How deep in the document's hierarchy this heading sits, counting
+        /// from one.
+        ///
+        /// A screen's own heading is always the first level and does not set
+        /// this. A book carries real hierarchy, and drawing every level of it
+        /// as display type gave a page of a paper four titles and no
+        /// hierarchy at all: the section heading over a paragraph was set
+        /// larger than the paper's own name. Levels below the first are set
+        /// at [`FontSize::Title`], which is bold enough to lead the prose
+        /// under it without competing with the title above it.
+        level: u8,
     },
     Text {
         id: NodeId,
@@ -3809,7 +3820,9 @@ pub enum LayoutKind {
     /// The battery, drawn at the level the runtime read, and whether it is on
     /// the charger. `None` means unreadable, which is drawn as nothing.
     StatusBattery(Option<Percent>, bool),
-    Heading,
+    /// A heading, carrying the level it sits at so it is drawn at the size it
+    /// was measured at.
+    Heading(u8),
     Text,
     RichText(TextPresentation),
     /// A run inside a paragraph that goes somewhere.
@@ -4574,7 +4587,9 @@ pub fn clamp_lines(text: &str, width: i32, size: FontSize, lines: usize) -> Stri
 /// quietly wrong about it.
 fn intrinsic_width(node: &Node, available: i32, metrics: &DisplayMetrics, prose: Face) -> i32 {
     match node {
-        Node::Heading { text, .. } => measure_text(text, FontSize::Heading).0,
+        Node::Heading { text, level, .. } => {
+            measure_text(text, FontSize::for_heading_level(*level)).0
+        }
         Node::Text { text, .. } => measure_text_in(text, FontSize::Body, prose).0,
         Node::Secondary { text, .. } => measure_text(text, FontSize::Caption).0,
         Node::Button { label, .. } => measure_text(label, FontSize::Body)
@@ -4839,9 +4854,10 @@ fn layout_node(
     }
     let width = max(0, width);
     match node {
-        Node::Heading { id, text } => {
-            let lines = wrap_text(text, width, FontSize::Heading);
-            let height = max(36, lines.len() as i32 * FontSize::Heading.line_height());
+        Node::Heading { id, text, level } => {
+            let size = FontSize::for_heading_level(*level);
+            let lines = wrap_text(text, width, size);
+            let height = max(36, lines.len() as i32 * size.line_height());
             layout.nodes.push(LayoutNode {
                 id: *id,
                 rect: Rect {
@@ -4850,7 +4866,7 @@ fn layout_node(
                     width,
                     height,
                 },
-                kind: LayoutKind::Heading,
+                kind: LayoutKind::Heading(*level),
                 text_lines: lines,
             });
             y.saturating_add(height)
@@ -6951,6 +6967,23 @@ impl FontSize {
             Self::Body => 31,
             Self::Title => 42,
             Self::Heading => 54,
+        }
+    }
+
+    /// The size a heading at `level` is set at, counting levels from one.
+    ///
+    /// The one place this is decided. Pagination measures a heading and the
+    /// renderer draws it, and when those two disagreed by a single step the
+    /// line a heading was measured as two and drawn as three pushed the last
+    /// line of the page over the page number.
+    #[must_use]
+    pub const fn for_heading_level(level: u8) -> Self {
+        if level <= 1 {
+            Self::Heading
+        } else {
+            // Level three is already small enough that going smaller again
+            // would barely separate it from the text under it.
+            Self::Title
         }
     }
 
@@ -9724,7 +9757,7 @@ const fn is_tappable(kind: LayoutKind) -> bool {
 
 fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
     let size = match node.kind {
-        LayoutKind::Heading => FontSize::Heading,
+        LayoutKind::Heading(level) => FontSize::for_heading_level(level),
         LayoutKind::CellLabel
             if node
                 .text_lines
@@ -10520,12 +10553,12 @@ fn render_all_with_selected_font(
                 );
             }
 
-            LayoutKind::Heading => draw_lines(
+            LayoutKind::Heading(level) => draw_lines(
                 surface,
                 &node.text_lines,
                 node.rect.x,
                 node.rect.y,
-                FontSize::Heading,
+                FontSize::for_heading_level(level),
                 tone::INK,
                 clip,
             ),
@@ -12802,6 +12835,7 @@ mod tests {
             vec![Node::Heading {
                 id: NodeId(1),
                 text: "Hi".into(),
+                level: 1,
             }],
         );
         let mut surface = Surface::new(128, 128);
@@ -12862,6 +12896,7 @@ mod tests {
                 children: vec![Node::Heading {
                     id: NodeId(2),
                     text: "Card".into(),
+                    level: 1,
                 }],
             }],
         );
@@ -14096,6 +14131,7 @@ mod loading_tests {
             Node::Heading {
                 id: NodeId(1),
                 text: "Heading".into(),
+                level: 1,
             },
             Node::Text {
                 id: NodeId(2),
@@ -17648,10 +17684,12 @@ mod prose_tests {
                             Node::Heading {
                                 id: NodeId(2),
                                 text: "Tall".to_owned(),
+                                level: 1,
                             },
                             Node::Heading {
                                 id: NodeId(4),
                                 text: "Still tall".to_owned(),
+                                level: 1,
                             },
                         ]),
                         BandSlot::fill(vec![Node::Secondary {
@@ -17732,6 +17770,7 @@ mod prose_tests {
                 Node::Heading {
                     id: NodeId(1),
                     text: "Moby Dick".to_owned(),
+                    level: 1,
                 },
                 Node::Section {
                     id: NodeId(2),
@@ -18435,6 +18474,7 @@ mod press_feedback_tests {
                 Node::Heading {
                     id: NodeId(1),
                     text: "Shelf".to_owned(),
+                    level: 1,
                 },
                 Node::Secondary {
                     id: NodeId(2),
@@ -18474,6 +18514,7 @@ mod press_feedback_tests {
                 Node::Heading {
                     id: NodeId(1),
                     text: "Shelf".to_owned(),
+                    level: 1,
                 },
                 Node::Secondary {
                     id: NodeId(2),
@@ -18577,6 +18618,7 @@ mod press_feedback_tests {
                 Node::Heading {
                     id: NodeId(1),
                     text: "Moby Dick".into(),
+                    level: 1,
                 },
                 Node::Activity {
                     id: NodeId(2),
