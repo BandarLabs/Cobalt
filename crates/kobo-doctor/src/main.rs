@@ -2,7 +2,7 @@ use kobo_hal::observe::MAXIMUM_OBSERVE_SECONDS;
 use kobo_hal::refresh::Rect;
 use kobo_hal::surface::{read_region, SurfaceGeometry};
 use kobo_hal::{observe_touch, probe_device};
-use kobo_profile::{DeviceProfile, FramebufferSnapshot, Readiness, CLARA_BW_391};
+use kobo_profile::{identify_profile, DeviceProfile, FramebufferSnapshot, Readiness, CLARA_BW_391};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
@@ -75,7 +75,6 @@ fn grey_of(pixels: &[u8]) -> Vec<u8> {
 fn main() -> ExitCode {
     println!("Kobo doctor 0.1.0");
     println!("mode: read-only (query ioctls only)");
-    println!("profile: {} ({})", CLARA_BW_391.id, CLARA_BW_391.model);
 
     let snapshot = match probe_device() {
         Ok(snapshot) => snapshot,
@@ -84,6 +83,9 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    
+    let matched_profile = identify_profile(&snapshot).unwrap_or(&CLARA_BW_391);
+    println!("profile: {} ({})", matched_profile.id, matched_profile.model);
 
     println!("device-tree compatible: {}", snapshot.compatible.join(", "));
     if let Some(model) = &snapshot.model {
@@ -131,7 +133,7 @@ fn main() -> ExitCode {
         );
     }
 
-    let report = CLARA_BW_391.validate(&snapshot);
+    let report = matched_profile.validate(&snapshot);
     println!("result: {}", report.readiness);
     for mismatch in &report.mismatches {
         eprintln!("mismatch: {mismatch}");
@@ -149,7 +151,7 @@ fn main() -> ExitCode {
     if let Some(request) = std::env::var_os(OBSERVE_TOUCH_VARIABLE) {
         let touch_path = snapshot.touch.as_ref().map(|touch| touch.path.clone());
         if let Err(error) = observe(
-            &CLARA_BW_391,
+            matched_profile,
             touch_path.as_deref(),
             &request.to_string_lossy(),
         ) {

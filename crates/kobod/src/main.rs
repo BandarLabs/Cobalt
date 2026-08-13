@@ -1,7 +1,7 @@
 use kobo_policy::{DeviceServices, TaskRunner};
-use kobo_profile::CLARA_BW_391;
+
 use kobo_protocol::{Frame, LogLevel, Message, TaskError, TaskOutcome};
-use kobo_ui::{display_metrics_from_env, Screen, Surface, DISPLAY_HEIGHT, DISPLAY_WIDTH};
+use kobo_ui::{display_metrics_from_env, Screen, Surface};
 use std::env;
 use std::error::Error;
 use std::fs::{self, OpenOptions};
@@ -9,6 +9,17 @@ use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
+
+pub fn device_metrics() -> kobo_ui::DisplayMetrics {
+    let mut metrics = kobo_ui::display_metrics_from_env();
+    if let Some(profile) = kobo_hal::probe_device().ok().and_then(|s| kobo_profile::identify_profile(&s)) {
+        metrics.width = profile.width as i32;
+        metrics.height = profile.height as i32;
+        metrics.pixels_per_inch = profile.pixels_per_inch as i32;
+    }
+    metrics
+}
+
 use std::process::ExitCode;
 
 mod app_store;
@@ -71,9 +82,15 @@ fn touch_test(seconds: &str) -> Result<(), Box<dyn Error>> {
     use std::time::{Duration, Instant};
 
     let seconds: u64 = seconds.parse().unwrap_or(20).min(120);
-    let profile = &kobo_profile::CLARA_BW_391;
-    println!("touch device: {}", device::TOUCH_DEVICE);
-    let mut session = TouchSession::acquire(Path::new(device::TOUCH_DEVICE), profile)?;
+    
+    let snapshot = kobo_hal::probe_device()?;
+    let profile = kobo_profile::identify_profile(&snapshot)
+        .ok_or_else(|| "no supported hardware profile matched this device".to_owned())?;
+    let touch_path = snapshot.touch.as_ref().map(|t| t.path.clone())
+        .ok_or_else(|| "touch probe was unavailable".to_owned())?;
+        
+    println!("touch device: {}", touch_path);
+    let mut session = TouchSession::acquire(Path::new(&touch_path), profile)?;
     println!("grabbed; touch the panel");
     let events = session
         .take_events()
@@ -241,7 +258,14 @@ fn clear_session_files(state: &Path) -> String {
 fn print_safety_state() {
     let write_unlocked = env::var_os("KOBO_DEVICE_WRITE_UNLOCK").is_some();
     println!("kobod 0.1.0");
-    println!("profile: {}", CLARA_BW_391.id);
+    
+    let profile_id = kobo_hal::probe_device()
+        .ok()
+        .and_then(|snapshot| kobo_profile::identify_profile(&snapshot))
+        .map(|p| p.id)
+        .unwrap_or("unknown");
+        
+    println!("profile: {}", profile_id);
     println!("device-write compiled: {}", cfg!(feature = "device-write"));
     println!("device-write unlocked: {write_unlocked}");
     println!(
@@ -266,7 +290,7 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
     // paragraph height in the picture belongs to a panel nobody has. The
     // preview exists to be looked at; a preview drawn in the wrong face is
     // worse than none, because it is believed.
-    let metrics = display_metrics_from_env();
+    let metrics = crate::device_metrics();
     let _ = kobo_text::install(metrics);
     // The same owner trust roots the device loads, from the host's own
     // directory, so an application developed against a local daemon works
@@ -294,8 +318,8 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
         &Frame {
             request_id: hello.request_id,
             message: Message::Welcome {
-                width: u16::try_from(DISPLAY_WIDTH)?,
-                height: u16::try_from(DISPLAY_HEIGHT)?,
+                width: u16::try_from(metrics.width)?,
+                height: u16::try_from(metrics.height)?,
                 pixels_per_inch: u16::try_from(metrics.pixels_per_inch)?,
                 text_scale: metrics.text_scale,
             },
@@ -626,8 +650,8 @@ fn write_screen(
     pictures: &dyn kobo_ui::Pictures,
 ) -> Result<(), Box<dyn Error>> {
     let mut surface = Surface::new(
-        usize::try_from(DISPLAY_WIDTH)?,
-        usize::try_from(DISPLAY_HEIGHT)?,
+        usize::try_from(crate::device_metrics().width)?,
+        usize::try_from(crate::device_metrics().height)?,
     );
     // The same two steps the device takes, in the same order, because a
     // preview drawn with different chrome is a preview of a screen that will
@@ -635,7 +659,7 @@ fn write_screen(
     // was the one part of every screen that could not be looked at without a
     // reader, and it is the part that traps somebody when it is missing.
     let screen = kobo_ui::ensure_way_back(screen, chrome, name);
-    let metrics = kobo_ui::display_metrics_from_env();
+    let metrics = crate::device_metrics();
     // The same reason as on the device: the typeface sets at the ambient
     // scale, so a preview of a screen that asked for larger prose has to say
     // so or it is a preview of a screen nobody will see. The interface around

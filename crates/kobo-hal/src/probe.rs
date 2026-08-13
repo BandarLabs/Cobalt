@@ -49,19 +49,13 @@ pub fn probe_device() -> Result<DeviceSnapshot, ProbeError> {
     ]);
 
     let framebuffer = probe_framebuffer(Path::new("/dev/fb0"))?;
-    let touch_path = discover_touch_path("/proc/bus/input/devices").ok_or_else(|| {
-        ProbeError::new(
-            "discover touch input",
-            io::Error::from(io::ErrorKind::NotFound),
-        )
-    })?;
-    let touch = probe_touch(&touch_path)?;
+    let touch = discover_touch_path("/proc/bus/input/devices").and_then(|path| probe_touch(&path).ok());
 
     Ok(DeviceSnapshot {
         compatible,
         model,
         framebuffer: Some(framebuffer),
-        touch: Some(touch),
+        touch,
         identity: probe_identity(),
     })
 }
@@ -163,7 +157,7 @@ fn discover_touch_path_from(content: &str) -> Option<PathBuf> {
         let name_matches = block
             .lines()
             .find(|line| line.starts_with("N: Name="))
-            .is_some_and(|line| line.contains("cyttsp5_mt"));
+            .is_some_and(|line| line.contains("cyttsp5_mt") || line.contains("Elan Touchscreen"));
         if !name_matches {
             return None;
         }

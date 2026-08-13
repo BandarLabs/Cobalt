@@ -41,10 +41,10 @@ use kobo_hal::supervisor::Suspended;
 use kobo_hal::touch::TouchEvent;
 use kobo_hal::{Rect, RefreshIntent, RefreshPlan, RegionSnapshot};
 use kobo_policy::{Backends, Capability, Declared, DeviceServices, PowerPolicy, TaskRunner};
-use kobo_profile::{DeviceProfile, CLARA_BW_391};
+use kobo_profile::DeviceProfile;
 use kobo_protocol::{Frame, Lifecycle, Message, TaskError, TaskOutcome};
 use kobo_ui::{
-    display_metrics_from_env, render_all, ActionId, Chrome, FontHandle, FramePlanner,
+    render_all, ActionId, Chrome, FontHandle, FramePlanner,
     PanelWaveform, PictureCache, Screen, Surface,
 };
 use std::collections::BTreeMap;
@@ -58,8 +58,6 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-/// The touch panel on every device this supports so far.
-pub const TOUCH_DEVICE: &str = "/dev/input/event1";
 const COBALT_ROOT: &str = "/mnt/onboard/.adds/cobalt";
 /// Where named credentials live.
 ///
@@ -112,7 +110,7 @@ const DATA_ROOT: &str = "/mnt/onboard/.adds/cobalt/data";
 /// the reader's own accessibility scale, so a book set larger does not also
 /// grow the bar above it and take the room out of the page.
 fn metrics_for(screen: &Screen) -> kobo_ui::DisplayMetrics {
-    let metrics = display_metrics_from_env();
+    let metrics = crate::device_metrics();
     // The typeface is installed once and lives as long as the process, so the
     // size it sets at has to be told to it rather than carried in the metrics
     // it was built with. Set here, where the screen's own answer is known, so
@@ -461,7 +459,6 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
         idle: limits.idle.min(MAX_SESSION),
         ceiling: limits.ceiling.min(MAX_SESSION),
     };
-    let profile = &CLARA_BW_391;
 
     // Checked here, before anything is taken over. Stopping the reader costs
     // the owner half a minute and the network connection, so discovering only
@@ -473,7 +470,7 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     // Installed before anything is taken over, because it reads a file and a
     // read can fail. A failure is not fatal: `kobo-ui` keeps its built-in
     // bitmap, so the worst case is ugly text rather than a dead session.
-    let typeface = match kobo_text::install(display_metrics_from_env()) {
+    let typeface = match kobo_text::install(crate::device_metrics()) {
         Ok(path) => path.file_name().map_or_else(
             || path.display().to_string(),
             |name| name.to_string_lossy().into_owned(),
@@ -510,8 +507,9 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
         Watchdog::arm(&state, WATCHDOG_CHECK).map_err(|error| format!("arm watchdog: {error}"))?,
     );
 
-    let display = DisplaySession::open(profile, Some(OWNER_UNLOCK_PHRASE))
+    let display = DisplaySession::open(Some(OWNER_UNLOCK_PHRASE))
         .map_err(|error| format!("open display: {error}"))?;
+    let profile = display.profile();
     let geometry = display.geometry();
     let whole_screen = Rect {
         x: 0,
@@ -522,7 +520,11 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     let backup = display
         .capture(whole_screen)
         .map_err(|error| format!("snapshot the screen: {error}"))?;
-    let mut touch = TouchSession::acquire(Path::new(TOUCH_DEVICE), profile)
+        
+    let touch_path = display.snapshot().touch.as_ref().map(|t| t.path.clone())
+        .ok_or_else(|| "touch probe was unavailable".to_owned())?;
+        
+    let mut touch = TouchSession::acquire(Path::new(&touch_path), profile)
         .map_err(|error| format!("take the touch panel: {error}"))?;
 
     // Without this the device reboots itself partway through the session, so a
@@ -1450,7 +1452,7 @@ fn host_applications(
                                 match kobo_text::BookFont::from_bytes(
                                     &bytes,
                                     &name,
-                                    display_metrics_from_env(),
+                                    crate::device_metrics(),
                                 ) {
                                     Ok(book_font) => {
                                         let runtime_handle =
@@ -2567,9 +2569,9 @@ fn greet(
                 // The panel this runtime renders for. An application that
                 // measures text has to measure it for the same one, and pixel
                 // counts alone do not say how large a pixel is.
-                pixels_per_inch: u16::try_from(display_metrics_from_env().pixels_per_inch)
+                pixels_per_inch: u16::try_from(crate::device_metrics().pixels_per_inch)
                     .unwrap_or(u16::MAX),
-                text_scale: display_metrics_from_env().text_scale,
+                text_scale: crate::device_metrics().text_scale,
             },
         },
     )
@@ -3083,7 +3085,7 @@ mod tests {
         let screen = hello();
         let chrome = Chrome::with_back(true);
         let back = screen
-            .layout_with(&display_metrics_from_env(), &chrome)
+            .layout_with(&crate::device_metrics(), &chrome)
             .nodes
             .iter()
             .find(|node| node.kind == kobo_ui::LayoutKind::Back)
@@ -3124,7 +3126,7 @@ mod tests {
         let chrome = Chrome::with_back(true);
         let screen = hello();
         let back = screen
-            .layout_with(&display_metrics_from_env(), &chrome)
+            .layout_with(&crate::device_metrics(), &chrome)
             .nodes
             .iter()
             .find(|node| node.kind == kobo_ui::LayoutKind::Back)

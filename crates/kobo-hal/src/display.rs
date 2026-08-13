@@ -92,13 +92,14 @@ impl DisplaySession {
     /// hardware profile does not match exactly, the device identity does not
     /// match exactly, or the framebuffer cannot be opened.
     pub fn open(
-        profile: &'static DeviceProfile,
         unlock: Option<&str>,
     ) -> Result<Self, DisplayError> {
         if unlock != Some(OWNER_UNLOCK_PHRASE) {
             return Err(DisplayError::UnlockMissing);
         }
         let snapshot = probe_device().map_err(DisplayError::Probe)?;
+        let profile = kobo_profile::identify_profile(&snapshot)
+            .ok_or_else(|| DisplayError::ProfileRejected(vec!["no supported hardware profile matched this device".to_owned()]))?;
         Self::open_verified(profile, snapshot, Path::new("/dev/fb0"))
     }
 

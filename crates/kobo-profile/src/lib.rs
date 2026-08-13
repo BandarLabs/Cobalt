@@ -53,6 +53,66 @@ pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     kernel_release: "4.9.77",
 };
 
+pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
+    id: "elipsa-2e-389",
+    model: "Kobo Elipsa 2E",
+    device_code: 389,
+    device_tree_model: "MediaTek MT8110 board",
+    compatible_fragments: &["mediatek,mt8110", "mediatek,mt8512"],
+    framebuffer_id: "hwtcon",
+    width: 1404,
+    height: 1872,
+    pixels_per_inch: 227,
+    virtual_width: 1404,
+    virtual_height: 1872,
+    x_offset: 0,
+    y_offset: 0,
+    bits_per_pixel: 32,
+    grayscale: 0,
+    stride: 5616,
+    memory_length: 10_543_104,
+    framebuffer_kind: 0,
+    framebuffer_visual: 2,
+    rotation: 1,
+    red: Bitfield {
+        offset: 0,
+        length: 0,
+        msb_right: 0,
+    },
+    green: Bitfield {
+        offset: 0,
+        length: 0,
+        msb_right: 0,
+    },
+    blue: Bitfield {
+        offset: 0,
+        length: 0,
+        msb_right: 0,
+    },
+    alpha: Bitfield {
+        offset: 0,
+        length: 0,
+        msb_right: 0,
+    },
+    touch_name: "Elan Touchscreen",
+    touch_x_min: 0,
+    touch_x_max: 1872,
+    touch_y_min: 0,
+    touch_y_max: 1404,
+    serial_prefix: "N605",
+    firmware_version: "4.38.23697",
+    kernel_release: "4.9.77",
+};
+
+pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[&CLARA_BW_391, &ELIPSA_2E_389];
+
+pub fn identify_profile(snapshot: &DeviceSnapshot) -> Option<&'static DeviceProfile> {
+    SUPPORTED_PROFILES
+        .iter()
+        .copied()
+        .find(|profile| profile.validate(snapshot).readiness != Readiness::Rejected)
+}
+
 pub const READ_ONLY_WRITE_BLOCKER: &str =
     "write profile is intentionally incomplete until read-only doctor output is reviewed";
 
@@ -313,8 +373,11 @@ impl DeviceProfile {
         {
             return None;
         }
-        let x = self.touch_y_max - raw_y;
-        let y = raw_x;
+        let (x, y) = match self.rotation {
+            1 => (raw_y, self.touch_x_max - raw_x),
+            3 => (self.touch_y_max - raw_y, raw_x),
+            _ => (raw_x, raw_y),
+        };
         Some((u32::try_from(x).ok()?, u32::try_from(y).ok()?))
     }
 
@@ -329,8 +392,17 @@ impl DeviceProfile {
         if x >= self.width || y >= self.height {
             return None;
         }
-        let raw_x = i32::try_from(y).ok()?;
-        let raw_y = self.touch_y_max.checked_sub(i32::try_from(x).ok()?)?;
+        let (raw_x, raw_y) = match self.rotation {
+            1 => (
+                self.touch_x_max.checked_sub(i32::try_from(y).ok()?)?,
+                i32::try_from(x).ok()?,
+            ),
+            3 => (
+                i32::try_from(y).ok()?,
+                self.touch_y_max.checked_sub(i32::try_from(x).ok()?)?,
+            ),
+            _ => (i32::try_from(x).ok()?, i32::try_from(y).ok()?),
+        };
         if !(self.touch_x_min..=self.touch_x_max).contains(&raw_x)
             || !(self.touch_y_min..=self.touch_y_max).contains(&raw_y)
         {
@@ -451,10 +523,11 @@ fn validate_pixel_format(
         framebuffer.alpha,
         profile.alpha,
     );
-    if framebuffer.red.length != 8
-        || framebuffer.green.length != 8
-        || framebuffer.blue.length != 8
-        || framebuffer.alpha.length != 8
+    let valid_length = |len| len == 8 || len == 0;
+    if !valid_length(framebuffer.red.length)
+        || !valid_length(framebuffer.green.length)
+        || !valid_length(framebuffer.blue.length)
+        || !valid_length(framebuffer.alpha.length)
     {
         blockers.push(format!(
             "unconfirmed framebuffer bitfields R{:?} G{:?} B{:?} A{:?}",

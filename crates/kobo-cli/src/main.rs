@@ -117,7 +117,7 @@ if [ -s \"$staged_key\" ]; then
   sync
 fi
 KOBO_PRESENT_UNLOCK=OWNER_ATTENDED_PANEL_SESSION \\
-  exec \"$root/bin/kobod\" --present \"$root/bin/kobo-launcher\"
+  exec \"$root/bin/kobod\" --present \"$root/bin/kobo-launcher\" > /mnt/onboard/kobod.txt 2>&1
 ";
 
 /// Shipped inside the package, because the thing an owner most needs to find
@@ -1330,6 +1330,9 @@ fn build_device(device: bool) -> Result<(), String> {
         if std::env::var_os("CC_armv7_unknown_linux_musleabihf").is_none() {
             command.env("CC_armv7_unknown_linux_musleabihf", find_device_cc()?);
         }
+        if std::env::var_os("AR_armv7_unknown_linux_musleabihf").is_none() {
+            command.env("AR_armv7_unknown_linux_musleabihf", find_device_ar()?);
+        }
         command.args(["--target", "armv7-unknown-linux-musleabihf"]);
         for package in DEVICE_PACKAGES {
             command.args(["-p", package]);
@@ -2121,6 +2124,9 @@ fn device_build_command(package: &str, features: Option<&str>) -> Result<Command
         .env("CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER", linker);
     if std::env::var_os("CC_armv7_unknown_linux_musleabihf").is_none() {
         command.env("CC_armv7_unknown_linux_musleabihf", find_device_cc()?);
+    }
+    if std::env::var_os("AR_armv7_unknown_linux_musleabihf").is_none() {
+        command.env("AR_armv7_unknown_linux_musleabihf", find_device_ar()?);
     }
     if let Some(features) = features {
         command.args(["--features", features]);
@@ -4044,6 +4050,31 @@ fn find_device_cc() -> Result<String, String> {
          messense/macos-cross-toolchains/armv7-unknown-linux-musleabihf\n  \
          Debian: sudo apt-get install gcc-arm-linux-gnueabihf\nSet \
          CC_armv7_unknown_linux_musleabihf to override.",
+        NAMES.join(", ")
+    ))
+}
+
+fn find_device_ar() -> Result<String, String> {
+    const NAMES: [&str; 4] = [
+        "armv7-unknown-linux-musleabihf-ar",
+        "armv7-linux-musleabihf-ar",
+        "arm-linux-musleabihf-ar",
+        "arm-linux-gnueabihf-ar",
+    ];
+    for name in NAMES {
+        let found = Command::new(name)
+            .arg("--version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success());
+        if found {
+            return Ok(name.to_owned());
+        }
+    }
+    Err(format!(
+        "no ARM cross-archiver was found, and one is needed for C dependencies. \
+         Tried: {}.\nSet AR_armv7_unknown_linux_musleabihf to override.",
         NAMES.join(", ")
     ))
 }
