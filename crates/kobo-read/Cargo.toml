@@ -12,5 +12,14 @@ kobo-sdk = { path = "../kobo-sdk" }
 kobo-ui = { path = "../kobo-ui" }
 unicode-segmentation = "1.13.3"
 
+[dev-dependencies]
+kobo-image = { path = "../kobo-image" }
+kobo-profile = { path = "../kobo-profile" }
+kobo-text = { path = "../kobo-text" }
+
+[features]
+# Draws displayed formulae properly instead of describing them in words.
+raster = ["kobo-doc/raster"]
+
 [lints]
 workspace = true

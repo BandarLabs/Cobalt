@@ -29,6 +29,49 @@ every one of those outside it, so the article is where the cut is made. A
 rendering with no article in it is used whole: furniture is worse than the
 paper, but nothing is worse than both.
 
+## The mathematics is set, not described
+
+A paper without its mathematics is a paper with holes in it. arXiv's renderings
+carry every formula as MathML, and MathML read as prose gives back the
+alphabet soup that produced it — the reader sees the parts and never the
+expression.
+
+So a formula is typeset. Each one is handed to a TeX layout engine and drawn
+as a picture at the size the surrounding text is set in, so an integral sits on
+the line it belongs to and a fraction has a rule between its halves. A formula
+in the middle of a sentence stays in the sentence; one the author set on its
+own line gets its own line back.
+
+Drawing has a budget, because a survey paper can carry a thousand formulas and
+a reader will not wait for all of them. Past the budget the remaining formulas
+are read as text rather than drawn — the paper still opens, and opens quickly.
+
+<img width="300" src="screenshots/formulas.png" alt="Set unions with their indices beneath them, drawn on the page as type">
+
+## The figures and tables come too
+
+A table squeezed to fit is a table read wrong. Each column asks for the width
+its own contents need and never gets less, so a column of three-digit numbers
+stays three digits wide and the headings stay above the numbers they name. Only
+when those least widths together overrun the panel does a row stack, and a
+stacked row carries its headings inline — `BigToM: 0.803` — because nothing on
+the page says which column a lone number fell out of. A table that runs past
+the foot of the page sets its headings again at the top of the next one.
+
+Figures are fetched from the address the paper came from and fitted to the
+width of the panel, caption and all. They arrive one at a time, after the text,
+so a paper with thirty diagrams in it still opens on its first page.
+
+<img width="300" src="screenshots/table.png" alt="A results table in real columns under its headings"> <img width="300" src="screenshots/figure.png" alt="A paper's figure drawn on the panel beneath its caption">
+
+## Keeping a paper
+
+**Keep for offline** stores the rendering on the reader, and the paper then
+opens from **Library** with no network at all. The same button becomes **Remove
+from library**, so keeping is a decision the reader can take back. This matters
+on a device that spends most of its life away from Wi-Fi: a paper found on a
+sofa is readable on a train.
+
 ## Newest first, always
 
 A preprint server sorted by relevance is a search engine; sorted by date it is

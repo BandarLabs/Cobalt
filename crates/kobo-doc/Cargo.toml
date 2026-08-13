@@ -11,5 +11,9 @@ kobo-html = { path = "../kobo-html" }
 miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
 pulldown-cmark = { version = "0.13.4", default-features = false }
 
+[features]
+# Draws displayed formulae properly instead of describing them in words.
+raster = ["kobo-html/raster"]
+
 [lints]
 workspace = true

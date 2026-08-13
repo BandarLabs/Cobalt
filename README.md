@@ -68,6 +68,10 @@ utilities.
 <td valign="top"><a href="examples/tictactoe/README.md"><img width="230" src="examples/tictactoe/screenshots/game.png" alt="A completed game of tic-tac-toe"></a><br><b><a href="examples/tictactoe/README.md">Tic-tac-toe</a></b><br>A two-player touch game using partial refreshes for individual cells.</td>
 </tr>
 <tr>
+<td valign="top"><a href="apps/arxiv/README.md"><img width="230" src="apps/arxiv/screenshots/listing.png" alt="The newest machine learning preprints on a Kobo Clara BW, newest first"></a><br><b><a href="apps/arxiv/README.md">arXiv Reader</a></b><br>Browses and searches preprints, keeps them for offline reading, and sets their mathematics as type.</td>
+<td valign="top"><a href="apps/morse/README.md"><img width="230" src="apps/morse/screenshots/sending.png" alt="The letter S filling the panel while the beacon sends it"></a><br><b><a href="apps/morse/README.md">Morse</a></b><br>Sends a typed message on the front light, a letter at a time, drawn across the panel as it goes.</td>
+</tr>
+<tr>
 <td valign="top"><a href="examples/magnet/README.md"><img width="230" src="examples/magnet/screenshots/counting.png" alt="The Kobo hall sensor responding to a magnet"></a><br><b><a href="examples/magnet/README.md">Magnet</a></b><br>Locates the hall sensor behind the bezel and reports its changes.</td>
 <td></td>
 <td></td>

@@ -56,7 +56,7 @@ resolver = "2"
 [workspace.package]
 version = "0.2.6"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.85.1"
 license = "AGPL-3.0-only"
 repository = "https://github.com/BandarLabs/Cobalt"
 

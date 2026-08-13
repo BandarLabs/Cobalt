@@ -19,13 +19,13 @@ pub use kobo_ui::QuoteRole;
 pub use kobo_ui::{
     terminal_grid, terminal_grid_for, typographic_cover, ActionId, BandAlign, BandSlot,
     BannerLevel, BarAction, BarStyle, BottomAction, Caret, Cell, Chip, Chrome, ControlState,
-    DiagnosticSeverity, DisplayMetrics, Emphasis, Fold, FontHandle, Freeform, Glyph, LayoutIssue,
-    LayoutIssueKind, NavBar, Node, NodeId, Overlay, OverlayKind, ParagraphAlignment,
+    DiagnosticSeverity, DisplayMetrics, Emphasis, Fold, FontHandle, Freeform, Glyph, InlineFormula,
+    LayoutIssue, LayoutIssueKind, NavBar, Node, NodeId, Overlay, OverlayKind, ParagraphAlignment,
     ParagraphPresentation, Percent, PictureHandle, ProseArea, RichTextSpan, Row, RowLead, RowState,
     Screen, SlotWidth, Space, TextHit, TextPresentation, TextSelection, Tile, TilePicture,
     TileShape, TileState, TopBar, TransferFailure, CLARA_BW_METRICS, MAX_BAND_SLOTS, MAX_CELLS,
-    MAX_CHIPS, MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_QUOTE_DEPTH, MAX_ROWS, MAX_TABS,
-    MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS, TILE_BADGE_LIMIT,
+    MAX_CHIPS, MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_INLINE_FORMULAE, MAX_QUOTE_DEPTH, MAX_ROWS,
+    MAX_TABS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS, TILE_BADGE_LIMIT,
 };
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
@@ -475,11 +475,24 @@ impl ScreenBuilder {
     }
 
     #[must_use]
-    pub fn heading(mut self, text: impl Into<String>) -> Self {
+    pub fn heading(self, text: impl Into<String>) -> Self {
+        self.heading_at_level(1, text)
+    }
+
+    /// A heading at a given depth in a document's hierarchy, counting from
+    /// one.
+    ///
+    /// A screen has one heading and calls [`Self::heading`]. This is for
+    /// prose that carries real structure -- a book, a paper -- where setting
+    /// every level as display type gives a page several titles and no
+    /// hierarchy.
+    #[must_use]
+    pub fn heading_at_level(mut self, level: u8, text: impl Into<String>) -> Self {
         let id = self.next_id();
         self.nodes.push(Node::Heading {
             id,
             text: text.into(),
+            level: level.max(1),
         });
         self
     }
@@ -511,6 +524,7 @@ impl ScreenBuilder {
             links: Vec::new(),
             presentation,
             selection: None,
+            formulae: Vec::new(),
         });
         self
     }
@@ -552,6 +566,7 @@ impl ScreenBuilder {
             links,
             presentation,
             selection: None,
+            formulae: Vec::new(),
         });
         self
     }
@@ -595,7 +610,42 @@ impl ScreenBuilder {
             links,
             presentation,
             selection: Some(kobo_ui::TextSelection { context, offset }),
+            formulae: Vec::new(),
         });
+        self
+    }
+
+    /// Sets typeset formulas into the paragraph just added.
+    ///
+    /// Separate from the calls that add the paragraph because mathematics is
+    /// rare and those calls already take everything a paragraph normally has.
+    /// Each formula names a picture the application has handed over and the
+    /// half-open range of the paragraph's own bytes it is drawn over -- the
+    /// written form of the formula, which stays in the text so that a search
+    /// still finds it and a reader without the picture still reads it.
+    ///
+    /// Does nothing if the last thing added was not a paragraph, or if a
+    /// range does not land on a character boundary of it.
+    #[must_use]
+    pub fn with_formulae(mut self, formulae: impl IntoIterator<Item = InlineFormula>) -> Self {
+        let Some(Node::RichText {
+            text, formulae: on, ..
+        }) = self.nodes.last_mut()
+        else {
+            return self;
+        };
+        for formula in formulae.into_iter().take(kobo_ui::MAX_INLINE_FORMULAE) {
+            if formula.start < formula.end
+                && formula.end <= text.len()
+                && text.is_char_boundary(formula.start)
+                && text.is_char_boundary(formula.end)
+                && on
+                    .last()
+                    .is_none_or(|last: &InlineFormula| last.end <= formula.start)
+            {
+                on.push(formula);
+            }
+        }
         self
     }
 
@@ -1894,13 +1944,31 @@ impl ScreenBuilder {
     /// the same screen gives a picture the same share of the panel on a Clara
     /// and on an Elipsa.
     #[must_use]
-    pub fn picture(mut self, picture: TilePicture, max_height_mm: u16) -> Self {
+    pub fn picture(self, picture: TilePicture, max_height_mm: u16) -> Self {
+        self.drawn_picture(picture, max_height_mm, true)
+    }
+
+    /// The same, without a rule around it.
+    ///
+    /// For a picture that is part of the text rather than an illustration of
+    /// it -- a formula set on its own line, say. An edge tells a reader where
+    /// an illustration stops; drawn around a line of mathematics it only says
+    /// that the line was drawn rather than written, which is not something the
+    /// reader needs to know.
+    #[must_use]
+    pub fn unframed_picture(self, picture: TilePicture, max_height_mm: u16) -> Self {
+        self.drawn_picture(picture, max_height_mm, false)
+    }
+
+    #[must_use]
+    fn drawn_picture(mut self, picture: TilePicture, max_height_mm: u16, framed: bool) -> Self {
         let id = self.next_id();
         self.nodes.push(Node::Picture {
             id,
             handle: picture.handle,
             source: picture.source,
             max_height_tenths_mm: max_height_mm.saturating_mul(10),
+            framed,
         });
         self
     }

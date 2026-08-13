@@ -2230,7 +2230,12 @@ fn start_application(
         .env("KOBO_SOCKET", &child_socket)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        // An application that dies of something the protocol never hears about
+        // -- a panic, a signal, a failed allocation -- says so on its standard
+        // error and nowhere else. Sent to nothing, as this was, the only trace
+        // left of a crash was the application no longer being there, and the
+        // one question worth asking of a crash could not be answered at all.
+        .stderr(Stdio::piped());
     if let Some(sandbox) = sandbox {
         sandbox.configure(&mut command);
     } else {
@@ -2246,6 +2251,9 @@ fn start_application(
             return Err(format!("start {}: {error}", path.display()));
         }
     };
+    if let Some(stderr) = child.stderr.take() {
+        report_what_an_application_says(expected_name.clone(), stderr);
+    }
     let greeting = greet(&listener, whole_screen, &expected_name);
     drop(listener);
     let _ignored = fs::remove_file(&socket_path);
@@ -2337,8 +2345,34 @@ fn start_application(
     Ok(id)
 }
 
+/// Repeats an application's standard error into the trace, line by line.
+///
+/// On its own thread because the application writes when it has something to
+/// say, which is rarely and then all at once, and the session cannot wait on
+/// it either way.
+fn report_what_an_application_says(name: String, stderr: std::process::ChildStderr) {
+    std::thread::spawn(move || {
+        use std::io::BufRead;
+        for line in std::io::BufReader::new(stderr).lines() {
+            let Ok(line) = line else { break };
+            if line.trim().is_empty() {
+                continue;
+            }
+            trace(&format!("{name} said: {line}"));
+            println!("{name} said: {line}");
+        }
+    });
+}
+
 /// Ends one hosted application and everything it started.
 fn stop_hosted(mut app: Hosted) {
+    // Said out loud, because an application that stopped on its own stopped
+    // for a reason, and the number is the whole of what the system knows: a
+    // signal says it was killed and which way, a status says it gave up.
+    if let Ok(Some(status)) = app.child.try_wait() {
+        trace(&format!("{} ended with {status}", app.name));
+        println!("{} ended with {status}", app.name);
+    }
     for (_, handle) in std::mem::take(&mut app.fonts) {
         kobo_ui::drop_book_typesetter(handle);
     }
