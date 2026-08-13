@@ -50,17 +50,17 @@ are read as text rather than drawn — the paper still opens, and opens quickly.
 
 ## The figures and tables come too
 
-A results table read as a run-on sentence is a table nobody reads. Each column
-asks for the width its own contents need and is never squeezed below it, so a
-column of three-digit numbers stays three digits wide and the table keeps its
-headings above its figures. Only when the narrowest the columns can honestly be
-still will not fit does a row stack, and a stacked row names every value it
-carries — no reader should have to count across to find out which benchmark a
-number belongs to. A table longer than a page repeats its headings on every
-page it runs onto.
+A table squeezed to fit is a table read wrong. Each column asks for the width
+its own contents need and never gets less, so a column of three-digit numbers
+stays three digits wide and the headings stay above the numbers they name. Only
+when those least widths together overrun the panel does a row stack, and a
+stacked row carries its headings inline — `BigToM: 0.803` — because nothing on
+the page says which column a lone number fell out of. A table that runs past
+the foot of the page sets its headings again at the top of the next one.
 
-A paper's diagrams are fetched from the address the paper itself came from and
-fitted to the width of the panel, caption and all.
+Figures are fetched from the address the paper came from and fitted to the
+width of the panel, caption and all. They arrive one at a time, after the text,
+so a paper with thirty diagrams in it still opens on its first page.
 
 <img width="300" src="screenshots/table.png" alt="A results table in real columns under its headings"> <img width="300" src="screenshots/figure.png" alt="A paper's figure drawn on the panel beneath its caption">
 
