@@ -3064,7 +3064,13 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
     }
 
     let length = match node {
-        Node::Heading { text, .. } | Node::Secondary { text, .. } => {
+        // The tag, the id, the text, and one byte for the heading's level.
+        Node::Heading { text, .. } => {
+            let mut length = 6;
+            add_encoded_len(&mut length, encoded_string_len(text)?)?;
+            length
+        }
+        Node::Secondary { text, .. } => {
             let mut length = 5;
             add_encoded_len(&mut length, encoded_string_len(text)?)?;
             length
@@ -3083,6 +3089,7 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
             spans,
             links,
             selection,
+            formulae,
             ..
         } => {
             if spans.len() > kobo_ui::MAX_RICH_TEXT_SPANS {
@@ -3096,6 +3103,10 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
             }
             if selection.is_some() {
                 add_encoded_len(&mut length, 12)?;
+            }
+            add_encoded_len(&mut length, 1)?;
+            for _ in formulae.iter().take(kobo_ui::MAX_INLINE_FORMULAE) {
+                add_encoded_len(&mut length, 20)?;
             }
             length
         }
@@ -3258,7 +3269,7 @@ fn encoded_node_len(node: &Node, depth: usize, count: &mut usize) -> Result<usiz
             }
             length
         }
-        Node::Picture { .. } => 19,
+        Node::Picture { .. } => 20,
         Node::Table { rows, weights, .. } => {
             if rows.len() > u8::MAX as usize || weights.len() > u8::MAX as usize {
                 return Err(ProtocolError::TooManyNodes);
@@ -4089,10 +4100,11 @@ fn encode_node(
         return Err(ProtocolError::TooManyNodes);
     }
     match node {
-        Node::Heading { id, text } => {
+        Node::Heading { id, text, level } => {
             output.push(1);
             push_u32(output, id.0);
             push_string(output, text)?;
+            output.push(*level);
         }
         Node::Text { id, text, links } => {
             let links = &links[..links.len().min(kobo_ui::MAX_TEXT_LINKS)];
@@ -4113,6 +4125,7 @@ fn encode_node(
             links,
             presentation,
             selection,
+            formulae,
         } => {
             if spans.len() > kobo_ui::MAX_RICH_TEXT_SPANS {
                 return Err(ProtocolError::TooManyNodes);
@@ -4169,6 +4182,28 @@ fn encode_node(
                     push_u32(output, selection.offset);
                 }
                 None => output.push(0),
+            }
+            let formulae = &formulae[..formulae.len().min(kobo_ui::MAX_INLINE_FORMULAE)];
+            output.push(u8::try_from(formulae.len()).map_err(|_| ProtocolError::TooManyNodes)?);
+            for formula in formulae {
+                if formula.start >= formula.end
+                    || formula.end > text.len()
+                    || !text.is_char_boundary(formula.start)
+                    || !text.is_char_boundary(formula.end)
+                {
+                    return Err(ProtocolError::InvalidValue("inline formula"));
+                }
+                push_u32(output, formula.handle.0);
+                push_u32(
+                    output,
+                    u32::try_from(formula.start).map_err(|_| ProtocolError::FrameTooLarge)?,
+                );
+                push_u32(
+                    output,
+                    u32::try_from(formula.end).map_err(|_| ProtocolError::FrameTooLarge)?,
+                );
+                push_u32(output, formula.source.0);
+                push_u32(output, formula.source.1);
             }
         }
         Node::Secondary { id, text } => {
@@ -4447,6 +4482,7 @@ fn encode_node(
             handle,
             source,
             max_height_tenths_mm,
+            framed,
         } => {
             output.push(17);
             push_u32(output, id.0);
@@ -4454,6 +4490,7 @@ fn encode_node(
             push_u32(output, source.0);
             push_u32(output, source.1);
             push_u16(output, *max_height_tenths_mm);
+            output.push(u8::from(*framed));
         }
         Node::Table { id, rows, weights } => {
             output.push(30);
@@ -5043,6 +5080,7 @@ fn decode_node(
         1 => Ok(Node::Heading {
             id,
             text: reader.string()?,
+            level: reader.u8()?,
         }),
         2 => {
             let text = reader.string()?;
@@ -5127,6 +5165,35 @@ fn decode_node(
                 }),
                 _ => return Err(ProtocolError::InvalidValue("text selection flag")),
             };
+            let formula_count = usize::from(reader.u8()?);
+            let mut formulae = Vec::with_capacity(formula_count.min(kobo_ui::MAX_INLINE_FORMULAE));
+            for _ in 0..formula_count {
+                let handle = PictureHandle(reader.u32()?);
+                let start = reader.u32()? as usize;
+                let end = reader.u32()? as usize;
+                let source = (reader.u32()?, reader.u32()?);
+                // A formula that does not land on the text it stands in for
+                // is dropped rather than drawn: the words are still there,
+                // and a picture at the wrong offset would cover the wrong
+                // ones. Formulas are kept in order and never overlapping so
+                // that layout can walk them alongside the string.
+                if start < end
+                    && end <= text.len()
+                    && text.is_char_boundary(start)
+                    && text.is_char_boundary(end)
+                    && formulae.len() < kobo_ui::MAX_INLINE_FORMULAE
+                    && formulae
+                        .last()
+                        .is_none_or(|last: &kobo_ui::InlineFormula| last.end <= start)
+                {
+                    formulae.push(kobo_ui::InlineFormula {
+                        start,
+                        end,
+                        handle,
+                        source,
+                    });
+                }
+            }
             Ok(Node::RichText {
                 id,
                 text,
@@ -5134,6 +5201,7 @@ fn decode_node(
                 links,
                 presentation,
                 selection,
+                formulae,
             })
         }
         18 => {
@@ -5400,6 +5468,7 @@ fn decode_node(
             handle: PictureHandle(reader.u32()?),
             source: (reader.u32()?, reader.u32()?),
             max_height_tenths_mm: reader.u16()?,
+            framed: reader.u8()? != 0,
         }),
         10 => {
             let prompt = reader.string()?;
@@ -6503,6 +6572,7 @@ mod node_coverage_tests {
             Node::Heading {
                 id: NodeId(1),
                 text: "Heading".into(),
+                level: 1,
             },
             Node::Text {
                 id: NodeId(2),
@@ -6530,6 +6600,12 @@ mod node_coverage_tests {
                     context: 3,
                     offset: 11,
                 }),
+                formulae: vec![kobo_ui::InlineFormula {
+                    start: 7,
+                    end: 11,
+                    handle: PictureHandle(9),
+                    source: (40, 20),
+                }],
             },
             Node::Quote {
                 id: NodeId(30),
@@ -6632,6 +6708,7 @@ mod node_coverage_tests {
                         Node::Heading {
                             id: NodeId(27),
                             text: "Moby Dick".into(),
+                            level: 1,
                         },
                         Node::Secondary {
                             id: NodeId(28),
@@ -7868,6 +7945,7 @@ mod picture_tests {
                     handle: PictureHandle(7),
                     source: (190, 300),
                     max_height_tenths_mm: 600,
+                    framed: true,
                 },
             ],
         );

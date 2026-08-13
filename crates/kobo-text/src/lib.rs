@@ -597,6 +597,10 @@ impl Typesetter for BookFont {
         self.face.measure_run(text, size, Face::Reading, None, None)
     }
 
+    fn em(&self, size: FontSize, _face: Face) -> i32 {
+        self.face.pixels(size, Face::Reading).max(1.0) as i32
+    }
+
     fn line_height(&self, size: FontSize, _face: Face) -> i32 {
         let natural = self.face.height(size, Face::Reading);
         // A publisher font supplies its own metrics, and a structurally valid
@@ -743,6 +747,10 @@ impl Typesetter for SystemFonts {
             self.cell(size, face),
             self.fallback(face),
         )
+    }
+
+    fn em(&self, size: FontSize, face: Face) -> i32 {
+        self.cut(size, face).pixels(size, face).max(1.0) as i32
     }
 
     fn line_height(&self, size: FontSize, face: Face) -> i32 {

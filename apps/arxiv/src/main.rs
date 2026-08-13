@@ -822,7 +822,14 @@ impl Arxiv {
         // the address the rendering came from. None of that is arXiv's to
         // know: it is what reading a web page on this device means, and every
         // application that shows one gets the same answer.
-        let origin = format!("https://arxiv.org/html/{}/", escape_path(&paper.id));
+        // The same address the rendering was fetched from, to the character.
+        // A figure's address is joined against the document's own directory,
+        // so a trailing slash here would make the paper's own directory the
+        // base -- and arXiv writes its figures as "{id}/name.png", already
+        // carrying the id. The paper's name appeared twice and every figure
+        // came back 404, which is why a paper used to read with nothing but
+        // "Refer to caption" where its plots belong.
+        let origin = format!("https://arxiv.org/html/{}", escape_path(&paper.id));
         // Whatever this paper was left at, if it has been read before. The
         // load was asked for when the paper was opened, so by the time the
         // rendering is in hand the answer is usually already here; a paper
@@ -1760,7 +1767,7 @@ mod tests {
         let mut runner = AppRunner::new(Arxiv::default());
         let commands = opened_on(
             &mut runner,
-            "<article><p>A paper.</p><img src=\"x1.png\" alt=\"A plot\"></article>",
+            "<article><p>A paper.</p><img src=\"2401.00001v2/x1.png\" alt=\"A plot\"></article>",
         );
 
         let asked: Vec<String> = commands
@@ -1777,7 +1784,9 @@ mod tests {
             asked
                 .iter()
                 .any(|url| url == "https://arxiv.org/html/2401.00001v2/x1.png"),
-            "the figure was not asked for beside its paper: {asked:?}"
+            "the figure was not asked for beside its paper: {asked:?}. arXiv \
+             writes a figure as \"{{id}}/name.png\", so the address it is \
+             joined against is the document's own, not the paper's directory."
         );
     }
 

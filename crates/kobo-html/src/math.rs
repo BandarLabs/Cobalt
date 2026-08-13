@@ -34,6 +34,47 @@
 //! everywhere, so the structure is spelled with `^` and `_` and grouped with
 //! parentheses when the group is longer than a single character.
 
+/// Sets a formula the way its author's typesetter would have.
+///
+/// Takes the LaTeX the converter left beside the markup and returns a PNG of
+/// the formula laid out properly: a fraction with a rule through it, a radical
+/// with a hood over its argument, a sum with its limits above and below. The
+/// alternative this replaces is a line of text that spells the same formula
+/// sideways, which is readable but is not mathematics.
+///
+/// `em` is the size of the surrounding text in pixels, because a formula that
+/// does not match the line it interrupts is worse than one set plainly.
+///
+/// Returns `None` when the source will not parse or will not draw. There is no
+/// half-drawn formula: the caller is expected to fall back to [`render`],
+/// which cannot fail.
+#[cfg(feature = "raster")]
+#[must_use]
+pub fn raster(latex: &str, em: f32) -> Option<Vec<u8>> {
+    use ratex_layout::{layout, to_display_list, LayoutOptions};
+    use ratex_render::{render_to_png, RenderOptions};
+
+    // A formula set on its own line is displayed, which is what decides
+    // whether a sum's limits sit above it or beside it.
+    let options = LayoutOptions {
+        style: ratex_types::math_style::MathStyle::Display,
+        ..LayoutOptions::default()
+    };
+    let tree = ratex_parser::parser::parse(latex).ok()?;
+    let list = to_display_list(&layout(&tree, &options));
+    // A formula is ink on the page like the text around it, so it is drawn on
+    // white and left for the picture pipeline to dither with everything else.
+    render_to_png(
+        &list,
+        &RenderOptions {
+            font_size: em,
+            padding: em / 8.0,
+            ..RenderOptions::default()
+        },
+    )
+    .ok()
+}
+
 /// Renders one `<math>` element as a line of text.
 ///
 /// Takes the whole element, opening tag included, and returns what should
