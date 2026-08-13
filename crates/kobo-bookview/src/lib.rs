@@ -68,10 +68,18 @@ pub const PICTURE_HANDLE_BASE: u32 = 1_000;
 
 /// The ceiling on one fetched picture.
 ///
-/// A plot is tens of kilobytes. The ones that overrun this are photographs at
-/// print resolution, which the panel cannot show anyway: it is sixteen greys
-/// on a screen narrower than the figure's own caption.
-pub const MAX_PICTURE_BYTES: u32 = 512 * 1024;
+/// Half a megabyte was chosen on the belief that a plot is tens of kilobytes.
+/// A paper's figures are not: arXiv serves the diagrams in a machine learning
+/// paper at two megabytes each, so every one of them was cut off part-way,
+/// failed to decode, and left an empty frame with a caption under it on page
+/// after page. A figure is fetched one at a time and thrown away once it has
+/// been fitted to eighty millimetres of panel, so the cost of allowing the
+/// whole of one is one of them, briefly.
+///
+/// What overruns four megabytes is a photograph at print resolution, which
+/// the panel cannot show anyway: it is sixteen greys on a screen narrower
+/// than the figure's own caption.
+pub const MAX_PICTURE_BYTES: u32 = 4 * 1024 * 1024;
 
 /// The longest a picture's address may be.
 const MAX_PICTURE_NAME: usize = 512;
@@ -864,6 +872,22 @@ pub fn pictures_in(document: &Document) -> Vec<&str> {
 
 #[cfg(test)]
 mod tests {
+
+    /// A paper's figure is asked for whole.
+    ///
+    /// arXiv serves the diagrams in a machine learning paper at around two
+    /// megabytes each. Under the old half-megabyte ceiling every one of them
+    /// came back cut off, failed to decode, and left an empty frame with a
+    /// caption underneath: a paper read with no pictures in it at all.
+    #[test]
+    fn a_figure_the_size_arxiv_serves_one_is_not_cut_off() {
+        let arxiv_figure = 2_251_637;
+        assert!(
+            super::MAX_PICTURE_BYTES >= arxiv_figure,
+            "a {arxiv_figure} byte figure does not fit under {} bytes",
+            super::MAX_PICTURE_BYTES
+        );
+    }
 
     use super::{picture_url, pictures_in, BookView, Step};
     use kobo_doc::{Block, Document};
