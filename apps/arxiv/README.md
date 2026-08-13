@@ -46,6 +46,24 @@ Drawing has a budget, because a survey paper can carry a thousand formulas and
 a reader will not wait for all of them. Past the budget the remaining formulas
 are read as text rather than drawn — the paper still opens, and opens quickly.
 
+<img width="300" src="screenshots/formulas.png" alt="Set unions with their indices beneath them, drawn on the page as type">
+
+## The figures and tables come too
+
+A results table read as a run-on sentence is a table nobody reads. Each column
+asks for the width its own contents need and is never squeezed below it, so a
+column of three-digit numbers stays three digits wide and the table keeps its
+headings above its figures. Only when the narrowest the columns can honestly be
+still will not fit does a row stack, and a stacked row names every value it
+carries — no reader should have to count across to find out which benchmark a
+number belongs to. A table longer than a page repeats its headings on every
+page it runs onto.
+
+A paper's diagrams are fetched from the address the paper itself came from and
+fitted to the width of the panel, caption and all.
+
+<img width="300" src="screenshots/table.png" alt="A results table in real columns under its headings"> <img width="300" src="screenshots/figure.png" alt="A paper's figure drawn on the panel beneath its caption">
+
 ## Keeping a paper
 
 **Keep for offline** stores the rendering on the reader, and the paper then
