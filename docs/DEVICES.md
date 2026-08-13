@@ -165,6 +165,9 @@ running 4.45.23697, and it replaces the worse answer that came before it:
 `EnableDebugServices=true`, which brings up telnet and FTP as root **with no
 password at all** and still does not give you `kobo deploy`.
 
+> [!NOTE]
+> If your Kobo is running a firmware older than **4.42** (such as 4.38), it does not have this built-in SSH toggle. You will need to manually install an SSH server (like Dropbear via NickelMenu) and manually copy your public key (from `~/.ssh/kobo_cobalt.pub`) into `/root/.ssh/authorized_keys` on the device yourself.
+
 ### Why Cobalt itself is not a `KoboRoot.tgz`
 
 The ordinary way to install anything on a Kobo is to drop a `KoboRoot.tgz` into
