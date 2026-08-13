@@ -77,6 +77,101 @@ pub const MIN_BAND_SLOT_TENTH_MM: i32 = 120;
 /// turns a three column table into a tall grey block nobody can read across.
 pub const MIN_TABLE_COLUMN_TENTH_MM: i32 = 120;
 
+/// How wide each column of a table is drawn, and whether it stacks instead.
+///
+/// `wants` is how wide each column's widest cell would like to be, `usable`
+/// the room left for columns once the gaps between them are taken out, and
+/// `minimum` the narrowest a column of prose may be squeezed to.
+///
+/// Every column is first given the least it can live with, which is what it
+/// asked for or `minimum`, whichever is smaller: a column whose widest cell
+/// is four characters wide is not broken at five characters of room, it is
+/// finished. Whatever room is left over is then shared out in proportion to
+/// how much more each column wanted, so a sentence takes the slack and the
+/// numbers beside it keep their digits.
+///
+/// Squeezing every column in proportion instead, as this once did, starved
+/// the narrow ones: a table of eight short numbers had each of them squeezed
+/// under the width of the number itself, so the whole table was declared
+/// unfittable and stacked into a ladder of a hundred figures with nothing to
+/// say which column any of them came from. Every one of them fitted.
+///
+/// The table stacks only when the columns cannot hold even that least width.
+///
+/// Both the layout that draws a table and the pagination that measures one
+/// ask this, because the two must agree on whether a table stacked before
+/// either can say how tall a row is.
+/// Whether a table's first row names its columns rather than holding data.
+///
+/// `LaTeXML`, which is what renders a paper on arXiv, writes every cell as a
+/// `<td>` and marks none of them as a heading, so a table's own header row
+/// arrives looking exactly like its data. The row that names columns is
+/// words; the rows underneath are numbers. A table whose top row is already
+/// figures is left alone rather than having its first measurement turned
+/// into a set of labels for the rest.
+#[must_use]
+pub fn row_names_the_columns(cells: &[String]) -> bool {
+    let named = cells
+        .iter()
+        .filter(|cell| cell.chars().any(char::is_alphabetic))
+        .count();
+    let filled = cells.iter().filter(|cell| !cell.trim().is_empty()).count();
+    filled > 1 && named * 2 > filled
+}
+
+/// A stacked cell written with the heading its column was under.
+///
+/// A table's meaning is entirely in which value sits under which heading, so
+/// a stacked table that kept every figure and dropped the headings kept
+/// nothing: a page of a paper's results read as a ladder of eighty bare
+/// numbers. Returns `None` for the header row itself, which is read as
+/// written, and for a cell whose own column has no name.
+#[must_use]
+pub fn stacked_cell(labels: &[String], row: usize, column: usize, cell: &str) -> Option<String> {
+    if row == 0 {
+        return None;
+    }
+    let label = labels.get(column)?.trim();
+    if label.is_empty() || cell.trim().is_empty() {
+        return None;
+    }
+    Some(format!("{label}: {cell}"))
+}
+
+#[must_use]
+pub fn table_column_widths(wants: &[i32], usable: i32, minimum: i32) -> (Vec<i32>, bool) {
+    if wants.is_empty() {
+        return (Vec::new(), true);
+    }
+    let floors: Vec<i32> = wants
+        .iter()
+        .map(|want| minimum.min((*want).max(1)))
+        .collect();
+    let total: i32 = wants.iter().copied().fold(0, i32::saturating_add);
+    if total <= usable {
+        return (wants.to_vec(), false);
+    }
+    let base: i32 = floors.iter().copied().fold(0, i32::saturating_add);
+    if base > usable {
+        return (floors, true);
+    }
+    let spare = usable - base;
+    let slack: i32 = wants
+        .iter()
+        .zip(&floors)
+        .map(|(want, floor)| (want - floor).max(0))
+        .fold(0, i32::saturating_add);
+    if slack <= 0 {
+        return (floors, false);
+    }
+    let widths = wants
+        .iter()
+        .zip(&floors)
+        .map(|(want, floor)| floor + (want - floor).max(0).saturating_mul(spare) / slack)
+        .collect();
+    (widths, false)
+}
+
 /// The most rows one [`Node::Table`] will draw.
 ///
 /// A page holds a few dozen lines and a table row is at least one of them, so
@@ -2320,6 +2415,116 @@ pub struct RichTextSpan {
     pub presentation: TextPresentation,
 }
 
+/// A formula set into a sentence, drawn rather than written.
+///
+/// Mathematics does not survive being written out in a line: a fraction
+/// stacks, an index sits above the letter it belongs to, and a square root
+/// reaches over what it covers. None of that is expressible as a run of
+/// characters, so the run is typeset into a picture elsewhere and this says
+/// where it goes.
+///
+/// `start..end` is not a hole in the text. It is the best linear reading of
+/// the formula the writer could manage, and it stays in the string: it is
+/// what a search matches, what a selection copies, and what a reader gets
+/// when the picture has not arrived or will not decode. The picture is laid
+/// over it, not instead of it, which is why nothing outside layout and
+/// drawing has to know that this list exists.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InlineFormula {
+    pub start: usize,
+    pub end: usize,
+    pub handle: PictureHandle,
+    /// The typeset picture's own size, in pixels, as handed over.
+    pub source: (u32, u32),
+}
+
+/// How many formulas one paragraph may carry.
+///
+/// A dense page of mathematics runs to a few dozen; beyond that the extras
+/// fall back to their written form, which reads poorly but reads.
+pub const MAX_INLINE_FORMULAE: usize = 64;
+
+/// How big a formula is drawn on the line it sits on.
+///
+/// At the size it was handed over, because the application scaled it against
+/// the reading em when it decoded it, and that is what makes an `x` in a
+/// formula the same size as an `x` in the sentence around it.
+///
+/// The one thing decided here is the ceiling. A fraction stands taller than a
+/// line, and left alone a tall one would push the lines apart and take the
+/// paragraph with it. Two lines is as tall as anything set in a sentence may
+/// be; beyond that it is scaled down, keeping its shape, which is what a
+/// typesetter does with an inline fraction too.
+#[must_use]
+fn inline_formula_size(formula: &InlineFormula, line_height: i32) -> (i32, i32) {
+    let width = i32::try_from(formula.source.0).unwrap_or(i32::MAX);
+    let height = i32::try_from(formula.source.1).unwrap_or(i32::MAX);
+    if width <= 0 || height <= 0 {
+        return (0, 0);
+    }
+    let ceiling = line_height.saturating_mul(2).max(1);
+    if height <= ceiling {
+        return (width, height);
+    }
+    let narrowed = i64::from(width) * i64::from(ceiling) / i64::from(height);
+    (i32::try_from(narrowed).unwrap_or(i32::MAX).max(1), ceiling)
+}
+
+/// The formula covering an offset, if one does.
+fn formula_at(offset: usize, formulae: &[InlineFormula]) -> Option<&InlineFormula> {
+    formulae
+        .iter()
+        .take(MAX_INLINE_FORMULAE)
+        .find(|formula| formula.start <= offset && offset < formula.end)
+}
+
+/// How wide `text[from..to]` is once its formulas are drawn rather than read.
+///
+/// The written form of a formula and its typeset picture are rarely the same
+/// width, so a paragraph carrying formulas cannot be measured as a string.
+/// This walks the range, measuring the prose between formulas as prose and
+/// each formula at the width it will actually be drawn.
+fn measure_range_in(
+    text: &str,
+    from: usize,
+    to: usize,
+    size: FontSize,
+    face: Face,
+    formulae: &[InlineFormula],
+    line_height: i32,
+) -> i32 {
+    if formulae.is_empty() {
+        return measure_text_in(&text[from..to], size, face).0;
+    }
+    let mut total = 0i32;
+    let mut cursor = from;
+    while cursor < to {
+        if let Some(formula) = formula_at(cursor, formulae) {
+            // Only from its own start: a formula cut by a line break is
+            // measured on the line that begins it, and the remainder of it
+            // is not measured twice.
+            if formula.start == cursor {
+                total = total.saturating_add(inline_formula_size(formula, line_height).0);
+            }
+            cursor = formula.end.min(to).max(cursor + 1);
+            continue;
+        }
+        let next = formulae
+            .iter()
+            .take(MAX_INLINE_FORMULAE)
+            .map(|formula| formula.start)
+            .filter(|start| *start > cursor)
+            .min()
+            .unwrap_or(to)
+            .min(to);
+        if text.is_char_boundary(cursor) && text.is_char_boundary(next) {
+            total = total.saturating_add(measure_text_in(&text[cursor..next], size, face).0);
+        }
+        cursor = next.max(cursor + 1);
+    }
+    total
+}
+
 /// Stable document coordinates attached to publisher-styled reading text.
 ///
 /// The UI layer deliberately treats `context` as opaque. A reading
@@ -2375,6 +2580,17 @@ pub enum Node {
     Heading {
         id: NodeId,
         text: String,
+        /// How deep in the document's hierarchy this heading sits, counting
+        /// from one.
+        ///
+        /// A screen's own heading is always the first level and does not set
+        /// this. A book carries real hierarchy, and drawing every level of it
+        /// as display type gave a page of a paper four titles and no
+        /// hierarchy at all: the section heading over a paragraph was set
+        /// larger than the paper's own name. Levels below the first are set
+        /// at [`FontSize::Title`], which is bold enough to lead the prose
+        /// under it without competing with the title above it.
+        level: u8,
     },
     Text {
         id: NodeId,
@@ -2396,6 +2612,13 @@ pub enum Node {
         links: Vec<TextLink>,
         presentation: ParagraphPresentation,
         selection: Option<TextSelection>,
+        /// Runs of this paragraph that are typeset pictures rather than words.
+        ///
+        /// Empty for all prose, which is why this is a list on the node in
+        /// the same way links are: a formula is a property of a few
+        /// characters inside a sentence, and a paragraph split into three
+        /// nodes to carry one would wrap and paginate as three paragraphs.
+        formulae: Vec<InlineFormula>,
     },
     /// A line about the content rather than the content: a date, an author, a
     /// size, a count, a status.
@@ -2750,6 +2973,14 @@ pub enum Node {
         /// portrait picture cannot take a whole panel on one device and a
         /// third of it on another.
         max_height_tenths_mm: u16,
+        /// Whether to draw a rule around it.
+        ///
+        /// An illustration is a thing set into the page and wants an edge, so
+        /// that a pale sky is not mistaken for the margin. A formula is not a
+        /// picture of anything, it is a line of the text that happens to be
+        /// drawn rather than written, and a box around it would be as odd as
+        /// a box around a sentence.
+        framed: bool,
     },
     /// Work in flight, typically a network request.
     ///
@@ -3684,7 +3915,9 @@ pub enum LayoutKind {
     /// The battery, drawn at the level the runtime read, and whether it is on
     /// the charger. `None` means unreadable, which is drawn as nothing.
     StatusBattery(Option<Percent>, bool),
-    Heading,
+    /// A heading, carrying the level it sits at so it is drawn at the size it
+    /// was measured at.
+    Heading(u8),
     Text,
     RichText(TextPresentation),
     /// A run inside a paragraph that goes somewhere.
@@ -3815,6 +4048,9 @@ pub enum LayoutKind {
     /// A picture, already placed. `rect` is where it goes; the renderer scales
     /// it to fit only if the application handed over something larger.
     Picture(PictureHandle),
+    /// A picture with a rule drawn around it, which is what an illustration
+    /// set into a page wants and what a formula does not.
+    FramedPicture(PictureHandle),
     ChoicePrompt,
     /// A stepper's reading: what is being adjusted and where it stands. Set in
     /// the middle of the row, between the two controls, and not itself a
@@ -4446,7 +4682,9 @@ pub fn clamp_lines(text: &str, width: i32, size: FontSize, lines: usize) -> Stri
 /// quietly wrong about it.
 fn intrinsic_width(node: &Node, available: i32, metrics: &DisplayMetrics, prose: Face) -> i32 {
     match node {
-        Node::Heading { text, .. } => measure_text(text, FontSize::Heading).0,
+        Node::Heading { text, level, .. } => {
+            measure_text(text, FontSize::for_heading_level(*level)).0
+        }
         Node::Text { text, .. } => measure_text_in(text, FontSize::Body, prose).0,
         Node::Secondary { text, .. } => measure_text(text, FontSize::Caption).0,
         Node::Button { label, .. } => measure_text(label, FontSize::Body)
@@ -4711,9 +4949,10 @@ fn layout_node(
     }
     let width = max(0, width);
     match node {
-        Node::Heading { id, text } => {
-            let lines = wrap_text(text, width, FontSize::Heading);
-            let height = max(36, lines.len() as i32 * FontSize::Heading.line_height());
+        Node::Heading { id, text, level } => {
+            let size = FontSize::for_heading_level(*level);
+            let lines = wrap_text(text, width, size);
+            let height = max(36, lines.len() as i32 * size.line_height());
             layout.nodes.push(LayoutNode {
                 id: *id,
                 rect: Rect {
@@ -4722,7 +4961,7 @@ fn layout_node(
                     width,
                     height,
                 },
-                kind: LayoutKind::Heading,
+                kind: LayoutKind::Heading(*level),
                 text_lines: lines,
             });
             y.saturating_add(height)
@@ -4791,6 +5030,7 @@ fn layout_node(
             links,
             presentation,
             selection,
+            formulae,
         } => {
             let natural = FontSize::Body.line_height_in(prose).max(1);
             let line_height = natural
@@ -4803,11 +5043,13 @@ fn layout_node(
                 .saturating_mul(i32::from(presentation.first_line_indent_em))
                 / 100;
             let measure = width.saturating_sub(indent.max(0)).max(1);
-            let ranges = wrap_ranges(text, measure, FontSize::Body, prose);
+            let ranges =
+                wrap_ranges_with(text, measure, FontSize::Body, prose, formulae, line_height);
             let mut line_y = y.saturating_add(before);
             for (line_index, &(from, to)) in ranges.iter().enumerate() {
                 let line = &text[from..to];
-                let line_width = measure_text_in(line, FontSize::Body, prose).0;
+                let line_width =
+                    measure_range_in(text, from, to, FontSize::Body, prose, formulae, line_height);
                 let first_indent = if line_index == 0 { indent } else { 0 };
                 let available = width.saturating_sub(first_indent.max(0));
                 let aligned = match presentation.alignment {
@@ -4819,7 +5061,69 @@ fn layout_node(
                 let mut cursor = from;
                 let mut run_x = line_x;
                 while cursor < to {
+                    // Every slice below is by byte, and a paper is full of
+                    // characters that take more than one of them. An offset
+                    // that landed inside a "\u{3c0}" would take the whole
+                    // application down with it, which on a reader means the
+                    // panel going back to the stock software mid-sentence, so
+                    // a stray offset walks forward to the next character
+                    // instead of being trusted.
+                    if !text.is_char_boundary(cursor) {
+                        let Some(next) = (cursor..to).find(|at| text.is_char_boundary(*at)) else {
+                            break;
+                        };
+                        cursor = next;
+                        continue;
+                    }
+                    // A formula is drawn, not written, so it leaves the run
+                    // machinery entirely: it takes its own width on the line
+                    // and the words standing in for it are skipped over.
+                    // Only while there is a node left to draw it with. Out of
+                    // nodes, the formula falls through to the run machinery
+                    // below and is set as the words it was written as, which
+                    // is how it reads without a picture anywhere else. Skipping
+                    // it here instead would take the mathematics off the page
+                    // and leave the sentence with a hole in it.
+                    if let Some(formula) = formula_at(cursor, formulae)
+                        .filter(|_| layout.nodes.len().saturating_add(1) < MAX_LAYOUT_NODES)
+                    {
+                        let end = formula.end.min(to).max(cursor + 1);
+                        if formula.start == cursor {
+                            let (drawn_width, drawn_height) =
+                                inline_formula_size(formula, line_height);
+                            // Centred on the line rather than sat on its top,
+                            // because a formula is read against the middle of
+                            // the letters beside it and a tall one has to
+                            // stand out of the line evenly at both ends.
+                            layout.nodes.push(LayoutNode {
+                                id: *id,
+                                rect: Rect {
+                                    x: run_x,
+                                    y: line_y + (line_height - drawn_height) / 2,
+                                    width: drawn_width,
+                                    height: drawn_height,
+                                },
+                                kind: LayoutKind::Picture(formula.handle),
+                                text_lines: Vec::new(),
+                            });
+                            run_x = run_x.saturating_add(drawn_width);
+                        }
+                        cursor = end;
+                        continue;
+                    }
                     let (mut end, mut styled) = rich_run_at(cursor, to, spans);
+                    // Never run a styled run across the start of a formula:
+                    // the formula has to be reached at its own offset for the
+                    // branch above to see it.
+                    if let Some(next) = formulae
+                        .iter()
+                        .take(MAX_INLINE_FORMULAE)
+                        .map(|formula| formula.start)
+                        .filter(|start| *start > cursor && *start < end)
+                        .min()
+                    {
+                        end = next;
+                    }
                     if end <= cursor || end > to || !text.is_char_boundary(end) {
                         end = text[cursor..to]
                             .char_indices()
@@ -4856,8 +5160,28 @@ fn layout_node(
                     let start = max(from, link.start);
                     let end = min(to, link.end);
                     if start < end && text.is_char_boundary(start) && text.is_char_boundary(end) {
-                        let before = measure_text_in(&text[from..start], FontSize::Body, prose).0;
-                        let through = measure_text_in(&text[from..end], FontSize::Body, prose).0;
+                        // Measured the way the line is set, not the way it was
+                        // written: a formula earlier on the line takes the width
+                        // of its picture, and measuring the words it stands for
+                        // instead puts every target after it in the wrong place.
+                        let before = measure_range_in(
+                            text,
+                            from,
+                            start,
+                            FontSize::Body,
+                            prose,
+                            formulae,
+                            line_height,
+                        );
+                        let through = measure_range_in(
+                            text,
+                            from,
+                            end,
+                            FontSize::Body,
+                            prose,
+                            formulae,
+                            line_height,
+                        );
                         layout.nodes.push(LayoutNode {
                             id: *id,
                             rect: Rect {
@@ -4883,8 +5207,24 @@ fn layout_node(
                         else {
                             continue;
                         };
-                        let before = measure_text_in(&text[from..start], FontSize::Body, prose).0;
-                        let through = measure_text_in(&text[from..end], FontSize::Body, prose).0;
+                        let before = measure_range_in(
+                            text,
+                            from,
+                            start,
+                            FontSize::Body,
+                            prose,
+                            formulae,
+                            line_height,
+                        );
+                        let through = measure_range_in(
+                            text,
+                            from,
+                            end,
+                            FontSize::Body,
+                            prose,
+                            formulae,
+                            line_height,
+                        );
                         layout.text_hits.push((
                             Rect {
                                 x: line_x.saturating_add(before),
@@ -5466,30 +5806,35 @@ fn layout_node(
                     *want = i32::from(*weight);
                 }
             }
-            let total: i32 = wants.iter().copied().fold(0, i32::saturating_add);
-            let widths: Vec<i32> = if total <= usable {
-                wants.clone()
-            } else if total > 0 {
-                wants
-                    .iter()
-                    .map(|want| max(minimum, want.saturating_mul(usable) / total))
-                    .collect()
-            } else {
-                vec![usable / i32::try_from(columns).unwrap_or(1); columns]
-            };
+            let (widths, stacked) = table_column_widths(&wants, usable, minimum);
 
             // Squeezing has a floor, and past it a table is not a table any
             // more. Rather than draw columns four characters wide, each row
             // is stacked as its own lines, which is always readable.
-            if widths.iter().copied().fold(0, i32::saturating_add) > usable
-                || widths.iter().any(|column| *column < minimum)
-            {
+            if stacked {
+                // The first row of a table on this screen is the row that
+                // names its columns -- the reader repeats it at the top of
+                // every page a long table runs onto -- so each value below it
+                // can be written with the heading it sat under.
+                let labels = rows
+                    .first()
+                    .filter(|first| first.header)
+                    .map_or(&[][..], |first| first.cells.as_slice());
                 let mut cursor = y;
-                for row in rows {
-                    for cell in row.cells.iter().take(columns) {
+                for (index, row) in rows.iter().enumerate() {
+                    // The heading row is not drawn on its own: every value
+                    // below carries its heading beside it, so setting the
+                    // headings again above them is eight lines saying what
+                    // the next eighty already say.
+                    if index == 0 && !labels.is_empty() {
+                        continue;
+                    }
+                    for (column, cell) in row.cells.iter().take(columns).enumerate() {
                         if cell.trim().is_empty() || layout.nodes.len() >= MAX_LAYOUT_NODES {
                             continue;
                         }
+                        let labelled = stacked_cell(labels, index, column, cell);
+                        let cell = labelled.as_deref().unwrap_or(cell);
                         let lines = wrap_text_in(cell, width, size, prose);
                         let height = max(line, lines.len() as i32 * line);
                         layout.nodes.push(LayoutNode {
@@ -5965,6 +6310,7 @@ fn layout_node(
             handle,
             source,
             max_height_tenths_mm,
+            framed,
         } => {
             let ceiling = metrics.tenth_mm(i32::from(*max_height_tenths_mm));
             let (drawn_width, drawn_height) = fit_within(*source, width, ceiling);
@@ -5976,7 +6322,11 @@ fn layout_node(
                     width: drawn_width,
                     height: drawn_height,
                 },
-                kind: LayoutKind::Picture(*handle),
+                kind: if *framed {
+                    LayoutKind::FramedPicture(*handle)
+                } else {
+                    LayoutKind::Picture(*handle)
+                },
                 text_lines: Vec::new(),
             });
             y.saturating_add(drawn_height)
@@ -6103,7 +6453,7 @@ fn layout_node(
                 // stretched. A stretched face is worse than a smaller one.
                 let (mark, mark_width, mark_height) = if let Some(picture) = tile.picture {
                     let (width, height) = fit_within(picture.source, cell, body);
-                    (LayoutKind::Picture(picture.handle), width, height)
+                    (LayoutKind::FramedPicture(picture.handle), width, height)
                 } else {
                     let size = metrics.tenth_mm(110);
                     (LayoutKind::TileGlyph(tile.glyph), size, size)
@@ -6720,6 +7070,23 @@ impl FontSize {
         }
     }
 
+    /// The size a heading at `level` is set at, counting levels from one.
+    ///
+    /// The one place this is decided. Pagination measures a heading and the
+    /// renderer draws it, and when those two disagreed by a single step the
+    /// line a heading was measured as two and drawn as three pushed the last
+    /// line of the page over the page number.
+    #[must_use]
+    pub const fn for_heading_level(level: u8) -> Self {
+        if level <= 1 {
+            Self::Heading
+        } else {
+            // Level three is already small enough that going smaller again
+            // would barely separate it from the text under it.
+            Self::Title
+        }
+    }
+
     /// The legacy bitmap scale factor, used only by the built-in fallback.
     #[must_use]
     pub const fn scale(self) -> i32 {
@@ -6750,6 +7117,16 @@ impl FontSize {
     pub fn line_height_in(self, face: Face) -> i32 {
         with_typesetter(face, |typesetter| typesetter.line_height(self, face))
             .unwrap_or_else(|| self.fallback_line_height_in(face))
+    }
+
+    /// The em in pixels: the size the type is actually set at.
+    ///
+    /// What anything set beside the text rather than in it is scaled against.
+    #[must_use]
+    pub fn em_in(self, face: Face) -> i32 {
+        with_typesetter(face, |typesetter| typesetter.em(self, face))
+            .unwrap_or_else(|| self.fallback_line_height_in(face))
+            .max(1)
     }
 
     /// The built-in bitmap's line height, at the current type size.
@@ -6822,6 +7199,18 @@ pub trait Typesetter: Send + Sync {
     fn measure(&self, text: &str, size: FontSize, face: Face) -> (i32, i32);
     /// The baseline-to-baseline distance for a size.
     fn line_height(&self, size: FontSize, face: Face) -> i32;
+    /// The em in pixels for a size: the size the type is actually set at.
+    ///
+    /// Distinct from the line height, which is the em plus whatever the face
+    /// and the reader want between lines. Anything set alongside the text
+    /// rather than in it -- a typeset formula, most of all -- has to be scaled
+    /// against this or it comes out a fifth too large.
+    ///
+    /// The default is the line height, which is wrong but is the right shape:
+    /// a typesetter that cannot say has to say something.
+    fn em(&self, size: FontSize, face: Face) -> i32 {
+        self.line_height(size, face)
+    }
     /// Draws `text` with its top-left corner at `x`, `y`.
     ///
     /// Coverage runs from 0 for untouched to 255 for solid, so a renderer can
@@ -8061,6 +8450,32 @@ pub fn wrap_text_in(text: &str, max_width: i32, size: FontSize, face: Face) -> V
         .collect()
 }
 
+/// The same, for a paragraph with formulas set into it.
+///
+/// A page is counted before it is drawn, and until now it was counted from
+/// the words a formula was written as rather than the picture drawn over
+/// them. The two are different widths, so a paragraph wrapped one way and
+/// drawn the other came out a line longer than the page had room for, and
+/// that line was drawn over the page number at the foot of it.
+#[must_use]
+pub fn wrap_text_with_formulae(
+    text: &str,
+    max_width: i32,
+    size: FontSize,
+    face: Face,
+    formulae: &[InlineFormula],
+    line_height: i32,
+) -> Vec<String> {
+    let lines = wrap_ranges_with(text, max_width, size, face, formulae, line_height);
+    if lines.is_empty() {
+        return vec![String::new()];
+    }
+    lines
+        .into_iter()
+        .map(|line| text[line.0..line.1].to_owned())
+        .collect()
+}
+
 /// The same wrapping, as byte offsets into `text` rather than copies of it.
 ///
 /// What lets a run inside a paragraph be found on the page: a link is a range
@@ -8072,6 +8487,23 @@ pub fn wrap_text_in(text: &str, max_width: i32, size: FontSize, face: Face) -> V
 /// Empty for text that wraps to nothing, which [`wrap_text_in`] turns back into
 /// the single empty line every caller downstream expects.
 fn wrap_ranges(text: &str, max_width: i32, size: FontSize, face: Face) -> Vec<(usize, usize)> {
+    wrap_ranges_with(text, max_width, size, face, &[], 0)
+}
+
+/// The same, for a paragraph with formulas set into it.
+///
+/// A formula is drawn at a width of its own that has nothing to do with the
+/// width of the words standing in for it, so a line that would fit as a
+/// string may not fit as a line, and the other way about. Breaking on the
+/// drawn width is the only way the two agree.
+fn wrap_ranges_with(
+    text: &str,
+    max_width: i32,
+    size: FontSize,
+    face: Face,
+    formulae: &[InlineFormula],
+    line_height: i32,
+) -> Vec<(usize, usize)> {
     if text.is_empty() || max_width <= 0 {
         return Vec::new();
     }
@@ -8101,7 +8533,16 @@ fn wrap_ranges(text: &str, max_width: i32, size: FontSize, face: Face) -> Vec<(u
             };
             let candidate = text[start..visible_end].trim_end_matches(char::is_whitespace);
             let candidate_end = start + candidate.len();
-            if measure_text_in(candidate, size, face).0 <= max_width {
+            if measure_range_in(
+                text,
+                start,
+                candidate_end,
+                size,
+                face,
+                formulae,
+                line_height,
+            ) <= max_width
+            {
                 best = Some((end, candidate_end));
                 if opportunity == BreakOpportunity::Mandatory {
                     lines.push((start, candidate_end));
@@ -9416,7 +9857,7 @@ const fn is_tappable(kind: LayoutKind) -> bool {
 
 fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
     let size = match node.kind {
-        LayoutKind::Heading => FontSize::Heading,
+        LayoutKind::Heading(level) => FontSize::for_heading_level(level),
         LayoutKind::CellLabel
             if node
                 .text_lines
@@ -10212,12 +10653,12 @@ fn render_all_with_selected_font(
                 );
             }
 
-            LayoutKind::Heading => draw_lines(
+            LayoutKind::Heading(level) => draw_lines(
                 surface,
                 &node.text_lines,
                 node.rect.x,
                 node.rect.y,
-                FontSize::Heading,
+                FontSize::for_heading_level(level),
                 tone::INK,
                 clip,
             ),
@@ -10578,9 +11019,17 @@ fn render_all_with_selected_font(
             LayoutKind::TileGlyph(glyph) | LayoutKind::InlineGlyph(glyph) => {
                 draw_glyph_icon(surface, glyph, node.rect, clip);
             }
-            // Outlined, because a cover with pale edges on white paper has no
-            // boundary at all and reads as text floating in space.
+            // Bare, because a formula is part of a sentence and a rule round
+            // one would read as a box drawn in the middle of the words.
             LayoutKind::Picture(handle) => {
+                if let Some(pixels) = pictures.get(handle) {
+                    draw_picture(surface, node.rect, pixels, clip);
+                }
+            }
+            // Outlined, because a cover or a plate with pale edges on white
+            // paper has no boundary at all and reads as text floating in
+            // space.
+            LayoutKind::FramedPicture(handle) => {
                 if let Some(pixels) = pictures.get(handle) {
                     draw_picture(surface, node.rect, pixels, clip);
                 }
@@ -11800,6 +12249,95 @@ fn glyph(character: char) -> [u8; 7] {
 
 #[cfg(test)]
 mod tests {
+
+    /// A stacked value is written with the heading it sat under.
+    #[test]
+    fn a_stacked_value_keeps_the_heading_it_sat_under() {
+        let labels = vec!["BigToM".to_owned(), "Hi-ToM".to_owned()];
+        assert_eq!(
+            super::stacked_cell(&labels, 1, 0, "0.803").as_deref(),
+            Some("BigToM: 0.803"),
+            "a bare number says nothing about which column it came from"
+        );
+        assert_eq!(
+            super::stacked_cell(&labels, 0, 0, "BigToM"),
+            None,
+            "the heading row is read as written"
+        );
+        assert_eq!(
+            super::stacked_cell(&labels, 1, 9, "0.803"),
+            None,
+            "a column with no heading has nothing to say"
+        );
+    }
+
+    /// The row that names columns is words; the rows under it are numbers.
+    #[test]
+    fn a_row_of_numbers_is_not_mistaken_for_a_row_of_headings() {
+        let words = ["Scaffold builder", "BigToM", "Hi-ToM", "Avg."]
+            .map(str::to_owned)
+            .to_vec();
+        assert!(
+            super::row_names_the_columns(&words),
+            "a row of names names the columns"
+        );
+        let numbers = ["6", "0.803", "0.842", "+0.387"]
+            .map(str::to_owned)
+            .to_vec();
+        assert!(
+            !super::row_names_the_columns(&numbers),
+            "a table whose top row is already data has no headings to give"
+        );
+    }
+
+    /// A narrow column keeps the digits it asked for.
+    ///
+    /// The eight columns of a paper's results table each wanted less than a
+    /// sentence; squeezed in proportion they all fell under their own content
+    /// width and the table stacked. What a column asked for is the most it can
+    /// need, so no column is ever given less than that.
+    #[test]
+    fn a_narrow_column_is_never_squeezed_under_what_it_asked_for() {
+        let wants = [351, 23, 125, 121, 132, 104, 238, 121];
+        let (widths, stacked) = super::table_column_widths(&wants, 1000, 142);
+        assert!(!stacked, "every column fits in 1000: {widths:?}");
+        for (column, (width, want)) in widths.iter().zip(&wants).enumerate() {
+            assert!(
+                *width >= (*want).min(142),
+                "column {column} wanted {want} and was given {width}"
+            );
+        }
+    }
+
+    /// The room left over goes to the column that wanted it.
+    #[test]
+    fn the_spare_room_goes_to_the_widest_column() {
+        let (widths, stacked) = super::table_column_widths(&[400, 40, 40], 300, 100);
+        assert!(!stacked, "three columns fitting should not stack");
+        assert_eq!(
+            widths.iter().sum::<i32>(),
+            300,
+            "the room is all shared out"
+        );
+        assert!(
+            widths[0] > widths[1] && widths[0] > widths[2],
+            "the sentence should take the slack, not the numbers: {widths:?}"
+        );
+        assert_eq!(
+            (widths[1], widths[2]),
+            (40, 40),
+            "a column four characters wide needs no more than four characters"
+        );
+    }
+
+    /// A table stacks only when even the least widths do not fit.
+    #[test]
+    fn a_table_stacks_only_when_the_least_widths_do_not_fit() {
+        let (_, roomy) = super::table_column_widths(&[300, 300, 300], 330, 100);
+        assert!(!roomy, "three columns of 100 fit in 330");
+        let (_, cramped) = super::table_column_widths(&[300, 300, 300], 290, 100);
+        assert!(cramped, "three columns of 100 do not fit in 290");
+    }
     use super::*;
 
     #[test]
@@ -11825,6 +12363,7 @@ mod tests {
                     ..ParagraphPresentation::default()
                 },
                 selection: None,
+                formulae: Vec::new(),
             }],
         )
         .with_reading(true);
@@ -11859,6 +12398,7 @@ mod tests {
                     context: 19,
                     offset: 100,
                 }),
+                formulae: Vec::new(),
             }],
         )
         .with_reading(true)
@@ -12003,6 +12543,264 @@ mod tests {
             .any(|issue| matches!(issue.kind, LayoutIssueKind::TouchTargetTooSmall { .. })));
     }
 
+    /// A formula set into a sentence is drawn where its words were, at the
+    /// size it was handed over, and the words underneath it are not drawn
+    /// twice.
+    #[test]
+    fn a_formula_in_a_sentence_is_drawn_in_place_of_the_words_it_stands_for() {
+        let text = "the constant K_G is small.";
+        let start = text.find("K_G").expect("the formula's words");
+        let screen = Screen::new(
+            1,
+            vec![Node::RichText {
+                id: NodeId(1),
+                text: text.to_owned(),
+                spans: Vec::new(),
+                links: Vec::new(),
+                presentation: ParagraphPresentation::default(),
+                selection: None,
+                formulae: vec![InlineFormula {
+                    start,
+                    end: start + "K_G".len(),
+                    handle: PictureHandle(3),
+                    source: (60, 30),
+                }],
+            }],
+        );
+        let layout = screen.layout();
+        let picture = layout
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::Picture(PictureHandle(3))))
+            .expect("the formula should have been laid out");
+        assert_eq!((picture.rect.width, picture.rect.height), (60, 30));
+        // The words are still in the paragraph -- a search and a selection
+        // read them -- but nothing draws them, or they would show through.
+        let drawn: String = layout
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, LayoutKind::RichText(_) | LayoutKind::Text))
+            .flat_map(|node| node.text_lines.iter())
+            .cloned()
+            .collect();
+        assert!(!drawn.contains("K_G"), "the words were drawn too: {drawn}");
+        assert!(
+            drawn.contains("the constant"),
+            "the sentence was lost: {drawn}"
+        );
+        assert!(
+            drawn.contains("is small."),
+            "the sentence was lost: {drawn}"
+        );
+    }
+
+    /// A link that follows a formula on the same line is where the reader can
+    /// see it, not where the words the formula stands for used to end.
+    ///
+    /// A formula takes the width of its picture rather than the width of its
+    /// TeX, and a tap target measured against the written form is out of place
+    /// by the difference -- so a reader taps a citation and the page does
+    /// nothing, or follows the reference beside it.
+    #[test]
+    fn a_link_after_a_formula_is_where_the_formula_leaves_it() {
+        let text = "at K_G see the note.";
+        let start = text.find("K_G").expect("the formula's words");
+        let note = text.find("the note").expect("the link's words");
+        let link = TextLink {
+            action: ActionId(7),
+            start: note,
+            end: note + "the note".len(),
+        };
+        let target = |formulae: Vec<InlineFormula>| {
+            let screen = Screen::new(
+                1,
+                vec![Node::RichText {
+                    id: NodeId(1),
+                    text: text.to_owned(),
+                    spans: Vec::new(),
+                    links: vec![link],
+                    presentation: ParagraphPresentation::default(),
+                    selection: None,
+                    formulae,
+                }],
+            );
+            screen
+                .layout()
+                .nodes
+                .iter()
+                .find(|node| matches!(node.kind, LayoutKind::InlineLink(ActionId(7))))
+                .expect("the link should have been laid out")
+                .rect
+                .x
+        };
+
+        // Far wider than the three characters it is set in place of, so the
+        // words after it are pushed along and the mistake is visible.
+        let written = target(Vec::new());
+        let drawn = target(vec![InlineFormula {
+            start,
+            end: start + "K_G".len(),
+            handle: PictureHandle(3),
+            source: (240, 30),
+        }]);
+        assert!(
+            drawn > written,
+            "the formula did not move the words after it, so this proves nothing"
+        );
+
+        let screen = Screen::new(
+            1,
+            vec![Node::RichText {
+                id: NodeId(1),
+                text: text.to_owned(),
+                spans: Vec::new(),
+                links: vec![link],
+                presentation: ParagraphPresentation::default(),
+                selection: None,
+                formulae: vec![InlineFormula {
+                    start,
+                    end: start + "K_G".len(),
+                    handle: PictureHandle(3),
+                    source: (240, 30),
+                }],
+            }],
+        );
+        let layout = screen.layout();
+        let words = layout
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, LayoutKind::RichText(_)))
+            .find(|node| node.text_lines.iter().any(|line| line.contains("the note")))
+            .expect("the words after the formula should have been drawn");
+        let target = layout
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::InlineLink(ActionId(7))))
+            .expect("the link should have been laid out")
+            .rect;
+        assert!(
+            target.x >= words.rect.x,
+            "the link was left behind the words it covers: {target:?} against {:?}",
+            words.rect
+        );
+        assert!(
+            target.x < words.rect.x.saturating_add(words.rect.width),
+            "the link fell past the words it covers: {target:?} against {:?}",
+            words.rect
+        );
+    }
+
+    /// A formula whose offsets land inside a character lays the paragraph out
+    /// anyway instead of taking the application down.
+    ///
+    /// A paper is written in a great many characters that take more than one
+    /// byte, and every offset here indexes bytes. Panicking on a bad one does
+    /// not fail politely on a reader: the process dies, the panel goes back to
+    /// the stock software, and the sentence somebody was reading goes with it.
+    #[test]
+    fn a_formula_offset_inside_a_character_does_not_take_the_page_down() {
+        // Every one of these is two bytes, so every odd offset is inside a
+        // character and none of them are anywhere a formula should begin.
+        let text = "\u{3c0}\u{3c0}\u{3c0} and \u{3c0}\u{3c0}\u{3c0}";
+        let screen = Screen::new(
+            1,
+            vec![Node::RichText {
+                id: NodeId(1),
+                text: text.to_owned(),
+                spans: Vec::new(),
+                links: Vec::new(),
+                presentation: ParagraphPresentation::default(),
+                selection: None,
+                formulae: vec![InlineFormula {
+                    start: 1,
+                    end: 5,
+                    handle: PictureHandle(4),
+                    source: (40, 20),
+                }],
+            }],
+        );
+        let layout = screen.layout();
+        assert!(
+            !layout.nodes.is_empty(),
+            "the paragraph was dropped entirely"
+        );
+        let drawn: String = layout
+            .nodes
+            .iter()
+            .flat_map(|node| node.text_lines.iter())
+            .cloned()
+            .collect();
+        assert!(drawn.contains("and"), "the sentence was lost: {drawn}");
+    }
+
+    /// A formula takes the width of its picture rather than the width of the
+    /// words it stands for, and lines have to break on the width that is
+    /// actually drawn or the paragraph runs into the margin.
+    #[test]
+    fn a_wide_formula_pushes_the_line_it_will_not_fit_on() {
+        let text = "aaa bbb X ccc ddd";
+        let start = text.find('X').expect("the formula's words");
+        let paragraph = |source| {
+            Screen::new(
+                1,
+                vec![Node::RichText {
+                    id: NodeId(1),
+                    text: text.to_owned(),
+                    spans: Vec::new(),
+                    links: Vec::new(),
+                    presentation: ParagraphPresentation::default(),
+                    selection: None,
+                    formulae: vec![InlineFormula {
+                        start,
+                        end: start + 1,
+                        handle: PictureHandle(3),
+                        source,
+                    }],
+                }],
+            )
+            .layout()
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, LayoutKind::RichText(_) | LayoutKind::Text))
+            .map(|node| node.rect.y)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+        };
+        assert!(
+            paragraph((4_000, 30)) > paragraph((20, 30)),
+            "a formula wider than the page did not break the line"
+        );
+    }
+
+    /// An illustration wants an edge and a formula does not, and the two
+    /// have to be distinguishable after layout, because that is the only
+    /// place the renderer looks.
+    #[test]
+    fn a_picture_asked_for_without_a_frame_lays_out_without_one() {
+        let picture = |framed| {
+            Screen::new(
+                1,
+                vec![Node::Picture {
+                    id: NodeId(1),
+                    handle: PictureHandle(7),
+                    source: (10, 10),
+                    max_height_tenths_mm: 100,
+                    framed,
+                }],
+            )
+            .layout()
+            .nodes
+            .into_iter()
+            .find_map(|node| match node.kind {
+                LayoutKind::Picture(_) | LayoutKind::FramedPicture(_) => Some(node.kind),
+                _ => None,
+            })
+            .expect("the picture should have been laid out")
+        };
+        assert!(matches!(picture(true), LayoutKind::FramedPicture(_)));
+        assert!(matches!(picture(false), LayoutKind::Picture(_)));
+    }
+
     #[test]
     fn validation_can_distinguish_a_missing_picture_from_layout() {
         let screen = Screen::new(
@@ -12012,6 +12810,7 @@ mod tests {
                 handle: PictureHandle(7),
                 source: (10, 10),
                 max_height_tenths_mm: 100,
+                framed: true,
             }],
         );
         let diagnostics = screen.diagnostics_with_pictures(
@@ -12225,6 +13024,7 @@ mod tests {
             vec![Node::Heading {
                 id: NodeId(1),
                 text: "Hi".into(),
+                level: 1,
             }],
         );
         let mut surface = Surface::new(128, 128);
@@ -12285,6 +13085,7 @@ mod tests {
                 children: vec![Node::Heading {
                     id: NodeId(2),
                     text: "Card".into(),
+                    level: 1,
                 }],
             }],
         );
@@ -13519,6 +14320,7 @@ mod loading_tests {
             Node::Heading {
                 id: NodeId(1),
                 text: "Heading".into(),
+                level: 1,
             },
             Node::Text {
                 id: NodeId(2),
@@ -14800,6 +15602,33 @@ mod prose_tests {
         );
     }
 
+    /// A cover on a shelf keeps the pale edge that tells it from the page.
+    ///
+    /// The outline lives on the layout's kind rather than on the drawing, so
+    /// it is lost by describing a picture as the unframed sort. A book cover
+    /// is very often white at its margins, and without the edge it bleeds into
+    /// the shelf behind it.
+    #[test]
+    fn a_cover_on_a_shelf_keeps_its_edge() {
+        let screen = Screen::new(
+            1,
+            vec![Node::TileGrid {
+                id: NodeId(1),
+                tiles: vec![Tile::new(ActionId(8), "Arrived", Glyph::Book)
+                    .with_picture(TilePicture::new(PictureHandle(3), 190, 300))],
+                shape: TileShape::Portrait,
+            }],
+        )
+        .layout();
+        assert!(
+            screen
+                .nodes
+                .iter()
+                .any(|node| node.kind == LayoutKind::FramedPicture(PictureHandle(3))),
+            "a cover was drawn without the edge that separates it from the shelf"
+        );
+    }
+
     #[test]
     fn a_tile_without_its_picture_yet_still_shows_its_glyph() {
         // Covers arrive one network request at a time, so most of a shelf's
@@ -14831,7 +15660,12 @@ mod prose_tests {
             screen
                 .nodes
                 .iter()
-                .filter(|node| matches!(node.kind, LayoutKind::Picture(_)))
+                .filter(|node| {
+                    matches!(
+                        node.kind,
+                        LayoutKind::Picture(_) | LayoutKind::FramedPicture(_)
+                    )
+                })
                 .count(),
             1
         );
@@ -17039,10 +17873,12 @@ mod prose_tests {
                             Node::Heading {
                                 id: NodeId(2),
                                 text: "Tall".to_owned(),
+                                level: 1,
                             },
                             Node::Heading {
                                 id: NodeId(4),
                                 text: "Still tall".to_owned(),
+                                level: 1,
                             },
                         ]),
                         BandSlot::fill(vec![Node::Secondary {
@@ -17123,6 +17959,7 @@ mod prose_tests {
                 Node::Heading {
                     id: NodeId(1),
                     text: "Moby Dick".to_owned(),
+                    level: 1,
                 },
                 Node::Section {
                     id: NodeId(2),
@@ -17826,6 +18663,7 @@ mod press_feedback_tests {
                 Node::Heading {
                     id: NodeId(1),
                     text: "Shelf".to_owned(),
+                    level: 1,
                 },
                 Node::Secondary {
                     id: NodeId(2),
@@ -17865,6 +18703,7 @@ mod press_feedback_tests {
                 Node::Heading {
                     id: NodeId(1),
                     text: "Shelf".to_owned(),
+                    level: 1,
                 },
                 Node::Secondary {
                     id: NodeId(2),
@@ -17968,6 +18807,7 @@ mod press_feedback_tests {
                 Node::Heading {
                     id: NodeId(1),
                     text: "Moby Dick".into(),
+                    level: 1,
                 },
                 Node::Activity {
                     id: NodeId(2),

@@ -381,25 +381,36 @@ fn push_break(out: &mut String, ceiling: usize) {
 /// than spilling its body onto the panel.
 #[must_use]
 pub fn skip_element<'a>(after: &'a str, name: &str) -> &'a str {
-    // Lower-casing ASCII changes no byte's length, so offsets found in the
-    // copy are offsets into `after`.
-    let lower = after.to_ascii_lowercase();
-    let close = format!("</{name}");
+    // Compared a character at a time rather than against a lower-cased copy.
+    // The copy was of everything still to be read, and this is called once per
+    // element that is skipped, so a paper carrying a thousand formulae copied
+    // and lower-cased the best part of a gigabyte to find a thousand close
+    // tags. That is thirty milliseconds on a development machine and eight
+    // seconds on a reader, which is the difference between a paper that opens
+    // and one that appears to have hung.
+    let haystack = after.as_bytes();
+    let close = name.as_bytes();
     let mut from = 0;
-    while let Some(offset) = lower.get(from..).and_then(|rest| rest.find(&close)) {
+    while let Some(offset) = haystack[from..].iter().position(|byte| *byte == b'<') {
         let start = from + offset;
         let tail = &after[start..];
         // `</scriptx>` does not close a `<script>`. Only a name that ends
         // where the tag ends, or where its attributes would begin, counts.
-        let ends_the_name = tail[close.len()..]
-            .starts_with(|character: char| character == '>' || character.is_whitespace());
-        if ends_the_name {
+        // Past the `<` and the `/` that must follow it.
+        let named = tail
+            .as_bytes()
+            .get(2..close.len() + 2)
+            .is_some_and(|found| tail.as_bytes()[1] == b'/' && found.eq_ignore_ascii_case(close));
+        if named
+            && tail[close.len() + 2..]
+                .starts_with(|character: char| character == '>' || character.is_whitespace())
+        {
             if let Some(end) = tail.find('>') {
                 return &tail[end + 1..];
             }
             return "";
         }
-        from = start + close.len();
+        from = start + 1;
     }
     ""
 }
@@ -484,6 +495,67 @@ mod tests {
         let text = super::to_text("<p>Before.<script>x</scriptx> still script</script><p>After.");
         assert!(!text.contains("still script"), "{text:?}");
         assert!(text.contains("After."), "{text:?}");
+    }
+
+    #[test]
+    fn an_opening_tag_inside_a_script_does_not_close_it() {
+        // Only `</script>` ends a script; `< script >` is a less-than sign
+        // followed by a word. Pages that build tags from strings are where
+        // this shows up, and it is why they are written `'<' + 'script>'` in
+        // the first place. A scanner that accepts any character between the
+        // `<` and the name stops here, takes the very next `>` for the end of
+        // the close tag, and spills the rest of the script onto the panel.
+        let text = super::to_text("<p>Before.<script>w('< script > tail')</script><p>After.");
+        assert!(!text.contains("tail"), "the script leaked: {text:?}");
+        assert!(text.contains("After."), "{text:?}");
+    }
+
+    #[test]
+    fn a_close_tag_shouted_in_capitals_still_closes_its_element() {
+        let text = super::to_text("<p>Before.<SCRIPT>x = 1;</SCRIPT><p>After.");
+        assert!(
+            !text.contains("x = 1"),
+            "the script was read as prose: {text:?}"
+        );
+        assert!(text.contains("After."), "{text:?}");
+    }
+
+    #[test]
+    fn skipping_an_element_costs_no_more_when_the_document_behind_it_is_long() {
+        // This is a timing test because the fault it guards against was one.
+        // Finding a close tag used to mean lower-casing a copy of everything
+        // still unread, so the price of skipping one element was the length of
+        // the whole rest of the document. A paper of eleven hundred formulae
+        // paid it eleven hundred times: thirty milliseconds here, and eight
+        // seconds on a reader, where a paper that takes eight seconds to open
+        // is a paper that has hung.
+        //
+        // The two documents below carry the same elements to skip and differ
+        // only in what follows them, so a scanner that reads forward once is
+        // barely troubled by the difference and one that re-reads the tail is
+        // brought to its knees by it.
+        const SKIPPED: usize = 4_000;
+        let scripts = "<script>x</script>".repeat(SKIPPED);
+        let short = super::to_text(&format!("{scripts}<p>After."));
+        assert!(short.contains("After."), "{short:?}");
+
+        let long = format!("{scripts}<p>{}", "word ".repeat(400_000));
+        let started = std::time::Instant::now();
+        let text = super::to_text(&long);
+        let took = started.elapsed();
+        assert!(
+            text.starts_with("word"),
+            "{:?}",
+            &text[..20.min(text.len())]
+        );
+        // Generous by two orders of magnitude in both directions: the forward
+        // scan does this in a tenth of a second and the copying it replaced
+        // took thirteen and a half. Nothing in between is a result worth
+        // reporting.
+        assert!(
+            took < std::time::Duration::from_secs(2),
+            "skipping {SKIPPED} elements ahead of a long document took {took:?}"
+        );
     }
 
     #[test]

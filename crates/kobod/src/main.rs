@@ -693,6 +693,7 @@ fn log_app(level: LogLevel, message: &str) {
     // believed are the times it took the reader down with it. Standard output
     // does not survive that, so anything an application says goes to the black
     // box as well; it is a no-op unless the trace is on.
+    #[cfg(feature = "device-write")]
     crate::blackbox::trace(&format!("app {level:?}: {message}"));
 }
 

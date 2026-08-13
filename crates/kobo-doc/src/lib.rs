@@ -204,6 +204,14 @@ pub enum Block {
         /// the image will not decode, and on a panel that cannot show colour
         /// a caption is often the more useful of the two.
         alt: String,
+        /// Whether this is an illustration rather than a piece of the text.
+        ///
+        /// An illustration is a thing set into the page, and a reader gets a
+        /// rule around it so that a pale sky is not mistaken for the margin.
+        /// A formula set on its own line is not an illustration of the text,
+        /// it *is* the text, drawn rather than written, and a box around it
+        /// would read as oddly as a box around a sentence.
+        illustration: bool,
     },
     /// One row of a table.
     ///
@@ -246,11 +254,91 @@ pub struct InlineStyle {
     pub subscript: bool,
 }
 
+/// What a typeset formula's picture is named in [`Document::images`].
+///
+/// A formula is drawn at a fixed [`FORMULA_PICTURE_EM`] pixels to the em so
+/// that it has detail to spare, and set on the page at the size of the text
+/// it belongs to. An application has to be able to tell one apart from an
+/// illustration to size it that way, and the name is how.
+pub const FORMULA_PICTURE_PREFIX: &str = "formula:";
+
+/// The pixels to the em a formula's picture was drawn at.
+pub const FORMULA_PICTURE_EM: u32 = 48;
+
+/// The most formulae one document will be typeset pictures for.
+///
+/// A survey paper can carry a thousand pieces of mathematics, and a reader
+/// can only ever reserve room for a few dozen pictures at a time, so the
+/// nine hundred and fiftieth of them was never going to be shown to anybody.
+/// Drawing all one thousand and sixteen in one such paper took fifteen and a
+/// half seconds on a Clara BW — five to typeset them and nine more to turn
+/// them into something the panel could draw — and almost every picture that
+/// bought was thrown away unlooked at.
+///
+/// Past this many, a formula is read as the line of text it has always fallen
+/// back to. That is a worse-looking page than a drawn one, at the far end of
+/// a paper nobody has scrolled to, and it is the difference between a paper
+/// that opens and a paper that does not.
+pub const MAX_FORMULA_PICTURES: usize = 64;
+
+/// How long one document may spend drawing formulae.
+///
+/// The count above bounds how many pictures are worth keeping; it says
+/// nothing about how long making them takes, and a reader with a slower
+/// machine than the one this was written on should not be made to wait for a
+/// count that was chosen elsewhere.
+///
+/// Measured on a Clara BW, reading a 1.4 MB paper carrying 1016 formulae:
+/// the markup alone parses in about 290 ms, typesetting a formula costs
+/// 4.7 ms, and turning its picture into something the panel can draw costs
+/// 9.4 ms more. Opening that paper with every formula drawn takes fifteen
+/// and a half seconds. With sixty-four it takes two and a half, against nine
+/// and a half before any of this work — and sixty-four is already more
+/// mathematics than a page of it can show.
+///
+/// So the budget is set above what the count costs on this device — it is
+/// the count that should decide on hardware this work was measured on, and
+/// the clock that should decide on anything slower. A machine that cannot
+/// afford sixty-four draws what it can and reads the rest as the text they
+/// have always fallen back to, without having to be told which machine it is.
+pub const FORMULA_DRAWING_BUDGET: core::time::Duration = core::time::Duration::from_millis(500);
+
+/// The same, for the renderer, which measures type in fractions of a pixel.
+#[cfg(feature = "raster")]
+pub(crate) const FORMULA_PICTURE_EM_F32: f32 = 48.0;
+
+/// How big a formula's picture should be drawn, for a given reading em.
+///
+/// The picture was typeset at [`FORMULA_PICTURE_EM`] pixels to the em, so it
+/// is already in the units type is measured in: setting it beside text of a
+/// given em is a matter of scaling by the ratio of the two. The em rather
+/// than the line height, because the line height is the em plus the space a
+/// reader wants between lines, and a formula scaled to that comes out a fifth
+/// larger than the letters either side of it.
+#[must_use]
+pub fn formula_size(source: (u32, u32), em: u32) -> (u32, u32) {
+    let scaled = |side: u32| {
+        (side.saturating_mul(em.max(1)))
+            .div_ceil(FORMULA_PICTURE_EM)
+            .max(1)
+    };
+    (scaled(source.0), scaled(source.1))
+}
+
 /// One styled run inside a block of prose.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct InlineSpan {
     pub text: String,
     pub style: InlineStyle,
+    /// The typeset picture to draw over this run, keyed into
+    /// [`Document::images`], when the run is a formula.
+    ///
+    /// Mathematics does not survive being written out in a line: a fraction
+    /// stacks and an index sits above its letter, and neither is a sequence
+    /// of characters. So `text` holds the best linear reading of the formula
+    /// -- which is what a search matches and what a reader without the
+    /// picture gets -- and this says what to draw over it instead.
+    pub formula: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -859,6 +947,7 @@ fn bound_rich_spans(spans: &mut Vec<InlineSpan>, canonical: &str) {
         *spans = vec![InlineSpan {
             text: canonical.to_owned(),
             style: InlineStyle::default(),
+            formula: None,
         }];
         return;
     }
@@ -878,6 +967,7 @@ fn bound_rich_spans(spans: &mut Vec<InlineSpan>, canonical: &str) {
         spans.push(InlineSpan {
             text: tail,
             style: InlineStyle::default(),
+            formula: None,
         });
     }
 }

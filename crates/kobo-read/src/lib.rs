@@ -184,6 +184,13 @@ pub struct Piece {
     pub text: String,
     kind: Kind,
     spans: Vec<kobo_ui::RichTextSpan>,
+    /// The runs of this piece that are typeset formulas, as the name of the
+    /// picture to draw and the half-open range of `text` it is drawn over.
+    ///
+    /// The words stay in `text`: they are the written form of the formula,
+    /// and they are what a search matches, what a selection copies and what
+    /// the reader sees if the picture never arrives.
+    formulae: Vec<(usize, usize, String)>,
     presentation: kobo_ui::ParagraphPresentation,
     source_offset: Option<u32>,
     /// The cells of a table row, and what each column of its table wants to
@@ -217,10 +224,7 @@ enum Kind {
 impl Kind {
     const fn size(self) -> FontSize {
         match self {
-            Kind::Heading(1) => FontSize::Heading,
-            // Level three is already small enough that the title size would
-            // barely distinguish it from the text under it.
-            Kind::Heading(_) => FontSize::Title,
+            Kind::Heading(level) => FontSize::for_heading_level(level),
             Kind::Caption => FontSize::Caption,
             _ => FontSize::Body,
         }
@@ -1445,7 +1449,7 @@ impl Reader {
                 continue;
             }
             screen = match piece.kind {
-                Kind::Heading(_) => screen.heading(piece.text.clone()),
+                Kind::Heading(level) => screen.heading_at_level(level, piece.text.clone()),
                 Kind::Marked | Kind::Quote | Kind::Item => {
                     screen.quote(HIGHLIGHT_DEPTH, piece.text.clone())
                 }
@@ -1458,36 +1462,15 @@ impl Reader {
                     // what the book said the picture shows is better than a
                     // gap the reader cannot account for.
                     match self.picture_for(piece.block) {
-                        Some(drawn) => screen.picture(drawn, MAX_PICTURE_MM),
+                        Some((drawn, true)) => screen.picture(drawn, MAX_PICTURE_MM),
+                        Some((drawn, false)) => screen.unframed_picture(drawn, MAX_PICTURE_MM),
                         None if piece.text.is_empty() => screen,
                         None => screen.secondary(piece.text.clone()),
                     }
                 }
                 Kind::Rule => screen.divider(),
                 Kind::Break => screen.spacer(kobo_ui::Space::Small),
-                Kind::Body | Kind::Preformatted => {
-                    if let Some(offset) = piece.source_offset {
-                        screen.selectable_rich_text_linking(
-                            piece.text.clone(),
-                            piece.spans.clone(),
-                            piece.presentation,
-                            u64::from(piece.block),
-                            offset,
-                            self.links_in(piece),
-                        )
-                    } else if piece.spans.is_empty()
-                        && piece.presentation == kobo_ui::ParagraphPresentation::default()
-                    {
-                        screen.text_linking(piece.text.clone(), self.links_in(piece))
-                    } else {
-                        screen.rich_text_linking(
-                            piece.text.clone(),
-                            piece.spans.clone(),
-                            piece.presentation,
-                            self.links_in(piece),
-                        )
-                    }
-                }
+                Kind::Body | Kind::Preformatted => self.prose(screen, piece),
                 Kind::Row { .. } => screen,
             };
         }
@@ -2050,6 +2033,18 @@ impl Reader {
                 }
             }
         }
+        // A formula standing inside a sentence is a picture the book refers
+        // to just as much as a plate is; it is simply referred to from inside
+        // a run of prose rather than from a block of its own.
+        for rich in self.document.rich.values() {
+            for span in &rich.spans {
+                if let Some(name) = &span.formula {
+                    if !wanted.contains(&name.as_str()) {
+                        wanted.push(name.as_str());
+                    }
+                }
+            }
+        }
         wanted
     }
 
@@ -2073,6 +2068,11 @@ impl Reader {
                     wanted.push(name.as_str());
                 }
             }
+            for (_, _, name) in &piece.formulae {
+                if !wanted.contains(&name.as_str()) {
+                    wanted.push(name.as_str());
+                }
+            }
         }
         wanted
     }
@@ -2088,13 +2088,74 @@ impl Reader {
         self.pictures.get(name).copied()
     }
 
-    /// The picture to draw for a block, when one has been handed over.
-    fn picture_for(&self, block: Locator) -> Option<kobo_ui::TilePicture> {
+    /// One paragraph of the book, with whatever is set into it.
+    fn prose(&self, screen: kobo_sdk::ScreenBuilder, piece: &Piece) -> kobo_sdk::ScreenBuilder {
+        let formulae = self.formulae_in(piece);
+        if let Some(offset) = piece.source_offset {
+            screen
+                .selectable_rich_text_linking(
+                    piece.text.clone(),
+                    piece.spans.clone(),
+                    piece.presentation,
+                    u64::from(piece.block),
+                    offset,
+                    self.links_in(piece),
+                )
+                .with_formulae(formulae)
+        } else if piece.spans.is_empty()
+            && formulae.is_empty()
+            && piece.presentation == kobo_ui::ParagraphPresentation::default()
+        {
+            screen.text_linking(piece.text.clone(), self.links_in(piece))
+        } else {
+            screen
+                .rich_text_linking(
+                    piece.text.clone(),
+                    piece.spans.clone(),
+                    piece.presentation,
+                    self.links_in(piece),
+                )
+                .with_formulae(formulae)
+        }
+    }
+
+    /// The typeset formulas of a piece, for those whose pictures have landed.
+    ///
+    /// A formula whose picture has not been handed over is simply left out:
+    /// the written form of it is already in the piece's text, so the sentence
+    /// reads either way and the difference is typesetting rather than
+    /// meaning.
+    fn formulae_in(&self, piece: &Piece) -> Vec<kobo_ui::InlineFormula> {
+        piece
+            .formulae
+            .iter()
+            .take(kobo_ui::MAX_INLINE_FORMULAE)
+            .filter_map(|(start, end, name)| {
+                let drawn = self.pictures.get(name.as_str())?;
+                Some(kobo_ui::InlineFormula {
+                    start: *start,
+                    end: *end,
+                    handle: drawn.handle,
+                    source: drawn.source,
+                })
+            })
+            .collect()
+    }
+
+    /// The picture to draw for a block, when one has been handed over, and
+    /// whether it is an illustration rather than a drawn piece of the text.
+    fn picture_for(&self, block: Locator) -> Option<(kobo_ui::TilePicture, bool)> {
         let at = usize::try_from(block).ok()?;
-        let Block::Picture { name, .. } = self.document.blocks.get(at)? else {
+        let Block::Picture {
+            name, illustration, ..
+        } = self.document.blocks.get(at)?
+        else {
             return None;
         };
-        self.pictures.get(name).copied()
+        self.pictures
+            .get(name)
+            .copied()
+            .map(|drawn| (drawn, *illustration))
     }
 }
 
@@ -2489,23 +2550,36 @@ fn column_widths(columns: &[u16], metrics: &DisplayMetrics, area: ProseArea) -> 
         .iter()
         .map(|want| i32::from(*want))
         .collect();
-    let total: i32 = wants.iter().copied().fold(0, i32::saturating_add);
-    let widths: Vec<i32> = if total <= usable {
-        wants
-    } else if total > 0 {
-        wants
-            .iter()
-            .map(|want| want.saturating_mul(usable) / total)
-            .collect()
-    } else {
-        vec![usable / i32::try_from(count).unwrap_or(1); count]
-    };
-    let stacked = widths.iter().any(|width| *width < minimum);
-    (widths, stacked)
+    kobo_ui::table_column_widths(&wants, usable, minimum)
+}
+
+/// One row of a table, ready to be put on a page.
+fn row_piece(block: usize, kind: Kind, cells: &[String], columns: &[u16]) -> Piece {
+    Piece {
+        block: Locator::try_from(block).unwrap_or(Locator::MAX),
+        text: String::new(),
+        kind,
+        spans: Vec::new(),
+        formulae: Vec::new(),
+        presentation: kobo_ui::ParagraphPresentation::default(),
+        source_offset: None,
+        row: Some((cells.to_vec(), columns.to_vec())),
+    }
 }
 
 /// How tall a row will be drawn, so a page can be packed around it.
-fn row_height(cells: &[String], columns: &[u16], metrics: &DisplayMetrics, area: ProseArea) -> i32 {
+///
+/// `labels` is the row that names the table's columns and `index` where this
+/// row sits under it, because a stacked cell is drawn with its heading
+/// written beside it and a label nobody measured is a line nobody counted.
+fn row_height(
+    cells: &[String],
+    columns: &[u16],
+    labels: &[String],
+    index: usize,
+    metrics: &DisplayMetrics,
+    area: ProseArea,
+) -> i32 {
     let line = FontSize::Body.line_height_in(area.face).max(1);
     let (widths, stacked) = column_widths(columns, metrics, area);
     if widths.is_empty() {
@@ -2516,10 +2590,12 @@ fn row_height(cells: &[String], columns: &[u16], metrics: &DisplayMetrics, area:
     // together rather than as tall as the tallest of them.
     if stacked {
         let mut height = metrics.space(kobo_ui::Space::Small);
-        for cell in cells.iter().take(widths.len()) {
+        for (column, cell) in cells.iter().take(widths.len()).enumerate() {
             if cell.trim().is_empty() {
                 continue;
             }
+            let labelled = kobo_ui::stacked_cell(labels, index, column, cell);
+            let cell = labelled.as_deref().unwrap_or(cell);
             let lines = wrap_text_in(cell, area.width.max(1), FontSize::Body, area.face);
             height = height.saturating_add(lines_high(lines.len(), line));
         }
@@ -2565,6 +2641,12 @@ fn paginate(
     // measured over all of its rows at once. Held across the loop so that a
     // table taller than a page keeps its columns on the page it spills onto.
     let mut columns: Vec<u16> = Vec::new();
+    // The row that names a table's columns, kept for as long as the table
+    // runs so that it can be repeated at the top of every page the table
+    // spills onto -- a column of figures under no heading at all is the one
+    // thing a table cannot survive losing.
+    let mut head: Option<(usize, Vec<String>)> = None;
+    let mut row_index = 0_usize;
 
     for (index, block) in document.blocks.iter().enumerate() {
         let rich = document.rich.get(&index);
@@ -2589,13 +2671,32 @@ fn paginate(
             force_page_break(&mut pages, &mut page, &mut used);
         }
         let size = kind.size();
-        let natural_height = size.line_height_in(area.face);
+        // A heading is drawn by the toolkit in the interface face, whatever
+        // face the book asked for, and at the size its level is set at, so
+        // that is what it has to be measured at here. Measuring it as the
+        // book's own type set a two-line heading that was drawn as three,
+        // and the line that made was drawn over the page number.
+        let heading = matches!(kind, Kind::Heading(_));
+        let wrap_size = if let Kind::Heading(level) = kind {
+            kobo_ui::FontSize::for_heading_level(level)
+        } else {
+            size
+        };
+        let wrap_face = if heading {
+            kobo_ui::Face::default()
+        } else {
+            area.face
+        };
+        let natural_height = wrap_size.line_height_in(wrap_face);
         // A publisher face reports its own metrics, and a structurally valid
         // font whose ascent, descent and line gap are all zero would make this
         // a divisor of zero further down. A book must not be able to choose
         // the panic, so a line is at least one pixel tall.
         let natural_height = natural_height.max(1);
+        // The toolkit sets a heading's lines solid; only prose is given the
+        // book's line spacing, so only prose may be charged for it.
         let height = rich
+            .filter(|_| !heading)
             .map_or(natural_height, |rich| {
                 natural_height
                     .saturating_mul(i32::from(rich.style.line_height_percent.clamp(80, 250)))
@@ -2637,6 +2738,7 @@ fn paginate(
                 text: String::new(),
                 kind,
                 spans: Vec::new(),
+                formulae: Vec::new(),
                 presentation: kobo_ui::ParagraphPresentation::default(),
                 source_offset: None,
                 row: None,
@@ -2650,38 +2752,60 @@ fn paginate(
         if let Block::Row { cells, .. } = block {
             if columns.is_empty() {
                 columns = table_columns(&document.blocks, index_of(index), area);
+                head =
+                    kobo_ui::row_names_the_columns(cells).then(|| (index_of(index), cells.clone()));
+                row_index = 0;
             }
-            let height = row_height(cells, &columns, metrics, area);
+            let labels = head.as_ref().map_or(&[][..], |(_, cells)| cells.as_slice());
+            let stacked = column_widths(&columns, metrics, area).1;
+            // Stacked, the heading row is not drawn at all: its headings are
+            // written beside the values instead, so it takes no room.
+            let height = if stacked && row_index == 0 && !labels.is_empty() {
+                0
+            } else {
+                row_height(cells, &columns, labels, row_index, metrics, area)
+            };
             if !page.is_empty() && used + gap + height > area.height {
                 pages.push(std::mem::take(&mut page));
                 used = 0;
+                // The heading row goes at the top of the continuation, drawn
+                // and charged for exactly as the layout will draw it.
+                if let Some((at, cells)) = head.clone().filter(|(at, _)| *at != index_of(index)) {
+                    if !stacked {
+                        used += row_height(&cells, &columns, &[], 0, metrics, area);
+                    }
+                    page.push(row_piece(at, Kind::Row { header: true }, &cells, &columns));
+                }
             }
             used += if page.is_empty() {
                 height
             } else {
                 gap + height
             };
-            page.push(Piece {
-                block: index,
-                text: String::new(),
-                kind,
-                spans: Vec::new(),
-                presentation: kobo_ui::ParagraphPresentation::default(),
-                source_offset: None,
-                row: Some((cells.clone(), columns.clone())),
-            });
+            // Marked as the heading it is, whatever the markup called it:
+            // LaTeXML writes every cell as data, and the layout has to know
+            // which row names the others before it can say so beside them.
+            let kind = if row_index == 0 && head.is_some() {
+                Kind::Row { header: true }
+            } else {
+                kind
+            };
+            page.push(row_piece(index_of(index), kind, cells, &columns));
+            row_index += 1;
             continue;
         }
         // Anything that is not a row ends the table before it, so the next
         // one is measured afresh.
         columns.clear();
+        head = None;
+        row_index = 0;
 
         // A picture is placed whole or moved to the next page: there is no
         // half of one to leave behind, which is what the line-by-line packing
         // below does for prose. A picture nobody has handed over yet falls
         // through to that packing with its description standing in for it.
         let described;
-        let text = if let Block::Picture { name, alt } = block {
+        let text = if let Block::Picture { name, alt, .. } = block {
             if let Some(drawn) = pictures.get(name.as_str()) {
                 place_picture(
                     *drawn,
@@ -2690,6 +2814,7 @@ fn paginate(
                         text: alt.clone(),
                         kind,
                         spans: Vec::new(),
+                        formulae: Vec::new(),
                         presentation: kobo_ui::ParagraphPresentation::default(),
                         source_offset: None,
                         row: None,
@@ -2714,7 +2839,20 @@ fn paginate(
             let Some(text) = block.text() else { continue };
             text
         };
-        let lines = wrap_text_in(text, width, size, area.face);
+        // Wrapped against the pictures rather than the words they stand for
+        // when both are known, because a page counted one way and drawn the
+        // other is a page with a line too many on it.
+        let lines = match rich_layout.map(|rich| block_formulae(rich, pictures)) {
+            Some(formulae) if !formulae.is_empty() => kobo_ui::wrap_text_with_formulae(
+                text,
+                width,
+                size,
+                area.face,
+                &formulae,
+                natural_height,
+            ),
+            _ => wrap_text_in(text, width, wrap_size, wrap_face),
+        };
         if lines.is_empty() {
             continue;
         }
@@ -2779,7 +2917,7 @@ fn paginate(
                     .max(1);
                     let end = (placed + forced).min(lines.len());
                     let text = lines[placed..end].join(" ");
-                    let (spans, presentation) =
+                    let (spans, formulae, presentation) =
                         piece_presentation(rich, text.as_str(), &mut source_at);
                     let presentation =
                         fragment_presentation(presentation, placed == 0, end == lines.len());
@@ -2788,6 +2926,7 @@ fn paginate(
                         text,
                         kind,
                         spans,
+                        formulae,
                         presentation,
                         source_offset: None,
                         row: None,
@@ -2805,7 +2944,8 @@ fn paginate(
                 used += gap;
             }
             let text = lines[placed..placed + take].join(" ");
-            let (spans, presentation) = piece_presentation(rich, text.as_str(), &mut source_at);
+            let (spans, formulae, presentation) =
+                piece_presentation(rich, text.as_str(), &mut source_at);
             let presentation =
                 fragment_presentation(presentation, placed == 0, placed + take == lines.len());
             used += i32::try_from(take)
@@ -2817,6 +2957,7 @@ fn paginate(
                 text,
                 kind,
                 spans,
+                formulae,
                 presentation,
                 source_offset: None,
                 row: None,
@@ -2851,25 +2992,36 @@ fn kind_of(block: &Block, marked: bool) -> Kind {
     }
 }
 
+type PiecePresentation = (
+    Vec<kobo_ui::RichTextSpan>,
+    Vec<(usize, usize, String)>,
+    kobo_ui::ParagraphPresentation,
+);
+
 fn piece_presentation(
     rich: Option<&kobo_doc::RichBlock>,
     piece: &str,
     source_at: &mut usize,
-) -> (Vec<kobo_ui::RichTextSpan>, kobo_ui::ParagraphPresentation) {
+) -> PiecePresentation {
     let Some(rich) = rich else {
-        return (Vec::new(), kobo_ui::ParagraphPresentation::default());
+        return (
+            Vec::new(),
+            Vec::new(),
+            kobo_ui::ParagraphPresentation::default(),
+        );
     };
     let whole: String = rich.spans.iter().map(|span| span.text.as_str()).collect();
     let Some(relative) = whole.get(*source_at..).and_then(|rest| rest.find(piece)) else {
         // Retire the block rather than leave the cursor behind: a later piece
         // that matched earlier text would be given another piece's emphasis.
         *source_at = whole.len();
-        return (Vec::new(), paragraph_presentation(&rich.style));
+        return (Vec::new(), Vec::new(), paragraph_presentation(&rich.style));
     };
     let from = *source_at + relative;
     let to = from + piece.len();
     *source_at = to;
     let mut spans = Vec::new();
+    let mut formulae = Vec::new();
     let mut cursor = 0usize;
     for span in &rich.spans {
         let span_from = cursor;
@@ -2879,6 +3031,21 @@ fn piece_presentation(
         let end = span_to.min(to);
         if start >= end {
             continue;
+        }
+        // Only a formula that survived the split whole. Half a picture drawn
+        // over half a formula is worse than the written form of it, which is
+        // what the words left in the text already are. Without the spaces
+        // either side, which belong to the sentence: a picture drawn over
+        // those would close the gap between the formula and its neighbour.
+        if let Some(name) = &span.formula {
+            if span_from >= from && span_to <= to {
+                let run = &piece[start - from..end - from];
+                let head = run.len() - run.trim_start().len();
+                let tail = run.len() - run.trim_end().len();
+                if head + tail < run.len() {
+                    formulae.push((start - from + head, end - from - tail, name.clone()));
+                }
+            }
         }
         spans.push(kobo_ui::RichTextSpan {
             start: start - from,
@@ -2893,7 +3060,48 @@ fn piece_presentation(
             },
         });
     }
-    (spans, paragraph_presentation(&rich.style))
+    (spans, formulae, paragraph_presentation(&rich.style))
+}
+
+/// Every formula in a block, as the pictures they are drawn as.
+///
+/// The offsets are into the block's own text -- the spans joined end to end,
+/// which is what pagination wraps -- so that the line breaks it chooses are
+/// the ones the page will actually be drawn with.
+fn block_formulae(
+    rich: &kobo_doc::RichBlock,
+    pictures: &BTreeMap<String, kobo_ui::TilePicture>,
+) -> Vec<kobo_ui::InlineFormula> {
+    if pictures.is_empty() {
+        return Vec::new();
+    }
+    let mut formulae = Vec::new();
+    let mut cursor = 0usize;
+    for span in &rich.spans {
+        let from = cursor;
+        cursor += span.text.len();
+        let Some(name) = &span.formula else { continue };
+        let Some(drawn) = pictures.get(name.as_str()) else {
+            continue;
+        };
+        // Without the spaces either side, which belong to the sentence
+        // rather than to the formula, exactly as the drawn piece does it.
+        let head = span.text.len() - span.text.trim_start().len();
+        let tail = span.text.len() - span.text.trim_end().len();
+        if head + tail >= span.text.len() {
+            continue;
+        }
+        formulae.push(kobo_ui::InlineFormula {
+            start: from + head,
+            end: cursor - tail,
+            handle: drawn.handle,
+            source: drawn.source,
+        });
+        if formulae.len() >= kobo_ui::MAX_INLINE_FORMULAE {
+            break;
+        }
+    }
+    formulae
 }
 
 fn paragraph_presentation(style: &kobo_doc::BlockStyle) -> kobo_ui::ParagraphPresentation {
@@ -3020,6 +3228,7 @@ mod tests {
                 Block::Picture {
                     name: "plate.png".into(),
                     alt: "A cathedral tower at dawn".into(),
+                    illustration: true,
                 },
                 Block::Paragraph("After the plate.".into()),
             ],
@@ -3057,6 +3266,7 @@ mod tests {
         blocks.push(Block::Picture {
             name: "plate.png".into(),
             alt: "Four rabbits under a fir tree".into(),
+            illustration: true,
         });
         blocks.push(Block::Paragraph(
             "They lived with their mother in a sand-bank.".into(),
@@ -3123,6 +3333,7 @@ mod tests {
         blocks.push(Block::Picture {
             name: "plate.png".into(),
             alt: "A cathedral tower at dawn".into(),
+            illustration: true,
         });
         let document = Document {
             blocks,
@@ -4465,6 +4676,7 @@ mod tests {
                 Block::Picture {
                     name: "lantern.png".into(),
                     alt: "paper lantern".into(),
+                    illustration: true,
                 },
                 Block::Paragraph("The PAPER LANTERN at the end.".into()),
             ],
@@ -4967,6 +5179,311 @@ mod tests {
             );
             turned.act("reader-next", &panel);
         }
+    }
+
+    /// The lowest pixel any text on the page is set down to.
+    fn text_bottom_on_page(reader: &Reader, panel: &DisplayMetrics) -> i32 {
+        reader
+            .screen("Paper")
+            .layout_for(panel)
+            .nodes
+            .iter()
+            .filter(|node| {
+                matches!(
+                    node.kind,
+                    kobo_ui::LayoutKind::Text
+                        | kobo_ui::LayoutKind::RichText(_)
+                        | kobo_ui::LayoutKind::Heading(_)
+                )
+            })
+            .map(|node| node.rect.y + node.rect.height)
+            .max()
+            .unwrap_or(0)
+    }
+
+    fn no_words_fall_off_a_page(reader: &Reader) {
+        let panel = panel();
+        let floor = panel.height - panel.page_position_band();
+        let mut turned = reader.clone();
+        turned.go_to(0, &panel);
+        for number in 0..reader.page_count() {
+            let bottom = text_bottom_on_page(&turned, &panel);
+            assert!(
+                bottom <= floor,
+                "page {number} sets words down to {bottom}, past the {floor} the page ends at"
+            );
+            turned.act("reader-next", &panel);
+        }
+    }
+
+    // A heading is drawn by the toolkit at one size in its own face, whatever
+    // level it is and whatever face the book asked for. Measured as the
+    // book's own type instead, this heading came out two lines where three
+    // were drawn, and the line that made was drawn over the page number.
+    #[test]
+    fn a_heading_is_measured_at_the_size_it_is_drawn() {
+        let mut blocks = Vec::new();
+        let mut rich = std::collections::BTreeMap::new();
+        for index in 0..12 {
+            // A paper styles its headings like everything else, and a
+            // heading is set solid however wide the book opens its prose:
+            // charging it the book's line spacing counts room the page will
+            // not use, and charging the prose the heading's counts room it
+            // needs twice.
+            rich.insert(
+                blocks.len(),
+                kobo_doc::RichBlock {
+                    spans: Vec::new(),
+                    style: kobo_doc::BlockStyle {
+                        line_height_percent: 220,
+                        ..kobo_doc::BlockStyle::default()
+                    },
+                },
+            );
+            blocks.push(Block::Heading {
+                level: 3,
+                text: format!(
+                    "{index}.2 Estimating Question Difficulty for Compute-Optimal Scaling"
+                ),
+            });
+            blocks.push(Block::Paragraph(format!(
+                "Paragraph {index}: the quick brown fox jumps over the lazy dog and runs on. \
+                 The quick brown fox jumps over the lazy dog and runs on again."
+            )));
+        }
+        let reader = Reader::open(
+            Document {
+                blocks,
+                rich,
+                ..Document::default()
+            },
+            Memory::default(),
+            &panel(),
+        );
+
+        no_words_fall_off_a_page(&reader);
+        assert_eq!(
+            reader.page_count(),
+            2,
+            "the headings were kept room the page does not spend on them"
+        );
+    }
+
+    // Pagination once wrapped the written-out form of a formula while the
+    // page drew the picture, and a picture is far wider than the handful of
+    // characters standing in for it. The lines pagination had not counted
+    // were drawn anyway, over the foot of the page.
+    #[test]
+    fn a_formula_is_measured_as_the_picture_it_is_drawn_as() {
+        let mut blocks = Vec::new();
+        let mut rich = std::collections::BTreeMap::new();
+        let mut pictures = BTreeMap::new();
+        for index in 0..12u32 {
+            let name = format!("formula-{index}");
+            let mut spans = Vec::new();
+            let mut text = String::new();
+            for step in 0..6u32 {
+                let word = format!("The estimate for step {step} is ");
+                text.push_str(&word);
+                spans.push(kobo_doc::InlineSpan {
+                    text: word,
+                    ..kobo_doc::InlineSpan::default()
+                });
+                text.push_str("x, ");
+                spans.push(kobo_doc::InlineSpan {
+                    text: "x, ".into(),
+                    formula: Some(name.clone()),
+                    ..kobo_doc::InlineSpan::default()
+                });
+            }
+            pictures.insert(
+                name,
+                kobo_ui::TilePicture::new(kobo_ui::PictureHandle(index), 240, 40),
+            );
+            rich.insert(
+                blocks.len(),
+                kobo_doc::RichBlock {
+                    spans,
+                    style: kobo_doc::BlockStyle::default(),
+                },
+            );
+            blocks.push(Block::Paragraph(text));
+        }
+
+        let mut reader = Reader::open(
+            Document {
+                blocks,
+                rich,
+                ..Document::default()
+            },
+            Memory::default(),
+            &panel(),
+        );
+        reader.set_pictures(pictures, &panel());
+
+        no_words_fall_off_a_page(&reader);
+    }
+
+    /// A book face that sets half as wide as the interface one.
+    ///
+    /// Real faces differ; the fallback bitmap does not, so a test that wants
+    /// to see a face confused for another has to bring one that can be told
+    /// apart.
+    struct NarrowBookFace;
+
+    impl kobo_ui::Typesetter for NarrowBookFace {
+        fn measure(&self, text: &str, size: kobo_ui::FontSize, face: kobo_ui::Face) -> (i32, i32) {
+            let width = i32::try_from(text.chars().count()).unwrap_or(i32::MAX)
+                * size.line_height()
+                / if face == kobo_ui::Face::Reading { 4 } else { 2 };
+            (width, self.line_height(size, face))
+        }
+
+        fn line_height(&self, size: kobo_ui::FontSize, _face: kobo_ui::Face) -> i32 {
+            size.line_height()
+        }
+
+        fn draw(
+            &self,
+            _text: &str,
+            _x: i32,
+            _y: i32,
+            _size: kobo_ui::FontSize,
+            _face: kobo_ui::Face,
+            _plot: &mut dyn FnMut(i32, i32, u8),
+        ) {
+        }
+    }
+
+    // A section heading inside a paper used to be drawn as display type, the
+    // same size the paper's own title was set at, so a page carrying one had
+    // two titles on it and no hierarchy at all. The level a heading sits at
+    // now reaches the toolkit, and the toolkit sets the deeper ones smaller.
+    #[test]
+    fn a_section_heading_is_set_smaller_than_the_title_above_it() {
+        let title = "Estimating Question Difficulty for Compute-Optimal Scaling";
+        let page_of = |level: u8| {
+            let reader = Reader::open(
+                Document {
+                    blocks: vec![Block::Heading {
+                        level,
+                        text: title.to_owned(),
+                    }],
+                    ..Document::default()
+                },
+                Memory::default(),
+                &panel(),
+            );
+            text_bottom_on_page(&reader, &panel())
+        };
+        let title_deep = page_of(1);
+        let section_deep = page_of(2);
+        assert!(
+            section_deep < title_deep,
+            "a section heading took {section_deep} px, as much as the title's {title_deep} px"
+        );
+    }
+
+    // Pagination once wrapped a heading in the face the book had asked for
+    // while the toolkit drew it in the interface face. A book face that sets
+    // narrower than the interface one then bought the heading fewer lines
+    // than were drawn, and the lines nobody had counted went over the edge.
+    #[test]
+    fn a_heading_is_measured_in_the_face_it_is_drawn_in() {
+        let handle = kobo_ui::FontHandle(0xBEEF);
+        kobo_ui::put_book_typesetter(handle, Box::new(NarrowBookFace));
+
+        let mut blocks = Vec::new();
+        for index in 0..12 {
+            blocks.push(Block::Heading {
+                level: 3,
+                text: format!(
+                    "{index}.2 Estimating Question Difficulty for Compute-Optimal Scaling"
+                ),
+            });
+            blocks.push(Block::Paragraph(format!(
+                "Paragraph {index}: the quick brown fox jumps over the lazy dog and runs on."
+            )));
+        }
+        let mut reader = Reader::open(
+            Document {
+                blocks,
+                ..Document::default()
+            },
+            Memory::default(),
+            &panel(),
+        );
+        reader.set_publisher_font(Some(handle), &panel());
+
+        no_words_fall_off_a_page(&reader);
+        kobo_ui::drop_book_typesetter(handle);
+    }
+
+    /// A results table that spilled onto a second page left its headings on
+    /// the first, so a page of a paper read as a ladder of bare numbers with
+    /// nothing saying which column any of them came from. Every value carries
+    /// the heading it sat under, on whichever page it lands on.
+    #[test]
+    fn a_stacked_table_names_its_values_on_every_page_it_runs_onto() {
+        let mut rows: Vec<(bool, Vec<String>)> = vec![(
+            false,
+            [
+                "Scaffold builder",
+                "BigToM",
+                "Hi-ToM",
+                "MMToM",
+                "MuMA",
+                "Avg.",
+                "R",
+                "Delta",
+            ]
+            .map(str::to_owned)
+            .to_vec(),
+        )];
+        for index in 0..24 {
+            rows.push((
+                false,
+                std::iter::once(format!("Opus-4.7 (x-high) run {index}"))
+                    .chain((1..8).map(|c| format!("0.{index}{c}5 \u{b1} 0.0{c}6")))
+                    .collect(),
+            ));
+        }
+        let blocks = rows
+            .iter()
+            .map(|(header, cells)| Block::Row {
+                header: *header,
+                cells: cells.clone(),
+            })
+            .collect();
+        let mut reader = Reader::open(
+            Document {
+                blocks,
+                ..Document::default()
+            },
+            Memory::default(),
+            &panel(),
+        );
+
+        let panel = panel();
+        let pages = reader.page_count();
+        assert!(pages > 1, "the table was meant to run onto a second page");
+        reader.go_to(0, &panel);
+        for number in 0..pages {
+            let drawn: Vec<String> = reader
+                .screen("Paper")
+                .layout_for(&panel)
+                .nodes
+                .iter()
+                .flat_map(|node| node.text_lines.clone())
+                .collect();
+            assert!(
+                drawn.iter().any(|line| line.contains("BigToM: ")),
+                "page {number} of the table says nowhere which column a \
+                 value came from: {drawn:?}"
+            );
+            reader.forward();
+        }
+        no_cell_falls_off_a_page(&reader);
     }
 
     fn columns_on_page(reader: &Reader) -> Vec<u16> {

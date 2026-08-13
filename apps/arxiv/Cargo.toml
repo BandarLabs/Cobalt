@@ -8,9 +8,9 @@ publish = false
 
 [dependencies]
 kobo-bookview = { path = "../../crates/kobo-bookview" }
-kobo-doc = { path = "../../crates/kobo-doc" }
+kobo-doc = { path = "../../crates/kobo-doc", features = ["raster"] }
 kobo-html = { path = "../../crates/kobo-html" }
-kobo-read = { path = "../../crates/kobo-read" }
+kobo-read = { path = "../../crates/kobo-read", features = ["raster"] }
 kobo-sdk = { path = "../../crates/kobo-sdk" }
 kobo-xml = { path = "../../crates/kobo-xml" }
 

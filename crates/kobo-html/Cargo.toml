@@ -6,5 +6,23 @@ rust-version.workspace = true
 license.workspace = true
 publish = false
 
+[dependencies]
+# Real mathematical typesetting, used only by the reader. Optional because a
+# crate that merely reads tags should not carry a font foundry with it: the
+# KaTeX faces and the rasteriser together are some three megabytes.
+ratex-layout = { version = "0.1.14", optional = true }
+ratex-parser = { version = "0.1.14", optional = true }
+ratex-render = { version = "0.1.14", optional = true, features = ["embed-fonts"] }
+ratex-types = { version = "0.1.14", optional = true }
+
+[features]
+# Draws formulae as pictures instead of describing them in words.
+raster = [
+    "dep:ratex-layout",
+    "dep:ratex-parser",
+    "dep:ratex-render",
+    "dep:ratex-types",
+]
+
 [lints]
 workspace = true
