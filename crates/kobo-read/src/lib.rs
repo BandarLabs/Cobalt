@@ -2550,19 +2550,7 @@ fn column_widths(columns: &[u16], metrics: &DisplayMetrics, area: ProseArea) -> 
         .iter()
         .map(|want| i32::from(*want))
         .collect();
-    let total: i32 = wants.iter().copied().fold(0, i32::saturating_add);
-    let widths: Vec<i32> = if total <= usable {
-        wants
-    } else if total > 0 {
-        wants
-            .iter()
-            .map(|want| want.saturating_mul(usable) / total)
-            .collect()
-    } else {
-        vec![usable / i32::try_from(count).unwrap_or(1); count]
-    };
-    let stacked = widths.iter().any(|width| *width < minimum);
-    (widths, stacked)
+    kobo_ui::table_column_widths(&wants, usable, minimum)
 }
 
 /// How tall a row will be drawn, so a page can be packed around it.

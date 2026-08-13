@@ -77,6 +77,64 @@ pub const MIN_BAND_SLOT_TENTH_MM: i32 = 120;
 /// turns a three column table into a tall grey block nobody can read across.
 pub const MIN_TABLE_COLUMN_TENTH_MM: i32 = 120;
 
+/// How wide each column of a table is drawn, and whether it stacks instead.
+///
+/// `wants` is how wide each column's widest cell would like to be, `usable`
+/// the room left for columns once the gaps between them are taken out, and
+/// `minimum` the narrowest a column of prose may be squeezed to.
+///
+/// Every column is first given the least it can live with, which is what it
+/// asked for or `minimum`, whichever is smaller: a column whose widest cell
+/// is four characters wide is not broken at five characters of room, it is
+/// finished. Whatever room is left over is then shared out in proportion to
+/// how much more each column wanted, so a sentence takes the slack and the
+/// numbers beside it keep their digits.
+///
+/// Squeezing every column in proportion instead, as this once did, starved
+/// the narrow ones: a table of eight short numbers had each of them squeezed
+/// under the width of the number itself, so the whole table was declared
+/// unfittable and stacked into a ladder of a hundred figures with nothing to
+/// say which column any of them came from. Every one of them fitted.
+///
+/// The table stacks only when the columns cannot hold even that least width.
+///
+/// Both the layout that draws a table and the pagination that measures one
+/// ask this, because the two must agree on whether a table stacked before
+/// either can say how tall a row is.
+#[must_use]
+pub fn table_column_widths(wants: &[i32], usable: i32, minimum: i32) -> (Vec<i32>, bool) {
+    if wants.is_empty() {
+        return (Vec::new(), true);
+    }
+    let floors: Vec<i32> = wants
+        .iter()
+        .map(|want| minimum.min((*want).max(1)))
+        .collect();
+    let total: i32 = wants.iter().copied().fold(0, i32::saturating_add);
+    if total <= usable {
+        return (wants.to_vec(), false);
+    }
+    let base: i32 = floors.iter().copied().fold(0, i32::saturating_add);
+    if base > usable {
+        return (floors, true);
+    }
+    let spare = usable - base;
+    let slack: i32 = wants
+        .iter()
+        .zip(&floors)
+        .map(|(want, floor)| (want - floor).max(0))
+        .fold(0, i32::saturating_add);
+    if slack <= 0 {
+        return (floors, false);
+    }
+    let widths = wants
+        .iter()
+        .zip(&floors)
+        .map(|(want, floor)| floor + (want - floor).max(0).saturating_mul(spare) / slack)
+        .collect();
+    (widths, false)
+}
+
 /// The most rows one [`Node::Table`] will draw.
 ///
 /// A page holds a few dozen lines and a table row is at least one of them, so
@@ -5711,24 +5769,12 @@ fn layout_node(
                     *want = i32::from(*weight);
                 }
             }
-            let total: i32 = wants.iter().copied().fold(0, i32::saturating_add);
-            let widths: Vec<i32> = if total <= usable {
-                wants.clone()
-            } else if total > 0 {
-                wants
-                    .iter()
-                    .map(|want| max(minimum, want.saturating_mul(usable) / total))
-                    .collect()
-            } else {
-                vec![usable / i32::try_from(columns).unwrap_or(1); columns]
-            };
+            let (widths, stacked) = table_column_widths(&wants, usable, minimum);
 
             // Squeezing has a floor, and past it a table is not a table any
             // more. Rather than draw columns four characters wide, each row
             // is stacked as its own lines, which is always readable.
-            if widths.iter().copied().fold(0, i32::saturating_add) > usable
-                || widths.iter().any(|column| *column < minimum)
-            {
+            if stacked {
                 let mut cursor = y;
                 for row in rows {
                     for cell in row.cells.iter().take(columns) {
@@ -12149,6 +12195,55 @@ fn glyph(character: char) -> [u8; 7] {
 
 #[cfg(test)]
 mod tests {
+
+    /// A narrow column keeps the digits it asked for.
+    ///
+    /// The eight columns of a paper's results table each wanted less than a
+    /// sentence; squeezed in proportion they all fell under their own content
+    /// width and the table stacked. What a column asked for is the most it can
+    /// need, so no column is ever given less than that.
+    #[test]
+    fn a_narrow_column_is_never_squeezed_under_what_it_asked_for() {
+        let wants = [351, 23, 125, 121, 132, 104, 238, 121];
+        let (widths, stacked) = super::table_column_widths(&wants, 1000, 142);
+        assert!(!stacked, "every column fits in 1000: {widths:?}");
+        for (column, (width, want)) in widths.iter().zip(&wants).enumerate() {
+            assert!(
+                *width >= (*want).min(142),
+                "column {column} wanted {want} and was given {width}"
+            );
+        }
+    }
+
+    /// The room left over goes to the column that wanted it.
+    #[test]
+    fn the_spare_room_goes_to_the_widest_column() {
+        let (widths, stacked) = super::table_column_widths(&[400, 40, 40], 300, 100);
+        assert!(!stacked, "three columns fitting should not stack");
+        assert_eq!(
+            widths.iter().sum::<i32>(),
+            300,
+            "the room is all shared out"
+        );
+        assert!(
+            widths[0] > widths[1] && widths[0] > widths[2],
+            "the sentence should take the slack, not the numbers: {widths:?}"
+        );
+        assert_eq!(
+            (widths[1], widths[2]),
+            (40, 40),
+            "a column four characters wide needs no more than four characters"
+        );
+    }
+
+    /// A table stacks only when even the least widths do not fit.
+    #[test]
+    fn a_table_stacks_only_when_the_least_widths_do_not_fit() {
+        let (_, roomy) = super::table_column_widths(&[300, 300, 300], 330, 100);
+        assert!(!roomy, "three columns of 100 fit in 330");
+        let (_, cramped) = super::table_column_widths(&[300, 300, 300], 290, 100);
+        assert!(cramped, "three columns of 100 do not fit in 290");
+    }
     use super::*;
 
     #[test]
