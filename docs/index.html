@@ -258,13 +258,20 @@ footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
   .field-grid { grid-template-columns: 1fr 1fr; }
   .field-wide { grid-template-columns: 1fr; }
   section { padding: 56px 0; }
-  .hero { padding: 48px 0; }
+  .hero { padding: 32px 0 48px; }
+  .hero .wrap { gap: 28px; }
+  .hero h1 { margin-bottom: 18px; }
+  .hero p.lede { font-size: 19px; margin-bottom: 22px; }
+  .hero p.sub { display: none; }
   .hero figure { max-width: 420px; }
   .device-engraving { display: none; }
 }
 @media (max-width: 520px) {
   .field-grid { grid-template-columns: 1fr; }
-  nav.top { gap: 16px; }
+  header.masthead { padding: 14px 0; }
+  .masthead .wrap { gap: 12px; }
+  nav.top { gap: 14px; flex-wrap: wrap; font-size: 15px; }
+  .btn { padding: 11px 16px; font-size: 16px; }
 }
 </style>
 </head>
