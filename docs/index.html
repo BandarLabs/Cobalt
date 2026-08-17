@@ -52,7 +52,9 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html { scroll-behavior: smooth; }
 body {
-  background: var(--paper);
+  background: var(--paper) url("media/site/grain.png") repeat;
+  background-size: 128px 128px;
+  background-blend-mode: multiply;
   color: var(--ink);
   font-family: var(--serif);
   font-size: 19px;
@@ -61,12 +63,6 @@ body {
   border-top: 5px solid var(--cobalt);
 }
 ::selection { background: var(--cobalt); color: var(--paper); }
-body::before {
-  content: ""; position: fixed; inset: 0;
-  background: url("media/site/grain.png") repeat; background-size: 128px 128px;
-  opacity: 0.55; mix-blend-mode: multiply;
-  pointer-events: none; z-index: 2147483647;
-}
 a { color: var(--cobalt); text-decoration: none; }
 a:hover { text-decoration: underline; text-underline-offset: 3px; }
 img { display: block; max-width: 100%; height: auto; }
