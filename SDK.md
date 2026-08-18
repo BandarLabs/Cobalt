@@ -3,6 +3,9 @@
 Write an application for a Kobo e-reader in one file, with no dependencies
 outside this workspace, and run it on the panel.
 
+Looking for the available controls and layouts? Jump to the
+[UI component reference](#3-ui-component-reference).
+
 ```rust
 use kobo_sdk::{ActionId, Context, KoboApp, ScreenBuilder};
 
@@ -223,78 +226,132 @@ one cannot.
 
 ---
 
-## 3. Building a screen
+## 3. UI component reference
 
-`ScreenBuilder` is a chain. Every method that adds content returns `Self`.
+Apps build screens from the components below through `ScreenBuilder`. The
+builder is a chain: every method that adds or configures UI returns `Self`.
+This is the app-facing UI vocabulary; apps do not draw arbitrary pixels or
+instantiate renderer-internal `Node` variants directly.
 
-### Structure
+The [component gallery](examples/gallery/README.md) shows these primitives on
+the actual E Ink renderer and is the quickest visual reference.
+
+### Screen structure and overlays
 
 | Method | What it is |
 |---|---|
 | `top_bar(title)` | The fixed bar at the top. Back is added by the runtime. |
 | `top_bar_action(name, label)` | One trailing control in the top bar. |
+| `top_bar_glyph(name, label, glyph)` | A trailing top-bar control drawn with a built-in glyph. |
 | `owns_back(bool)` | Ask for Back as an action before it leaves the app. |
-| `nav_bar(selected, [(name, label), …])` | The pinned bottom bar of *destinations*. At least two. |
-| `action_bar(name, [(name, label), …])` | The same slot, carrying *verbs* instead. At most three. |
-| `action_bar_marked([(name, label, glyph), …])` | The same, with a mark drawn above each word that has one. |
+| `nav_bar(selected, [(name, label), ...])` | The pinned bottom bar of *destinations*. At least two. |
+| `action_bar([(name, label), ...])` | The same slot, carrying *verbs* instead. At most three. |
+| `action_bar_marked([(name, label, glyph), ...])` | The same, with an optional mark drawn above each word. |
+| `bottom_action(name, label)` | One pinned full-width control in the bottom band. |
 | `bottom_action_marked(name, label, glyph)` | One pinned control with its mark beside the word. |
-| `top_bar_overflow(name, open, [(name, label), …])` | Three dots that open a menu when `open`, and close on a tap anywhere else. |
+| `top_bar_overflow(name, open, [(name, label), ...])` | Three dots that open a menu when `open`, and close on a tap anywhere else. |
+| `popover(anchor, build)` | An anchored overlay that dismisses when the reader taps outside it. |
+| `modal(title, build)` | A centred overlay that remains until one of its controls answers it. |
 | `page_turns(previous, next)` | Tap the left of the page to go back, the rest to go on. |
 | `page_position(page, total)` | A footer line saying where in the list this is. |
-| `tabs(selected, [(name, label), …])` | A row of tabs over one region of the screen. |
+| `reading_menu(name)` | Adds a middle page-turn zone for a reader's controls. |
+| `hold(name)` | Sends an action when the content area is held. |
+| `tabs(selected, [(name, label), ...])` | A row of tabs over one region of the screen. |
 
-### Content
+### Text and document content
 
 | Method | What it is |
 |---|---|
 | `heading(text)` | One line of display type. |
+| `heading_at_level(level, text)` | A heading in a book or document hierarchy. |
 | `text(text)` | A paragraph. Wraps by measured glyph width and Unicode line-break rules. |
+| `text_linking(text, links)` | A paragraph with tappable byte ranges. |
+| `rich_text(text, spans, presentation)` | Publisher-styled prose with semantic spans and paragraph presentation. |
+| `rich_text_linking(...)` | Rich text with tappable inline destinations. |
+| `selectable_rich_text_linking(...)` | Rich text whose words can be resolved when held. |
+| `with_formulae(formulae)` | Adds prepared inline formula pictures to the rich-text paragraph just added. |
+| `secondary(text)` | Muted metadata such as an author, date, size or status. |
+| `section(title)` / `section_with_value(title, value)` | A labelled group, optionally with a count or total. |
+| `facts([(label, value), ...])` | Labelled values with one shared, measured label column. |
+| `quote(depth, text)` / `byline(depth, text)` | Thread body text and its smaller, muted author line. |
+| `folding_byline(...)` | A tappable byline that represents a collapsed reply subtree. |
+| `table(rows, weights)` | Tabular document content with columns measured across all rows. |
+| `picture(picture, max_height_mm)` | A framed picture fitted to a physical height. |
+| `unframed_picture(picture, max_height_mm)` | The same without a border, for formulas and in-flow document art. |
+
+### Actions and input
+
+| Method | What it is |
+|---|---|
 | `button(name, label)` | A full-width action. |
-| `buttons([(name, label), …])` | Two or three secondary actions on one line. |
+| `primary_button(name, label)` | The single filled, primary action on a screen. |
+| `buttons([(name, label), ...])` | Two or three secondary actions on one line. |
 | `disabled_button(name, label)` | A visible, outlined action that yields nothing and absorbs its tap. |
-| `rows([(name, title, summary, glyph), …])` | A list. Title, one line of detail, an icon. |
-| `checklist([(name, title, summary, done), …])` | The same list, where a finished row is struck through. |
-| `rows_with_menu([(name, title, summary, glyph, menu), …])` | The same list, where each row carries an overflow mark naming an action of its own. |
-| `row_overflow(anchor, open, [(name, label), …])` | The menu behind that mark. |
-| `tiles([(name, label, glyph), …])` | A grid of square destinations. |
-| `apps([metadata, …])` | Launcher tiles from `AppMetadata`, with picture-to-glyph fallback. |
-| `grid(columns, square, cells)` | A board. What tic-tac-toe is drawn with. |
-| `controls(columns, [(name, label, glyph), …])` | The same row, drawn as pictures. The label names the action but is not set. |
-| `choose(prompt, [(name, label), …])` | A question with tappable answers. |
+| `button_with_state(name, label, state)` | A button with explicit semantic enabled state. |
+| `field(name, value, placeholder)` | A tappable field showing its current value; the app routes it to a keyboard screen. |
+| `field_clear(name)` | Adds a clear control to the field just declared when it has a value. |
+| `chips([(name, label, selected), ...])` | Wrapping filters, tags or recent searches with selected state. |
+| `choose(prompt, [(name, label), ...])` | A question with tappable answers. |
 | `chosen(index)` | Marks which answer of the preceding `choose` is already given. |
 | `or_type(name, placeholder)` | A freeform row on the end of a `choose`. |
-| `quote(depth, text)` | A paragraph set in by reply depth, with a gutter rule. |
-| `picture(picture, max_height_mm)` | One picture, as large as the width and that height allow. |
-| `picture_tiles(shape, […])` | A grid of tiles that each carry a picture, falling back to a glyph. |
+| `stepper(label, less, less_glyph, more, more_glyph)` | A setting that moves one notch at a time. |
+| `stepper_ends(less, more)` / `stepper_track(percent)` | Configures enabled ends and the optional position track of the preceding stepper. |
+| `keyboard(&keyboard, submit)` | The on-screen text keyboard, pinned under the thumbs. |
+| `text_entry(&entry, prompt, submit)` | A complete prompt, typed value, keyboard and cancel action. |
+| `typed(&keyboard, placeholder)` | The text accumulated by a keyboard, or its placeholder. |
+
+### Collections, grids and media
+
+| Method | What it is |
+|---|---|
+| `rows([(name, title, summary, glyph), ...])` | A list. Title, one line of detail, an icon. |
+| `checklist([(name, title, summary, done), ...])` | The same list, where a finished row is struck through. |
+| `rows_with_menu([(name, title, summary, glyph, menu), ...])` | The same list, where each row carries an overflow mark naming an action of its own. |
+| `rows_with_trailing([(name, title, summary, lead, value), ...])` | Rows with a short score, date, size or count at the trailing edge. |
+| `row_overflow(anchor, open, [(name, label, glyph), ...])` | The menu behind that mark. |
+| `paged_list(page, items)` | A pre-paged list of plain strings. |
+| `tiles([(name, label, glyph), ...])` | A grid of square destinations. |
+| `apps([metadata, ...])` | Launcher tiles from `AppMetadata`, with picture-to-glyph fallback. |
+| `grid(columns, square, cells)` | A general grid of labelled buttons, optionally square. |
+| `board(columns, cells)` | A square board whose filled cells are large built-in marks. |
+| `controls(columns, [(name, label, glyph), ...])` | Compact glyph-and-label controls for universally understood actions. |
+| `picture_tiles(shape, [...])` | A grid of tiles that each carry a picture, falling back to a glyph. |
+| `tile_grid(shape, \|tile\| ...)` | Configurable tiles with subtitles, badges, pictures and semantic state. |
+| `hero(picture, mm, title, ...)` | A picture beside a column of title, metadata and facts. |
+
+### Feedback, loading and states
+
+| Method | What it is |
+|---|---|
 | `banner(level, text)` | `Info` or `Attention`. Attention is drawn inverted. |
 | `progress(percent)` | A determinate bar. |
-| `activity(label, progress)` | An indeterminate wait. |
+| `activity(label, progress)` | Work in flight, indeterminate with `None` or coarse determinate progress with `Some(percent)`. |
 | `cancellable(name, label)` | Adds a cancel control to the preceding activity. |
 | `skeleton(lines)` | Placeholder lines, occupying where content will land. |
-| `divider()` / `spacer(space)` | Rules and space, from the spacing scale. |
-| `fill()` | Pushes everything after it to the foot of the panel. |
-| `paged_list(page, items)` | A pre-paged list of plain strings. |
-| `keyboard(&keyboard, submit)` | The on-screen keys. Positional, so a layer change moves nothing. |
-| `text_entry(&entry, prompt, submit)` | A prompt, what has been typed, and the keys. |
-| `terminal(rows, cursor)` | A character grid with a block caret. |
-| `terminal_keys(&keys)` | Keys that send a byte the moment they are tapped. |
 | `splash(glyph, title, summary)` | A mark, a title and a sentence, centred in the room that is left. |
 | `empty_state(message)` | A standard empty result with a useful default title. |
 | `offline_state(message)` | A standard offline presentation; chain a retry button when useful. |
 | `permission_denied_state(message)` | A standard denied-capability presentation. |
 | `error_state(message)` | A standard recoverable-error presentation. |
+| `failure_state(failure, retry)` | Maps a task failure to a standard state and the valid recovery actions. |
 | `confirmation(title, message, primary, secondary)` | A whole-screen confirmation with two `DialogAction`s. |
-| `section(title)` | A labelled group. The rows after it belong to it. |
-| `section_with_value(title, value)` | The same, with a count or a total set to the right. |
-| `section_rows(title, rows)` | A section and its rows in one call. |
-| `facts([(label, value), …])` | A set of labelled values, the label column measured across all of them. |
-| `band([slot, …])` | Up to three things side by side, which stack when they cannot stay readable. |
-| `hero(picture, mm, title, …)` | A picture beside a column of metadata. A `band`, named. |
-| `field(name, label, value)` | What has been typed, visible outside the keyboard screen. |
-| `chips(name, [chip, …])` | Short tappable words: tags, filters, recent searches. |
-| `tile_grid(shape, \|tile\| …)` | Tiles built by a closure, so a tile's slots are configuration and not new methods. |
-| `transfer(label, received, total)` | A transfer, determinate as soon as a total is known. |
-| `transfer_failed(…)` / `transfer_retry(…)` | A transfer that stopped, and the way back into it. |
+| `confirm(title, question, confirm, cancel)` | A modal confirmation with standard primary and cancel controls. |
+| `transfer(label, received, total)` | Byte transfer progress, determinate only when a total is known. |
+| `transfer_failed(...)` / `transfer_retry(...)` | A transfer that stopped, and the way back into it. |
+
+### Layout and specialised surfaces
+
+| Method | What it is |
+|---|---|
+| `divider()` / `spacer(space)` | A rule and semantic space from the design scale. |
+| `fill()` | Pushes everything after it to the foot of the panel. |
+| `band(align, [slot, ...])` | Up to three blocks side by side, stacking automatically when too narrow. |
+| `compose(build)` | Reuses a function that builds a group of components without breaking the chain. |
+| `section_rows(title, value, rows)` | A section, optional trailing value and its rows in one call. |
+| `terminal(rows, cursor)` | A fixed character grid with an optional block caret. |
+| `terminal_keys(&keys)` | Terminal keys that send bytes immediately, including control and cursor keys. |
+| `text_scale(scale)` / `reading(reading)` / `reading_font(font)` | Reader-only typography configuration; ordinary app UI follows the user's scale. |
+| `build_checked()` | Builds only when screen diagnostics contain no errors. |
 
 There is no free-form drawing, no colour, no font choice and no pixel
 positioning. Every size comes from the panel's *physical* dimensions, so a
@@ -1063,6 +1120,12 @@ Unknown names are rejected rather than ignored, dependencies are enforced
 maximum Wi-Fi hold, and withdrawal of the expensive capabilities below fifteen
 percent battery unless the device is charging.
 
+`sleep-screen`, `notifications` and `shared-files` are reserved capability
+names in the policy and manifest format, but `kobo-sdk` does not currently
+expose an application call for them. Do not request them yet. Large
+application-private files use `Context::shelf`; that is not the user-visible
+shared-files surface.
+
 `shell` is the one that is different in kind. Every other capability is undone
 by a reboot; a shell on this device is root on a writable root filesystem, so
 it is the first thing the platform hosts that a power cycle cannot repair. It
@@ -1386,6 +1449,13 @@ single rule: **nothing that cannot be undone by a reboot.**
 | `kobo-policy` | Capabilities, the task runner, device services, keyed storage. |
 | `kobo-net` | HTTPS. Carries TLS so nothing else has to. |
 | `kobo-json` | A small JSON reader and object builder. |
+| `kobo-html` | Defensive HTML-to-text conversion and optional formula rasterisation. |
+| `kobo-xml` | A bounded XML pull scanner for feeds and Atom documents. |
+| `kobo-opds` | OPDS 1.2 and 2.0 catalogue parsing. |
+| `kobo-image` | Bounded JPEG/PNG decoding, fitting and E Ink dithering. |
+| `kobo-doc` | EPUB, HTML, Markdown and plain-text bytes into a structured document. |
+| `kobo-read` | Pagination, reading positions, contents, search and annotations. |
+| `kobo-bookview` | End-to-end SDK reading surface, including deferred pictures. |
 | `kobo-text` | Typeface loading and measurement. |
 | `kobo-shell` | One terminal per application, hosted by the runtime. |
 | `kobo-term` | The vt100 screen a program's output is parsed into. |
