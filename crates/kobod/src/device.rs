@@ -44,8 +44,8 @@ use kobo_policy::{Backends, Capability, Declared, DeviceServices, PowerPolicy, T
 use kobo_profile::DeviceProfile;
 use kobo_protocol::{Frame, Lifecycle, Message, TaskError, TaskOutcome};
 use kobo_ui::{
-    render_all, ActionId, Chrome, FontHandle, FramePlanner,
-    PanelWaveform, PictureCache, Screen, Surface,
+    render_all, ActionId, Chrome, FontHandle, FramePlanner, PanelWaveform, PictureCache, Screen,
+    Surface,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -467,17 +467,6 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     // application disappears on a reboot.
     preflight(application)?;
 
-    // Installed before anything is taken over, because it reads a file and a
-    // read can fail. A failure is not fatal: `kobo-ui` keeps its built-in
-    // bitmap, so the worst case is ugly text rather than a dead session.
-    let typeface = match kobo_text::install(crate::device_metrics()) {
-        Ok(path) => path.file_name().map_or_else(
-            || path.display().to_string(),
-            |name| name.to_string_lossy().into_owned(),
-        ),
-        Err(error) => format!("none ({error})"),
-    };
-
     // Owner-installed trust roots, before the first request could build the
     // TLS configuration without them. Zero on almost every reader.
     let trusted = kobo_net::trust_owner_roots_from_dir(Path::new(TRUST));
@@ -510,6 +499,20 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     let display = DisplaySession::open(Some(OWNER_UNLOCK_PHRASE))
         .map_err(|error| format!("open display: {error}"))?;
     let profile = display.profile();
+    crate::remember_device_profile(profile)?;
+
+    // The display's exact profile is now retained for every later layout and
+    // hit test. Installing a face may fail, but that is not fatal: `kobo-ui`
+    // keeps its built-in bitmap, so the worst case is ugly text rather than a
+    // dead session.
+    let typeface = match kobo_text::install(crate::device_metrics()) {
+        Ok(path) => path.file_name().map_or_else(
+            || path.display().to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        ),
+        Err(error) => format!("none ({error})"),
+    };
+
     let geometry = display.geometry();
     let whole_screen = Rect {
         x: 0,
@@ -520,10 +523,14 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     let backup = display
         .capture(whole_screen)
         .map_err(|error| format!("snapshot the screen: {error}"))?;
-        
-    let touch_path = display.snapshot().touch.as_ref().map(|t| t.path.clone())
+
+    let touch_path = display
+        .snapshot()
+        .touch
+        .as_ref()
+        .map(|t| t.path.clone())
         .ok_or_else(|| "touch probe was unavailable".to_owned())?;
-        
+
     let mut touch = TouchSession::acquire(Path::new(&touch_path), profile)
         .map_err(|error| format!("take the touch panel: {error}"))?;
 

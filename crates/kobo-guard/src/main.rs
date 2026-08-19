@@ -19,7 +19,6 @@ use kobo_hal::surface::RegionSnapshot;
 use kobo_hal::{
     DisplaySession, Rect, RefreshIntent, RefreshPlan, SurfaceGeometry, OWNER_UNLOCK_PHRASE,
 };
-use kobo_profile::CLARA_BW_391;
 use std::env;
 use std::fmt;
 use std::path::Path;
@@ -88,8 +87,8 @@ fn run(arguments: &[String]) -> Result<String, String> {
 
     // The display session applies the profile, geometry and identity gates, so
     // a screen is only ever captured or written on exactly the known hardware.
-    let session = DisplaySession::open(&CLARA_BW_391, Some(OWNER_UNLOCK_PHRASE))
-        .map_err(|error| error.to_string())?;
+    let session =
+        DisplaySession::open(Some(OWNER_UNLOCK_PHRASE)).map_err(|error| error.to_string())?;
     let geometry = session.geometry();
     let whole_screen = Rect {
         x: 0,

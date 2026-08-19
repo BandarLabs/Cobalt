@@ -19,7 +19,6 @@
 
 use kobo_hal::display::{DisplaySession, OWNER_UNLOCK_PHRASE};
 use kobo_hal::{Rect, RefreshIntent, RefreshPlan, RegionSnapshot};
-use kobo_profile::CLARA_BW_391;
 use std::env;
 use std::process::ExitCode;
 use std::thread::sleep;
@@ -93,8 +92,8 @@ fn main() -> ExitCode {
 fn run(unlock: Option<&str>) -> Result<String, String> {
     let stage = Stage::from_unlock(unlock)
         .ok_or_else(|| "owner-attended smoke unlock is missing or incorrect".to_owned())?;
-    let session = DisplaySession::open(&CLARA_BW_391, Some(OWNER_UNLOCK_PHRASE))
-        .map_err(|error| error.to_string())?;
+    let session =
+        DisplaySession::open(Some(OWNER_UNLOCK_PHRASE)).map_err(|error| error.to_string())?;
     let plan = RefreshPlan::new(
         FIXED_REGION,
         stage.intent(),

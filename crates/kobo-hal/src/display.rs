@@ -91,15 +91,16 @@ impl DisplaySession {
     /// Returns an error when the unlock phrase is wrong, the probe fails, the
     /// hardware profile does not match exactly, the device identity does not
     /// match exactly, or the framebuffer cannot be opened.
-    pub fn open(
-        unlock: Option<&str>,
-    ) -> Result<Self, DisplayError> {
+    pub fn open(unlock: Option<&str>) -> Result<Self, DisplayError> {
         if unlock != Some(OWNER_UNLOCK_PHRASE) {
             return Err(DisplayError::UnlockMissing);
         }
         let snapshot = probe_device().map_err(DisplayError::Probe)?;
-        let profile = kobo_profile::identify_profile(&snapshot)
-            .ok_or_else(|| DisplayError::ProfileRejected(vec!["no supported hardware profile matched this device".to_owned()]))?;
+        let profile = kobo_profile::identify_profile(&snapshot).ok_or_else(|| {
+            DisplayError::ProfileRejected(vec![
+                "no supported hardware profile matched this device".to_owned()
+            ])
+        })?;
         Self::open_verified(profile, snapshot, Path::new("/dev/fb0"))
     }
 
@@ -283,11 +284,11 @@ mod tests {
     #[test]
     fn refuses_a_wrong_unlock_phrase_before_probing() {
         assert!(matches!(
-            DisplaySession::open(&CLARA_BW_391, None),
+            DisplaySession::open(None),
             Err(DisplayError::UnlockMissing)
         ));
         assert!(matches!(
-            DisplaySession::open(&CLARA_BW_391, Some("please")),
+            DisplaySession::open(Some("please")),
             Err(DisplayError::UnlockMissing)
         ));
         assert_eq!(OWNER_UNLOCK_PHRASE, "OWNER_ATTENDED_DISPLAY_WRITE");

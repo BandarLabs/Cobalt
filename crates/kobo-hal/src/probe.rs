@@ -49,7 +49,8 @@ pub fn probe_device() -> Result<DeviceSnapshot, ProbeError> {
     ]);
 
     let framebuffer = probe_framebuffer(Path::new("/dev/fb0"))?;
-    let touch = discover_touch_path("/proc/bus/input/devices").and_then(|path| probe_touch(&path).ok());
+    let touch =
+        discover_touch_path("/proc/bus/input/devices").and_then(|path| probe_touch(&path).ok());
 
     Ok(DeviceSnapshot {
         compatible,

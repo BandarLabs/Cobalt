@@ -9,15 +9,51 @@ use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
+static VERIFIED_DEVICE_METRICS: OnceLock<kobo_ui::DisplayMetrics> = OnceLock::new();
+
+fn metrics_for_profile(
+    profile: &kobo_profile::DeviceProfile,
+    mut metrics: kobo_ui::DisplayMetrics,
+) -> Result<kobo_ui::DisplayMetrics, String> {
+    metrics.width = i32::try_from(profile.width).map_err(|_| {
+        format!(
+            "profile {} width does not fit the layout engine",
+            profile.id
+        )
+    })?;
+    metrics.height = i32::try_from(profile.height).map_err(|_| {
+        format!(
+            "profile {} height does not fit the layout engine",
+            profile.id
+        )
+    })?;
+    metrics.pixels_per_inch = i32::from(profile.pixels_per_inch);
+    Ok(metrics)
+}
+
+/// Returns immutable hardware metrics after a verified device session starts,
+/// or the explicit host-simulation metrics before then.
 pub fn device_metrics() -> kobo_ui::DisplayMetrics {
-    let mut metrics = kobo_ui::display_metrics_from_env();
-    if let Some(profile) = kobo_hal::probe_device().ok().and_then(|s| kobo_profile::identify_profile(&s)) {
-        metrics.width = profile.width as i32;
-        metrics.height = profile.height as i32;
-        metrics.pixels_per_inch = profile.pixels_per_inch as i32;
+    VERIFIED_DEVICE_METRICS
+        .get()
+        .copied()
+        .unwrap_or_else(display_metrics_from_env)
+}
+
+#[cfg(feature = "device-write")]
+fn remember_device_profile(profile: &kobo_profile::DeviceProfile) -> Result<(), String> {
+    let metrics = metrics_for_profile(profile, display_metrics_from_env())?;
+    if let Some(remembered) = VERIFIED_DEVICE_METRICS.get() {
+        if *remembered == metrics {
+            return Ok(());
+        }
+        return Err("the verified device profile changed during this runtime".to_owned());
     }
-    metrics
+    VERIFIED_DEVICE_METRICS
+        .set(metrics)
+        .map_err(|_| "the verified device metrics could not be retained".to_owned())
 }
 
 use std::process::ExitCode;
@@ -82,14 +118,17 @@ fn touch_test(seconds: &str) -> Result<(), Box<dyn Error>> {
     use std::time::{Duration, Instant};
 
     let seconds: u64 = seconds.parse().unwrap_or(20).min(120);
-    
+
     let snapshot = kobo_hal::probe_device()?;
     let profile = kobo_profile::identify_profile(&snapshot)
         .ok_or_else(|| "no supported hardware profile matched this device".to_owned())?;
-    let touch_path = snapshot.touch.as_ref().map(|t| t.path.clone())
+    let touch_path = snapshot
+        .touch
+        .as_ref()
+        .map(|t| t.path.clone())
         .ok_or_else(|| "touch probe was unavailable".to_owned())?;
-        
-    println!("touch device: {}", touch_path);
+
+    println!("touch device: {touch_path}");
     let mut session = TouchSession::acquire(Path::new(&touch_path), profile)?;
     println!("grabbed; touch the panel");
     let events = session
@@ -258,14 +297,13 @@ fn clear_session_files(state: &Path) -> String {
 fn print_safety_state() {
     let write_unlocked = env::var_os("KOBO_DEVICE_WRITE_UNLOCK").is_some();
     println!("kobod 0.1.0");
-    
+
     let profile_id = kobo_hal::probe_device()
         .ok()
         .and_then(|snapshot| kobo_profile::identify_profile(&snapshot))
-        .map(|p| p.id)
-        .unwrap_or("unknown");
-        
-    println!("profile: {}", profile_id);
+        .map_or("unknown", |profile| profile.id);
+
+    println!("profile: {profile_id}");
     println!("device-write compiled: {}", cfg!(feature = "device-write"));
     println!("device-write unlocked: {write_unlocked}");
     println!(
@@ -733,6 +771,20 @@ impl Drop for SocketGuard {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn an_elipsa_session_keeps_its_verified_metrics_without_another_probe() {
+        let ambient = kobo_ui::DisplayMetrics {
+            text_scale: kobo_ui::TextScale::Large,
+            ..kobo_ui::CLARA_BW_METRICS
+        };
+        let metrics = super::metrics_for_profile(&kobo_profile::ELIPSA_2E_389, ambient)
+            .expect("the supported profile fits layout coordinates");
+        assert_eq!(metrics.width, 1404);
+        assert_eq!(metrics.height, 1872);
+        assert_eq!(metrics.pixels_per_inch, 227);
+        assert_eq!(metrics.text_scale, kobo_ui::TextScale::Large);
+    }
 
     fn plain() -> kobo_ui::Screen {
         kobo_ui::Screen::new(1, Vec::new())

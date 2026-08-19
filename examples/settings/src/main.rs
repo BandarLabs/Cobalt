@@ -33,8 +33,6 @@ const NETWORK_ACTIONS: [&str; 10] = [
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Where releases are published.
 const RELEASES: &str = "https://api.github.com/repos/BandarLabs/Cobalt/releases/latest";
-/// The device profile this build is packaged for, as release assets name it.
-const DEVICE: &str = "ClaraBW";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum View {
@@ -1040,7 +1038,7 @@ fn numbers(version: &str) -> Option<(u64, u64, u64)> {
 }
 
 fn archive_name(version: &str) -> String {
-    format!("cobalt-{version}-{DEVICE}-KoboRoot.tgz")
+    format!("cobalt-{version}-KoboRoot.tgz")
 }
 
 /// Reads the GitHub "latest release" reply down to the two URLs this device
@@ -1069,7 +1067,7 @@ fn latest_release(body: &str) -> Result<Release, String> {
     };
     let archive = url_of(&archive_name(&version))
         .ok_or_else(|| "The newest release has no download for this reader.".to_owned())?;
-    let digest = url_of(&format!("cobalt-{version}-{DEVICE}.sha256"))
+    let digest = url_of(&format!("cobalt-{version}.sha256"))
         .ok_or_else(|| "The newest release publishes no digest to verify against.".to_owned())?;
     Ok(Release {
         version,
@@ -1392,11 +1390,11 @@ mod tests {
 
     fn release_json(version: &str, with_digest: bool) -> String {
         let archive = format!(
-            r#"{{"name":"cobalt-{version}-ClaraBW-KoboRoot.tgz","browser_download_url":"https://example.test/{version}/KoboRoot.tgz"}}"#
+            r#"{{"name":"cobalt-{version}-KoboRoot.tgz","browser_download_url":"https://example.test/{version}/KoboRoot.tgz"}}"#
         );
         let digest = if with_digest {
             format!(
-                r#",{{"name":"cobalt-{version}-ClaraBW.sha256","browser_download_url":"https://example.test/{version}/checksums"}}"#
+                r#",{{"name":"cobalt-{version}.sha256","browser_download_url":"https://example.test/{version}/checksums"}}"#
             )
         } else {
             String::new()
@@ -1411,6 +1409,11 @@ mod tests {
         assert_eq!(release.archive, "https://example.test/9.9.9/KoboRoot.tgz");
         assert_eq!(release.digest, "https://example.test/9.9.9/checksums");
         assert!(release.newer_than(super::VERSION));
+    }
+
+    #[test]
+    fn the_release_archive_name_is_device_neutral() {
+        assert_eq!(super::archive_name("9.9.9"), "cobalt-9.9.9-KoboRoot.tgz");
     }
 
     #[test]
@@ -1439,20 +1442,20 @@ mod tests {
     fn the_digest_is_found_beside_the_other_files_in_the_listing() {
         let digest = "a".repeat(64);
         let listing = format!(
-            "{}  THIRD-PARTY.md\n{digest}  cobalt-9.9.9-ClaraBW-KoboRoot.tgz\n",
+            "{}  THIRD-PARTY.md\n{digest}  cobalt-9.9.9-KoboRoot.tgz\n",
             "b".repeat(64)
         );
         assert_eq!(
-            super::digest_for(&listing, "cobalt-9.9.9-ClaraBW-KoboRoot.tgz"),
+            super::digest_for(&listing, "cobalt-9.9.9-KoboRoot.tgz"),
             Some(digest)
         );
         assert_eq!(
-            super::digest_for(&listing, "cobalt-9.9.9-ClaraBW.tgz"),
+            super::digest_for(&listing, "cobalt-9.9.9-ClaraBW-KoboRoot.tgz"),
             None,
             "a digest for a different file vouches for nothing"
         );
         assert_eq!(
-            super::digest_for("not a listing", "cobalt-9.9.9-ClaraBW-KoboRoot.tgz"),
+            super::digest_for("not a listing", "cobalt-9.9.9-KoboRoot.tgz"),
             None
         );
     }

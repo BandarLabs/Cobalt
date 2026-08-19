@@ -10,10 +10,6 @@ permissions:
 jobs:
   package:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        # One entry per supported device profile. A new profile adds a row.
-        device: [ClaraBW]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
@@ -39,17 +35,25 @@ jobs:
       - name: Name the assets and write checksums
         run: |
           version="${GITHUB_REF_NAME#v}"
-          asset="cobalt-${version}-${{ matrix.device }}-KoboRoot.tgz"
+          asset="cobalt-${version}-KoboRoot.tgz"
+          legacy_asset="cobalt-${version}-ClaraBW-KoboRoot.tgz"
+          digest="cobalt-${version}.sha256"
+          legacy_digest="cobalt-${version}-ClaraBW.sha256"
           mv dist/KoboRoot.tgz "dist/$asset"
+          # Existing Clara installations look up these names. Keep aliases
+          # until their device-specific updater contract can be retired.
+          cp "dist/$asset" "dist/$legacy_asset"
           cp THIRD-PARTY.md dist/
-          cd dist && sha256sum * > "cobalt-${version}-${{ matrix.device }}.sha256"
+          cd dist
+          sha256sum THIRD-PARTY.md "$asset" "$legacy_asset" > "$digest"
+          cp "$digest" "$legacy_digest"
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           version="${GITHUB_REF_NAME#v}"
           notes="Rename the .tgz to KoboRoot.tgz, copy it into the .kobo folder \
-          of a USB-connected ${{ matrix.device }}, and restart the reader. \
+          of a USB-connected supported Kobo reader, and restart the reader. \
           Store applications are published independently from main and do not \
           require a new Cobalt platform release. \
           Verify the download against the .sha256 file first. \
