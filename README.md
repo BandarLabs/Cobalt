@@ -130,8 +130,9 @@ cd my-app
 kobo dev
 ```
 
-`kobo dev` runs the app in the Clara BW browser simulator. The SDK guide is in
-[SDK.md](SDK.md).
+`kobo dev` runs the app in the Clara BW browser simulator. Start with the
+[SDK documentation](https://bandarlabs.github.io/Cobalt/sdk.html); the
+repository also keeps the [deep implementation guide](SDK.md).
 
 ### What the SDK provides
 
@@ -149,12 +150,13 @@ directly. The runtime can deny a request because it was not declared, is too
 expensive for the current battery state, or is unsupported, and each refusal
 is returned to the app as a value it can present or recover from.
 
-See the full guide for [the application model](SDK.md#1-the-shape-of-an-application),
-[screen building](SDK.md#3-building-a-screen),
-[asynchronous work and credentials](SDK.md#5-work-that-takes-time),
-[persistent state](SDK.md#7-state-that-survives-being-closed),
-[hardware capabilities](SDK.md#10-hardware), and
-[simulation, packaging, and deployment](SDK.md#11-running-it).
+See the SDK docs for the
+[application model](https://bandarlabs.github.io/Cobalt/sdk.html#application-model),
+[UI components](https://bandarlabs.github.io/Cobalt/sdk.html#ui),
+[runtime services](https://bandarlabs.github.io/Cobalt/sdk.html#services),
+[capabilities](https://bandarlabs.github.io/Cobalt/sdk.html#capabilities),
+[developer-facing crates](https://bandarlabs.github.io/Cobalt/sdk.html#crates),
+and the [CLI command reference](https://bandarlabs.github.io/Cobalt/sdk.html#cli).
 
 ## Contributing apps
 

@@ -1,0 +1,523 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cobalt SDK documentation</title>
+<meta name="description" content="Developer documentation for building Kobo e-reader applications with the Cobalt Rust SDK: UI components, lifecycle, runtime services, capabilities, companion crates, testing and shipping.">
+<link rel="canonical" href="https://bandarlabs.github.io/Cobalt/sdk.html">
+<link rel="icon" href="logo.svg" type="image/svg+xml">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Cobalt SDK documentation">
+<meta property="og:description" content="Build declarative, capability-isolated Rust applications for Kobo e-readers.">
+<meta property="og:url" content="https://bandarlabs.github.io/Cobalt/sdk.html">
+<meta property="og:image" content="https://bandarlabs.github.io/Cobalt/media/site/og-card.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+:root {
+  --paper: #f6f2ea;
+  --paper-deep: #eee8db;
+  --ink: #1b1813;
+  --ink-soft: #5a5347;
+  --rule: #d9d1c0;
+  --cobalt: #1a41a8;
+  --cobalt-deep: #143283;
+  --dither-light: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8'%3E%3Crect x='0' y='0' width='1' height='1' fill='%23ffffff' fill-opacity='.22'/%3E%3Crect x='4' y='4' width='1' height='1' fill='%23ffffff' fill-opacity='.22'/%3E%3Crect x='6' y='2' width='1' height='1' fill='%23ffffff' fill-opacity='.12'/%3E%3Crect x='2' y='6' width='1' height='1' fill='%23ffffff' fill-opacity='.12'/%3E%3C/svg%3E");
+  --serif: "Charter", "Iowan Old Style", "Palatino", "Georgia", serif;
+  --mono: "SF Mono", "Menlo", "Consolas", monospace;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { scroll-behavior: smooth; max-width: 100%; overflow-x: hidden; }
+body {
+  background: var(--paper) url("media/site/grain.png") repeat;
+  background-size: 128px 128px;
+  background-blend-mode: multiply;
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: 18px;
+  line-height: 1.58;
+  -webkit-font-smoothing: antialiased;
+  border-top: 5px solid var(--cobalt);
+  max-width: 100%; overflow-x: hidden;
+}
+::selection { background: var(--cobalt); color: var(--paper); }
+a { color: var(--cobalt); text-decoration: none; }
+a:hover { text-decoration: underline; text-underline-offset: 3px; }
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+header.masthead { border-bottom: 1px solid var(--ink); padding: 18px 0; }
+.masthead .wrap {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 24px; flex-wrap: wrap;
+}
+.brand { display: flex; align-items: center; color: var(--ink); }
+.brand img { height: 34px; width: auto; }
+nav.top { display: flex; gap: 24px; font-size: 16px; flex-wrap: wrap; }
+nav.top a { color: var(--ink); }
+nav.top a.active, nav.top a:hover { color: var(--cobalt); }
+h1 { font-size: clamp(36px, 5vw, 52px); line-height: 1.06; }
+.cta { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 30px; }
+.btn {
+  display: inline-block; padding: 11px 20px; font-size: 16px;
+  border: 1.5px solid var(--ink); color: var(--ink);
+}
+.btn:hover { background: var(--ink); color: var(--paper); text-decoration: none; }
+.btn.primary { background: var(--cobalt); border-color: var(--cobalt); color: #fff; }
+.btn.primary:hover { background: var(--cobalt-deep); border-color: var(--cobalt-deep); }
+.docs {
+  display: grid; grid-template-columns: 220px minmax(0, 1fr);
+  gap: 58px; padding-top: 62px; padding-bottom: 86px;
+}
+.docs > *, article, article section { min-width: 0; }
+.page-intro { padding-bottom: 52px; margin-bottom: 64px; border-bottom: 1px solid var(--rule); }
+.page-intro .lede { font-size: 21px; max-width: 38em; margin-top: 20px; }
+.page-intro .sub { color: var(--ink-soft); max-width: 45em; margin-top: 10px; }
+.contents { align-self: start; position: sticky; top: 24px; }
+.contents h2 {
+  font-family: var(--mono); font-size: 13px; letter-spacing: .12em;
+  text-transform: uppercase; margin-bottom: 13px; color: var(--ink-soft);
+}
+.contents a {
+  display: block; color: var(--ink); font-size: 15px;
+  padding: 6px 0; border-bottom: 1px solid var(--rule);
+}
+.contents a:hover { color: var(--cobalt); }
+article section { padding: 0 0 64px; margin-bottom: 64px; border-bottom: 1px solid var(--rule); }
+article section:last-child { border-bottom: 0; margin-bottom: 0; padding-bottom: 0; }
+h2 { font-size: clamp(28px, 4vw, 39px); line-height: 1.12; margin-bottom: 18px; }
+h3 { font-size: 21px; line-height: 1.25; margin: 34px 0 12px; }
+p + p { margin-top: 14px; }
+.quiet { color: var(--ink-soft); }
+code {
+  font-family: var(--mono); font-size: .82em;
+  background: #ece5d7; border: 1px solid #d1c6b3; color: #211e18;
+  padding: 1px 5px; font-weight: 600;
+  -webkit-font-smoothing: auto; font-variant-ligatures: none;
+}
+pre {
+  font-family: var(--mono); font-size: 13.5px; line-height: 1.6;
+  background: #171510; color: #f1ecdf; padding: 22px 26px;
+  overflow-x: auto; tab-size: 4; border-left: 4px solid var(--cobalt);
+  margin: 22px 0;
+  -webkit-font-smoothing: auto; text-rendering: optimizeLegibility;
+  font-variant-ligatures: none;
+}
+pre code {
+  font: inherit; background: none; border: 0; padding: 0;
+  color: inherit; font-weight: inherit;
+}
+pre .kw { color: #8fd7ff; }
+pre .ty { color: #86d6c3; }
+pre .fn { color: #f0d48a; }
+pre .str { color: #dbc18c; }
+pre .num { color: #eea18f; }
+pre .com { color: #9a9384; }
+pre .macro { color: #d9a5dc; }
+pre .cmd { color: #8fd7ff; font-weight: 700; }
+.cards {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px; margin-top: 28px;
+}
+.card {
+  border: 1px solid var(--rule); padding: 20px;
+  background: rgba(255,255,255,.28);
+}
+.card h3 { font-size: 18px; margin: 0 0 9px; }
+.card p { color: var(--ink-soft); font-size: 15px; line-height: 1.55; }
+.card code { color: var(--ink); }
+.table-wrap { max-width: 100%; overflow-x: auto; margin-top: 24px; }
+table { border-collapse: collapse; width: 100%; min-width: 650px; font-size: 15px; }
+th, td { text-align: left; vertical-align: top; border-bottom: 1px solid var(--rule); padding: 11px 12px; }
+th { font-family: var(--mono); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-soft); }
+td:first-child { color: var(--ink); font-weight: 700; }
+.service-table { table-layout: fixed; min-width: 760px; }
+.service-table th:nth-child(1) { width: 16%; }
+.service-table th:nth-child(2) { width: 36%; }
+.service-table th:nth-child(3) { width: 48%; }
+.service-table td { overflow-wrap: break-word; }
+.service-table code { white-space: normal; overflow-wrap: anywhere; }
+.note {
+  border-left: 4px solid var(--cobalt); background: var(--paper-deep);
+  padding: 17px 20px; margin: 24px 0; color: var(--ink-soft);
+}
+.note strong { color: var(--ink); }
+.links { display: flex; flex-wrap: wrap; gap: 12px 22px; margin-top: 22px; font-size: 16px; }
+footer {
+  background: var(--cobalt) var(--dither-light); background-size: 8px 8px;
+  padding: 46px 0 54px; font-size: 15px; color: #fff;
+}
+footer a { color: #fff; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: rgba(255,255,255,.45); }
+footer .wrap { display: flex; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
+footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
+@media (max-width: 820px) {
+  body { font-size: 17px; }
+  .docs { grid-template-columns: 1fr; gap: 34px; padding-top: 42px; }
+  .contents { position: static; display: grid; grid-template-columns: 1fr 1fr; gap: 0 18px; }
+  .contents h2 { grid-column: 1 / -1; }
+  .page-intro { padding-bottom: 44px; margin-bottom: 52px; }
+}
+@media (max-width: 560px) {
+  .wrap { padding-left: 18px; padding-right: 18px; }
+  .cards { grid-template-columns: 1fr; }
+  .contents { display: none; }
+  .docs { gap: 28px; padding-top: 30px; padding-bottom: 60px; }
+  .docs, article, article section, .page-intro {
+    width: 100%; max-width: 100%; min-width: 0;
+  }
+  .page-intro .lede, .page-intro .sub { max-width: 100%; overflow-wrap: break-word; }
+  .masthead .wrap { align-items: center; }
+  nav.top {
+    width: 100%; gap: 18px; font-size: 15px; flex-wrap: nowrap;
+    overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin;
+  }
+  nav.top a { white-space: nowrap; }
+  h1 { font-size: 36px; }
+  h2 { font-size: 29px; }
+  .page-intro { padding-bottom: 38px; margin-bottom: 44px; }
+  .page-intro .lede { font-size: 19px; }
+  .cta { display: grid; grid-template-columns: 1fr; gap: 10px; }
+  .btn { text-align: center; }
+  pre {
+    margin-left: -18px; margin-right: -18px; padding: 16px 18px;
+    border-left-width: 3px; white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  .table-wrap {
+    width: calc(100% + 36px); max-width: none;
+    margin-left: -18px; margin-right: -18px;
+    padding: 0 18px 8px; overscroll-behavior-x: contain;
+  }
+  .card { padding: 17px; }
+  article section { padding-bottom: 46px; margin-bottom: 46px; }
+  footer .wrap { display: block; }
+  footer nav { margin-top: 18px; }
+}
+</style>
+</head>
+<body>
+<header class="masthead">
+  <div class="wrap">
+    <a class="brand" href="index.html"><img src="logo.svg" alt="Cobalt" width="81" height="34"></a>
+    <nav class="top">
+      <a href="index.html">Home</a>
+      <a class="active" href="sdk.html">SDK</a>
+      <a href="APP_STORE.md">App Store</a>
+      <a href="INSTALL.md">Install</a>
+      <a href="https://github.com/BandarLabs/Cobalt">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap docs">
+  <nav class="contents" aria-label="SDK documentation sections">
+    <h2>On this page</h2>
+    <a href="#quick-start">Quick start</a>
+    <a href="#application-model">Application model</a>
+    <a href="#ui">UI components</a>
+    <a href="#services">Runtime services</a>
+    <a href="#capabilities">Capabilities</a>
+    <a href="#crates">Developer crates</a>
+    <a href="#cli">CLI commands</a>
+    <a href="#testing">Testing and shipping</a>
+    <a href="#limits">Boundaries and limits</a>
+  </nav>
+
+  <article>
+    <div class="page-intro">
+      <h1>Cobalt SDK</h1>
+      <p class="lede">A declarative Rust API for E Ink UI, asynchronous work, private storage and capability-gated device services.</p>
+      <p class="sub">Applications manage state. The runtime handles layout, refresh planning, hardware access, network credentials and process isolation.</p>
+      <div class="cta">
+        <a class="btn primary" href="#quick-start">Quick start</a>
+        <a class="btn" href="https://github.com/BandarLabs/Cobalt/blob/main/SDK.md">Detailed guide</a>
+        <a class="btn" href="https://github.com/BandarLabs/Cobalt/tree/main/examples/gallery">Component gallery</a>
+      </div>
+    </div>
+    <section id="quick-start">
+      <h2>Create an application</h2>
+      <p>Install the CLI, create an application and start the browser simulator:</p>
+<pre><code><span class="cmd">cargo</span> install --path crates/kobo-cli
+<span class="cmd">kobo</span> new my-app
+<span class="cmd">cd</span> my-app
+<span class="cmd">kobo</span> dev</code></pre>
+      <p>Implement <code>KoboApp</code>, render the current state and handle named actions:</p>
+<pre><code><span class="kw">use</span> kobo_sdk::{action_id, <span class="ty">ActionId</span>, <span class="ty">Context</span>, <span class="ty">KoboApp</span>, <span class="ty">ScreenBuilder</span>};
+
+<span class="macro">#[derive(Default)]</span>
+<span class="kw">struct</span> <span class="ty">Counter</span> { taps: <span class="ty">u32</span> }
+
+<span class="kw">impl</span> <span class="ty">KoboApp</span> <span class="kw">for</span> <span class="ty">Counter</span> {
+    <span class="kw">fn</span> <span class="fn">on_start</span>(&amp;<span class="kw">mut</span> self, context: &amp;<span class="kw">mut</span> <span class="ty">Context</span>) {
+        self.<span class="fn">show</span>(context);
+    }
+
+    <span class="kw">fn</span> <span class="fn">on_action</span>(&amp;<span class="kw">mut</span> self, context: &amp;<span class="kw">mut</span> <span class="ty">Context</span>, action: <span class="ty">ActionId</span>) {
+        <span class="kw">if</span> action == <span class="fn">action_id</span>(<span class="str">"tap"</span>) {
+            self.taps += <span class="num">1</span>;
+        }
+        self.<span class="fn">show</span>(context);
+    }
+}
+
+<span class="kw">impl</span> <span class="ty">Counter</span> {
+    <span class="kw">fn</span> <span class="fn">show</span>(&amp;self, context: &amp;<span class="kw">mut</span> <span class="ty">Context</span>) {
+        context.<span class="fn">set_screen</span>(
+            <span class="ty">ScreenBuilder</span>::<span class="fn">new</span>(<span class="str">"counter"</span>)
+                .<span class="fn">top_bar</span>(<span class="str">"Counter"</span>)
+                .<span class="fn">heading</span>(<span class="macro">format!</span>(<span class="str">"{} taps"</span>, self.taps))
+                .<span class="fn">primary_button</span>(<span class="str">"tap"</span>, <span class="str">"Tap"</span>)
+                .<span class="fn">build</span>(),
+        );
+    }
+}
+
+<span class="kw">fn</span> <span class="fn">main</span>() {
+    <span class="kw">let</span> _ = kobo_sdk::<span class="fn">run</span>(<span class="str">"counter"</span>, <span class="ty">Counter</span>::<span class="fn">default</span>());
+}</code></pre>
+      <div class="note"><strong>Hardware support.</strong> Cobalt has been tested on the Kobo Clara BW N365, device code 391. Other Kobo models can be supported after hardware testing and review of their device profile.</div>
+    </section>
+
+    <section id="application-model">
+      <h2>Application callbacks</h2>
+      <p>The runtime delivers events to one <code>KoboApp</code>. Rebuild the screen after state changes. Do not block callbacks or retain renderer objects.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Callback</th><th>When it runs</th></tr></thead>
+          <tbody>
+            <tr><td><code>on_start</code></td><td>The application session starts. Draw the first screen and request initial data.</td></tr>
+            <tr><td><code>on_action</code></td><td>A named button, row, tile, key, navigation item or Back action was activated.</td></tr>
+            <tr><td><code>on_text_hold</code></td><td>A selectable rich-text word was held, with stable text coordinates.</td></tr>
+            <tr><td><code>on_task</code></td><td>An asynchronous fetch, post, file read or sleep completed, failed or was cancelled.</td></tr>
+            <tr><td><code>on_device_result</code></td><td>A device, radio, audio, dictionary, update or app-catalog request answered.</td></tr>
+            <tr><td><code>on_store</code></td><td>Private key-value or shelf storage answered.</td></tr>
+            <tr><td><code>on_shell_event</code></td><td>The runtime-owned terminal opened, produced bytes, closed or was refused.</td></tr>
+            <tr><td><code>on_cover_change</code></td><td>The hall sensor's settled magnet state changed while the app was foregrounded.</td></tr>
+            <tr><td><code>on_background</code> / <code>on_foreground</code></td><td>The reader left for another app and later returned. Work continues while backgrounded.</td></tr>
+            <tr><td><code>on_suspend</code> / <code>on_resume</code></td><td>The device session suspends and resumes.</td></tr>
+            <tr><td><code>on_scheduled_wake</code></td><td>A capability-gated background wake is delivered.</td></tr>
+            <tr><td><code>on_exit</code></td><td>The application session is ending.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="quiet">Callbacks have a 250 ms deadline. Hand slow work to <code>Context::spawn</code> and render an activity or skeleton state while it runs.</p>
+    </section>
+
+    <section id="ui">
+      <h2>UI components</h2>
+      <p><code>ScreenBuilder</code> provides 94 component and configuration methods. The renderer handles physical size, wrapping, grayscale tone, touch geometry and refresh strategy.</p>
+      <div class="cards">
+        <div class="card"><h3>Text and documents</h3><p><code>heading</code>, hierarchical headings, plain and linked text, styled and selectable rich text, inline formulae, metadata, sections, facts, quotes, bylines, tables and pictures.</p></div>
+        <div class="card"><h3>Actions and input</h3><p>Primary, secondary and disabled buttons, fields with clear actions, chips, choices, steppers, text entry and terminal keyboards.</p></div>
+        <div class="card"><h3>Collections and media</h3><p>Rows, checklists, trailing values, row menus, paged lists, tiles, app tiles, picture tiles, configurable tile grids, boards and glyph controls.</p></div>
+        <div class="card"><h3>Navigation and overlays</h3><p>Top bars, tabs, destination bars, action bars, pinned bottom actions, page turns, reading menus, holds, popovers, overflow menus and modal sheets.</p></div>
+        <div class="card"><h3>Feedback and states</h3><p>Banners, progress, activity, cancellation, byte transfers, skeletons, splash screens, confirmations and standard empty, offline, denied and error states.</p></div>
+        <div class="card"><h3>Adaptive layout</h3><p>Semantic spacing, dividers, bottom fill and two- or three-slot bands. Bands stack automatically on narrow panels.</p></div>
+      </div>
+      <div class="links">
+        <a href="https://github.com/BandarLabs/Cobalt/blob/main/SDK.md#3-ui-component-reference">Method-by-method UI reference</a>
+        <a href="https://github.com/BandarLabs/Cobalt/tree/main/examples/gallery">Rendered component gallery</a>
+      </div>
+    </section>
+
+    <section id="services">
+      <h2>Runtime services</h2>
+      <div class="table-wrap">
+        <table class="service-table">
+          <colgroup>
+            <col style="width:16%">
+            <col style="width:36%">
+            <col style="width:48%">
+          </colgroup>
+          <thead><tr><th>Surface</th><th>Developer API</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td>Display</td><td><code>set_screen</code>, <code>put_picture</code>, <code>put_font</code></td><td>Publish a screen and bounded picture or book-font resources; release them with <code>drop_picture</code> and <code>drop_font</code>.</td></tr>
+            <tr><td>Async work</td><td><code>spawn</code>, <code>spawn_retrying</code>, <code>cancel</code></td><td>HTTPS fetch/post, app-private file reads and sleeps without blocking the event loop.</td></tr>
+            <tr><td>Small state</td><td><code>store().save/load/cache/load_cached/forget/list</code></td><td>Atomic app-private keyed state and evictable cache values.</td></tr>
+            <tr><td>Large state</td><td><code>shelf()</code>, <code>ShelfUpload</code>, <code>ShelfDownload</code></td><td>App-private books, audio, covers and other large blobs transferred in bounded chunks.</td></tr>
+            <tr><td>Application handoff</td><td><code>launch</code></td><td>Ask the runtime to open an installed catalog application by stable ID.</td></tr>
+            <tr><td>App catalog</td><td><code>applications()</code></td><td>List installed apps, read or refresh the signed catalog, install/update and uninstall. Identity-authorized for launcher and Store apps.</td></tr>
+            <tr><td>Power and schedule</td><td><code>device().hold_wifi/release_wifi/keep_awake/allow_sleep/schedule_wake/cancel_wake</code></td><td>Request bounded power-policy exceptions and scheduled refreshes.</td></tr>
+            <tr><td>Device readings</td><td><code>read_battery</code>, <code>read_battery_detail</code>, <code>read_cover</code>, <code>read_frontlight</code></td><td>Read typed hardware state; every request receives one result or refusal.</td></tr>
+            <tr><td>Wi-Fi and Bluetooth</td><td><code>read/set/scan/join/connect/disconnect/forget</code></td><td>Capability-gated radio control through firmware-owned services.</td></tr>
+            <tr><td>Audio</td><td><code>load/play/pause/seek/stop/set_audio_volume</code>, <code>AudioPlayer</code></td><td>Play app-shelf audio or bounded unauthenticated HTTPS streams through the active output.</td></tr>
+            <tr><td>Dictionary</td><td><code>lookup_word</code></td><td>Use runtime-installed dictionaries offline, with an optional language tag.</td></tr>
+            <tr><td>Terminal</td><td><code>shell()</code>, <code>TerminalKeys</code></td><td>Send bytes to a runtime-owned terminal and receive output events; apps never choose a program path.</td></tr>
+            <tr><td>Platform update</td><td><code>device().update</code></td><td>Settings-only replacement from an HTTPS release archive with an exact SHA-256 digest.</td></tr>
+            <tr><td>Diagnostics</td><td><code>log</code>, <code>build_checked</code>, <code>AppRunner</code></td><td>Structured runtime logs, screen validation and host-side deterministic app tests.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="capabilities">
+      <h2>Capabilities</h2>
+      <p>Capabilities use exact manifest names. Device results distinguish undeclared, battery-withheld and unsupported operations.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Capability</th><th>Current SDK surface</th></tr></thead>
+          <tbody>
+            <tr><td><code>network</code></td><td>Foreground <code>Task::Fetch</code> and <code>Task::Post</code>.</td></tr>
+            <tr><td><code>background-network</code></td><td>Network tasks during a scheduled background wake; requires <code>scheduled-wake</code>.</td></tr>
+            <tr><td><code>hold-wifi</code></td><td>Bounded Wi-Fi association hold; requires <code>network</code>.</td></tr>
+            <tr><td><code>keep-awake</code></td><td>Bounded foreground suspend prevention.</td></tr>
+            <tr><td><code>scheduled-wake</code></td><td>Schedule and cancel a runtime-coalesced wake.</td></tr>
+            <tr><td><code>battery-read</code></td><td>Battery summary and detailed optional gauge readings.</td></tr>
+            <tr><td><code>frontlight-control</code></td><td>Read and set front-light percentage.</td></tr>
+            <tr><td><code>wifi-control</code></td><td>Power, scan, join and disconnect Wi-Fi.</td></tr>
+            <tr><td><code>bluetooth-control</code></td><td>Power, scan, pair, connect, disconnect and forget Bluetooth devices.</td></tr>
+            <tr><td><code>audio</code></td><td>Load and control playback.</td></tr>
+            <tr><td><code>bluetooth-audio</code></td><td>Bluetooth audio output; requires <code>audio</code>.</td></tr>
+            <tr><td><code>cover-sensor</code></td><td>Initial hall-sensor read and foreground change events.</td></tr>
+            <tr><td><code>shell</code></td><td>Runtime-owned terminal. Reserved to the Terminal application by current platform policy.</td></tr>
+            <tr><td><code>sleep-screen</code></td><td>Reserved manifest vocabulary; no public <code>kobo-sdk</code> application call yet.</td></tr>
+            <tr><td><code>notifications</code></td><td>Reserved manifest vocabulary; no public <code>kobo-sdk</code> application call yet.</td></tr>
+            <tr><td><code>shared-files</code></td><td>Reserved manifest vocabulary; no public <code>kobo-sdk</code> application call yet. <code>Context::shelf</code> is private, not user-visible.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="quiet">App launching, catalog management and platform updates are authorized by caller identity rather than by public manifest capabilities.</p>
+    </section>
+
+    <section id="crates">
+      <h2>Application-facing crates</h2>
+      <p>Use <code>kobo-sdk</code> for the application API. Add companion crates for specific data formats and reading surfaces.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Crate</th><th>Use it when</th><th>Reference app</th></tr></thead>
+          <tbody>
+            <tr><td><code>kobo-sdk</code></td><td>Every app: lifecycle, UI, tasks, storage and runtime services.</td><td>All examples and apps</td></tr>
+            <tr><td><code>kobo-ui</code></td><td>You need advanced public UI types, pagination helpers or renderer-level layout assertions. Most component types are re-exported by <code>kobo-sdk</code>.</td><td>Gallery, Sudoku tests</td></tr>
+            <tr><td><code>kobo-image</code></td><td>Decode bounded JPEG/PNG bytes, fit/crop them and dither to panel greys before <code>put_picture</code>.</td><td>Gallery, readers</td></tr>
+            <tr><td><code>kobo-json</code></td><td>Parse untrusted JSON or build request objects without Serde.</td><td>Brief, Chat, RSS</td></tr>
+            <tr><td><code>kobo-html</code></td><td>Turn untrusted HTML fragments into bounded text, or rasterise mathematical formulae with its optional feature.</td><td>Hacker News, RSS, arXiv</td></tr>
+            <tr><td><code>kobo-xml</code></td><td>Scan bounded XML/Atom/RSS input without external entities or recursive allocation.</td><td>RSS, arXiv</td></tr>
+            <tr><td><code>kobo-opds</code></td><td>Read OPDS 1.2 Atom and OPDS 2.0 JSON catalogues into one model.</td><td>Store/catalog clients</td></tr>
+            <tr><td><code>kobo-doc</code></td><td>Sniff and parse EPUB, HTML, Markdown or plain-text bytes into structured document blocks.</td><td>arXiv, book readers</td></tr>
+            <tr><td><code>kobo-read</code></td><td>Paginate a structured document and manage stable locations, contents, search and annotations.</td><td>arXiv</td></tr>
+            <tr><td><code>kobo-bookview</code></td><td>You need an end-to-end reading surface with deferred image loading and stable repagination.</td><td>arXiv</td></tr>
+            <tr><td><code>kobo-term</code></td><td>Turn VT100 output bytes into rows and a cursor for <code>ScreenBuilder::terminal</code>.</td><td>Terminal</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="note"><strong>Internal crates.</strong> <code>kobo-protocol</code>, <code>kobo-policy</code>, <code>kobo-net</code>, <code>kobo-text</code>, <code>kobo-hal</code>, <code>kobo-shell</code>, <code>kobod</code> and the install tools implement the runtime. Applications should use SDK re-exports instead.</div>
+    </section>
+
+    <section id="cli">
+      <h2>CLI commands</h2>
+      <p>The CLI creates and tests applications, manages developer devices, and builds Store artifacts. Commands accepting <code>--device</code> also accept <code>-s</code>.</p>
+
+      <h3>Build and exercise applications</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Command</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td><code>new &lt;name&gt;</code></td><td>Create a Rust SDK application. Aliases: <code>init</code>, <code>create</code>.</td></tr>
+            <tr><td><code>dev [--builtin] [address]</code></td><td>Run the current SDK app in the browser simulator. Aliases: <code>sim</code>, <code>simulator</code>.</td></tr>
+            <tr><td><code>run --sim [--app NAME]</code></td><td>Run the SDK transport, daemon and one application together on the host.</td></tr>
+            <tr><td><code>drive --script PATH</code></td><td>Drive a running simulator with taps, typing, expectations, scenarios and PNG screenshots.</td></tr>
+            <tr><td><code>shot [--device HOST]</code></td><td>Save a PNG of the simulated or real panel. Device capture is read-only.</td></tr>
+            <tr><td><code>build [--device]</code></td><td>Build the host workspace or the ARM safe doctor, disabled runtime and sample app.</td></tr>
+            <tr><td><code>package [--out PATH] [--folder PATH]</code></td><td>Build the <code>KoboRoot.tgz</code> an owner installs over USB.</td></tr>
+            <tr><td><code>inspect &lt;package&gt;</code></td><td>List a package and verify that no entry can write outside Cobalt's install folder.</td></tr>
+            <tr><td><code>verify &lt;arm-binary&gt;</code></td><td>Verify static ARMv7 hard-float binary format.</td></tr>
+            <tr><td><code>version</code></td><td>Print the CLI version.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Work with a developer device</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Command</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td><code>setup [--volume PATH] [--undo] [--enable-ssh] [--no-key]</code></td><td>Prepare or undo a reader over USB. Root SSH is an explicit development opt-in.</td></tr>
+            <tr><td><code>deploy --device IP [--package PATH]</code></td><td>Install over Wi-Fi without rebooting. Alias: <code>install</code>.</td></tr>
+            <tr><td><code>devices [--subnet A.B.C]</code></td><td>Find readers on the local network and report hardware, firmware and Cobalt versions.</td></tr>
+            <tr><td><code>doctor [--device IP]</code></td><td>Run read-only host or device diagnostics.</td></tr>
+            <tr><td><code>present &lt;app&gt; --device IP [--seconds N]</code></td><td>Run one installed application on the real panel for a bounded presentation.</td></tr>
+            <tr><td><code>stop --device IP</code></td><td>Stop the Cobalt session and hand the panel back to the stock reader.</td></tr>
+            <tr><td><code>session --device IP [--hold [minutes]]</code></td><td>Keep a development device reachable, awake and associated with Wi-Fi.</td></tr>
+            <tr><td><code>wait --device IP</code></td><td>Block until a device answers again. Alias: <code>wait-for-device</code>.</td></tr>
+            <tr><td><code>logs --device IP [--follow] [--lines N]</code></td><td>Read or follow the runtime trace. Alias: <code>logcat</code>.</td></tr>
+            <tr><td><code>shell --device IP [command ...]</code></td><td>Run one developer command on the reader, or open an interactive SSH session.</td></tr>
+            <tr><td><code>record --device IP [--seconds N] [--fps F] [--out DIR]</code></td><td>Capture a read-only sequence of panel frames.</td></tr>
+            <tr><td><code>touch-probe --device IP [--seconds N]</code></td><td>Watch touch input read-only to verify the hardware profile's coordinate transform.</td></tr>
+            <tr><td><code>guard-test --device IP --confirm ...</code></td><td>Attended proof that the session guardian restores the previous screen.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Credentials, trust and Store releases</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Command</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td><code>secret set/list/remove</code></td><td>Install, name or remove runtime-held application credentials without printing their values.</td></tr>
+            <tr><td><code>trust set/list/remove</code></td><td>Manage owner TLS roots for private HTTPS services.</td></tr>
+            <tr><td><code>app-key --seed PATH</code></td><td>Print the Ed25519 public key for a Store release seed.</td></tr>
+            <tr><td><code>app-bundle ...</code></td><td>Build one signed, pathless <code>.cobalt-app</code> package.</td></tr>
+            <tr><td><code>app-catalog ...</code></td><td>Build and sign the public application catalog.</td></tr>
+            <tr><td><code>app-list --registry PATH</code></td><td>List validated Store registry entries as JSON.</td></tr>
+            <tr><td><code>app-check --registry PATH ...</code></td><td>Build and verify registered Store applications.</td></tr>
+            <tr><td><code>app-release --registry PATH ...</code></td><td>Build and sign the complete registered application release.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note"><strong>Device-write feature.</strong> Build <code>kobo-cli</code> with <code>--features device-write</code> to enable <code>tap --device IP X,Y [MS:X,Y ...]</code> and <code>smoke-display --device IP --confirm ...</code>. These commands write to the device input or display.</div>
+    </section>
+
+    <section id="testing">
+      <h2>Testing and shipping</h2>
+<pre><code><span class="com"># Browser simulator from an app directory</span>
+<span class="cmd">kobo</span> dev
+
+<span class="com"># Host runtime</span>
+<span class="cmd">cargo</span> run -p kobo-cli -- run --sim --app my-app
+
+<span class="com"># Drive taps, typing, expectations and screenshots</span>
+<span class="cmd">cargo</span> run -p kobo-cli -- drive --script tour.kobo --shots target/shots
+
+<span class="com"># Targeted application tests</span>
+<span class="cmd">cargo</span> test -p kobo-my-app
+
+<span class="com"># Package a device build</span>
+<span class="cmd">cargo</span> run -p kobo-cli -- package</code></pre>
+      <p>The simulator uses the production layout, renderer, hit testing and refresh planner. Failure scenarios cover offline, timeout, low battery, denied capability, missing credentials, storage pressure and image-cache pressure.</p>
+      <div class="links">
+        <a href="DEVELOPING.md">Repository development</a>
+        <a href="CONTRIBUTING_APPS.md">Contributing an app</a>
+        <a href="APP_STORE.md">Publishing and the App Store</a>
+      </div>
+    </section>
+
+    <section id="limits">
+      <h2>Platform constraints</h2>
+      <div class="cards">
+        <div class="card"><h3>Callback duration</h3><p>Callbacks must return quickly. Network, files, sleeps and device operations use asynchronous requests.</p></div>
+        <div class="card"><h3>Brokered access</h3><p>Applications do not open sockets, device nodes, shared paths or processes. Runtime requests return a result or refusal.</p></div>
+        <div class="card"><h3>Bounded data</h3><p>Rows, cells, choices, pictures, tasks, keys and wire strings have explicit limits. Diagnostics report truncation and overflow.</p></div>
+        <div class="card"><h3>Pagination</h3><p>Long prose, rows and tiles are measured into pages. The SDK does not provide continuous scrolling.</p></div>
+        <div class="card"><h3>Credentials</h3><p>Requests name runtime-held credentials. Values do not enter application memory or follow redirects.</p></div>
+        <div class="card"><h3>Hardware profiles</h3><p>Device support requires an exact profile. Unknown models are refused.</p></div>
+      </div>
+      <div class="links">
+        <a href="https://github.com/BandarLabs/Cobalt/blob/main/SDK.md">Detailed SDK guide</a>
+        <a href="https://github.com/BandarLabs/Cobalt/tree/main/crates/kobo-sdk/src">SDK Rust source and rustdoc comments</a>
+        <a href="https://github.com/BandarLabs/Cobalt/tree/main/examples">Worked examples</a>
+      </div>
+    </section>
+  </article>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>Cobalt SDK · AGPL-3.0 · <a href="https://github.com/BandarLabs/Cobalt">BandarLabs/Cobalt</a></p>
+    <nav>
+      <a href="index.html">Home</a>
+      <a href="https://github.com/BandarLabs/Cobalt/blob/main/SDK.md">Detailed guide</a>
+      <a href="INSTALL.md">Install</a>
+      <a href="CONTRIBUTING_APPS.md">Contribute an app</a>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>

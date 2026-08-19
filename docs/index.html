@@ -1,0 +1,635 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cobalt: apps and an SDK for Kobo e-readers</title>
+<meta name="description" content="Cobalt is an open-source app platform for Kobo e-readers: a launcher, a signed App Store, a Rust SDK, and a capability-isolated runtime. One USB install; every app after that arrives over Wi-Fi.">
+<link rel="canonical" href="https://bandarlabs.github.io/Cobalt/">
+<link rel="icon" href="logo.svg" type="image/svg+xml">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Cobalt: apps and an SDK for Kobo e-readers">
+<meta property="og:description" content="A launcher, a signed App Store, a Rust SDK, and a capability-isolated runtime for the Kobo Clara BW. Install once over USB; everything after that arrives over Wi-Fi.">
+<meta property="og:url" content="https://bandarlabs.github.io/Cobalt/">
+<meta property="og:image" content="https://bandarlabs.github.io/Cobalt/media/site/og-card.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="The Cobalt launcher on a Kobo Clara BW: Settings, App Store, Terminal, AI Chat, Audiobooks, Components, Daily Brief, Feeds and Gutenbird.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Cobalt: apps and an SDK for Kobo e-readers">
+<meta name="twitter:description" content="A launcher, a signed App Store, a Rust SDK, and a capability-isolated runtime for the Kobo Clara BW.">
+<meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/og-card.jpg">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Cobalt",
+  "operatingSystem": "Linux (Kobo Clara BW)",
+  "applicationCategory": "DeveloperApplication",
+  "description": "An open-source application platform for Kobo e-readers: a launcher, a signed App Store, a Rust SDK, and a runtime with capability isolation.",
+  "url": "https://bandarlabs.github.io/Cobalt/",
+  "image": "https://bandarlabs.github.io/Cobalt/media/site/og-card.jpg",
+  "license": "https://www.gnu.org/licenses/agpl-3.0.html",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "softwareHelp": "https://github.com/BandarLabs/Cobalt/blob/main/docs/INSTALL.md",
+  "codeRepository": "https://github.com/BandarLabs/Cobalt"
+}
+</script>
+<style>
+:root {
+  --paper: #f6f2ea;
+  --paper-deep: #eee8db;
+  --ink: #1b1813;
+  --ink-soft: #5a5347;
+  --rule: #d9d1c0;
+  --cobalt: #1a41a8;
+  --cobalt-deep: #143283;
+  --dither-light: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8'%3E%3Crect x='0' y='0' width='1' height='1' fill='%23ffffff' fill-opacity='.22'/%3E%3Crect x='4' y='4' width='1' height='1' fill='%23ffffff' fill-opacity='.22'/%3E%3Crect x='6' y='2' width='1' height='1' fill='%23ffffff' fill-opacity='.12'/%3E%3Crect x='2' y='6' width='1' height='1' fill='%23ffffff' fill-opacity='.12'/%3E%3C/svg%3E");
+  --dither-ink: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8'%3E%3Crect x='0' y='0' width='1' height='1' fill='%231a41a8' fill-opacity='.10'/%3E%3Crect x='4' y='4' width='1' height='1' fill='%231a41a8' fill-opacity='.10'/%3E%3Crect x='6' y='2' width='1' height='1' fill='%231a41a8' fill-opacity='.05'/%3E%3Crect x='2' y='6' width='1' height='1' fill='%231a41a8' fill-opacity='.05'/%3E%3C/svg%3E");
+  --serif: "Charter", "Iowan Old Style", "Palatino", "Georgia", serif;
+  --mono: "SF Mono", "Menlo", "Consolas", monospace;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  background: var(--paper) url("media/site/grain.png") repeat;
+  background-size: 128px 128px;
+  background-blend-mode: multiply;
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: 19px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  border-top: 5px solid var(--cobalt);
+}
+::selection { background: var(--cobalt); color: var(--paper); }
+a { color: var(--cobalt); text-decoration: none; }
+a:hover { text-decoration: underline; text-underline-offset: 3px; }
+img { display: block; max-width: 100%; height: auto; }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+
+/* ---------- masthead ---------- */
+header.masthead {
+  border-bottom: 1px solid var(--ink);
+  padding: 18px 0;
+}
+.masthead .wrap {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 24px;
+  flex-wrap: wrap;
+}
+.brand { display: flex; align-items: center; color: var(--ink); }
+.brand img { height: 34px; width: auto; }
+nav.top { display: flex; gap: 26px; font-size: 16px; }
+nav.top a { color: var(--ink); }
+nav.top a:hover { color: var(--cobalt); }
+
+/* ---------- hero ---------- */
+.hero { padding: 72px 0 64px; border-bottom: 1px solid var(--rule); position: relative; }
+.hero::after {
+  content: ""; position: absolute; inset: 0;
+  background-image: radial-gradient(circle, rgba(26, 65, 168, 0.55) 1px, transparent 1px);
+  background-size: 26px 26px;
+  pointer-events: none;
+  mask-image: linear-gradient(115deg, transparent 52%, #000 100%);
+  -webkit-mask-image: linear-gradient(115deg, transparent 52%, #000 100%);
+}
+.hero .wrap { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 64px; align-items: center; position: relative; z-index: 1; }
+.hero h1 {
+  font-size: clamp(38px, 5.4vw, 58px);
+  line-height: 1.06;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  margin-bottom: 26px;
+}
+.hero p.lede { font-size: 21px; color: var(--ink); max-width: 34em; margin-bottom: 14px; }
+.hero p.sub { font-size: 18px; color: var(--ink-soft); max-width: 34em; margin-bottom: 30px; }
+.cta { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+.btn {
+  display: inline-block; padding: 12px 22px; font-size: 17px;
+  border: 1.5px solid var(--ink); color: var(--ink);
+}
+.btn:hover { background: var(--ink); color: var(--paper); text-decoration: none; }
+.btn.primary { background: var(--cobalt); border-color: var(--cobalt); color: #fff; }
+.btn.primary:hover { background: var(--cobalt-deep); border-color: var(--cobalt-deep); }
+.hero figure { margin: 0; }
+.hero figure img { border: 1px solid var(--rule); }
+figcaption {
+  font-size: 13.5px; color: var(--ink-soft); margin-top: 10px;
+  letter-spacing: 0.02em;
+}
+
+/* ---------- fact strip ---------- */
+.facts { background: var(--cobalt) var(--dither-light); background-size: 8px 8px; }
+.facts .wrap {
+  display: flex; flex-wrap: wrap; gap: 8px 0; padding-top: 13px; padding-bottom: 13px;
+  font-size: 15px; color: #fff;
+}
+.facts span { white-space: nowrap; }
+.facts span + span::before { content: "·"; margin: 0 14px; color: var(--rule); }
+
+/* ---------- sections ---------- */
+section { padding: 76px 0; border-bottom: 1px solid var(--rule); }
+.kicker {
+  font-family: var(--mono); font-size: 13px; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--cobalt); margin-bottom: 14px;
+}
+.kicker::before {
+  content: ""; display: inline-block; width: 9px; height: 9px;
+  background: var(--cobalt); margin-right: 10px;
+}
+h2 { font-size: clamp(28px, 3.6vw, 38px); line-height: 1.12; letter-spacing: -0.01em; margin-bottom: 18px; }
+.measure { max-width: 40em; }
+.measure p + p { margin-top: 14px; }
+p.quiet { color: var(--ink-soft); }
+
+/* ---------- tour ---------- */
+.tour { display: grid; grid-template-columns: minmax(260px, 380px) 1fr; gap: 64px; align-items: start; }
+.tour figure img { border: 1px solid var(--rule); width: 100%; }
+.tour .measure { padding-top: 8px; }
+
+/* ---------- field photos ---------- */
+.field-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; margin-top: 44px;
+}
+.field-grid figure img, .field-wide figure img {
+  border: 1px solid var(--rule);
+}
+.field-wide { margin-top: 28px; display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+.field-wide figure img { border: 1px solid var(--rule); }
+
+/* ---------- apps ---------- */
+.apps-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 36px 28px; margin-top: 44px;
+}
+.app { font-size: 15.5px; }
+.app a.shot { display: block; border: 1px solid var(--rule); background: #fff; }
+.app a.shot:hover { border-color: var(--ink); }
+.app h3 { font-size: 17px; margin: 12px 0 4px; font-weight: 700; }
+.app h3 a { color: var(--ink); }
+.app p { color: var(--ink-soft); line-height: 1.45; }
+.app h3 .tag { margin-left: 8px; vertical-align: 2px; }
+
+/* ---------- SDK ---------- */
+.hero .wrap > *, .tour > *, .sdk > *, .store > * { min-width: 0; }
+.sdk { display: grid; grid-template-columns: 1fr 1fr; gap: 64px; align-items: start; }
+pre {
+  font-family: var(--mono); font-size: 13px; line-height: 1.55;
+  background: var(--ink); color: #e8e2d4; padding: 22px 26px;
+  overflow-x: auto; tab-size: 4;
+  border-left: 4px solid var(--cobalt);
+}
+pre .k { color: #8fb4ff; }
+pre .s { color: #c9b98a; }
+pre .c { color: #8a8371; }
+code.inline {
+  font-family: var(--mono); font-size: 0.82em; background: var(--paper-deep);
+  padding: 2px 6px; border: 1px solid var(--rule);
+}
+.sdk-list { margin-top: 30px; border-top: 1px solid var(--rule); }
+.sdk-list div {
+  display: grid; grid-template-columns: 120px 1fr; gap: 18px;
+  padding: 11px 0; border-bottom: 1px solid var(--rule);
+  font-size: 16px; color: var(--ink-soft);
+}
+.sdk-list dt { font-weight: 700; color: var(--ink); }
+.sdk-list dd { margin: 0; }
+/* ---------- store ---------- */
+.store { display: grid; grid-template-columns: 1fr minmax(260px, 360px); gap: 64px; align-items: start; }
+.store figure img { border: 1px solid var(--rule); width: 100%; }
+
+/* ---------- install ---------- */
+.install { position: relative; overflow: hidden; }
+.install pre { margin: 26px 0; position: relative; z-index: 1; max-width: 44em; }
+.device-engraving {
+  position: absolute; right: 0; top: 46%; transform: translateY(-50%);
+  width: 270px; height: auto; opacity: 0.55; pointer-events: none; z-index: 0;
+  color: var(--ink-soft);
+}
+.install .wrap { position: relative; }
+.steps { list-style: none; counter-reset: step; max-width: 40em; }
+.steps li {
+  counter-increment: step; padding: 14px 0 14px 52px; position: relative;
+  border-top: 1px solid var(--rule); font-size: 17px; color: var(--ink-soft);
+}
+.steps li::before {
+  content: counter(step); position: absolute; left: 0; top: 12px;
+  font-family: var(--mono); font-size: 14px; color: #fff;
+  background: var(--cobalt); width: 30px; height: 30px;
+  display: flex; align-items: center; justify-content: center;
+}
+.steps li strong { color: var(--ink); }
+
+/* ---------- safety ---------- */
+.safety { background: var(--paper-deep) var(--dither-ink); background-size: 8px 8px; }
+
+/* ---------- footer ---------- */
+footer {
+  background: var(--cobalt) var(--dither-light); background-size: 8px 8px;
+  padding: 52px 0 60px; font-size: 15px; color: #fff;
+}
+footer a { color: #fff; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: rgba(255,255,255,.45); }
+footer a:hover { text-decoration-color: #fff; }
+footer .wrap { display: flex; justify-content: space-between; align-items: center; gap: 24px; flex-wrap: wrap; }
+footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
+.element {
+  display: flex; align-items: center; gap: 18px;
+}
+.element .tile {
+  width: 64px; height: 64px; background: #fff; color: var(--cobalt);
+  font-family: var(--mono); position: relative; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 26px; font-weight: 700;
+}
+.element .tile small {
+  position: absolute; top: 5px; left: 7px; font-size: 11px; font-weight: 400;
+}
+.element p { max-width: 26em; }
+
+@media (max-width: 860px) {
+  body { font-size: 17px; }
+  pre { font-size: 12px; padding: 16px 18px; white-space: pre-wrap; word-break: break-word; }
+  .hero .wrap, .tour, .sdk, .store { grid-template-columns: 1fr; gap: 40px; }
+  .field-grid { grid-template-columns: 1fr 1fr; }
+  .field-wide { grid-template-columns: 1fr; }
+  section { padding: 56px 0; }
+  .hero { padding: 32px 0 48px; }
+  .hero .wrap { gap: 28px; }
+  .hero h1 { margin-bottom: 18px; }
+  .hero p.lede { font-size: 19px; margin-bottom: 22px; }
+  .hero p.sub { display: none; }
+  .hero figure { max-width: 420px; }
+  .device-engraving { display: none; }
+}
+@media (max-width: 520px) {
+  .field-grid { grid-template-columns: 1fr; }
+  header.masthead { padding: 14px 0; }
+  .masthead .wrap { gap: 12px; }
+  nav.top { gap: 14px; flex-wrap: wrap; font-size: 15px; }
+  .btn { padding: 11px 16px; font-size: 16px; }
+}
+</style>
+</head>
+<body>
+
+<header class="masthead">
+  <div class="wrap">
+    <a class="brand" href="https://bandarlabs.github.io/Cobalt/">
+      <img src="logo.svg" alt="Cobalt" width="81" height="34">
+    </a>
+    <nav class="top">
+      <a href="#apps">Apps</a>
+      <a href="sdk.html">SDK</a>
+      <a href="#store">Store</a>
+      <a href="#install">Install</a>
+      <a href="#contributing">Contributing</a>
+      <a href="https://github.com/BandarLabs/Cobalt">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<div class="hero">
+  <div class="wrap">
+    <div>
+      <h1>Your Kobo can run apps now.</h1>
+      <p class="lede">Cobalt is an open-source application platform for Kobo e-readers: a launcher, a signed App Store, a Rust SDK, and a runtime that keeps every app in its own unprivileged process.</p>
+      <p class="sub">Install it once over USB. Every app after that installs, updates and removes on the reader itself, over Wi-Fi. A reboot returns to the stock Kobo reader.</p>
+      <div class="cta">
+        <a class="btn primary" href="#install">Install on your Kobo</a>
+        <a class="btn" href="https://github.com/BandarLabs/Cobalt">Read the source</a>
+      </div>
+    </div>
+    <figure>
+      <img src="media/site/cobalt-launcher-kobo-clara-bw.jpg" width="1400" height="1867"
+           alt="The Cobalt launcher on a Kobo Clara BW showing Settings, App Store, Terminal, AI Chat, Audiobooks, Components, Daily Brief, Feeds and Gutenbird"
+           fetchpriority="high">
+      <figcaption>The launcher on a Kobo Clara BW.</figcaption>
+    </figure>
+  </div>
+</div>
+
+<div class="facts">
+  <div class="wrap">
+    <span>Not affiliated with Rakuten Kobo</span>
+  </div>
+</div>
+
+<section id="tour">
+  <div class="wrap tour">
+    <figure>
+      <a href="cobalt-tour.mp4">
+        <img src="tour.gif" width="600" height="810" loading="lazy"
+             alt="A Kobo Clara BW running Audiobook Studio, Gutenbird, Terminal, Hacker News, Sidekick and the App Store, then installing, playing, removing and reinstalling Sudoku over Wi-Fi">
+      </a>
+      <figcaption>Recorded on-device at 3× speed. <a href="cobalt-tour.mp4">Watch as video.</a></figcaption>
+    </figure>
+    <div class="measure">
+      <h2>Running on a Kobo.</h2>
+      <p>Every app is a static ARM binary running as its own unprivileged process on stock hardware. The App Store installs, updates and removes them over Wi-Fi, with signatures verified before anything launches.</p>
+    </div>
+  </div>
+</section>
+
+<section id="field">
+  <div class="wrap">
+    <h2 class="measure">arXiv papers and coding agents, on the panel.</h2>
+    <p class="measure quiet">These are photographs of the device, not simulator captures. The arXiv app reads the HTML rendering arXiv publishes for every paper since December 2023: abstracts, sections, math and result tables, paginated for the panel.</p>
+    <div class="field-grid">
+      <figure>
+        <img src="media/site/arxiv-preprint-kobo-clara-bw.jpg" width="1000" height="1333" loading="lazy"
+             alt="An arXiv preprint section titled 'A hard optimization problem and its relaxation' rendered on a Kobo Clara BW">
+        <figcaption>A preprint, page 8 of 54, on the panel.</figcaption>
+      </figure>
+      <figure>
+        <img src="media/site/arxiv-results-table-kobo.jpg" width="1000" height="1333" loading="lazy"
+             alt="A results table from an arXiv paper comparing language models, rendered on a Kobo e-reader">
+        <figcaption>A results table from the same paper.</figcaption>
+      </figure>
+      <figure>
+        <img src="media/site/arxiv-math-typesetting-kobo.jpg" width="1000" height="1333" loading="lazy"
+             alt="Mathematical notation and a numbered algorithm from an arXiv paper on a Kobo e-reader">
+        <figcaption>Math notation and a numbered algorithm.</figcaption>
+      </figure>
+    </div>
+    <div class="field-wide">
+      <figure>
+        <img src="media/site/sidekick-claude-code-question-kobo.jpg" width="1000" height="1333" loading="lazy"
+             alt="Sidekick on a Kobo showing a question from Claude Code with three tappable answers and a 'Leave it for the terminal' button">
+        <figcaption>Sidekick showing a question from Claude Code, with tappable answers.</figcaption>
+      </figure>
+      <figure>
+        <img src="media/site/sidekick-watching-kobo.jpg" width="1000" height="1333" loading="lazy"
+             alt="Sidekick's watching screen on a Kobo, paired with a machine on the local network, showing the last answer sent">
+        <figcaption>Sidekick paired over the local network, waiting for the next question.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section id="apps">
+  <div class="wrap">
+    <p class="kicker">Apps</p>
+    <h2 class="measure">The apps.</h2>
+    <p class="measure quiet">Every screenshot below is a capture from a Kobo Clara BW. Store apps version independently of the platform; the rest ship with the platform install.</p>
+    <div class="apps-grid">
+      <div class="app">
+        <a class="shot" href="https://github.com/BandarLabs/Cobalt/blob/main/examples/launcher/README.md"><img src="media/site/apps/launcher.png" width="1072" height="1448" loading="lazy" alt="Cobalt launcher app grid on e-ink"></a>
+        <h3><a href="https://github.com/BandarLabs/Cobalt/blob/main/examples/launcher/README.md">Launcher</a></h3>
+        <p>Opens installed apps and always keeps a route back to the Kobo reader.</p>
+      </div>
+      <div class="app">
+        <a class="shot" href="https://github.com/BandarLabs/Cobalt/blob/main/docs/APP_STORE.md"><img src="media/site/apps/store.png" width="1072" height="1448" loading="lazy" alt="Cobalt App Store catalog listing installed and available apps"></a>
+        <h3><a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/APP_STORE.md">App Store</a></h3>
+        <p>Installs, updates, removes and reinstalls signed apps over Wi-Fi.</p>
+      </div>
+      <div class="app">
+        <a class="shot" href="https://github.com/BandarLabs/Cobalt/tree/main/apps/arxiv"><img src="media/site/apps/arxiv.png" width="1072" height="1448" loading="lazy" alt="Newest machine learning preprints listed in the arXiv app on a Kobo"></a>
+        <h3><a href="https://github.com/BandarLabs/Cobalt/tree/main/apps/arxiv">arXiv</a></h3>
+        <p>Browses a subject's newest preprints and reads the full text on the panel.</p>
+      </div>
+      <div class="app">
+        <a class="shot" href="https://github.com/BandarLabs/Cobalt/tree/main/apps/sudoku"><img src="media/site/apps/sudoku.png" width="1072" height="1448" loading="lazy" alt="A complete 81-cell Sudoku game on a Kobo Clara BW"></a>
+        <h3><a href="https://github.com/BandarLabs/Cobalt/tree/main/apps/sudoku">Sudoku</a></h3>
+        <p>Store-only by design: installing it proves delivery of an app the USB package never contained.</p>
+      </div>
+      <div class="app">
+        <a class="shot" href="https://github.com/BandarLabs/Cobalt/tree/main/apps/morse"><img src="media/site/apps/morse.png" width="1072" height="1448" loading="lazy" alt="The letter S filling the Kobo panel while the front light sends it in Morse"></a>
+        <h3><a href="https://github.com/BandarLabs/Cobalt/tree/main/apps/morse">Morse</a></h3>
+        <p>Sends a typed message in Morse on the front light, one letter across the whole panel.</p>
+      </div>
+      <div class="app">
+        <a class="shot" href="https://github.com/BandarLabs/Cobalt/blob/main/examples/audiobook/README.md"><img src="media/site/apps/audiobook.png" width="1072" height="1448" loading="lazy" alt="An audiobook player with cover art, position and transport controls on e-ink"></a>
+        <h3><a href="https://github.com/BandarLabs/Cobalt/blob/main/examples/audiobook/README.md">Audiobook Studio</a></h3>
+        <p>Researches, writes, narrates and plays an original audiobook.</p>
+      </div>
+      <div class="app">
+        <a class="shot" href="https://github.com/BandarLabs/Cobalt/blob/main/examples/gutenbird/README.md"><img src="media/site/apps/gutenbird.png" width="1072" height="1448" loading="lazy" alt="A shelf of book covers from an OPDS catalogue on a Kobo"></a>
+        <h3><a href="https://github.com/BandarLabs/Cobalt/blob/main/examples/gutenbird/README.md">Gutenbird</a></h3>
+        <p>Reads any OPDS library: Project Gutenberg, Standard Ebooks, Open Library, or yours.</p>
+      </div>
+      <div class="app">
+        <a class="shot" href="https://github.com/BandarLabs/Cobalt/blob/main/examples/hn/README.md"><img src="media/site/apps/hackernews.png" width="1072" height="1448" loading="lazy" alt="A ranked list of Hacker News stories on a Kobo e-reader"></a>
+        <h3><a href="https://github.com/BandarLabs/Cobalt/blob/main/examples/hn/README.md">Hacker News</a></h3>
+        <p>Top, New, Ask and Show stories with complete comment threads.</p>
+      </div>
+      <div class="app">
+        <a class="shot" href="https://github.com/BandarLabs/Cobalt/blob/main/examples/rss/README.md"><img src="media/site/apps/feeds.png" width="1072" height="1448" loading="lazy" alt="Subscribed feeds and articles in the Feeds app"></a>
+        <h3><a href="https://github.com/BandarLabs/Cobalt/blob/main/examples/rss/README.md">Feeds</a></h3>
+        <p>Discovers a site's feed and presents its articles without the site's layout.</p>
+      </div>
+      <div class="app">
+        <a class="shot" href="https://github.com/BandarLabs/Cobalt/blob/main/examples/brief/README.md"><img src="media/site/apps/brief.png" width="1072" height="1448" loading="lazy" alt="A numbered daily news brief on e-ink"></a>
+        <h3><a href="https://github.com/BandarLabs/Cobalt/blob/main/examples/brief/README.md">Daily Brief</a></h3>
+        <p>Collects the day's stories in the background while you use another app.</p>
+      </div>
+      <div class="app">
+        <a class="shot" href="https://github.com/BandarLabs/Cobalt/blob/main/examples/chat/README.md"><img src="media/site/apps/chat.png" width="1072" height="1448" loading="lazy" alt="An AI answer displayed as readable text on the Kobo panel"></a>
+        <h3><a href="https://github.com/BandarLabs/Cobalt/blob/main/examples/chat/README.md">AI Command Center</a></h3>
+        <p>Asks a question and turns the answer into touch-friendly reading.</p>
+      </div>
+      <div class="app">
+        <a class="shot" href="https://github.com/BandarLabs/Cobalt/blob/main/examples/sidekick/README.md"><img src="media/site/apps/sidekick.png" width="1072" height="1448" loading="lazy" alt="A coding agent request with tappable responses in Sidekick"></a>
+        <h3><a href="https://github.com/BandarLabs/Cobalt/blob/main/examples/sidekick/README.md">Sidekick</a></h3>
+        <p>Approve or deny requests from coding agents, away from the keyboard.</p>
+      </div>
+      <div class="app">
+        <a class="shot" href="https://github.com/BandarLabs/Cobalt/blob/main/examples/terminal/README.md"><img src="media/site/apps/terminal.png" width="1072" height="1448" loading="lazy" alt="A shell and touch keyboard on the Kobo display"></a>
+        <h3><a href="https://github.com/BandarLabs/Cobalt/blob/main/examples/terminal/README.md">Terminal</a></h3>
+        <p>A panel-native shell with keys that send input immediately.</p>
+      </div>
+      <div class="app">
+        <a class="shot" href="https://github.com/BandarLabs/Cobalt/blob/main/examples/gallery/README.md"><img src="media/site/apps/components.png" width="1072" height="1448" loading="lazy" alt="Cobalt typography and UI components on e-ink"></a>
+        <h3><a href="https://github.com/BandarLabs/Cobalt/blob/main/examples/gallery/README.md">Components</a></h3>
+        <p>The UI toolkit's controls, layouts, typography and states, on the panel.</p>
+      </div>
+      <div class="app">
+        <a class="shot" href="https://github.com/BandarLabs/Cobalt/blob/main/examples/settings/README.md"><img src="media/site/apps/settings.png" width="1072" height="1448" loading="lazy" alt="Battery status and hardware facts in Settings"></a>
+        <h3><a href="https://github.com/BandarLabs/Cobalt/blob/main/examples/settings/README.md">Settings</a></h3>
+        <p>Connectivity, hardware, and platform updates, kept separate from Store.</p>
+      </div>
+      <div class="app">
+        <a class="shot" href="https://github.com/BandarLabs/Cobalt/blob/main/examples/todo/README.md"><img src="media/site/apps/todo.png" width="1072" height="1448" loading="lazy" alt="A persistent to-do list with completed items"></a>
+        <h3><a href="https://github.com/BandarLabs/Cobalt/blob/main/examples/todo/README.md">Todo</a></h3>
+        <p>A persistent list with touch entry and completed-item states.</p>
+      </div>
+      <div class="app">
+        <a class="shot" href="https://github.com/BandarLabs/Cobalt/blob/main/examples/tictactoe/README.md"><img src="media/site/apps/tictactoe.png" width="1072" height="1448" loading="lazy" alt="A completed game of tic-tac-toe on e-ink"></a>
+        <h3><a href="https://github.com/BandarLabs/Cobalt/blob/main/examples/tictactoe/README.md">Tic-tac-toe</a></h3>
+        <p>Two players, partial refreshes for individual cells.</p>
+      </div>
+      <div class="app">
+        <a class="shot" href="https://github.com/BandarLabs/Cobalt/blob/main/examples/magnet/README.md"><img src="media/site/apps/magnet.png" width="1072" height="1448" loading="lazy" alt="The Kobo hall sensor responding to a magnet"></a>
+        <h3><a href="https://github.com/BandarLabs/Cobalt/blob/main/examples/magnet/README.md">Magnet</a></h3>
+        <p>Locates the hall sensor behind the bezel and reports its changes.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="sdk">
+  <div class="wrap sdk">
+    <div class="measure">
+      <p class="kicker">The SDK</p>
+      <h2>An app is one Rust file.</h2>
+      <p>Implement <code class="inline">KoboApp</code>, describe screens declaratively, and the runtime handles layout, e-ink refresh planning, Back navigation and lifecycle.</p>
+      <p>Apps don't open device resources; they ask. Network, storage, audio, frontlight and Wi-Fi are capability-gated, and a refusal comes back as a value the app can handle.</p>
+      <dl class="sdk-list">
+        <div><dt>E-ink UI</dt><dd>Text, tiles, dialogs, keyboards, pagination, partial refresh planning</dd></div>
+        <div><dt>Simulators</dt><dd>Browser and runtime simulators with layout diagnostics</dd></div>
+        <div><dt>Async work</dt><dd>HTTPS, ranged downloads, cancellable tasks, scheduled wakes</dd></div>
+        <div><dt>State</dt><dd>Atomic per-app keyed storage</dd></div>
+        <div><dt>Shipping</dt><dd>Signed static ARMv7 binaries, published when an app PR merges</dd></div>
+      </dl>
+<pre style="margin-top:26px"><code>kobo new my-app
+<span class="k">cd</span> my-app
+kobo dev</code></pre>
+      <p style="margin-top:18px"><a href="sdk.html">Read the SDK docs</a></p>
+    </div>
+    <div>
+<pre><code><span class="k">use</span> kobo_sdk::{
+    ActionId, Context, KoboApp, ScreenBuilder,
+};
+
+#[derive(Default)]
+<span class="k">struct</span> Hello { taps: u32 }
+
+<span class="k">impl</span> KoboApp <span class="k">for</span> Hello {
+    <span class="k">fn</span> on_start(&amp;<span class="k">mut</span> <span class="k">self</span>, ctx: &amp;<span class="k">mut</span> Context) {
+        <span class="k">self</span>.show(ctx);
+    }
+
+    <span class="k">fn</span> on_action(
+        &amp;<span class="k">mut</span> <span class="k">self</span>, ctx: &amp;<span class="k">mut</span> Context, a: ActionId,
+    ) {
+        <span class="k">if</span> a == kobo_sdk::action_id(<span class="s">"tap"</span>) {
+            <span class="k">self</span>.taps += 1;
+        }
+        <span class="k">self</span>.show(ctx);
+    }
+}
+
+<span class="k">impl</span> Hello {
+    <span class="k">fn</span> show(&amp;<span class="k">self</span>, ctx: &amp;<span class="k">mut</span> Context) {
+        <span class="k">let</span> screen = ScreenBuilder::new(<span class="s">"hello"</span>)
+            .top_bar(<span class="s">"Hello"</span>)
+            .heading(format!(<span class="s">"{} taps"</span>, <span class="k">self</span>.taps))
+            .button(<span class="s">"tap"</span>, <span class="s">"Tap me"</span>)
+            .build();
+        ctx.set_screen(screen);
+    }
+}
+
+<span class="k">fn</span> main() {
+    <span class="k">let</span> app = Hello::default();
+    <span class="k">let</span> _ = kobo_sdk::run(<span class="s">"hello"</span>, app);
+}</code></pre>
+    </div>
+  </div>
+</section>
+
+<section id="store">
+  <div class="wrap store">
+    <div class="measure">
+      <p class="kicker">The Store</p>
+      <h2>Signed packages, verified before launch.</h2>
+      <p>Store reads a signed catalog from a fixed GitHub release. Each package holds one ARM executable and a signed canonical manifest. The runtime verifies the catalog, the package, the installed manifest and the binary before an app runs.</p>
+      <p>App releases are independent of platform releases: merging an app PR builds it for ARM, signs it, and updates the catalog. No Cobalt version bump, no reinstall. The app simply appears in Store.</p>
+      <p>The Cobalt platform itself also updates over Wi-Fi, through Settings, on a channel separate from the app catalog. The USB cable is only ever needed once.</p>
+      <p class="quiet">Install and catalog transactions are recovery-safe; an interrupted update leaves the reader with the version it had.</p>
+      <p style="margin-top:20px"><a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/CONTRIBUTING_APPS.md">Publish your own app →</a></p>
+    </div>
+    <figure>
+      <img src="media/store-demo.gif" width="430" height="580" loading="lazy"
+           alt="The Cobalt App Store installing an app over Wi-Fi on a Kobo Clara BW">
+      <figcaption>Sudoku arriving over Wi-Fi.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section id="install" class="install">
+  <div class="wrap">
+    <svg class="device-engraving" viewBox="0 0 220 320" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <defs>
+        <pattern id="screen-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <line x1="0" y1="0" x2="0" y2="6" stroke="currentColor" stroke-width="0.4" opacity="0.5"/>
+        </pattern>
+      </defs>
+      <!-- body -->
+      <rect x="30" y="14" width="160" height="252" rx="12" stroke="currentColor" stroke-width="1"/>
+      <!-- screen -->
+      <rect x="42" y="30" width="136" height="196" stroke="currentColor" stroke-width="0.6"/>
+      <rect x="42" y="30" width="136" height="196" fill="url(#screen-hatch)"/>
+      <!-- chin wordmark line -->
+      <line x1="88" y1="246" x2="132" y2="246" stroke="currentColor" stroke-width="1.4"/>
+      <!-- power button -->
+      <line x1="140" y1="13" x2="164" y2="13" stroke="currentColor" stroke-width="2.5"/>
+      <!-- usb-c port -->
+      <rect x="98" y="264" width="24" height="4" rx="2" stroke="currentColor" stroke-width="0.8"/>
+      <!-- dimension callout -->
+      <line x1="14" y1="14" x2="14" y2="266" stroke="currentColor" stroke-width="0.5"/>
+      <line x1="10" y1="14" x2="18" y2="14" stroke="currentColor" stroke-width="0.5"/>
+      <line x1="10" y1="266" x2="18" y2="266" stroke="currentColor" stroke-width="0.5"/>
+      <line x1="30" y1="282" x2="190" y2="282" stroke="currentColor" stroke-width="0.5"/>
+      <line x1="30" y1="278" x2="30" y2="286" stroke="currentColor" stroke-width="0.5"/>
+      <line x1="190" y1="278" x2="190" y2="286" stroke="currentColor" stroke-width="0.5"/>
+      <text x="110" y="304" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="currentColor" letter-spacing="1">FIG. 1 CLARA BW N365</text>
+    </svg>
+    <p class="kicker">Install</p>
+    <h2 class="measure">Installing from source.</h2>
+    <ol class="steps">
+      <li><strong>Charge a Kobo Clara BW (N365)</strong> and connect it over USB. Other models are refused, not guessed at.</li>
+      <li><strong>Run the setup:</strong></li>
+    </ol>
+<pre><code>git clone https://github.com/BandarLabs/Cobalt.git
+<span class="k">cd</span> Cobalt
+rustup target add armv7-unknown-linux-musleabihf
+cargo run -p kobo-cli -- setup</code></pre>
+    <ol class="steps" start="3" style="counter-reset: step 2">
+      <li><strong>Restart the reader</strong> and open <strong>Cobalt</strong> from Kobo's menu.</li>
+      <li><strong>Open Store.</strong> Everything from here on arrives over Wi-Fi.</li>
+    </ol>
+    <p class="measure quiet" style="margin-top:22px">The complete walkthrough, including recovery steps, is in <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/INSTALL.md">docs/INSTALL.md</a>.</p>
+  </div>
+</section>
+
+<section id="contributing">
+  <div class="wrap">
+    <p class="kicker">Contributing</p>
+    <h2 class="measure">Contribute an app.</h2>
+    <p class="measure quiet">App contributions are regular pull requests. If it runs on your device and the PR shows it running, it gets merged and published.</p>
+    <ol class="steps" style="margin-top:26px">
+      <li><strong>Build it.</strong> Add the app as a workspace package under <code class="inline">apps/&lt;app-id&gt;/</code> and register it in <code class="inline">apps/catalog.json</code>.</li>
+      <li><strong>Test it.</strong> Add unit and layout tests, and run it in the browser and runtime simulators.</li>
+      <li><strong>Run it on your own device.</strong> A real Clara BW, not just the simulator.</li>
+      <li><strong>Open a PR with a gif or photos of it running.</strong> Once reviewed and merged, the publish workflow signs it and it appears in Store. No platform release needed.</li>
+    </ol>
+    <p class="measure quiet" style="margin-top:22px">Own a different Kobo model? <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/PORTING.md">Porting</a> is welcome too; open an issue first so the device profile can be agreed. Full details in <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/CONTRIBUTING_APPS.md">docs/CONTRIBUTING_APPS.md</a>.</p>
+  </div>
+</section>
+
+<section class="safety">
+  <div class="wrap measure">
+    <p class="kicker">Safety</p>
+    <h2>Device support and safety.</h2>
+    <p>Cobalt does not replace Kobo's boot chain. Device writes are gated on an exact hardware and firmware match, and a reboot returns to the stock reader. The first installation does modify files on the user storage partition, and it is provided without warranty.</p>
+    <p>Only the Clara BW profile has been hardware-tested. Don't install on another model until it has a <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/PORTING.md">reviewed, hardware-tested profile</a>. Cobalt is an independent project, not affiliated with Rakuten Kobo.</p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="element">
+      <div class="tile"><small>27</small>Co</div>
+      <p>Cobalt · AGPL-3.0 · <a href="https://github.com/BandarLabs/Cobalt">BandarLabs/Cobalt</a></p>
+    </div>
+    <nav>
+      <a href="sdk.html">SDK docs</a>
+      <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/INSTALL.md">Install</a>
+      <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/CONTRIBUTING_APPS.md">Contribute an app</a>
+      <a href="https://github.com/BandarLabs/Cobalt/blob/main/SECURITY.md">Security</a>
+    </nav>
+  </div>
+</footer>
+
+</body>
+</html>
