@@ -52,7 +52,7 @@
 use kobo_abi::input;
 use kobo_hal::probe_device;
 use kobo_hal::touch::InputEvent32;
-use kobo_profile::{DeviceProfile, CLARA_BW_391};
+use kobo_profile::{identify_profile, DeviceProfile, DeviceSnapshot};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::process::ExitCode;
@@ -110,11 +110,12 @@ fn tap() -> Result<(), String> {
         .touch
         .as_ref()
         .ok_or("no touch device was discovered")?;
+    let profile = writable_profile(&snapshot)?;
     // Every point is turned into events before the first one is written, so a
     // point that is off the screen is refused while the panel is still
     // untouched. Discovering it halfway through would leave an application
     // part-way into a journey with no way to finish it.
-    let planned = plan(&CLARA_BW_391, &steps)?;
+    let planned = plan(profile, &steps)?;
 
     let mut node = OpenOptions::new()
         .write(true)
@@ -134,6 +135,17 @@ fn tap() -> Result<(), String> {
         println!("tapped {},{}", step.x, step.y);
     }
     Ok(())
+}
+
+fn writable_profile(snapshot: &DeviceSnapshot) -> Result<&'static DeviceProfile, String> {
+    let profile = identify_profile(snapshot)
+        .ok_or_else(|| "the probed device does not match a supported profile".to_owned())?;
+    let blockers = profile.write_identity_blockers(snapshot);
+    if blockers.is_empty() {
+        Ok(profile)
+    } else {
+        Err(format!("device write refused: {}", blockers.join("; ")))
+    }
 }
 
 /// One tap, and how long to wait before making it.
@@ -285,12 +297,15 @@ fn parse_point(request: &str) -> Result<(u32, u32), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        encode, parse_point, parse_sequence, plan, press_and_lift, Step, LIFT_EVENTS,
-        MAXIMUM_SEQUENCE_MILLIS, MAXIMUM_STEPS,
+        encode, parse_point, parse_sequence, plan, press_and_lift, writable_profile, Step,
+        LIFT_EVENTS, MAXIMUM_SEQUENCE_MILLIS, MAXIMUM_STEPS,
     };
     use kobo_abi::input;
     use kobo_hal::touch::{InputEvent32, TouchDecoder, TouchEvent};
-    use kobo_profile::CLARA_BW_391;
+    use kobo_profile::{
+        DeviceProfile, DeviceSnapshot, FramebufferSnapshot, IdentitySnapshot, TouchSnapshot,
+        CLARA_BW_391, ELIPSA_2E_389,
+    };
     use std::time::Duration;
 
     #[test]
@@ -333,6 +348,29 @@ mod tests {
             matches!(reported.last(), Some(TouchEvent::Up { .. })),
             "a tap that does not lift leaves a phantom finger on the glass: {reported:?}"
         );
+    }
+
+    #[test]
+    fn an_elipsa_tap_uses_the_elipsa_transform() {
+        let events = press_and_lift(&ELIPSA_2E_389, 1403, 1871).expect("Elipsa corner");
+        let mut decoder = TouchDecoder::default();
+        let reported: Vec<_> = events
+            .into_iter()
+            .filter_map(|event| decoder.push(event, &ELIPSA_2E_389))
+            .collect();
+        assert_eq!(
+            reported.first(),
+            Some(&TouchEvent::Down { x: 1403, y: 1871 })
+        );
+        assert!(matches!(reported.last(), Some(TouchEvent::Up { .. })));
+    }
+
+    #[test]
+    fn matching_geometry_without_exact_identity_cannot_receive_a_tap() {
+        let snapshot = snapshot_for(&ELIPSA_2E_389, IdentitySnapshot::default());
+        let error = writable_profile(&snapshot).expect_err("identity gates every device write");
+        assert!(error.contains("device write refused"), "{error}");
+        assert!(error.contains("device code"), "{error}");
     }
 
     #[test]
@@ -434,5 +472,45 @@ mod tests {
         assert!(plan(&CLARA_BW_391, &steps).is_err());
         let good = parse_sequence("10,10 20,20 30,30").expect("it parses");
         assert!(plan(&CLARA_BW_391, &good).is_ok());
+    }
+
+    fn snapshot_for(profile: &DeviceProfile, identity: IdentitySnapshot) -> DeviceSnapshot {
+        DeviceSnapshot {
+            compatible: profile
+                .compatible_fragments
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect(),
+            model: Some(profile.device_tree_model.to_owned()),
+            framebuffer: Some(FramebufferSnapshot {
+                id: profile.framebuffer_id.to_owned(),
+                width: profile.width,
+                height: profile.height,
+                virtual_width: profile.virtual_width,
+                virtual_height: profile.virtual_height,
+                x_offset: profile.x_offset,
+                y_offset: profile.y_offset,
+                bits_per_pixel: profile.bits_per_pixel,
+                grayscale: profile.grayscale,
+                stride: profile.stride,
+                memory_length: profile.memory_length,
+                kind: profile.framebuffer_kind,
+                visual: profile.framebuffer_visual,
+                rotation: profile.rotation,
+                red: profile.red,
+                green: profile.green,
+                blue: profile.blue,
+                alpha: profile.alpha,
+            }),
+            touch: Some(TouchSnapshot {
+                path: "/dev/input/event1".to_owned(),
+                name: profile.touch_name.to_owned(),
+                x_min: profile.touch_x_min,
+                x_max: profile.touch_x_max,
+                y_min: profile.touch_y_min,
+                y_max: profile.touch_y_max,
+            }),
+            identity,
+        }
     }
 }

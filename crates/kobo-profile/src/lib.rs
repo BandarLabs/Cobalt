@@ -53,6 +53,67 @@ pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     kernel_release: "4.9.77",
 };
 
+pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
+    id: "elipsa-2e-389",
+    model: "Kobo Elipsa 2E",
+    device_code: 389,
+    device_tree_model: "MediaTek MT8110 board",
+    compatible_fragments: &["mediatek,mt8110", "mediatek,mt8512"],
+    framebuffer_id: "hwtcon",
+    width: 1404,
+    height: 1872,
+    pixels_per_inch: 227,
+    virtual_width: 1404,
+    virtual_height: 1872,
+    x_offset: 0,
+    y_offset: 0,
+    bits_per_pixel: 32,
+    grayscale: 0,
+    stride: 5616,
+    memory_length: 10_543_104,
+    framebuffer_kind: 0,
+    framebuffer_visual: 2,
+    rotation: 1,
+    red: Bitfield {
+        offset: 0,
+        length: 0,
+        msb_right: 0,
+    },
+    green: Bitfield {
+        offset: 0,
+        length: 0,
+        msb_right: 0,
+    },
+    blue: Bitfield {
+        offset: 0,
+        length: 0,
+        msb_right: 0,
+    },
+    alpha: Bitfield {
+        offset: 0,
+        length: 0,
+        msb_right: 0,
+    },
+    touch_name: "Elan Touchscreen",
+    touch_x_min: 0,
+    touch_x_max: 1872,
+    touch_y_min: 0,
+    touch_y_max: 1404,
+    serial_prefix: "N605",
+    firmware_version: "4.38.23697",
+    kernel_release: "4.9.77",
+};
+
+pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[&CLARA_BW_391, &ELIPSA_2E_389];
+
+#[must_use]
+pub fn identify_profile(snapshot: &DeviceSnapshot) -> Option<&'static DeviceProfile> {
+    SUPPORTED_PROFILES
+        .iter()
+        .copied()
+        .find(|profile| profile.validate(snapshot).readiness != Readiness::Rejected)
+}
+
 pub const READ_ONLY_WRITE_BLOCKER: &str =
     "write profile is intentionally incomplete until read-only doctor output is reviewed";
 
@@ -313,9 +374,16 @@ impl DeviceProfile {
         {
             return None;
         }
-        let x = self.touch_y_max - raw_y;
-        let y = raw_x;
-        Some((u32::try_from(x).ok()?, u32::try_from(y).ok()?))
+        let horizontal = scale_touch_axis(raw_y, self.touch_y_min, self.touch_y_max, self.width)?;
+        let vertical = scale_touch_axis(raw_x, self.touch_x_min, self.touch_x_max, self.height)?;
+        match self.rotation {
+            1 => Some((horizontal, self.height.checked_sub(1 + vertical)?)),
+            3 => Some((self.width.checked_sub(1 + horizontal)?, vertical)),
+            _ => Some((
+                scale_touch_axis(raw_x, self.touch_x_min, self.touch_x_max, self.width)?,
+                scale_touch_axis(raw_y, self.touch_y_min, self.touch_y_max, self.height)?,
+            )),
+        }
     }
 
     /// Converts a visible display coordinate back to the touch controller's
@@ -329,8 +397,30 @@ impl DeviceProfile {
         if x >= self.width || y >= self.height {
             return None;
         }
-        let raw_x = i32::try_from(y).ok()?;
-        let raw_y = self.touch_y_max.checked_sub(i32::try_from(x).ok()?)?;
+        let (raw_x, raw_y) = match self.rotation {
+            1 => (
+                scale_display_axis(
+                    self.height.checked_sub(1 + y)?,
+                    self.height,
+                    self.touch_x_min,
+                    self.touch_x_max,
+                )?,
+                scale_display_axis(x, self.width, self.touch_y_min, self.touch_y_max)?,
+            ),
+            3 => (
+                scale_display_axis(y, self.height, self.touch_x_min, self.touch_x_max)?,
+                scale_display_axis(
+                    self.width.checked_sub(1 + x)?,
+                    self.width,
+                    self.touch_y_min,
+                    self.touch_y_max,
+                )?,
+            ),
+            _ => (
+                scale_display_axis(x, self.width, self.touch_x_min, self.touch_x_max)?,
+                scale_display_axis(y, self.height, self.touch_y_min, self.touch_y_max)?,
+            ),
+        };
         if !(self.touch_x_min..=self.touch_x_max).contains(&raw_x)
             || !(self.touch_y_min..=self.touch_y_max).contains(&raw_y)
         {
@@ -338,6 +428,32 @@ impl DeviceProfile {
         }
         Some((raw_x, raw_y))
     }
+}
+
+fn scale_touch_axis(value: i32, minimum: i32, maximum: i32, pixels: u32) -> Option<u32> {
+    if pixels == 0 || value < minimum || value > maximum || maximum <= minimum {
+        return None;
+    }
+    if pixels == 1 {
+        return Some(0);
+    }
+    let source = i64::from(maximum) - i64::from(minimum);
+    let offset = i64::from(value) - i64::from(minimum);
+    let target = i64::from(pixels - 1);
+    u32::try_from((offset * target + source / 2) / source).ok()
+}
+
+fn scale_display_axis(value: u32, pixels: u32, minimum: i32, maximum: i32) -> Option<i32> {
+    if pixels == 0 || value >= pixels || maximum <= minimum {
+        return None;
+    }
+    if pixels == 1 {
+        return Some(minimum);
+    }
+    let source = i64::from(pixels - 1);
+    let target = i64::from(maximum) - i64::from(minimum);
+    let scaled = (i64::from(value) * target + source / 2) / source;
+    i32::try_from(i64::from(minimum) + scaled).ok()
 }
 
 fn validate_framebuffer(
@@ -451,10 +567,11 @@ fn validate_pixel_format(
         framebuffer.alpha,
         profile.alpha,
     );
-    if framebuffer.red.length != 8
-        || framebuffer.green.length != 8
-        || framebuffer.blue.length != 8
-        || framebuffer.alpha.length != 8
+    let valid_length = |len| len == 8 || len == 0;
+    if !valid_length(framebuffer.red.length)
+        || !valid_length(framebuffer.green.length)
+        || !valid_length(framebuffer.blue.length)
+        || !valid_length(framebuffer.alpha.length)
     {
         blockers.push(format!(
             "unconfirmed framebuffer bitfields R{:?} G{:?} B{:?} A{:?}",
@@ -527,7 +644,7 @@ fn compare_identity(blockers: &mut Vec<String>, name: &str, expected: &str, actu
 mod tests {
     use super::{
         Bitfield, DeviceSnapshot, FramebufferSnapshot, IdentitySnapshot, Readiness, TouchSnapshot,
-        CLARA_BW_391,
+        CLARA_BW_391, ELIPSA_2E_389,
     };
 
     #[test]
@@ -549,6 +666,27 @@ mod tests {
         }
         assert_eq!(CLARA_BW_391.display_to_touch(1072, 0), None);
         assert_eq!(CLARA_BW_391.display_to_touch(0, 1448), None);
+    }
+
+    #[test]
+    fn elipsa_touch_edges_stay_inside_the_panel_and_display_points_round_trip() {
+        for raw in [(0, 0), (0, 1404), (1872, 0), (1872, 1404)] {
+            let display = ELIPSA_2E_389
+                .touch_to_display(raw.0, raw.1)
+                .expect("measured Elipsa edge maps to the display");
+            assert!(display.0 < ELIPSA_2E_389.width, "x escaped: {display:?}");
+            assert!(display.1 < ELIPSA_2E_389.height, "y escaped: {display:?}");
+        }
+        assert_eq!(ELIPSA_2E_389.touch_to_display(0, 0), Some((0, 1871)));
+        assert_eq!(ELIPSA_2E_389.touch_to_display(1872, 1404), Some((1403, 0)));
+        for display in [(0, 0), (1403, 0), (0, 1871), (1403, 1871), (702, 936)] {
+            let raw = ELIPSA_2E_389
+                .display_to_touch(display.0, display.1)
+                .expect("Elipsa display point maps to the controller");
+            assert_eq!(ELIPSA_2E_389.touch_to_display(raw.0, raw.1), Some(display));
+        }
+        assert_eq!(ELIPSA_2E_389.display_to_touch(1404, 0), None);
+        assert_eq!(ELIPSA_2E_389.display_to_touch(0, 1872), None);
     }
 
     /// Captured from a physical touch on the real Clara BW with
