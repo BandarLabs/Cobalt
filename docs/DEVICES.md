@@ -4,6 +4,25 @@ Getting Cobalt onto a device, talking to it over Wi-Fi, keeping it awake long
 enough to work, and the attended tests that are allowed to write to the panel.
 Part of [Cobalt](../README.md).
 
+## Device support matrix
+
+Support is tied to an exact model, device code, firmware, kernel, framebuffer,
+and touch profile. A matching model name alone is not sufficient.
+
+| Device | Exact tested identity | Evidence status | Installation status |
+|---|---|---|---|
+| Kobo Clara BW | N365, code 391, firmware 4.45.23697, kernel 4.9.77 | Read-only probe and owner-attended display, touch, exit, and recovery tests complete | Fully tested |
+| Kobo Elipsa 2E | N605, code 389, firmware 4.38.23697, kernel 4.9.77 | Read-only probe and owner-attended display, touch, exit, suspend/resume, and recovery tests complete | Fully tested |
+
+`Read-only doctor match complete` means the profile describes the observed
+identity, framebuffer, and touch ranges. It does not prove the physical touch
+direction, panel refresh behavior, or recovery after Cobalt takes ownership of
+the device. Those claims require owner-attended hardware runs; simulator and
+fixture results are not substitutes.
+
+Firmware versions not listed here are unsupported even on the same model until
+a new read-only probe and the applicable attended evidence have been reviewed.
+
 ## Connecting a device
 
 The reader has to be on the same wireless network as the machine you work from.
@@ -497,6 +516,13 @@ phrase in the device process environment, an exact match of every probed
 hardware value against the profile, and an exact match of the device code,
 serial model prefix, firmware version and kernel release.
 
+Ordinary display, guard, synthetic-touch, and exclusive touch-grab paths also
+require the profile's reviewed `write_ready` flag. The HAL owns the smoke
+operation's fixed regions, waveform choices, restoration, and verification, so
+the caller never receives a general candidate-capable display session. It may
+ignore only the evidence-pending blocker. Any geometry, framebuffer, or
+identity blocker still refuses the smoke run before the framebuffer is opened.
+
 ```
 kobo smoke-display --device <address> --confirm DISPLAY_ONLY_GC16
 kobo smoke-display --device <address> --confirm REVERSIBLE_PIXELS_GC16
@@ -515,6 +541,14 @@ snapshot and restore; the DU waveform; the touch transform, against a physical
 touch; guardian restoration after a failed child; stopping and restarting the
 stock reader; an application rendered on the panel and taps reaching it; and
 HTTPS, including a 24 MB download.
+
+Proven on the physical N605: the same four bounded GC16, reversible-pixel,
+whole-screen restore, and DU stages; the Elan touch transform against a
+physical top-left touch; guardian restoration after a deliberate child
+failure; a Todo session rendered at 1404×1872 with physical taps reaching UI
+actions; release of panel and touch followed by a successful stock-reader
+restart; and suspend/resume with monotonic device uptime and no Cobalt process
+left running.
 
 Update markers are random and at least `0x40000000`, because markers are a
 global namespace shared with the stock reader and a low fixed marker could be

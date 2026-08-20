@@ -51,6 +51,7 @@ pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     serial_prefix: "N365",
     firmware_version: "4.45.23697",
     kernel_release: "4.9.77",
+    write_ready: true,
 };
 
 pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
@@ -102,6 +103,7 @@ pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
     serial_prefix: "N605",
     firmware_version: "4.38.23697",
     kernel_release: "4.9.77",
+    write_ready: true,
 };
 
 pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[&CLARA_BW_391, &ELIPSA_2E_389];
@@ -114,8 +116,32 @@ pub fn identify_profile(snapshot: &DeviceSnapshot) -> Option<&'static DeviceProf
         .find(|profile| profile.validate(snapshot).readiness != Readiness::Rejected)
 }
 
-pub const READ_ONLY_WRITE_BLOCKER: &str =
-    "write profile is intentionally incomplete until read-only doctor output is reviewed";
+pub const WRITE_EVIDENCE_PENDING: &str =
+    "owner-attended display, touch, exit, and recovery evidence is incomplete";
+
+/// Returns the exact supported profile authorized for ordinary device writes.
+///
+/// A hardware match alone deliberately is not enough. The profile must have
+/// completed its attended evidence and every identity field must match the
+/// reviewed device and firmware exactly.
+///
+/// # Errors
+///
+/// Returns every write blocker when no supported profile matches, the profile
+/// is still awaiting attended evidence, or exact device identity is missing or
+/// different.
+pub fn write_ready_profile(
+    snapshot: &DeviceSnapshot,
+) -> Result<&'static DeviceProfile, Vec<String>> {
+    let profile = identify_profile(snapshot)
+        .ok_or_else(|| vec!["no supported hardware profile matched this device".to_owned()])?;
+    let report = profile.validate(snapshot);
+    if report.readiness == Readiness::WriteReady {
+        Ok(profile)
+    } else {
+        Err(report.write_blockers)
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Bitfield {
@@ -248,6 +274,8 @@ pub struct DeviceProfile {
     pub serial_prefix: &'static str,
     pub firmware_version: &'static str,
     pub kernel_release: &'static str,
+    /// True only after owner-attended hardware evidence has been reviewed.
+    pub write_ready: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -309,7 +337,10 @@ impl DeviceProfile {
             None => mismatches.push("touch probe unavailable".to_owned()),
         }
 
-        blockers.push(READ_ONLY_WRITE_BLOCKER.to_owned());
+        blockers.extend(self.write_identity_blockers(snapshot));
+        if !self.write_ready {
+            blockers.push(WRITE_EVIDENCE_PENDING.to_owned());
+        }
 
         let readiness = if !mismatches.is_empty() {
             Readiness::Rejected
@@ -643,8 +674,8 @@ fn compare_identity(blockers: &mut Vec<String>, name: &str, expected: &str, actu
 #[cfg(test)]
 mod tests {
     use super::{
-        Bitfield, DeviceSnapshot, FramebufferSnapshot, IdentitySnapshot, Readiness, TouchSnapshot,
-        CLARA_BW_391, ELIPSA_2E_389,
+        Bitfield, DeviceProfile, DeviceSnapshot, FramebufferSnapshot, IdentitySnapshot, Readiness,
+        TouchSnapshot, CLARA_BW_391, ELIPSA_2E_389, WRITE_EVIDENCE_PENDING,
     };
 
     #[test]
@@ -717,6 +748,30 @@ mod tests {
         assert_eq!(flipped_y, (109, 1337));
     }
 
+    /// Captured from a physical top-left touch on the real Elipsa 2E with
+    /// `kobo touch-probe`, read-only and ungrabbed. The raw controller sample
+    /// `(1838, 30)` mapped to display `(30, 34)`, matching where the owner
+    /// touched rather than merely mapping the controller's corner set onto the
+    /// panel's corner set.
+    #[test]
+    fn elipsa_touch_transform_matches_a_physically_measured_touch() {
+        let mapped = ELIPSA_2E_389
+            .touch_to_display(1838, 30)
+            .expect("the measured raw Elipsa sample is in range");
+        assert_eq!(mapped, (30, 34));
+
+        // Either plausible reversed axis still produces an in-range point,
+        // but places it far from the top-left location that was touched.
+        let flipped_x = ELIPSA_2E_389
+            .touch_to_display(1838, 1404 - 30)
+            .expect("in range");
+        let flipped_y = ELIPSA_2E_389
+            .touch_to_display(1872 - 1838, 30)
+            .expect("in range");
+        assert_eq!(flipped_x, (1373, 34));
+        assert_eq!(flipped_y, (30, 1837));
+    }
+
     #[test]
     fn empty_snapshot_is_rejected() {
         let report = CLARA_BW_391.validate(&DeviceSnapshot::default());
@@ -725,7 +780,7 @@ mod tests {
     }
 
     #[test]
-    fn measured_snapshot_remains_read_only_until_reviewed() {
+    fn reviewed_profile_with_exact_identity_is_write_ready() {
         let red = Bitfield {
             offset: 0,
             length: 8,
@@ -770,10 +825,18 @@ mod tests {
             },
         };
         let report = CLARA_BW_391.validate(&snapshot);
-        assert_eq!(report.readiness, Readiness::ReadOnlyMatched);
+        assert_eq!(report.readiness, Readiness::WriteReady);
         assert!(report.mismatches.is_empty());
-        assert!(!report.write_blockers.is_empty());
+        assert!(report.write_blockers.is_empty());
         assert!(CLARA_BW_391.write_identity_blockers(&snapshot).is_empty());
+
+        let candidate = DeviceProfile {
+            write_ready: false,
+            ..CLARA_BW_391
+        };
+        let report = candidate.validate(&snapshot);
+        assert_eq!(report.readiness, Readiness::ReadOnlyMatched);
+        assert_eq!(report.write_blockers, vec![WRITE_EVIDENCE_PENDING]);
     }
 
     #[test]
