@@ -20,7 +20,11 @@ new app can appear in Store without reinstalling or updating Cobalt.
 </p>
 
 > [!IMPORTANT]
-> Cobalt currently is tested only on the **Kobo Clara BW N365 (device code 391)**.
+> The **Kobo Clara BW N365 (device code 391)** and **Kobo Elipsa 2E N605
+> (device code 389)** are fully hardware-tested on the exact firmware and
+> kernel versions in the support matrix.
+> See the [device support matrix](docs/DEVICES.md#device-support-matrix) before
+> installing.
 > It is an independent project and is not affiliated with Rakuten Kobo.
 
 ## Features
@@ -31,7 +35,7 @@ new app can appear in Store without reinstalling or updating Cobalt.
 - Per-app capability checks for network, storage, audio, frontlight, and other
   device services
 - Declarative e-ink UI toolkit and browser simulator
-- Full and partial refresh planning for the 1072 x 1448 Clara BW panel
+- Profile-driven full and partial refresh planning for supported panels
 - Static ARMv7 binaries with no device-side package manager
 - Recovery-safe app and catalog transactions
 
@@ -80,7 +84,8 @@ utilities.
 
 ## Install
 
-Install Rust, add the ARM target and connect a charged Clara BW over USB:
+Install Rust, add the ARM target and connect a charged, fully supported reader
+over USB:
 
 ```sh
 git clone https://github.com/BandarLabs/Cobalt.git
@@ -164,7 +169,7 @@ App contributions are regular pull requests:
 
 1. Add the app as a workspace package under `apps/<app-id>/`.
 2. Add its release metadata to `apps/catalog.json`.
-3. Add unit and Clara BW layout tests.
+3. Add unit tests and layout checks for every affected supported profile.
 4. Run the app in the browser and runtime simulators.
 5. Open a pull request.
 
@@ -213,8 +218,12 @@ by hardware and firmware identity, and a reboot returns to the stock reader.
 The first installation still modifies files on the user storage partition and
 is provided without warranty.
 
-Only the Clara BW profile has been tested. Do not install Cobalt on another
-model until that model has a reviewed and hardware-tested profile.
+Normal panel-write entry points require one of the exact hardware and firmware
+combinations in the
+[device support matrix](docs/DEVICES.md#device-support-matrix). Do not treat a
+read-only profile match as permission to install: normal use requires the
+profile's owner-attended display, touch, exit, and recovery evidence to be
+complete.
 
 ## License
 

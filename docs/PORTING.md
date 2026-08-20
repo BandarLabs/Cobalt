@@ -2,10 +2,16 @@
 
 Part of [Cobalt](../README.md).
 
-**Cobalt has only ever run on a Kobo Clara BW (N365, device code 391).** Every
-device write is gated on an exact hardware match, so a different reader is
-refused rather than guessed at. Nothing here bricks a device by trying; it
-simply declines.
+Cobalt selects a device profile at runtime. The Clara BW and Elipsa 2E profiles
+are fully hardware-tested at their recorded identity and firmware boundaries.
+The current status and exact boundaries are recorded in the
+[device support matrix](DEVICES.md#device-support-matrix).
+
+Display and synthetic-touch write entry points demand an exact hardware and
+firmware match, so an unknown reader is refused rather than guessed at. A
+read-only match is only a porting milestone, not permission to ship or install
+the profile. Review every other path that takes device ownership against the
+same identity boundary.
 
 This is a genuinely welcome pull request. Open an issue first so the profile
 shape can be agreed.
@@ -18,18 +24,22 @@ and every application are device-independent. What is measured is:
 1. **A `DeviceProfile`**, in `crates/kobo-profile/src/lib.rs`. Panel size and
    stride, framebuffer identity, the touch device and its axis ranges and
    rotation, and the identity fields (device code, serial prefix, firmware,
-   kernel). `CLARA_BW_391` is the worked example.
+   kernel). Its `write_ready` flag remains false until the attended evidence in
+   the device support matrix has been reviewed. `CLARA_BW_391` and
+   `ELIPSA_2E_389` are the current examples.
 2. **`DisplayMetrics`**, in `crates/kobo-ui/src/lib.rs`. Size and DPI, which is
    what the layout engine reasons about.
-3. **Which profile is compiled in.** There is no runtime device selection yet.
-   `kobod`, `kobo-tap`, `kobo-doctor`, `kobo-guard`, `kobo-smoke` and the
-   simulator each name `CLARA_BW_391` directly. Making that a choice rather
-   than a constant is most of the work of supporting a second device, and is
-   the part worth agreeing before anybody writes it.
+3. **Runtime profile registration.** `SUPPORTED_PROFILES` in `kobo-profile`
+   contains the profiles the runtime may identify. Device tools probe first and
+   select a matching hardware profile; panel-write entry points then apply the
+   shared `write_ready_profile` gate, which requires exact identity and reviewed
+   evidence. The browser/runtime simulator remains Clara BW-sized, so a new
+   profile also needs explicit layout coverage for its metrics.
 
-The hardware layer itself is already fine: every function in `kobo-hal` takes
-a `&DeviceProfile` rather than reaching for a global, so the framebuffer, the
-touch decoder and the refresh planner need no changes at all.
+The framebuffer, touch decoder, and refresh planner consume a `DeviceProfile`
+rather than assuming one model. A new device can still require narrow discovery
+support—for example, recognizing its touch device name—and tests proving that
+all write paths use the profile selected from the same probe.
 
 ## How to get the numbers
 
@@ -63,13 +73,23 @@ device-tree compatible: mediatek,mt8110, mediatek,mt8512
 framebuffer: id=hwtcon 1072x1448 virtual=1072x1448 offset=0,0 bpp=32 ...
 identity: model=N365 firmware=4.45.23697 kernel=4.9.77 device-code=391
 touch: cyttsp5_mt at /dev/input/event1 X=0..1447 Y=0..1071
-result: read-only matched
+result: write ready
 ```
 
-Every field a profile needs is on that page. It then validates what it found
-against the profile compiled into it and lists each mismatch, so on a device
-that is not a Clara BW the report *is* your starting profile: each mismatch
-names a field and the value your device actually has.
+The hardware-verified Elipsa 2E probe is:
+
+```
+profile: elipsa-2e-389 (Kobo Elipsa 2E)
+framebuffer: id=hwtcon 1404x1872 virtual=1404x1872 offset=0,0 bpp=32 ...
+identity: model=N605 firmware=4.38.23697 kernel=4.9.77 device-code=389
+touch: Elan Touchscreen at /dev/input/event2 X=0..1872 Y=0..1404
+result: write ready
+```
+
+Every field a profile needs is on that page. The doctor compares the probe with
+the registered profiles. A known device is named; an unknown device is reported
+as unsupported after its raw fields are printed, making that report the
+starting evidence for a new profile.
 
 The full serial number is deliberately never read past its four-character
 model prefix.
@@ -77,7 +97,16 @@ model prefix.
 ## What will refuse to work until the profile is right
 
 By design, all of it. `validate` returns `Rejected` on any mismatch, and every
-write path also demands an exact device code, serial prefix, firmware
-version and kernel release. A profile that is merely close is treated as a
-different device. That is the whole point: geometry alone is not proof of
-identity, and the failure mode of guessing is somebody else's reader.
+ordinary write or exclusive-ownership path uses `write_ready_profile`, which
+also demands an exact device code, serial prefix, firmware version, kernel
+release, and completed attended evidence. A profile that is merely close is
+treated as a different device. That is the whole point: geometry alone is not
+proof of identity, and the failure mode of guessing is somebody else's reader.
+
+The bounded `kobo smoke-display` operation is the only exception while evidence
+is being gathered. The HAL owns its fixed regions, waveform choices,
+restoration, and verification and never returns a candidate-capable display
+session to the caller. It may ignore only the evidence-pending blocker;
+geometry, framebuffer safety, and exact identity remain mandatory. Normal
+runtime display, guard, synthetic-tap, and exclusive touch-grab paths stay
+blocked until `write_ready` is reviewed and enabled.

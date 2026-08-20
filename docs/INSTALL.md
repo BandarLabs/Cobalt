@@ -1,19 +1,26 @@
 # Installing Cobalt
 
-The full walkthrough for getting Cobalt onto a Kobo Clara BW over USB, what to
-do if a step doesn't go as described, and how to take it back off. Part of
-[Cobalt](../README.md).
+The full owner-facing walkthrough for getting Cobalt onto a supported Kobo over
+USB, what to do if a step does not go as described, and how to take it back
+off. Part of [Cobalt](../README.md).
 
-**Tested on one device: the Kobo Clara BW (N365, device code 391), firmware
-4.45.23697.** Every device write is gated on an exact match of framebuffer
-identity, geometry, device code, serial model prefix, firmware version and
-kernel release, so a different reader is refused rather than guessed at. On
-any other Kobo, Cobalt will decline to draw.
+The procedure below is fully hardware-tested on the **Kobo Clara BW N365
+(device code 391), firmware 4.45.23697** and the **Kobo Elipsa 2E N605 (device
+code 389), firmware 4.38.23697**. Support remains tied to the exact firmware,
+kernel, framebuffer, touch, and identity combination in the
+[device support matrix](DEVICES.md#device-support-matrix).
+
+Display and synthetic-touch writes require an exact match of framebuffer
+identity, geometry, device code, serial model prefix, firmware version, and
+kernel release. A different reader or firmware is refused rather than guessed
+at.
 
 ## What you need
 
-- A **Kobo Clara BW**, charged. The reader's own installer is gated on battery
-  level and fails silently, so charge it first.
+- A charged reader whose entry in the
+  [device support matrix](DEVICES.md#device-support-matrix) is fully tested.
+  The reader's own installer is gated on battery level and fails silently, so
+  charge it first.
 - A **USB cable** that carries data. Charge-only cables are common and they
   look identical; if the reader charges but never offers to connect, suspect
   the cable before anything else.

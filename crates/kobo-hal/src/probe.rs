@@ -34,8 +34,10 @@ impl Error for ProbeError {
 ///
 /// # Errors
 ///
-/// Returns the first framebuffer or touch discovery error without guessing a
-/// fallback device.
+/// Returns a framebuffer query error or an error querying a recognized touch
+/// device without guessing a fallback device. The absence of a recognized
+/// touch device remains part of the snapshot so the doctor can report unknown
+/// hardware read-only.
 pub fn probe_device() -> Result<DeviceSnapshot, ProbeError> {
     let compatible = read_nul_list(&[
         "/sys/firmware/devicetree/base/compatible",
@@ -49,8 +51,9 @@ pub fn probe_device() -> Result<DeviceSnapshot, ProbeError> {
     ]);
 
     let framebuffer = probe_framebuffer(Path::new("/dev/fb0"))?;
-    let touch =
-        discover_touch_path("/proc/bus/input/devices").and_then(|path| probe_touch(&path).ok());
+    let touch = discover_touch_path("/proc/bus/input/devices")
+        .map(|path| probe_touch(&path))
+        .transpose()?;
 
     Ok(DeviceSnapshot {
         compatible,
@@ -189,6 +192,20 @@ H: Handlers=event0\n";
         assert_eq!(
             discover_touch_path_from(fixture).as_deref(),
             Some(Path::new("/dev/input/event1"))
+        );
+    }
+
+    #[test]
+    fn finds_elan_touch_handler() {
+        let fixture = "I: Bus=0018 Vendor=04f3 Product=0000 Version=0000\n\
+N: Name=\"Elan Touchscreen\"\n\
+H: Handlers=mouse0 event2\n\
+B: EV=b\n\n\
+N: Name=\"gpio-keys\"\n\
+H: Handlers=event0\n";
+        assert_eq!(
+            discover_touch_path_from(fixture).as_deref(),
+            Some(Path::new("/dev/input/event2"))
         );
     }
 }

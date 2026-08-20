@@ -52,7 +52,7 @@
 use kobo_abi::input;
 use kobo_hal::probe_device;
 use kobo_hal::touch::InputEvent32;
-use kobo_profile::{identify_profile, DeviceProfile, DeviceSnapshot};
+use kobo_profile::{write_ready_profile, DeviceProfile, DeviceSnapshot};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::process::ExitCode;
@@ -138,14 +138,8 @@ fn tap() -> Result<(), String> {
 }
 
 fn writable_profile(snapshot: &DeviceSnapshot) -> Result<&'static DeviceProfile, String> {
-    let profile = identify_profile(snapshot)
-        .ok_or_else(|| "the probed device does not match a supported profile".to_owned())?;
-    let blockers = profile.write_identity_blockers(snapshot);
-    if blockers.is_empty() {
-        Ok(profile)
-    } else {
-        Err(format!("device write refused: {}", blockers.join("; ")))
-    }
+    write_ready_profile(snapshot)
+        .map_err(|blockers| format!("device write refused: {}", blockers.join("; ")))
 }
 
 /// One tap, and how long to wait before making it.
@@ -371,6 +365,22 @@ mod tests {
         let error = writable_profile(&snapshot).expect_err("identity gates every device write");
         assert!(error.contains("device write refused"), "{error}");
         assert!(error.contains("device code"), "{error}");
+    }
+
+    #[test]
+    fn reviewed_elipsa_with_exact_identity_can_receive_a_tap() {
+        let snapshot = snapshot_for(
+            &ELIPSA_2E_389,
+            IdentitySnapshot {
+                serial_prefix: Some("N605".into()),
+                firmware_version: Some("4.38.23697".into()),
+                kernel_release: Some("4.9.77".into()),
+                device_code: Some(389),
+            },
+        );
+        let profile = writable_profile(&snapshot)
+            .expect("completed attended evidence authorizes synthetic touch");
+        assert_eq!(profile.id, ELIPSA_2E_389.id);
     }
 
     #[test]
