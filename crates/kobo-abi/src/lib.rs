@@ -733,6 +733,36 @@ pub mod sandbox {
             u32::try_from(number).unwrap_or(u32::MAX)
         }
 
+        // Some architectures have no fork or vfork syscall at all, and libc
+        // defines no number for them: the C library implements both by calling
+        // clone, which this filter blocks in its own right. The device is
+        // armv7, where both numbers exist and the filter below is unchanged.
+        // This arm exists only so the workspace builds on such a development
+        // machine, arm64 Linux being the one people actually hit.
+        //
+        // The two slots are kept rather than removed. Every jump in the filter
+        // carries a relative offset -- socket lands on the AF_UNIX check, the
+        // rest land on RET ERRNO -- so dropping an instruction would silently
+        // retarget every jump above it. u32::MAX matches no syscall, which is
+        // the same fallback syscall() already uses, and leaves the offsets and
+        // the meaning of the program exactly as they are elsewhere.
+        //
+        // The list names the architectures that lack the calls, so that an
+        // unlisted future one fails to compile here rather than quietly
+        // dropping two entries from the filter.
+        #[cfg(any(
+            target_arch = "aarch64",
+            target_arch = "riscv64",
+            target_arch = "loongarch64"
+        ))]
+        let fork_calls: [u32; 2] = [u32::MAX, u32::MAX];
+        #[cfg(not(any(
+            target_arch = "aarch64",
+            target_arch = "riscv64",
+            target_arch = "loongarch64"
+        )))]
+        let fork_calls: [u32; 2] = [syscall(libc::SYS_fork), syscall(libc::SYS_vfork)];
+
         // seccomp_data.nr is at byte 0 and args[0] at byte 16 on the little-
         // endian ARM and x86 Linux targets supported by this workspace. SDK
         // applications are single-process event loops; their asynchronous work
@@ -746,8 +776,8 @@ pub mod sandbox {
             jump(syscall(libc::SYS_setpgid), 9, 0),
             jump(syscall(libc::SYS_unshare), 8, 0),
             jump(syscall(libc::SYS_setns), 7, 0),
-            jump(syscall(libc::SYS_fork), 6, 0),
-            jump(syscall(libc::SYS_vfork), 5, 0),
+            jump(fork_calls[0], 6, 0),
+            jump(fork_calls[1], 5, 0),
             jump(syscall(libc::SYS_clone), 4, 0),
             jump(syscall(libc::SYS_clone3), 3, 0),
             statement(RET_K, libc::SECCOMP_RET_ALLOW),
