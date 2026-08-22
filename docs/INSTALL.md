@@ -1,19 +1,20 @@
 # Installing Cobalt
 
-The full walkthrough for getting Cobalt onto a Kobo Clara BW over USB, what to
+The full walkthrough for getting Cobalt onto a supported Kobo over USB, what to
 do if a step doesn't go as described, and how to take it back off. Part of
 [Cobalt](../README.md).
 
-**Tested on one device: the Kobo Clara BW (N365, device code 391), firmware
-4.45.23697.** Every device write is gated on an exact match of framebuffer
-identity, geometry, device code, serial model prefix, firmware version and
-kernel release, so a different reader is refused rather than guessed at. On
-any other Kobo, Cobalt will decline to draw.
+**Hardware-tested profiles:** Kobo Clara BW (N365, device code 391), firmware
+4.45.23697; and Kobo Clara HD (N249, device code 376), firmware 4.38.23684.
+Every device write is gated on an exact match of framebuffer identity,
+geometry, device code, serial model prefix, firmware version and kernel
+release, so a different reader is refused rather than guessed at. On any
+other Kobo, Cobalt will decline to draw.
 
 ## What you need
 
-- A **Kobo Clara BW**, charged. The reader's own installer is gated on battery
-  level and fails silently, so charge it first.
+- A **supported Kobo Clara BW or Clara HD**, charged. The reader's own installer
+  is gated on battery level and fails silently, so charge it first.
 - A **USB cable** that carries data. Charge-only cables are common and they
   look identical; if the reader charges but never offers to connect, suspect
   the cable before anything else.
@@ -95,8 +96,8 @@ you with an unbootable reader.
 
 On this firmware the entry is in the menu at the **bottom right** of the home
 screen. (NickelMenu puts its items in the top-left menu on old firmware and in
-the bottom-right one from 4.23.15505 onward, and the Clara BW is well past
-that.) Tap it and choose **Cobalt**.
+the bottom-right one from 4.23.15505 onward, and both tested profiles are well
+past that.) Tap it and choose **Cobalt**.
 
 The launcher appears with Cobalt's built-in applications. Store-only
 applications are deliberately absent until they are installed over Wi-Fi.

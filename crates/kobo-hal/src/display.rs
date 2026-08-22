@@ -14,8 +14,8 @@
 use crate::probe::{probe_device, ProbeError};
 use crate::refresh::{Rect, RefreshPlan};
 use crate::surface::{self, RegionSnapshot, SurfaceError, SurfaceGeometry};
-use kobo_abi::hwtcon;
-use kobo_profile::{DeviceProfile, DeviceSnapshot};
+use kobo_abi::{hwtcon, mxcfb};
+use kobo_profile::{DeviceProfile, DeviceSnapshot, FramebufferController};
 use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read};
@@ -193,13 +193,26 @@ impl DisplaySession {
         // Validate the region against this exact surface before the kernel sees it.
         surface::RegionPlacement::new(self.geometry, plan.region)?;
         let marker = unique_marker()?;
-        let mut update = plan.update_data(marker);
-        hwtcon::send_update(&self.framebuffer, &mut update)?;
-        let mut wait = hwtcon::HwtconUpdateMarkerData {
-            update_marker: marker,
-            collision_test: 0,
-        };
-        hwtcon::wait_for_update_complete(&self.framebuffer, &mut wait)?;
+        match self.profile.framebuffer_controller {
+            FramebufferController::Hwtcon => {
+                let mut update = plan.hwtcon_update_data(marker);
+                hwtcon::send_update(&self.framebuffer, &mut update)?;
+                let mut wait = hwtcon::HwtconUpdateMarkerData {
+                    update_marker: marker,
+                    collision_test: 0,
+                };
+                hwtcon::wait_for_update_complete(&self.framebuffer, &mut wait)?;
+            }
+            FramebufferController::MxcfbV2 => {
+                let mut update = plan.mxcfb_update_data(marker);
+                mxcfb::send_update_v2(&self.framebuffer, &mut update)?;
+                let mut wait = mxcfb::MxcfbUpdateMarkerData {
+                    update_marker: marker,
+                    collision_test: 0,
+                };
+                mxcfb::wait_for_update_complete_v3(&self.framebuffer, &mut wait)?;
+            }
+        }
         Ok(())
     }
 }

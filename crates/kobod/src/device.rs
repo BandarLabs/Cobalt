@@ -821,7 +821,7 @@ struct Hosted {
     path: PathBuf,
     /// Root-owned filesystem visible to this application on the device.
     jail: Option<PathBuf>,
-    child: Child,
+    child: ApplicationChild,
     stream: std::os::unix::net::UnixStream,
     store: kobo_policy::store::Store,
     shelf: kobo_policy::shelf::Shelf,
@@ -847,6 +847,57 @@ struct Hosted {
     painted: u32,
     /// When this was last on the panel, for deciding what to stop first.
     used: Instant,
+}
+
+/// An application process plus the legacy-kernel supervisor, when one is
+/// needed. Ordinary process APIs may reap a child only after ptrace has
+/// released its exit stop, so that ordering lives behind this type.
+struct ApplicationChild {
+    process: Child,
+    #[cfg(all(target_os = "linux", target_arch = "arm"))]
+    trace: Option<kobo_abi::sandbox::SyscallTrace>,
+}
+
+impl ApplicationChild {
+    fn ordinary(process: Child) -> Self {
+        Self {
+            process,
+            #[cfg(all(target_os = "linux", target_arch = "arm"))]
+            trace: None,
+        }
+    }
+
+    #[cfg(all(target_os = "linux", target_arch = "arm"))]
+    fn traced(process: Child, trace: kobo_abi::sandbox::SyscallTrace) -> Self {
+        Self {
+            process,
+            trace: Some(trace),
+        }
+    }
+
+    fn id(&self) -> u32 {
+        self.process.id()
+    }
+
+    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        #[cfg(all(target_os = "linux", target_arch = "arm"))]
+        if self
+            .trace
+            .as_ref()
+            .is_some_and(|trace| !trace.is_detached())
+        {
+            return Ok(None);
+        }
+        self.process.try_wait()
+    }
+
+    fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
+        #[cfg(all(target_os = "linux", target_arch = "arm"))]
+        if let Some(trace) = &self.trace {
+            trace.wait_until_detached(APP_STOP_GRACE);
+        }
+        self.process.wait()
+    }
 }
 
 struct AppLaunch {
@@ -2243,12 +2294,26 @@ fn start_application(
         // left of a crash was the application no longer being there, and the
         // one question worth asking of a crash could not be answered at all.
         .stderr(Stdio::piped());
-    if let Some(sandbox) = sandbox {
-        sandbox.configure(&mut command);
+    let trace_syscalls = if let Some(sandbox) = sandbox {
+        sandbox.configure(&mut command)
     } else {
         kobo_abi::process_group::configure(&mut command);
-    }
-    let mut child = match command.spawn() {
+        false
+    };
+    let spawned = if trace_syscalls {
+        #[cfg(all(target_os = "linux", target_arch = "arm"))]
+        {
+            kobo_abi::sandbox::SyscallTrace::spawn(command)
+                .map(|(child, trace)| ApplicationChild::traced(child, trace))
+        }
+        #[cfg(not(all(target_os = "linux", target_arch = "arm")))]
+        {
+            unreachable!("syscall tracing is selected only on 32-bit ARM Linux")
+        }
+    } else {
+        command.spawn().map(ApplicationChild::ordinary)
+    };
+    let mut child = match spawned {
         Ok(child) => child,
         Err(error) => {
             let _ignored = fs::remove_file(&socket_path);
@@ -2258,7 +2323,7 @@ fn start_application(
             return Err(format!("start {}: {error}", path.display()));
         }
     };
-    if let Some(stderr) = child.stderr.take() {
+    if let Some(stderr) = child.process.stderr.take() {
         report_what_an_application_says(expected_name.clone(), stderr);
     }
     let greeting = greet(&listener, whole_screen, &expected_name);
@@ -2473,7 +2538,7 @@ const HOLD_TIME: Duration = Duration::from_millis(500);
 const HOLD_SLIP: i32 = 40;
 
 /// Ends the application, politely if it has already finished and firmly if not.
-fn stop_application(child: &mut Child, jail: Option<&Path>) {
+fn stop_application(child: &mut ApplicationChild, jail: Option<&Path>) {
     let group = child.id();
     let _ignored = kobo_abi::process_group::signal(group, kobo_abi::process_group::SIGTERM);
     if let Some(root) = jail {

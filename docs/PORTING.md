@@ -2,10 +2,10 @@
 
 Part of [Cobalt](../README.md).
 
-**Cobalt has only ever run on a Kobo Clara BW (N365, device code 391).** Every
-device write is gated on an exact hardware match, so a different reader is
-refused rather than guessed at. Nothing here bricks a device by trying; it
-simply declines.
+**Cobalt has hardware-tested profiles for the Kobo Clara BW (N365, device code
+391) and Kobo Clara HD (N249, device code 376).** Every device write is gated
+on an exact hardware match, so a different reader is refused rather than
+guessed at. Nothing here bricks a device by trying; it simply declines.
 
 This is a genuinely welcome pull request. Open an issue first so the profile
 shape can be agreed.
@@ -17,19 +17,17 @@ and every application are device-independent. What is measured is:
 
 1. **A `DeviceProfile`**, in `crates/kobo-profile/src/lib.rs`. Panel size and
    stride, framebuffer identity, the touch device and its axis ranges and
-   rotation, and the identity fields (device code, serial prefix, firmware,
-   kernel). `CLARA_BW_391` is the worked example.
-2. **`DisplayMetrics`**, in `crates/kobo-ui/src/lib.rs`. Size and DPI, which is
-   what the layout engine reasons about.
-3. **Which profile is compiled in.** There is no runtime device selection yet.
-   `kobod`, `kobo-tap`, `kobo-doctor`, `kobo-guard`, `kobo-smoke` and the
-   simulator each name `CLARA_BW_391` directly. Making that a choice rather
-   than a constant is most of the work of supporting a second device, and is
-   the part worth agreeing before anybody writes it.
+   rotation, refresh controller, physical density, and the identity fields
+   (device code, serial prefix, firmware, kernel). `CLARA_BW_391` and
+   `CLARA_HD_376` are the worked examples.
+2. **A controller backend**, when the device does not use one already present.
+   Cobalt currently supports MediaTek HWTCON and Mark 7 MXCFB v2. Their ioctl
+   structures and waveform numbers are deliberately separate.
 
-The hardware layer itself is already fine: every function in `kobo-hal` takes
-a `&DeviceProfile` rather than reaching for a global, so the framebuffer, the
-touch decoder and the refresh planner need no changes at all.
+The runtime selects a matching profile after probing and derives its
+`DisplayMetrics` from that profile. The touch decoder and layout engine take
+the selected profile rather than reaching for a model-specific global. The
+browser simulator still presents the Clara BW geometry by default.
 
 ## How to get the numbers
 
@@ -46,6 +44,7 @@ same partition your books are on.
 cargo run -p kobo-cli -- setup --enable-ssh --no-menu   # over USB, then eject
 cargo run -p kobo-cli -- devices                        # find the address
 cargo run -p kobo-cli -- doctor --device <address>
+cargo run -p kobo-cli -- touch-probe --device <address> --seconds 30
 ```
 
 `--no-menu` leaves the reader's own menus alone, which is what you want here:
@@ -67,9 +66,10 @@ result: read-only matched
 ```
 
 Every field a profile needs is on that page. It then validates what it found
-against the profile compiled into it and lists each mismatch, so on a device
-that is not a Clara BW the report *is* your starting profile: each mismatch
-names a field and the value your device actually has.
+against the profiles compiled into it and lists each mismatch, so on an
+unsupported device the report *is* your starting profile: each mismatch names
+a field and the value your device actually has. The touch probe then checks a
+physical touch at a known corner against the proposed rotated transform.
 
 The full serial number is deliberately never read past its four-character
 model prefix.
