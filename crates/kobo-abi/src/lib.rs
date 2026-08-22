@@ -577,6 +577,155 @@ pub mod hwtcon {
     }
 }
 
+/// The i.MX6 EPDC framebuffer interface, as used by the Kobo Mark 7 devices.
+///
+/// This is the second display backend beside [`hwtcon`], and the two are more
+/// alike than they look. `MediaTek` kept the i.MX ioctl numbering, so both
+/// backends send updates on `'F', 0x2e` and wait on `'F', 0x2f`. Two things
+/// differ, and both are load-bearing:
+///
+/// 1. The update struct is 72 bytes here against 36 on hwtcon, because Mark 7
+///    takes the v2 layout with `temp`, `dither_mode`, `quant_bit` and an
+///    alternate buffer descriptor. The size is encoded in the request number,
+///    so the two `SEND_UPDATE` constants are genuinely different values.
+/// 2. The waveform *numbers* differ. `GL16` is 5 here and 3 on hwtcon; `A2` is
+///    4 here and 6 there. A waveform constant from the wrong backend is a
+///    silently wrong picture, not an error.
+///
+/// The wait request, by contrast, is bit-identical to the hwtcon one: the same
+/// number over the same eight-byte marker struct.
+///
+/// Every declaration here was read out of the Kobo Libra 2's own published
+/// kernel source, `include/uapi/linux/mxcfb.h` and
+/// `drivers/video/fbdev/mxc/mxc_epdc_v2_fb.c`, rather than reconstructed.
+pub mod mxcfb {
+    use super::{iow, iowr};
+    #[cfg(feature = "device-write")]
+    use super::{mutating_ioctl, File};
+    #[cfg(feature = "device-write")]
+    use std::io;
+
+    pub const UPDATE_MODE_PARTIAL: u32 = 0;
+    pub const UPDATE_MODE_FULL: u32 = 1;
+
+    // Defined in the driver rather than the uapi header, at
+    // `mxc_epdc_v2_fb.c:204`. Note the ordering difference against hwtcon.
+    //
+    // These are not the numbers the panel controller itself uses. The driver
+    // treats the submitted value as an index into a table it builds from the
+    // loaded waveform file, and substitutes the hardware's own number before
+    // sending it on (`mxc_epdc_v2_fb.c:5305`). That is the deeper reason the
+    // two backends cannot share constants: hwtcon takes a final waveform
+    // number and this takes an index, and they happen to overlap in range.
+    //
+    // Which hardware number each index maps to therefore depends on the
+    // waveform file on the device. `DU`, `GC16` and `GL16` are present in
+    // every known table; `GC4` is not dependable.
+    pub const WAVEFORM_INIT: u32 = 0;
+    pub const WAVEFORM_DU: u32 = 1;
+    pub const WAVEFORM_GC16: u32 = 2;
+    pub const WAVEFORM_GC4: u32 = 3;
+    pub const WAVEFORM_A2: u32 = 4;
+    pub const WAVEFORM_GL16: u32 = 5;
+    pub const WAVEFORM_GLR16: u32 = 6;
+    pub const WAVEFORM_GLD16: u32 = 7;
+    pub const WAVEFORM_AUTO: u32 = 257;
+
+    /// Ask the panel controller to use its own ambient temperature reading.
+    ///
+    /// hwtcon has no equivalent field. Every other known consumer of this
+    /// interface sends this value, and nothing here has a better number to
+    /// offer, so it is not exposed as a choice.
+    pub const TEMP_USE_AMBIENT: i32 = 0x1000;
+
+    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+    #[repr(C)]
+    pub struct MxcfbRect {
+        pub top: u32,
+        pub left: u32,
+        pub width: u32,
+        pub height: u32,
+    }
+
+    /// The marker half of the interface, identical in layout and in request
+    /// number to [`hwtcon::HwtconUpdateMarkerData`](super::hwtcon::HwtconUpdateMarkerData).
+    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+    #[repr(C)]
+    pub struct MxcfbUpdateMarkerData {
+        pub update_marker: u32,
+        pub collision_test: u32,
+    }
+
+    /// An alternate source buffer for an update, addressed physically.
+    ///
+    /// Nothing here uses it: updates always come from the framebuffer itself,
+    /// so every field stays zero. It exists because it occupies the last 28
+    /// bytes of the update struct, and the struct's size is part of the ioctl
+    /// request number.
+    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+    #[repr(C)]
+    pub struct MxcfbAltBufferData {
+        pub phys_addr: u32,
+        pub width: u32,
+        pub height: u32,
+        pub alt_update_region: MxcfbRect,
+    }
+
+    /// The Mark 7 update descriptor, `mxcfb_update_data_v2` in the kernel.
+    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+    #[repr(C)]
+    pub struct MxcfbUpdateData {
+        pub update_region: MxcfbRect,
+        pub waveform_mode: u32,
+        pub update_mode: u32,
+        pub update_marker: u32,
+        pub temp: i32,
+        pub flags: u32,
+        pub dither_mode: i32,
+        pub quant_bit: i32,
+        pub alt_buffer_data: MxcfbAltBufferData,
+    }
+
+    const _: [(); 16] = [(); std::mem::size_of::<MxcfbRect>()];
+    const _: [(); 8] = [(); std::mem::size_of::<MxcfbUpdateMarkerData>()];
+    const _: [(); 28] = [(); std::mem::size_of::<MxcfbAltBufferData>()];
+    const _: [(); 72] = [(); std::mem::size_of::<MxcfbUpdateData>()];
+
+    pub const MXCFB_SEND_UPDATE: u64 = iow(b'F', 0x2e, 72);
+    pub const MXCFB_WAIT_FOR_UPDATE_COMPLETE: u64 = iowr(b'F', 0x2f, 8);
+
+    /// Submits an EPDC update. Available only with `device-write`.
+    ///
+    /// The request is declared write-only by the kernel header, but the driver
+    /// copies the descriptor back to user space, so it is passed mutably.
+    /// `update.waveform_mode` is overwritten in the process: what comes back
+    /// is the panel's own waveform number, not the constant that went in
+    /// (`mxc_epdc_v2_fb.c:5486`, "Pass selected waveform mode back to user").
+    /// Nothing here reads it back, but a caller that compared the field
+    /// against a `WAVEFORM_` constant after the call would find they differ.
+    ///
+    /// # Errors
+    ///
+    /// Returns the kernel error from `MXCFB_SEND_UPDATE`.
+    #[cfg(feature = "device-write")]
+    pub fn send_update(file: &File, update: &mut MxcfbUpdateData) -> io::Result<()> {
+        mutating_ioctl(file, MXCFB_SEND_UPDATE, update)
+    }
+
+    /// Waits for the EPDC marker and returns its collision-test result.
+    ///
+    /// # Errors
+    ///
+    /// Returns the kernel error from `MXCFB_WAIT_FOR_UPDATE_COMPLETE`.
+    #[cfg(feature = "device-write")]
+    pub fn wait_for_update_complete(
+        file: &File,
+        marker: &mut MxcfbUpdateMarkerData,
+    ) -> io::Result<()> {
+        mutating_ioctl(file, MXCFB_WAIT_FOR_UPDATE_COMPLETE, marker)
+    }
+}
+
 /// Kernel isolation applied to an application immediately before it starts.
 ///
 /// Device applications are ordinary static binaries, but they are not trusted
@@ -1371,7 +1520,7 @@ mod pty_tests {
 
 #[cfg(test)]
 mod tests {
-    use super::{hwtcon, input, ior, iow, iowr};
+    use super::{hwtcon, input, ior, iow, iowr, mxcfb};
     #[cfg(feature = "device-write")]
     use std::fs::File;
 
@@ -1408,15 +1557,73 @@ mod tests {
         assert_eq!(input::EVIOCGABS_MT_POSITION_Y, 0x8018_4576);
         assert_eq!(hwtcon::HWTCON_SEND_UPDATE, 0x4024_462e);
         assert_eq!(hwtcon::HWTCON_WAIT_FOR_UPDATE_COMPLETE, 0xc008_462f);
+        assert_eq!(mxcfb::MXCFB_SEND_UPDATE, 0x4048_462e);
+        assert_eq!(mxcfb::MXCFB_WAIT_FOR_UPDATE_COMPLETE, 0xc008_462f);
         assert_eq!(ior(b'E', 0x75, 24), 0x8018_4575);
         assert_eq!(iow(b'F', 0x2e, 36), 0x4024_462e);
+        assert_eq!(iow(b'F', 0x2e, 72), 0x4048_462e);
         assert_eq!(iowr(b'F', 0x2f, 8), 0xc008_462f);
     }
 
+    /// The two backends share a number here, and that is not a coincidence to
+    /// be tidied away: the marker struct is the same eight bytes on both, so
+    /// the wait half of the interface needs no second implementation.
     #[test]
-    fn hwtcon_waveforms_do_not_reuse_mxcfb_values() {
+    fn both_backends_wait_on_the_same_request() {
+        assert_eq!(
+            hwtcon::HWTCON_WAIT_FOR_UPDATE_COMPLETE,
+            mxcfb::MXCFB_WAIT_FOR_UPDATE_COMPLETE
+        );
+        assert_ne!(hwtcon::HWTCON_SEND_UPDATE, mxcfb::MXCFB_SEND_UPDATE);
+    }
+
+    /// A waveform constant taken from the wrong backend does not fail: it
+    /// draws the wrong thing. Ask an i.MX6 panel for hwtcon's `GL16` and it
+    /// runs `GC4`; ask it for hwtcon's `A2` and it runs `GLR16`.
+    #[test]
+    fn the_two_backends_number_their_waveforms_differently() {
         assert_eq!(hwtcon::WAVEFORM_GLR16, 4);
         assert_eq!(hwtcon::WAVEFORM_A2, 6);
+        assert_eq!(mxcfb::WAVEFORM_GL16, 5);
+        assert_eq!(mxcfb::WAVEFORM_A2, 4);
+        assert_ne!(hwtcon::WAVEFORM_GL16, mxcfb::WAVEFORM_GL16);
+        assert_ne!(hwtcon::WAVEFORM_A2, mxcfb::WAVEFORM_A2);
+
+        // The three the two backends genuinely agree on.
+        assert_eq!(hwtcon::WAVEFORM_INIT, mxcfb::WAVEFORM_INIT);
+        assert_eq!(hwtcon::WAVEFORM_DU, mxcfb::WAVEFORM_DU);
+        assert_eq!(hwtcon::WAVEFORM_GC16, mxcfb::WAVEFORM_GC16);
+        assert_eq!(hwtcon::WAVEFORM_AUTO, mxcfb::WAVEFORM_AUTO);
+    }
+
+    #[test]
+    fn mxcfb_offsets_match_vendor_c_layout() {
+        use std::mem::offset_of;
+
+        assert_eq!(offset_of!(mxcfb::MxcfbUpdateData, update_region), 0);
+        assert_eq!(offset_of!(mxcfb::MxcfbUpdateData, waveform_mode), 16);
+        assert_eq!(offset_of!(mxcfb::MxcfbUpdateData, update_mode), 20);
+        assert_eq!(offset_of!(mxcfb::MxcfbUpdateData, update_marker), 24);
+        assert_eq!(offset_of!(mxcfb::MxcfbUpdateData, temp), 28);
+        assert_eq!(offset_of!(mxcfb::MxcfbUpdateData, flags), 32);
+        assert_eq!(offset_of!(mxcfb::MxcfbUpdateData, dither_mode), 36);
+        assert_eq!(offset_of!(mxcfb::MxcfbUpdateData, quant_bit), 40);
+        assert_eq!(offset_of!(mxcfb::MxcfbUpdateData, alt_buffer_data), 44);
+
+        assert_eq!(offset_of!(mxcfb::MxcfbAltBufferData, phys_addr), 0);
+        assert_eq!(offset_of!(mxcfb::MxcfbAltBufferData, width), 4);
+        assert_eq!(offset_of!(mxcfb::MxcfbAltBufferData, height), 8);
+        assert_eq!(offset_of!(mxcfb::MxcfbAltBufferData, alt_update_region), 12);
+
+        // Without these, swapping `top` and `left` would keep every size and
+        // every offset above correct, and put every update in the wrong place.
+        assert_eq!(offset_of!(mxcfb::MxcfbRect, top), 0);
+        assert_eq!(offset_of!(mxcfb::MxcfbRect, left), 4);
+        assert_eq!(offset_of!(mxcfb::MxcfbRect, width), 8);
+        assert_eq!(offset_of!(mxcfb::MxcfbRect, height), 12);
+
+        assert_eq!(offset_of!(mxcfb::MxcfbUpdateMarkerData, update_marker), 0);
+        assert_eq!(offset_of!(mxcfb::MxcfbUpdateMarkerData, collision_test), 4);
     }
 
     #[test]

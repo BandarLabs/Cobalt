@@ -1,4 +1,74 @@
-use kobo_abi::hwtcon;
+use kobo_abi::{hwtcon, mxcfb};
+use kobo_profile::DeviceProfile;
+
+/// Which panel-controller interface a device speaks.
+///
+/// This is not a preference. It is a property of the hardware, read from the
+/// profile's framebuffer identifier, and the two interfaces are not
+/// interchangeable: they number their waveforms differently, so a plan built
+/// for one backend and submitted to the other draws the wrong thing without
+/// reporting anything. Keeping the choice in one enum is what stops a waveform
+/// constant from being written down anywhere a backend is not also named.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Backend {
+    /// `MediaTek` panel controller, as on the Clara BW.
+    Hwtcon,
+    /// i.MX6 EPDC, as on the Mark 7 devices.
+    Mxcfb,
+}
+
+impl Backend {
+    /// Resolves the backend from a framebuffer identifier, as reported by the
+    /// kernel in `fb_fix_screeninfo.id`.
+    ///
+    /// An unknown identifier is `None` rather than a guess, in keeping with
+    /// the rest of the device model: an unrecognised panel is refused, not
+    /// approximated.
+    #[must_use]
+    pub fn from_framebuffer_id(id: &str) -> Option<Self> {
+        match id {
+            "hwtcon" => Some(Self::Hwtcon),
+            "mxc_epdc_fb" => Some(Self::Mxcfb),
+            _ => None,
+        }
+    }
+
+    /// Resolves the backend a profile describes.
+    #[must_use]
+    pub fn from_profile(profile: &DeviceProfile) -> Option<Self> {
+        Self::from_framebuffer_id(profile.framebuffer_id)
+    }
+
+    /// The waveform number this backend uses for `intent`.
+    ///
+    /// Only the three waveforms every known panel has are reachable from a
+    /// [`RefreshIntent`], which is what makes this mapping safe to write down
+    /// once. `GC4` in particular is not dependable across firmware versions
+    /// and is deliberately not offered.
+    ///
+    /// On i.MX6 the driver may still not run what is asked for. There is a
+    /// block in `mxc_epdc_v2_fb.c` that substitutes `GLD16` or `GLR16` for a
+    /// requested `GC16`, which would mean a quality refresh never actually
+    /// clears ghosting. It sits behind `NTX_WFM_MODE_OPTIMIZED`, and that
+    /// macro is not defined anywhere in the Libra 2 kernel tree, so the code
+    /// is dead on this device. `tools/abi/check-mxcfb.sh` fails if a kernel
+    /// ever turns it on.
+    #[must_use]
+    pub fn waveform(self, intent: RefreshIntent) -> u32 {
+        match self {
+            Self::Hwtcon => match intent {
+                RefreshIntent::FastFeedback => hwtcon::WAVEFORM_DU,
+                RefreshIntent::TextContent => hwtcon::WAVEFORM_GL16,
+                RefreshIntent::QualityContent => hwtcon::WAVEFORM_GC16,
+            },
+            Self::Mxcfb => match intent {
+                RefreshIntent::FastFeedback => mxcfb::WAVEFORM_DU,
+                RefreshIntent::TextContent => mxcfb::WAVEFORM_GL16,
+                RefreshIntent::QualityContent => mxcfb::WAVEFORM_GC16,
+            },
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Rect {
@@ -43,10 +113,16 @@ pub enum RefreshIntent {
     QualityContent,
 }
 
+/// A clipped region and what is to be done to it.
+///
+/// The plan deliberately carries the *intent* and not a waveform number.
+/// Callers describe the change they made; only the display session, which
+/// knows the profile, turns that into a number for a particular panel
+/// controller.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RefreshPlan {
     pub region: Rect,
-    pub waveform: u32,
+    pub intent: RefreshIntent,
     pub full: bool,
 }
 
@@ -61,17 +137,19 @@ impl RefreshPlan {
     ) -> Option<Self> {
         Some(Self {
             region: region.clipped(screen_width, screen_height)?,
-            waveform: match intent {
-                RefreshIntent::FastFeedback => hwtcon::WAVEFORM_DU,
-                RefreshIntent::TextContent => hwtcon::WAVEFORM_GL16,
-                RefreshIntent::QualityContent => hwtcon::WAVEFORM_GC16,
-            },
+            intent,
             full,
         })
     }
 
+    /// The waveform number `backend` uses for this plan.
     #[must_use]
-    pub fn update_data(self, marker: u32) -> hwtcon::HwtconUpdateData {
+    pub fn waveform(self, backend: Backend) -> u32 {
+        backend.waveform(self.intent)
+    }
+
+    #[must_use]
+    pub fn hwtcon_update_data(self, marker: u32) -> hwtcon::HwtconUpdateData {
         hwtcon::HwtconUpdateData {
             update_region: hwtcon::HwtconRect {
                 top: self.region.y,
@@ -79,7 +157,7 @@ impl RefreshPlan {
                 width: self.region.width,
                 height: self.region.height,
             },
-            waveform_mode: self.waveform,
+            waveform_mode: self.waveform(Backend::Hwtcon),
             update_mode: if self.full {
                 hwtcon::UPDATE_MODE_FULL
             } else {
@@ -88,6 +166,46 @@ impl RefreshPlan {
             update_marker: marker,
             flags: 0,
             dither_mode: 0,
+        }
+    }
+
+    /// The same plan as an i.MX6 EPDC update.
+    ///
+    /// `temp` asks the controller for its own ambient reading, which is what
+    /// every other consumer of this interface sends and the only value here
+    /// that is not simply zero. Dithering is left off and the alternate buffer
+    /// unused: updates come from the framebuffer itself.
+    #[must_use]
+    pub fn mxcfb_update_data(self, marker: u32) -> mxcfb::MxcfbUpdateData {
+        mxcfb::MxcfbUpdateData {
+            update_region: mxcfb::MxcfbRect {
+                top: self.region.y,
+                left: self.region.x,
+                width: self.region.width,
+                height: self.region.height,
+            },
+            waveform_mode: self.waveform(Backend::Mxcfb),
+            update_mode: if self.full {
+                mxcfb::UPDATE_MODE_FULL
+            } else {
+                mxcfb::UPDATE_MODE_PARTIAL
+            },
+            update_marker: marker,
+            temp: mxcfb::TEMP_USE_AMBIENT,
+            flags: 0,
+            dither_mode: 0,
+            quant_bit: 0,
+            alt_buffer_data: mxcfb::MxcfbAltBufferData {
+                phys_addr: 0,
+                width: 0,
+                height: 0,
+                alt_update_region: mxcfb::MxcfbRect {
+                    top: 0,
+                    left: 0,
+                    width: 0,
+                    height: 0,
+                },
+            },
         }
     }
 }
@@ -112,8 +230,8 @@ impl UpdateMarker {
 
 #[cfg(test)]
 mod tests {
-    use super::{Rect, RefreshIntent, RefreshPlan, UpdateMarker};
-    use kobo_abi::hwtcon;
+    use super::{Backend, Rect, RefreshIntent, RefreshPlan, UpdateMarker};
+    use kobo_abi::{hwtcon, mxcfb};
 
     #[test]
     fn clips_regions_before_building_update() {
@@ -132,7 +250,78 @@ mod tests {
         .expect("region intersects screen");
         assert_eq!(plan.region.width, 12);
         assert_eq!(plan.region.height, 8);
-        assert_eq!(plan.waveform, hwtcon::WAVEFORM_GC16);
+        assert_eq!(plan.waveform(Backend::Hwtcon), hwtcon::WAVEFORM_GC16);
+    }
+
+    /// The reason the plan stopped carrying a waveform number. Both panels are
+    /// being asked for the same thing, and both are being told a different
+    /// number. Had the hwtcon number been sent to an i.MX6 panel, it would have
+    /// run `GC4` and reported success.
+    #[test]
+    fn one_intent_becomes_a_different_number_on_each_backend() {
+        let plan = RefreshPlan::new(
+            Rect {
+                x: 0,
+                y: 0,
+                width: 64,
+                height: 64,
+            },
+            RefreshIntent::TextContent,
+            false,
+            1264,
+            1680,
+        )
+        .expect("region intersects screen");
+
+        assert_eq!(plan.waveform(Backend::Hwtcon), hwtcon::WAVEFORM_GL16);
+        assert_eq!(plan.waveform(Backend::Mxcfb), mxcfb::WAVEFORM_GL16);
+        assert_ne!(
+            plan.waveform(Backend::Hwtcon),
+            plan.waveform(Backend::Mxcfb)
+        );
+    }
+
+    #[test]
+    fn a_backend_comes_from_the_hardware_and_is_never_guessed() {
+        assert_eq!(
+            Backend::from_framebuffer_id("hwtcon"),
+            Some(Backend::Hwtcon)
+        );
+        assert_eq!(
+            Backend::from_framebuffer_id("mxc_epdc_fb"),
+            Some(Backend::Mxcfb)
+        );
+        assert_eq!(Backend::from_framebuffer_id("mxc_epdc_fb2"), None);
+        assert_eq!(Backend::from_framebuffer_id(""), None);
+    }
+
+    #[test]
+    fn an_mxcfb_update_asks_the_panel_for_its_own_temperature() {
+        let plan = RefreshPlan::new(
+            Rect {
+                x: 8,
+                y: 16,
+                width: 32,
+                height: 48,
+            },
+            RefreshIntent::QualityContent,
+            true,
+            1264,
+            1680,
+        )
+        .expect("region intersects screen");
+        let update = plan.mxcfb_update_data(0x4000_0001);
+
+        assert_eq!(update.update_region.left, 8);
+        assert_eq!(update.update_region.top, 16);
+        assert_eq!(update.waveform_mode, mxcfb::WAVEFORM_GC16);
+        assert_eq!(update.update_mode, mxcfb::UPDATE_MODE_FULL);
+        assert_eq!(update.update_marker, 0x4000_0001);
+        assert_eq!(update.temp, mxcfb::TEMP_USE_AMBIENT);
+        assert_eq!(update.flags, 0);
+        assert_eq!(update.dither_mode, 0);
+        assert_eq!(update.quant_bit, 0);
+        assert_eq!(update.alt_buffer_data, mxcfb::MxcfbAltBufferData::default());
     }
 
     #[test]

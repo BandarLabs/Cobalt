@@ -12,9 +12,9 @@
 //! a default build contains no callable display-write code at all.
 
 use crate::probe::{probe_device, ProbeError};
-use crate::refresh::{Rect, RefreshPlan};
+use crate::refresh::{Backend, Rect, RefreshPlan};
 use crate::surface::{self, RegionSnapshot, SurfaceError, SurfaceGeometry};
-use kobo_abi::hwtcon;
+use kobo_abi::{hwtcon, mxcfb};
 use kobo_profile::{DeviceProfile, DeviceSnapshot};
 use std::fmt;
 use std::fs::{File, OpenOptions};
@@ -79,6 +79,7 @@ impl From<io::Error> for DisplayError {
 pub struct DisplaySession {
     framebuffer: File,
     geometry: SurfaceGeometry,
+    backend: Backend,
     profile: &'static DeviceProfile,
     snapshot: DeviceSnapshot,
 }
@@ -121,6 +122,15 @@ impl DisplaySession {
             .framebuffer
             .as_ref()
             .ok_or_else(|| DisplayError::ProfileRejected(vec!["framebuffer missing".to_owned()]))?;
+        // Resolved once, here, where the profile has already been matched
+        // exactly. A panel controller nobody has written a backend for is a
+        // refusal, in the same way an unmatched profile is.
+        let backend = Backend::from_profile(profile).ok_or_else(|| {
+            DisplayError::ProfileRejected(vec![format!(
+                "no display backend for framebuffer {}",
+                profile.framebuffer_id
+            )])
+        })?;
         let geometry = SurfaceGeometry {
             width: framebuffer.width,
             height: framebuffer.height,
@@ -135,6 +145,7 @@ impl DisplaySession {
         Ok(Self {
             framebuffer: file,
             geometry,
+            backend,
             profile,
             snapshot,
         })
@@ -143,6 +154,12 @@ impl DisplaySession {
     #[must_use]
     pub fn profile(&self) -> &'static DeviceProfile {
         self.profile
+    }
+
+    /// The panel-controller interface this device speaks.
+    #[must_use]
+    pub fn backend(&self) -> Backend {
+        self.backend
     }
 
     #[must_use]
@@ -193,13 +210,32 @@ impl DisplaySession {
         // Validate the region against this exact surface before the kernel sees it.
         surface::RegionPlacement::new(self.geometry, plan.region)?;
         let marker = unique_marker()?;
-        let mut update = plan.update_data(marker);
-        hwtcon::send_update(&self.framebuffer, &mut update)?;
-        let mut wait = hwtcon::HwtconUpdateMarkerData {
-            update_marker: marker,
-            collision_test: 0,
-        };
-        hwtcon::wait_for_update_complete(&self.framebuffer, &mut wait)?;
+        // The two backends' wait requests happen to be the same number over
+        // the same struct, so one path would work for both. It is still
+        // written out twice: the coincidence belongs to this kernel, not to
+        // the interface, and a device whose wait struct grew a field would
+        // otherwise be served a MediaTek ioctl through an i.MX session with
+        // nothing in the code to make that visible.
+        match self.backend {
+            Backend::Hwtcon => {
+                let mut update = plan.hwtcon_update_data(marker);
+                hwtcon::send_update(&self.framebuffer, &mut update)?;
+                let mut wait = hwtcon::HwtconUpdateMarkerData {
+                    update_marker: marker,
+                    collision_test: 0,
+                };
+                hwtcon::wait_for_update_complete(&self.framebuffer, &mut wait)?;
+            }
+            Backend::Mxcfb => {
+                let mut update = plan.mxcfb_update_data(marker);
+                mxcfb::send_update(&self.framebuffer, &mut update)?;
+                let mut wait = mxcfb::MxcfbUpdateMarkerData {
+                    update_marker: marker,
+                    collision_test: 0,
+                };
+                mxcfb::wait_for_update_complete(&self.framebuffer, &mut wait)?;
+            }
+        }
         Ok(())
     }
 }
