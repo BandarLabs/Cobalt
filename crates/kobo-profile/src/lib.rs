@@ -2,6 +2,44 @@
 
 use std::fmt;
 
+/// How a device's touch controller reports position relative to the display.
+///
+/// This used to be inferred from the framebuffer's `rotation`. It cannot be:
+/// the framebuffer says how the panel is scanned, and says nothing about which
+/// way round the digitiser underneath it was soldered. Two devices reporting
+/// `rotation: 1` were found to need different transforms, so the mapping is
+/// declared per profile and has to be measured with `kobo touch-probe` rather
+/// than derived.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TouchTransform {
+    /// Controller axes already agree with the display. No device here uses
+    /// this, and it is the historical fallback for any rotation other than 1
+    /// or 3.
+    Direct,
+    /// Axes exchanged, neither mirrored.
+    ///
+    /// Measured on the Kobo Libra 2 with three taps in an L, one leg per
+    /// physical axis: moving down the left edge drives `raw_x` upward, moving
+    /// right along the bottom drives `raw_y` upward, and neither runs
+    /// backwards.
+    Transpose,
+    /// Axes exchanged and Y mirrored.
+    ///
+    /// This is what every `rotation: 1` device did before the transform became
+    /// explicit. It is preserved for the Elipsa 2E so that its behaviour does
+    /// not change, but it has never been checked against a real finger: its
+    /// test asserts only the arithmetic it was derived from. The Libra 2 is
+    /// also `rotation: 1`, also an Elan controller, and measured as a plain
+    /// `Transpose`, so this variant is the likeliest place for a latent bug on
+    /// a device nobody here can test.
+    TransposeMirrorY,
+    /// Axes exchanged and X mirrored.
+    ///
+    /// Confirmed on the Clara BW, which is the only transform here backed by a
+    /// physically captured touch.
+    TransposeMirrorX,
+}
+
 pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     id: "clara-bw-391",
     model: "Kobo Clara BW",
@@ -43,6 +81,7 @@ pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
         length: 8,
         msb_right: 0,
     },
+    touch_transform: TouchTransform::TransposeMirrorX,
     touch_name: "cyttsp5_mt",
     touch_x_min: 0,
     touch_x_max: 1447,
@@ -94,6 +133,7 @@ pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
         length: 0,
         msb_right: 0,
     },
+    touch_transform: TouchTransform::TransposeMirrorY,
     touch_name: "Elan Touchscreen",
     touch_x_min: 0,
     touch_x_max: 1872,
@@ -113,11 +153,14 @@ pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
 /// The geometry below is the portrait state. Six of these fields move when the
 /// reader is rotated: `width` and `height` exchange, `virtual_width` becomes
 /// 1696 and `virtual_height` 1280, `stride` becomes 6784, and `rotation`
-/// becomes 2. The alignment differs as well, 128 in portrait against 32 in
-/// landscape, so it is not a simple exchange. `memory_length` does not move,
-/// being allocated once at the larger of the two, and neither do the bitfields
-/// or the touch ranges, since the controller reports in panel coordinates
-/// whatever the screen is doing.
+/// becomes 2. One rule covers both: the stride is the visible row rounded up
+/// to 128 bytes, and the virtual width is that stride divided by four. So 1264
+/// pixels is 5056 bytes, rounded to 5120, giving 1280; and 1680 pixels is 6720
+/// bytes, rounded to 6784, giving 1696. The virtual height is the visible
+/// height rounded up to 128 pixels. `memory_length` does not move, being
+/// allocated once at the larger of the two products, and neither do the
+/// bitfields or the touch ranges, since the controller reports in panel
+/// coordinates whatever the screen is doing.
 ///
 /// So this profile matches the device in portrait and rejects it in landscape.
 /// Nothing about that is specific to the Libra 2, since every Kobo rotates and
@@ -168,6 +211,7 @@ pub const LIBRA_2_388: DeviceProfile = DeviceProfile {
         length: 8,
         msb_right: 0,
     },
+    touch_transform: TouchTransform::Transpose,
     touch_name: "Elan Touchscreen",
     touch_x_min: 0,
     touch_x_max: 1680,
@@ -314,6 +358,14 @@ pub struct DeviceProfile {
     pub green: Bitfield,
     pub blue: Bitfield,
     pub alpha: Bitfield,
+    /// How the touch controller's axes relate to the visible display.
+    ///
+    /// Kept separate from `rotation` because the two answer different
+    /// questions. `rotation` is read back from the framebuffer and is compared
+    /// during validation, so it has to stay whatever the kernel reports. How
+    /// the digitiser is mounted underneath the panel is a fact about the
+    /// hardware that no framebuffer field records, and it has to be measured.
+    pub touch_transform: TouchTransform,
     pub touch_name: &'static str,
     pub touch_x_min: i32,
     pub touch_x_max: i32,
@@ -450,10 +502,15 @@ impl DeviceProfile {
         }
         let horizontal = scale_touch_axis(raw_y, self.touch_y_min, self.touch_y_max, self.width)?;
         let vertical = scale_touch_axis(raw_x, self.touch_x_min, self.touch_x_max, self.height)?;
-        match self.rotation {
-            1 => Some((horizontal, self.height.checked_sub(1 + vertical)?)),
-            3 => Some((self.width.checked_sub(1 + horizontal)?, vertical)),
-            _ => Some((
+        match self.touch_transform {
+            TouchTransform::Transpose => Some((horizontal, vertical)),
+            TouchTransform::TransposeMirrorY => {
+                Some((horizontal, self.height.checked_sub(1 + vertical)?))
+            }
+            TouchTransform::TransposeMirrorX => {
+                Some((self.width.checked_sub(1 + horizontal)?, vertical))
+            }
+            TouchTransform::Direct => Some((
                 scale_touch_axis(raw_x, self.touch_x_min, self.touch_x_max, self.width)?,
                 scale_touch_axis(raw_y, self.touch_y_min, self.touch_y_max, self.height)?,
             )),
@@ -471,8 +528,12 @@ impl DeviceProfile {
         if x >= self.width || y >= self.height {
             return None;
         }
-        let (raw_x, raw_y) = match self.rotation {
-            1 => (
+        let (raw_x, raw_y) = match self.touch_transform {
+            TouchTransform::Transpose => (
+                scale_display_axis(y, self.height, self.touch_x_min, self.touch_x_max)?,
+                scale_display_axis(x, self.width, self.touch_y_min, self.touch_y_max)?,
+            ),
+            TouchTransform::TransposeMirrorY => (
                 scale_display_axis(
                     self.height.checked_sub(1 + y)?,
                     self.height,
@@ -481,7 +542,7 @@ impl DeviceProfile {
                 )?,
                 scale_display_axis(x, self.width, self.touch_y_min, self.touch_y_max)?,
             ),
-            3 => (
+            TouchTransform::TransposeMirrorX => (
                 scale_display_axis(y, self.height, self.touch_x_min, self.touch_x_max)?,
                 scale_display_axis(
                     self.width.checked_sub(1 + x)?,
@@ -490,7 +551,7 @@ impl DeviceProfile {
                     self.touch_y_max,
                 )?,
             ),
-            _ => (
+            TouchTransform::Direct => (
                 scale_display_axis(x, self.width, self.touch_x_min, self.touch_x_max)?,
                 scale_display_axis(y, self.height, self.touch_y_min, self.touch_y_max)?,
             ),
@@ -801,6 +862,53 @@ mod tests {
         );
     }
 
+    /// Captured from three physical taps on the real Libra 2 with
+    /// `kobo touch-probe`, read-only and ungrabbed, in an L so that each leg
+    /// moves along exactly one physical axis.
+    ///
+    /// Corner assertions alone cannot catch a mirrored axis, because the four
+    /// corners of a rectangle map onto themselves under any rotation, and a
+    /// round trip through `display_to_touch` proves only that the inverse is
+    /// an inverse. An earlier version of this test asserted both and passed
+    /// while the transform was inverted by the full height of the panel.
+    #[test]
+    fn libra_2_touch_matches_three_physically_measured_taps() {
+        // Tap 1, top-left corner of the image.
+        let top_left = LIBRA_2_388
+            .touch_to_display(54, 62)
+            .expect("measured tap maps to the display");
+        // Tap 2, bottom-left: straight down the same edge, so only the
+        // physical vertical changed, and only raw_x moved.
+        let bottom_left = LIBRA_2_388
+            .touch_to_display(1600, 66)
+            .expect("measured tap maps to the display");
+        // Tap 3, bottom-right: straight across the bottom, so only the
+        // physical horizontal changed, and only raw_y moved.
+        let bottom_right = LIBRA_2_388
+            .touch_to_display(1596, 1172)
+            .expect("measured tap maps to the display");
+
+        assert_eq!(top_left, (62, 54));
+        assert_eq!(bottom_left, (66, 1599));
+        assert_eq!(bottom_right, (1171, 1595));
+
+        // The shape of the L, stated independently of the exact numbers, so
+        // that a mirrored axis fails here even if the values are edited.
+        assert!(top_left.1 < bottom_left.1, "the left edge runs downward");
+        assert!(
+            top_left.0.abs_diff(bottom_left.0) < 32,
+            "the left edge stays at one side"
+        );
+        assert!(
+            bottom_left.0 < bottom_right.0,
+            "the bottom edge runs rightward"
+        );
+        assert!(
+            bottom_left.1.abs_diff(bottom_right.1) < 32,
+            "the bottom edge stays at one end"
+        );
+    }
+
     #[test]
     fn libra_2_touch_edges_stay_inside_the_panel_and_round_trip() {
         for raw in [(0, 0), (0, 1264), (1680, 0), (1680, 1264)] {
@@ -810,8 +918,8 @@ mod tests {
             assert!(display.0 < LIBRA_2_388.width, "x escaped: {display:?}");
             assert!(display.1 < LIBRA_2_388.height, "y escaped: {display:?}");
         }
-        assert_eq!(LIBRA_2_388.touch_to_display(0, 0), Some((0, 1679)));
-        assert_eq!(LIBRA_2_388.touch_to_display(1680, 1264), Some((1263, 0)));
+        assert_eq!(LIBRA_2_388.touch_to_display(0, 0), Some((0, 0)));
+        assert_eq!(LIBRA_2_388.touch_to_display(1680, 1264), Some((1263, 1679)));
         for display in [(0, 0), (1263, 0), (0, 1679), (1263, 1679), (632, 840)] {
             let raw = LIBRA_2_388
                 .display_to_touch(display.0, display.1)
