@@ -10,6 +10,30 @@ use std::fmt;
 /// `rotation: 1` were found to need different transforms, so the mapping is
 /// declared per profile and has to be measured with `kobo touch-probe` rather
 /// than derived.
+///
+/// # Why this is only safe while `rotation` is matched exactly
+///
+/// A value here is a composition of two separate facts, and only one of them
+/// belongs in a profile. How the digitiser sits under the panel is fixed in
+/// the hardware and never changes. How display coordinates map onto physical
+/// space is decided by the framebuffer's `rotation`, which is live state: a
+/// Libra 2 held upside down reports `rotation: 3` where the same device
+/// upright reports 1, with every geometry field unchanged, and it flips as the
+/// reader is handled.
+///
+/// So a variant here is correct only at the rotation it was measured at. That
+/// holds today because `validate` compares `rotation` exactly, and a session
+/// cannot open unless the device is in the state the profile was measured in.
+/// The refusal is doing double duty: it is the thing that keeps this field
+/// honest.
+///
+/// Anyone relaxing the `rotation` comparison, which the orientation behaviour
+/// otherwise invites, has to replace this field at the same time. Touch would
+/// not fail loudly. It would land in the wrong place. As evidence that the
+/// composition really is what is encoded here: the 180-degree case would need
+/// a transpose with both axes mirrored, and there is deliberately no such
+/// variant, because a profile has no business describing which way up someone
+/// is holding the reader.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TouchTransform {
     /// Controller axes already agree with the display. No device here uses
