@@ -304,7 +304,7 @@ mod tests {
         )
         .expect("plan is valid");
         assert_eq!(
-            plan.update_data(0x4000_0002).update_mode,
+            plan.hwtcon_update_data(0x4000_0002).update_mode,
             hwtcon::UPDATE_MODE_PARTIAL
         );
     }
@@ -373,7 +373,7 @@ mod tests {
             CLARA.height,
         )
         .expect("plan is valid");
-        let update = plan.update_data(0x4000_0001);
+        let update = plan.hwtcon_update_data(0x4000_0001);
         assert_eq!(update.waveform_mode, hwtcon::WAVEFORM_GC16);
         assert_eq!(update.update_mode, hwtcon::UPDATE_MODE_PARTIAL);
         assert_eq!(update.update_region.left, FIXED_REGION.x);

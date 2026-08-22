@@ -1,4 +1,4 @@
-use kobo_abi::hwtcon;
+use kobo_abi::{hwtcon, mxc_epdc};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Rect {
@@ -71,7 +71,7 @@ impl RefreshPlan {
     }
 
     #[must_use]
-    pub fn update_data(self, marker: u32) -> hwtcon::HwtconUpdateData {
+    pub fn hwtcon_update_data(self, marker: u32) -> hwtcon::HwtconUpdateData {
         hwtcon::HwtconUpdateData {
             update_region: hwtcon::HwtconRect {
                 top: self.region.y,
@@ -88,6 +88,37 @@ impl RefreshPlan {
             update_marker: marker,
             flags: 0,
             dither_mode: 0,
+        }
+    }
+
+    #[must_use]
+    pub fn epdc_update_data(self, marker: u32) -> mxc_epdc::MxcfbUpdateData {
+        // EPDC waveform numbers differ from HWTCON: remap the stored value.
+        let waveform = match self.waveform {
+            hwtcon::WAVEFORM_DU => mxc_epdc::WAVEFORM_DU,
+            hwtcon::WAVEFORM_GC16 => mxc_epdc::WAVEFORM_GC16,
+            hwtcon::WAVEFORM_GL16 => mxc_epdc::WAVEFORM_GL16,
+            other => other,
+        };
+        mxc_epdc::MxcfbUpdateData {
+            update_region: mxc_epdc::MxcfbRect {
+                top: self.region.y,
+                left: self.region.x,
+                width: self.region.width,
+                height: self.region.height,
+            },
+            waveform_mode: waveform,
+            update_mode: if self.full {
+                mxc_epdc::UPDATE_MODE_FULL
+            } else {
+                mxc_epdc::UPDATE_MODE_PARTIAL
+            },
+            update_marker: marker,
+            temp: mxc_epdc::TEMP_USE_AMBIENT,
+            flags: 0,
+            dither_mode: 0,
+            quant_bit: 0,
+            alt_buffer_data: mxc_epdc::MxcfbAltBufferData::default(),
         }
     }
 }

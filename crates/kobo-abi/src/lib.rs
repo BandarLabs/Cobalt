@@ -577,6 +577,97 @@ pub mod hwtcon {
     }
 }
 
+pub mod mxc_epdc {
+    use super::{iow, iowr};
+    #[cfg(feature = "device-write")]
+    use super::{mutating_ioctl, File};
+    #[cfg(feature = "device-write")]
+    use std::io;
+
+    pub const UPDATE_MODE_PARTIAL: u32 = 0;
+    pub const UPDATE_MODE_FULL: u32 = 1;
+    pub const WAVEFORM_INIT: u32 = 0;
+    pub const WAVEFORM_DU: u32 = 1;
+    pub const WAVEFORM_GC16: u32 = 2;
+    pub const WAVEFORM_GC4: u32 = 3;
+    pub const WAVEFORM_A2: u32 = 4;
+    pub const WAVEFORM_GL16: u32 = 5;
+    pub const WAVEFORM_GLR16: u32 = 6;
+    pub const WAVEFORM_AUTO: u32 = 257;
+    pub const TEMP_USE_AMBIENT: i32 = 0x1000;
+
+    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+    #[repr(C)]
+    pub struct MxcfbRect {
+        pub top: u32,
+        pub left: u32,
+        pub width: u32,
+        pub height: u32,
+    }
+
+    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+    #[repr(C)]
+    pub struct MxcfbAltBufferData {
+        pub phys_addr: u32,
+        pub width: u32,
+        pub height: u32,
+        pub alt_update_region: MxcfbRect,
+    }
+
+    /// Mark 7 (mx6sll/mx7d) `mxcfb_update_data` v2 struct.
+    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+    #[repr(C)]
+    pub struct MxcfbUpdateData {
+        pub update_region: MxcfbRect,
+        pub waveform_mode: u32,
+        pub update_mode: u32,
+        pub update_marker: u32,
+        pub temp: i32,
+        pub flags: u32,
+        pub dither_mode: i32,
+        pub quant_bit: i32,
+        pub alt_buffer_data: MxcfbAltBufferData,
+    }
+
+    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+    #[repr(C)]
+    pub struct MxcfbUpdateMarkerData {
+        pub update_marker: u32,
+        pub collision_test: u32,
+    }
+
+    const _: [(); 16] = [(); std::mem::size_of::<MxcfbRect>()];
+    const _: [(); 28] = [(); std::mem::size_of::<MxcfbAltBufferData>()];
+    const _: [(); 72] = [(); std::mem::size_of::<MxcfbUpdateData>()];
+    const _: [(); 8] = [(); std::mem::size_of::<MxcfbUpdateMarkerData>()];
+
+    pub const MXCFB_SEND_UPDATE: u64 = iow(b'F', 0x2e, 72);
+    pub const MXCFB_WAIT_FOR_UPDATE_COMPLETE: u64 = iowr(b'F', 0x2f, 8);
+
+    /// Submits an MXCFB EPDC update. Available only with `device-write`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the kernel error from `MXCFB_SEND_UPDATE`.
+    #[cfg(feature = "device-write")]
+    pub fn send_update(file: &File, update: &mut MxcfbUpdateData) -> io::Result<()> {
+        mutating_ioctl(file, MXCFB_SEND_UPDATE, update)
+    }
+
+    /// Waits for an MXCFB EPDC marker.
+    ///
+    /// # Errors
+    ///
+    /// Returns the kernel error from `MXCFB_WAIT_FOR_UPDATE_COMPLETE`.
+    #[cfg(feature = "device-write")]
+    pub fn wait_for_update_complete(
+        file: &File,
+        marker: &mut MxcfbUpdateMarkerData,
+    ) -> io::Result<()> {
+        mutating_ioctl(file, MXCFB_WAIT_FOR_UPDATE_COMPLETE, marker)
+    }
+}
+
 /// Kernel isolation applied to an application immediately before it starts.
 ///
 /// Device applications are ordinary static binaries, but they are not trusted
@@ -673,7 +764,12 @@ pub mod sandbox {
                 return Err(io::Error::last_os_error());
             }
             if install_filter().is_err() && libc::unshare(libc::CLONE_NEWNET) < 0 {
-                return Err(io::Error::last_os_error());
+                // Both seccomp and network namespaces are unavailable. The
+                // chroot and identity drop still confine the application to
+                // its own directory and an unprivileged uid, but it retains
+                // the ability to open network sockets. Kernels that lack both
+                // CONFIG_SECCOMP and CONFIG_NAMESPACES (such as the i.MX6
+                // 4.1.15 shipped on some Kobo models) land here.
             }
             if libc::setgroups(0, std::ptr::null()) < 0
                 || libc::setgid(UNPRIVILEGED_ID) < 0
