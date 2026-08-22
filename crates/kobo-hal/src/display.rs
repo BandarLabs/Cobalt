@@ -15,8 +15,8 @@
 use crate::probe::{probe_device, ProbeError};
 use crate::refresh::{Rect, RefreshPlan};
 use crate::surface::{self, RegionSnapshot, SurfaceError, SurfaceGeometry};
-use kobo_abi::hwtcon;
-use kobo_profile::{DeviceProfile, DeviceSnapshot, WRITE_EVIDENCE_PENDING};
+use kobo_abi::{hwtcon, mxcfb};
+use kobo_profile::{DeviceProfile, DeviceSnapshot, FramebufferController, WRITE_EVIDENCE_PENDING};
 use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read};
@@ -257,13 +257,26 @@ impl DisplaySession {
         // Validate the region against this exact surface before the kernel sees it.
         surface::RegionPlacement::new(self.geometry, plan.region)?;
         let marker = unique_marker()?;
-        let mut update = plan.update_data(marker);
-        hwtcon::send_update(&self.framebuffer, &mut update)?;
-        let mut wait = hwtcon::HwtconUpdateMarkerData {
-            update_marker: marker,
-            collision_test: 0,
-        };
-        hwtcon::wait_for_update_complete(&self.framebuffer, &mut wait)?;
+        match self.profile.framebuffer_controller {
+            FramebufferController::Hwtcon => {
+                let mut update = plan.hwtcon_update_data(marker);
+                hwtcon::send_update(&self.framebuffer, &mut update)?;
+                let mut wait = hwtcon::HwtconUpdateMarkerData {
+                    update_marker: marker,
+                    collision_test: 0,
+                };
+                hwtcon::wait_for_update_complete(&self.framebuffer, &mut wait)?;
+            }
+            FramebufferController::MxcfbV2 => {
+                let mut update = plan.mxcfb_update_data(marker);
+                mxcfb::send_update_v2(&self.framebuffer, &mut update)?;
+                let mut wait = mxcfb::MxcfbUpdateMarkerData {
+                    update_marker: marker,
+                    collision_test: 0,
+                };
+                mxcfb::wait_for_update_complete_v3(&self.framebuffer, &mut wait)?;
+            }
+        }
         Ok(())
     }
 }
@@ -423,7 +436,7 @@ mod tests {
     use kobo_abi::hwtcon;
     use kobo_profile::{
         DeviceProfile, DeviceSnapshot, FramebufferSnapshot, IdentitySnapshot, TouchSnapshot,
-        CLARA_BW_391, ELIPSA_2E_389, WRITE_EVIDENCE_PENDING,
+        CLARA_BW_391, CLARA_HD_376, ELIPSA_2E_389, WRITE_EVIDENCE_PENDING,
     };
     use std::path::Path;
 
@@ -588,7 +601,7 @@ mod tests {
 
     #[test]
     fn hal_owned_smoke_regions_are_bounded_on_every_registered_panel() {
-        for profile in [&CLARA_BW_391, &ELIPSA_2E_389] {
+        for profile in [&CLARA_BW_391, &CLARA_HD_376, &ELIPSA_2E_389] {
             let geometry = SurfaceGeometry {
                 width: profile.width,
                 height: profile.height,
@@ -629,7 +642,7 @@ mod tests {
                 CLARA_BW_391.height,
             )
             .expect("fixed plan");
-            let update = plan.update_data(0x4000_0001);
+            let update = plan.hwtcon_update_data(0x4000_0001);
             assert_eq!(update.waveform_mode, waveform);
             assert_eq!(update.update_mode, hwtcon::UPDATE_MODE_PARTIAL);
         }

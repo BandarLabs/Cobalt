@@ -1,6 +1,6 @@
-//! Minimal Linux ABI declarations used by the Kobo Clara BW runtime.
+//! Minimal Linux ABI declarations used by the Kobo runtime.
 //!
-//! Query operations are always available. Mutating HWTCON requests are compiled
+//! Query operations are always available. Mutating panel requests are compiled
 //! only with the explicitly opt-in `device-write` feature.
 
 use std::ffi::{c_int, c_ulong, CString};
@@ -86,13 +86,17 @@ unsafe extern "C" {
     fn ioctl(fd: c_int, request: c_ulong, ...) -> c_int;
 }
 
+fn ioctl_request(request: u64) -> c_ulong {
+    c_ulong::try_from(request).unwrap_or(c_ulong::MAX)
+}
+
 fn query_ioctl<T>(file: &File, request: u64) -> io::Result<T> {
     let mut value = MaybeUninit::<T>::zeroed();
     // SAFETY: request is a query ioctl whose kernel ABI writes exactly one T.
     let result = unsafe {
         ioctl(
             file.as_raw_fd(),
-            request as c_ulong,
+            ioctl_request(request),
             value.as_mut_ptr().cast::<std::ffi::c_void>(),
         )
     };
@@ -109,7 +113,7 @@ fn query_ioctl_bytes(file: &File, request: u64, bytes: &mut [u8]) -> io::Result<
     let result = unsafe {
         ioctl(
             file.as_raw_fd(),
-            request as c_ulong,
+            ioctl_request(request),
             bytes.as_mut_ptr().cast::<std::ffi::c_void>(),
         )
     };
@@ -127,7 +131,7 @@ fn mutating_ioctl<T>(file: &File, request: u64, value: &mut T) -> io::Result<()>
     let result = unsafe {
         ioctl(
             file.as_raw_fd(),
-            request as c_ulong,
+            ioctl_request(request),
             std::ptr::from_mut(value).cast::<std::ffi::c_void>(),
         )
     };
@@ -145,7 +149,7 @@ fn mutating_ioctl<T>(file: &File, request: u64, value: &mut T) -> io::Result<()>
 fn value_ioctl(file: &File, request: u64, value: c_int) -> io::Result<()> {
     // SAFETY: this request takes its argument by value; no memory is read
     // through it.
-    let result = unsafe { ioctl(file.as_raw_fd(), request as c_ulong, value) };
+    let result = unsafe { ioctl(file.as_raw_fd(), ioctl_request(request), value) };
     if result < 0 {
         Err(io::Error::last_os_error())
     } else {
@@ -577,6 +581,103 @@ pub mod hwtcon {
     }
 }
 
+/// Mark 7 i.MX6SLL electrophoretic display controller ABI.
+///
+/// These declarations match Kobo's vendor `mxcfb_update_data_v2` interface.
+/// It uses the same ioctl numbers as HWTCON, but a different update structure
+/// and different numeric values for some waveforms. Keeping it as a separate
+/// module makes accidentally submitting one controller's structure to the
+/// other controller difficult.
+pub mod mxcfb {
+    use super::{iow, iowr};
+    #[cfg(feature = "device-write")]
+    use super::{mutating_ioctl, File};
+    #[cfg(feature = "device-write")]
+    use std::io;
+
+    pub const UPDATE_MODE_PARTIAL: u32 = 0;
+    pub const UPDATE_MODE_FULL: u32 = 1;
+    pub const WAVEFORM_INIT: u32 = 0;
+    pub const WAVEFORM_DU: u32 = 1;
+    pub const WAVEFORM_GC16: u32 = 2;
+    pub const WAVEFORM_GL16: u32 = 5;
+    pub const WAVEFORM_GLR16: u32 = 6;
+    pub const WAVEFORM_GLD16: u32 = 7;
+    pub const WAVEFORM_AUTO: u32 = 257;
+    pub const TEMP_USE_AMBIENT: i32 = 0x1000;
+    pub const DITHER_PASSTHROUGH: i32 = 0;
+
+    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+    #[repr(C)]
+    pub struct MxcfbRect {
+        pub top: u32,
+        pub left: u32,
+        pub width: u32,
+        pub height: u32,
+    }
+
+    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+    #[repr(C)]
+    pub struct MxcfbAltBufferData {
+        pub physical_address: u32,
+        pub width: u32,
+        pub height: u32,
+        pub update_region: MxcfbRect,
+    }
+
+    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+    #[repr(C)]
+    pub struct MxcfbUpdateDataV2 {
+        pub update_region: MxcfbRect,
+        pub waveform_mode: u32,
+        pub update_mode: u32,
+        pub update_marker: u32,
+        pub temperature: i32,
+        pub flags: u32,
+        pub dither_mode: i32,
+        pub quant_bit: i32,
+        pub alt_buffer_data: MxcfbAltBufferData,
+    }
+
+    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+    #[repr(C)]
+    pub struct MxcfbUpdateMarkerData {
+        pub update_marker: u32,
+        pub collision_test: u32,
+    }
+
+    const _: [(); 16] = [(); std::mem::size_of::<MxcfbRect>()];
+    const _: [(); 28] = [(); std::mem::size_of::<MxcfbAltBufferData>()];
+    const _: [(); 72] = [(); std::mem::size_of::<MxcfbUpdateDataV2>()];
+    const _: [(); 8] = [(); std::mem::size_of::<MxcfbUpdateMarkerData>()];
+
+    pub const MXCFB_SEND_UPDATE_V2: u64 = iow(b'F', 0x2e, 72);
+    pub const MXCFB_WAIT_FOR_UPDATE_COMPLETE_V3: u64 = iowr(b'F', 0x2f, 8);
+
+    /// Submits a Mark 7 MXCFB v2 update. Available only with `device-write`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the kernel error from `MXCFB_SEND_UPDATE_V2`.
+    #[cfg(feature = "device-write")]
+    pub fn send_update_v2(file: &File, update: &mut MxcfbUpdateDataV2) -> io::Result<()> {
+        mutating_ioctl(file, MXCFB_SEND_UPDATE_V2, update)
+    }
+
+    /// Waits for a Mark 7 MXCFB update marker.
+    ///
+    /// # Errors
+    ///
+    /// Returns the kernel error from `MXCFB_WAIT_FOR_UPDATE_COMPLETE_V3`.
+    #[cfg(feature = "device-write")]
+    pub fn wait_for_update_complete_v3(
+        file: &File,
+        marker: &mut MxcfbUpdateMarkerData,
+    ) -> io::Result<()> {
+        mutating_ioctl(file, MXCFB_WAIT_FOR_UPDATE_COMPLETE_V3, marker)
+    }
+}
+
 /// Kernel isolation applied to an application immediately before it starts.
 ///
 /// Device applications are ordinary static binaries, but they are not trusted
@@ -586,7 +687,8 @@ pub mod hwtcon {
 /// the unprivileged `nobody` identity. A seccomp filter permits local Unix
 /// sockets but refuses network sockets and prevents descendants from escaping
 /// their process group. If seccomp is unavailable, a private network namespace
-/// provides the network boundary instead.
+/// provides the network boundary instead. Older ARM vendor kernels that expose
+/// neither are supervised by an equivalent userspace syscall filter.
 pub mod sandbox {
     #[cfg(target_os = "linux")]
     use std::fs;
@@ -595,12 +697,22 @@ pub mod sandbox {
     use std::os::unix::fs::MetadataExt;
     use std::os::unix::process::CommandExt;
     use std::path::Path;
+    #[cfg(all(target_os = "linux", target_arch = "arm"))]
+    use std::process::Child;
     use std::process::Command;
 
     #[cfg(target_os = "linux")]
     use std::ffi::CString;
     #[cfg(target_os = "linux")]
     use std::os::unix::ffi::OsStrExt;
+    #[cfg(all(target_os = "linux", target_arch = "arm"))]
+    use std::sync::atomic::{AtomicBool, Ordering};
+    #[cfg(all(target_os = "linux", target_arch = "arm"))]
+    use std::sync::Arc;
+    #[cfg(all(target_os = "linux", target_arch = "arm"))]
+    use std::thread;
+    #[cfg(all(target_os = "linux", target_arch = "arm"))]
+    use std::time::{Duration, Instant};
 
     #[cfg(target_os = "linux")]
     const UNPRIVILEGED_ID: libc::uid_t = 65_534;
@@ -609,6 +721,8 @@ pub mod sandbox {
     pub struct Sandbox {
         #[cfg(target_os = "linux")]
         root: CString,
+        #[cfg(all(target_os = "linux", target_arch = "arm"))]
+        trace_syscalls: bool,
     }
 
     impl Sandbox {
@@ -623,7 +737,15 @@ pub mod sandbox {
                 let root = CString::new(root.as_os_str().as_bytes()).map_err(|_| {
                     io::Error::new(io::ErrorKind::InvalidInput, "sandbox path has NUL")
                 })?;
-                Ok(Self { root })
+                Ok(Self {
+                    root,
+                    #[cfg(target_arch = "arm")]
+                    // Kobo's 4.1 i.MX6SLL kernel exposes neither seccomp BPF
+                    // nor network namespaces. An absent net namespace is a
+                    // stable signal that the child needs the ptrace fallback;
+                    // newer kernels retain the cheaper in-kernel filter.
+                    trace_syscalls: !Path::new("/proc/self/ns/net").exists(),
+                })
             }
             #[cfg(not(target_os = "linux"))]
             {
@@ -635,7 +757,18 @@ pub mod sandbox {
         /// Configures `command` to enter this sandbox after fork and before
         /// exec. Keeping the unsafe hook inside the ABI crate means callers
         /// cannot accidentally run the transition in their own process.
-        pub fn configure(self, command: &mut Command) {
+        pub fn configure(self, command: &mut Command) -> bool {
+            #[cfg(target_os = "linux")]
+            let trace_syscalls = {
+                #[cfg(target_arch = "arm")]
+                {
+                    self.trace_syscalls
+                }
+                #[cfg(not(target_arch = "arm"))]
+                {
+                    false
+                }
+            };
             #[cfg(target_os = "linux")]
             // SAFETY: Command runs this only in the freshly forked child. The
             // prepared sandbox owns every byte the closure reads.
@@ -646,6 +779,14 @@ pub mod sandbox {
             {
                 let _ = self;
                 command.process_group(0);
+            }
+            #[cfg(target_os = "linux")]
+            {
+                trace_syscalls
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                false
             }
         }
 
@@ -672,7 +813,23 @@ pub mod sandbox {
             if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) < 0 {
                 return Err(io::Error::last_os_error());
             }
-            if install_filter().is_err() && libc::unshare(libc::CLONE_NEWNET) < 0 {
+            let filter = install_filter();
+            #[cfg(target_arch = "arm")]
+            if self.trace_syscalls {
+                if libc::ptrace(
+                    libc::PTRACE_TRACEME,
+                    0,
+                    std::ptr::null_mut::<libc::c_void>(),
+                    std::ptr::null_mut::<libc::c_void>(),
+                ) < 0
+                {
+                    return Err(io::Error::last_os_error());
+                }
+            } else if filter.is_err() && libc::unshare(libc::CLONE_NEWNET) < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            #[cfg(not(target_arch = "arm"))]
+            if filter.is_err() && libc::unshare(libc::CLONE_NEWNET) < 0 {
                 return Err(io::Error::last_os_error());
             }
             if libc::setgroups(0, std::ptr::null()) < 0
@@ -683,6 +840,267 @@ pub mod sandbox {
             }
             Ok(())
         }
+    }
+
+    /// A userspace syscall filter for ARM vendor kernels without seccomp BPF
+    /// or network namespaces.
+    ///
+    /// `PTRACE_TRACEME` stops the child on successful `exec`, before its first
+    /// application instruction. The tracer then refuses exactly the escape
+    /// syscalls the seccomp program refuses. `PTRACE_O_EXITKILL` also means an
+    /// application cannot outlive the runtime that enforces its policy.
+    #[cfg(all(target_os = "linux", target_arch = "arm"))]
+    pub struct SyscallTrace {
+        detached: Arc<AtomicBool>,
+    }
+
+    #[cfg(all(target_os = "linux", target_arch = "arm"))]
+    impl SyscallTrace {
+        /// Starts `command` on its tracing thread and lets it run under the
+        /// legacy syscall policy.
+        ///
+        /// `PTRACE_TRACEME` makes the thread that forks the application its
+        /// tracer. Starting the command here, rather than moving an already
+        /// started child onto a worker, preserves that kernel relationship.
+        ///
+        /// # Errors
+        ///
+        /// Returns an error when the tracing thread, application process or
+        /// ptrace policy cannot be started.
+        pub fn spawn(mut command: Command) -> io::Result<(Child, Self)> {
+            let detached = Arc::new(AtomicBool::new(false));
+            let finished = Arc::clone(&detached);
+            let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+            thread::Builder::new()
+                .name("cobalt-syscall-trace".to_owned())
+                .spawn(move || {
+                    let mut child = match command.spawn() {
+                        Ok(child) => child,
+                        Err(error) => {
+                            let _ignored = sender.send(Err(error));
+                            finished.store(true, Ordering::Release);
+                            return;
+                        }
+                    };
+                    let pid = match begin_trace(child.id()) {
+                        Ok(pid) => pid,
+                        Err(error) => {
+                            abort_trace(child.id());
+                            let _ignored = child.wait();
+                            let _ignored = sender.send(Err(error));
+                            finished.store(true, Ordering::Release);
+                            return;
+                        }
+                    };
+                    match sender.send(Ok(child)) {
+                        Ok(()) => trace_child(pid),
+                        Err(error) => {
+                            abort_trace(u32::try_from(pid).unwrap_or_default());
+                            if let Ok(mut child) = error.0 {
+                                let _ignored = child.wait();
+                            }
+                        }
+                    }
+                    finished.store(true, Ordering::Release);
+                })?;
+            let child = receiver.recv().map_err(|_| {
+                io::Error::other("sandbox syscall tracer stopped before application launch")
+            })??;
+            Ok((child, Self { detached }))
+        }
+
+        /// Whether the tracer has released the process for ordinary reaping.
+        #[must_use]
+        pub fn is_detached(&self) -> bool {
+            self.detached.load(Ordering::Acquire)
+        }
+
+        /// Waits briefly for a terminating child to leave the tracing stop.
+        pub fn wait_until_detached(&self, timeout: Duration) {
+            let deadline = Instant::now() + timeout;
+            while !self.is_detached() && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(5));
+            }
+        }
+    }
+
+    #[cfg(all(target_os = "linux", target_arch = "arm"))]
+    fn begin_trace(pid: u32) -> io::Result<i32> {
+        let pid = i32::try_from(pid).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidInput, "child pid does not fit pid_t")
+        })?;
+        let mut status = 0;
+        if unsafe { libc::waitpid(pid, &raw mut status, 0) } < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if !libc::WIFSTOPPED(status) || libc::WSTOPSIG(status) != libc::SIGTRAP {
+            return Err(io::Error::other(
+                "sandboxed child did not stop at its exec boundary",
+            ));
+        }
+        let options =
+            libc::PTRACE_O_TRACESYSGOOD | libc::PTRACE_O_TRACEEXIT | libc::PTRACE_O_EXITKILL;
+        ptrace_value(libc::PTRACE_SETOPTIONS, pid, options)?;
+        ptrace_syscall(pid, 0)?;
+        Ok(pid)
+    }
+
+    #[cfg(all(target_os = "linux", target_arch = "arm"))]
+    fn abort_trace(pid: u32) {
+        let Ok(pid) = i32::try_from(pid) else { return };
+        let _ignored = ptrace_value(libc::PTRACE_KILL, pid, 0);
+    }
+
+    #[cfg(all(target_os = "linux", target_arch = "arm"))]
+    #[derive(Clone, Copy, Default)]
+    #[repr(C)]
+    struct ArmRegisters {
+        r0: u32,
+        r1: u32,
+        r2: u32,
+        r3: u32,
+        r4: u32,
+        r5: u32,
+        r6: u32,
+        r7: u32,
+        r8: u32,
+        r9: u32,
+        r10: u32,
+        frame_pointer: u32,
+        intra_procedure: u32,
+        stack_pointer: u32,
+        link_register: u32,
+        program_counter: u32,
+        status: u32,
+        original_r0: u32,
+    }
+
+    #[cfg(all(target_os = "linux", target_arch = "arm"))]
+    fn trace_child(pid: i32) {
+        let mut entering = true;
+        let mut denied = false;
+        loop {
+            let mut status = 0;
+            if unsafe { libc::waitpid(pid, &raw mut status, 0) } < 0 {
+                abort_trace(u32::try_from(pid).unwrap_or_default());
+                break;
+            }
+            if libc::WIFEXITED(status) || libc::WIFSIGNALED(status) {
+                break;
+            }
+            if !libc::WIFSTOPPED(status) {
+                continue;
+            }
+            let signal = libc::WSTOPSIG(status);
+            let event = u32::try_from(status).unwrap_or_default() >> 16;
+            if signal == libc::SIGTRAP && event == libc::PTRACE_EVENT_EXIT as u32 {
+                let _ignored = ptrace_value(libc::PTRACE_DETACH, pid, 0);
+                break;
+            }
+            if signal == (libc::SIGTRAP | 0x80) {
+                if entering {
+                    if let Ok(mut registers) = get_registers(pid) {
+                        denied = syscall_is_denied(registers.r7, registers.r0);
+                        if denied {
+                            registers.r7 = u32::MAX;
+                            let _ignored = set_registers(pid, &registers);
+                        }
+                    }
+                } else if denied {
+                    if let Ok(mut registers) = get_registers(pid) {
+                        registers.r0 = u32::from_ne_bytes((-libc::EPERM).to_ne_bytes());
+                        let _ignored = set_registers(pid, &registers);
+                    }
+                }
+                entering = !entering;
+                if ptrace_syscall(pid, 0).is_err() {
+                    abort_trace(u32::try_from(pid).unwrap_or_default());
+                    break;
+                }
+                continue;
+            }
+            let delivered = if signal == libc::SIGSTOP || signal == libc::SIGTRAP {
+                0
+            } else {
+                signal
+            };
+            if ptrace_syscall(pid, delivered).is_err() {
+                abort_trace(u32::try_from(pid).unwrap_or_default());
+                break;
+            }
+        }
+    }
+
+    #[cfg(all(target_os = "linux", target_arch = "arm"))]
+    fn syscall_is_denied(number: u32, first_argument: u32) -> bool {
+        let syscall = |value| u32::try_from(value).unwrap_or(u32::MAX);
+        (number == syscall(libc::SYS_socket) && first_argument != libc::AF_UNIX as u32)
+            || [
+                libc::SYS_setsid,
+                libc::SYS_setpgid,
+                libc::SYS_unshare,
+                libc::SYS_setns,
+                libc::SYS_fork,
+                libc::SYS_vfork,
+                libc::SYS_clone,
+                libc::SYS_clone3,
+            ]
+            .into_iter()
+            .map(syscall)
+            .any(|denied| number == denied)
+    }
+
+    #[cfg(all(target_os = "linux", target_arch = "arm"))]
+    fn get_registers(pid: i32) -> io::Result<ArmRegisters> {
+        let mut registers = ArmRegisters::default();
+        let result = unsafe {
+            libc::ptrace(
+                libc::PTRACE_GETREGS,
+                pid,
+                std::ptr::null_mut::<libc::c_void>(),
+                std::ptr::from_mut(&mut registers).cast::<libc::c_void>(),
+            )
+        };
+        if result < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(registers)
+        }
+    }
+
+    #[cfg(all(target_os = "linux", target_arch = "arm"))]
+    fn set_registers(pid: i32, registers: &ArmRegisters) -> io::Result<()> {
+        let result = unsafe {
+            libc::ptrace(
+                libc::PTRACE_SETREGS,
+                pid,
+                std::ptr::null_mut::<libc::c_void>(),
+                std::ptr::from_ref(registers)
+                    .cast_mut()
+                    .cast::<libc::c_void>(),
+            )
+        };
+        if result < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    #[cfg(all(target_os = "linux", target_arch = "arm"))]
+    fn ptrace_value(request: libc::c_int, pid: i32, value: libc::c_int) -> io::Result<()> {
+        let result =
+            unsafe { libc::ptrace(request, pid, std::ptr::null_mut::<libc::c_void>(), value) };
+        if result < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    #[cfg(all(target_os = "linux", target_arch = "arm"))]
+    fn ptrace_syscall(pid: i32, signal: i32) -> io::Result<()> {
+        ptrace_value(libc::PTRACE_SYSCALL, pid, signal)
     }
 
     /// Whether the current process has the privilege required to prepare and
@@ -1341,7 +1759,7 @@ mod pty_tests {
 
 #[cfg(test)]
 mod tests {
-    use super::{hwtcon, input, ior, iow, iowr};
+    use super::{hwtcon, input, ior, iow, iowr, mxcfb};
     #[cfg(feature = "device-write")]
     use std::fs::File;
 
@@ -1378,6 +1796,8 @@ mod tests {
         assert_eq!(input::EVIOCGABS_MT_POSITION_Y, 0x8018_4576);
         assert_eq!(hwtcon::HWTCON_SEND_UPDATE, 0x4024_462e);
         assert_eq!(hwtcon::HWTCON_WAIT_FOR_UPDATE_COMPLETE, 0xc008_462f);
+        assert_eq!(mxcfb::MXCFB_SEND_UPDATE_V2, 0x4048_462e);
+        assert_eq!(mxcfb::MXCFB_WAIT_FOR_UPDATE_COMPLETE_V3, 0xc008_462f);
         assert_eq!(ior(b'E', 0x75, 24), 0x8018_4575);
         assert_eq!(iow(b'F', 0x2e, 36), 0x4024_462e);
         assert_eq!(iowr(b'F', 0x2f, 8), 0xc008_462f);
@@ -1401,6 +1821,21 @@ mod tests {
         assert_eq!(offset_of!(hwtcon::HwtconUpdateData, dither_mode), 32);
     }
 
+    #[test]
+    fn mxcfb_v2_offsets_match_the_mark_7_vendor_c_layout() {
+        use std::mem::offset_of;
+
+        assert_eq!(offset_of!(mxcfb::MxcfbUpdateDataV2, update_region), 0);
+        assert_eq!(offset_of!(mxcfb::MxcfbUpdateDataV2, waveform_mode), 16);
+        assert_eq!(offset_of!(mxcfb::MxcfbUpdateDataV2, update_mode), 20);
+        assert_eq!(offset_of!(mxcfb::MxcfbUpdateDataV2, update_marker), 24);
+        assert_eq!(offset_of!(mxcfb::MxcfbUpdateDataV2, temperature), 28);
+        assert_eq!(offset_of!(mxcfb::MxcfbUpdateDataV2, flags), 32);
+        assert_eq!(offset_of!(mxcfb::MxcfbUpdateDataV2, dither_mode), 36);
+        assert_eq!(offset_of!(mxcfb::MxcfbUpdateDataV2, quant_bit), 40);
+        assert_eq!(offset_of!(mxcfb::MxcfbUpdateDataV2, alt_buffer_data), 44);
+    }
+
     #[cfg(feature = "device-write")]
     #[test]
     fn device_write_wrappers_have_vendor_requests() {
@@ -1408,7 +1843,11 @@ mod tests {
             hwtcon::send_update;
         let wait: fn(&File, &mut hwtcon::HwtconUpdateMarkerData) -> std::io::Result<()> =
             hwtcon::wait_for_update_complete;
-        let _ = (send, wait);
+        let mxcfb_send: fn(&File, &mut mxcfb::MxcfbUpdateDataV2) -> std::io::Result<()> =
+            mxcfb::send_update_v2;
+        let mxcfb_wait: fn(&File, &mut mxcfb::MxcfbUpdateMarkerData) -> std::io::Result<()> =
+            mxcfb::wait_for_update_complete_v3;
+        let _ = (send, wait, mxcfb_send, mxcfb_wait);
     }
 }
 

@@ -2,6 +2,12 @@
 
 use std::fmt;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FramebufferController {
+    Hwtcon,
+    MxcfbV2,
+}
+
 pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     id: "clara-bw-391",
     model: "Kobo Clara BW",
@@ -9,6 +15,7 @@ pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     device_tree_model: "MediaTek MT8110 board",
     compatible_fragments: &["mediatek,mt8110", "mediatek,mt8512"],
     framebuffer_id: "hwtcon",
+    framebuffer_controller: FramebufferController::Hwtcon,
     width: 1072,
     height: 1448,
     pixels_per_inch: 300,
@@ -54,6 +61,59 @@ pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     write_ready: true,
 };
 
+pub const CLARA_HD_376: DeviceProfile = DeviceProfile {
+    id: "clara-hd-376",
+    model: "Kobo Clara HD",
+    device_code: 376,
+    device_tree_model: "Freescale i.MX6SLL NTX Board",
+    compatible_fragments: &["fsl,imx6sll-lpddr3-arm2", "fsl,imx6sll"],
+    framebuffer_id: "mxc_epdc_fb",
+    framebuffer_controller: FramebufferController::MxcfbV2,
+    width: 1072,
+    height: 1448,
+    pixels_per_inch: 300,
+    virtual_width: 1088,
+    virtual_height: 1536,
+    x_offset: 0,
+    y_offset: 0,
+    bits_per_pixel: 32,
+    grayscale: 0,
+    stride: 4352,
+    memory_length: 6_782_976,
+    framebuffer_kind: 0,
+    framebuffer_visual: 2,
+    rotation: 3,
+    red: Bitfield {
+        offset: 16,
+        length: 8,
+        msb_right: 0,
+    },
+    green: Bitfield {
+        offset: 8,
+        length: 8,
+        msb_right: 0,
+    },
+    blue: Bitfield {
+        offset: 0,
+        length: 8,
+        msb_right: 0,
+    },
+    alpha: Bitfield {
+        offset: 24,
+        length: 8,
+        msb_right: 0,
+    },
+    touch_name: "cyttsp5_mt",
+    touch_x_min: 0,
+    touch_x_max: 1447,
+    touch_y_min: 0,
+    touch_y_max: 1071,
+    serial_prefix: "N249",
+    firmware_version: "4.38.23684",
+    kernel_release: "4.1.15-00136-g12655eaaef89",
+    write_ready: true,
+};
+
 pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
     id: "elipsa-2e-389",
     model: "Kobo Elipsa 2E",
@@ -61,6 +121,7 @@ pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
     device_tree_model: "MediaTek MT8110 board",
     compatible_fragments: &["mediatek,mt8110", "mediatek,mt8512"],
     framebuffer_id: "hwtcon",
+    framebuffer_controller: FramebufferController::Hwtcon,
     width: 1404,
     height: 1872,
     pixels_per_inch: 227,
@@ -106,7 +167,7 @@ pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
     write_ready: true,
 };
 
-pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[&CLARA_BW_391, &ELIPSA_2E_389];
+pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[&CLARA_BW_391, &CLARA_HD_376, &ELIPSA_2E_389];
 
 #[must_use]
 pub fn identify_profile(snapshot: &DeviceSnapshot) -> Option<&'static DeviceProfile> {
@@ -248,6 +309,7 @@ pub struct DeviceProfile {
     pub device_tree_model: &'static str,
     pub compatible_fragments: &'static [&'static str],
     pub framebuffer_id: &'static str,
+    pub framebuffer_controller: FramebufferController,
     pub width: u32,
     pub height: u32,
     pub pixels_per_inch: u16,
@@ -675,7 +737,7 @@ fn compare_identity(blockers: &mut Vec<String>, name: &str, expected: &str, actu
 mod tests {
     use super::{
         Bitfield, DeviceProfile, DeviceSnapshot, FramebufferSnapshot, IdentitySnapshot, Readiness,
-        TouchSnapshot, CLARA_BW_391, ELIPSA_2E_389, WRITE_EVIDENCE_PENDING,
+        TouchSnapshot, CLARA_BW_391, CLARA_HD_376, ELIPSA_2E_389, WRITE_EVIDENCE_PENDING,
     };
 
     #[test]
@@ -837,6 +899,102 @@ mod tests {
         let report = candidate.validate(&snapshot);
         assert_eq!(report.readiness, Readiness::ReadOnlyMatched);
         assert_eq!(report.write_blockers, vec![WRITE_EVIDENCE_PENDING]);
+    }
+
+    #[test]
+    fn clara_hd_doctor_snapshot_matches_its_strict_profile() {
+        let channel = Bitfield {
+            offset: 16,
+            length: 8,
+            msb_right: 0,
+        };
+        let snapshot = DeviceSnapshot {
+            compatible: vec!["fsl,imx6sll-lpddr3-arm2".into(), "fsl,imx6sll".into()],
+            model: Some("Freescale i.MX6SLL NTX Board".into()),
+            framebuffer: Some(FramebufferSnapshot {
+                id: "mxc_epdc_fb".into(),
+                width: 1072,
+                height: 1448,
+                virtual_width: 1088,
+                virtual_height: 1536,
+                x_offset: 0,
+                y_offset: 0,
+                bits_per_pixel: 32,
+                grayscale: 0,
+                stride: 4352,
+                memory_length: 6_782_976,
+                kind: 0,
+                visual: 2,
+                rotation: 3,
+                red: channel,
+                green: Bitfield {
+                    offset: 8,
+                    ..channel
+                },
+                blue: Bitfield {
+                    offset: 0,
+                    ..channel
+                },
+                alpha: Bitfield {
+                    offset: 24,
+                    ..channel
+                },
+            }),
+            touch: Some(TouchSnapshot {
+                path: "/dev/input/event1".into(),
+                name: "cyttsp5_mt".into(),
+                x_min: 0,
+                x_max: 1447,
+                y_min: 0,
+                y_max: 1071,
+            }),
+            identity: IdentitySnapshot {
+                serial_prefix: Some("N249".into()),
+                firmware_version: Some("4.38.23684".into()),
+                kernel_release: Some("4.1.15-00136-g12655eaaef89".into()),
+                device_code: Some(376),
+            },
+        };
+        let report = CLARA_HD_376.validate(&snapshot);
+        assert_eq!(report.readiness, Readiness::WriteReady);
+        assert!(report.mismatches.is_empty());
+        assert!(report.write_blockers.is_empty());
+        assert!(CLARA_HD_376.write_identity_blockers(&snapshot).is_empty());
+        assert_eq!(super::identify_profile(&snapshot), Some(&CLARA_HD_376));
+    }
+
+    #[test]
+    fn clara_hd_touch_edges_map_inside_the_panel_and_round_trip() {
+        for raw in [(0, 0), (0, 1071), (1447, 0), (1447, 1071)] {
+            let display = CLARA_HD_376
+                .touch_to_display(raw.0, raw.1)
+                .expect("measured Clara HD edge maps to the display");
+            assert!(display.0 < CLARA_HD_376.width, "x escaped: {display:?}");
+            assert!(display.1 < CLARA_HD_376.height, "y escaped: {display:?}");
+        }
+        for display in [(0, 0), (1071, 0), (0, 1447), (1071, 1447), (536, 724)] {
+            let raw = CLARA_HD_376
+                .display_to_touch(display.0, display.1)
+                .expect("Clara HD display point maps to the controller");
+            assert_eq!(CLARA_HD_376.touch_to_display(raw.0, raw.1), Some(display));
+        }
+    }
+
+    /// Captured from a physical touch about a centimetre in from the top-left
+    /// of the Clara HD. The axis ranges prove that the controller is rotated;
+    /// this sample proves the direction of both axes.
+    #[test]
+    fn clara_hd_touch_transform_matches_a_physically_measured_touch() {
+        assert_eq!(CLARA_HD_376.touch_to_display(160, 909), Some((162, 160)));
+
+        let flipped_x = CLARA_HD_376
+            .touch_to_display(160, 1071 - 909)
+            .expect("flipped sample remains in range");
+        let flipped_y = CLARA_HD_376
+            .touch_to_display(1447 - 160, 909)
+            .expect("flipped sample remains in range");
+        assert_eq!(flipped_x, (909, 160));
+        assert_eq!(flipped_y, (162, 1287));
     }
 
     #[test]

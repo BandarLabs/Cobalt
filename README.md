@@ -20,10 +20,11 @@ new app can appear in Store without reinstalling or updating Cobalt.
 </p>
 
 > [!IMPORTANT]
-> The **Kobo Clara BW N365 (device code 391)** and **Kobo Elipsa 2E N605
-> (device code 389)** are fully hardware-tested on the exact firmware and
-> kernel versions in the support matrix.
-> See the [device support matrix](docs/DEVICES.md#device-support-matrix) before
+> The **Kobo Clara BW N365 (device code 391)**, **Kobo Elipsa 2E N605 (device
+> code 389)**, and **Kobo Clara HD N249 (device code 376)** are fully
+> hardware-tested on the exact firmware and kernel versions in the support
+> matrix. See the
+> [device support matrix](docs/DEVICES.md#device-support-matrix) before
 > installing.
 > It is an independent project and is not affiliated with Rakuten Kobo.
 

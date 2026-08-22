@@ -1,4 +1,4 @@
-use kobo_abi::hwtcon;
+use kobo_abi::{hwtcon, mxcfb};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Rect {
@@ -44,9 +44,16 @@ pub enum RefreshIntent {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RefreshWaveform {
+    Du,
+    Gl16,
+    Gc16,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RefreshPlan {
     pub region: Rect,
-    pub waveform: u32,
+    pub waveform: RefreshWaveform,
     pub full: bool,
 }
 
@@ -62,16 +69,16 @@ impl RefreshPlan {
         Some(Self {
             region: region.clipped(screen_width, screen_height)?,
             waveform: match intent {
-                RefreshIntent::FastFeedback => hwtcon::WAVEFORM_DU,
-                RefreshIntent::TextContent => hwtcon::WAVEFORM_GL16,
-                RefreshIntent::QualityContent => hwtcon::WAVEFORM_GC16,
+                RefreshIntent::FastFeedback => RefreshWaveform::Du,
+                RefreshIntent::TextContent => RefreshWaveform::Gl16,
+                RefreshIntent::QualityContent => RefreshWaveform::Gc16,
             },
             full,
         })
     }
 
     #[must_use]
-    pub fn update_data(self, marker: u32) -> hwtcon::HwtconUpdateData {
+    pub fn hwtcon_update_data(self, marker: u32) -> hwtcon::HwtconUpdateData {
         hwtcon::HwtconUpdateData {
             update_region: hwtcon::HwtconRect {
                 top: self.region.y,
@@ -79,7 +86,11 @@ impl RefreshPlan {
                 width: self.region.width,
                 height: self.region.height,
             },
-            waveform_mode: self.waveform,
+            waveform_mode: match self.waveform {
+                RefreshWaveform::Du => hwtcon::WAVEFORM_DU,
+                RefreshWaveform::Gl16 => hwtcon::WAVEFORM_GL16,
+                RefreshWaveform::Gc16 => hwtcon::WAVEFORM_GC16,
+            },
             update_mode: if self.full {
                 hwtcon::UPDATE_MODE_FULL
             } else {
@@ -88,6 +99,34 @@ impl RefreshPlan {
             update_marker: marker,
             flags: 0,
             dither_mode: 0,
+        }
+    }
+
+    #[must_use]
+    pub fn mxcfb_update_data(self, marker: u32) -> mxcfb::MxcfbUpdateDataV2 {
+        mxcfb::MxcfbUpdateDataV2 {
+            update_region: mxcfb::MxcfbRect {
+                top: self.region.y,
+                left: self.region.x,
+                width: self.region.width,
+                height: self.region.height,
+            },
+            waveform_mode: match self.waveform {
+                RefreshWaveform::Du => mxcfb::WAVEFORM_DU,
+                RefreshWaveform::Gl16 => mxcfb::WAVEFORM_GL16,
+                RefreshWaveform::Gc16 => mxcfb::WAVEFORM_GC16,
+            },
+            update_mode: if self.full {
+                mxcfb::UPDATE_MODE_FULL
+            } else {
+                mxcfb::UPDATE_MODE_PARTIAL
+            },
+            update_marker: marker,
+            temperature: mxcfb::TEMP_USE_AMBIENT,
+            flags: 0,
+            dither_mode: mxcfb::DITHER_PASSTHROUGH,
+            quant_bit: 0,
+            alt_buffer_data: mxcfb::MxcfbAltBufferData::default(),
         }
     }
 }
@@ -112,8 +151,8 @@ impl UpdateMarker {
 
 #[cfg(test)]
 mod tests {
-    use super::{Rect, RefreshIntent, RefreshPlan, UpdateMarker};
-    use kobo_abi::hwtcon;
+    use super::{Rect, RefreshIntent, RefreshPlan, RefreshWaveform, UpdateMarker};
+    use kobo_abi::{hwtcon, mxcfb};
 
     #[test]
     fn clips_regions_before_building_update() {
@@ -132,7 +171,33 @@ mod tests {
         .expect("region intersects screen");
         assert_eq!(plan.region.width, 12);
         assert_eq!(plan.region.height, 8);
-        assert_eq!(plan.waveform, hwtcon::WAVEFORM_GC16);
+        assert_eq!(plan.waveform, RefreshWaveform::Gc16);
+    }
+
+    #[test]
+    fn controller_specific_updates_use_each_vendor_waveform_number() {
+        let plan = RefreshPlan::new(
+            Rect {
+                x: 10,
+                y: 20,
+                width: 30,
+                height: 40,
+            },
+            RefreshIntent::TextContent,
+            false,
+            1072,
+            1448,
+        )
+        .expect("region is on screen");
+        assert_eq!(
+            plan.hwtcon_update_data(7).waveform_mode,
+            hwtcon::WAVEFORM_GL16
+        );
+        let mxcfb = plan.mxcfb_update_data(7);
+        assert_eq!(mxcfb.waveform_mode, mxcfb::WAVEFORM_GL16);
+        assert_eq!(mxcfb.temperature, mxcfb::TEMP_USE_AMBIENT);
+        assert_eq!(mxcfb.dither_mode, mxcfb::DITHER_PASSTHROUGH);
+        assert_eq!(mxcfb.update_marker, 7);
     }
 
     #[test]
