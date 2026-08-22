@@ -1,5 +1,5 @@
 use kobo_abi::input;
-use kobo_profile::DeviceProfile;
+use kobo_profile::PanelPose;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct InputEvent32 {
@@ -80,7 +80,7 @@ impl Default for TouchDecoder {
 }
 
 impl TouchDecoder {
-    pub fn push(&mut self, event: InputEvent32, profile: &DeviceProfile) -> Option<TouchEvent> {
+    pub fn push(&mut self, event: InputEvent32, pose: &PanelPose<'_>) -> Option<TouchEvent> {
         match (event.kind, event.code) {
             (input::EV_ABS, input::ABS_MT_SLOT) => {
                 self.current_slot = usize::try_from(event.value)
@@ -124,7 +124,7 @@ impl TouchDecoder {
                 }
             }
             (input::EV_SYN, input::SYN_REPORT) => {
-                return self.finish_report(profile);
+                return self.finish_report(pose);
             }
             _ => {}
         }
@@ -157,7 +157,7 @@ impl TouchDecoder {
         slot.set(SLOT_CHANGED, true);
     }
 
-    fn finish_report(&mut self, profile: &DeviceProfile) -> Option<TouchEvent> {
+    fn finish_report(&mut self, pose: &PanelPose<'_>) -> Option<TouchEvent> {
         let mut output = None;
         if let Some(slot_index) = self.primary_slot {
             let slot = &mut self.slots[slot_index];
@@ -168,7 +168,7 @@ impl TouchDecoder {
             // coordinates away, which is how a quick tap came to register as
             // nothing at all.
             let point = if slot.has(SLOT_X_FRESH) && slot.has(SLOT_Y_FRESH) {
-                profile.touch_to_display(slot.raw_x, slot.raw_y)
+                pose.touch_to_display(slot.raw_x, slot.raw_y)
             } else {
                 None
             };
@@ -229,7 +229,12 @@ impl TouchDecoder {
 mod tests {
     use super::{InputEvent32, TouchDecoder, TouchEvent, MAX_TOUCH_SLOTS};
     use kobo_abi::input;
-    use kobo_profile::CLARA_BW_391;
+    use kobo_profile::{PanelPose, CLARA_BW_391};
+
+    /// The Clara BW at the pose its profile was measured in. Decoding is
+    /// pose-relative now, and these tests assert display coordinates, so they
+    /// have to say which pose they mean.
+    const CLARA_BW_POSE: PanelPose<'static> = PanelPose::reference(&CLARA_BW_391);
 
     /// Every event of one real press, captured byte for byte from
     /// `/dev/input/event1` on the Clara BW. It contains no `ABS_MT_SLOT` and
@@ -257,7 +262,7 @@ mod tests {
         report
             .iter()
             .filter_map(|&(kind, code, value)| {
-                decoder.push(InputEvent32 { kind, code, value }, &CLARA_BW_391)
+                decoder.push(InputEvent32 { kind, code, value }, &CLARA_BW_POSE)
             })
             .collect()
     }
@@ -296,7 +301,7 @@ mod tests {
                 (input::EV_SYN, input::SYN_REPORT, 0),
             ],
         );
-        let expected = CLARA_BW_391
+        let expected = CLARA_BW_POSE
             .touch_to_display(374, 267)
             .expect("the panel maps this point");
         assert_eq!(
@@ -400,7 +405,7 @@ mod tests {
         ];
         let output = events
             .into_iter()
-            .find_map(|event| decoder.push(event, &CLARA_BW_391));
+            .find_map(|event| decoder.push(event, &CLARA_BW_POSE));
         assert_eq!(output, Some(TouchEvent::Down { x: 871, y: 100 }));
     }
 
@@ -421,15 +426,15 @@ mod tests {
         assert_eq!(
             events
                 .into_iter()
-                .find_map(|event| decoder.push(event, &CLARA_BW_391)),
+                .find_map(|event| decoder.push(event, &CLARA_BW_POSE)),
             Some(TouchEvent::Down { x: 871, y: 100 })
         );
 
         assert_eq!(
-            decoder.push(absolute(input::ABS_MT_POSITION_X, 700), &CLARA_BW_391),
+            decoder.push(absolute(input::ABS_MT_POSITION_X, 700), &CLARA_BW_POSE),
             None
         );
-        assert_eq!(decoder.push(sync(), &CLARA_BW_391), None);
+        assert_eq!(decoder.push(sync(), &CLARA_BW_POSE), None);
 
         let move_events = [
             absolute(input::ABS_MT_SLOT, 0),
@@ -440,7 +445,7 @@ mod tests {
         assert_eq!(
             move_events
                 .into_iter()
-                .find_map(|event| decoder.push(event, &CLARA_BW_391)),
+                .find_map(|event| decoder.push(event, &CLARA_BW_POSE)),
             Some(TouchEvent::Move { x: 861, y: 110 })
         );
 
@@ -448,7 +453,7 @@ mod tests {
         assert_eq!(
             release_primary
                 .into_iter()
-                .find_map(|event| decoder.push(event, &CLARA_BW_391)),
+                .find_map(|event| decoder.push(event, &CLARA_BW_POSE)),
             Some(TouchEvent::Up { x: 861, y: 110 })
         );
         assert!(!decoder.is_quiescent());
@@ -461,7 +466,7 @@ mod tests {
         assert_eq!(
             release_secondary
                 .into_iter()
-                .find_map(|event| decoder.push(event, &CLARA_BW_391)),
+                .find_map(|event| decoder.push(event, &CLARA_BW_POSE)),
             None
         );
         assert!(decoder.is_quiescent());
@@ -476,7 +481,7 @@ mod tests {
                     input::ABS_MT_SLOT,
                     i32::try_from(MAX_TOUCH_SLOTS).expect("slot count")
                 ),
-                &CLARA_BW_391
+                &CLARA_BW_POSE
             ),
             None
         );
@@ -491,26 +496,26 @@ mod tests {
             absolute(input::ABS_MT_POSITION_X, 100),
             absolute(input::ABS_MT_POSITION_Y, 200),
         ] {
-            assert_eq!(decoder.push(event, &CLARA_BW_391), None);
+            assert_eq!(decoder.push(event, &CLARA_BW_POSE), None);
         }
         assert_eq!(
-            decoder.push(sync(), &CLARA_BW_391),
+            decoder.push(sync(), &CLARA_BW_POSE),
             Some(TouchEvent::Down { x: 871, y: 100 })
         );
 
         assert_eq!(
-            decoder.push(absolute(input::ABS_MT_TRACKING_ID, 2), &CLARA_BW_391),
+            decoder.push(absolute(input::ABS_MT_TRACKING_ID, 2), &CLARA_BW_POSE),
             None
         );
-        assert_eq!(decoder.push(sync(), &CLARA_BW_391), None);
+        assert_eq!(decoder.push(sync(), &CLARA_BW_POSE), None);
         for event in [
             absolute(input::ABS_MT_POSITION_X, 300),
             absolute(input::ABS_MT_POSITION_Y, 400),
         ] {
-            assert_eq!(decoder.push(event, &CLARA_BW_391), None);
+            assert_eq!(decoder.push(event, &CLARA_BW_POSE), None);
         }
         assert_eq!(
-            decoder.push(sync(), &CLARA_BW_391),
+            decoder.push(sync(), &CLARA_BW_POSE),
             Some(TouchEvent::Down { x: 671, y: 300 })
         );
     }

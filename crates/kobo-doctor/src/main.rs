@@ -2,7 +2,10 @@ use kobo_hal::observe::MAXIMUM_OBSERVE_SECONDS;
 use kobo_hal::refresh::Rect;
 use kobo_hal::surface::{read_region, SurfaceGeometry};
 use kobo_hal::{observe_touch, probe_device};
-use kobo_profile::{identify_profile, DeviceProfile, FramebufferSnapshot, Readiness};
+use kobo_profile::{
+    identify_profile, DeviceProfile, DeviceSnapshot, FramebufferSnapshot, PanelPose, PoseError,
+    Readiness,
+};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
@@ -170,14 +173,13 @@ fn main() -> ExitCode {
     }
 
     // Observation is only offered once the profile matched, so events are never
-    // interpreted with a transform that does not belong to this hardware.
+    // interpreted with a transform that does not belong to this hardware. The
+    // pose is resolved here too, and loudly, because the transform is only
+    // correct at the orientation the reader is actually in.
     if let Some(request) = std::env::var_os(OBSERVE_TOUCH_VARIABLE) {
         let touch_path = snapshot.touch.as_ref().map(|touch| touch.path.clone());
-        if let Err(error) = observe(
-            matched_profile,
-            touch_path.as_deref(),
-            &request.to_string_lossy(),
-        ) {
+        let request = request.to_string_lossy();
+        if let Err(error) = observe(matched_profile, &snapshot, touch_path.as_deref(), &request) {
             eprintln!("touch observation failed: {error}");
             return ExitCode::FAILURE;
         }
@@ -434,7 +436,32 @@ fn base64_line(bytes: &[u8]) -> String {
     encoded
 }
 
-fn observe(profile: &DeviceProfile, touch_path: Option<&str>, request: &str) -> Result<(), String> {
+/// The profile paired with the orientation the reader is actually in.
+///
+/// Separate from `main` only to keep it short. The refusal matters more than
+/// the brevity: a touch transform is correct at one orientation, so observing
+/// with an unresolved pose would report coordinates nobody can trust.
+fn resolve_pose<'a>(
+    profile: &'a DeviceProfile,
+    snapshot: &DeviceSnapshot,
+) -> Result<PanelPose<'a>, PoseError> {
+    snapshot
+        .framebuffer
+        .as_ref()
+        .ok_or(PoseError::FramebufferMissing)
+        .and_then(|framebuffer| PanelPose::resolve(profile, framebuffer))
+}
+
+fn observe(
+    profile: &DeviceProfile,
+    snapshot: &DeviceSnapshot,
+    touch_path: Option<&str>,
+    request: &str,
+) -> Result<(), String> {
+    // Resolved before anything is read, and loudly. A touch transform is
+    // correct at one orientation, so observing without a resolved pose would
+    // print coordinates nobody can trust.
+    let pose = &resolve_pose(profile, snapshot).map_err(|error| error.to_string())?;
     let seconds: u64 = request
         .trim()
         .parse()
@@ -446,13 +473,18 @@ fn observe(profile: &DeviceProfile, touch_path: Option<&str>, request: &str) -> 
     }
     let path = touch_path.ok_or("no touch device was discovered")?;
     println!("touch observation: {seconds}s read-only on {path}, not grabbed");
+    // This line used to be hardcoded to one device's transform and printed
+    // regardless of the profile, so it described a mapping the code did not
+    // use on every device but the Clara BW. It now names what will actually
+    // run, including the orientation, since the transform is only right at one.
     println!(
-        "touch transform under test: display_x = {} - raw_y, display_y = raw_x",
-        profile.touch_y_max
+        "touch transform under test: {:?} at rotation {}",
+        pose.touch_transform(),
+        pose.rotation()
     );
     let reported = observe_touch(
         Path::new(path),
-        profile,
+        pose,
         Duration::from_secs(seconds),
         |observation| println!("touch: {observation}"),
     )

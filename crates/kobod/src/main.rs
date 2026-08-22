@@ -129,7 +129,13 @@ fn touch_test(seconds: &str) -> Result<(), Box<dyn Error>> {
         .ok_or_else(|| "touch probe was unavailable".to_owned())?;
 
     println!("touch device: {touch_path}");
-    let mut session = TouchSession::acquire(Path::new(&touch_path), profile)?;
+    let framebuffer = snapshot
+        .framebuffer
+        .as_ref()
+        .ok_or_else(|| "framebuffer probe was unavailable".to_owned())?;
+    let pose = kobo_profile::PanelPose::resolve(profile, framebuffer)
+        .map_err(|error| format!("touch refused: {error}"))?;
+    let mut session = TouchSession::acquire(Path::new(&touch_path), pose)?;
     println!("grabbed; touch the panel");
     let events = session
         .take_events()

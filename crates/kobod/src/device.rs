@@ -531,7 +531,17 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
         .map(|t| t.path.clone())
         .ok_or_else(|| "touch probe was unavailable".to_owned())?;
 
-    let mut touch = TouchSession::acquire(Path::new(&touch_path), profile)
+    let framebuffer = display
+        .snapshot()
+        .framebuffer
+        .as_ref()
+        .ok_or_else(|| "framebuffer probe was unavailable".to_owned())?;
+    // Resolved rather than assumed: the transform that places every tap is
+    // only correct at the orientation it was measured at, so a reader held the
+    // other way up has to refuse the session rather than mislocate touches.
+    let pose = kobo_profile::PanelPose::resolve(profile, framebuffer)
+        .map_err(|error| format!("take the touch panel: {error}"))?;
+    let mut touch = TouchSession::acquire(Path::new(&touch_path), pose)
         .map_err(|error| format!("take the touch panel: {error}"))?;
 
     // Without this the device reboots itself partway through the session, so a

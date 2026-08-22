@@ -525,16 +525,179 @@ impl DeviceProfile {
         blockers
     }
 
+}
+
+/// Why a profile could not be resolved against the orientation a device is in.
+///
+/// A refusal here has to be as loud as a rejected profile. It cannot be
+/// swallowed by a caller and it must never reach the touch decoder, where an
+/// unresolvable pose would look like taps quietly going nowhere rather than
+/// like a device Cobalt declines to drive.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PoseError {
+    /// The device is in an orientation this profile has not been measured in.
+    UnverifiedRotation { observed: u32, expected: u32 },
+    /// The visible geometry disagrees with the profile at an orientation the
+    /// profile does claim to describe.
+    GeometryMismatch { field: &'static str, observed: u32, expected: u32 },
+    /// The probe returned no framebuffer at all.
+    FramebufferMissing,
+}
+
+impl fmt::Display for PoseError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnverifiedRotation { observed, expected } => write!(
+                formatter,
+                "device is at rotation {observed}, and this profile is only measured at {expected}"
+            ),
+            Self::GeometryMismatch {
+                field,
+                observed,
+                expected,
+            } => write!(
+                formatter,
+                "{field}: expected {expected}, found {observed}"
+            ),
+            Self::FramebufferMissing => formatter.write_str("no framebuffer to resolve against"),
+        }
+    }
+}
+
+/// A profile resolved against the orientation the device is actually in.
+///
+/// A [`DeviceProfile`] describes hardware. Which way up the reader is being
+/// held is not hardware: the framebuffer's `rotation` flips between 1 and 3 as
+/// a Libra 2 is handled, with every geometry field unchanged. A pose is the
+/// pairing of the two, resolved once, at the point where a live framebuffer is
+/// available.
+///
+/// # What this does and does not do yet
+///
+/// Today `resolve` accepts only the rotation the profile was measured at, so a
+/// pose carries exactly the values the profile does and nothing observable
+/// changes. That is deliberate. The transform can only be composed with live
+/// rotation once `validate` accepts more than one pose, and `validate` can only
+/// accept more than one pose once the transform composes. Doing either alone is
+/// worse than doing neither: composing early buys nothing, and relaxing early
+/// puts taps in the wrong place without failing.
+///
+/// This type exists so those two can land in that order. It is also the shape
+/// live re-resolution would need, if the reader is ever to be turned over
+/// mid-session, which is out of scope here.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PanelPose<'a> {
+    profile: &'a DeviceProfile,
+    rotation: u32,
+    width: u32,
+    height: u32,
+    transform: TouchTransform,
+}
+
+impl<'a> PanelPose<'a> {
+    /// The pose the profile was measured in.
+    ///
+    /// For callers with no device in front of them. It asserts an orientation
+    /// rather than observing one, so it is right for the simulator and for
+    /// tests, and wrong for anything holding a framebuffer.
+    #[must_use]
+    pub const fn reference(profile: &'a DeviceProfile) -> Self {
+        Self {
+            profile,
+            rotation: profile.rotation,
+            width: profile.width,
+            height: profile.height,
+            transform: profile.touch_transform,
+        }
+    }
+
+    /// Resolves a pose against a live framebuffer.
+    ///
+    /// Refuses any orientation this profile cannot describe, which is
+    /// currently every orientation but the one it was measured in. The refusal
+    /// is the point: an unresolvable pose has to stay a refusal rather than
+    /// fall back on the reference, since the fallback would be a transform
+    /// wrong by the height of the panel, and wrong silently.
+    ///
+    /// The geometry is compared rather than copied. Nothing stops a caller
+    /// resolving against a snapshot that was never validated, and a pose built
+    /// from dimensions the profile does not recognise would scale every tap
+    /// against the wrong panel.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PoseError`] when the device is in an unverified orientation or
+    /// when its visible geometry disagrees with the profile.
+    pub fn resolve(
+        profile: &'a DeviceProfile,
+        framebuffer: &FramebufferSnapshot,
+    ) -> Result<Self, PoseError> {
+        if framebuffer.rotation != profile.rotation {
+            return Err(PoseError::UnverifiedRotation {
+                observed: framebuffer.rotation,
+                expected: profile.rotation,
+            });
+        }
+        for (field, observed, expected) in [
+            ("width", framebuffer.width, profile.width),
+            ("height", framebuffer.height, profile.height),
+        ] {
+            if observed != expected {
+                return Err(PoseError::GeometryMismatch {
+                    field,
+                    observed,
+                    expected,
+                });
+            }
+        }
+        Ok(Self {
+            profile,
+            rotation: framebuffer.rotation,
+            width: framebuffer.width,
+            height: framebuffer.height,
+            transform: profile.touch_transform,
+        })
+    }
+
+    #[must_use]
+    pub const fn profile(&self) -> &'a DeviceProfile {
+        self.profile
+    }
+
+    #[must_use]
+    pub const fn rotation(&self) -> u32 {
+        self.rotation
+    }
+
+    #[must_use]
+    pub const fn width(&self) -> u32 {
+        self.width
+    }
+
+    #[must_use]
+    pub const fn height(&self) -> u32 {
+        self.height
+    }
+
+    #[must_use]
+    pub const fn touch_transform(&self) -> TouchTransform {
+        self.transform
+    }
+
+    /// Maps a raw touch coordinate into display space at this pose.
     #[must_use]
     pub fn touch_to_display(&self, raw_x: i32, raw_y: i32) -> Option<(u32, u32)> {
-        if !(self.touch_x_min..=self.touch_x_max).contains(&raw_x)
-            || !(self.touch_y_min..=self.touch_y_max).contains(&raw_y)
+        let profile = self.profile;
+        if !(profile.touch_x_min..=profile.touch_x_max).contains(&raw_x)
+            || !(profile.touch_y_min..=profile.touch_y_max).contains(&raw_y)
         {
             return None;
         }
-        let horizontal = scale_touch_axis(raw_y, self.touch_y_min, self.touch_y_max, self.width)?;
-        let vertical = scale_touch_axis(raw_x, self.touch_x_min, self.touch_x_max, self.height)?;
-        match self.touch_transform {
+        let horizontal =
+            scale_touch_axis(raw_y, profile.touch_y_min, profile.touch_y_max, self.width)?;
+        let vertical =
+            scale_touch_axis(raw_x, profile.touch_x_min, profile.touch_x_max, self.height)?;
+        match self.transform {
             TouchTransform::Transpose => Some((horizontal, vertical)),
             TouchTransform::TransposeMirrorY => {
                 Some((horizontal, self.height.checked_sub(1 + vertical)?))
@@ -543,53 +706,50 @@ impl DeviceProfile {
                 Some((self.width.checked_sub(1 + horizontal)?, vertical))
             }
             TouchTransform::Direct => Some((
-                scale_touch_axis(raw_x, self.touch_x_min, self.touch_x_max, self.width)?,
-                scale_touch_axis(raw_y, self.touch_y_min, self.touch_y_max, self.height)?,
+                scale_touch_axis(raw_x, profile.touch_x_min, profile.touch_x_max, self.width)?,
+                scale_touch_axis(raw_y, profile.touch_y_min, profile.touch_y_max, self.height)?,
             )),
         }
     }
 
-    /// Converts a visible display coordinate back to the touch controller's
-    /// rotated coordinate space.
-    ///
-    /// The browser simulator deliberately takes this round trip before hit
-    /// testing, so the same measured transform that gates the device is also
-    /// exercised during ordinary application development.
+    /// Converts a visible display coordinate back into raw touch space at this
+    /// pose.
     #[must_use]
     pub fn display_to_touch(&self, x: u32, y: u32) -> Option<(i32, i32)> {
+        let profile = self.profile;
         if x >= self.width || y >= self.height {
             return None;
         }
-        let (raw_x, raw_y) = match self.touch_transform {
+        let (raw_x, raw_y) = match self.transform {
             TouchTransform::Transpose => (
-                scale_display_axis(y, self.height, self.touch_x_min, self.touch_x_max)?,
-                scale_display_axis(x, self.width, self.touch_y_min, self.touch_y_max)?,
+                scale_display_axis(y, self.height, profile.touch_x_min, profile.touch_x_max)?,
+                scale_display_axis(x, self.width, profile.touch_y_min, profile.touch_y_max)?,
             ),
             TouchTransform::TransposeMirrorY => (
                 scale_display_axis(
                     self.height.checked_sub(1 + y)?,
                     self.height,
-                    self.touch_x_min,
-                    self.touch_x_max,
+                    profile.touch_x_min,
+                    profile.touch_x_max,
                 )?,
-                scale_display_axis(x, self.width, self.touch_y_min, self.touch_y_max)?,
+                scale_display_axis(x, self.width, profile.touch_y_min, profile.touch_y_max)?,
             ),
             TouchTransform::TransposeMirrorX => (
-                scale_display_axis(y, self.height, self.touch_x_min, self.touch_x_max)?,
+                scale_display_axis(y, self.height, profile.touch_x_min, profile.touch_x_max)?,
                 scale_display_axis(
                     self.width.checked_sub(1 + x)?,
                     self.width,
-                    self.touch_y_min,
-                    self.touch_y_max,
+                    profile.touch_y_min,
+                    profile.touch_y_max,
                 )?,
             ),
             TouchTransform::Direct => (
-                scale_display_axis(x, self.width, self.touch_x_min, self.touch_x_max)?,
-                scale_display_axis(y, self.height, self.touch_y_min, self.touch_y_max)?,
+                scale_display_axis(x, self.width, profile.touch_x_min, profile.touch_x_max)?,
+                scale_display_axis(y, self.height, profile.touch_y_min, profile.touch_y_max)?,
             ),
         };
-        if !(self.touch_x_min..=self.touch_x_max).contains(&raw_x)
-            || !(self.touch_y_min..=self.touch_y_max).contains(&raw_y)
+        if !(profile.touch_x_min..=profile.touch_x_max).contains(&raw_x)
+            || !(profile.touch_y_min..=profile.touch_y_max).contains(&raw_y)
         {
             return None;
         }
@@ -809,6 +969,15 @@ fn compare_identity(blockers: &mut Vec<String>, name: &str, expected: &str, actu
 
 #[cfg(test)]
 mod tests {
+    use super::PanelPose;
+
+    /// The Libra 2 at the pose it was measured in: page-turn buttons on the
+    /// right, which this device reports as rotation 1. Every display
+    /// coordinate below is only meaningful at that pose.
+    const LIBRA_2_POSE: PanelPose<'static> = PanelPose::reference(&LIBRA_2_388);
+    const CLARA_BW_POSE: PanelPose<'static> = PanelPose::reference(&CLARA_BW_391);
+    const ELIPSA_2E_POSE: PanelPose<'static> = PanelPose::reference(&ELIPSA_2E_389);
+
     use super::{
         Bitfield, DeviceSnapshot, FramebufferSnapshot, IdentitySnapshot, Readiness, TouchSnapshot,
         CLARA_BW_391, ELIPSA_2E_389, LIBRA_2_388,
@@ -906,17 +1075,17 @@ mod tests {
     #[test]
     fn libra_2_touch_matches_three_physically_measured_taps() {
         // Tap 1, top-left corner of the image.
-        let top_left = LIBRA_2_388
+        let top_left = LIBRA_2_POSE
             .touch_to_display(54, 62)
             .expect("measured tap maps to the display");
         // Tap 2, bottom-left: straight down the same edge, so only the
         // physical vertical changed, and only raw_x moved.
-        let bottom_left = LIBRA_2_388
+        let bottom_left = LIBRA_2_POSE
             .touch_to_display(1600, 66)
             .expect("measured tap maps to the display");
         // Tap 3, bottom-right: straight across the bottom, so only the
         // physical horizontal changed, and only raw_y moved.
-        let bottom_right = LIBRA_2_388
+        let bottom_right = LIBRA_2_POSE
             .touch_to_display(1596, 1172)
             .expect("measured tap maps to the display");
 
@@ -944,64 +1113,64 @@ mod tests {
     #[test]
     fn libra_2_touch_edges_stay_inside_the_panel_and_round_trip() {
         for raw in [(0, 0), (0, 1264), (1680, 0), (1680, 1264)] {
-            let display = LIBRA_2_388
+            let display = LIBRA_2_POSE
                 .touch_to_display(raw.0, raw.1)
                 .expect("measured Libra 2 edge maps to the display");
             assert!(display.0 < LIBRA_2_388.width, "x escaped: {display:?}");
             assert!(display.1 < LIBRA_2_388.height, "y escaped: {display:?}");
         }
-        assert_eq!(LIBRA_2_388.touch_to_display(0, 0), Some((0, 0)));
-        assert_eq!(LIBRA_2_388.touch_to_display(1680, 1264), Some((1263, 1679)));
+        assert_eq!(LIBRA_2_POSE.touch_to_display(0, 0), Some((0, 0)));
+        assert_eq!(LIBRA_2_POSE.touch_to_display(1680, 1264), Some((1263, 1679)));
         for display in [(0, 0), (1263, 0), (0, 1679), (1263, 1679), (632, 840)] {
-            let raw = LIBRA_2_388
+            let raw = LIBRA_2_POSE
                 .display_to_touch(display.0, display.1)
                 .expect("Libra 2 display point maps to the controller");
-            assert_eq!(LIBRA_2_388.touch_to_display(raw.0, raw.1), Some(display));
+            assert_eq!(LIBRA_2_POSE.touch_to_display(raw.0, raw.1), Some(display));
         }
-        assert_eq!(LIBRA_2_388.display_to_touch(1264, 0), None);
-        assert_eq!(LIBRA_2_388.display_to_touch(0, 1680), None);
+        assert_eq!(LIBRA_2_POSE.display_to_touch(1264, 0), None);
+        assert_eq!(LIBRA_2_POSE.display_to_touch(0, 1680), None);
     }
 
     #[test]
     fn touch_transform_matches_measured_corners() {
-        assert_eq!(CLARA_BW_391.touch_to_display(0, 1071), Some((0, 0)));
-        assert_eq!(CLARA_BW_391.touch_to_display(0, 0), Some((1071, 0)));
-        assert_eq!(CLARA_BW_391.touch_to_display(1447, 1071), Some((0, 1447)));
-        assert_eq!(CLARA_BW_391.touch_to_display(1447, 0), Some((1071, 1447)));
-        assert_eq!(CLARA_BW_391.touch_to_display(1448, 0), None);
+        assert_eq!(CLARA_BW_POSE.touch_to_display(0, 1071), Some((0, 0)));
+        assert_eq!(CLARA_BW_POSE.touch_to_display(0, 0), Some((1071, 0)));
+        assert_eq!(CLARA_BW_POSE.touch_to_display(1447, 1071), Some((0, 1447)));
+        assert_eq!(CLARA_BW_POSE.touch_to_display(1447, 0), Some((1071, 1447)));
+        assert_eq!(CLARA_BW_POSE.touch_to_display(1448, 0), None);
     }
 
     #[test]
     fn display_and_touch_coordinates_round_trip_at_edges_and_inside() {
         for display in [(0, 0), (1071, 0), (0, 1447), (1071, 1447), (109, 110)] {
-            let raw = CLARA_BW_391
+            let raw = CLARA_BW_POSE
                 .display_to_touch(display.0, display.1)
                 .expect("display point maps to controller");
-            assert_eq!(CLARA_BW_391.touch_to_display(raw.0, raw.1), Some(display));
+            assert_eq!(CLARA_BW_POSE.touch_to_display(raw.0, raw.1), Some(display));
         }
-        assert_eq!(CLARA_BW_391.display_to_touch(1072, 0), None);
-        assert_eq!(CLARA_BW_391.display_to_touch(0, 1448), None);
+        assert_eq!(CLARA_BW_POSE.display_to_touch(1072, 0), None);
+        assert_eq!(CLARA_BW_POSE.display_to_touch(0, 1448), None);
     }
 
     #[test]
     fn elipsa_touch_edges_stay_inside_the_panel_and_display_points_round_trip() {
         for raw in [(0, 0), (0, 1404), (1872, 0), (1872, 1404)] {
-            let display = ELIPSA_2E_389
+            let display = ELIPSA_2E_POSE
                 .touch_to_display(raw.0, raw.1)
                 .expect("measured Elipsa edge maps to the display");
             assert!(display.0 < ELIPSA_2E_389.width, "x escaped: {display:?}");
             assert!(display.1 < ELIPSA_2E_389.height, "y escaped: {display:?}");
         }
-        assert_eq!(ELIPSA_2E_389.touch_to_display(0, 0), Some((0, 1871)));
-        assert_eq!(ELIPSA_2E_389.touch_to_display(1872, 1404), Some((1403, 0)));
+        assert_eq!(ELIPSA_2E_POSE.touch_to_display(0, 0), Some((0, 1871)));
+        assert_eq!(ELIPSA_2E_POSE.touch_to_display(1872, 1404), Some((1403, 0)));
         for display in [(0, 0), (1403, 0), (0, 1871), (1403, 1871), (702, 936)] {
-            let raw = ELIPSA_2E_389
+            let raw = ELIPSA_2E_POSE
                 .display_to_touch(display.0, display.1)
                 .expect("Elipsa display point maps to the controller");
-            assert_eq!(ELIPSA_2E_389.touch_to_display(raw.0, raw.1), Some(display));
+            assert_eq!(ELIPSA_2E_POSE.touch_to_display(raw.0, raw.1), Some(display));
         }
-        assert_eq!(ELIPSA_2E_389.display_to_touch(1404, 0), None);
-        assert_eq!(ELIPSA_2E_389.display_to_touch(0, 1872), None);
+        assert_eq!(ELIPSA_2E_POSE.display_to_touch(1404, 0), None);
+        assert_eq!(ELIPSA_2E_POSE.display_to_touch(0, 1872), None);
     }
 
     /// Captured from a physical touch on the real Clara BW with
@@ -1015,17 +1184,17 @@ mod tests {
     /// transform placed it at (109, 110).
     #[test]
     fn touch_transform_matches_a_physically_measured_touch() {
-        let mapped = CLARA_BW_391
+        let mapped = CLARA_BW_POSE
             .touch_to_display(110, 962)
             .expect("the measured raw sample is in range");
         assert_eq!(mapped, (109, 110));
 
         // A flip of either axis still lands inside the screen, so only distance
         // from the touched corner distinguishes them. Both are far away.
-        let flipped_x = CLARA_BW_391
+        let flipped_x = CLARA_BW_POSE
             .touch_to_display(110, 1071 - 962)
             .expect("in range");
-        let flipped_y = CLARA_BW_391
+        let flipped_y = CLARA_BW_POSE
             .touch_to_display(1447 - 110, 962)
             .expect("in range");
         assert_eq!(flipped_x, (962, 110));

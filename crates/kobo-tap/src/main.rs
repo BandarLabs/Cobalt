@@ -52,7 +52,7 @@
 use kobo_abi::input;
 use kobo_hal::probe_device;
 use kobo_hal::touch::InputEvent32;
-use kobo_profile::{identify_profile, DeviceProfile, DeviceSnapshot};
+use kobo_profile::{identify_profile, DeviceSnapshot, PanelPose};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::process::ExitCode;
@@ -110,12 +110,12 @@ fn tap() -> Result<(), String> {
         .touch
         .as_ref()
         .ok_or("no touch device was discovered")?;
-    let profile = writable_profile(&snapshot)?;
+    let pose = writable_pose(&snapshot)?;
     // Every point is turned into events before the first one is written, so a
     // point that is off the screen is refused while the panel is still
     // untouched. Discovering it halfway through would leave an application
     // part-way into a journey with no way to finish it.
-    let planned = plan(profile, &steps)?;
+    let planned = plan(&pose, &steps)?;
 
     let mut node = OpenOptions::new()
         .write(true)
@@ -137,15 +137,26 @@ fn tap() -> Result<(), String> {
     Ok(())
 }
 
-fn writable_profile(snapshot: &DeviceSnapshot) -> Result<&'static DeviceProfile, String> {
+/// The profile and the orientation the reader is in, or why neither can be
+/// used to place a synthetic tap.
+///
+/// Injecting a tap needs display-to-raw, which is only correct at the
+/// orientation it was measured at. Resolving the pose here means a reader held
+/// the wrong way up refuses the whole sequence rather than tapping somewhere
+/// nobody asked for.
+fn writable_pose(snapshot: &DeviceSnapshot) -> Result<PanelPose<'static>, String> {
     let profile = identify_profile(snapshot)
         .ok_or_else(|| "the probed device does not match a supported profile".to_owned())?;
     let blockers = profile.write_identity_blockers(snapshot);
-    if blockers.is_empty() {
-        Ok(profile)
-    } else {
-        Err(format!("device write refused: {}", blockers.join("; ")))
+    if !blockers.is_empty() {
+        return Err(format!("device write refused: {}", blockers.join("; ")));
     }
+    let framebuffer = snapshot
+        .framebuffer
+        .as_ref()
+        .ok_or_else(|| "device write refused: no framebuffer to resolve the pose".to_owned())?;
+    PanelPose::resolve(profile, framebuffer)
+        .map_err(|error| format!("device write refused: {error}"))
 }
 
 /// One tap, and how long to wait before making it.
@@ -167,16 +178,16 @@ const LIFT_EVENTS: usize = 3;
 /// Separate from writing them so that a whole tour is checked against the
 /// panel before any of it reaches the digitiser. Stopping in the middle is the
 /// one failure mode that leaves the device somewhere nobody asked for.
-fn plan(profile: &DeviceProfile, steps: &[Step]) -> Result<Vec<Vec<InputEvent32>>, String> {
+fn plan(pose: &PanelPose<'_>, steps: &[Step]) -> Result<Vec<Vec<InputEvent32>>, String> {
     steps
         .iter()
-        .map(|step| press_and_lift(profile, step.x, step.y))
+        .map(|step| press_and_lift(pose, step.x, step.y))
         .collect()
 }
 
 /// The evdev records for one complete tap, press first and lift last.
-fn press_and_lift(profile: &DeviceProfile, x: u32, y: u32) -> Result<Vec<InputEvent32>, String> {
-    let (raw_x, raw_y) = profile
+fn press_and_lift(pose: &PanelPose<'_>, x: u32, y: u32) -> Result<Vec<InputEvent32>, String> {
+    let (raw_x, raw_y) = pose
         .display_to_touch(x, y)
         .ok_or_else(|| format!("{x},{y} is not on the screen"))?;
     Ok(vec![
@@ -297,13 +308,14 @@ fn parse_point(request: &str) -> Result<(u32, u32), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        encode, parse_point, parse_sequence, plan, press_and_lift, writable_profile, Step,
+        encode, parse_point, parse_sequence, plan, press_and_lift, writable_pose, Step,
         LIFT_EVENTS, MAXIMUM_SEQUENCE_MILLIS, MAXIMUM_STEPS,
     };
     use kobo_abi::input;
     use kobo_hal::touch::{InputEvent32, TouchDecoder, TouchEvent};
     use kobo_profile::{
-        DeviceProfile, DeviceSnapshot, FramebufferSnapshot, IdentitySnapshot, TouchSnapshot,
+        DeviceProfile, DeviceSnapshot, FramebufferSnapshot, IdentitySnapshot, PanelPose,
+        TouchSnapshot,
         CLARA_BW_391, ELIPSA_2E_389,
     };
     use std::time::Duration;
@@ -331,11 +343,11 @@ mod tests {
         // The strongest check available without hardware: feed what would be
         // written into the decoder the device itself uses, and require that it
         // reports the same coordinates that went in.
-        let events = press_and_lift(&CLARA_BW_391, 536, 900).expect("the middle of the screen");
+        let events = press_and_lift(&PanelPose::reference(&CLARA_BW_391), 536, 900).expect("the middle of the screen");
         let mut decoder = TouchDecoder::default();
         let mut reported = Vec::new();
         for event in &events {
-            if let Some(touch) = decoder.push(*event, &CLARA_BW_391) {
+            if let Some(touch) = decoder.push(*event, &PanelPose::reference(&CLARA_BW_391)) {
                 reported.push(touch);
             }
         }
@@ -352,11 +364,11 @@ mod tests {
 
     #[test]
     fn an_elipsa_tap_uses_the_elipsa_transform() {
-        let events = press_and_lift(&ELIPSA_2E_389, 1403, 1871).expect("Elipsa corner");
+        let events = press_and_lift(&PanelPose::reference(&ELIPSA_2E_389), 1403, 1871).expect("Elipsa corner");
         let mut decoder = TouchDecoder::default();
         let reported: Vec<_> = events
             .into_iter()
-            .filter_map(|event| decoder.push(event, &ELIPSA_2E_389))
+            .filter_map(|event| decoder.push(event, &PanelPose::reference(&ELIPSA_2E_389)))
             .collect();
         assert_eq!(
             reported.first(),
@@ -368,14 +380,14 @@ mod tests {
     #[test]
     fn matching_geometry_without_exact_identity_cannot_receive_a_tap() {
         let snapshot = snapshot_for(&ELIPSA_2E_389, IdentitySnapshot::default());
-        let error = writable_profile(&snapshot).expect_err("identity gates every device write");
+        let error = writable_pose(&snapshot).expect_err("identity gates every device write");
         assert!(error.contains("device write refused"), "{error}");
         assert!(error.contains("device code"), "{error}");
     }
 
     #[test]
     fn the_lift_is_the_last_thing_written() {
-        let events = press_and_lift(&CLARA_BW_391, 100, 100).expect("on the screen");
+        let events = press_and_lift(&PanelPose::reference(&CLARA_BW_391), 100, 100).expect("on the screen");
         let lift = &events[events.len() - LIFT_EVENTS..];
         assert_eq!(lift[0].code, input::ABS_MT_TRACKING_ID);
         assert_eq!(lift[0].value, -1, "-1 is how a contact ends");
@@ -384,7 +396,7 @@ mod tests {
 
     #[test]
     fn a_point_off_the_screen_is_refused_rather_than_clamped_onto_the_edge() {
-        assert!(press_and_lift(&CLARA_BW_391, 5000, 5000).is_err());
+        assert!(press_and_lift(&PanelPose::reference(&CLARA_BW_391), 5000, 5000).is_err());
     }
 
     #[test]
@@ -469,9 +481,9 @@ mod tests {
         // its fourth point is off the panel has left an application somewhere
         // nobody asked for it to be, with no way to finish the journey.
         let steps = parse_sequence("10,10 20,20 4000,20").expect("it parses");
-        assert!(plan(&CLARA_BW_391, &steps).is_err());
+        assert!(plan(&PanelPose::reference(&CLARA_BW_391), &steps).is_err());
         let good = parse_sequence("10,10 20,20 30,30").expect("it parses");
-        assert!(plan(&CLARA_BW_391, &good).is_ok());
+        assert!(plan(&PanelPose::reference(&CLARA_BW_391), &good).is_ok());
     }
 
     fn snapshot_for(profile: &DeviceProfile, identity: IdentitySnapshot) -> DeviceSnapshot {
