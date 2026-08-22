@@ -478,8 +478,8 @@ fn observe(
     // use on every device but the Clara BW. It now names what will actually
     // run, including the orientation, since the transform is only right at one.
     println!(
-        "touch transform under test: {:?} at rotation {}",
-        pose.touch_transform(),
+        "touch mapping under test: {:?} at rotation {}",
+        pose.touch_mapping(),
         pose.rotation()
     );
     let reported = observe_touch(

@@ -72,6 +72,97 @@ pub enum TouchTransform {
     TransposeMirrorX,
 }
 
+impl TouchTransform {
+    /// Lowers a declared transform into the composable form.
+    ///
+    /// Lossless in both directions for all four variants. The composed value
+    /// this feeds is a superset: a transpose with both axes mirrored is
+    /// reachable here and deliberately has no variant above, because it is a
+    /// runtime fact about which way up the reader is being held rather than a
+    /// hardware fact about the digitiser.
+    #[must_use]
+    pub const fn lower(self) -> TouchMapping {
+        match self {
+            Self::Direct => TouchMapping {
+                swap_axes: false,
+                mirror_x: false,
+                mirror_y: false,
+            },
+            Self::Transpose => TouchMapping {
+                swap_axes: true,
+                mirror_x: false,
+                mirror_y: false,
+            },
+            Self::TransposeMirrorY => TouchMapping {
+                swap_axes: true,
+                mirror_x: false,
+                mirror_y: true,
+            },
+            Self::TransposeMirrorX => TouchMapping {
+                swap_axes: true,
+                mirror_x: true,
+                mirror_y: false,
+            },
+        }
+    }
+}
+
+/// A touch mapping that can be composed with a live rotation.
+///
+/// # The frame these mirrors are written in
+///
+/// `mirror_x` and `mirror_y` are applied in **display pixel space**, after the
+/// axis swap and after scaling. This has to be stated, because the raw-space
+/// and display-space spellings of a single mirror are crossed: mirroring
+/// display x is the same operation as mirroring raw y once the axes are
+/// swapped. A reader who assumes the raw frame will map
+/// [`TouchTransform::TransposeMirrorX`] onto `TransposeMirrorY`'s behaviour and
+/// vice versa, which is a silent inversion on a device nobody here can test.
+/// The Clara BW's measured-touch test is what would catch it.
+///
+/// Mirroring after scaling also matters: `width - 1 - scaled` and
+/// `scale(maximum - raw)` round differently at the extremes, and the exact edge
+/// assertions are what fail if the order is swapped.
+///
+/// Unlike [`TouchTransform`], this can express a transpose with both axes
+/// mirrored, which is exactly what a 180 degree pose change produces and the
+/// only reason this type exists.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TouchMapping {
+    /// Controller axes are exchanged relative to the display.
+    pub swap_axes: bool,
+    /// Display x runs backwards.
+    pub mirror_x: bool,
+    /// Display y runs backwards.
+    pub mirror_y: bool,
+}
+
+impl TouchMapping {
+    /// The same mapping with the image turned through 180 degrees.
+    ///
+    /// The digitiser is glued to the glass and does not move when the reader is
+    /// turned over. The image does: the driver hands `rotate` to the PXP, which
+    /// rotates pixels on the way to the panel, and the `FB_ROTATE_UD` arm of
+    /// `adjust_coordinates` maps a rectangle to `xres - (left + width)` and
+    /// `yres - (top + height)`. So the same finger position lands at the
+    /// diametrically opposite display point, which is both mirrors flipped with
+    /// the swap unchanged.
+    ///
+    /// The 180 degree rotation is in the centre of the dihedral group, so it
+    /// commutes with the swap and with either mirror. That is why this is
+    /// correct regardless of which frame the mirrors are read in, and it is the
+    /// one part of this composition that does not depend on the convention
+    /// question below.
+    #[must_use]
+    pub const fn rotated_180(self) -> Self {
+        Self {
+            swap_axes: self.swap_axes,
+            mirror_x: !self.mirror_x,
+            mirror_y: !self.mirror_y,
+        }
+    }
+}
+
 pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     id: "clara-bw-391",
     model: "Kobo Clara BW",
@@ -114,6 +205,7 @@ pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
         msb_right: 0,
     },
     touch_transform: TouchTransform::TransposeMirrorX,
+    reference_rotation: 3,
     touch_name: "cyttsp5_mt",
     touch_x_min: 0,
     touch_x_max: 1447,
@@ -166,6 +258,7 @@ pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
         msb_right: 0,
     },
     touch_transform: TouchTransform::TransposeMirrorY,
+    reference_rotation: 1,
     touch_name: "Elan Touchscreen",
     touch_x_min: 0,
     touch_x_max: 1872,
@@ -244,6 +337,7 @@ pub const LIBRA_2_388: DeviceProfile = DeviceProfile {
         msb_right: 0,
     },
     touch_transform: TouchTransform::Transpose,
+    reference_rotation: 1,
     touch_name: "Elan Touchscreen",
     touch_x_min: 0,
     touch_x_max: 1680,
@@ -398,6 +492,20 @@ pub struct DeviceProfile {
     /// the digitiser is mounted underneath the panel is a fact about the
     /// hardware that no framebuffer field records, and it has to be measured.
     pub touch_transform: TouchTransform,
+    /// The orientation `touch_transform` is written in.
+    ///
+    /// `Transpose` on its own means nothing without "relative to what". The
+    /// anchor is physical rather than numeric: the Libra 2's mapping was
+    /// measured with the page-turn buttons on the right and the USB-C port on
+    /// the top edge, which this device reports as `rotate: 1`.
+    ///
+    /// This constrains nothing at validation time. It names the frame the
+    /// digitiser fact is expressed in, so that a live rotation can be composed
+    /// against it. Recorded explicitly because a later reader will otherwise
+    /// delete it as redundant with `rotation`, which it currently equals on
+    /// every profile and which answers a different question: `rotation` is a
+    /// pose snapshot that moves as the reader is handled, and this does not.
+    pub reference_rotation: u32,
     pub touch_name: &'static str,
     pub touch_x_min: i32,
     pub touch_x_max: i32,
@@ -542,6 +650,9 @@ pub enum PoseError {
     GeometryMismatch { field: &'static str, observed: u32, expected: u32 },
     /// The probe returned no framebuffer at all.
     FramebufferMissing,
+    /// The orientation differs from the profile's reference frame by a quarter
+    /// turn, which nobody has measured on this device.
+    UnsupportedRotationDelta { observed: u32, reference: u32 },
 }
 
 impl fmt::Display for PoseError {
@@ -560,6 +671,14 @@ impl fmt::Display for PoseError {
                 "{field}: expected {expected}, found {observed}"
             ),
             Self::FramebufferMissing => formatter.write_str("no framebuffer to resolve against"),
+            Self::UnsupportedRotationDelta {
+                observed,
+                reference,
+            } => write!(
+                formatter,
+                "rotation {observed} is a quarter turn from the reference rotation {reference}, \
+                 and no quarter turn has been measured on this device"
+            ),
         }
     }
 }
@@ -591,7 +710,7 @@ pub struct PanelPose<'a> {
     rotation: u32,
     width: u32,
     height: u32,
-    transform: TouchTransform,
+    mapping: TouchMapping,
 }
 
 impl<'a> PanelPose<'a> {
@@ -607,8 +726,56 @@ impl<'a> PanelPose<'a> {
             rotation: profile.rotation,
             width: profile.width,
             height: profile.height,
-            transform: profile.touch_transform,
+            mapping: profile.touch_transform.lower(),
         }
+    }
+
+    /// Composes the digitiser mapping against an orientation.
+    ///
+    /// The digitiser is fixed to the glass, so the profile's mapping is a
+    /// constant expressed in the frame named by `reference_rotation`. What
+    /// moves is the image. Composition is therefore by the difference between
+    /// the live orientation and that frame.
+    ///
+    /// Only a difference of zero or a half turn is supported. A quarter turn is
+    /// refused, and that refusal is load-bearing rather than cautious. The
+    /// driver swaps the clockwise and anticlockwise numbering under a hardware
+    /// configuration flag, `bDisplayBusWidth == 3`, which this board has not
+    /// been read for. That swap is an involution on the two portrait values and
+    /// fixes the other two, so it preserves a half turn exactly and inverts a
+    /// quarter turn. The differences accepted here are precisely the ones the
+    /// ambiguity cannot corrupt, and the ones refused are precisely the ones
+    /// where it decides the answer.
+    ///
+    /// Anyone adding quarter turn support has to read `bDisplayBusWidth` off
+    /// the device first. Without it this stops being fail-closed and becomes a
+    /// coin flip.
+    fn compose(profile: &DeviceProfile, rotation: u32) -> Result<TouchMapping, PoseError> {
+        let mapping = profile.touch_transform.lower();
+        match (rotation % 4 + 4 - profile.reference_rotation % 4) % 4 {
+            0 => Ok(mapping),
+            2 => Ok(mapping.rotated_180()),
+            _ => Err(PoseError::UnsupportedRotationDelta {
+                observed: rotation,
+                reference: profile.reference_rotation,
+            }),
+        }
+    }
+
+    /// A pose at an arbitrary orientation, for tests that have no device.
+    ///
+    /// Deliberately private to this crate's tests. `resolve` stays the only way
+    /// to build a pose from a device, and a public constructor taking any
+    /// rotation would read as landscape support that nobody has measured.
+    #[cfg(test)]
+    fn for_test(profile: &'a DeviceProfile, rotation: u32) -> Result<Self, PoseError> {
+        Ok(Self {
+            profile,
+            rotation,
+            width: profile.width,
+            height: profile.height,
+            mapping: Self::compose(profile, rotation)?,
+        })
     }
 
     /// Resolves a pose against a live framebuffer.
@@ -655,7 +822,7 @@ impl<'a> PanelPose<'a> {
             rotation: framebuffer.rotation,
             width: framebuffer.width,
             height: framebuffer.height,
-            transform: profile.touch_transform,
+            mapping: Self::compose(profile, framebuffer.rotation)?,
         })
     }
 
@@ -679,9 +846,15 @@ impl<'a> PanelPose<'a> {
         self.height
     }
 
+    /// The mapping that will actually run at this pose.
+    ///
+    /// Not the profile's declared [`TouchTransform`]. Reporting that instead
+    /// would print a mapping the code does not use as soon as the reader is
+    /// held the other way up, which is the shape of a defect this port has
+    /// already fixed once in `doctor`.
     #[must_use]
-    pub const fn touch_transform(&self) -> TouchTransform {
-        self.transform
+    pub const fn touch_mapping(&self) -> TouchMapping {
+        self.mapping
     }
 
     /// Maps a raw touch coordinate into display space at this pose.
@@ -693,23 +866,27 @@ impl<'a> PanelPose<'a> {
         {
             return None;
         }
-        let horizontal =
-            scale_touch_axis(raw_y, profile.touch_y_min, profile.touch_y_max, self.width)?;
-        let vertical =
-            scale_touch_axis(raw_x, profile.touch_x_min, profile.touch_x_max, self.height)?;
-        match self.transform {
-            TouchTransform::Transpose => Some((horizontal, vertical)),
-            TouchTransform::TransposeMirrorY => {
-                Some((horizontal, self.height.checked_sub(1 + vertical)?))
-            }
-            TouchTransform::TransposeMirrorX => {
-                Some((self.width.checked_sub(1 + horizontal)?, vertical))
-            }
-            TouchTransform::Direct => Some((
+        // The swap decides which raw axis feeds which display axis; the
+        // mirrors are then applied in display space, after scaling. Doing the
+        // mirrors before the scale rounds differently at the extremes.
+        let (mut x, mut y) = if self.mapping.swap_axes {
+            (
+                scale_touch_axis(raw_y, profile.touch_y_min, profile.touch_y_max, self.width)?,
+                scale_touch_axis(raw_x, profile.touch_x_min, profile.touch_x_max, self.height)?,
+            )
+        } else {
+            (
                 scale_touch_axis(raw_x, profile.touch_x_min, profile.touch_x_max, self.width)?,
                 scale_touch_axis(raw_y, profile.touch_y_min, profile.touch_y_max, self.height)?,
-            )),
+            )
+        };
+        if self.mapping.mirror_x {
+            x = self.width.checked_sub(1 + x)?;
         }
+        if self.mapping.mirror_y {
+            y = self.height.checked_sub(1 + y)?;
+        }
+        Some((x, y))
     }
 
     /// Converts a visible display coordinate back into raw touch space at this
@@ -720,33 +897,28 @@ impl<'a> PanelPose<'a> {
         if x >= self.width || y >= self.height {
             return None;
         }
-        let (raw_x, raw_y) = match self.transform {
-            TouchTransform::Transpose => (
+        // The exact inverse: undo the display-space mirrors first, then undo
+        // the swap. Any other order is a different transform.
+        let x = if self.mapping.mirror_x {
+            self.width.checked_sub(1 + x)?
+        } else {
+            x
+        };
+        let y = if self.mapping.mirror_y {
+            self.height.checked_sub(1 + y)?
+        } else {
+            y
+        };
+        let (raw_x, raw_y) = if self.mapping.swap_axes {
+            (
                 scale_display_axis(y, self.height, profile.touch_x_min, profile.touch_x_max)?,
                 scale_display_axis(x, self.width, profile.touch_y_min, profile.touch_y_max)?,
-            ),
-            TouchTransform::TransposeMirrorY => (
-                scale_display_axis(
-                    self.height.checked_sub(1 + y)?,
-                    self.height,
-                    profile.touch_x_min,
-                    profile.touch_x_max,
-                )?,
-                scale_display_axis(x, self.width, profile.touch_y_min, profile.touch_y_max)?,
-            ),
-            TouchTransform::TransposeMirrorX => (
-                scale_display_axis(y, self.height, profile.touch_x_min, profile.touch_x_max)?,
-                scale_display_axis(
-                    self.width.checked_sub(1 + x)?,
-                    self.width,
-                    profile.touch_y_min,
-                    profile.touch_y_max,
-                )?,
-            ),
-            TouchTransform::Direct => (
+            )
+        } else {
+            (
                 scale_display_axis(x, self.width, profile.touch_x_min, profile.touch_x_max)?,
                 scale_display_axis(y, self.height, profile.touch_y_min, profile.touch_y_max)?,
-            ),
+            )
         };
         if !(profile.touch_x_min..=profile.touch_x_max).contains(&raw_x)
             || !(profile.touch_y_min..=profile.touch_y_max).contains(&raw_y)
@@ -969,7 +1141,7 @@ fn compare_identity(blockers: &mut Vec<String>, name: &str, expected: &str, actu
 
 #[cfg(test)]
 mod tests {
-    use super::PanelPose;
+    use super::{PanelPose, PoseError, TouchMapping, TouchTransform, SUPPORTED_PROFILES};
 
     /// The Libra 2 at the pose it was measured in: page-turn buttons on the
     /// right, which this device reports as rotation 1. Every display
@@ -1072,6 +1244,156 @@ mod tests {
     /// round trip through `display_to_touch` proves only that the inverse is
     /// an inverse. An earlier version of this test asserted both and passed
     /// while the transform was inverted by the full height of the panel.
+    /// Every profile's declared mapping is written in the frame it was
+    /// measured at, until `validate` accepts more than one pose. Without this,
+    /// `reference_rotation` is a second copy of a fact with nothing checking
+    /// the two agree, which is the drift this log keeps recording.
+    #[test]
+    fn reference_rotation_matches_the_measured_rotation_on_every_profile() {
+        for profile in SUPPORTED_PROFILES {
+            assert_eq!(
+                profile.reference_rotation, profile.rotation,
+                "{} declares a reference frame it was not measured in",
+                profile.id
+            );
+        }
+    }
+
+    /// The composed mapping at the buttons-left pose, against the raw
+    /// coordinates physically measured there.
+    ///
+    /// The expected values are hand-derived and written as literals: each is
+    /// the rotate 1 answer for the same physical corner, turned through 180
+    /// degrees. Nothing under test computed them. A fixture whose expectations
+    /// come from running the composition asserts only that the code agrees with
+    /// itself.
+    ///
+    /// Each tap is named by both anchors, buttons and port, rather than by its
+    /// position in a table. Matching a rotate 3 tap against the wrong rotate 1
+    /// tap produces a plausible answer that is wrong by most of the panel, and
+    /// that mistake was made once while this fixture was being reviewed.
+    ///
+    /// Predicted before the panel was ever driven at this pose. The rendered
+    /// mark experiment in the port log is what confirms the premise underneath
+    /// it: the driver says the controller intends to rotate the image, and only
+    /// the panel says it does.
+    #[test]
+    fn libra_2_composed_touch_at_the_buttons_left_pose() {
+        let pose = PanelPose::for_test(&LIBRA_2_388, 3).expect("a half turn from the reference");
+        assert_eq!(
+            pose.touch_mapping(),
+            TouchMapping {
+                swap_axes: true,
+                mirror_x: true,
+                mirror_y: true,
+            },
+            "a half turn flips both mirrors and leaves the swap alone"
+        );
+
+        // Buttons left, port bottom edge. Raw values measured on the device.
+        let far_from_buttons_away_from_port = pose
+            .touch_to_display(1587, 72)
+            .expect("measured tap maps to the display");
+        let far_from_buttons_port_edge = pose
+            .touch_to_display(96, 75)
+            .expect("measured tap maps to the display");
+        let near_buttons_port_edge = pose
+            .touch_to_display(95, 1168)
+            .expect("measured tap maps to the display");
+
+        assert_eq!(far_from_buttons_away_from_port, (1191, 93));
+        assert_eq!(far_from_buttons_port_edge, (1188, 1583));
+        assert_eq!(near_buttons_port_edge, (96, 1584));
+
+        // The assertion that actually carries this test. The digitiser does not
+        // move, so one raw coordinate mapped at both poses must land at
+        // diametrically opposite display points. If the composition were the
+        // identity, which is the likeliest bug in this step, every corner
+        // assertion and every round trip below still passes and this fails.
+        let reference = PanelPose::reference(&LIBRA_2_388);
+        for raw in [(1587, 72), (96, 75), (95, 1168), (800, 600)] {
+            let upright = reference
+                .touch_to_display(raw.0, raw.1)
+                .expect("maps at the reference pose");
+            let turned = pose
+                .touch_to_display(raw.0, raw.1)
+                .expect("maps at the turned pose");
+            assert_eq!(
+                upright.0 + turned.0,
+                LIBRA_2_388.width - 1,
+                "x is not diametrically opposite for raw {raw:?}"
+            );
+            assert_eq!(
+                upright.1 + turned.1,
+                LIBRA_2_388.height - 1,
+                "y is not diametrically opposite for raw {raw:?}"
+            );
+        }
+
+        // The L walks the other way round at this pose. Stated as gradients so
+        // that a mirrored axis fails here even if the literals above are edited
+        // to match a broken implementation.
+        assert!(
+            far_from_buttons_port_edge.1 > far_from_buttons_away_from_port.1,
+            "increasing raw x must run up the display at this pose"
+        );
+        assert!(
+            far_from_buttons_port_edge.0 > near_buttons_port_edge.0,
+            "increasing raw y must run left across the display at this pose"
+        );
+    }
+
+    /// A quarter turn is refused rather than guessed. The clockwise and
+    /// anticlockwise numbering is board-dependent in the driver and this board
+    /// has not been read for it, so a quarter turn is the case where the
+    /// ambiguity decides the answer.
+    #[test]
+    fn a_quarter_turn_from_the_reference_is_refused() {
+        for rotation in [0, 2] {
+            assert_eq!(
+                PanelPose::for_test(&LIBRA_2_388, rotation),
+                Err(PoseError::UnsupportedRotationDelta {
+                    observed: rotation,
+                    reference: 1,
+                })
+            );
+        }
+    }
+
+    /// All four declared transforms survive the round trip through the
+    /// composable form, and a half turn is its own inverse.
+    #[test]
+    fn lowering_preserves_every_declared_transform() {
+        let lowered = [
+            (TouchTransform::Direct, (false, false, false)),
+            (TouchTransform::Transpose, (true, false, false)),
+            (TouchTransform::TransposeMirrorY, (true, false, true)),
+            (TouchTransform::TransposeMirrorX, (true, true, false)),
+        ];
+        for (transform, (swap_axes, mirror_x, mirror_y)) in lowered {
+            let mapping = transform.lower();
+            assert_eq!(
+                mapping,
+                TouchMapping {
+                    swap_axes,
+                    mirror_x,
+                    mirror_y
+                },
+                "{transform:?} lowered into the wrong frame"
+            );
+            assert_eq!(
+                mapping.rotated_180().rotated_180(),
+                mapping,
+                "two half turns are not the identity for {transform:?}"
+            );
+            assert_ne!(
+                mapping.rotated_180(),
+                mapping,
+                "a half turn changed nothing for {transform:?}"
+            );
+        }
+    }
+
     #[test]
     fn libra_2_touch_matches_three_physically_measured_taps() {
         // Tap 1, top-left corner of the image.
