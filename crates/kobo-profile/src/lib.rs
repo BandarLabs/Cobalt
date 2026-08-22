@@ -45,7 +45,15 @@ pub enum TouchTransform {
     /// Measured on the Kobo Libra 2 with three taps in an L, one leg per
     /// physical axis: moving down the left edge drives `raw_x` upward, moving
     /// right along the bottom drives `raw_y` upward, and neither runs
-    /// backwards.
+    /// backwards. Confirmed afterwards against the fixed transform, where a
+    /// tap in each of three corners reported that corner.
+    ///
+    /// The reader was held with its page-turn buttons on the right throughout,
+    /// which is the pose this device reports as `rotation: 1`. Buttons on the
+    /// left is `rotation: 3`, and the profile refuses that pose. Anyone
+    /// repeating the measurement has to say which side the buttons are on:
+    /// "portrait" alone names two orientations 180 degrees apart, and the
+    /// digitiser tells them apart even when the screen does not.
     Transpose,
     /// Axes exchanged and Y mirrored.
     ///
