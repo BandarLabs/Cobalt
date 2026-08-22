@@ -37,7 +37,8 @@ driver=$2
 status=0
 
 # The values kobo-abi's mxcfb module declares, which have to match the
-# driver's own NTX_WFM_MODE_* defines.
+# driver's own NTX_WFM_MODE_* defines. These are not in the uapi header, which
+# is why the driver source has to be read directly.
 for pair in INIT:0 DU:1 GC16:2 GC4:3 A2:4 GL16:5 GLR16:6 GLD16:7; do
     name=${pair%:*}
     want=${pair#*:}

@@ -612,15 +612,19 @@ pub mod mxcfb {
     // `mxc_epdc_v2_fb.c:204`. Note the ordering difference against hwtcon.
     //
     // These are not the numbers the panel controller itself uses. The driver
-    // treats the submitted value as an index into a table it builds from the
-    // loaded waveform file, and substitutes the hardware's own number before
-    // sending it on (`mxc_epdc_v2_fb.c:5305`). That is the deeper reason the
-    // two backends cannot share constants: hwtcon takes a final waveform
-    // number and this takes an index, and they happen to overlap in range.
+    // maps the submitted constant through a table it builds from the waveform
+    // file on the device, and sends the hardware's own index on in its place
+    // (`mxc_epdc_v2_fb.c:5305`).
     //
-    // Which hardware number each index maps to therefore depends on the
-    // waveform file on the device. `DU`, `GC16` and `GL16` are present in
-    // every known table; `GC4` is not dependable.
+    // hwtcon works the same way, through `struct hwtcon_waveform_modes`, so
+    // that indirection is not what separates the two backends. What separates
+    // them is duller: the two vendors chose different values for the same
+    // waveforms, and the ranges overlap, so a constant from the wrong one is
+    // accepted and drawn.
+    //
+    // One consequence of the table being built per device: which hardware
+    // waveform a constant reaches depends on the waveform file. `DU`, `GC16`
+    // and `GL16` are present in every known table; `GC4` is not dependable.
     pub const WAVEFORM_INIT: u32 = 0;
     pub const WAVEFORM_DU: u32 = 1;
     pub const WAVEFORM_GC16: u32 = 2;
