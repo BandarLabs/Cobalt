@@ -53,6 +53,16 @@ pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     kernel_release: "4.9.77",
 };
 
+/// The Clara Colour shares the Clara BW's panel, framebuffer and touch controller.
+/// The only difference is Kaleido screen displaying colors.
+pub const CLARA_COLOUR_393: DeviceProfile = DeviceProfile {
+    id: "clara-colour-393",
+    model: "Kobo Clara Colour",
+    device_code: 393,
+    serial_prefix: "N367",
+    ..CLARA_BW_391
+};
+
 pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
     id: "elipsa-2e-389",
     model: "Kobo Elipsa 2E",
@@ -104,14 +114,26 @@ pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
     kernel_release: "4.9.77",
 };
 
-pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[&CLARA_BW_391, &ELIPSA_2E_389];
+pub const SUPPORTED_PROFILES: &[&DeviceProfile] =
+    &[&CLARA_BW_391, &CLARA_COLOUR_393, &ELIPSA_2E_389];
 
+/// Picks the profile this device is, preferring identity over geometry.
+///
+/// Two readers can share a panel. Clara Colour reports the same as Clara BW.
+///
+/// The fallback to a geometry-only match is deliberate and read-only-safe.
 #[must_use]
 pub fn identify_profile(snapshot: &DeviceSnapshot) -> Option<&'static DeviceProfile> {
+    let geometry_matched = |profile: &&'static DeviceProfile| {
+        profile.validate(snapshot).readiness != Readiness::Rejected
+    };
     SUPPORTED_PROFILES
         .iter()
         .copied()
-        .find(|profile| profile.validate(snapshot).readiness != Readiness::Rejected)
+        .find(|profile| {
+            geometry_matched(profile) && profile.write_identity_blockers(snapshot).is_empty()
+        })
+        .or_else(|| SUPPORTED_PROFILES.iter().copied().find(geometry_matched))
 }
 
 pub const READ_ONLY_WRITE_BLOCKER: &str =
@@ -643,9 +665,70 @@ fn compare_identity(blockers: &mut Vec<String>, name: &str, expected: &str, actu
 #[cfg(test)]
 mod tests {
     use super::{
-        Bitfield, DeviceSnapshot, FramebufferSnapshot, IdentitySnapshot, Readiness, TouchSnapshot,
-        CLARA_BW_391, ELIPSA_2E_389,
+        identify_profile, Bitfield, DeviceSnapshot, FramebufferSnapshot, IdentitySnapshot,
+        Readiness, TouchSnapshot, CLARA_BW_391, CLARA_COLOUR_393, ELIPSA_2E_389,
     };
+
+    fn clara_bw_identity() -> IdentitySnapshot {
+        IdentitySnapshot {
+            serial_prefix: Some("N365".into()),
+            firmware_version: Some("4.45.23697".into()),
+            kernel_release: Some("4.9.77".into()),
+            device_code: Some(391),
+        }
+    }
+
+    fn clara_colour_identity() -> IdentitySnapshot {
+        IdentitySnapshot {
+            serial_prefix: Some("N367".into()),
+            firmware_version: Some("4.45.23697".into()),
+            kernel_release: Some("4.9.77".into()),
+            device_code: Some(393),
+        }
+    }
+
+    /// The panel the Clara BW and the Clara Colour share.
+    /// Only the identity distinguishes the two readers.
+    fn clara_panel_snapshot(identity: IdentitySnapshot) -> DeviceSnapshot {
+        let red = Bitfield {
+            offset: 0,
+            length: 8,
+            msb_right: 0,
+        };
+        DeviceSnapshot {
+            compatible: vec!["mediatek,mt8110".into(), "mediatek,mt8512".into()],
+            model: Some("MediaTek MT8110 board".into()),
+            framebuffer: Some(FramebufferSnapshot {
+                id: "hwtcon".into(),
+                width: 1072,
+                height: 1448,
+                virtual_width: 1072,
+                virtual_height: 1448,
+                x_offset: 0,
+                y_offset: 0,
+                bits_per_pixel: 32,
+                grayscale: 0,
+                stride: 4288,
+                memory_length: 6_243_328,
+                kind: 0,
+                visual: 2,
+                rotation: 3,
+                red,
+                green: Bitfield { offset: 8, ..red },
+                blue: Bitfield { offset: 16, ..red },
+                alpha: Bitfield { offset: 24, ..red },
+            }),
+            touch: Some(TouchSnapshot {
+                path: "/dev/input/event1".into(),
+                name: "cyttsp5_mt".into(),
+                x_min: 0,
+                x_max: 1447,
+                y_min: 0,
+                y_max: 1071,
+            }),
+            identity,
+        }
+    }
 
     #[test]
     fn touch_transform_matches_measured_corners() {
@@ -726,54 +809,58 @@ mod tests {
 
     #[test]
     fn measured_snapshot_remains_read_only_until_reviewed() {
-        let red = Bitfield {
-            offset: 0,
-            length: 8,
-            msb_right: 0,
-        };
-        let snapshot = DeviceSnapshot {
-            compatible: vec!["mediatek,mt8110".into(), "mediatek,mt8512".into()],
-            model: Some("MediaTek MT8110 board".into()),
-            framebuffer: Some(FramebufferSnapshot {
-                id: "hwtcon".into(),
-                width: 1072,
-                height: 1448,
-                virtual_width: 1072,
-                virtual_height: 1448,
-                x_offset: 0,
-                y_offset: 0,
-                bits_per_pixel: 32,
-                grayscale: 0,
-                stride: 4288,
-                memory_length: 6_243_328,
-                kind: 0,
-                visual: 2,
-                rotation: 3,
-                red,
-                green: Bitfield { offset: 8, ..red },
-                blue: Bitfield { offset: 16, ..red },
-                alpha: Bitfield { offset: 24, ..red },
-            }),
-            touch: Some(TouchSnapshot {
-                path: "/dev/input/event1".into(),
-                name: "cyttsp5_mt".into(),
-                x_min: 0,
-                x_max: 1447,
-                y_min: 0,
-                y_max: 1071,
-            }),
-            identity: IdentitySnapshot {
-                serial_prefix: Some("N365".into()),
-                firmware_version: Some("4.45.23697".into()),
-                kernel_release: Some("4.9.77".into()),
-                device_code: Some(391),
-            },
-        };
+        let snapshot = clara_panel_snapshot(clara_bw_identity());
         let report = CLARA_BW_391.validate(&snapshot);
         assert_eq!(report.readiness, Readiness::ReadOnlyMatched);
         assert!(report.mismatches.is_empty());
         assert!(!report.write_blockers.is_empty());
         assert!(CLARA_BW_391.write_identity_blockers(&snapshot).is_empty());
+    }
+
+    #[test]
+    fn the_shared_panel_is_told_apart_only_by_its_identity() {
+        // Two readers with the same geometry.
+        // Each accepts the other's panel with no mismatch at all.
+        let colour = clara_panel_snapshot(clara_colour_identity());
+        assert!(CLARA_BW_391.validate(&colour).mismatches.is_empty());
+        assert!(CLARA_COLOUR_393.validate(&colour).mismatches.is_empty());
+
+        // Identity is what separates them, and it is exact both ways.
+        assert!(CLARA_COLOUR_393.write_identity_blockers(&colour).is_empty());
+        assert!(!CLARA_BW_391.write_identity_blockers(&colour).is_empty());
+
+        let clara_bw = clara_panel_snapshot(clara_bw_identity());
+        assert!(CLARA_BW_391.write_identity_blockers(&clara_bw).is_empty());
+        assert!(!CLARA_COLOUR_393
+            .write_identity_blockers(&clara_bw)
+            .is_empty());
+    }
+
+    #[test]
+    fn identify_prefers_the_reader_whose_identity_matches_over_the_shared_panel() {
+        // Clara Colour must get its profile, not Clara BW's.
+        assert_eq!(
+            identify_profile(&clara_panel_snapshot(clara_colour_identity())).map(|p| p.id),
+            Some(CLARA_COLOUR_393.id)
+        );
+        assert_eq!(
+            identify_profile(&clara_panel_snapshot(clara_bw_identity())).map(|p| p.id),
+            Some(CLARA_BW_391.id)
+        );
+    }
+
+    #[test]
+    fn a_known_panel_on_an_unknown_identity_still_identifies_for_a_read() {
+        // Geometry is matched but no write because profile's identity is not matched.
+        let stranger = clara_panel_snapshot(IdentitySnapshot {
+            serial_prefix: Some("N999".into()),
+            firmware_version: Some("9.99.99999".into()),
+            kernel_release: Some("9.9.99".into()),
+            device_code: Some(999),
+        });
+        let identified = identify_profile(&stranger).expect("a geometry match remains");
+        assert!(identified.validate(&stranger).mismatches.is_empty());
+        assert!(!identified.write_identity_blockers(&stranger).is_empty());
     }
 
     #[test]
