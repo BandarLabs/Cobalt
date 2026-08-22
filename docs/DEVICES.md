@@ -166,7 +166,7 @@ running 4.45.23697, and it replaces the worse answer that came before it:
 password at all** and still does not give you `kobo deploy`.
 
 > [!NOTE]
-> If your Kobo is running a firmware older than **4.42** (such as 4.38), it does not have this built-in SSH toggle. You will need to manually install an SSH server (like Dropbear via NickelMenu) and manually copy your public key (from `~/.ssh/kobo_cobalt.pub`) into `/root/.ssh/authorized_keys` on the device yourself.
+> The firmware version this toggle first shipped in is not 4.42, and may be model-dependent: a Libra 2 on firmware 4.38.23697 ships `.kobo/ssh-disabled`, and renaming it brings up a working OpenSSH. If your firmware really lacks the toggle, install an SSH server manually (like Dropbear via NickelMenu) and copy your public key (from `~/.ssh/kobo_cobalt.pub`) into `authorized_keys` under root's home directory yourself — which is `/.ssh/authorized_keys` on readers whose `/etc/passwd` gives root a home of `/`, such as the i.MX6 models, not `/root/.ssh/`.
 
 ### Why Cobalt itself is not a `KoboRoot.tgz`
 
