@@ -20,7 +20,9 @@ new app can appear in Store without reinstalling or updating Cobalt.
 </p>
 
 > [!IMPORTANT]
-> Cobalt currently is tested only on the **Kobo Clara BW N365 (device code 391)**.
+> Cobalt is hardware-tested on the **Kobo Clara BW N365 (device code 391)** and
+> **Kobo Clara HD N249 (device code 376)** at the firmware versions recorded in
+> their strict profiles.
 > It is an independent project and is not affiliated with Rakuten Kobo.
 
 ## Features
@@ -31,7 +33,7 @@ new app can appear in Store without reinstalling or updating Cobalt.
 - Per-app capability checks for network, storage, audio, frontlight, and other
   device services
 - Declarative e-ink UI toolkit and browser simulator
-- Full and partial refresh planning for the 1072 x 1448 Clara BW panel
+- HWTCON and MXCFB v2 refresh backends for supported Kobo panels
 - Static ARMv7 binaries with no device-side package manager
 - Recovery-safe app and catalog transactions
 
@@ -213,8 +215,9 @@ by hardware and firmware identity, and a reboot returns to the stock reader.
 The first installation still modifies files on the user storage partition and
 is provided without warranty.
 
-Only the Clara BW profile has been tested. Do not install Cobalt on another
-model until that model has a reviewed and hardware-tested profile.
+Only the Clara BW and Clara HD profiles have been hardware-tested. Do not
+install Cobalt on another model until that model has a reviewed and
+hardware-tested profile.
 
 ## License
 

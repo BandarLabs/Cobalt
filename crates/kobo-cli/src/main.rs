@@ -98,10 +98,17 @@ root=/mnt/onboard/.adds/cobalt
 staged_key=\"$root/bootstrap/authorized_key\"
 if [ -s \"$staged_key\" ]; then
   umask 077
-  mkdir -p /root/.ssh
-  touch /root/.ssh/authorized_keys
-  chmod 700 /root/.ssh
-  chmod 600 /root/.ssh/authorized_keys
+  root_home=$(awk -F: '$1 == \"root\" { print $6; exit }' /etc/passwd)
+  case \"$root_home\" in
+    /) ssh_dir=/.ssh ;;
+    /root) ssh_dir=/root/.ssh ;;
+    *) echo \"refusing unknown root home: $root_home\" >&2; exit 1 ;;
+  esac
+  authorized_keys=\"$ssh_dir/authorized_keys\"
+  mkdir -p \"$ssh_dir\"
+  touch \"$authorized_keys\"
+  chmod 700 \"$ssh_dir\"
+  chmod 600 \"$authorized_keys\"
   key=$(head -n 1 \"$staged_key\")
   found=false
   while IFS= read -r known; do
@@ -109,9 +116,9 @@ if [ -s \"$staged_key\" ]; then
       found=true
       break
     fi
-  done < /root/.ssh/authorized_keys
+  done < \"$authorized_keys\"
   if [ \"$found\" = false ]; then
-    printf '%s\\n' \"$key\" >> /root/.ssh/authorized_keys
+    printf '%s\\n' \"$key\" >> \"$authorized_keys\"
   fi
   rm -f \"$staged_key\"
   sync
@@ -3161,8 +3168,13 @@ fn setup_device(arguments: &[String]) -> Result<(), String> {
     // the owner had to run the command twice to get the entry they asked for.
     // When this run is the one that staged that archive, the key goes into it.
     let staged_here = matches!(menu, Some(Ok(menu::Menu::Staged)));
-    let key = (options.enable_ssh && options.authorize_key)
-        .then(|| authorize_this_machine(&reader.volume, staged_here));
+    let key = (options.enable_ssh && options.authorize_key).then(|| {
+        authorize_this_machine(
+            &reader.volume,
+            staged_here,
+            authorize::KeyLocation::for_model(reader.model_code()),
+        )
+    });
     let ejected = ejected_or_explained(&reader.volume, options.eject);
 
     // A reader that was never ejected has not seen the install and will not be
@@ -3199,6 +3211,7 @@ fn setup_device(arguments: &[String]) -> Result<(), String> {
 fn authorize_this_machine(
     volume: &Path,
     staged_here: bool,
+    location: authorize::KeyLocation,
 ) -> Result<(authorize::Key, authorize::Staged), String> {
     let (public_key, key) = authorize::public_key()?;
     let slot = volume.join(authorize::KOBOROOT);
@@ -3211,10 +3224,10 @@ fn authorize_this_machine(
         }
         let existing =
             fs::read(&slot).map_err(|error| format!("read {}: {error}", slot.display()))?;
-        let merged = authorize::merge(&gunzip(&existing)?, &public_key)?;
+        let merged = authorize::merge(&gunzip(&existing)?, &public_key, location)?;
         return Ok((key, authorize::restage(volume, &compressed(&merged)?)?));
     }
-    let alone = authorize::archive(&public_key)?;
+    let alone = authorize::archive(&public_key, location)?;
     Ok((key, authorize::stage(volume, &compressed(&alone)?)?))
 }
 
@@ -5883,10 +5896,13 @@ mod tests {
     #[test]
     fn the_start_script_installs_the_staged_public_key_once() {
         let script = super::START_SCRIPT;
-        assert!(script.contains("/root/.ssh/authorized_keys"));
+        assert!(script.contains("awk -F: '$1 == \"root\""));
+        assert!(script.contains("/) ssh_dir=/.ssh"));
+        assert!(script.contains("/root) ssh_dir=/root/.ssh"));
+        assert!(script.contains("authorized_keys=\"$ssh_dir/authorized_keys\""));
         assert!(script.contains("while IFS= read -r known"));
         assert!(script.contains("if [ \"$known\" = \"$key\" ]"));
-        assert!(script.contains("printf '%s\\n' \"$key\" >> /root/.ssh/authorized_keys"));
+        assert!(script.contains("printf '%s\\n' \"$key\" >> \"$authorized_keys\""));
         assert!(script.contains("rm -f \"$staged_key\""));
     }
 

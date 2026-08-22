@@ -260,7 +260,7 @@ mod tests {
     };
     use kobo_abi::hwtcon;
     use kobo_hal::surface::{RegionPlacement, SurfaceGeometry};
-    use kobo_hal::{Rect, RefreshIntent, RefreshPlan};
+    use kobo_hal::{Rect, RefreshIntent, RefreshPlan, RefreshWaveform};
 
     const CLARA: SurfaceGeometry = SurfaceGeometry {
         width: 1072,
@@ -304,7 +304,7 @@ mod tests {
         )
         .expect("plan is valid");
         assert_eq!(
-            plan.update_data(0x4000_0002).update_mode,
+            plan.hwtcon_update_data(0x4000_0002).update_mode,
             hwtcon::UPDATE_MODE_PARTIAL
         );
     }
@@ -335,10 +335,10 @@ mod tests {
     #[test]
     fn only_the_fast_feedback_stage_uses_the_du_waveform() {
         for (stage, waveform) in [
-            (Stage::DisplayOnly, hwtcon::WAVEFORM_GC16),
-            (Stage::ReversiblePixels, hwtcon::WAVEFORM_GC16),
-            (Stage::ScreenSnapshot, hwtcon::WAVEFORM_GC16),
-            (Stage::FastFeedback, hwtcon::WAVEFORM_DU),
+            (Stage::DisplayOnly, RefreshWaveform::Gc16),
+            (Stage::ReversiblePixels, RefreshWaveform::Gc16),
+            (Stage::ScreenSnapshot, RefreshWaveform::Gc16),
+            (Stage::FastFeedback, RefreshWaveform::Du),
         ] {
             let plan = RefreshPlan::new(
                 FIXED_REGION,
@@ -373,7 +373,7 @@ mod tests {
             CLARA.height,
         )
         .expect("plan is valid");
-        let update = plan.update_data(0x4000_0001);
+        let update = plan.hwtcon_update_data(0x4000_0001);
         assert_eq!(update.waveform_mode, hwtcon::WAVEFORM_GC16);
         assert_eq!(update.update_mode, hwtcon::UPDATE_MODE_PARTIAL);
         assert_eq!(update.update_region.left, FIXED_REGION.x);

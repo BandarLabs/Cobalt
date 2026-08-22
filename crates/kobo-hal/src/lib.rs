@@ -50,6 +50,6 @@ pub use battery::Battery;
 pub use display::{DisplayError, DisplaySession, OWNER_UNLOCK_PHRASE};
 pub use observe::{observe_touch, ObserveError, TouchObservation};
 pub use probe::{probe_device, ProbeError};
-pub use refresh::{Rect, RefreshIntent, RefreshPlan, UpdateMarker};
+pub use refresh::{Rect, RefreshIntent, RefreshPlan, RefreshWaveform, UpdateMarker};
 pub use surface::{read_region, RegionPlacement, RegionSnapshot, SurfaceError, SurfaceGeometry};
 pub use touch::{InputEvent32, TouchDecoder, TouchEvent};

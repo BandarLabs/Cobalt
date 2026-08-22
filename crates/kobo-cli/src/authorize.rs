@@ -10,7 +10,7 @@
 //!
 //! The firmware already has the mechanism. A `KoboRoot.tgz` dropped into
 //! `.kobo/` is extracted as root at the next start, which is how NickelMenu
-//! installs itself and how this reaches `/root/.ssh/authorized_keys`.
+//! installs itself and how this reaches the root user's `authorized_keys`.
 //!
 //! This is the one thing in the CLI that writes to the root filesystem. The
 //! Cobalt payload deliberately cannot: [`crate::package::check`] refuses any
@@ -24,15 +24,55 @@ use std::process::Command;
 /// Where the key lives on this machine, matching `DEVICE_KEY_NAME`.
 pub const KEY_NAME: &str = "kobo_cobalt";
 
-/// Where the reader keeps the keys it will accept.
-const AUTHORIZED_KEYS: &str = "root/.ssh/authorized_keys";
+/// Where a firmware family keeps root's SSH configuration.
+///
+/// The older i.MX6 firmware used by the Clara HD gives root `/` as its home;
+/// newer `MediaTek` firmware gives it `/root`. OpenSSH resolves
+/// `AuthorizedKeysFile .ssh/authorized_keys` against that home, so putting the
+/// same key at a path that is correct for the other family silently locks the
+/// owner out as soon as the first-login password gate is completed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum KeyLocation {
+    FilesystemRoot,
+    RootDirectory,
+}
+
+impl KeyLocation {
+    #[must_use]
+    pub fn for_model(model: &str) -> Self {
+        if model == "N249" {
+            Self::FilesystemRoot
+        } else {
+            Self::RootDirectory
+        }
+    }
+
+    const fn directory(self) -> &'static str {
+        match self {
+            Self::FilesystemRoot => ".ssh",
+            Self::RootDirectory => "root/.ssh",
+        }
+    }
+
+    const fn authorized_keys(self) -> &'static str {
+        match self {
+            Self::FilesystemRoot => ".ssh/authorized_keys",
+            Self::RootDirectory => "root/.ssh/authorized_keys",
+        }
+    }
+}
 
 /// Every path this module ever stages, for the undo to recognise its own work.
 ///
 /// The directory is listed too, because an archive lists the folder it
 /// creates and an undo that did not know about it would decide the archive
 /// belonged to somebody else.
-pub const STAGED_MEMBERS: &[&str] = &["root/.ssh", AUTHORIZED_KEYS];
+pub const STAGED_MEMBERS: &[&str] = &[
+    ".ssh",
+    ".ssh/authorized_keys",
+    "root/.ssh",
+    "root/.ssh/authorized_keys",
+];
 
 /// What the archive is staged as, the single slot the firmware looks at.
 pub const KOBOROOT: &str = ".kobo/KoboRoot.tgz";
@@ -124,8 +164,8 @@ fn with_pub_suffix(private: &Path) -> PathBuf {
 /// # Errors
 ///
 /// When the key is not a single line of OpenSSH public key.
-pub fn archive(public_key: &str) -> Result<Vec<u8>, String> {
-    let (folders, files) = entries(public_key)?;
+pub fn archive(public_key: &str, location: KeyLocation) -> Result<Vec<u8>, String> {
+    let (folders, files) = entries(public_key, location)?;
     Ok(crate::package::archive(&folders, &files))
 }
 
@@ -138,8 +178,8 @@ pub fn archive(public_key: &str) -> Result<Vec<u8>, String> {
 ///
 /// When the key is not a single line of OpenSSH public key, or `base` is not
 /// an archive that ends.
-pub fn merge(base: &[u8], public_key: &str) -> Result<Vec<u8>, String> {
-    let (folders, files) = entries(public_key)?;
+pub fn merge(base: &[u8], public_key: &str, location: KeyLocation) -> Result<Vec<u8>, String> {
+    let (folders, files) = entries(public_key, location)?;
     crate::package::extend(base, &folders, &files)
 }
 
@@ -150,7 +190,10 @@ type Folder<'a> = (&'a str, u32);
 type File = (String, Vec<u8>, u32);
 
 /// The two entries, in the one place that decides what they are.
-fn entries(public_key: &str) -> Result<(Vec<Folder<'_>>, Vec<File>), String> {
+fn entries(
+    public_key: &str,
+    location: KeyLocation,
+) -> Result<(Vec<Folder<'_>>, Vec<File>), String> {
     let line = check_public_key(public_key)?;
     // A trailing newline because this file is a list, and a later key appended
     // to a file whose last line has no terminator joins onto it and breaks
@@ -159,8 +202,12 @@ fn entries(public_key: &str) -> Result<(Vec<Folder<'_>>, Vec<File>), String> {
     // sshd ignores a key file in a directory anyone else can enter, so the
     // folder's mode matters as much as the file's.
     Ok((
-        vec![("root/.ssh", 0o700)],
-        vec![(AUTHORIZED_KEYS.to_owned(), contents.into_bytes(), 0o600)],
+        vec![(location.directory(), 0o700)],
+        vec![(
+            location.authorized_keys().to_owned(),
+            contents.into_bytes(),
+            0o600,
+        )],
     ))
 }
 
@@ -236,13 +283,34 @@ fn write_slot(volume: &Path, archive: &[u8]) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        archive, check_public_key, merge, restage, stage, Staged, AUTHORIZED_KEYS, KOBOROOT,
-    };
+    use super::{archive, check_public_key, merge, restage, stage, KeyLocation, Staged, KOBOROOT};
     use crate::package::list;
 
     const SAMPLE: &str =
         "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJq0ZQ8vN0example0key0bytes kobo-cobalt";
+    const LOCATION: KeyLocation = KeyLocation::RootDirectory;
+    const AUTHORIZED_KEYS: &str = "root/.ssh/authorized_keys";
+
+    #[test]
+    fn a_clara_hd_key_goes_beside_the_root_filesystem() {
+        let built = archive(SAMPLE, KeyLocation::for_model("N249")).expect("an archive");
+        let paths: Vec<String> = list(&built)
+            .expect("a readable archive")
+            .into_iter()
+            .map(|entry| entry.path.trim_end_matches('/').to_owned())
+            .collect();
+        assert!(paths.contains(&".ssh".to_owned()), "{paths:?}");
+        assert!(
+            paths.contains(&".ssh/authorized_keys".to_owned()),
+            "{paths:?}"
+        );
+        assert!(!paths.iter().any(|path| path.starts_with("root/.ssh")));
+    }
+
+    #[test]
+    fn newer_readers_keep_their_key_under_root() {
+        assert_eq!(KeyLocation::for_model("N365"), KeyLocation::RootDirectory);
+    }
 
     #[test]
     fn a_real_public_key_is_accepted() {
@@ -276,7 +344,7 @@ mod tests {
 
     #[test]
     fn the_archive_holds_one_file_and_it_is_the_key() {
-        let built = archive(SAMPLE).expect("an archive");
+        let built = archive(SAMPLE, LOCATION).expect("an archive");
         let listed = list(&built).expect("a readable archive");
         let files: Vec<&crate::package::Listed> =
             listed.iter().filter(|entry| entry.kind == b'0').collect();
@@ -286,7 +354,7 @@ mod tests {
 
     #[test]
     fn the_key_file_is_readable_only_by_root() {
-        let built = archive(SAMPLE).expect("an archive");
+        let built = archive(SAMPLE, LOCATION).expect("an archive");
         let listed = list(&built).expect("a readable archive");
         let key = listed
             .iter()
@@ -299,7 +367,7 @@ mod tests {
 
     #[test]
     fn the_directory_is_private_too() {
-        let built = archive(SAMPLE).expect("an archive");
+        let built = archive(SAMPLE, LOCATION).expect("an archive");
         let listed = list(&built).expect("a readable archive");
         let folder = listed
             .iter()
@@ -310,7 +378,7 @@ mod tests {
 
     #[test]
     fn the_archive_writes_nothing_but_the_key() {
-        let built = archive(SAMPLE).expect("an archive");
+        let built = archive(SAMPLE, LOCATION).expect("an archive");
         for entry in list(&built).expect("a readable archive") {
             assert!(
                 entry.path.starts_with("root/.ssh"),
@@ -328,7 +396,7 @@ mod tests {
             &[("usr/local/nm", 0o755)],
             &[("usr/local/nm/doc".to_owned(), b"nickelmenu".to_vec(), 0o644)],
         );
-        let merged = merge(&base, SAMPLE).expect("a merged archive");
+        let merged = merge(&base, SAMPLE, LOCATION).expect("a merged archive");
         let paths: Vec<String> = list(&merged)
             .expect("a readable archive")
             .into_iter()
@@ -341,7 +409,7 @@ mod tests {
     #[test]
     fn a_merged_key_is_still_readable_only_by_root() {
         let base = crate::package::archive(&[], &[("a".to_owned(), b"b".to_vec(), 0o644)]);
-        let merged = merge(&base, SAMPLE).expect("a merged archive");
+        let merged = merge(&base, SAMPLE, LOCATION).expect("a merged archive");
         let listed = list(&merged).expect("a readable archive");
         let key = listed
             .iter()
@@ -354,8 +422,8 @@ mod tests {
     fn something_that_is_not_an_archive_is_not_merged_into() {
         // Better to report that the slot could not be reopened than to hand
         // the firmware a file it will extract as root and we cannot read.
-        assert!(merge(b"not a tar at all", SAMPLE).is_err());
-        assert!(merge(&[0u8; 512], SAMPLE).is_err());
+        assert!(merge(b"not a tar at all", SAMPLE, LOCATION).is_err());
+        assert!(merge(&[0u8; 512], SAMPLE, LOCATION).is_err());
     }
 
     #[test]
@@ -395,7 +463,7 @@ mod tests {
         };
         let compressed = std::fs::read(&path).expect("the release archive");
         let before = decompress(&compressed);
-        let after = merge(&before, SAMPLE).expect("a merged archive");
+        let after = merge(&before, SAMPLE, LOCATION).expect("a merged archive");
 
         // Everything the release itself wrote must be byte for byte where it
         // was. Only the terminator was replaced, so the archive up to it is
