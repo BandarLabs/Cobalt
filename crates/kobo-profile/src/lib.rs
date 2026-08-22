@@ -104,7 +104,81 @@ pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
     kernel_release: "4.9.77",
 };
 
-pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[&CLARA_BW_391, &ELIPSA_2E_389];
+/// Kobo Libra 2, codename `io`, an i.MX6SLL Mark 7 device driven by
+/// `mxc_epdc_fb` rather than by `hwtcon`.
+///
+/// Measured with `kobo doctor` against a device on firmware 4.38.23697, from a
+/// cold boot into Nickel with nothing else launched.
+///
+/// The geometry below is the portrait state. Six of these fields move when the
+/// reader is rotated: `width` and `height` exchange, `virtual_width` becomes
+/// 1696 and `virtual_height` 1280, `stride` becomes 6784, and `rotation`
+/// becomes 2. The alignment differs as well, 128 in portrait against 32 in
+/// landscape, so it is not a simple exchange. `memory_length` does not move,
+/// being allocated once at the larger of the two, and neither do the bitfields
+/// or the touch ranges, since the controller reports in panel coordinates
+/// whatever the screen is doing.
+///
+/// So this profile matches the device in portrait and rejects it in landscape.
+/// Nothing about that is specific to the Libra 2, since every Kobo rotates and
+/// nothing here sets the mode it wants: `FBIOGET_VSCREENINFO` is read and
+/// `FBIOPUT_VSCREENINFO` is never sent, so whatever the previous application
+/// left is what gets validated. Relaxing the comparison would not be a fix on
+/// its own, because `rotation` also selects the touch transform in
+/// `touch_to_display`, so a device accepted at the wrong rotation would have
+/// its touch input placed wrongly.
+pub const LIBRA_2_388: DeviceProfile = DeviceProfile {
+    id: "libra-2-388",
+    model: "Kobo Libra 2",
+    device_code: 388,
+    device_tree_model: "Freescale i.MX6SLL NTX Board",
+    compatible_fragments: &["fsl,imx6sll"],
+    framebuffer_id: "mxc_epdc_fb",
+    width: 1264,
+    height: 1680,
+    pixels_per_inch: 300,
+    virtual_width: 1280,
+    virtual_height: 1792,
+    x_offset: 0,
+    y_offset: 0,
+    bits_per_pixel: 32,
+    grayscale: 0,
+    stride: 5120,
+    memory_length: 9_175_040,
+    framebuffer_kind: 0,
+    framebuffer_visual: 2,
+    rotation: 1,
+    red: Bitfield {
+        offset: 16,
+        length: 8,
+        msb_right: 0,
+    },
+    green: Bitfield {
+        offset: 8,
+        length: 8,
+        msb_right: 0,
+    },
+    blue: Bitfield {
+        offset: 0,
+        length: 8,
+        msb_right: 0,
+    },
+    alpha: Bitfield {
+        offset: 24,
+        length: 8,
+        msb_right: 0,
+    },
+    touch_name: "Elan Touchscreen",
+    touch_x_min: 0,
+    touch_x_max: 1680,
+    touch_y_min: 0,
+    touch_y_max: 1264,
+    serial_prefix: "N418",
+    firmware_version: "4.38.23697",
+    kernel_release: "4.1.15-00868-g58a2758be07",
+};
+
+pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[&CLARA_BW_391, &ELIPSA_2E_389, &LIBRA_2_388];
 
 #[must_use]
 pub fn identify_profile(snapshot: &DeviceSnapshot) -> Option<&'static DeviceProfile> {
@@ -644,8 +718,109 @@ fn compare_identity(blockers: &mut Vec<String>, name: &str, expected: &str, actu
 mod tests {
     use super::{
         Bitfield, DeviceSnapshot, FramebufferSnapshot, IdentitySnapshot, Readiness, TouchSnapshot,
-        CLARA_BW_391, ELIPSA_2E_389,
+        CLARA_BW_391, ELIPSA_2E_389, LIBRA_2_388,
     };
+
+    /// The Libra 2 as `kobo doctor` read it from a cold boot into Nickel, in
+    /// portrait. `rotation` picks the orientation: 1 as measured in portrait,
+    /// 2 as measured with the reader turned.
+    fn measured_libra_2(rotation: u32) -> DeviceSnapshot {
+        let red = Bitfield {
+            offset: 16,
+            length: 8,
+            msb_right: 0,
+        };
+        let landscape = rotation == 2;
+        DeviceSnapshot {
+            compatible: vec!["fsl,imx6sll-lpddr3-arm2".into(), "fsl,imx6sll".into()],
+            model: Some("Freescale i.MX6SLL NTX Board".into()),
+            framebuffer: Some(FramebufferSnapshot {
+                id: "mxc_epdc_fb".into(),
+                width: if landscape { 1680 } else { 1264 },
+                height: if landscape { 1264 } else { 1680 },
+                virtual_width: if landscape { 1696 } else { 1280 },
+                virtual_height: if landscape { 1280 } else { 1792 },
+                x_offset: 0,
+                y_offset: 0,
+                bits_per_pixel: 32,
+                grayscale: 0,
+                stride: if landscape { 6784 } else { 5120 },
+                memory_length: 9_175_040,
+                kind: 0,
+                visual: 2,
+                rotation,
+                red,
+                green: Bitfield { offset: 8, ..red },
+                blue: Bitfield { offset: 0, ..red },
+                alpha: Bitfield { offset: 24, ..red },
+            }),
+            touch: Some(TouchSnapshot {
+                path: "/dev/input/event1".into(),
+                name: "Elan Touchscreen".into(),
+                x_min: 0,
+                x_max: 1680,
+                y_min: 0,
+                y_max: 1264,
+            }),
+            identity: IdentitySnapshot {
+                serial_prefix: Some("N418".into()),
+                firmware_version: Some("4.38.23697".into()),
+                kernel_release: Some("4.1.15-00868-g58a2758be07".into()),
+                device_code: Some(388),
+            },
+        }
+    }
+
+    #[test]
+    fn libra_2_matches_the_measured_portrait_device() {
+        let snapshot = measured_libra_2(1);
+        let report = LIBRA_2_388.validate(&snapshot);
+        assert!(report.mismatches.is_empty(), "{:?}", report.mismatches);
+        assert_eq!(report.readiness, Readiness::ReadOnlyMatched);
+        assert!(LIBRA_2_388.write_identity_blockers(&snapshot).is_empty());
+        assert_eq!(
+            super::identify_profile(&snapshot).map(|profile| profile.id),
+            Some("libra-2-388")
+        );
+    }
+
+    /// Rotating the reader moves six of the compared fields, so the same
+    /// hardware stops matching. This is recorded rather than desired: the
+    /// values come from the device, and the test exists so that the day
+    /// somebody fixes it, they have to say so here.
+    #[test]
+    fn libra_2_rejects_the_same_device_in_landscape() {
+        let snapshot = measured_libra_2(2);
+        let report = LIBRA_2_388.validate(&snapshot);
+        assert_eq!(report.readiness, Readiness::Rejected);
+        assert_eq!(report.mismatches.len(), 6);
+        assert!(super::identify_profile(&snapshot).is_none());
+        assert!(
+            LIBRA_2_388.write_identity_blockers(&snapshot).is_empty(),
+            "identity is unaffected by orientation"
+        );
+    }
+
+    #[test]
+    fn libra_2_touch_edges_stay_inside_the_panel_and_round_trip() {
+        for raw in [(0, 0), (0, 1264), (1680, 0), (1680, 1264)] {
+            let display = LIBRA_2_388
+                .touch_to_display(raw.0, raw.1)
+                .expect("measured Libra 2 edge maps to the display");
+            assert!(display.0 < LIBRA_2_388.width, "x escaped: {display:?}");
+            assert!(display.1 < LIBRA_2_388.height, "y escaped: {display:?}");
+        }
+        assert_eq!(LIBRA_2_388.touch_to_display(0, 0), Some((0, 1679)));
+        assert_eq!(LIBRA_2_388.touch_to_display(1680, 1264), Some((1263, 0)));
+        for display in [(0, 0), (1263, 0), (0, 1679), (1263, 1679), (632, 840)] {
+            let raw = LIBRA_2_388
+                .display_to_touch(display.0, display.1)
+                .expect("Libra 2 display point maps to the controller");
+            assert_eq!(LIBRA_2_388.touch_to_display(raw.0, raw.1), Some(display));
+        }
+        assert_eq!(LIBRA_2_388.display_to_touch(1264, 0), None);
+        assert_eq!(LIBRA_2_388.display_to_touch(0, 1680), None);
+    }
 
     #[test]
     fn touch_transform_matches_measured_corners() {
