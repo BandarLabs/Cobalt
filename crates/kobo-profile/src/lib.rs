@@ -11,7 +11,7 @@ use std::fmt;
 /// declared per profile and has to be measured with `kobo touch-probe` rather
 /// than derived.
 ///
-/// # Why this is only safe while `rotation` is matched exactly
+/// # Why this is only safe at rotations in the verified set
 ///
 /// A value here is a composition of two separate facts, and only one of them
 /// belongs in a profile. How the digitiser sits under the panel is fixed in
@@ -21,15 +21,18 @@ use std::fmt;
 /// upright reports 1, with every geometry field unchanged, and it flips as the
 /// reader is handled.
 ///
-/// So a variant here is correct only at the rotation it was measured at. That
-/// holds today because `validate` compares `rotation` exactly, and a session
-/// cannot open unless the device is in the state the profile was measured in.
-/// The refusal is doing double duty: it is the thing that keeps this field
-/// honest.
+/// So a variant here is correct as written only at the rotation it was
+/// measured at, named by `reference_rotation`. At any other rotation in the
+/// profile's `verified_rotations` it is composed with the half-turn delta by
+/// [`PanelPose`], which is what keeps this field honest now that `validate`
+/// accepts more than one pose. Both halves were confirmed on the Libra 2
+/// panel on 2026-08-22: the digitiser measured panel-fixed by corner at both
+/// poses, and rendered marks at rotation 3 appearing diametrically opposite
+/// their rotation 1 positions.
 ///
-/// Anyone relaxing the `rotation` comparison, which the orientation behaviour
-/// otherwise invites, has to replace this field at the same time. Touch would
-/// not fail loudly. It would land in the wrong place. As evidence that the
+/// Anyone widening a profile's `verified_rotations` has to measure the pose
+/// first, on the panel and on the digitiser both. Touch would not fail
+/// loudly. It would land in the wrong place. As evidence that the
 /// composition really is what is encoded here: the 180-degree case would need
 /// a transpose with both axes mirrored, and there is deliberately no such
 /// variant, because a profile has no business describing which way up someone
@@ -50,7 +53,8 @@ pub enum TouchTransform {
     ///
     /// The reader was held with its page-turn buttons on the right throughout,
     /// which is the pose this device reports as `rotation: 1`. Buttons on the
-    /// left is `rotation: 3`, and the profile refuses that pose. Anyone
+    /// left is `rotation: 3`, a half turn away, which the profile accepts by
+    /// composing this mapping with the delta — see [`PanelPose`]. Anyone
     /// repeating the measurement has to say which side the buttons are on:
     /// "portrait" alone names two orientations 180 degrees apart, and the
     /// digitiser tells them apart even when the screen does not.
@@ -105,6 +109,59 @@ impl TouchTransform {
             },
         }
     }
+}
+
+/// How a profile's pose geometry follows from its panel dimensions.
+///
+/// The pose fields a framebuffer reports — virtual width, virtual height and
+/// stride — are not independent hardware facts. They are computed by the
+/// display driver from the visible geometry, and a profile that stores them as
+/// constants is storing a photograph of one pose. This names the computation
+/// instead, per profile, so that validation can derive the expectation for any
+/// rotation in the verified set rather than matching one snapshot.
+///
+/// For every rotation a profile currently verifies the derived values are
+/// numerically identical to the constants the profile also carries, and the
+/// tests pin that. What changes is the kind of check: consistency with the
+/// driver's rule rather than identity with one photograph. A firmware that
+/// changed the driver's alignment would pass here where a constant would fail
+/// loudly; the conformance harness in `tools/abi/check-mxcfb.sh` is where that
+/// belongs instead.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GeometryRule {
+    /// Pose fields are exact-matched constants.
+    ///
+    /// The MediaTek devices keep this, for the same reason the touch transform
+    /// is per-profile: do not silently change a device nobody here can test.
+    Fixed,
+    /// The i.MX6 EPDC v2 derivation, read out of the vendor driver source
+    /// (`mxc_epdc_v2_fb.c`) rather than fitted to observations:
+    ///
+    /// - `xres_virtual = ALIGN(xres, 32)` — the alignment is in pixels, not
+    ///   bytes, per `:3567`; the driver's own comment says bytes and is wrong.
+    /// - `yres_virtual = ALIGN(yres, 128) * num_screens / page_scale` per
+    ///   `:3568`, where `page_scale` is `bits_per_pixel / 16` with 16 the
+    ///   driver's `default_bpp`. The two factors cancel at 32 bpp and nowhere
+    ///   else.
+    /// - `line_length = xres_virtual * bits_per_pixel / 8` per `:3215`.
+    ///
+    /// `memory_length` is deliberately not derived. The driver fixes it at
+    /// probe time from the panel's native mode, taking the larger product
+    /// across orientations, and never recomputes it, so it stays an
+    /// exact-matched constant on the profile.
+    MxcEpdcV2 {
+        /// The driver's `num_screens`, computed on the device from a
+        /// device-tree memory size. A named assumption rather than a constant
+        /// of the rule: two hardware revisions ship under the Libra 2's device
+        /// code, and a revision with a different value would move the virtual
+        /// height. Observation matches 2.
+        num_screens: u32,
+    },
+}
+
+/// `ALIGN(value, to)` as the kernel macro does it: round up to a multiple.
+const fn align_up(value: u32, to: u32) -> u32 {
+    value.div_ceil(to) * to
 }
 
 /// A touch mapping that can be composed with a live rotation.
@@ -206,6 +263,8 @@ pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     },
     touch_transform: TouchTransform::TransposeMirrorX,
     reference_rotation: 3,
+    verified_rotations: &[3],
+    geometry_rule: GeometryRule::Fixed,
     touch_name: "cyttsp5_mt",
     touch_x_min: 0,
     touch_x_max: 1447,
@@ -259,6 +318,8 @@ pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
     },
     touch_transform: TouchTransform::TransposeMirrorY,
     reference_rotation: 1,
+    verified_rotations: &[1],
+    geometry_rule: GeometryRule::Fixed,
     touch_name: "Elan Touchscreen",
     touch_x_min: 0,
     touch_x_max: 1872,
@@ -338,6 +399,12 @@ pub const LIBRA_2_388: DeviceProfile = DeviceProfile {
     },
     touch_transform: TouchTransform::Transpose,
     reference_rotation: 1,
+    // Rotation 3 was verified on the device on 2026-08-22: the digitiser
+    // measured panel-fixed by corner at both poses, and rendered marks at
+    // rotation 3 appeared diametrically opposite their rotation 1 positions,
+    // both exactly as the half-turn composition predicts.
+    verified_rotations: &[1, 3],
+    geometry_rule: GeometryRule::MxcEpdcV2 { num_screens: 2 },
     touch_name: "Elan Touchscreen",
     touch_x_min: 0,
     touch_x_max: 1680,
@@ -506,6 +573,19 @@ pub struct DeviceProfile {
     /// every profile and which answers a different question: `rotation` is a
     /// pose snapshot that moves as the reader is handled, and this does not.
     pub reference_rotation: u32,
+    /// The rotations this profile has been verified at, on the digitiser and
+    /// on the panel both.
+    ///
+    /// Validation accepts a device only at a rotation in this set, and
+    /// [`PanelPose::resolve`] refuses any other. Every entry must differ from
+    /// `reference_rotation` by zero or a half turn, because that is all
+    /// [`PanelPose`] can compose; a quarter turn entry would be refused at
+    /// resolve time anyway, loudly. Widening this set is a measurement, not an
+    /// edit: both the digitiser mapping and the image placement have to be
+    /// confirmed on the physical device at the new pose first.
+    pub verified_rotations: &'static [u32],
+    /// How the pose geometry fields follow from the panel dimensions.
+    pub geometry_rule: GeometryRule,
     pub touch_name: &'static str,
     pub touch_x_min: i32,
     pub touch_x_max: i32,
@@ -514,6 +594,14 @@ pub struct DeviceProfile {
     pub serial_prefix: &'static str,
     pub firmware_version: &'static str,
     pub kernel_release: &'static str,
+}
+
+/// Pose geometry derived by a profile's [`GeometryRule`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExpectedGeometry {
+    pub virtual_width: u32,
+    pub virtual_height: u32,
+    pub stride: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -592,6 +680,33 @@ impl DeviceProfile {
         }
     }
 
+    /// The pose geometry this profile expects a framebuffer to report.
+    ///
+    /// Derived from the panel dimensions by the profile's [`GeometryRule`],
+    /// or the stored constants under [`GeometryRule::Fixed`]. Every rotation
+    /// in the verified set is a half turn from the reference, which preserves
+    /// width and height, so the visible dimensions are the profile's own at
+    /// every rotation validation can accept.
+    #[must_use]
+    pub const fn expected_geometry(&self) -> ExpectedGeometry {
+        match self.geometry_rule {
+            GeometryRule::Fixed => ExpectedGeometry {
+                virtual_width: self.virtual_width,
+                virtual_height: self.virtual_height,
+                stride: self.stride,
+            },
+            GeometryRule::MxcEpdcV2 { num_screens } => {
+                let virtual_width = align_up(self.width, 32);
+                let page_scale = self.bits_per_pixel / 16;
+                ExpectedGeometry {
+                    virtual_width,
+                    virtual_height: align_up(self.height, 128) * num_screens / page_scale,
+                    stride: virtual_width * self.bits_per_pixel / 8,
+                }
+            }
+        }
+    }
+
     /// Returns the reasons this device may not be written to.
     ///
     /// Hardware geometry alone is not proof of identity, because another device
@@ -644,7 +759,10 @@ impl DeviceProfile {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PoseError {
     /// The device is in an orientation this profile has not been measured in.
-    UnverifiedRotation { observed: u32, expected: u32 },
+    UnverifiedRotation {
+        observed: u32,
+        verified: &'static [u32],
+    },
     /// The visible geometry disagrees with the profile at an orientation the
     /// profile does claim to describe.
     GeometryMismatch { field: &'static str, observed: u32, expected: u32 },
@@ -658,9 +776,9 @@ pub enum PoseError {
 impl fmt::Display for PoseError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UnverifiedRotation { observed, expected } => write!(
+            Self::UnverifiedRotation { observed, verified } => write!(
                 formatter,
-                "device is at rotation {observed}, and this profile is only measured at {expected}"
+                "device is at rotation {observed}, and this profile is only verified at {verified:?}"
             ),
             Self::GeometryMismatch {
                 field,
@@ -691,17 +809,16 @@ impl fmt::Display for PoseError {
 /// pairing of the two, resolved once, at the point where a live framebuffer is
 /// available.
 ///
-/// # What this does and does not do yet
+/// # What this does
 ///
-/// Today `resolve` accepts only the rotation the profile was measured at, so a
-/// pose carries exactly the values the profile does and nothing observable
-/// changes. That is deliberate. The transform can only be composed with live
-/// rotation once `validate` accepts more than one pose, and `validate` can only
-/// accept more than one pose once the transform composes. Doing either alone is
-/// worse than doing neither: composing early buys nothing, and relaxing early
-/// puts taps in the wrong place without failing.
+/// `resolve` accepts any rotation in the profile's verified set and composes
+/// the digitiser mapping with the half-turn delta from the reference frame.
+/// Composition landed before validation relaxed, in that order deliberately:
+/// composing early buys nothing but is safe, where relaxing early would have
+/// put taps in the wrong place without failing. Both poses were confirmed on
+/// the Libra 2 panel before validation was widened.
 ///
-/// This type exists so those two can land in that order. It is also the shape
+/// This type is also the shape
 /// live re-resolution would need, if the reader is ever to be turned over
 /// mid-session, which is out of scope here.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -780,8 +897,7 @@ impl<'a> PanelPose<'a> {
 
     /// Resolves a pose against a live framebuffer.
     ///
-    /// Refuses any orientation this profile cannot describe, which is
-    /// currently every orientation but the one it was measured in. The refusal
+    /// Refuses any orientation outside the profile's verified set. The refusal
     /// is the point: an unresolvable pose has to stay a refusal rather than
     /// fall back on the reference, since the fallback would be a transform
     /// wrong by the height of the panel, and wrong silently.
@@ -799,10 +915,10 @@ impl<'a> PanelPose<'a> {
         profile: &'a DeviceProfile,
         framebuffer: &FramebufferSnapshot,
     ) -> Result<Self, PoseError> {
-        if framebuffer.rotation != profile.rotation {
+        if !profile.verified_rotations.contains(&framebuffer.rotation) {
             return Err(PoseError::UnverifiedRotation {
                 observed: framebuffer.rotation,
-                expected: profile.rotation,
+                verified: profile.verified_rotations,
             });
         }
         for (field, observed, expected) in [
@@ -969,17 +1085,18 @@ fn validate_framebuffer(
     );
     compare(mismatches, "width", framebuffer.width, profile.width);
     compare(mismatches, "height", framebuffer.height, profile.height);
+    let expected = profile.expected_geometry();
     compare(
         mismatches,
         "virtual width",
         framebuffer.virtual_width,
-        profile.virtual_width,
+        expected.virtual_width,
     );
     compare(
         mismatches,
         "virtual height",
         framebuffer.virtual_height,
-        profile.virtual_height,
+        expected.virtual_height,
     );
     compare(
         mismatches,
@@ -994,7 +1111,7 @@ fn validate_framebuffer(
         profile.y_offset,
     );
     validate_pixel_format(profile, framebuffer, mismatches, blockers);
-    compare(mismatches, "stride", framebuffer.stride, profile.stride);
+    compare(mismatches, "stride", framebuffer.stride, expected.stride);
     compare(
         mismatches,
         "memory length",
@@ -1013,12 +1130,12 @@ fn validate_framebuffer(
         framebuffer.visual,
         profile.framebuffer_visual,
     );
-    compare(
-        mismatches,
-        "rotation",
-        framebuffer.rotation,
-        profile.rotation,
-    );
+    if !profile.verified_rotations.contains(&framebuffer.rotation) {
+        mismatches.push(format!(
+            "rotation: {} is not in this profile's verified set {:?}",
+            framebuffer.rotation, profile.verified_rotations
+        ));
+    }
 
     if framebuffer.virtual_width < framebuffer.width
         || framebuffer.virtual_height < framebuffer.height
@@ -1233,6 +1350,95 @@ mod tests {
             LIBRA_2_388.write_identity_blockers(&snapshot).is_empty(),
             "identity is unaffected by orientation"
         );
+    }
+
+    /// The same hardware with the buttons on the left, which it reports as
+    /// rotation 3 with every geometry field unchanged. Accepted since the pose
+    /// was verified on the device on 2026-08-22: digitiser measured
+    /// panel-fixed by corner, rendered marks landing diametrically opposite
+    /// their rotation 1 positions.
+    #[test]
+    fn libra_2_matches_the_same_device_buttons_left() {
+        let snapshot = measured_libra_2(3);
+        let report = LIBRA_2_388.validate(&snapshot);
+        assert!(report.mismatches.is_empty(), "{:?}", report.mismatches);
+        assert_eq!(report.readiness, Readiness::ReadOnlyMatched);
+        assert_eq!(
+            super::identify_profile(&snapshot).map(|profile| profile.id),
+            Some("libra-2-388")
+        );
+        let pose = PanelPose::resolve(
+            &LIBRA_2_388,
+            snapshot.framebuffer.as_ref().expect("a framebuffer"),
+        )
+        .expect("a verified pose resolves");
+        assert_eq!(
+            pose.touch_mapping(),
+            TouchMapping {
+                swap_axes: true,
+                mirror_x: true,
+                mirror_y: true,
+            },
+            "the resolved pose carries the composed mapping, not the reference one"
+        );
+    }
+
+    /// `resolve` at an unverified rotation is a loud refusal, not a fallback
+    /// to the reference mapping, which would be wrong by the height of the
+    /// panel and wrong silently.
+    #[test]
+    fn resolve_refuses_an_unverified_rotation() {
+        let snapshot = measured_libra_2(2);
+        let error = PanelPose::resolve(
+            &LIBRA_2_388,
+            snapshot.framebuffer.as_ref().expect("a framebuffer"),
+        )
+        .expect_err("landscape has never been measured");
+        assert_eq!(
+            error,
+            PoseError::UnverifiedRotation {
+                observed: 2,
+                verified: &[1, 3],
+            }
+        );
+    }
+
+    /// The derived geometry is numerically identical to the constants each
+    /// profile also stores, so relaxing validation to the derived expectation
+    /// accepted nothing the constants would have rejected.
+    #[test]
+    fn every_profile_derives_the_geometry_it_stores() {
+        for profile in SUPPORTED_PROFILES {
+            let expected = profile.expected_geometry();
+            assert_eq!(
+                (expected.virtual_width, expected.virtual_height, expected.stride),
+                (profile.virtual_width, profile.virtual_height, profile.stride),
+                "{} derives geometry it was not measured to have",
+                profile.id
+            );
+        }
+    }
+
+    /// Every verified rotation must be composable, meaning a half turn or
+    /// none from the reference frame. A quarter-turn entry would pass
+    /// validation and then fail at resolve, which is loud but later than it
+    /// needs to be.
+    #[test]
+    fn every_verified_rotation_is_composable_on_every_profile() {
+        for profile in SUPPORTED_PROFILES {
+            assert!(
+                profile.verified_rotations.contains(&profile.reference_rotation),
+                "{} does not verify its own reference frame",
+                profile.id
+            );
+            for rotation in profile.verified_rotations {
+                assert!(
+                    (rotation % 4 + 4 - profile.reference_rotation % 4) % 4 % 2 == 0,
+                    "{} verifies rotation {rotation}, a quarter turn from its reference",
+                    profile.id
+                );
+            }
+        }
     }
 
     /// Captured from three physical taps on the real Libra 2 with
