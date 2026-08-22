@@ -28,6 +28,19 @@ new app can appear in Store without reinstalling or updating Cobalt.
 > installing.
 > It is an independent project and is not affiliated with Rakuten Kobo.
 
+> [!TIP]
+> **Own one of these Kobo models? Help test its port.** No coding is required.
+> Read the thread and comment with your exact model, firmware, and whether you
+> can run attended tests:
+> [Libra Colour](https://github.com/BandarLabs/Cobalt/issues/28),
+> [Libra 2](https://github.com/BandarLabs/Cobalt/issues/29),
+> [Clara Colour](https://github.com/BandarLabs/Cobalt/issues/30),
+> [Aura](https://github.com/BandarLabs/Cobalt/issues/32), or
+> [Clara HD](https://github.com/BandarLabs/Cobalt/issues/33).
+> Start with read-only checks; run panel tests only against the commit named by
+> a maintainer. See
+> [Contributing](CONTRIBUTING.md#device-testing).
+
 ## Features
 
 - Signed Wi-Fi app installation, updates, and removal
@@ -206,6 +219,7 @@ cargo run -p kobo-cli -- run --sim --app sudoku
 
 Additional guides:
 
+- [Contributing](CONTRIBUTING.md)
 - [Developing Cobalt](docs/DEVELOPING.md)
 - [Working with devices](docs/DEVICES.md)
 - [Publishing apps](docs/APP_STORE.md)
