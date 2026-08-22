@@ -3,7 +3,7 @@ use std::env;
 use std::ffi::OsStr;
 use std::fmt::Write as _;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{IsTerminal, Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitCode, ExitStatus, Stdio};
@@ -5199,75 +5199,242 @@ fn report_trust_names<'a>(names: impl Iterator<Item = &'a str>) {
     }
 }
 
+/// Whether `--help` should paint stdout with ANSI colour.
+///
+/// Checks `NO_COLOR` environment variable: any value disables colours.
+/// Checks whether output is terminal.
+/// So `kobo --help | less`, a pipe, or a CI log stays plain text.
+fn help_is_coloured() -> bool {
+    env::var_os("NO_COLOR").is_none() && std::io::stdout().is_terminal()
+}
+
+/// The escape codes `--help` paints with, or empty strings when colour is off.
+struct Palette {
+    heading: &'static str,
+    command: &'static str,
+    reset: &'static str,
+}
+
+impl Palette {
+    fn detect() -> Self {
+        if help_is_coloured() {
+            Self {
+                heading: "\x1b[1;32m",
+                command: "\x1b[36m",
+                reset: "\x1b[0m",
+            }
+        } else {
+            Self {
+                heading: "",
+                command: "",
+                reset: "",
+            }
+        }
+    }
+}
+
+const COMMANDS: &[(&str, &str)] = &[
+    ("new <name>", "Create a Rust application"),
+    ("dev [--builtin] [address]", "Run this SDK app in the browser simulator"),
+    ("drive --script PATH", "Drive a running simulator and save PNG screenshots"),
+    ("shot [--device HOST]", "Save a PNG of the panel (device or simulator)"),
+    (
+        "record --device IP [--seconds N] [--fps F] [--out DIR]",
+        "Film the panel, read-only",
+    ),
+    ("present <app> --device IP [--seconds N]", "Run one app on the panel"),
+    ("stop --device IP", "Hand the panel back to the reader now"),
+    (
+        "build [--device]",
+        "Build host workspace or ARM safe doctor,\ndisabled kobod, and sample app",
+    ),
+    ("doctor [--device IP]", "Run read-only device diagnostics"),
+    ("devices [--subnet A.B.C]", "Find every reader on the local network"),
+    ("session --device IP", "Keep a device awake and on Wi-Fi while developing"),
+    (
+        "session --device IP --hold [minutes]",
+        "Keep it reachable for unattended testing",
+    ),
+    ("wait --device IP", "Block until a device answers again"),
+    (
+        "logs --device IP [--follow] [--lines N]",
+        "Read the runtime trace from the device",
+    ),
+    (
+        "shell --device IP [command ...]",
+        "Run one command on the reader, or open a\nsession when no command is given. Exits\nwith whatever the reader exited with",
+    ),
+    (
+        "touch-probe --device IP [--seconds N]",
+        "Watch touch read-only to check the transform",
+    ),
+    ("guard-test --device IP --confirm ...", "Prove the guardian restores the screen"),
+    ("package [--out PATH] [--folder PATH]", "Build the KoboRoot.tgz an owner copies"),
+    ("app-key --seed PATH", "Print the Ed25519 public key for a release seed"),
+    (
+        "app-bundle --manifest PATH --binary PATH --seed PATH --out PATH",
+        "Build one signed, pathless .cobalt-app package",
+    ),
+    (
+        "app-catalog --seed PATH --out PATH --signature PATH --entry PACKAGE HTTPS_URL ...",
+        "Build and sign the public app catalog",
+    ),
+    ("app-list --registry PATH", "List validated Store app packages as JSON"),
+    (
+        "app-check --registry PATH [--package PACKAGE] [--out PATH]",
+        "Build and verify every registered Store app",
+    ),
+    (
+        "app-release --registry PATH --seed PATH --out PATH --base-url HTTPS_URL [--prebuilt-dir PATH | --artifact-dir PATH]",
+        "Build and sign every registered Store app",
+    ),
+    (
+        "setup [--volume PATH] [--undo] [--enable-ssh] [--no-key]",
+        "Prepare a reader over USB; root SSH is an\nexplicit opt-in, and it installs this\nmachine's key unless --no-key",
+    ),
+    ("deploy --device IP [--package PATH]", "Install over Wi-Fi, no reboot"),
+    (
+        "secret set <name> [--from PATH] --device IP",
+        "Install a credential an app can name",
+    ),
+    ("secret list --device IP", "Name the installed credentials, never their values"),
+    ("secret remove <name> --device IP", "Take one credential off the reader"),
+    (
+        "trust set <name> [--from PATH] --device IP",
+        "Install an owner TLS root the runtime\nverifies against",
+    ),
+    ("trust list --device IP", "Name the installed trust roots"),
+    ("trust remove <name> --device IP", "Take one trust root off the reader"),
+    (
+        "inspect <package>",
+        "List a package and prove it writes nothing\nto the rootfs",
+    ),
+    ("verify <arm-binary>", "Verify static ARM hard-float format"),
+    ("run --sim [--app NAME]", "Run SDK, IPC, daemon and one app on host"),
+    ("run", "Device execution remains safety-gated"),
+    ("version", "Print version"),
+];
+
+/// Writes one help row, `  invocation   description`.
+/// Command word might be coloured.
+/// An invocation too long to leave room for its description drops the
+/// description to the next line.
+fn write_command(
+    out: &mut String,
+    palette: &Palette,
+    invocation: &str,
+    description: &str,
+    column: usize,
+) {
+    // Colour only the leading command words the reader types verbatim
+    // ("secret set"), never the placeholders or flags that follow. A command
+    // word starts with a lowercase letter and holds only letters and hyphens,
+    // so "--registry" and "<name>" end the coloured run.
+    let mut verb_end = 0;
+    for (index, token) in invocation.split(' ').enumerate() {
+        let is_word = token
+            .bytes()
+            .next()
+            .is_some_and(|byte| byte.is_ascii_lowercase())
+            && token
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte == b'-');
+        if !is_word {
+            break;
+        }
+        verb_end += if index == 0 {
+            token.len()
+        } else {
+            token.len() + 1
+        };
+    }
+    let (verb, rest) = invocation.split_at(verb_end);
+
+    let indent = " ".repeat(column);
+    let mut lines = description.split('\n');
+    let first = lines.next().unwrap_or("");
+    if 2 + invocation.len() < column {
+        let gap = " ".repeat(column - 2 - invocation.len());
+        let _ = writeln!(
+            out,
+            "  {}{verb}{}{rest}{gap}{first}",
+            palette.command, palette.reset
+        );
+    } else {
+        let _ = writeln!(out, "  {}{verb}{}{rest}", palette.command, palette.reset);
+        let _ = writeln!(out, "{indent}{first}");
+    }
+    for line in lines {
+        let _ = writeln!(out, "{indent}{line}");
+    }
+}
+
+/// The two commands that only exist with `--features device-write`.
+///
+/// They are named here rather than in [`COMMANDS`] so a binary without the
+/// feature never advertises a verb it would reject. When the feature is on,
+/// they render through [`write_command`] like every other command, so they are
+/// coloured and aligned the same way.
+#[cfg(feature = "device-write")]
+const WRITING_COMMANDS: &[(&str, &str)] = &[
+    (
+        "tap --device IP X,Y [MS:X,Y ...]",
+        "Tap the real panel through the real touch node.\nSeveral steps run in one upload, timed on the\ndevice, which is how an application is driven.",
+    ),
+    (
+        "smoke-display --device IP --confirm ...",
+        "Attended display checks, one at a time",
+    ),
+];
+
 fn print_help() {
-    // Two commands write to the panel and are compiled out without the
-    // feature, so they are named here only when they are really present.
-    // Advertising a command this binary would reject is worse than saying
-    // nothing, and it is the sort of drift a help string invites.
-    #[cfg(feature = "device-write")]
-    const WRITING: &str = "\n\nBuilt with --features device-write, so also:\n  \
-         tap --device IP X,Y [MS:X,Y ...]  Tap the real panel through the real touch node.\n  \
-         \x20                              Several steps run in one upload, timed on the\n  \
-         \x20                              device, which is how an application is driven.\n  \
-         smoke-display --device IP --confirm ...  Attended display checks, one at a time";
-    #[cfg(not(feature = "device-write"))]
-    const WRITING: &str = "\n\nBuilt without --features device-write, so the commands that write \
-         to a panel\n(tap, smoke-display) are not in this binary.";
-    println!(
-        "Kobo application SDK\n\n\
-         Usage: kobo <command>\n\n\
-         Commands:\n\
-           new <name>             Create a Rust application\n\
-           dev [--builtin] [address]  Run this SDK app in the browser simulator\n\
-           drive --script PATH    Drive a running simulator and save PNG screenshots\n\
-           shot [--device HOST]   Save a PNG of the panel (device or simulator)\n\
-           record --device IP [--seconds N] [--fps F] [--out DIR]  Film the panel, read-only\n\
-           present <app> --device IP [--seconds N]  Run one app on the panel\n\
-           stop --device IP       Hand the panel back to the reader now\n\
-           build [--device]       Build host workspace or ARM safe doctor, disabled kobod, and sample app\n\
-           doctor [--device IP]   Run read-only device diagnostics\n\
-           devices [--subnet A.B.C]  Find every reader on the local network\n\
-           session --device IP    Keep a device awake and on Wi-Fi while developing\n\
-           session --device IP --hold [minutes]  Keep it reachable for unattended testing\n\
-           wait --device IP       Block until a device answers again\n\
-           logs --device IP [--follow] [--lines N]  Read the runtime trace from the device\n\
-           shell --device IP [command ...]  Run one command on the reader, or open a\n\
-           \x20                             session when no command is given. Exits with\n\
-           \x20                             whatever the reader exited with\n\
-           touch-probe --device IP [--seconds N]  Watch touch read-only to check the transform\n\
-           guard-test --device IP --confirm ...   Prove the guardian restores the screen\n\
-           package [--out PATH] [--folder PATH]  Build the KoboRoot.tgz an owner copies\n\
-           app-key --seed PATH     Print the Ed25519 public key for a release seed\n\
-           app-bundle --manifest PATH --binary PATH --seed PATH --out PATH\n\
-                                   Build one signed, pathless .cobalt-app package\n\
-           app-catalog --seed PATH --out PATH --signature PATH --entry PACKAGE HTTPS_URL ...\n\
-                                   Build and sign the public app catalog\n\
-           app-list --registry PATH\n\
-                                   List validated Store app packages as JSON\n\
-           app-check --registry PATH [--package PACKAGE] [--out PATH]\n\
-                                   Build and verify every registered Store app\n\
-           app-release --registry PATH --seed PATH --out PATH --base-url HTTPS_URL [--prebuilt-dir PATH | --artifact-dir PATH]\n\
-                                   Build and sign every registered Store app\n\
-           setup [--volume PATH] [--undo] [--enable-ssh] [--no-key]  Prepare a reader\n\
-                                   over USB; root SSH is an explicit opt-in, and it\n\
-                                   installs this machine's key unless --no-key\n\
-           deploy --device IP [--package PATH]   Install over Wi-Fi, no reboot\n\
-           secret set <name> [--from PATH] --device IP   Install a credential an app can name\n\
-           secret list --device IP   Name the installed credentials, never their values\n\
-           secret remove <name> --device IP   Take one credential off the reader\n\
-           trust set <name> [--from PATH] --device IP   Install an owner TLS root the runtime verifies against\n\
-           trust list --device IP   Name the installed trust roots\n\
-           trust remove <name> --device IP   Take one trust root off the reader\n\
-           inspect <package>       List a package and prove it writes nothing to the rootfs\n\
-           verify <arm-binary>     Verify static ARM hard-float format\n\
-           run --sim [--app NAME]  Run SDK, IPC, daemon and one app on host\n\
-           run                    Device execution remains safety-gated\n\
-           version                Print version\n\n\
-         Every command that takes --device also takes -s, and these names\n\
-         work if they are the ones you already know:\n\
-           logcat -> logs   install -> deploy   wait-for-device -> wait\n\
-           sim, simulator -> dev   init, create -> new{WRITING}"
+    // Where descriptions line up. Short invocations pad to this column; longer
+    // ones would leave too little room, so their description drops a line and
+    // continuation lines indent here too.
+    const COLUMN: usize = 28;
+
+    let palette = Palette::detect();
+    let mut out = String::from("Kobo application SDK\n\n");
+    let _ = writeln!(
+        out,
+        "{}Usage:{} kobo <command>\n",
+        palette.heading, palette.reset
     );
+    let _ = writeln!(out, "{}Commands:{}", palette.heading, palette.reset);
+    for (invocation, description) in COMMANDS {
+        write_command(&mut out, &palette, invocation, description, COLUMN);
+    }
+    let _ = write!(
+        out,
+        "\n{}Aliases:{} every command that takes --device also takes -s, and these\nnames work if they are the ones you already know:\n  logcat -> logs   install -> deploy   wait-for-device -> wait\n  sim, simulator -> dev   init, create -> new",
+        palette.heading, palette.reset,
+    );
+
+    // The panel-writing commands are compiled out without the feature, so they
+    // are named only when they are really present. Advertising a command this
+    // binary would reject is worse than saying nothing.
+    #[cfg(feature = "device-write")]
+    {
+        let _ = write!(
+            out,
+            "\n\n{}Built with --features device-write, so also:{}\n",
+            palette.heading, palette.reset
+        );
+        for (invocation, description) in WRITING_COMMANDS {
+            write_command(&mut out, &palette, invocation, description, COLUMN);
+        }
+    }
+    #[cfg(not(feature = "device-write"))]
+    {
+        let _ = write!(
+            out,
+            "\n\nBuilt without --features device-write, so the commands that write to a panel\n(tap, smoke-display) are not in this binary."
+        );
+    }
+
+    // write_command ends each row with a newline, so the device-write branch
+    // leaves a trailing one; trim it so println! adds exactly one.
+    println!("{}", out.trim_end_matches('\n'));
 }
 
 #[cfg(test)]
