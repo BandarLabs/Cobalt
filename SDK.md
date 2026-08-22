@@ -48,8 +48,8 @@ fn main() {
 
 ## 0. Your own application, end to end
 
-Before anything else: Cobalt is hardware-tested on the exact Clara BW, Elipsa
-2E, Clara HD, Libra 2, and Libra Colour identities in the
+Before anything else: Cobalt is hardware-tested on the exact Clara BW, Clara
+Colour, Elipsa 2E, Clara HD, Libra 2, and Libra Colour identities in the
 [device support matrix](docs/DEVICES.md#device-support-matrix). It is
 AGPL-3.0 licensed and comes with no warranty. Every device write is gated on an
 exact hardware match; do not install it on an unlisted identity or firmware.

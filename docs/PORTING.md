@@ -2,11 +2,11 @@
 
 Part of [Cobalt](../README.md).
 
-Cobalt selects a device profile at runtime. The Clara BW, Elipsa 2E,
-Clara HD, Libra 2, and Libra Colour profiles are fully hardware-tested at
-their recorded identity and
-firmware boundaries. The current status and exact boundaries are recorded in
-the [device support matrix](DEVICES.md#device-support-matrix).
+Cobalt selects a device profile at runtime. The Clara BW, Clara Colour,
+Elipsa 2E, Clara HD, Libra 2, and Libra Colour profiles are fully
+hardware-tested at their recorded identity and firmware boundaries. The
+current status and exact boundaries are recorded in the
+[device support matrix](DEVICES.md#device-support-matrix).
 
 Display and synthetic-touch write entry points demand an exact hardware and
 firmware match, so an unknown reader is refused rather than guessed at. A

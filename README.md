@@ -29,7 +29,8 @@ new app can appear in Store without reinstalling or updating Cobalt.
 > [!IMPORTANT]
 > The **Kobo Clara BW N365 (device code 391)**, **Kobo Elipsa 2E N605 (device
 > code 389)**, **Kobo Clara HD N249 (device code 376)**, **Kobo Libra 2 N418
-> (device code 388)**, and **Kobo Libra Colour N428 (device code 390)** are
+> (device code 388)**, **Kobo Clara Colour N367 (device code 393)**, and
+> **Kobo Libra Colour N428 (device code 390)** are
 > fully hardware-tested on the exact firmware and kernel versions in the
 > support matrix. See the
 > [device support matrix](docs/DEVICES.md#device-support-matrix) before
@@ -39,9 +40,7 @@ new app can appear in Store without reinstalling or updating Cobalt.
 > [!TIP]
 > **Own an unsupported Kobo? Help test its port.** No coding is required.
 > Read the thread and comment with your exact model, firmware, and whether you
-> can run attended tests:
-> [Clara Colour](https://github.com/BandarLabs/Cobalt/issues/30)
-> or [Aura](https://github.com/BandarLabs/Cobalt/issues/32).
+> can run attended tests: [Aura](https://github.com/BandarLabs/Cobalt/issues/32).
 > Start with read-only checks; run panel tests only against the commit named by
 > a maintainer. See
 > [Contributing](CONTRIBUTING.md#device-testing).
