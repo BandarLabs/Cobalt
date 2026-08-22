@@ -714,7 +714,7 @@ fn describe_key(key: crate::authorize::Key, staged: crate::authorize::Staged) ->
     match staged {
         crate::authorize::Staged::Written | crate::authorize::Staged::Merged => format!(
             "{origin} will be accepted by the reader after it restarts. This replaces \
-             /root/.ssh/authorized_keys rather than adding to it, because that file is on \
+             root's authorized_keys rather than adding to it, because that file is on \
              the root filesystem and USB cannot read it back. Another machine that had \
              access will need to run this again from its own desk."
         ),
@@ -808,9 +808,10 @@ boot. To undo all of it: 'kobo setup --undo'.
 /// What was written, when the reader already had the plugin.
 const KEY_SCOPE: &str = "
 One archive was staged for the firmware to extract as root at the next restart:
-this machine's public key, and nothing else. It becomes
-/root/.ssh/authorized_keys, which is the file the reader's SSH server reads to
-decide who may log in. Everything else was written to the book partition. To
+this machine's public key, and nothing else. It becomes root's authorized_keys
+(written to both /root/.ssh and /.ssh, so it is found whether the reader keeps
+root's home at /root or at /), which is the file the reader's SSH server reads
+to decide who may log in. Everything else was written to the book partition. To
 undo all of it: 'kobo setup --undo'.
 ";
 
@@ -819,8 +820,9 @@ const PLUGIN_AND_KEY_SCOPE: &str = "
 One archive was staged for the firmware to extract as root at the next restart,
 holding two things, because the firmware extracts one archive and both had to
 travel in it: NickelMenu, checked first to contain nothing but its own plugin
-and its own documentation, and this machine's public key, which becomes
-/root/.ssh/authorized_keys and is the file the reader's SSH server reads to
+and its own documentation, and this machine's public key, which becomes root's
+authorized_keys (written to both /root/.ssh and /.ssh, so it is found whether
+root's home is /root or /) and is the file the reader's SSH server reads to
 decide who may log in. Everything else was written to the book partition.
 NickelMenu removes itself if it fails to start, so it cannot leave the reader
 unable to boot. To undo all of it: 'kobo setup --undo'.
