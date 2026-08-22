@@ -131,7 +131,7 @@ impl TouchTransform {
 pub enum GeometryRule {
     /// Pose fields are exact-matched constants.
     ///
-    /// The MediaTek devices keep this, for the same reason the touch transform
+    /// The `MediaTek` devices keep this, for the same reason the touch transform
     /// is per-profile: do not silently change a device nobody here can test.
     Fixed,
     /// The i.MX6 EPDC v2 derivation, read out of the vendor driver source
@@ -425,9 +425,6 @@ pub fn identify_profile(snapshot: &DeviceSnapshot) -> Option<&'static DeviceProf
         .find(|profile| profile.validate(snapshot).readiness != Readiness::Rejected)
 }
 
-pub const READ_ONLY_WRITE_BLOCKER: &str =
-    "write profile is intentionally incomplete until read-only doctor output is reviewed";
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Bitfield {
     pub offset: u32,
@@ -663,7 +660,12 @@ impl DeviceProfile {
             None => mismatches.push("touch probe unavailable".to_owned()),
         }
 
-        blockers.push(READ_ONLY_WRITE_BLOCKER.to_owned());
+        // The write gate and the verdict used to be strangers: an
+        // unconditional "intentionally incomplete" blocker made WriteReady
+        // unreachable for every profile, while the write path consulted
+        // write_identity_blockers() separately and wrote anyway. The verdict
+        // now reports the condition the write path actually enforces.
+        blockers.extend(self.write_identity_blockers(snapshot));
 
         let readiness = if !mismatches.is_empty() {
             Readiness::Rejected
@@ -1327,7 +1329,7 @@ mod tests {
         let snapshot = measured_libra_2(1);
         let report = LIBRA_2_388.validate(&snapshot);
         assert!(report.mismatches.is_empty(), "{:?}", report.mismatches);
-        assert_eq!(report.readiness, Readiness::ReadOnlyMatched);
+        assert_eq!(report.readiness, Readiness::WriteReady);
         assert!(LIBRA_2_388.write_identity_blockers(&snapshot).is_empty());
         assert_eq!(
             super::identify_profile(&snapshot).map(|profile| profile.id),
@@ -1362,7 +1364,7 @@ mod tests {
         let snapshot = measured_libra_2(3);
         let report = LIBRA_2_388.validate(&snapshot);
         assert!(report.mismatches.is_empty(), "{:?}", report.mismatches);
-        assert_eq!(report.readiness, Readiness::ReadOnlyMatched);
+        assert_eq!(report.readiness, Readiness::WriteReady);
         assert_eq!(
             super::identify_profile(&snapshot).map(|profile| profile.id),
             Some("libra-2-388")
@@ -1737,7 +1739,7 @@ mod tests {
     }
 
     #[test]
-    fn measured_snapshot_remains_read_only_until_reviewed() {
+    fn a_fully_identified_device_is_write_ready_and_a_strange_firmware_is_not() {
         let red = Bitfield {
             offset: 0,
             length: 8,
@@ -1782,10 +1784,19 @@ mod tests {
             },
         };
         let report = CLARA_BW_391.validate(&snapshot);
+        assert_eq!(report.readiness, Readiness::WriteReady);
+        assert!(report.mismatches.is_empty());
+        assert!(report.write_blockers.is_empty());
+        assert!(CLARA_BW_391.write_identity_blockers(&snapshot).is_empty());
+
+        // The same hardware on unreviewed firmware is still matched, but the
+        // verdict drops back to read-only: geometry is not proof of identity.
+        let mut updated = snapshot;
+        updated.identity.firmware_version = Some("4.99.99999".into());
+        let report = CLARA_BW_391.validate(&updated);
         assert_eq!(report.readiness, Readiness::ReadOnlyMatched);
         assert!(report.mismatches.is_empty());
-        assert!(!report.write_blockers.is_empty());
-        assert!(CLARA_BW_391.write_identity_blockers(&snapshot).is_empty());
+        assert_eq!(report.write_blockers.len(), 1);
     }
 
     #[test]
