@@ -10,12 +10,13 @@
 //!
 //! The firmware already has the mechanism. A `KoboRoot.tgz` dropped into
 //! `.kobo/` is extracted as root at the next start, which is how NickelMenu
-//! installs itself and how this reaches `/root/.ssh/authorized_keys`.
+//! installs itself and how this reaches the reader's `authorized_keys`.
 //!
 //! This is the one thing in the CLI that writes to the root filesystem. The
 //! Cobalt payload deliberately cannot: [`crate::package::check`] refuses any
 //! path outside the install folder. So this module is separate, is named for
-//! what it does, ships exactly two entries, and says so in the report.
+//! what it does, ships nothing but this machine's public key, and says so in
+//! the report.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -24,15 +25,24 @@ use std::process::Command;
 /// Where the key lives on this machine, matching `DEVICE_KEY_NAME`.
 pub const KEY_NAME: &str = "kobo_cobalt";
 
-/// Where the reader keeps the keys it will accept.
-const AUTHORIZED_KEYS: &str = "root/.ssh/authorized_keys";
+/// Where the reader keeps the keys it could accept.
+/// Both /root/ and / can be root's home directory.
+const AUTHORIZED_KEYS: &[&str] = &["root/.ssh/authorized_keys", ".ssh/authorized_keys"];
+
+/// The directories those files live in, with the mode sshd requires.
+const KEY_DIRS: &[(&str, u32)] = &[("root/.ssh", 0o700), (".ssh", 0o700)];
 
 /// Every path this module ever stages, for the undo to recognise its own work.
 ///
-/// The directory is listed too, because an archive lists the folder it
-/// creates and an undo that did not know about it would decide the archive
+/// The directories are listed too, because an archive lists the folders it
+/// creates and an undo that did not know about them would decide the archive
 /// belonged to somebody else.
-pub const STAGED_MEMBERS: &[&str] = &["root/.ssh", AUTHORIZED_KEYS];
+pub const STAGED_MEMBERS: &[&str] = &[
+    "root/.ssh",
+    "root/.ssh/authorized_keys",
+    ".ssh",
+    ".ssh/authorized_keys",
+];
 
 /// What the archive is staged as, the single slot the firmware looks at.
 pub const KOBOROOT: &str = ".kobo/KoboRoot.tgz";
@@ -149,19 +159,20 @@ type Folder<'a> = (&'a str, u32);
 /// A file the archive carries: where it goes, what is in it, and its mode.
 type File = (String, Vec<u8>, u32);
 
-/// The two entries, in the one place that decides what they are.
+/// The entries, in the one place that decides what they are: the key at each
+/// place a reader's sshd might read it from, and the folders that hold them.
 fn entries(public_key: &str) -> Result<(Vec<Folder<'_>>, Vec<File>), String> {
     let line = check_public_key(public_key)?;
     // A trailing newline because this file is a list, and a later key appended
     // to a file whose last line has no terminator joins onto it and breaks
     // both.
     let contents = format!("{line}\n");
-    // sshd ignores a key file in a directory anyone else can enter, so the
-    // folder's mode matters as much as the file's.
-    Ok((
-        vec![("root/.ssh", 0o700)],
-        vec![(AUTHORIZED_KEYS.to_owned(), contents.into_bytes(), 0o600)],
-    ))
+    let folders = KEY_DIRS.to_vec();
+    let files = AUTHORIZED_KEYS
+        .iter()
+        .map(|path| ((*path).to_owned(), contents.clone().into_bytes(), 0o600))
+        .collect();
+    Ok((folders, files))
 }
 
 /// Refuses anything that is not one OpenSSH public key.
@@ -275,37 +286,46 @@ mod tests {
     }
 
     #[test]
-    fn the_archive_holds_one_file_and_it_is_the_key() {
+    fn the_archive_holds_the_key_at_each_location() {
         let built = archive(SAMPLE).expect("an archive");
         let listed = list(&built).expect("a readable archive");
-        let files: Vec<&crate::package::Listed> =
-            listed.iter().filter(|entry| entry.kind == b'0').collect();
-        assert_eq!(files.len(), 1, "{listed:?}");
-        assert_eq!(files[0].path, AUTHORIZED_KEYS);
+        let files: Vec<&str> = listed
+            .iter()
+            .filter(|entry| entry.kind == b'0')
+            .map(|entry| entry.path.as_str())
+            .collect();
+        assert_eq!(files.len(), AUTHORIZED_KEYS.len(), "{listed:?}");
+        for path in AUTHORIZED_KEYS {
+            assert!(files.contains(path), "{path} missing from {files:?}");
+        }
     }
 
     #[test]
-    fn the_key_file_is_readable_only_by_root() {
+    fn every_key_file_is_readable_only_by_root() {
         let built = archive(SAMPLE).expect("an archive");
         let listed = list(&built).expect("a readable archive");
-        let key = listed
-            .iter()
-            .find(|entry| entry.path == AUTHORIZED_KEYS)
-            .expect("the key");
         // sshd refuses a key file that anyone else can read, so a wrong mode
         // here is a reader that silently keeps asking for a password.
-        assert_eq!(key.mode, 0o600, "authorized_keys was mode {:o}", key.mode);
+        for path in AUTHORIZED_KEYS {
+            let key = listed
+                .iter()
+                .find(|entry| entry.path == *path)
+                .unwrap_or_else(|| panic!("the key at {path}"));
+            assert_eq!(key.mode, 0o600, "{path} was mode {:o}", key.mode);
+        }
     }
 
     #[test]
-    fn the_directory_is_private_too() {
+    fn every_directory_is_private_too() {
         let built = archive(SAMPLE).expect("an archive");
         let listed = list(&built).expect("a readable archive");
-        let folder = listed
-            .iter()
-            .find(|entry| entry.path.trim_end_matches('/') == "root/.ssh")
-            .expect("the folder");
-        assert_eq!(folder.mode, 0o700, "root/.ssh was mode {:o}", folder.mode);
+        for (dir, _) in super::KEY_DIRS {
+            let folder = listed
+                .iter()
+                .find(|entry| entry.path.trim_end_matches('/') == *dir)
+                .unwrap_or_else(|| panic!("the folder {dir}"));
+            assert_eq!(folder.mode, 0o700, "{dir} was mode {:o}", folder.mode);
+        }
     }
 
     #[test]
@@ -313,8 +333,8 @@ mod tests {
         let built = archive(SAMPLE).expect("an archive");
         for entry in list(&built).expect("a readable archive") {
             assert!(
-                entry.path.starts_with("root/.ssh"),
-                "{} is outside the ssh folder",
+                entry.path.starts_with("root/.ssh") || entry.path.starts_with(".ssh"),
+                "{} is outside the ssh folders",
                 entry.path
             );
         }
@@ -335,7 +355,9 @@ mod tests {
             .map(|entry| entry.path.trim_end_matches('/').to_owned())
             .collect();
         assert!(paths.contains(&"usr/local/nm/doc".to_owned()), "{paths:?}");
-        assert!(paths.contains(&AUTHORIZED_KEYS.to_owned()), "{paths:?}");
+        for key in AUTHORIZED_KEYS {
+            assert!(paths.contains(&(*key).to_owned()), "{paths:?}");
+        }
     }
 
     #[test]
@@ -343,11 +365,13 @@ mod tests {
         let base = crate::package::archive(&[], &[("a".to_owned(), b"b".to_vec(), 0o644)]);
         let merged = merge(&base, SAMPLE).expect("a merged archive");
         let listed = list(&merged).expect("a readable archive");
-        let key = listed
-            .iter()
-            .find(|entry| entry.path == AUTHORIZED_KEYS)
-            .expect("the key");
-        assert_eq!(key.mode, 0o600, "authorized_keys was mode {:o}", key.mode);
+        for path in AUTHORIZED_KEYS {
+            let key = listed
+                .iter()
+                .find(|entry| entry.path == *path)
+                .unwrap_or_else(|| panic!("the key at {path}"));
+            assert_eq!(key.mode, 0o600, "{path} was mode {:o}", key.mode);
+        }
     }
 
     #[test]
@@ -423,10 +447,12 @@ mod tests {
         for member in crate::menu::ARCHIVE_MEMBERS {
             assert!(listing.contains(member), "{member} was lost\n{listing}");
         }
-        assert!(
-            listing.contains(AUTHORIZED_KEYS),
-            "the key did not arrive\n{listing}"
-        );
+        for key in AUTHORIZED_KEYS {
+            assert!(
+                listing.contains(key),
+                "the key did not arrive at {key}\n{listing}"
+            );
+        }
         assert!(
             listing.contains("136056"),
             "libnm.so changed size\n{listing}"
