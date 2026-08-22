@@ -104,7 +104,58 @@ pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
     kernel_release: "4.9.77",
 };
 
-pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[&CLARA_BW_391, &ELIPSA_2E_389];
+pub const CLARA_HD_376: DeviceProfile = DeviceProfile {
+    id: "clara-hd-376",
+    model: "Kobo Clara HD",
+    device_code: 376,
+    device_tree_model: "Freescale i.MX6SLL NTX Board",
+    compatible_fragments: &["fsl,imx6sll-lpddr3-arm2", "fsl,imx6sll"],
+    framebuffer_id: "mxc_epdc_fb",
+    width: 1072,
+    height: 1448,
+    pixels_per_inch: 300,
+    virtual_width: 1088,
+    virtual_height: 1536,
+    x_offset: 0,
+    y_offset: 0,
+    bits_per_pixel: 32,
+    grayscale: 0,
+    stride: 4352,
+    memory_length: 6_782_976,
+    framebuffer_kind: 0,
+    framebuffer_visual: 2,
+    rotation: 3,
+    red: Bitfield {
+        offset: 16,
+        length: 8,
+        msb_right: 0,
+    },
+    green: Bitfield {
+        offset: 8,
+        length: 8,
+        msb_right: 0,
+    },
+    blue: Bitfield {
+        offset: 0,
+        length: 8,
+        msb_right: 0,
+    },
+    alpha: Bitfield {
+        offset: 24,
+        length: 8,
+        msb_right: 0,
+    },
+    touch_name: "cyttsp5_mt",
+    touch_x_min: 0,
+    touch_x_max: 1447,
+    touch_y_min: 0,
+    touch_y_max: 1071,
+    serial_prefix: "N249",
+    firmware_version: "4.38.23697",
+    kernel_release: "4.1.15-00136-g12655eaaef89",
+};
+
+pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[&CLARA_BW_391, &ELIPSA_2E_389, &CLARA_HD_376];
 
 #[must_use]
 pub fn identify_profile(snapshot: &DeviceSnapshot) -> Option<&'static DeviceProfile> {

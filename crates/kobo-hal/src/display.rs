@@ -14,7 +14,7 @@
 use crate::probe::{probe_device, ProbeError};
 use crate::refresh::{Rect, RefreshPlan};
 use crate::surface::{self, RegionSnapshot, SurfaceError, SurfaceGeometry};
-use kobo_abi::hwtcon;
+use kobo_abi::{hwtcon, mxc_epdc};
 use kobo_profile::{DeviceProfile, DeviceSnapshot};
 use std::fmt;
 use std::fs::{File, OpenOptions};
@@ -193,13 +193,23 @@ impl DisplaySession {
         // Validate the region against this exact surface before the kernel sees it.
         surface::RegionPlacement::new(self.geometry, plan.region)?;
         let marker = unique_marker()?;
-        let mut update = plan.update_data(marker);
-        hwtcon::send_update(&self.framebuffer, &mut update)?;
-        let mut wait = hwtcon::HwtconUpdateMarkerData {
-            update_marker: marker,
-            collision_test: 0,
-        };
-        hwtcon::wait_for_update_complete(&self.framebuffer, &mut wait)?;
+        if self.profile.framebuffer_id == "mxc_epdc_fb" {
+            let mut update = plan.epdc_update_data(marker);
+            mxc_epdc::send_update(&self.framebuffer, &mut update)?;
+            let mut wait = mxc_epdc::MxcfbUpdateMarkerData {
+                update_marker: marker,
+                collision_test: 0,
+            };
+            mxc_epdc::wait_for_update_complete(&self.framebuffer, &mut wait)?;
+        } else {
+            let mut update = plan.hwtcon_update_data(marker);
+            hwtcon::send_update(&self.framebuffer, &mut update)?;
+            let mut wait = hwtcon::HwtconUpdateMarkerData {
+                update_marker: marker,
+                collision_test: 0,
+            };
+            hwtcon::wait_for_update_complete(&self.framebuffer, &mut wait)?;
+        }
         Ok(())
     }
 }
