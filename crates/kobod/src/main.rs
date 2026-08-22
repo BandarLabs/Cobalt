@@ -120,8 +120,8 @@ fn touch_test(seconds: &str) -> Result<(), Box<dyn Error>> {
     let seconds: u64 = seconds.parse().unwrap_or(20).min(120);
 
     let snapshot = kobo_hal::probe_device()?;
-    let profile = kobo_profile::identify_profile(&snapshot)
-        .ok_or_else(|| "no supported hardware profile matched this device".to_owned())?;
+    let profile = kobo_profile::write_ready_profile(&snapshot)
+        .map_err(|blockers| format!("device write refused: {}", blockers.join("; ")))?;
     let touch_path = snapshot
         .touch
         .as_ref()

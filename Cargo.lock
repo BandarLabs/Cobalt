@@ -708,9 +708,7 @@ dependencies = [
 name = "kobo-smoke"
 version = "0.2.6"
 dependencies = [
- "kobo-abi",
  "kobo-hal",
- "kobo-profile",
 ]
 
 [[package]]
