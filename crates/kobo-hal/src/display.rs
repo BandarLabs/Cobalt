@@ -57,9 +57,9 @@ pub enum AttendedSmokeStage {
 impl AttendedSmokeStage {
     /// Every stage there is, so a test can walk them.
     ///
-    /// Written out rather than derived, and kept beside [`Self::intents`],
-    /// which matches exhaustively: adding a stage breaks the match, and the
-    /// compiler asks what waveforms it drives.
+    /// A hand-written list is only as good as the memory of whoever adds a
+    /// stage, so [`Self::position`] exists to make forgetting a compile
+    /// error rather than a silently narrower test.
     #[cfg(test)]
     const ALL: [Self; 5] = [
         Self::DisplayOnly,
@@ -68,6 +68,23 @@ impl AttendedSmokeStage {
         Self::FastFeedback,
         Self::WaitTiming,
     ];
+
+    /// Where the stage sits in [`Self::ALL`].
+    ///
+    /// The match is exhaustive, so a new variant does not compile until it is
+    /// given a position, and the test below proves each position holds the
+    /// stage that claims it. Together those two facts are what make `ALL`
+    /// complete rather than merely plausible.
+    #[cfg(test)]
+    const fn position(self) -> usize {
+        match self {
+            Self::DisplayOnly => 0,
+            Self::ReversiblePixels => 1,
+            Self::ScreenSnapshot => 2,
+            Self::FastFeedback => 3,
+            Self::WaitTiming => 4,
+        }
+    }
 
     const fn intent(self) -> crate::refresh::RefreshIntent {
         match self {
@@ -81,7 +98,11 @@ impl AttendedSmokeStage {
     /// [`Self::intent`] answers for a single update; `WaitTiming` submits
     /// three, one per offered waveform, and an invariant stated over
     /// [`Self::intent`] alone would miss two of them.
-    #[cfg(test)]
+    ///
+    /// Not `#[cfg(test)]`: [`smoke_wait_timing`] reads this list to decide
+    /// what it submits, which is the point. A declaration the behaviour does
+    /// not consult is a second copy of the truth, and the test walking it
+    /// would then be checking the copy rather than the device path.
     const fn intents(self) -> &'static [crate::refresh::RefreshIntent] {
         use crate::refresh::RefreshIntent::{FastFeedback, QualityContent, TextContent};
         match self {
@@ -450,11 +471,9 @@ fn smoke_wait_timing(session: &DisplaySession) -> Result<String, DisplayError> {
     let mut lines = String::from("update  intent   waveform  translated  submit_us  wait_us\n");
     let mut run = || -> Result<(), DisplayError> {
         let mut update = 0_usize;
-        for intent in [
-            crate::refresh::RefreshIntent::QualityContent,
-            crate::refresh::RefreshIntent::TextContent,
-            crate::refresh::RefreshIntent::FastFeedback,
-        ] {
+        // The stage's own declaration, so that what the invariant test walks
+        // and what the panel is actually asked for cannot drift apart.
+        for intent in AttendedSmokeStage::WaitTiming.intents().iter().copied() {
             let plan = smoke_plan_with_intent(session, SMOKE_PATCH_REGION, intent)?;
             for _ in 0..WAIT_TIMING_ROUNDS {
                 for snapshot in [&inverted, &original] {
@@ -501,6 +520,14 @@ fn smoke_wait_timing(session: &DisplaySession) -> Result<String, DisplayError> {
     ))
 }
 
+/// Whether a smoke update asks for a full, cleaning refresh.
+///
+/// It does not, and the invariant test asserts the consequence: every smoke
+/// update is partial. Shared with the test rather than written twice, so that
+/// flipping it here fails there instead of quietly widening what an
+/// owner-attended stage is allowed to do to the panel.
+const SMOKE_UPDATE_IS_FULL: bool = false;
+
 fn smoke_plan_with_intent(
     session: &DisplaySession,
     region: Rect,
@@ -509,7 +536,7 @@ fn smoke_plan_with_intent(
     RefreshPlan::new(
         region,
         intent,
-        false,
+        SMOKE_UPDATE_IS_FULL,
         session.geometry().width,
         session.geometry().height,
     )
@@ -611,7 +638,7 @@ mod tests {
     use super::{
         unique_marker, AttendedSmokeStage, DisplayError, DisplaySession, Rect, RefreshPlan,
         WritePolicy, ATTENDED_SMOKE_UNLOCK_PHRASE, OWNER_UNLOCK_PHRASE, SMOKE_FIXED_REGION,
-        SMOKE_PATCH_REGION, SMOKE_VISIBLE_HOLD,
+        SMOKE_PATCH_REGION, SMOKE_UPDATE_IS_FULL, SMOKE_VISIBLE_HOLD,
     };
     use crate::surface::{RegionPlacement, SurfaceGeometry};
     use kobo_abi::{hwtcon, mxcfb};
@@ -808,6 +835,18 @@ mod tests {
     }
 
     #[test]
+    fn every_smoke_stage_is_in_the_walked_set() {
+        // `position` matches exhaustively, so a new stage does not compile
+        // until it declares where it sits; this proves the seat is really
+        // its own. Without it, `ALL` could omit a stage and every invariant
+        // below would quietly stop covering it.
+        assert_eq!(AttendedSmokeStage::ALL.len(), 5);
+        for (index, stage) in AttendedSmokeStage::ALL.iter().enumerate() {
+            assert_eq!(stage.position(), index, "{stage:?} is not where it claims");
+        }
+    }
+
+    #[test]
     fn hal_owned_smoke_stages_use_only_partial_reversible_updates() {
         for profile in kobo_profile::SUPPORTED_PROFILES {
             let backend = crate::refresh::Backend::from_framebuffer_id(profile.framebuffer_id)
@@ -833,7 +872,7 @@ mod tests {
                     let plan = RefreshPlan::new(
                         SMOKE_FIXED_REGION,
                         *intent,
-                        false,
+                        SMOKE_UPDATE_IS_FULL,
                         profile.width,
                         profile.height,
                     )
