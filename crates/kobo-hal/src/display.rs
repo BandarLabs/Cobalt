@@ -20,6 +20,7 @@ use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read};
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 /// The exact phrase an owner must supply to open a write session.
 pub const OWNER_UNLOCK_PHRASE: &str = "OWNER_ATTENDED_DISPLAY_WRITE";
@@ -207,6 +208,20 @@ impl DisplaySession {
     ///
     /// Returns an error when the region is invalid or either ioctl fails.
     pub fn refresh(&self, plan: RefreshPlan) -> Result<(), DisplayError> {
+        self.refresh_timed(plan).map(|_| ())
+    }
+
+    /// [`Self::refresh`], instrumented.
+    ///
+    /// Measures the submit and wait ioctls separately and reads back the
+    /// waveform the driver actually selected: both vendors' `SEND_UPDATE`
+    /// requests are in-out, and the driver copies the translated waveform mode
+    /// back into the struct. The regular [`Self::refresh`] path discards it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the region is invalid or either ioctl fails.
+    pub fn refresh_timed(&self, plan: RefreshPlan) -> Result<RefreshTiming, DisplayError> {
         // Validate the region against this exact surface before the kernel sees it.
         surface::RegionPlacement::new(self.geometry, plan.region)?;
         let marker = unique_marker()?;
@@ -216,28 +231,56 @@ impl DisplaySession {
         // the interface, and a device whose wait struct grew a field would
         // otherwise be served a MediaTek ioctl through an i.MX session with
         // nothing in the code to make that visible.
-        match self.backend {
+        let submitted_waveform = plan.waveform(self.backend);
+        let (translated_waveform, submit, wait) = match self.backend {
             Backend::Hwtcon => {
                 let mut update = plan.hwtcon_update_data(marker);
+                let submit_started = Instant::now();
                 hwtcon::send_update(&self.framebuffer, &mut update)?;
+                let submit = submit_started.elapsed();
                 let mut wait = hwtcon::HwtconUpdateMarkerData {
                     update_marker: marker,
                     collision_test: 0,
                 };
+                let wait_started = Instant::now();
                 hwtcon::wait_for_update_complete(&self.framebuffer, &mut wait)?;
+                (update.waveform_mode, submit, wait_started.elapsed())
             }
             Backend::Mxcfb => {
                 let mut update = plan.mxcfb_update_data(marker);
+                let submit_started = Instant::now();
                 mxcfb::send_update(&self.framebuffer, &mut update)?;
+                let submit = submit_started.elapsed();
                 let mut wait = mxcfb::MxcfbUpdateMarkerData {
                     update_marker: marker,
                     collision_test: 0,
                 };
+                let wait_started = Instant::now();
                 mxcfb::wait_for_update_complete(&self.framebuffer, &mut wait)?;
+                (update.waveform_mode, submit, wait_started.elapsed())
             }
-        }
-        Ok(())
+        };
+        Ok(RefreshTiming {
+            submitted_waveform,
+            translated_waveform,
+            submit,
+            wait,
+        })
     }
+}
+
+/// What one instrumented refresh measured.
+#[derive(Clone, Copy, Debug)]
+pub struct RefreshTiming {
+    /// The waveform constant submitted with the update.
+    pub submitted_waveform: u32,
+    /// The waveform the driver copied back after translating the request
+    /// through the device's waveform table.
+    pub translated_waveform: u32,
+    /// How long the submit ioctl took.
+    pub submit: Duration,
+    /// How long the wait-for-complete ioctl blocked.
+    pub wait: Duration,
 }
 
 /// Returns a random nonzero update marker.

@@ -47,7 +47,7 @@ pub mod touch;
 
 pub use battery::Battery;
 #[cfg(feature = "device-write")]
-pub use display::{DisplayError, DisplaySession, OWNER_UNLOCK_PHRASE};
+pub use display::{DisplayError, DisplaySession, RefreshTiming, OWNER_UNLOCK_PHRASE};
 pub use observe::{observe_touch, ObserveError, TouchObservation};
 pub use probe::{probe_device, ProbeError};
 pub use refresh::{Backend, Rect, RefreshIntent, RefreshPlan, UpdateMarker};

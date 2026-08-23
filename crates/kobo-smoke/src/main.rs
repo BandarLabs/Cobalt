@@ -20,6 +20,7 @@
 use kobo_hal::display::{DisplaySession, OWNER_UNLOCK_PHRASE};
 use kobo_hal::{Rect, RefreshIntent, RefreshPlan, RegionSnapshot};
 use std::env;
+use std::fmt::Write as _;
 use std::process::ExitCode;
 use std::thread::sleep;
 use std::time::Duration;
@@ -29,6 +30,10 @@ const UNLOCK_DISPLAY_ONLY: &str = "OWNER_ATTENDED_DISPLAY_ONLY_GC16";
 const UNLOCK_REVERSIBLE_PIXELS: &str = "OWNER_ATTENDED_REVERSIBLE_PIXELS_GC16";
 const UNLOCK_SCREEN_SNAPSHOT: &str = "OWNER_ATTENDED_SCREEN_SNAPSHOT_RESTORE";
 const UNLOCK_FAST_FEEDBACK: &str = "OWNER_ATTENDED_REVERSIBLE_PIXELS_DU";
+const UNLOCK_WAIT_TIMING: &str = "OWNER_ATTENDED_WAIT_TIMING_GC16_DU";
+
+/// How many invert-restore pairs the wait-timing stage runs per waveform.
+const WAIT_TIMING_ROUNDS: usize = 4;
 
 const FIXED_REGION: Rect = Rect {
     x: 512,
@@ -52,6 +57,7 @@ enum Stage {
     ReversiblePixels,
     ScreenSnapshot,
     FastFeedback,
+    WaitTiming,
 }
 
 impl Stage {
@@ -71,6 +77,7 @@ impl Stage {
             Some(UNLOCK_REVERSIBLE_PIXELS) => Some(Self::ReversiblePixels),
             Some(UNLOCK_SCREEN_SNAPSHOT) => Some(Self::ScreenSnapshot),
             Some(UNLOCK_FAST_FEEDBACK) => Some(Self::FastFeedback),
+            Some(UNLOCK_WAIT_TIMING) => Some(Self::WaitTiming),
             _ => None,
         }
     }
@@ -119,6 +126,7 @@ fn run(unlock: Option<&str>) -> Result<String, String> {
             ))
         }
         Stage::ScreenSnapshot => screen_snapshot_restore(&session),
+        Stage::WaitTiming => wait_timing(&session),
         Stage::FastFeedback => {
             // DU is the two-level waveform interactive feedback uses. It is
             // driven through exactly the same capture, show, restore, verify
@@ -133,6 +141,85 @@ fn run(unlock: Option<&str>) -> Result<String, String> {
             ))
         }
     }
+}
+
+/// Measures whether `WAIT_FOR_UPDATE_COMPLETE` actually blocks for the
+/// duration of the waveform, which `KOReader`'s device table says it does not
+/// on this board (`hasReliableMxcWaitFor = no`).
+///
+/// Runs invert-restore pairs on the patch region, alternating GC16 and DU,
+/// timing the submit and wait ioctls separately and reading back the waveform
+/// the driver translated the request into. A GC16 waveform runs roughly half a
+/// second on the panel regardless of area and DU roughly a quarter, so a wait
+/// that returns in a few milliseconds is not waiting. The original bytes are
+/// restored and verified at the end, on every path.
+fn wait_timing(session: &DisplaySession) -> Result<String, String> {
+    let original = session
+        .capture(PATCH_REGION)
+        .map_err(|error| format!("capture patch region: {error}"))?;
+    let inverted = original.inverted_rgb();
+
+    let mut lines = String::from("update  intent   waveform  translated  submit_us  wait_us\n");
+    let mut run = || -> Result<(), String> {
+        let mut update = 0_usize;
+        for intent in [
+            RefreshIntent::QualityContent,
+            RefreshIntent::TextContent,
+            RefreshIntent::FastFeedback,
+        ] {
+            let plan = RefreshPlan::new(
+                PATCH_REGION,
+                intent,
+                false,
+                session.geometry().width,
+                session.geometry().height,
+            )
+            .ok_or_else(|| "patch region is not inside this screen".to_owned())?;
+            for _ in 0..WAIT_TIMING_ROUNDS {
+                for snapshot in [&inverted, &original] {
+                    session
+                        .restore(snapshot)
+                        .map_err(|error| format!("write patch region: {error}"))?;
+                    let timing = session
+                        .refresh_timed(plan)
+                        .map_err(|error| format!("refresh patch region: {error}"))?;
+                    update += 1;
+                    let _ = writeln!(
+                        lines,
+                        "{update:>6}  {:<8} {:>8}  {:>10}  {:>9}  {:>7}",
+                        match intent {
+                            RefreshIntent::QualityContent => "GC16",
+                            RefreshIntent::TextContent => "GL16",
+                            RefreshIntent::FastFeedback => "DU",
+                        },
+                        timing.submitted_waveform,
+                        timing.translated_waveform,
+                        timing.submit.as_micros(),
+                        timing.wait.as_micros(),
+                    );
+                }
+            }
+        }
+        Ok(())
+    };
+    let outcome = run();
+
+    // Always leave the screen as found, even when a refresh failed mid-run.
+    let restored = session
+        .restore(&original)
+        .map_err(|error| format!("restore patch region: {error}"));
+    outcome?;
+    restored?;
+    let verify = session
+        .capture(PATCH_REGION)
+        .map_err(|error| format!("verify patch region: {error}"))?;
+    if !verify.matches(&original) {
+        return Err("patch region does not match the original bytes".to_owned());
+    }
+    Ok(format!(
+        "{lines}wait timing completed; {} bytes restored and verified",
+        original.pixels().len()
+    ))
 }
 
 /// Snapshots the whole screen, changes a larger region, then puts the entire
@@ -256,7 +343,7 @@ fn show_and_restore(
 mod tests {
     use super::{
         Stage, FIXED_REGION, PATCH_REGION, UNLOCK_DISPLAY_ONLY, UNLOCK_FAST_FEEDBACK,
-        UNLOCK_REVERSIBLE_PIXELS, UNLOCK_SCREEN_SNAPSHOT, VISIBLE_HOLD,
+        UNLOCK_REVERSIBLE_PIXELS, UNLOCK_SCREEN_SNAPSHOT, UNLOCK_WAIT_TIMING, VISIBLE_HOLD,
     };
     use kobo_abi::hwtcon;
     use kobo_hal::surface::{RegionPlacement, SurfaceGeometry};
@@ -316,6 +403,7 @@ mod tests {
             (UNLOCK_REVERSIBLE_PIXELS, Stage::ReversiblePixels),
             (UNLOCK_SCREEN_SNAPSHOT, Stage::ScreenSnapshot),
             (UNLOCK_FAST_FEEDBACK, Stage::FastFeedback),
+            (UNLOCK_WAIT_TIMING, Stage::WaitTiming),
         ] {
             assert_eq!(Stage::from_unlock(Some(phrase)), Some(expected));
         }
@@ -327,6 +415,8 @@ mod tests {
             Some("OWNER_ATTENDED_DISPLAY_WRITE"),
             Some("OWNER_ATTENDED_REVERSIBLE_PIXELS_DU "),
             Some("REVERSIBLE_PIXELS_DU"),
+            Some("OWNER_ATTENDED_WAIT_TIMING_GC16_DU "),
+            Some("WAIT_TIMING_GC16_DU"),
         ] {
             assert_eq!(Stage::from_unlock(wrong), None, "{wrong:?} must not unlock");
         }
