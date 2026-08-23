@@ -287,6 +287,17 @@ pub struct Credential {
     pub header: SecretHeader,
 }
 
+/// The network operation for which the runtime is about to resolve a named
+/// credential.
+///
+/// Destination policy needs the method as well as the URL: a read-only client
+/// may legitimately GET an item while a POST to that route changes data.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CredentialUse {
+    Fetch,
+    Post,
+}
+
 impl Credential {
     /// The usual convention: `Authorization: Bearer <value>`.
     #[must_use]

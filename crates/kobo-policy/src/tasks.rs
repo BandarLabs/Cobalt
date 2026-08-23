@@ -7,7 +7,7 @@
 //! exactly once.
 
 use kobo_protocol::{
-    Credential, SecretHeader, Task, TaskError, TaskId, TaskOutcome, MAX_TASK_BYTES,
+    Credential, CredentialUse, SecretHeader, Task, TaskError, TaskId, TaskOutcome, MAX_TASK_BYTES,
     MAX_TASK_BYTES_U32,
 };
 use std::collections::HashMap;
@@ -82,7 +82,7 @@ pub type Poster = dyn Fn(&str, &[u8], &str, Option<(&str, &str)>, &[(&str, &str)
 ///
 /// Secret files alone are not authority: without this second decision an
 /// application could name a real key and an attacker-controlled destination.
-pub type CredentialAuthorizer = dyn Fn(&Credential, &str) -> bool + Send + Sync;
+pub type CredentialAuthorizer = dyn Fn(&Credential, &str, CredentialUse) -> bool + Send + Sync;
 
 /// Headers an application may not set, because the runtime decides them.
 ///
@@ -124,13 +124,14 @@ pub fn header_is_the_applications_to_set(name: &str) -> bool {
 fn resolved_credential(
     wanted: Option<&kobo_protocol::Credential>,
     url: &str,
+    usage: CredentialUse,
     credentials: Option<&CredentialAuthorizer>,
     secrets: Option<&Path>,
 ) -> Result<Option<(String, String)>, TaskError> {
     let Some(wanted) = wanted else {
         return Ok(None);
     };
-    if credentials.is_none_or(|allows| !allows(wanted, url)) {
+    if credentials.is_none_or(|allows| !allows(wanted, url, usage)) {
         return Err(TaskError::Denied);
     }
     // Not `Denied`. The application asked for a key it is allowed to ask for,
@@ -493,12 +494,6 @@ fn secret(directory: Option<&Path>, name: &str) -> Option<String> {
 }
 
 fn run(work: &Task, root: &Path, backends: Backends<'_>, cancel: &AtomicBool) -> TaskOutcome {
-    let Backends {
-        fetch,
-        post,
-        secrets,
-        credentials,
-    } = backends;
     match work {
         Task::Sleep { seconds } => {
             // Polled in short slices rather than slept in one call, so a
@@ -540,36 +535,7 @@ fn run(work: &Task, root: &Path, backends: Backends<'_>, cancel: &AtomicBool) ->
             max_bytes,
             credential: wanted,
             headers,
-        } => match fetch {
-            None => TaskOutcome::Failed(TaskError::Denied),
-            // The same gate `Post` applies to its headers, and for `Fetch` it
-            // is load-bearing rather than tidy: `Range` is how `offset` is
-            // turned into the piece of the document actually asked for, and
-            // an application that could set `Range` itself could read past
-            // the piece the byte ceiling allowed.
-            Some(fetch) => {
-                let extra = match own_headers(headers) {
-                    Ok(extra) => extra,
-                    Err(error) => return TaskOutcome::Failed(error),
-                };
-                // Appended after the gate above rather than before it: the
-                // credential is the runtime's own header, and an application
-                // is refused for setting one by hand.
-                let credential =
-                    match resolved_credential(wanted.as_ref(), url, credentials, secrets) {
-                        Ok(credential) => credential,
-                        Err(error) => return TaskOutcome::Failed(error),
-                    };
-                let mut extra = extra;
-                if let Some((name, value)) = &credential {
-                    extra.push((name.as_str(), value.as_str()));
-                }
-                match fetch(url, *offset, (*max_bytes).min(MAX_TASK_BYTES_U32), &extra) {
-                    Ok(bytes) => TaskOutcome::Completed(bytes),
-                    Err(error) => TaskOutcome::Failed(error),
-                }
-            }
-        },
+        } => run_fetch(url, *offset, *max_bytes, wanted.as_ref(), headers, backends),
         Task::Post {
             url,
             body,
@@ -577,40 +543,92 @@ fn run(work: &Task, root: &Path, backends: Backends<'_>, cancel: &AtomicBool) ->
             credential: wanted,
             headers,
             max_bytes,
-        } => {
-            let Some(post) = post else {
-                return TaskOutcome::Failed(TaskError::Denied);
-            };
-            // Refused rather than quietly dropped. A request that loses a
-            // header the runtime happens to own would fail at the far end with
-            // an error the author cannot connect to anything they wrote.
-            let extra = match own_headers(headers) {
-                Ok(extra) => extra,
-                Err(error) => return TaskOutcome::Failed(error),
-            };
-            // A task that names a credential the runtime does not hold is
-            // refused rather than sent without one. Sending it anyway would
-            // reach the server as an unauthenticated request, and the
-            // application would report whatever the server said about that
-            // instead of the real problem.
-            let credential = match resolved_credential(wanted.as_ref(), url, credentials, secrets) {
-                Ok(credential) => credential,
-                Err(error) => return TaskOutcome::Failed(error),
-            };
-            match post(
-                url,
-                body.as_bytes(),
-                content_type,
-                credential
-                    .as_ref()
-                    .map(|(name, value)| (name.as_str(), value.as_str())),
-                &extra,
-                (*max_bytes).min(MAX_TASK_BYTES_U32),
-            ) {
-                Ok(bytes) => TaskOutcome::Completed(bytes),
-                Err(error) => TaskOutcome::Failed(error),
-            }
-        }
+        } => run_post(
+            url,
+            body,
+            content_type,
+            *max_bytes,
+            wanted.as_ref(),
+            headers,
+            backends,
+        ),
+    }
+}
+
+fn run_fetch(
+    url: &str,
+    offset: u32,
+    max_bytes: u32,
+    wanted: Option<&Credential>,
+    headers: &[kobo_protocol::Header],
+    backends: Backends<'_>,
+) -> TaskOutcome {
+    let Some(fetch) = backends.fetch else {
+        return TaskOutcome::Failed(TaskError::Denied);
+    };
+    // `Range` and the runtime-owned credential cannot be replaced by app
+    // headers; `own_headers` applies the same gate used for POST.
+    let mut extra = match own_headers(headers) {
+        Ok(extra) => extra,
+        Err(error) => return TaskOutcome::Failed(error),
+    };
+    let resolved = match resolved_credential(
+        wanted,
+        url,
+        CredentialUse::Fetch,
+        backends.credentials,
+        backends.secrets,
+    ) {
+        Ok(credential) => credential,
+        Err(error) => return TaskOutcome::Failed(error),
+    };
+    if let Some((name, value)) = &resolved {
+        extra.push((name.as_str(), value.as_str()));
+    }
+    match fetch(url, offset, max_bytes.min(MAX_TASK_BYTES_U32), &extra) {
+        Ok(bytes) => TaskOutcome::Completed(bytes),
+        Err(error) => TaskOutcome::Failed(error),
+    }
+}
+
+fn run_post(
+    url: &str,
+    body: &str,
+    content_type: &str,
+    max_bytes: u32,
+    wanted: Option<&Credential>,
+    headers: &[kobo_protocol::Header],
+    backends: Backends<'_>,
+) -> TaskOutcome {
+    let Some(post) = backends.post else {
+        return TaskOutcome::Failed(TaskError::Denied);
+    };
+    let extra = match own_headers(headers) {
+        Ok(extra) => extra,
+        Err(error) => return TaskOutcome::Failed(error),
+    };
+    let resolved = match resolved_credential(
+        wanted,
+        url,
+        CredentialUse::Post,
+        backends.credentials,
+        backends.secrets,
+    ) {
+        Ok(credential) => credential,
+        Err(error) => return TaskOutcome::Failed(error),
+    };
+    match post(
+        url,
+        body.as_bytes(),
+        content_type,
+        resolved
+            .as_ref()
+            .map(|(name, value)| (name.as_str(), value.as_str())),
+        &extra,
+        max_bytes.min(MAX_TASK_BYTES_U32),
+    ) {
+        Ok(bytes) => TaskOutcome::Completed(bytes),
+        Err(error) => TaskOutcome::Failed(error),
     }
 }
 
@@ -1022,7 +1040,7 @@ mod tests {
         let mut runner = TaskRunner::simulated(temp_root("nosecret"))
             .with_capabilities([Capability::Network])
             .with_secrets(temp_root("nosecret-empty"))
-            .with_credential_policy(Arc::new(|_, _| true))
+            .with_credential_policy(Arc::new(|_, _, _| true))
             .with_post(Arc::new(move |_, _, _, _, _, _| {
                 observed.store(true, Ordering::SeqCst);
                 Ok(Vec::new())
@@ -1059,7 +1077,7 @@ mod tests {
         let mut runner = TaskRunner::simulated(temp_root("resolved-root"))
             .with_capabilities([Capability::Network])
             .with_secrets(directory)
-            .with_credential_policy(Arc::new(|credential, url| {
+            .with_credential_policy(Arc::new(|credential, url, _| {
                 credential.secret == "openai" && url == "https://example.invalid/"
             }))
             .with_post(Arc::new(|_, _, _, credential, _, _| {
@@ -1096,7 +1114,7 @@ mod tests {
         let mut runner = TaskRunner::simulated(temp_root("wrong-destination-root"))
             .with_capabilities([Capability::Network])
             .with_secrets(directory)
-            .with_credential_policy(Arc::new(|credential, url| {
+            .with_credential_policy(Arc::new(|credential, url, _| {
                 credential.secret == "openai" && url == "https://api.openai.com/v1/chat/completions"
             }))
             .with_post(Arc::new(move |_, _, _, _, _, _| {
@@ -1121,6 +1139,55 @@ mod tests {
             TaskOutcome::Failed(TaskError::Denied)
         );
         assert!(!sent.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn credential_policy_distinguishes_fetch_from_post_to_the_same_url() {
+        let directory = secret_dir("read-only-method");
+        let mut runner = TaskRunner::simulated(temp_root("read-only-method-root"))
+            .with_capabilities([Capability::Network])
+            .with_secrets(directory)
+            .with_credential_policy(Arc::new(|credential, url, usage| {
+                credential.secret == "openai"
+                    && url == "https://example.invalid/items"
+                    && usage == CredentialUse::Fetch
+            }))
+            .with_fetch(Arc::new(|_, _, _, _| Ok(b"[]".to_vec())))
+            .with_post(Arc::new(|_, _, _, _, _, _| Ok(b"{}".to_vec())));
+        runner
+            .submit(
+                TaskId(1),
+                Task::Fetch {
+                    url: "https://example.invalid/items".into(),
+                    offset: 0,
+                    max_bytes: 1024,
+                    credential: Some(Credential::bearer("openai")),
+                    headers: Vec::new(),
+                },
+            )
+            .expect("fetch submitted");
+        assert!(matches!(
+            collect(&mut runner, 1)[0].outcome,
+            TaskOutcome::Completed(_)
+        ));
+
+        runner
+            .submit(
+                TaskId(2),
+                Task::Post {
+                    url: "https://example.invalid/items".into(),
+                    body: "[]".into(),
+                    content_type: "application/json".into(),
+                    credential: Some(Credential::bearer("openai")),
+                    headers: Vec::new(),
+                    max_bytes: 1024,
+                },
+            )
+            .expect("post submitted");
+        assert_eq!(
+            collect(&mut runner, 1)[0].outcome,
+            TaskOutcome::Failed(TaskError::Denied)
+        );
     }
 
     #[test]

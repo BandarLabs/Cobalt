@@ -2585,7 +2585,7 @@ fn start_application(
         .with_fetch(Arc::new(kobo_net::fetch_from))
         .with_post(Arc::new(kobo_net::post))
         .with_secrets(SECRETS)
-        .with_credential_policy(Arc::new(move |credential, url| {
+        .with_credential_policy(Arc::new(move |credential, url, _usage| {
             kobo_net::credential_allowed(&credential_app, credential, url)
         }))
         .with_wake(Arc::new(move || {
