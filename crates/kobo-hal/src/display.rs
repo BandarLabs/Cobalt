@@ -16,7 +16,9 @@ use crate::probe::{probe_device, ProbeError};
 use crate::refresh::{Rect, RefreshPlan};
 use crate::surface::{self, RegionSnapshot, SurfaceError, SurfaceGeometry};
 use kobo_abi::{hwtcon, mxcfb};
-use kobo_profile::{DeviceProfile, DeviceSnapshot, FramebufferController, WRITE_EVIDENCE_PENDING};
+use kobo_profile::{
+    CompletionWait, DeviceProfile, DeviceSnapshot, FramebufferController, WRITE_EVIDENCE_PENDING,
+};
 use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read};
@@ -40,6 +42,7 @@ const SMOKE_PATCH_REGION: Rect = Rect {
     height: 256,
 };
 const SMOKE_VISIBLE_HOLD: Duration = Duration::from_millis(1200);
+const UNRELIABLE_MXCFB_PACING: Duration = Duration::from_micros(2500);
 const ATTENDED_SMOKE_UNLOCK_PHRASE: &str = "OWNER_ATTENDED_CANDIDATE_DISPLAY_VALIDATION";
 
 /// One bounded operation used to gather owner-attended display evidence.
@@ -244,7 +247,7 @@ impl DisplaySession {
         Ok(())
     }
 
-    /// Submits one hardware update for `plan` and waits for it to complete.
+    /// Submits one hardware update for `plan` and applies the profile's pacing.
     ///
     /// A fresh high-entropy marker is generated for every update. Markers are a
     /// global namespace shared with the stock reader, so a low fixed marker
@@ -252,7 +255,7 @@ impl DisplaySession {
     ///
     /// # Errors
     ///
-    /// Returns an error when the region is invalid or either ioctl fails.
+    /// Returns an error when the region is invalid or a required ioctl fails.
     pub fn refresh(&self, plan: RefreshPlan) -> Result<(), DisplayError> {
         // Validate the region against this exact surface before the kernel sees it.
         surface::RegionPlacement::new(self.geometry, plan.region)?;
@@ -270,11 +273,22 @@ impl DisplaySession {
             FramebufferController::MxcfbV2 => {
                 let mut update = plan.mxcfb_update_data(marker);
                 mxcfb::send_update_v2(&self.framebuffer, &mut update)?;
-                let mut wait = mxcfb::MxcfbUpdateMarkerData {
-                    update_marker: marker,
-                    collision_test: 0,
-                };
-                mxcfb::wait_for_update_complete_v3(&self.framebuffer, &mut wait)?;
+                match self.profile.completion_wait {
+                    CompletionWait::ReliableIoctl => {
+                        let mut wait = mxcfb::MxcfbUpdateMarkerData {
+                            update_marker: marker,
+                            collision_test: 0,
+                        };
+                        mxcfb::wait_for_update_complete_v3(&self.framebuffer, &mut wait)?;
+                    }
+                    CompletionWait::BypassUnreliableMxcfb => {
+                        // KoboLuna/Nia is flagged by KOReader and FBInk as
+                        // having an MXCFB completion wait that may stall for
+                        // seconds. Match KOReader's stub pacing instead of
+                        // entering that ioctl after every partial frame.
+                        sleep(UNRELIABLE_MXCFB_PACING);
+                    }
+                }
             }
         }
         Ok(())
@@ -436,7 +450,7 @@ mod tests {
     use kobo_abi::hwtcon;
     use kobo_profile::{
         DeviceProfile, DeviceSnapshot, FramebufferSnapshot, IdentitySnapshot, TouchSnapshot,
-        CLARA_BW_391, CLARA_HD_376, ELIPSA_2E_389, NIA_382, WRITE_EVIDENCE_PENDING,
+        CLARA_BW_391, ELIPSA_2E_389, SUPPORTED_PROFILES, WRITE_EVIDENCE_PENDING,
     };
     use std::path::Path;
 
@@ -601,7 +615,7 @@ mod tests {
 
     #[test]
     fn hal_owned_smoke_regions_are_bounded_on_every_registered_panel() {
-        for profile in [&CLARA_BW_391, &CLARA_HD_376, &NIA_382, &ELIPSA_2E_389] {
+        for profile in SUPPORTED_PROFILES {
             let geometry = SurfaceGeometry {
                 width: profile.width,
                 height: profile.height,

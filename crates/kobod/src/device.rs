@@ -1014,6 +1014,7 @@ fn host_applications(
     profile: &'static DeviceProfile,
     watchdog: &Arc<Watchdog>,
 ) -> Result<String, String> {
+    let _ = profile;
     let catalogue = application
         .parent()
         .map_or_else(|| PathBuf::from("/tmp"), Path::to_path_buf);
@@ -1316,12 +1317,9 @@ fn host_applications(
                             TouchEvent::Down { x, y } => {
                                 if let (Ok(x), Ok(y)) = (i32::try_from(x), i32::try_from(y)) {
                                     landed = Some((Instant::now(), x, y));
-                                    let layout =
-                                        current.layout_with(&metrics_for(current), &chrome);
-                                    let defer_key_feedback = !profile.key_press_feedback
-                                        && layout.pressed_control_is_key(x, y);
-                                    if let Some(rect) =
-                                        layout.pressed_control(x, y).filter(|_| !defer_key_feedback)
+                                    if let Some(rect) = current
+                                        .layout_with(&metrics_for(current), &chrome)
+                                        .pressed_control(x, y)
                                     {
                                         let metrics = metrics_for(current);
                                         surface.invert_press(rect, &metrics);

@@ -8,6 +8,18 @@ pub enum FramebufferController {
     MxcfbV2,
 }
 
+/// How a submitted framebuffer update is paced before the caller continues.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CompletionWait {
+    /// Use the controller's completion ioctl for the submitted marker.
+    ReliableIoctl,
+    /// Do not call the unreliable Mk. 7 MXCFB completion ioctl.
+    ///
+    /// `KOReader` uses a 2.5 ms stub wait for the same device quirk. The kernel's
+    /// update queue still serializes and merges the submitted updates.
+    BypassUnreliableMxcfb,
+}
+
 pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     id: "clara-bw-391",
     model: "Kobo Clara BW",
@@ -16,6 +28,7 @@ pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     compatible_fragments: &["mediatek,mt8110", "mediatek,mt8512"],
     framebuffer_id: "hwtcon",
     framebuffer_controller: FramebufferController::Hwtcon,
+    completion_wait: CompletionWait::ReliableIoctl,
     width: 1072,
     height: 1448,
     pixels_per_inch: 300,
@@ -58,7 +71,6 @@ pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     serial_prefix: "N365",
     firmware_versions: &["4.45.23697"],
     kernel_release: "4.9.77",
-    key_press_feedback: true,
     write_ready: true,
 };
 
@@ -70,6 +82,7 @@ pub const CLARA_HD_376: DeviceProfile = DeviceProfile {
     compatible_fragments: &["fsl,imx6sll-lpddr3-arm2", "fsl,imx6sll"],
     framebuffer_id: "mxc_epdc_fb",
     framebuffer_controller: FramebufferController::MxcfbV2,
+    completion_wait: CompletionWait::ReliableIoctl,
     width: 1072,
     height: 1448,
     pixels_per_inch: 300,
@@ -112,7 +125,6 @@ pub const CLARA_HD_376: DeviceProfile = DeviceProfile {
     serial_prefix: "N249",
     firmware_versions: &["4.38.23684", "4.38.23697"],
     kernel_release: "4.1.15-00136-g12655eaaef89",
-    key_press_feedback: true,
     write_ready: true,
 };
 
@@ -124,6 +136,7 @@ pub const NIA_382: DeviceProfile = DeviceProfile {
     compatible_fragments: &["fsl,imx6ull-ddr3-arm2", "fsl,imx6ull"],
     framebuffer_id: "mxc_epdc_fb",
     framebuffer_controller: FramebufferController::MxcfbV2,
+    completion_wait: CompletionWait::BypassUnreliableMxcfb,
     width: 758,
     height: 1024,
     pixels_per_inch: 212,
@@ -166,8 +179,7 @@ pub const NIA_382: DeviceProfile = DeviceProfile {
     serial_prefix: "N306",
     firmware_versions: &["4.38.23684"],
     kernel_release: "4.1.15-00463-g38afd5cea756",
-    key_press_feedback: false,
-    write_ready: true,
+    write_ready: false,
 };
 
 pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
@@ -178,6 +190,7 @@ pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
     compatible_fragments: &["mediatek,mt8110", "mediatek,mt8512"],
     framebuffer_id: "hwtcon",
     framebuffer_controller: FramebufferController::Hwtcon,
+    completion_wait: CompletionWait::ReliableIoctl,
     width: 1404,
     height: 1872,
     pixels_per_inch: 227,
@@ -220,7 +233,6 @@ pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
     serial_prefix: "N605",
     firmware_versions: &["4.38.23697"],
     kernel_release: "4.9.77",
-    key_press_feedback: true,
     write_ready: true,
 };
 
@@ -368,6 +380,7 @@ pub struct DeviceProfile {
     pub compatible_fragments: &'static [&'static str],
     pub framebuffer_id: &'static str,
     pub framebuffer_controller: FramebufferController,
+    pub completion_wait: CompletionWait,
     pub width: u32,
     pub height: u32,
     pub pixels_per_inch: u16,
@@ -395,13 +408,6 @@ pub struct DeviceProfile {
     /// Exact firmware releases covered by owner-attended evidence.
     pub firmware_versions: &'static [&'static str],
     pub kernel_release: &'static str,
-    /// Whether key-like grid cells need a separate pressed-state refresh.
-    ///
-    /// This is kept per profile because a press and its release are two
-    /// synchronous panel updates before the application can answer. On a
-    /// controller where those updates are slow, the application's own redraw
-    /// is both the first useful feedback and substantially more responsive.
-    pub key_press_feedback: bool,
     /// True only after owner-attended hardware evidence has been reviewed.
     pub write_ready: bool,
 }
@@ -1086,7 +1092,7 @@ mod tests {
     }
 
     #[test]
-    fn nia_doctor_snapshot_is_write_ready_after_attended_hardware_validation() {
+    fn nia_doctor_snapshot_remains_read_only_while_write_evidence_is_pending() {
         let channel = Bitfield {
             offset: 16,
             length: 8,
@@ -1140,14 +1146,14 @@ mod tests {
             },
         };
         let report = NIA_382.validate(&snapshot);
-        assert_eq!(report.readiness, Readiness::WriteReady);
+        assert_eq!(report.readiness, Readiness::ReadOnlyMatched);
         assert!(report.mismatches.is_empty());
-        assert!(report.write_blockers.is_empty());
+        assert_eq!(report.write_blockers, vec![WRITE_EVIDENCE_PENDING]);
         assert!(NIA_382.write_identity_blockers(&snapshot).is_empty());
         assert_eq!(super::identify_profile(&snapshot), Some(&NIA_382));
-        assert!(
-            !NIA_382.key_press_feedback,
-            "the Nia must not put two slow decorative refreshes before a key action"
+        assert_eq!(
+            NIA_382.completion_wait,
+            super::CompletionWait::BypassUnreliableMxcfb
         );
     }
 

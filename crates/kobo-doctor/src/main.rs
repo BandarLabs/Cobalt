@@ -6,7 +6,7 @@ use kobo_profile::{identify_profile, DeviceProfile, FramebufferSnapshot, Readine
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
-use std::process::ExitCode;
+use std::process::{Command, ExitCode};
 use std::time::Duration;
 
 /// Opting into touch observation. It stays read-only: the device is opened
@@ -93,7 +93,7 @@ fn require_profile(
 
 fn main() -> ExitCode {
     println!("Kobo doctor 0.1.0");
-    println!("mode: read-only (query ioctls only)");
+    println!("mode: read-only (query ioctls and hwconfig only)");
 
     let snapshot = match probe_device() {
         Ok(snapshot) => snapshot,
@@ -132,18 +132,8 @@ fn main() -> ExitCode {
             framebuffer.red, framebuffer.green, framebuffer.blue, framebuffer.alpha
         );
     }
-    // Identity is what gates every write. The full serial is deliberately never
-    // read past its four-character model prefix.
-    let identity = &snapshot.identity;
-    println!(
-        "identity: model={} firmware={} kernel={} device-code={}",
-        identity.serial_prefix.as_deref().unwrap_or("<unknown>"),
-        identity.firmware_version.as_deref().unwrap_or("<unknown>"),
-        identity.kernel_release.as_deref().unwrap_or("<unknown>"),
-        identity
-            .device_code
-            .map_or_else(|| "<unknown>".to_owned(), |code| code.to_string()),
-    );
+    announce_identity(&snapshot.identity);
+    announce_hwconfig_revision();
     if let Some(touch) = &snapshot.touch {
         println!(
             "touch: {} at {} X={}..{} Y={}..{}",
@@ -207,6 +197,54 @@ fn main() -> ExitCode {
     }
 
     ExitCode::SUCCESS
+}
+
+/// Prints the exact write-gating identity without ever reading the full serial.
+fn announce_identity(identity: &kobo_profile::IdentitySnapshot) {
+    println!(
+        "identity: model={} firmware={} kernel={} device-code={}",
+        identity.serial_prefix.as_deref().unwrap_or("<unknown>"),
+        identity.firmware_version.as_deref().unwrap_or("<unknown>"),
+        identity.kernel_release.as_deref().unwrap_or("<unknown>"),
+        identity
+            .device_code
+            .map_or_else(|| "<unknown>".to_owned(), |code| code.to_string()),
+    );
+}
+
+/// Prints the hardware-revision fields which can vary under one device code.
+///
+/// `ntx_hwconfig -s` is Kobo's read-only listing mode. Keeping the exact field
+/// names and values in the doctor transcript avoids interpreting a new PMIC or
+/// frontlight revision as equivalent to the unit which supplied the evidence.
+fn announce_hwconfig_revision() {
+    let Ok(output) = Command::new("/bin/ntx_hwconfig")
+        .args(["-s", "/dev/mmcblk0"])
+        .output()
+    else {
+        println!("hwconfig revision: unavailable");
+        return;
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let fields = hwconfig_revision_fields(&stdout);
+    if fields.is_empty() {
+        println!("hwconfig revision: unavailable");
+    } else {
+        println!("hwconfig revision: {}", fields.join(", "));
+    }
+}
+
+fn hwconfig_revision_fields(output: &str) -> Vec<&str> {
+    const NAMES: [&str; 5] = ["PCB", "PCB_REV", "PCB_LVL", "PMIC", "FL_PWM"];
+    output
+        .lines()
+        .filter_map(|line| line.split_once("] ").map(|(_, field)| field.trim()))
+        .filter(|field| {
+            field
+                .split_once('=')
+                .is_some_and(|(name, _)| NAMES.contains(&name))
+        })
+        .collect()
 }
 
 /// Prints the whole panel as base64 grey, one byte per pixel.
@@ -500,6 +538,27 @@ mod tests {
             grey_of(&pixels),
             vec![20, 50],
             "the panel is single-channel, so the three colour bytes agree and any one of them is the grey"
+        );
+    }
+
+    #[test]
+    fn hwconfig_revision_keeps_the_tools_exact_field_names_and_values() {
+        let fixture = "HW CONFIG v3.3 @1024 secno, size=72 bytes :\n\
+[0] PCB='E60U20'\n\
+[40] VCOM_10mV_LoByte=0x2A\n\
+[41] PCB_REV=0x03\n\
+[42] PCB_LVL='C'\n\
+[44] PMIC='BD71828'\n\
+[45] FL_PWM='LM3630'\n";
+        assert_eq!(
+            super::hwconfig_revision_fields(fixture),
+            [
+                "PCB='E60U20'",
+                "PCB_REV=0x03",
+                "PCB_LVL='C'",
+                "PMIC='BD71828'",
+                "FL_PWM='LM3630'",
+            ]
         );
     }
 }
