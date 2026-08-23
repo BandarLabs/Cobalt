@@ -13,16 +13,16 @@
 //! a default build contains no callable display-write code at all.
 
 use crate::probe::{probe_device, ProbeError};
-use crate::refresh::{Rect, RefreshPlan};
+use crate::refresh::{Backend, Rect, RefreshPlan};
 use crate::surface::{self, RegionSnapshot, SurfaceError, SurfaceGeometry};
 use kobo_abi::{hwtcon, mxcfb};
-use kobo_profile::{DeviceProfile, DeviceSnapshot, FramebufferController, WRITE_EVIDENCE_PENDING};
+use kobo_profile::{DeviceProfile, DeviceSnapshot, WRITE_EVIDENCE_PENDING};
 use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read};
 use std::path::Path;
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// The exact phrase an owner must supply to open a write session.
 pub const OWNER_UNLOCK_PHRASE: &str = "OWNER_ATTENDED_DISPLAY_WRITE";
@@ -49,13 +49,66 @@ pub enum AttendedSmokeStage {
     ReversiblePixels,
     ScreenSnapshot,
     FastFeedback,
+    /// Measures the submit and wait ioctls across the three offered
+    /// waveforms, reversibly, on the fixed patch region.
+    WaitTiming,
 }
 
 impl AttendedSmokeStage {
+    /// Every stage there is, so a test can walk them.
+    ///
+    /// A hand-written list is only as good as the memory of whoever adds a
+    /// stage, so [`Self::position`] exists to make forgetting a compile
+    /// error rather than a silently narrower test.
+    #[cfg(test)]
+    const ALL: [Self; 5] = [
+        Self::DisplayOnly,
+        Self::ReversiblePixels,
+        Self::ScreenSnapshot,
+        Self::FastFeedback,
+        Self::WaitTiming,
+    ];
+
+    /// Where the stage sits in [`Self::ALL`].
+    ///
+    /// The match is exhaustive, so a new variant does not compile until it is
+    /// given a position, and the test below proves each position holds the
+    /// stage that claims it. Together those two facts are what make `ALL`
+    /// complete rather than merely plausible.
+    #[cfg(test)]
+    const fn position(self) -> usize {
+        match self {
+            Self::DisplayOnly => 0,
+            Self::ReversiblePixels => 1,
+            Self::ScreenSnapshot => 2,
+            Self::FastFeedback => 3,
+            Self::WaitTiming => 4,
+        }
+    }
+
     const fn intent(self) -> crate::refresh::RefreshIntent {
         match self {
             Self::FastFeedback => crate::refresh::RefreshIntent::FastFeedback,
             _ => crate::refresh::RefreshIntent::QualityContent,
+        }
+    }
+
+    /// Every intent the stage may submit, not just the one it opens with.
+    ///
+    /// [`Self::intent`] answers for a single update; `WaitTiming` submits
+    /// three, one per offered waveform, and an invariant stated over
+    /// [`Self::intent`] alone would miss two of them.
+    ///
+    /// Not `#[cfg(test)]`: [`smoke_wait_timing`] reads this list to decide
+    /// what it submits, which is the point. A declaration the behaviour does
+    /// not consult is a second copy of the truth, and the test walking it
+    /// would then be checking the copy rather than the device path.
+    const fn intents(self) -> &'static [crate::refresh::RefreshIntent] {
+        use crate::refresh::RefreshIntent::{FastFeedback, QualityContent, TextContent};
+        match self {
+            Self::DisplayOnly | Self::ReversiblePixels | Self::ScreenSnapshot => &[QualityContent],
+            Self::FastFeedback => &[FastFeedback],
+            Self::WaitTiming => &[QualityContent, TextContent, FastFeedback],
         }
     }
 }
@@ -113,6 +166,7 @@ impl From<io::Error> for DisplayError {
 pub struct DisplaySession {
     framebuffer: File,
     geometry: SurfaceGeometry,
+    backend: Backend,
     profile: &'static DeviceProfile,
     snapshot: DeviceSnapshot,
 }
@@ -199,6 +253,7 @@ impl DisplaySession {
         Ok(Self {
             framebuffer: file,
             geometry,
+            backend: Backend::from_controller(profile.framebuffer_controller),
             profile,
             snapshot,
         })
@@ -212,6 +267,12 @@ impl DisplaySession {
     #[must_use]
     pub fn snapshot(&self) -> &DeviceSnapshot {
         &self.snapshot
+    }
+
+    /// The panel-controller interface this device speaks.
+    #[must_use]
+    pub fn backend(&self) -> Backend {
+        self.backend
     }
 
     #[must_use]
@@ -254,31 +315,79 @@ impl DisplaySession {
     ///
     /// Returns an error when the region is invalid or either ioctl fails.
     pub fn refresh(&self, plan: RefreshPlan) -> Result<(), DisplayError> {
+        self.refresh_timed(plan).map(|_| ())
+    }
+
+    /// [`Self::refresh`], instrumented.
+    ///
+    /// Measures the submit and wait ioctls separately and reads back the
+    /// waveform the driver actually selected: both vendors' `SEND_UPDATE`
+    /// requests are in-out, and the driver copies the translated waveform mode
+    /// back into the struct. The regular [`Self::refresh`] path discards it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the region is invalid or either ioctl fails.
+    pub fn refresh_timed(&self, plan: RefreshPlan) -> Result<RefreshTiming, DisplayError> {
         // Validate the region against this exact surface before the kernel sees it.
         surface::RegionPlacement::new(self.geometry, plan.region)?;
         let marker = unique_marker()?;
-        match self.profile.framebuffer_controller {
-            FramebufferController::Hwtcon => {
+        // The two backends' wait requests happen to be the same number over
+        // the same struct, so one path would work for both. It is still
+        // written out twice: the coincidence belongs to this kernel, not to
+        // the interface, and a device whose wait struct grew a field would
+        // otherwise be served a MediaTek ioctl through an i.MX session with
+        // nothing in the code to make that visible.
+        let submitted_waveform = plan.waveform(self.backend);
+        let (translated_waveform, submit, wait) = match self.backend {
+            Backend::Hwtcon => {
                 let mut update = plan.hwtcon_update_data(marker);
+                let submit_started = Instant::now();
                 hwtcon::send_update(&self.framebuffer, &mut update)?;
+                let submit = submit_started.elapsed();
                 let mut wait = hwtcon::HwtconUpdateMarkerData {
                     update_marker: marker,
                     collision_test: 0,
                 };
+                let wait_started = Instant::now();
                 hwtcon::wait_for_update_complete(&self.framebuffer, &mut wait)?;
+                (update.waveform_mode, submit, wait_started.elapsed())
             }
-            FramebufferController::MxcfbV2 => {
+            Backend::Mxcfb => {
                 let mut update = plan.mxcfb_update_data(marker);
-                mxcfb::send_update_v2(&self.framebuffer, &mut update)?;
+                let submit_started = Instant::now();
+                mxcfb::send_update(&self.framebuffer, &mut update)?;
+                let submit = submit_started.elapsed();
                 let mut wait = mxcfb::MxcfbUpdateMarkerData {
                     update_marker: marker,
                     collision_test: 0,
                 };
-                mxcfb::wait_for_update_complete_v3(&self.framebuffer, &mut wait)?;
+                let wait_started = Instant::now();
+                mxcfb::wait_for_update_complete(&self.framebuffer, &mut wait)?;
+                (update.waveform_mode, submit, wait_started.elapsed())
             }
-        }
-        Ok(())
+        };
+        Ok(RefreshTiming {
+            submitted_waveform,
+            translated_waveform,
+            submit,
+            wait,
+        })
     }
+}
+
+/// What one instrumented refresh measured.
+#[derive(Clone, Copy, Debug)]
+pub struct RefreshTiming {
+    /// The waveform constant submitted with the update.
+    pub submitted_waveform: u32,
+    /// The waveform the driver copied back after translating the request
+    /// through the device's waveform table.
+    pub translated_waveform: u32,
+    /// How long the submit ioctl took.
+    pub submit: Duration,
+    /// How long the wait-for-complete ioctl blocked.
+    pub wait: Duration,
 }
 
 /// Runs one fixed, bounded, restoration-verified candidate display check.
@@ -324,6 +433,7 @@ pub fn run_attended_smoke(
             ))
         }
         AttendedSmokeStage::ScreenSnapshot => smoke_screen_snapshot_restore(&session),
+        AttendedSmokeStage::WaitTiming => smoke_wait_timing(&session),
         AttendedSmokeStage::FastFeedback => {
             let original = session.capture(SMOKE_FIXED_REGION)?;
             smoke_show_and_restore(&session, plan, &original)?;
@@ -333,6 +443,104 @@ pub fn run_attended_smoke(
             ))
         }
     }
+}
+
+const WAIT_TIMING_ROUNDS: usize = 4;
+
+/// Measures the submit and wait ioctls, reversibly, on the patch region.
+///
+/// Each of the three offered waveforms is driven [`WAIT_TIMING_ROUNDS`] times
+/// through an invert-and-restore pair, and every update reports the waveform
+/// the driver actually translated the request to alongside both ioctl
+/// durations. The screen is left exactly as found, and the restoration is
+/// verified byte for byte even when a refresh fails mid-run.
+fn smoke_wait_timing(session: &DisplaySession) -> Result<String, DisplayError> {
+    use std::fmt::Write as _;
+
+    let original = session.capture(SMOKE_PATCH_REGION)?;
+    let inverted = original.inverted_rgb();
+    // Built before the run, not inside the recovery, so that the error path
+    // always has a plan to restore with. A quality update, because this is the
+    // last thing the panel is asked to show.
+    let restore_plan = smoke_plan_with_intent(
+        session,
+        SMOKE_PATCH_REGION,
+        crate::refresh::RefreshIntent::QualityContent,
+    )?;
+
+    let mut lines = String::from("update  intent   waveform  translated  submit_us  wait_us\n");
+    let mut run = || -> Result<(), DisplayError> {
+        let mut update = 0_usize;
+        // The stage's own declaration, so that what the invariant test walks
+        // and what the panel is actually asked for cannot drift apart.
+        for intent in AttendedSmokeStage::WaitTiming.intents().iter().copied() {
+            let plan = smoke_plan_with_intent(session, SMOKE_PATCH_REGION, intent)?;
+            for _ in 0..WAIT_TIMING_ROUNDS {
+                for snapshot in [&inverted, &original] {
+                    session.restore(snapshot)?;
+                    let timing = session.refresh_timed(plan)?;
+                    update += 1;
+                    let _ = writeln!(
+                        lines,
+                        "{update:>6}  {:<8} {:>8}  {:>10}  {:>9}  {:>7}",
+                        match intent {
+                            crate::refresh::RefreshIntent::QualityContent => "GC16",
+                            crate::refresh::RefreshIntent::TextContent => "GL16",
+                            crate::refresh::RefreshIntent::FastFeedback => "DU",
+                        },
+                        timing.submitted_waveform,
+                        timing.translated_waveform,
+                        timing.submit.as_micros(),
+                        timing.wait.as_micros(),
+                    );
+                }
+            }
+        }
+        Ok(())
+    };
+    let outcome = run();
+
+    // Always leave the screen as found, even when a refresh failed mid-run.
+    // The bytes alone are not enough: without a refresh the panel goes on
+    // showing the inverted patch, so the owner is left looking at the failure.
+    let restored = session
+        .restore(&original)
+        .and_then(|()| session.refresh(restore_plan));
+    outcome?;
+    restored?;
+    let verify = session.capture(SMOKE_PATCH_REGION)?;
+    if !verify.matches(&original) {
+        return Err(DisplayError::Smoke(
+            "patch region does not match the original bytes".to_owned(),
+        ));
+    }
+    Ok(format!(
+        "{lines}wait timing completed; {} bytes restored and verified",
+        original.pixels().len()
+    ))
+}
+
+/// Whether a smoke update asks for a full, cleaning refresh.
+///
+/// It does not, and the invariant test asserts the consequence: every smoke
+/// update is partial. Shared with the test rather than written twice, so that
+/// flipping it here fails there instead of quietly widening what an
+/// owner-attended stage is allowed to do to the panel.
+const SMOKE_UPDATE_IS_FULL: bool = false;
+
+fn smoke_plan_with_intent(
+    session: &DisplaySession,
+    region: Rect,
+    intent: crate::refresh::RefreshIntent,
+) -> Result<RefreshPlan, DisplayError> {
+    RefreshPlan::new(
+        region,
+        intent,
+        SMOKE_UPDATE_IS_FULL,
+        session.geometry().width,
+        session.geometry().height,
+    )
+    .ok_or_else(|| DisplayError::Smoke(format!("region {region:?} is not inside this screen")))
 }
 
 fn smoke_screen_snapshot_restore(session: &DisplaySession) -> Result<String, DisplayError> {
@@ -430,13 +638,13 @@ mod tests {
     use super::{
         unique_marker, AttendedSmokeStage, DisplayError, DisplaySession, Rect, RefreshPlan,
         WritePolicy, ATTENDED_SMOKE_UNLOCK_PHRASE, OWNER_UNLOCK_PHRASE, SMOKE_FIXED_REGION,
-        SMOKE_PATCH_REGION, SMOKE_VISIBLE_HOLD,
+        SMOKE_PATCH_REGION, SMOKE_UPDATE_IS_FULL, SMOKE_VISIBLE_HOLD,
     };
     use crate::surface::{RegionPlacement, SurfaceGeometry};
-    use kobo_abi::hwtcon;
+    use kobo_abi::{hwtcon, mxcfb};
     use kobo_profile::{
         DeviceProfile, DeviceSnapshot, FramebufferSnapshot, IdentitySnapshot, TouchSnapshot,
-        CLARA_BW_391, CLARA_HD_376, ELIPSA_2E_389, WRITE_EVIDENCE_PENDING,
+        CLARA_BW_391, ELIPSA_2E_389, WRITE_EVIDENCE_PENDING,
     };
     use std::path::Path;
 
@@ -601,7 +809,7 @@ mod tests {
 
     #[test]
     fn hal_owned_smoke_regions_are_bounded_on_every_registered_panel() {
-        for profile in [&CLARA_BW_391, &CLARA_HD_376, &ELIPSA_2E_389] {
+        for profile in kobo_profile::SUPPORTED_PROFILES {
             let geometry = SurfaceGeometry {
                 width: profile.width,
                 height: profile.height,
@@ -627,24 +835,75 @@ mod tests {
     }
 
     #[test]
-    fn hal_owned_smoke_stages_use_only_partial_gc16_or_du_updates() {
-        for (stage, waveform) in [
-            (AttendedSmokeStage::DisplayOnly, hwtcon::WAVEFORM_GC16),
-            (AttendedSmokeStage::ReversiblePixels, hwtcon::WAVEFORM_GC16),
-            (AttendedSmokeStage::ScreenSnapshot, hwtcon::WAVEFORM_GC16),
-            (AttendedSmokeStage::FastFeedback, hwtcon::WAVEFORM_DU),
-        ] {
-            let plan = RefreshPlan::new(
-                SMOKE_FIXED_REGION,
-                stage.intent(),
-                false,
-                CLARA_BW_391.width,
-                CLARA_BW_391.height,
-            )
-            .expect("fixed plan");
-            let update = plan.hwtcon_update_data(0x4000_0001);
-            assert_eq!(update.waveform_mode, waveform);
-            assert_eq!(update.update_mode, hwtcon::UPDATE_MODE_PARTIAL);
+    fn every_smoke_stage_is_in_the_walked_set() {
+        // `position` matches exhaustively, so a new stage does not compile
+        // until it declares where it sits; this proves the seat is really
+        // its own. Without it, `ALL` could omit a stage and every invariant
+        // below would quietly stop covering it.
+        assert_eq!(AttendedSmokeStage::ALL.len(), 5);
+        for (index, stage) in AttendedSmokeStage::ALL.iter().enumerate() {
+            assert_eq!(stage.position(), index, "{stage:?} is not where it claims");
+        }
+    }
+
+    #[test]
+    fn hal_owned_smoke_stages_use_only_partial_reversible_updates() {
+        for profile in kobo_profile::SUPPORTED_PROFILES {
+            let backend = crate::refresh::Backend::from_framebuffer_id(profile.framebuffer_id)
+                .expect("every supported profile names a backend the HAL drives");
+            // The waveforms a smoke stage may ask for, per controller. Both
+            // are grayscale and both are reversible; what is excluded is the
+            // panel-wide INIT and the two-tone A2, neither of which belongs in
+            // a stage the owner is watching.
+            let allowed = match backend {
+                crate::refresh::Backend::Hwtcon => [
+                    hwtcon::WAVEFORM_GC16,
+                    hwtcon::WAVEFORM_GL16,
+                    hwtcon::WAVEFORM_DU,
+                ],
+                crate::refresh::Backend::Mxcfb => [
+                    mxcfb::WAVEFORM_GC16,
+                    mxcfb::WAVEFORM_GL16,
+                    mxcfb::WAVEFORM_DU,
+                ],
+            };
+            for stage in AttendedSmokeStage::ALL {
+                for intent in stage.intents() {
+                    let plan = RefreshPlan::new(
+                        SMOKE_FIXED_REGION,
+                        *intent,
+                        SMOKE_UPDATE_IS_FULL,
+                        profile.width,
+                        profile.height,
+                    )
+                    .expect("fixed plan");
+                    let (waveform, update_mode, partial) = match backend {
+                        crate::refresh::Backend::Hwtcon => {
+                            let update = plan.hwtcon_update_data(0x4000_0001);
+                            (
+                                update.waveform_mode,
+                                update.update_mode,
+                                hwtcon::UPDATE_MODE_PARTIAL,
+                            )
+                        }
+                        crate::refresh::Backend::Mxcfb => {
+                            let update = plan.mxcfb_update_data(0x4000_0001);
+                            (
+                                update.waveform_mode,
+                                update.update_mode,
+                                mxcfb::UPDATE_MODE_PARTIAL,
+                            )
+                        }
+                    };
+                    assert!(
+                        allowed.contains(&waveform),
+                        "{} stage {stage:?} asked {} for waveform {waveform}",
+                        profile.id,
+                        profile.framebuffer_id,
+                    );
+                    assert_eq!(update_mode, partial, "{} stage {stage:?}", profile.id);
+                }
+            }
         }
         assert!(SMOKE_VISIBLE_HOLD.as_secs() < 5);
     }

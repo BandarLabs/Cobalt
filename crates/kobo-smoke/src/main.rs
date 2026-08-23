@@ -26,6 +26,7 @@ const UNLOCK_DISPLAY_ONLY: &str = "OWNER_ATTENDED_DISPLAY_ONLY_GC16";
 const UNLOCK_REVERSIBLE_PIXELS: &str = "OWNER_ATTENDED_REVERSIBLE_PIXELS_GC16";
 const UNLOCK_SCREEN_SNAPSHOT: &str = "OWNER_ATTENDED_SCREEN_SNAPSHOT_RESTORE";
 const UNLOCK_FAST_FEEDBACK: &str = "OWNER_ATTENDED_REVERSIBLE_PIXELS_DU";
+const UNLOCK_WAIT_TIMING: &str = "OWNER_ATTENDED_WAIT_TIMING_GC16_DU";
 const HAL_VALIDATION_UNLOCK: &str = "OWNER_ATTENDED_CANDIDATE_DISPLAY_VALIDATION";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -34,6 +35,7 @@ enum Stage {
     ReversiblePixels,
     ScreenSnapshot,
     FastFeedback,
+    WaitTiming,
 }
 
 impl From<Stage> for AttendedSmokeStage {
@@ -43,6 +45,7 @@ impl From<Stage> for AttendedSmokeStage {
             Stage::ReversiblePixels => Self::ReversiblePixels,
             Stage::ScreenSnapshot => Self::ScreenSnapshot,
             Stage::FastFeedback => Self::FastFeedback,
+            Stage::WaitTiming => Self::WaitTiming,
         }
     }
 }
@@ -54,6 +57,7 @@ impl Stage {
             Some(UNLOCK_REVERSIBLE_PIXELS) => Some(Self::ReversiblePixels),
             Some(UNLOCK_SCREEN_SNAPSHOT) => Some(Self::ScreenSnapshot),
             Some(UNLOCK_FAST_FEEDBACK) => Some(Self::FastFeedback),
+            Some(UNLOCK_WAIT_TIMING) => Some(Self::WaitTiming),
             _ => None,
         }
     }

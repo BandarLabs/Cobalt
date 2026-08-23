@@ -14,6 +14,7 @@ and touch profile. A matching model name alone is not sufficient.
 | Kobo Clara BW | N365, code 391, firmware 4.45.23697, kernel 4.9.77 | Read-only probe and owner-attended display, touch, exit, and recovery tests complete | Fully tested |
 | Kobo Clara HD | N249, code 376, firmware 4.38.23684 or 4.38.23697, kernel 4.1.15-00136-g12655eaaef89 | Read-only probe and owner-attended display, touch, exit, sandbox, and recovery tests complete | Fully tested |
 | Kobo Elipsa 2E | N605, code 389, firmware 4.38.23697, kernel 4.9.77 | Read-only probe and owner-attended display, touch, exit, suspend/resume, and recovery tests complete | Fully tested |
+| Kobo Libra 2 | N418, code 388, firmware 4.38.23697, kernel 4.1.15-00868-g58a2758be07 | Read-only probe and owner-attended display, touch, page-button, exit, and recovery tests complete | Fully tested |
 
 `Read-only doctor match complete` means the profile describes the observed
 identity, framebuffer, and touch ranges. It does not prove the physical touch
@@ -186,7 +187,7 @@ running 4.45.23697, and it replaces the worse answer that came before it:
 password at all** and still does not give you `kobo deploy`.
 
 > [!NOTE]
-> If your Kobo is running a firmware older than **4.42** (such as 4.38), it does not have this built-in SSH toggle. You will need to manually install an SSH server (like Dropbear via NickelMenu) and manually copy your public key (from `~/.ssh/kobo_cobalt.pub`) into `/root/.ssh/authorized_keys` on the device yourself.
+> The firmware version this toggle first shipped in is not 4.42, and may be model-dependent: a Libra 2 on firmware 4.38.23697 ships `.kobo/ssh-disabled`, and renaming it brings up a working OpenSSH. If your firmware really lacks the toggle, install an SSH server manually (like Dropbear via NickelMenu) and copy your public key (from `~/.ssh/kobo_cobalt.pub`) into `authorized_keys` under root's home directory yourself — which is `/.ssh/authorized_keys` on readers whose `/etc/passwd` gives root a home of `/`, such as the i.MX6 models, not `/root/.ssh/`.
 
 ### Why Cobalt itself is not a `KoboRoot.tgz`
 
@@ -440,6 +441,21 @@ inside an application can be read back the same way. This is the reason to
 reach for `context.log(...)` around work you suspect: an application logs to
 explain itself, and the times it most needs to be believed are the times it
 took the reader down with it.
+
+### Per-frame timing
+
+One line per painted frame on standard error, off unless `KOBO_FRAME_TIMING=1`:
+
+```text
+frame 1264x1680 wf=2 convert=41ms write=18ms submit=214us wait=401ms
+```
+
+It separates the grayscale conversion, the framebuffer write and the two
+ioctls, and names the waveform the panel was actually given. This is what found
+the Libra 2 tap delay, and it is the fastest way to tell a slow conversion apart
+from a slow panel. It goes to standard error rather than the black box because
+the black box costs an `fsync` per line, which would swamp the thing being
+measured; `start.sh` captures standard error already.
 
 The excerpt above is the whole method in three lines. A reader that had returned
 to the stock interface looks identical whether the session ended cleanly or the

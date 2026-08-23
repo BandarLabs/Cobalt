@@ -12,7 +12,7 @@
 
 use crate::touch::{InputEvent32, TouchDecoder, TouchEvent};
 use kobo_abi::input;
-use kobo_profile::DeviceProfile;
+use kobo_profile::PanelPose;
 use std::fmt;
 use std::fs::File;
 use std::io::{self, Read};
@@ -98,7 +98,7 @@ impl fmt::Display for TouchObservation {
 /// number of decodable events.
 pub fn observe_touch(
     path: &Path,
-    profile: &DeviceProfile,
+    pose: &PanelPose<'_>,
     duration: Duration,
     mut sink: impl FnMut(TouchObservation),
 ) -> Result<usize, ObserveError> {
@@ -133,7 +133,7 @@ pub fn observe_touch(
                     }
                     _ => {}
                 }
-                if let Some(touch) = decoder.push(event, profile) {
+                if let Some(touch) = decoder.push(event, pose) {
                     let (raw_x, raw_y) = last_raw.unwrap_or((-1, -1));
                     reported += 1;
                     sink(TouchObservation {
@@ -189,7 +189,7 @@ fn read_events(mut file: File, sender: &mpsc::Sender<Result<InputEvent32, String
 mod tests {
     use super::{observe_touch, TouchObservation, MAXIMUM_OBSERVE_SECONDS};
     use crate::touch::TouchEvent;
-    use kobo_profile::CLARA_BW_391;
+    use kobo_profile::{PanelPose, CLARA_BW_391};
     use std::path::Path;
     use std::time::Duration;
 
@@ -197,7 +197,7 @@ mod tests {
     fn an_over_long_window_is_refused_before_the_device_is_opened() {
         let error = observe_touch(
             Path::new("/definitely/not/a/device"),
-            &CLARA_BW_391,
+            &PanelPose::reference(&CLARA_BW_391),
             Duration::from_secs(MAXIMUM_OBSERVE_SECONDS + 1),
             |_| unreachable!("no touch can be reported"),
         )
@@ -212,7 +212,7 @@ mod tests {
     fn a_missing_touch_device_is_an_error_rather_than_a_hang() {
         let error = observe_touch(
             Path::new("/definitely/not/a/device"),
-            &CLARA_BW_391,
+            &PanelPose::reference(&CLARA_BW_391),
             Duration::from_millis(1),
             |_| unreachable!("no touch can be reported"),
         )
@@ -236,11 +236,13 @@ mod tests {
 
     #[test]
     fn the_transform_under_test_maps_the_corners_as_documented() {
-        // These are the four claims a physical touch has to confirm.
-        let profile = &CLARA_BW_391;
-        assert_eq!(profile.touch_to_display(0, 0), Some((1071, 0)));
-        assert_eq!(profile.touch_to_display(0, 1071), Some((0, 0)));
-        assert_eq!(profile.touch_to_display(1447, 0), Some((1071, 1447)));
-        assert_eq!(profile.touch_to_display(1447, 1071), Some((0, 1447)));
+        // These are the four claims a physical touch has to confirm. They are
+        // asserted at the pose the Clara BW profile was measured in, which is
+        // the only pose this transform is known to be right at.
+        let pose = PanelPose::reference(&CLARA_BW_391);
+        assert_eq!(pose.touch_to_display(0, 0), Some((1071, 0)));
+        assert_eq!(pose.touch_to_display(0, 1071), Some((0, 0)));
+        assert_eq!(pose.touch_to_display(1447, 0), Some((1071, 1447)));
+        assert_eq!(pose.touch_to_display(1447, 1071), Some((0, 1447)));
     }
 }

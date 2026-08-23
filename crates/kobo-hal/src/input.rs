@@ -18,7 +18,7 @@
 
 use crate::touch::{InputEvent32, TouchDecoder, TouchEvent};
 use kobo_abi::input;
-use kobo_profile::DeviceProfile;
+use kobo_profile::PanelPose;
 use std::fmt;
 use std::fs::File;
 use std::io::{self, Read};
@@ -92,12 +92,12 @@ impl TouchSession {
     ///
     /// Returns an error when the device is not the expected panel, never
     /// becomes quiescent, or is already owned by another process.
-    pub fn acquire(path: &Path, profile: &'static DeviceProfile) -> Result<Self, InputError> {
+    pub fn acquire(path: &Path, pose: PanelPose<'static>) -> Result<Self, InputError> {
         let device = File::open(path)?;
         let name = input::device_name(&device)?;
-        if name != profile.touch_name {
+        if name != pose.profile().touch_name {
             return Err(InputError::WrongDevice {
-                expected: profile.touch_name.to_owned(),
+                expected: pose.profile().touch_name.to_owned(),
                 found: name,
             });
         }
@@ -133,7 +133,7 @@ impl TouchSession {
                             event.kind, event.code, event.value
                         );
                     }
-                    if let Some(touch) = decoder.push(event, profile) {
+                    if let Some(touch) = decoder.push(event, &pose) {
                         if sender.send(touch).is_err() {
                             return;
                         }
