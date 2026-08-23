@@ -607,15 +607,15 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
 
     // Which page key means "forward" depends on how the reader is held. At
     // the profile's reference pose (buttons on the right, on the Libra 2)
-    // key 194 pages forward and 193 pages back, which is KOReader's
-    // assignment for this device.
+    // key 194 pages forward and 193 pages back, which is both KOReader's
+    // assignment for this device and what the owner read off the hardware:
+    // with the buttons on the right the upper key goes back and the lower
+    // key goes forward, so 194 is the lower one.
     //
-    // What was verified here is the behaviour, not that attribution: a
-    // session paged the way the reader expected in both portrait poses, and a
-    // half turn mid-session inverted it correctly. Which physical key, upper
-    // or lower, carries which code was never separately recorded, so it is
-    // not claimed. Pose resolution has already refused anything but the two
-    // portrait poses.
+    // The behaviour was checked the same way: a session paged as expected in
+    // both portrait poses, and a half turn mid-session inverted it correctly
+    // with no restart. Pose resolution has already refused anything but the
+    // two portrait poses.
     let forward_is_194 = pose.rotation() % 4 == profile.reference_rotation % 4;
 
     let outcome = host_applications(
@@ -2802,9 +2802,12 @@ fn page_key_message(
         kobo_ui::PagingState::None => Some(kobo_protocol::Message::PageTurn { forward }),
         // Dropped, but not silently: a press that does nothing is
         // indistinguishable from a broken button, and this is the record that
-        // says which it was.
+        // says which it was. Both channels, as `action_for` does it, because
+        // the black box is off unless somebody asked for it and this has to
+        // be answerable in an ordinary session.
         kobo_ui::PagingState::SuppressedByOverlay => {
             trace("page key dropped: an overlay is up");
+            println!("page key dropped: an overlay is up");
             None
         }
     }
