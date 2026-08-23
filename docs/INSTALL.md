@@ -103,7 +103,7 @@ you with an unbootable reader.
 
 On this firmware the entry is in the menu at the **bottom right** of the home
 screen. (NickelMenu puts its items in the top-left menu on old firmware and in
-the bottom-right one from 4.23.15505 onward, and both tested profiles are well
+the bottom-right one from 4.23.15505 onward, and all three tested profiles are well
 past that.) Tap it and choose **Cobalt**.
 
 The launcher appears with Cobalt's built-in applications. Store-only

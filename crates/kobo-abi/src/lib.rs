@@ -951,7 +951,7 @@ pub mod sandbox {
         let _ignored = ptrace_value(libc::PTRACE_KILL, pid, 0);
     }
 
-    #[cfg(all(target_os = "linux", target_arch = "arm"))]
+    #[cfg(any(test, all(target_os = "linux", target_arch = "arm")))]
     #[derive(Clone, Copy, Default)]
     #[repr(C)]
     struct ArmRegisters {
@@ -975,10 +975,58 @@ pub mod sandbox {
         original_r0: u32,
     }
 
+    #[cfg(any(test, all(target_os = "linux", target_arch = "arm")))]
+    struct SyscallStopState {
+        entering: bool,
+        denied: bool,
+    }
+
+    #[cfg(any(test, all(target_os = "linux", target_arch = "arm")))]
+    impl Default for SyscallStopState {
+        fn default() -> Self {
+            Self {
+                entering: true,
+                denied: false,
+            }
+        }
+    }
+
+    /// Inspects, rewrites and resumes one syscall stop as a single operation.
+    /// A register failure must leave the tracee stopped: resuming after a
+    /// failed entry rewrite could execute the syscall the policy denied.
+    #[cfg(any(test, all(target_os = "linux", target_arch = "arm")))]
+    fn advance_syscall_stop<Get, Set, Denied, Resume>(
+        state: &mut SyscallStopState,
+        mut get_registers: Get,
+        mut set_registers: Set,
+        syscall_is_denied: Denied,
+        resume: Resume,
+    ) -> io::Result<()>
+    where
+        Get: FnMut() -> io::Result<ArmRegisters>,
+        Set: FnMut(&ArmRegisters) -> io::Result<()>,
+        Denied: FnOnce(u32, u32) -> bool,
+        Resume: FnOnce() -> io::Result<()>,
+    {
+        if state.entering {
+            let mut registers = get_registers()?;
+            state.denied = syscall_is_denied(registers.r7, registers.r0);
+            if state.denied {
+                registers.r7 = u32::MAX;
+                set_registers(&registers)?;
+            }
+        } else if state.denied {
+            let mut registers = get_registers()?;
+            registers.r0 = u32::from_ne_bytes((-libc::EPERM).to_ne_bytes());
+            set_registers(&registers)?;
+        }
+        state.entering = !state.entering;
+        resume()
+    }
+
     #[cfg(all(target_os = "linux", target_arch = "arm"))]
     fn trace_child(pid: i32) {
-        let mut entering = true;
-        let mut denied = false;
+        let mut syscall_state = SyscallStopState::default();
         loop {
             let mut status = 0;
             if unsafe { libc::waitpid(pid, &raw mut status, 0) } < 0 {
@@ -998,22 +1046,15 @@ pub mod sandbox {
                 break;
             }
             if signal == (libc::SIGTRAP | 0x80) {
-                if entering {
-                    if let Ok(mut registers) = get_registers(pid) {
-                        denied = syscall_is_denied(registers.r7, registers.r0);
-                        if denied {
-                            registers.r7 = u32::MAX;
-                            let _ignored = set_registers(pid, &registers);
-                        }
-                    }
-                } else if denied {
-                    if let Ok(mut registers) = get_registers(pid) {
-                        registers.r0 = u32::from_ne_bytes((-libc::EPERM).to_ne_bytes());
-                        let _ignored = set_registers(pid, &registers);
-                    }
-                }
-                entering = !entering;
-                if ptrace_syscall(pid, 0).is_err() {
+                if advance_syscall_stop(
+                    &mut syscall_state,
+                    || get_registers(pid),
+                    |registers| set_registers(pid, registers),
+                    syscall_is_denied,
+                    || ptrace_syscall(pid, 0),
+                )
+                .is_err()
+                {
                     abort_trace(u32::try_from(pid).unwrap_or_default());
                     break;
                 }
@@ -1237,6 +1278,52 @@ pub mod sandbox {
         {
             let _ = (root, signal_number);
             Ok(0)
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{advance_syscall_stop, ArmRegisters, SyscallStopState};
+        use std::cell::Cell;
+        use std::io;
+
+        #[test]
+        fn a_register_read_failure_does_not_resume_the_tracee() {
+            let resumed = Cell::new(false);
+            let result = advance_syscall_stop(
+                &mut SyscallStopState::default(),
+                || Err(io::Error::other("PTRACE_GETREGS failed")),
+                |_| Ok(()),
+                |_, _| true,
+                || {
+                    resumed.set(true);
+                    Ok(())
+                },
+            );
+
+            assert!(result.is_err());
+            assert!(!resumed.get());
+        }
+
+        #[test]
+        fn a_denied_syscall_rewrite_failure_does_not_resume_the_tracee() {
+            let resumed = Cell::new(false);
+            let result = advance_syscall_stop(
+                &mut SyscallStopState::default(),
+                || Ok(ArmRegisters::default()),
+                |registers| {
+                    assert_eq!(registers.r7, u32::MAX);
+                    Err(io::Error::other("PTRACE_SETREGS failed"))
+                },
+                |_, _| true,
+                || {
+                    resumed.set(true);
+                    Ok(())
+                },
+            );
+
+            assert!(result.is_err());
+            assert!(!resumed.get());
         }
     }
 }
