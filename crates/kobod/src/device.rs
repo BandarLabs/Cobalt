@@ -607,11 +607,15 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
 
     // Which page key means "forward" depends on how the reader is held. At
     // the profile's reference pose (buttons on the right, on the Libra 2)
-    // the lower key, 194, pages forward. Measured on the device rather than
-    // borrowed: an ungrabbed capture on `gpio-keys` reported 193 for the
-    // upper key and 194 for the lower one at buttons-right, and paging that
-    // way round was confirmed in a session. A half turn swaps them, which was
-    // confirmed too, and pose resolution has already refused anything else.
+    // key 194 pages forward and 193 pages back, which is KOReader's
+    // assignment for this device.
+    //
+    // What was verified here is the behaviour, not that attribution: a
+    // session paged the way the reader expected in both portrait poses, and a
+    // half turn mid-session inverted it correctly. Which physical key, upper
+    // or lower, carries which code was never separately recorded, so it is
+    // not claimed. Pose resolution has already refused anything but the two
+    // portrait poses.
     let forward_is_194 = pose.rotation() % 4 == profile.reference_rotation % 4;
 
     let outcome = host_applications(
