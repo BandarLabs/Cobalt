@@ -2801,12 +2801,32 @@ impl Painter {
             PanelWaveform::Gc16 => RefreshIntent::QualityContent,
         };
 
-        let frame =
-            RegionSnapshot::from_grayscale(display.geometry(), whole_screen, &surface.pixels)
-                .map_err(|error| format!("prepare the frame: {error}"))?;
+        let started = Instant::now();
+        // Convert and write only the rows the transition touches. The write
+        // path runs at a few megabytes per second on the i.MX6's uncached
+        // framebuffer, so writing the whole screen for every frame cost about
+        // 1.6 seconds per tap regardless of how small the change was.
+        let region_gray = {
+            let out_of_surface = || "the transition region is not inside the surface".to_owned();
+            let x = usize::try_from(transition.region.x).map_err(|_| out_of_surface())?;
+            let y = usize::try_from(transition.region.y).map_err(|_| out_of_surface())?;
+            let width = usize::try_from(transition.region.width).map_err(|_| out_of_surface())?;
+            let height = usize::try_from(transition.region.height).map_err(|_| out_of_surface())?;
+            let mut gray = Vec::with_capacity(width.saturating_mul(height));
+            for row in 0..height {
+                let start = (y + row) * surface.width + x;
+                let end = start + width;
+                gray.extend_from_slice(surface.pixels.get(start..end).ok_or_else(out_of_surface)?);
+            }
+            gray
+        };
+        let frame = RegionSnapshot::from_grayscale(display.geometry(), region, &region_gray)
+            .map_err(|error| format!("prepare the frame: {error}"))?;
+        let converted = started.elapsed();
         display
             .restore(&frame)
             .map_err(|error| format!("write the frame: {error}"))?;
+        let written = started.elapsed();
         let plan = RefreshPlan::new(
             region,
             intent,
@@ -2815,9 +2835,24 @@ impl Painter {
             whole_screen.height,
         )
         .ok_or_else(|| "the refresh region is not inside the screen".to_owned())?;
-        display
-            .refresh(plan)
+        let timing = display
+            .refresh_timed(plan)
             .map_err(|error| format!("show the frame: {error}"))?;
+        // One line per frame while the delay on the Libra 2 is being chased:
+        // how long the grayscale conversion, the framebuffer write and the
+        // two ioctls each took, and what was refreshed with which waveform.
+        // Stderr rather than the black box: start.sh already captures it, and
+        // the black box costs an fsync per line.
+        eprintln!(
+            "frame {}x{} wf={} convert={}ms write={}ms submit={}us wait={}ms",
+            region.width,
+            region.height,
+            timing.submitted_waveform,
+            converted.as_millis(),
+            (written - converted).as_millis(),
+            timing.submit.as_micros(),
+            timing.wait.as_millis(),
+        );
 
         if !self.frames.commit(surface, transition) {
             return Err("the frame planner rejected a completed refresh".to_owned());
