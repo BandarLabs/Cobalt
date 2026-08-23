@@ -3419,9 +3419,9 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
             would_stage,
             options.enable_ssh && options.authorize_key,
         ) {
-            (true, true) => ", and nothing extracted as root but NickelMenu's own two files and one authorized_keys",
+            (true, true) => ", and nothing extracted as root but NickelMenu's own two files, one authorized_keys, and the firmware's first-login marker",
             (true, false) => ", and nothing extracted as root but NickelMenu's own two files",
-            (false, true) => ", and nothing extracted as root but one authorized_keys",
+            (false, true) => ", and nothing extracted as root but one authorized_keys and the firmware's first-login marker",
             (false, false) => ", nothing extracted as root",
         }
     )
@@ -6727,7 +6727,10 @@ mod tests {
             assert!(plan.contains("stage NickelMenu"), "{plan}");
             assert!(plan.contains("same .kobo/KoboRoot.tgz"), "{plan}");
             assert!(
-                plan.contains("NickelMenu's own two files and one authorized_keys"),
+                plan.contains(
+                    "NickelMenu's own two files, one authorized_keys, and the firmware's \
+                     first-login marker"
+                ),
                 "{plan}"
             );
         }
