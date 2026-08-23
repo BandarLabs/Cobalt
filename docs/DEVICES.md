@@ -441,6 +441,21 @@ reach for `context.log(...)` around work you suspect: an application logs to
 explain itself, and the times it most needs to be believed are the times it
 took the reader down with it.
 
+### Per-frame timing
+
+One line per painted frame on standard error, off unless `KOBO_FRAME_TIMING=1`:
+
+```text
+frame 1264x1680 wf=2 convert=41ms write=18ms submit=214us wait=401ms
+```
+
+It separates the grayscale conversion, the framebuffer write and the two
+ioctls, and names the waveform the panel was actually given. This is what found
+the Libra 2 tap delay, and it is the fastest way to tell a slow conversion apart
+from a slow panel. It goes to standard error rather than the black box because
+the black box costs an `fsync` per line, which would swamp the thing being
+measured; `start.sh` captures standard error already.
+
 The excerpt above is the whole method in three lines. A reader that had returned
 to the stock interface looks identical whether the session ended cleanly or the
 `SoC` watchdog reset the device, and the two have completely different causes.

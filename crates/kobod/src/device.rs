@@ -72,6 +72,19 @@ const SECRETS: &str = "/mnt/onboard/.adds/cobalt/secrets";
 const TRUST: &str = "/mnt/onboard/.adds/cobalt/trust";
 const DICTIONARIES: &str = "/mnt/onboard/.adds/cobalt/dictionaries";
 
+/// Turns on the per-frame timing line on stderr.
+const FRAME_TIMING: &str = "KOBO_FRAME_TIMING";
+
+/// Whether the owner asked for per-frame timing, read once for the process.
+///
+/// Once rather than per frame because the point of the line is to measure the
+/// paint path, and an environment lookup inside the thing being measured is
+/// exactly the wrong place for it.
+fn frame_timing_wanted() -> bool {
+    static WANTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *WANTED.get_or_init(|| std::env::var(FRAME_TIMING).ok().as_deref() == Some("1"))
+}
+
 /// The most publisher faces one application may hold in the runtime at once.
 ///
 /// The protocol bounds a single font frame, not how many frames arrive. A book
@@ -3024,21 +3037,25 @@ impl Painter {
         let timing = display
             .refresh_timed(plan)
             .map_err(|error| format!("show the frame: {error}"))?;
-        // One line per frame while the delay on the Libra 2 is being chased:
-        // how long the grayscale conversion, the framebuffer write and the
-        // two ioctls each took, and what was refreshed with which waveform.
-        // Stderr rather than the black box: start.sh already captures it, and
-        // the black box costs an fsync per line.
-        eprintln!(
-            "frame {}x{} wf={} convert={}ms write={}ms submit={}us wait={}ms",
-            region.width,
-            region.height,
-            timing.submitted_waveform,
-            converted.as_millis(),
-            written.saturating_sub(converted).as_millis(),
-            timing.submit.as_micros(),
-            timing.wait.as_millis(),
-        );
+        // One line per frame: how long the grayscale conversion, the
+        // framebuffer write and the two ioctls each took, and what was
+        // refreshed with which waveform. This is what found the Libra 2 tap
+        // delay, so it stays, but off by default and behind its own switch:
+        // every frame on every device is the wrong place for unconditional
+        // output. Stderr rather than the black box, which costs an fsync per
+        // line; start.sh already captures stderr.
+        if frame_timing_wanted() {
+            eprintln!(
+                "frame {}x{} wf={} convert={}ms write={}ms submit={}us wait={}ms",
+                region.width,
+                region.height,
+                timing.submitted_waveform,
+                converted.as_millis(),
+                written.saturating_sub(converted).as_millis(),
+                timing.submit.as_micros(),
+                timing.wait.as_millis(),
+            );
+        }
 
         if !self.frames.commit(surface, transition) {
             return Err("the frame planner rejected a completed refresh".to_owned());
