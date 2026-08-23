@@ -21,6 +21,10 @@ pub mod display;
 /// though only a register on the light driver, which a reboot restores.
 #[cfg(feature = "device-write")]
 pub mod frontlight;
+/// The physical buttons and the orientation channel, read without a grab.
+/// Not gated: like [`cover`], watching the node takes nothing away from the
+/// stock reader.
+pub mod gpio;
 #[cfg(feature = "device-write")]
 pub mod input;
 /// Putting the network back after a handoff. Available only with

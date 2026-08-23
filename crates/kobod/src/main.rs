@@ -102,6 +102,13 @@ fn run(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     if arguments.len() == 2 && arguments[0] == "--touch-test" {
         return touch_test(&arguments[1]);
     }
+    // Reads the physical buttons and reports what arrives. This takes no
+    // grab: the reader keeps seeing every press, so pages may turn in Nickel
+    // underneath and the power button keeps its normal meaning. Purely a
+    // capture, safe on a device in normal use.
+    if arguments.len() == 2 && arguments[0] == "--key-test" {
+        return key_test(&arguments[1]);
+    }
     // Performs one real request and reports what happened. This touches no
     // hardware and does not go near the reader, so it is safe to run on a
     // device in normal use, which is the point: the network path has to be
@@ -109,7 +116,7 @@ fn run(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     if arguments.len() == 3 && arguments[0] == "--fetch" {
         return fetch_once(&arguments[1], &arguments[2]);
     }
-    Err("usage: kobod [--sim-socket PATH --frame PATH] [--present APP] [--fetch URL BYTES]".into())
+    Err("usage: kobod [--sim-socket PATH --frame PATH] [--present APP] [--fetch URL BYTES] [--key-test SECONDS]".into())
 }
 
 #[cfg(feature = "device-write")]
@@ -162,6 +169,85 @@ fn touch_test(seconds: &str) -> Result<(), Box<dyn Error>> {
     session.release()?;
     println!("released after {count} events");
     Ok(())
+}
+
+/// Reads the button device without grabbing it and prints every event.
+///
+/// The point is to learn the keycodes the page-turn and power buttons emit
+/// on hardware nobody has captured yet, at both poses. Numeric codes are
+/// printed verbatim so nothing is lost to an incomplete name table.
+fn key_test(seconds: &str) -> Result<(), Box<dyn Error>> {
+    use kobo_hal::touch::InputEvent32;
+    use std::io::Read;
+    use std::time::{Duration, Instant};
+
+    let seconds: u64 = seconds.parse().unwrap_or(20).min(120);
+
+    let content = std::fs::read_to_string("/proc/bus/input/devices")?;
+    let path = discover_key_path(&content)
+        .ok_or_else(|| "no gpio-keys device found in /proc/bus/input/devices".to_owned())?;
+    let mut device = std::fs::File::open(&path)?;
+    let name = kobo_abi::input::device_name(&device)?;
+    println!("button device: {} ({name})", path.display());
+    println!("reading for {seconds}s, no grab; press each button, at both poses");
+
+    let deadline = Instant::now() + Duration::from_secs(seconds);
+    let started = Instant::now();
+    let mut buffer = [0_u8; 16 * 64];
+    let mut count = 0_u32;
+    while Instant::now() < deadline {
+        // A blocking read sits here until a press arrives; the deadline is
+        // only checked between reads, so the capture ends on the first
+        // event after time is up, or at the final press of Enter... it does
+        // not, so the run simply overshoots by however long the last quiet
+        // stretch lasts. Acceptable for an owner-attended probe.
+        let read = device.read(&mut buffer)?;
+        for chunk in buffer[..read].chunks_exact(16) {
+            let Some(event) = InputEvent32::decode(chunk) else {
+                continue;
+            };
+            count += 1;
+            let at = started.elapsed().as_millis();
+            let kind = match event.kind {
+                0 => "SYN",
+                1 => "KEY",
+                _ => "???",
+            };
+            let action = match (event.kind, event.value) {
+                (1, 0) => " up",
+                (1, 1) => " down",
+                (1, 2) => " repeat",
+                _ => "",
+            };
+            println!(
+                "{at:>7} ms  {kind} code={} value={}{action}",
+                event.code, event.value
+            );
+        }
+    }
+    println!("captured {count} events");
+    Ok(())
+}
+
+/// Finds the event node for the `gpio-keys` device.
+fn discover_key_path(content: &str) -> Option<std::path::PathBuf> {
+    content.split("\n\n").find_map(|block| {
+        let name_matches = block
+            .lines()
+            .find(|line| line.starts_with("N: Name="))
+            .is_some_and(|line| line.contains("gpio-keys"));
+        if !name_matches {
+            return None;
+        }
+        let handlers = block
+            .lines()
+            .find(|line| line.starts_with("H: Handlers="))?;
+        let event = handlers
+            .strip_prefix("H: Handlers=")?
+            .split_whitespace()
+            .find(|handler| handler.starts_with("event"))?;
+        Some(std::path::Path::new("/dev/input").join(event))
+    })
 }
 
 /// Fetches one URL and prints a one line verdict.

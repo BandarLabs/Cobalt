@@ -384,6 +384,18 @@ pub mod input {
     pub const EV_SYN: u16 = 0x00;
     pub const EV_KEY: u16 = 0x01;
     pub const EV_ABS: u16 = 0x03;
+    pub const EV_MSC: u16 = 0x04;
+    /// The one `EV_MSC` code the NTX kernels use: digested accelerometer
+    /// orientation, delivered on the `gpio-keys` node.
+    pub const MSC_RAW: u16 = 0x03;
+    /// The power button, as `gpio-keys` reports it.
+    pub const KEY_POWER: u16 = 116;
+    /// The page-turn keys on devices that have them. Linux names these
+    /// `KEY_F23` and `KEY_F24`; which one means "forward" depends on how the
+    /// reader is held, so the codes stay neutral here and the meaning is
+    /// assigned where the pose is known. Captured on a Libra 2 on 2026-08-23.
+    pub const KEY_PAGE_193: u16 = 193;
+    pub const KEY_PAGE_194: u16 = 194;
     pub const SYN_REPORT: u16 = 0;
     pub const BTN_TOUCH: u16 = 330;
 

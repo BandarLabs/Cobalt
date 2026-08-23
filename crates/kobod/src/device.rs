@@ -34,6 +34,7 @@
 
 use crate::blackbox::{self, trace};
 use kobo_hal::display::{DisplaySession, OWNER_UNLOCK_PHRASE};
+use kobo_hal::gpio::{self, GpioEvent, GpioSession};
 use kobo_hal::input::TouchSession;
 use kobo_hal::reader::{Reader, Watchdog, WATCHDOG_CHECK};
 use kobo_hal::soc_watchdog::SocWatchdog;
@@ -408,6 +409,8 @@ const APP_STOP_GRACE: Duration = Duration::from_secs(3);
 /// battery life.
 enum Event {
     Touch(TouchEvent),
+    /// A button or orientation report from the `gpio-keys` node.
+    Gpio(GpioEvent),
     App(u64, Box<Frame>),
     /// An application's end of the socket closed.
     AppGone(u64),
@@ -573,6 +576,22 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     // started here rather than per application.
     let taps = TouchSink::default();
     pump_touch(&mut touch, &taps);
+
+    // The buttons and the orientation channel, on hardware that has them.
+    // Absence is not a failure: not every supported device has page keys,
+    // and a session without buttons is the state every session was in
+    // before this existed.
+    let mut buttons = gpio::discover_buttons_path()
+        .and_then(|path| match GpioSession::acquire(&path) {
+            Ok(session) => Some(session),
+            Err(error) => {
+                trace(&format!("buttons unavailable: {error}"));
+                None
+            }
+        });
+    if let Some(session) = buttons.as_mut() {
+        pump_gpio(session, &taps);
+    }
 
     let outcome = host_applications(
         application,
@@ -1248,6 +1267,14 @@ fn host_applications(
                             &mut status,
                         )?;
                     }
+                }
+                Ok(Event::Gpio(event)) => {
+                    last_activity = Instant::now();
+                    // Observed and logged only, until the protocol carries
+                    // page-turn intent. The demux that assigns meaning —
+                    // forward or back from the pose, sleep from the power
+                    // button — builds on top of this arm.
+                    trace(&format!("gpio: {event:?}"));
                 }
                 Ok(Event::Touch(event)) => {
                     last_activity = Instant::now();
@@ -2895,6 +2922,18 @@ impl TouchSink {
             let _ignored = sender.send(Event::Touch(event));
         }
     }
+
+    /// Same policy as taps: between applications a press is dropped, not
+    /// queued for whatever comes up next.
+    fn send_gpio(&self, event: GpioEvent) {
+        let guard = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(sender) = guard.as_ref() {
+            let _ignored = sender.send(Event::Gpio(event));
+        }
+    }
 }
 
 fn pump_touch(touch: &mut TouchSession, sink: &TouchSink) {
@@ -2905,6 +2944,21 @@ fn pump_touch(touch: &mut TouchSession, sink: &TouchSink) {
     thread::spawn(move || {
         while let Ok(event) = events.recv() {
             sink.send(event);
+        }
+    });
+}
+
+/// One reader thread on the button device for the whole panel session,
+/// mirroring [`pump_touch`] for the same reason: the destination changes as
+/// applications come and go, the thread does not.
+fn pump_gpio(buttons: &mut GpioSession, sink: &TouchSink) {
+    let Some(events) = buttons.take_events() else {
+        return;
+    };
+    let sink = sink.clone();
+    thread::spawn(move || {
+        while let Ok(event) = events.recv() {
+            sink.send_gpio(event);
         }
     });
 }
