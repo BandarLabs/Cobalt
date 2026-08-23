@@ -384,7 +384,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_identity_nia_cannot_receive_a_tap_while_write_evidence_is_pending() {
+    fn pending_nia_rejects_synthetic_taps() {
         let snapshot = snapshot_for(
             &NIA_382,
             IdentitySnapshot {

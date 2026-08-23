@@ -42,7 +42,7 @@ const SMOKE_PATCH_REGION: Rect = Rect {
     height: 256,
 };
 const SMOKE_VISIBLE_HOLD: Duration = Duration::from_millis(1200);
-const UNRELIABLE_MXCFB_PACING: Duration = Duration::from_micros(2500);
+const MXCFB_PACING: Duration = Duration::from_micros(2500);
 const ATTENDED_SMOKE_UNLOCK_PHRASE: &str = "OWNER_ATTENDED_CANDIDATE_DISPLAY_VALIDATION";
 
 /// One bounded operation used to gather owner-attended display evidence.
@@ -286,7 +286,7 @@ impl DisplaySession {
                         // having an MXCFB completion wait that may stall for
                         // seconds. Match KOReader's stub pacing instead of
                         // entering that ioctl after every partial frame.
-                        sleep(UNRELIABLE_MXCFB_PACING);
+                        sleep(MXCFB_PACING);
                     }
                 }
             }

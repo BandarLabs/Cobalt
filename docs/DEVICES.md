@@ -13,7 +13,6 @@ and touch profile. A matching model name alone is not sufficient.
 |---|---|---|---|
 | Kobo Clara BW | N365, code 391, firmware 4.45.23697, kernel 4.9.77 | Read-only probe and owner-attended display, touch, exit, and recovery tests complete | Fully tested |
 | Kobo Clara HD | N249, code 376, firmware 4.38.23684 or 4.38.23697, kernel 4.1.15-00136-g12655eaaef89 | Read-only probe and owner-attended display, touch, exit, sandbox, and recovery tests complete | Fully tested |
-| Kobo Nia (candidate) | N306, code 382, firmware 4.38.23684, kernel 4.1.15-00463-g38afd5cea756; PCB E60U20, PCB_REV 0x10, PCB_LVL A, PMIC RC5T619, FL_PWM LM3630x1a | Read-only profile match; attended write, sandbox, revision-boundary, and sustained-refresh evidence pending review | Pending; runtime writes rejected |
 | Kobo Elipsa 2E | N605, code 389, firmware 4.38.23697, kernel 4.9.77 | Read-only probe and owner-attended display, touch, exit, suspend/resume, and recovery tests complete | Fully tested |
 
 `Read-only doctor match complete` means the profile describes the observed
@@ -551,17 +550,6 @@ failure; a Todo session rendered at 1404×1872 with physical taps reaching UI
 actions; release of panel and touch followed by a successful stock-reader
 restart; and suspend/resume with monotonic device uptime and no Cobalt process
 left running.
-
-The N306 profile is a read-only candidate. Its `write_ready` flag remains false
-until the porting issue contains the complete reviewed evidence block required
-by [PORTING.md](PORTING.md): command output for all four display stages,
-physical and end-to-end touch, guardian restoration, clean return to Nickel,
-the ptrace sandbox, and known gaps. The tested unit reports
-`PCB='E60U20'`, `PCB_REV=0x10`, `PCB_LVL='A'`, `PMIC='RC5T619'`, and
-`FL_PWM='LM3630x1a'`. The current serial-prefix, firmware, kernel, and
-device-code identity gate does **not** include those hwconfig fields and
-therefore does not exclude the untested BD71828 hardware revision found under
-the same device code. The broader identity cannot be write-enabled yet.
 
 [KOReader marks its KoboLuna/Nia profile](https://github.com/koreader/koreader/blob/master/frontend/device/kobo/device.lua#L372-L383)
 as having an unreliable `MXCFB_WAIT_FOR_UPDATE_COMPLETE` ioctl, and
