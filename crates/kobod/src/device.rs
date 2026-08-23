@@ -821,7 +821,7 @@ struct Hosted {
     path: PathBuf,
     /// Root-owned filesystem visible to this application on the device.
     jail: Option<PathBuf>,
-    child: Child,
+    child: ApplicationChild,
     stream: std::os::unix::net::UnixStream,
     store: kobo_policy::store::Store,
     shelf: kobo_policy::shelf::Shelf,
@@ -847,6 +847,67 @@ struct Hosted {
     painted: u32,
     /// When this was last on the panel, for deciding what to stop first.
     used: Instant,
+}
+
+/// An application process plus the legacy-kernel supervisor, when one is
+/// needed. Ordinary process APIs may reap a child only after ptrace has
+/// released its exit stop, so that ordering lives behind this type.
+struct ApplicationChild {
+    process: Child,
+    #[cfg(all(target_os = "linux", target_arch = "arm"))]
+    trace: Option<kobo_abi::sandbox::SyscallTrace>,
+}
+
+impl ApplicationChild {
+    fn ordinary(process: Child) -> Self {
+        Self {
+            process,
+            #[cfg(all(target_os = "linux", target_arch = "arm"))]
+            trace: None,
+        }
+    }
+
+    #[cfg(all(target_os = "linux", target_arch = "arm"))]
+    fn traced(process: Child, trace: kobo_abi::sandbox::SyscallTrace) -> Self {
+        Self {
+            process,
+            trace: Some(trace),
+        }
+    }
+
+    fn id(&self) -> u32 {
+        self.process.id()
+    }
+
+    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        #[cfg(all(target_os = "linux", target_arch = "arm"))]
+        if self
+            .trace
+            .as_ref()
+            .is_some_and(|trace| !trace.is_detached())
+        {
+            return Ok(None);
+        }
+        self.process.try_wait()
+    }
+
+    fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
+        #[cfg(all(target_os = "linux", target_arch = "arm"))]
+        if let Some(trace) = &self.trace {
+            trace.wait_until_detached(APP_STOP_GRACE);
+        }
+        self.process.wait()
+    }
+
+    fn trace_failure(&self) -> Option<String> {
+        #[cfg(all(target_os = "linux", target_arch = "arm"))]
+        if let Some(trace) = &self.trace {
+            return trace.failure();
+        }
+        #[cfg(not(all(target_os = "linux", target_arch = "arm")))]
+        let _ = self;
+        None
+    }
 }
 
 struct AppLaunch {
@@ -2222,6 +2283,17 @@ fn start_application(
     sender: &Sender<Event>,
 ) -> Result<u64, String> {
     let expected_name = installed_name(path)?;
+    // Capabilities are part of admission, not post-launch setup. Reading them
+    // before any process exists means a corrupt or concurrently removed
+    // manifest cannot leave an unowned child and jail behind.
+    let declared = if path.starts_with(Path::new(COBALT_ROOT).join("apps")) {
+        crate::app_store::declared(Path::new(COBALT_ROOT), &expected_name)
+            .ok_or_else(|| format!("read application manifest for {expected_name}"))?
+    } else if let Some(declared) = crate::app_store::builtin_declared(&expected_name) {
+        declared
+    } else {
+        Declared::all()
+    };
     let launch = AppLaunch::prepare(path, *next_id)?;
     let AppLaunch {
         listener,
@@ -2243,12 +2315,26 @@ fn start_application(
         // left of a crash was the application no longer being there, and the
         // one question worth asking of a crash could not be answered at all.
         .stderr(Stdio::piped());
-    if let Some(sandbox) = sandbox {
-        sandbox.configure(&mut command);
+    let trace_syscalls = if let Some(sandbox) = sandbox {
+        sandbox.configure(&mut command)
     } else {
         kobo_abi::process_group::configure(&mut command);
-    }
-    let mut child = match command.spawn() {
+        false
+    };
+    let spawned = if trace_syscalls {
+        #[cfg(all(target_os = "linux", target_arch = "arm"))]
+        {
+            kobo_abi::sandbox::SyscallTrace::spawn(command)
+                .map(|(child, trace)| ApplicationChild::traced(child, trace))
+        }
+        #[cfg(not(all(target_os = "linux", target_arch = "arm")))]
+        {
+            unreachable!("syscall tracing is selected only on 32-bit ARM Linux")
+        }
+    } else {
+        command.spawn().map(ApplicationChild::ordinary)
+    };
+    let mut child = match spawned {
         Ok(child) => child,
         Err(error) => {
             let _ignored = fs::remove_file(&socket_path);
@@ -2258,7 +2344,7 @@ fn start_application(
             return Err(format!("start {}: {error}", path.display()));
         }
     };
-    if let Some(stderr) = child.stderr.take() {
+    if let Some(stderr) = child.process.stderr.take() {
         report_what_an_application_says(expected_name.clone(), stderr);
     }
     let greeting = greet(&listener, whole_screen, &expected_name);
@@ -2268,6 +2354,7 @@ fn start_application(
         Ok(greeting) => greeting,
         Err(error) => {
             stop_application(&mut child, jail.as_deref());
+            let error = with_trace_failure(error, &child);
             if let Some(root) = &jail {
                 let _ignored = fs::remove_dir_all(root);
             }
@@ -2278,6 +2365,7 @@ fn start_application(
     *next_id += 1;
     if let Err(error) = pump_application(&stream, sender, id) {
         stop_application(&mut child, jail.as_deref());
+        let error = with_trace_failure(error, &child);
         if let Some(root) = &jail {
             let _ignored = fs::remove_dir_all(root);
         }
@@ -2285,14 +2373,6 @@ fn start_application(
     }
     let waker = sender.clone();
     let credential_app = name.clone();
-    let declared = if path.starts_with(Path::new(COBALT_ROOT).join("apps")) {
-        crate::app_store::declared(Path::new(COBALT_ROOT), &name)
-            .ok_or_else(|| format!("read application manifest for {name}"))?
-    } else if let Some(declared) = crate::app_store::builtin_declared(&name) {
-        declared
-    } else {
-        Declared::all()
-    };
     let tasks = TaskRunner::simulated(std::env::temp_dir())
         .with_fetch(Arc::new(kobo_net::fetch_from))
         .with_post(Arc::new(kobo_net::post))
@@ -2385,6 +2465,13 @@ fn stop_hosted(mut app: Hosted) {
     }
     app.tasks.shutdown();
     stop_application(&mut app.child, app.jail.as_deref());
+    if let Some(failure) = app.child.trace_failure() {
+        trace(&format!(
+            "{} syscall supervisor failed: {failure}",
+            app.name
+        ));
+        println!("{} syscall supervisor failed: {failure}", app.name);
+    }
     if let Some(root) = app.jail {
         let _ignored = fs::remove_dir_all(root);
     }
@@ -2473,7 +2560,7 @@ const HOLD_TIME: Duration = Duration::from_millis(500);
 const HOLD_SLIP: i32 = 40;
 
 /// Ends the application, politely if it has already finished and firmly if not.
-fn stop_application(child: &mut Child, jail: Option<&Path>) {
+fn stop_application(child: &mut ApplicationChild, jail: Option<&Path>) {
     let group = child.id();
     let _ignored = kobo_abi::process_group::signal(group, kobo_abi::process_group::SIGTERM);
     if let Some(root) = jail {
@@ -2502,6 +2589,13 @@ fn stop_application(child: &mut Child, jail: Option<&Path>) {
     }
     if child.try_wait().ok().flatten().is_none() {
         let _ignored = child.wait();
+    }
+}
+
+fn with_trace_failure(error: String, child: &ApplicationChild) -> String {
+    match child.trace_failure() {
+        Some(failure) => format!("{error}; syscall supervisor failed: {failure}"),
+        None => error,
     }
 }
 

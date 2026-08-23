@@ -2,10 +2,10 @@
 
 Part of [Cobalt](../README.md).
 
-Cobalt selects a device profile at runtime. The Clara BW and Elipsa 2E profiles
-are fully hardware-tested at their recorded identity and firmware boundaries.
-The current status and exact boundaries are recorded in the
-[device support matrix](DEVICES.md#device-support-matrix).
+Cobalt selects a device profile at runtime. The Clara BW, Elipsa 2E, and
+Clara HD profiles are fully hardware-tested at their recorded identity and
+firmware boundaries. The current status and exact boundaries are recorded in
+the [device support matrix](DEVICES.md#device-support-matrix).
 
 Display and synthetic-touch write entry points demand an exact hardware and
 firmware match, so an unknown reader is refused rather than guessed at. A
@@ -23,23 +23,27 @@ and every application are device-independent. What is measured is:
 
 1. **A `DeviceProfile`**, in `crates/kobo-profile/src/lib.rs`. Panel size and
    stride, framebuffer identity, the touch device and its axis ranges and
-   rotation, and the identity fields (device code, serial prefix, firmware,
-   kernel). Its `write_ready` flag remains false until the attended evidence in
-   the device support matrix has been reviewed. `CLARA_BW_391` and
-   `ELIPSA_2E_389` are the current examples.
-2. **`DisplayMetrics`**, in `crates/kobo-ui/src/lib.rs`. Size and DPI, which is
+   rotation, refresh controller, physical density, and the identity fields
+   (device code, serial prefix, firmware, kernel). Its `write_ready` flag
+   remains false until the attended evidence in the device support matrix has
+   been reviewed. `CLARA_BW_391`, `ELIPSA_2E_389`, and `CLARA_HD_376` are the
+   current examples.
+2. **A controller backend**, when the device does not use one already present.
+   Cobalt currently supports MediaTek HWTCON and Mark 7 MXCFB v2. Their ioctl
+   structures and waveform numbers are deliberately separate.
+3. **`DisplayMetrics`**, in `crates/kobo-ui/src/lib.rs`. Size and DPI, which is
    what the layout engine reasons about.
-3. **Runtime profile registration.** `SUPPORTED_PROFILES` in `kobo-profile`
+4. **Runtime profile registration.** `SUPPORTED_PROFILES` in `kobo-profile`
    contains the profiles the runtime may identify. Device tools probe first and
    select a matching hardware profile; panel-write entry points then apply the
    shared `write_ready_profile` gate, which requires exact identity and reviewed
-   evidence. The browser/runtime simulator remains Clara BW-sized, so a new
-   profile also needs explicit layout coverage for its metrics.
+   evidence.
 
-The framebuffer, touch decoder, and refresh planner consume a `DeviceProfile`
-rather than assuming one model. A new device can still require narrow discovery
-support—for example, recognizing its touch device name—and tests proving that
-all write paths use the profile selected from the same probe.
+The framebuffer, touch decoder, and refresh planner consume the selected
+`DeviceProfile` rather than assuming one model. The display backend dispatches
+on the profile's controller, so a new panel family needs its own backend plus
+tests proving that every write path uses the profile selected from the same
+probe.
 
 ## How to get the numbers
 
@@ -56,6 +60,7 @@ same partition your books are on.
 cargo run -p kobo-cli -- setup --enable-ssh --no-menu   # over USB, then eject
 cargo run -p kobo-cli -- devices                        # find the address
 cargo run -p kobo-cli -- doctor --device <address>
+cargo run -p kobo-cli -- touch-probe --device <address> --seconds 30
 ```
 
 `--no-menu` leaves the reader's own menus alone, which is what you want here:
@@ -86,10 +91,22 @@ touch: Elan Touchscreen at /dev/input/event2 X=0..1872 Y=0..1404
 result: write ready
 ```
 
+The hardware-verified Clara HD probe is:
+
+```
+profile: clara-hd-376 (Kobo Clara HD)
+device-tree compatible: fsl,imx6sll-lpddr3-arm2, fsl,imx6sll
+framebuffer: id=mxc_epdc_fb 1072x1448 virtual=1088x1536 offset=0,0 bpp=32 ...
+identity: model=N249 firmware=4.38.23697 kernel=4.1.15-00136-g12655eaaef89 device-code=376
+touch: cyttsp5_mt X=0..1447 Y=0..1071
+result: write ready
+```
+
 Every field a profile needs is on that page. The doctor compares the probe with
 the registered profiles. A known device is named; an unknown device is reported
 as unsupported after its raw fields are printed, making that report the
-starting evidence for a new profile.
+starting evidence for a new profile. The touch probe then checks a physical
+touch at a known corner against the proposed rotated transform.
 
 The full serial number is deliberately never read past its four-character
 model prefix.
