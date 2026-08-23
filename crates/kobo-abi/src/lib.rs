@@ -825,8 +825,26 @@ pub mod sandbox {
             if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) < 0 {
                 return Err(io::Error::last_os_error());
             }
-            if install_filter().is_err() && libc::unshare(libc::CLONE_NEWNET) < 0 {
-                return Err(io::Error::last_os_error());
+            if let Err(filter_error) = install_filter() {
+                if libc::unshare(libc::CLONE_NEWNET) < 0 {
+                    let unshare_error = io::Error::last_os_error();
+                    // A kernel that cannot express either boundary is not the
+                    // same as one that refused to. Kobo's own 4.1 i.MX6 kernels
+                    // ship with CONFIG_SECCOMP and CONFIG_NET_NS both off, and
+                    // report it as EINVAL (ENOSYS from a libc shim is the same
+                    // story). The chroot, the privilege ceiling and the
+                    // identity drop above all still hold; the network boundary
+                    // is enforced by nothing on such a kernel, which the
+                    // daemon detects with [`network_boundary_available`] and
+                    // says out loud at session start. An error that is not
+                    // "unsupported" is still a refusal.
+                    let unsupported = |error: &io::Error| {
+                        matches!(error.raw_os_error(), Some(libc::EINVAL | libc::ENOSYS))
+                    };
+                    if !(unsupported(&filter_error) && unsupported(&unshare_error)) {
+                        return Err(unshare_error);
+                    }
+                }
             }
             if libc::setgroups(0, std::ptr::null()) < 0
                 || libc::setgid(UNPRIVILEGED_ID) < 0
@@ -953,6 +971,21 @@ pub mod sandbox {
         } else {
             Ok(())
         }
+    }
+
+    /// Whether this kernel can put a network boundary around an application.
+    ///
+    /// True when either mechanism [`Sandbox::enter`] uses is available: a
+    /// seccomp filter, probed with `PR_GET_SECCOMP` (which a kernel built
+    /// without `CONFIG_SECCOMP` answers with `EINVAL`), or a private network
+    /// namespace, probed by the file the kernel publishes for it. Read-only:
+    /// nothing is installed or unshared.
+    #[cfg(target_os = "linux")]
+    #[must_use]
+    pub fn network_boundary_available() -> bool {
+        // SAFETY: PR_GET_SECCOMP reads the current mode and changes nothing.
+        let seccomp = unsafe { libc::prctl(libc::PR_GET_SECCOMP) } >= 0;
+        seccomp || Path::new("/proc/self/ns/net").exists()
     }
 
     /// Signals every process whose filesystem root is the prepared sandbox.

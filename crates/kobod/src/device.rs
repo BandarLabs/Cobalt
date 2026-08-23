@@ -889,6 +889,19 @@ impl AppLaunch {
     }
 
     fn sandboxed(path: &Path, id: u64) -> Result<Self, String> {
+        if !kobo_abi::sandbox::network_boundary_available() {
+            // Kobo's 4.1 i.MX6 kernels ship without CONFIG_SECCOMP and
+            // CONFIG_NET_NS, so neither of the sandbox's network boundaries
+            // exists there. The chroot, the privilege ceiling and the identity
+            // drop still hold, and the brokered network path is unchanged;
+            // what is lost is enforcement against an application opening its
+            // own socket. Said once per launch, loudly, so a transcript of a
+            // session on such a kernel cannot be read as if the boundary held.
+            trace(
+                "application network boundary unavailable on this kernel; \
+                 relying on chroot and the unprivileged identity",
+            );
+        }
         let root = std::env::temp_dir().join(format!("kobo-app-{}-{id}", std::process::id()));
         fs::create_dir(&root)
             .map_err(|error| format!("create application sandbox {}: {error}", root.display()))?;
