@@ -708,7 +708,7 @@ pub mod sandbox {
     #[cfg(all(target_os = "linux", target_arch = "arm"))]
     use std::sync::atomic::{AtomicBool, Ordering};
     #[cfg(all(target_os = "linux", target_arch = "arm"))]
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     #[cfg(all(target_os = "linux", target_arch = "arm"))]
     use std::thread;
     #[cfg(all(target_os = "linux", target_arch = "arm"))]
@@ -851,7 +851,14 @@ pub mod sandbox {
     /// application cannot outlive the runtime that enforces its policy.
     #[cfg(all(target_os = "linux", target_arch = "arm"))]
     pub struct SyscallTrace {
-        detached: Arc<AtomicBool>,
+        state: Arc<TraceState>,
+    }
+
+    #[cfg(all(target_os = "linux", target_arch = "arm"))]
+    #[derive(Default)]
+    struct TraceState {
+        detached: AtomicBool,
+        failure: Mutex<Option<String>>,
     }
 
     #[cfg(all(target_os = "linux", target_arch = "arm"))]
@@ -868,8 +875,8 @@ pub mod sandbox {
         /// Returns an error when the tracing thread, application process or
         /// ptrace policy cannot be started.
         pub fn spawn(mut command: Command) -> io::Result<(Child, Self)> {
-            let detached = Arc::new(AtomicBool::new(false));
-            let finished = Arc::clone(&detached);
+            let state = Arc::new(TraceState::default());
+            let finished = Arc::clone(&state);
             let (sender, receiver) = std::sync::mpsc::sync_channel(1);
             thread::Builder::new()
                 .name("cobalt-syscall-trace".to_owned())
@@ -878,41 +885,61 @@ pub mod sandbox {
                         Ok(child) => child,
                         Err(error) => {
                             let _ignored = sender.send(Err(error));
-                            finished.store(true, Ordering::Release);
+                            finished.detached.store(true, Ordering::Release);
                             return;
                         }
                     };
                     let pid = match begin_trace(child.id()) {
                         Ok(pid) => pid,
                         Err(error) => {
-                            abort_trace(child.id());
+                            let error = abort_failure(child.id(), error);
                             let _ignored = child.wait();
                             let _ignored = sender.send(Err(error));
-                            finished.store(true, Ordering::Release);
+                            finished.detached.store(true, Ordering::Release);
                             return;
                         }
                     };
                     match sender.send(Ok(child)) {
-                        Ok(()) => trace_child(pid),
+                        Ok(()) => {
+                            if let Err(error) = trace_child(pid) {
+                                let error =
+                                    abort_failure(u32::try_from(pid).unwrap_or_default(), error);
+                                *finished
+                                    .failure
+                                    .lock()
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                                    Some(error.to_string());
+                            }
+                        }
                         Err(error) => {
-                            abort_trace(u32::try_from(pid).unwrap_or_default());
+                            let _ignored = abort_trace(u32::try_from(pid).unwrap_or_default());
                             if let Ok(mut child) = error.0 {
                                 let _ignored = child.wait();
                             }
                         }
                     }
-                    finished.store(true, Ordering::Release);
+                    finished.detached.store(true, Ordering::Release);
                 })?;
             let child = receiver.recv().map_err(|_| {
                 io::Error::other("sandbox syscall tracer stopped before application launch")
             })??;
-            Ok((child, Self { detached }))
+            Ok((child, Self { state }))
         }
 
         /// Whether the tracer has released the process for ordinary reaping.
         #[must_use]
         pub fn is_detached(&self) -> bool {
-            self.detached.load(Ordering::Acquire)
+            self.state.detached.load(Ordering::Acquire)
+        }
+
+        /// The reason syscall supervision failed, if it ended abnormally.
+        #[must_use]
+        pub fn failure(&self) -> Option<String> {
+            self.state
+                .failure
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone()
         }
 
         /// Waits briefly for a terminating child to leave the tracing stop.
@@ -938,17 +965,33 @@ pub mod sandbox {
                 "sandboxed child did not stop at its exec boundary",
             ));
         }
-        let options =
-            libc::PTRACE_O_TRACESYSGOOD | libc::PTRACE_O_TRACEEXIT | libc::PTRACE_O_EXITKILL;
+        let options = libc::PTRACE_O_TRACESYSGOOD
+            | libc::PTRACE_O_TRACEFORK
+            | libc::PTRACE_O_TRACEVFORK
+            | libc::PTRACE_O_TRACECLONE
+            | libc::PTRACE_O_TRACEEXIT
+            | libc::PTRACE_O_EXITKILL;
         ptrace_value(libc::PTRACE_SETOPTIONS, pid, options)?;
         ptrace_syscall(pid, 0)?;
         Ok(pid)
     }
 
     #[cfg(all(target_os = "linux", target_arch = "arm"))]
-    fn abort_trace(pid: u32) {
-        let Ok(pid) = i32::try_from(pid) else { return };
-        let _ignored = ptrace_value(libc::PTRACE_KILL, pid, 0);
+    fn abort_trace(pid: u32) -> io::Result<()> {
+        let pid = i32::try_from(pid).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidInput, "child pid does not fit pid_t")
+        })?;
+        ptrace_value(libc::PTRACE_KILL, pid, 0)
+    }
+
+    #[cfg(all(target_os = "linux", target_arch = "arm"))]
+    fn abort_failure(pid: u32, failure: io::Error) -> io::Error {
+        match abort_trace(pid) {
+            Ok(()) => failure,
+            Err(abort) => io::Error::other(format!(
+                "{failure}; also failed to kill the stopped tracee: {abort}"
+            )),
+        }
     }
 
     #[cfg(any(test, all(target_os = "linux", target_arch = "arm")))]
@@ -992,28 +1035,33 @@ pub mod sandbox {
     }
 
     /// Inspects, rewrites and resumes one syscall stop as a single operation.
-    /// A register failure must leave the tracee stopped: resuming after a
-    /// failed entry rewrite could execute the syscall the policy denied.
+    /// An inspection or rewrite failure must leave the tracee stopped:
+    /// resuming after a failed entry rewrite could execute a denied syscall.
     #[cfg(any(test, all(target_os = "linux", target_arch = "arm")))]
-    fn advance_syscall_stop<Get, Set, Denied, Resume>(
+    fn advance_syscall_stop<Get, Set, SetSyscall, Denied, Resume>(
         state: &mut SyscallStopState,
         mut get_registers: Get,
         mut set_registers: Set,
+        set_syscall: SetSyscall,
         syscall_is_denied: Denied,
         resume: Resume,
     ) -> io::Result<()>
     where
         Get: FnMut() -> io::Result<ArmRegisters>,
         Set: FnMut(&ArmRegisters) -> io::Result<()>,
+        SetSyscall: FnOnce(i32) -> io::Result<()>,
         Denied: FnOnce(u32, u32) -> bool,
         Resume: FnOnce() -> io::Result<()>,
     {
         if state.entering {
-            let mut registers = get_registers()?;
+            let registers = get_registers()?;
             state.denied = syscall_is_denied(registers.r7, registers.r0);
             if state.denied {
-                registers.r7 = u32::MAX;
-                set_registers(&registers)?;
+                // ARM copies r7 into thread_info::syscall before this stop and
+                // dispatches from that field afterward. PTRACE_SET_SYSCALL is
+                // the architecture's only operation for changing the pending
+                // call; writing r7 here changes merely the saved user register.
+                set_syscall(-1)?;
             }
         } else if state.denied {
             let mut registers = get_registers()?;
@@ -1025,16 +1073,21 @@ pub mod sandbox {
     }
 
     #[cfg(all(target_os = "linux", target_arch = "arm"))]
-    fn trace_child(pid: i32) {
+    fn trace_child(pid: i32) -> io::Result<()> {
         let mut syscall_state = SyscallStopState::default();
         loop {
             let mut status = 0;
             if unsafe { libc::waitpid(pid, &raw mut status, 0) } < 0 {
-                abort_trace(u32::try_from(pid).unwrap_or_default());
-                break;
+                let error = io::Error::last_os_error();
+                if error.kind() == io::ErrorKind::Interrupted {
+                    continue;
+                }
+                return Err(io::Error::other(format!(
+                    "wait for sandboxed syscall stop: {error}"
+                )));
             }
             if libc::WIFEXITED(status) || libc::WIFSIGNALED(status) {
-                break;
+                return Ok(());
             }
             if !libc::WIFSTOPPED(status) {
                 continue;
@@ -1042,22 +1095,41 @@ pub mod sandbox {
             let signal = libc::WSTOPSIG(status);
             let event = u32::try_from(status).unwrap_or_default() >> 16;
             if signal == libc::SIGTRAP && event == libc::PTRACE_EVENT_EXIT as u32 {
-                let _ignored = ptrace_value(libc::PTRACE_DETACH, pid, 0);
-                break;
+                return ptrace_value(libc::PTRACE_DETACH, pid, 0)
+                    .map_err(|error| io::Error::other(format!("detach exiting tracee: {error}")));
+            }
+            if signal == libc::SIGTRAP
+                && [
+                    libc::PTRACE_EVENT_FORK,
+                    libc::PTRACE_EVENT_VFORK,
+                    libc::PTRACE_EVENT_CLONE,
+                ]
+                .into_iter()
+                .any(|kind| u32::try_from(kind).ok() == Some(event))
+            {
+                let descendant = ptrace_event_message(pid).map_or_else(
+                    |error| format!("unreadable descendant pid ({error})"),
+                    |descendant| {
+                        let _ignored = abort_trace(descendant);
+                        descendant.to_string()
+                    },
+                );
+                return Err(io::Error::other(format!(
+                    "denied process creation executed and produced descendant {descendant}"
+                )));
             }
             if signal == (libc::SIGTRAP | 0x80) {
-                if advance_syscall_stop(
+                advance_syscall_stop(
                     &mut syscall_state,
                     || get_registers(pid),
                     |registers| set_registers(pid, registers),
+                    |number| set_syscall(pid, number),
                     syscall_is_denied,
                     || ptrace_syscall(pid, 0),
                 )
-                .is_err()
-                {
-                    abort_trace(u32::try_from(pid).unwrap_or_default());
-                    break;
-                }
+                .map_err(|error| {
+                    io::Error::other(format!("advance sandboxed syscall stop: {error}"))
+                })?;
                 continue;
             }
             let delivered = if signal == libc::SIGSTOP || signal == libc::SIGTRAP {
@@ -1065,10 +1137,9 @@ pub mod sandbox {
             } else {
                 signal
             };
-            if ptrace_syscall(pid, delivered).is_err() {
-                abort_trace(u32::try_from(pid).unwrap_or_default());
-                break;
-            }
+            ptrace_syscall(pid, delivered).map_err(|error| {
+                io::Error::other(format!("resume sandboxed signal stop: {error}"))
+            })?;
         }
     }
 
@@ -1125,6 +1196,32 @@ pub mod sandbox {
             Err(io::Error::last_os_error())
         } else {
             Ok(())
+        }
+    }
+
+    #[cfg(all(target_os = "linux", target_arch = "arm"))]
+    fn set_syscall(pid: i32, number: i32) -> io::Result<()> {
+        // PTRACE_SET_SYSCALL is ARM-specific and libc does not expose it on
+        // every build host. Its stable UAPI request number is 23.
+        const PTRACE_SET_SYSCALL: libc::c_int = 23;
+        ptrace_value(PTRACE_SET_SYSCALL, pid, number)
+    }
+
+    #[cfg(all(target_os = "linux", target_arch = "arm"))]
+    fn ptrace_event_message(pid: i32) -> io::Result<u32> {
+        let mut message: libc::c_ulong = 0;
+        let result = unsafe {
+            libc::ptrace(
+                libc::PTRACE_GETEVENTMSG,
+                pid,
+                std::ptr::null_mut::<libc::c_void>(),
+                std::ptr::from_mut(&mut message).cast::<libc::c_void>(),
+            )
+        };
+        if result < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(message)
         }
     }
 
@@ -1294,6 +1391,7 @@ pub mod sandbox {
                 &mut SyscallStopState::default(),
                 || Err(io::Error::other("PTRACE_GETREGS failed")),
                 |_| Ok(()),
+                |_| Ok(()),
                 |_, _| true,
                 || {
                     resumed.set(true);
@@ -1306,14 +1404,15 @@ pub mod sandbox {
         }
 
         #[test]
-        fn a_denied_syscall_rewrite_failure_does_not_resume_the_tracee() {
+        fn a_denied_syscall_selection_failure_does_not_resume_the_tracee() {
             let resumed = Cell::new(false);
             let result = advance_syscall_stop(
                 &mut SyscallStopState::default(),
                 || Ok(ArmRegisters::default()),
-                |registers| {
-                    assert_eq!(registers.r7, u32::MAX);
-                    Err(io::Error::other("PTRACE_SETREGS failed"))
+                |_| Ok(()),
+                |number| {
+                    assert_eq!(number, -1);
+                    Err(io::Error::other("PTRACE_SET_SYSCALL failed"))
                 },
                 |_, _| true,
                 || {
@@ -1324,6 +1423,79 @@ pub mod sandbox {
 
             assert!(result.is_err());
             assert!(!resumed.get());
+        }
+
+        #[test]
+        fn a_denied_syscall_result_rewrite_failure_does_not_resume_the_tracee() {
+            let resumed = Cell::new(false);
+            let mut state = SyscallStopState {
+                entering: false,
+                denied: true,
+            };
+            let result = advance_syscall_stop(
+                &mut state,
+                || Ok(ArmRegisters::default()),
+                |_| Err(io::Error::other("PTRACE_SETREGS failed")),
+                |_| panic!("an exit stop must not replace the pending syscall"),
+                |_, _| panic!("an exit stop must not classify the syscall"),
+                || {
+                    resumed.set(true);
+                    Ok(())
+                },
+            );
+
+            assert!(result.is_err());
+            assert!(!resumed.get());
+        }
+
+        #[test]
+        fn a_denied_syscall_is_replaced_then_reported_as_permission_denied() {
+            let selected = Cell::new(None);
+            let result = Cell::new(None);
+            let resumes = Cell::new(0);
+            let mut state = SyscallStopState::default();
+            let entry = ArmRegisters {
+                r0: libc::AF_INET as u32,
+                r7: 281,
+                ..ArmRegisters::default()
+            };
+
+            advance_syscall_stop(
+                &mut state,
+                || Ok(entry),
+                |_| panic!("entry denial must not rewrite general registers"),
+                |number| {
+                    selected.set(Some(number));
+                    Ok(())
+                },
+                |number, family| number == 281 && family == libc::AF_INET as u32,
+                || {
+                    resumes.set(resumes.get() + 1);
+                    Ok(())
+                },
+            )
+            .expect("deny the syscall at entry");
+
+            advance_syscall_stop(
+                &mut state,
+                || Ok(ArmRegisters::default()),
+                |registers| {
+                    result.set(Some(i32::from_ne_bytes(registers.r0.to_ne_bytes())));
+                    Ok(())
+                },
+                |_| panic!("exit must not replace the pending syscall"),
+                |_, _| panic!("exit must not classify the syscall"),
+                || {
+                    resumes.set(resumes.get() + 1);
+                    Ok(())
+                },
+            )
+            .expect("report the denial at exit");
+
+            assert_eq!(selected.get(), Some(-1));
+            assert_eq!(result.get(), Some(-libc::EPERM));
+            assert_eq!(resumes.get(), 2);
+            assert!(state.entering);
         }
     }
 }

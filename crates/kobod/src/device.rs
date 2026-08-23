@@ -898,6 +898,16 @@ impl ApplicationChild {
         }
         self.process.wait()
     }
+
+    fn trace_failure(&self) -> Option<String> {
+        #[cfg(all(target_os = "linux", target_arch = "arm"))]
+        if let Some(trace) = &self.trace {
+            return trace.failure();
+        }
+        #[cfg(not(all(target_os = "linux", target_arch = "arm")))]
+        let _ = self;
+        None
+    }
 }
 
 struct AppLaunch {
@@ -2273,6 +2283,17 @@ fn start_application(
     sender: &Sender<Event>,
 ) -> Result<u64, String> {
     let expected_name = installed_name(path)?;
+    // Capabilities are part of admission, not post-launch setup. Reading them
+    // before any process exists means a corrupt or concurrently removed
+    // manifest cannot leave an unowned child and jail behind.
+    let declared = if path.starts_with(Path::new(COBALT_ROOT).join("apps")) {
+        crate::app_store::declared(Path::new(COBALT_ROOT), &expected_name)
+            .ok_or_else(|| format!("read application manifest for {expected_name}"))?
+    } else if let Some(declared) = crate::app_store::builtin_declared(&expected_name) {
+        declared
+    } else {
+        Declared::all()
+    };
     let launch = AppLaunch::prepare(path, *next_id)?;
     let AppLaunch {
         listener,
@@ -2333,6 +2354,7 @@ fn start_application(
         Ok(greeting) => greeting,
         Err(error) => {
             stop_application(&mut child, jail.as_deref());
+            let error = with_trace_failure(error, &child);
             if let Some(root) = &jail {
                 let _ignored = fs::remove_dir_all(root);
             }
@@ -2343,6 +2365,7 @@ fn start_application(
     *next_id += 1;
     if let Err(error) = pump_application(&stream, sender, id) {
         stop_application(&mut child, jail.as_deref());
+        let error = with_trace_failure(error, &child);
         if let Some(root) = &jail {
             let _ignored = fs::remove_dir_all(root);
         }
@@ -2350,14 +2373,6 @@ fn start_application(
     }
     let waker = sender.clone();
     let credential_app = name.clone();
-    let declared = if path.starts_with(Path::new(COBALT_ROOT).join("apps")) {
-        crate::app_store::declared(Path::new(COBALT_ROOT), &name)
-            .ok_or_else(|| format!("read application manifest for {name}"))?
-    } else if let Some(declared) = crate::app_store::builtin_declared(&name) {
-        declared
-    } else {
-        Declared::all()
-    };
     let tasks = TaskRunner::simulated(std::env::temp_dir())
         .with_fetch(Arc::new(kobo_net::fetch_from))
         .with_post(Arc::new(kobo_net::post))
@@ -2450,6 +2465,13 @@ fn stop_hosted(mut app: Hosted) {
     }
     app.tasks.shutdown();
     stop_application(&mut app.child, app.jail.as_deref());
+    if let Some(failure) = app.child.trace_failure() {
+        trace(&format!(
+            "{} syscall supervisor failed: {failure}",
+            app.name
+        ));
+        println!("{} syscall supervisor failed: {failure}", app.name);
+    }
     if let Some(root) = app.jail {
         let _ignored = fs::remove_dir_all(root);
     }
@@ -2567,6 +2589,13 @@ fn stop_application(child: &mut ApplicationChild, jail: Option<&Path>) {
     }
     if child.try_wait().ok().flatten().is_none() {
         let _ignored = child.wait();
+    }
+}
+
+fn with_trace_failure(error: String, child: &ApplicationChild) -> String {
+    match child.trace_failure() {
+        Some(failure) => format!("{error}; syscall supervisor failed: {failure}"),
+        None => error,
     }
 }
 
