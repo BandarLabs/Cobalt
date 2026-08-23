@@ -1345,6 +1345,44 @@ pub struct Screen {
     pub overlay: Option<Box<Overlay>>,
 }
 
+/// What paging means on a laid-out screen right now.
+///
+/// The screen's own [`Screen::page_turns`] says what it declares; the overlay
+/// says what is on top of it at this moment. Those two facts make four cases,
+/// and collapsing them into an `Option` loses the one that matters:
+///
+/// | Declares turns | Overlay up | This is | What acts on it |
+/// |---|---|---|---|
+/// | no | no | `None` | nothing here; a physical press may reach the application raw |
+/// | yes | no | `Declared` | a tap on a zone, or a press, sends the declared action |
+/// | yes | yes | `SuppressedByOverlay` | the press is dropped: the dialog is what the reader is answering |
+/// | no | yes | `SuppressedByOverlay` | likewise, and not the raw press either |
+///
+/// The last two used to be indistinguishable from the first, which meant a
+/// press while a dialog was up fell through to the raw intent and an
+/// application that handled it paged the content underneath.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum PageTurnZones {
+    /// The screen declares no page turns and nothing is covering it.
+    #[default]
+    None,
+    /// The screen declares these, and they are live.
+    Declared(PageTurns),
+    /// The screen is covered, so paging means nothing until it is not.
+    SuppressedByOverlay,
+}
+
+impl PageTurnZones {
+    /// The live turns, if paging means anything at all here.
+    #[must_use]
+    pub const fn declared(self) -> Option<PageTurns> {
+        match self {
+            Self::Declared(turns) => Some(turns),
+            Self::None | Self::SuppressedByOverlay => None,
+        }
+    }
+}
+
 /// The actions a tap on the content area sends.
 ///
 /// Some Kobo models also have physical page buttons. When those are wired up
@@ -1663,7 +1701,10 @@ impl Screen {
         // bar and stops above the nav bar. Never the bars themselves: Back and
         // the navigation are the two things a reader must be able to hit
         // without thinking, and a mistimed page turn there would be maddening.
-        layout.page_turns = self.page_turns;
+        layout.page_turns = match self.page_turns {
+            Some(turns) => PageTurnZones::Declared(turns),
+            None => PageTurnZones::None,
+        };
         layout.hold = self.hold;
         if let Some((turns, (page, of))) = self
             .page_turns
@@ -1724,8 +1765,9 @@ impl Screen {
             layout_overlay(overlay, metrics, prose, &mut layout);
             // A popover cannot also be a page turn: the zones are whatever is
             // left of the content area, and "left over" must not include the
-            // thing drawn over it.
-            layout.page_turns = None;
+            // thing drawn over it. Said as suppression rather than absence, so
+            // that whatever reads this can tell "covered" from "never asked".
+            layout.page_turns = PageTurnZones::SuppressedByOverlay;
             layout.hold = None;
         }
         layout
@@ -4136,8 +4178,9 @@ pub struct Layout {
     pub nodes: Vec<LayoutNode>,
     /// The band between the bars, which is what the page-turn zones cover.
     pub content: Rect,
-    /// Set when the screen asked for tap-to-turn.
-    pub page_turns: Option<PageTurns>,
+    /// What paging means here, including when the answer is "nothing, for
+    /// now": see [`PageTurnZones`].
+    pub page_turns: PageTurnZones,
     /// Set when the screen asked to hear about a held finger.
     pub hold: Option<ActionId>,
     /// Word rectangles derived during layout. These are kept outside `nodes`
@@ -4455,7 +4498,7 @@ impl Layout {
     /// The page turn a tap on empty content means, if any.
     #[must_use]
     pub fn hit_page_turn(&self, x: i32, y: i32) -> Option<ActionId> {
-        let turns = self.page_turns?;
+        let turns = self.page_turns.declared()?;
         if !self.content.contains(x, y) {
             return None;
         }
@@ -16570,6 +16613,14 @@ mod prose_tests {
         ));
         let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
         assert_eq!(layout.hit_page_turn(4, CLARA_BW_METRICS.height / 2), None);
+        // Suppressed, and saying so: a screen that declared turns and is now
+        // covered must not read as one that never declared any. The physical
+        // page keys tell those apart, and paged the content underneath the
+        // dialog while they could not.
+        assert_eq!(layout.page_turns, PageTurnZones::SuppressedByOverlay);
+        let uncovered =
+            Screen::new(1, Vec::new()).layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        assert_eq!(uncovered.page_turns, PageTurnZones::None);
     }
 
     /// A modal is deliberately not dismissed by a tap that misses it, so
