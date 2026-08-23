@@ -497,9 +497,9 @@ pub const LIBRA_2_388: DeviceProfile = DeviceProfile {
     serial_prefix: "N418",
     firmware_versions: &["4.38.23697"],
     kernel_release: "4.1.15-00868-g58a2758be07",
-    // Owner-attended evidence exists and is linked from the pull request;
-    // this flips to true once that evidence has been reviewed upstream.
-    write_ready: false,
+    // Owner-attended display, touch, exit and recovery evidence was filmed on
+    // the device and reviewed upstream before this was set.
+    write_ready: true,
 };
 
 pub const SUPPORTED_PROFILES: &[&DeviceProfile] =
@@ -1476,9 +1476,13 @@ mod tests {
         let snapshot = measured_libra_2(1);
         let report = LIBRA_2_388.validate(&snapshot);
         assert!(report.mismatches.is_empty(), "{:?}", report.mismatches);
-        // Identity is exact; only the attended-evidence review is pending.
-        assert_eq!(report.readiness, Readiness::ReadOnlyMatched);
-        assert_eq!(report.write_blockers, vec![WRITE_EVIDENCE_PENDING]);
+        // Identity is exact and the attended evidence has been reviewed.
+        assert_eq!(report.readiness, Readiness::WriteReady);
+        assert!(
+            report.write_blockers.is_empty(),
+            "{:?}",
+            report.write_blockers
+        );
         assert!(LIBRA_2_388.write_identity_blockers(&snapshot).is_empty());
         assert_eq!(
             super::identify_profile(&snapshot).map(|profile| profile.id),
@@ -1513,9 +1517,13 @@ mod tests {
         let snapshot = measured_libra_2(3);
         let report = LIBRA_2_388.validate(&snapshot);
         assert!(report.mismatches.is_empty(), "{:?}", report.mismatches);
-        // Identity is exact; only the attended-evidence review is pending.
-        assert_eq!(report.readiness, Readiness::ReadOnlyMatched);
-        assert_eq!(report.write_blockers, vec![WRITE_EVIDENCE_PENDING]);
+        // Identity is exact and the attended evidence has been reviewed.
+        assert_eq!(report.readiness, Readiness::WriteReady);
+        assert!(
+            report.write_blockers.is_empty(),
+            "{:?}",
+            report.write_blockers
+        );
         assert_eq!(
             super::identify_profile(&snapshot).map(|profile| profile.id),
             Some("libra-2-388")

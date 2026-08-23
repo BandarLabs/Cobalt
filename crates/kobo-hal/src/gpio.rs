@@ -46,8 +46,10 @@ pub enum Button {
 }
 
 /// The kernel's verdict on how the device is held, straight from the NTX
-/// `MSC_RAW` channel. Values confirmed against a Libra 2 and `KOReader`'s
-/// translation table on 2026-08-23.
+/// `MSC_RAW` channel. Five of these six were captured from a Libra 2 on
+/// 2026-08-23 by turning it about: both portrait poses, both landscape poses
+/// and face-up. Face-down completes the contiguous run and is the one pose a
+/// reader held in the hands never reaches.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Orientation {
     PortraitDown,
@@ -281,8 +283,8 @@ mod tests {
 
     #[test]
     fn every_captured_orientation_value_decodes() {
-        // The set the Libra 2 produced under rotation, plus the two KOReader
-        // documents that this capture did not exercise.
+        // The five values the Libra 2 produced under rotation, plus
+        // face-down, which that capture never reached.
         let cases = [
             (0x17, Orientation::PortraitDown),
             (0x18, Orientation::PortraitUp),
