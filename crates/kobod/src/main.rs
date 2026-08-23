@@ -675,6 +675,7 @@ fn serve_application(
             | Message::StoreResult(_)
             | Message::Lifecycle(_)
             | Message::CoverChanged { .. }
+            | Message::PageTurn { .. }
             | Message::ShellEvent(_) => {
                 return Err("application sent a daemon-only message".into());
             }

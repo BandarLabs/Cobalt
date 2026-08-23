@@ -42,7 +42,6 @@ use kobo_hal::supervisor::Suspended;
 use kobo_hal::touch::TouchEvent;
 use kobo_hal::{Rect, RefreshIntent, RefreshPlan, RegionSnapshot};
 use kobo_policy::{Backends, Capability, Declared, DeviceServices, PowerPolicy, TaskRunner};
-use kobo_profile::DeviceProfile;
 use kobo_protocol::{Frame, Lifecycle, Message, TaskError, TaskOutcome};
 use kobo_ui::{
     render_all, ActionId, Chrome, FontHandle, FramePlanner, PanelWaveform, PictureCache, Screen,
@@ -593,13 +592,21 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
         pump_gpio(session, &taps);
     }
 
+    // Which page key means "forward" depends on how the reader is held. At
+    // the profile's reference pose (buttons on the right, on the Libra 2)
+    // the lower key, 194, pages forward — KOReader's assignment, to be
+    // confirmed on the device. A half turn swaps them, and pose resolution
+    // has already refused anything else.
+    let forward_is_194 =
+        pose.rotation() % 4 == profile.reference_rotation % 4;
+
     let outcome = host_applications(
         application,
         &display,
         whole_screen,
         &taps,
         limits,
-        profile,
+        forward_is_194,
         &watchdog,
     );
     trace("session finished, handing the panel back");
@@ -992,10 +999,13 @@ fn host_applications(
     whole_screen: Rect,
     touch: &TouchSink,
     limits: Limits,
-    profile: &'static DeviceProfile,
+    forward_is_194: bool,
     watchdog: &Arc<Watchdog>,
 ) -> Result<String, String> {
-    let _ = profile;
+    // Kept current by the orientation channel: a reader flipped mid-session
+    // keeps "forward" pointing forward even though the image does not rotate
+    // yet.
+    let mut forward_is_194 = forward_is_194;
     let catalogue = application
         .parent()
         .map_or_else(|| PathBuf::from("/tmp"), Path::to_path_buf);
@@ -1270,11 +1280,43 @@ fn host_applications(
                 }
                 Ok(Event::Gpio(event)) => {
                     last_activity = Instant::now();
-                    // Observed and logged only, until the protocol carries
-                    // page-turn intent. The demux that assigns meaning —
-                    // forward or back from the pose, sleep from the power
-                    // button — builds on top of this arm.
-                    trace(&format!("gpio: {event:?}"));
+                    match event {
+                        // On the press, not the release: a page turn should
+                        // not wait for a finger to lift. Only the foreground
+                        // application hears it, for the same reason as taps
+                        // and the cover: the press happened in front of the
+                        // reader, and a background application has no
+                        // standing to react to it.
+                        GpioEvent::Button {
+                            button: button @ (gpio::Button::Page193 | gpio::Button::Page194),
+                            pressed: true,
+                        } => {
+                            let forward =
+                                (button == gpio::Button::Page194) == forward_is_194;
+                            if let Some(index) = index_of(&apps, front) {
+                                apps[index]
+                                    .send(kobo_protocol::Message::PageTurn { forward })?;
+                            }
+                        }
+                        GpioEvent::Button { button: gpio::Button::Power, pressed } => {
+                            // Meaning arrives with the power sub-feature:
+                            // short press sleep, long press shutdown. Until
+                            // then the press is at least on the record.
+                            trace(&format!("power button pressed={pressed}"));
+                        }
+                        // The kernel's digested accelerometer verdict. Only
+                        // the two portrait poses move the key mapping; the
+                        // image itself does not rotate mid-session yet.
+                        // Which MSC_RAW value is which physical pose is
+                        // KOReader's naming, to be confirmed on the device.
+                        GpioEvent::Orientation(gpio::Orientation::PortraitUp) => {
+                            forward_is_194 = true;
+                        }
+                        GpioEvent::Orientation(gpio::Orientation::PortraitDown) => {
+                            forward_is_194 = false;
+                        }
+                        GpioEvent::Button { .. } | GpioEvent::Orientation(_) => {}
+                    }
                 }
                 Ok(Event::Touch(event)) => {
                     last_activity = Instant::now();
@@ -2004,6 +2046,7 @@ fn host_applications(
                         | Message::DeviceResult(_)
                         | Message::StoreResult(_)
                         | Message::CoverChanged { .. }
+                        | Message::PageTurn { .. }
                         | Message::ShellEvent(_) => {
                             return Err(format!(
                                 "{} sent a runtime-only message",

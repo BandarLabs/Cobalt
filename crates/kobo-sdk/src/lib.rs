@@ -4319,6 +4319,14 @@ pub trait KoboApp {
     /// telling anyone. Ask [`Device::read_cover`] for the state to start from.
     fn on_cover_change(&mut self, _context: &mut Context, _magnet_present: bool) {}
 
+    /// Receives a physical page-turn key press, already resolved to intent.
+    ///
+    /// The runtime owns the raw keycodes and knows how the reader is held;
+    /// an application only hears which way the reader wants to go. Doing
+    /// nothing here is the default and is honest: there is no runtime
+    /// fallback for an application that ignores its buttons.
+    fn on_page_turn(&mut self, _context: &mut Context, _forward: bool) {}
+
     /// Receives the outcome of exactly one earlier [`Context::spawn`].
     ///
     /// Like device results, a task always reports back, including when it fails
@@ -4522,6 +4530,14 @@ impl<A: KoboApp> AppRunner<A> {
     /// because nothing asked for it.
     pub fn cover_changed(&mut self, magnet_present: bool) -> Vec<Command> {
         self.dispatch(|app, context| app.on_cover_change(context, magnet_present))
+    }
+
+    /// Delivers one page-turn key press to the application.
+    ///
+    /// Unsolicited, like [`Self::cover_changed`]: nothing asked for it, the
+    /// reader pressed a button.
+    pub fn page_turn(&mut self, forward: bool) -> Vec<Command> {
+        self.dispatch(|app, context| app.on_page_turn(context, forward))
     }
 
     /// Delivers one device answer, matched to the request that produced it.
@@ -4754,6 +4770,8 @@ pub enum ClientEvent {
     Shell(ShellEvent),
     /// A magnet arrived at, or left, the hall sensor. Unsolicited.
     CoverChanged(bool),
+    /// A physical page-turn key was pressed. Unsolicited; `true` is forward.
+    PageTurn(bool),
     Exit,
 }
 
@@ -4960,6 +4978,7 @@ impl Client {
             Message::CoverChanged { magnet_present } => {
                 Ok(ClientEvent::CoverChanged(magnet_present))
             }
+            Message::PageTurn { forward } => Ok(ClientEvent::PageTurn(forward)),
             Message::Exit => Ok(ClientEvent::Exit),
             _ => Err(ClientError::UnexpectedMessage),
         }
@@ -6405,6 +6424,9 @@ pub fn run_on<A: KoboApp>(name: &str, app: A, socket: &Path) -> Result<(), Clien
                 ClientEvent::CoverChanged(present) => {
                     client.send_commands(runner.cover_changed(present))?;
                 }
+                ClientEvent::PageTurn(forward) => {
+                    client.send_commands(runner.page_turn(forward))?;
+                }
                 ClientEvent::Action(_) | ClientEvent::TextHold { .. } | ClientEvent::Exit => break,
             }
         }
@@ -6422,6 +6444,7 @@ pub fn run_on<A: KoboApp>(name: &str, app: A, socket: &Path) -> Result<(), Clien
             ClientEvent::Lifecycle(state) => runner.lifecycle(state),
             ClientEvent::Shell(event) => runner.shell_event(event),
             ClientEvent::CoverChanged(present) => runner.cover_changed(present),
+            ClientEvent::PageTurn(forward) => runner.page_turn(forward),
             ClientEvent::Exit => {
                 // The runtime is taking the screen back. Give the application
                 // its exit callback, then go, rather than arguing about it.
