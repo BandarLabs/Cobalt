@@ -409,6 +409,14 @@ fn smoke_wait_timing(session: &DisplaySession) -> Result<String, DisplayError> {
 
     let original = session.capture(SMOKE_PATCH_REGION)?;
     let inverted = original.inverted_rgb();
+    // Built before the run, not inside the recovery, so that the error path
+    // always has a plan to restore with. A quality update, because this is the
+    // last thing the panel is asked to show.
+    let restore_plan = smoke_plan_with_intent(
+        session,
+        SMOKE_PATCH_REGION,
+        crate::refresh::RefreshIntent::QualityContent,
+    )?;
 
     let mut lines = String::from("update  intent   waveform  translated  submit_us  wait_us\n");
     let mut run = || -> Result<(), DisplayError> {
@@ -445,7 +453,11 @@ fn smoke_wait_timing(session: &DisplaySession) -> Result<String, DisplayError> {
     let outcome = run();
 
     // Always leave the screen as found, even when a refresh failed mid-run.
-    let restored = session.restore(&original);
+    // The bytes alone are not enough: without a refresh the panel goes on
+    // showing the inverted patch, so the owner is left looking at the failure.
+    let restored = session
+        .restore(&original)
+        .and_then(|()| session.refresh(restore_plan));
     outcome?;
     restored?;
     let verify = session.capture(SMOKE_PATCH_REGION)?;
