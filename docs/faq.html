@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cobalt FAQ</title>
-<meta name="description" content="How Cobalt differs from NickelMenu, KOReader and Plato, and how its app runtime, SDK and Store fit into the Kobo software ecosystem.">
+<meta name="description" content="What the Cobalt app platform provides, how it differs from NickelMenu, KOReader and Plato, and how its SDK and Store work.">
 <link rel="canonical" href="https://bandarlabs.github.io/Cobalt/faq.html">
 <link rel="icon" href="logo.svg" type="image/svg+xml">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Cobalt FAQ">
-<meta property="og:description" content="How Cobalt fits alongside NickelMenu, KOReader, Plato and Kobo's stock reader.">
+<meta property="og:description" content="What Cobalt's app runtime, SDK, simulator and Store provide on Kobo e-readers.">
 <meta property="og:url" content="https://bandarlabs.github.io/Cobalt/faq.html">
 <meta property="og:image" content="https://bandarlabs.github.io/Cobalt/media/site/og-card.jpg">
 <meta name="twitter:card" content="summary_large_image">
@@ -62,7 +62,6 @@ h1 {
   letter-spacing: -.015em; margin-bottom: 22px;
 }
 .lede { font-size: 21px; max-width: 38em; }
-.quiet { color: var(--ink-soft); margin-top: 12px; max-width: 44em; }
 .faq { padding: 38px 0; border-bottom: 1px solid var(--rule); }
 .faq h2 { font-size: 27px; line-height: 1.2; margin-bottom: 14px; }
 .faq p { max-width: 43em; }
@@ -125,38 +124,38 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
 <main class="wrap">
   <div class="intro">
     <p class="kicker">FAQ</p>
-    <h1>How Cobalt fits.</h1>
-    <p class="lede">NickelMenu, KOReader and Plato are mature projects with different goals. Cobalt is an app platform with a shared runtime, SDK and Store.</p>
+    <h1>Cobalt as an app platform.</h1>
+    <p class="lede">Cobalt gives Kobo app developers one runtime and SDK for UI, lifecycle, rendering, device services, testing and distribution.</p>
   </div>
 
   <section class="faq">
     <h2>How is Cobalt different from NickelMenu?</h2>
-    <p><a href="https://pgaskin.net/NickelMenu/">NickelMenu</a> extends Kobo's stock interface with custom menu actions. It is focused, mature and good at that job. Cobalt currently uses NickelMenu for the single menu entry that starts Cobalt.</p>
-    <p>After launch, Cobalt provides its own app runtime. Apps share the same UI toolkit, lifecycle, e-ink refresh planning, touch handling, storage, networking and device services instead of implementing those pieces separately.</p>
+    <p><a href="https://pgaskin.net/NickelMenu/">NickelMenu</a> adds custom actions to Kobo's stock interface. Cobalt uses one NickelMenu action to start the platform.</p>
+    <p>Cobalt then manages the launcher and every app session. Its runtime provides the UI toolkit, app lifecycle, framebuffer rendering, partial e-ink refreshes, touch input, storage, networking and device services.</p>
   </section>
 
   <section class="faq">
     <h2>How is Cobalt different from KOReader or Plato?</h2>
-    <p><a href="https://koreader.rocks/">KOReader</a> and <a href="https://github.com/baskerville/plato">Plato</a> are complete reading applications. They include the device integration needed to do their work.</p>
-    <p>Cobalt is not another reading app. It is a platform for many apps. An app developer writes against the Cobalt SDK, while the runtime handles common device work.</p>
+    <p><a href="https://koreader.rocks/">KOReader</a> and <a href="https://github.com/baskerville/plato">Plato</a> are standalone reading applications. They carry the UI and device integration needed by their application.</p>
+    <p>Cobalt is infrastructure for building many apps. Developers write app logic against the Cobalt SDK, while the runtime handles the shared platform work.</p>
   </section>
 
   <section class="faq">
-    <h2>Why build an app platform?</h2>
-    <p>The goal is to shorten the path from an idea to an app running on a real reader. <code>kobo new</code> creates an app, and <code>kobo dev</code> runs it in the browser simulator before it goes near the device.</p>
-    <p>The SDK provides screens, controls, lifecycle events, partial-refresh planning, background work and device services. The same app can then be packaged for a supported Kobo without carrying its own framebuffer, touch and service stack.</p>
+    <h2>What does Cobalt provide to an app?</h2>
+    <p>The SDK provides screens, controls, lifecycle events, background work, private storage and device service requests. The runtime handles layout, framebuffer drawing, refresh planning, touch input and communication with the device.</p>
+    <p>Cobalt implements this shared layer once so app developers do not need to build a UI toolkit and hardware stack for every new idea.</p>
   </section>
 
   <section class="faq">
-    <h2>What is different about the app security model?</h2>
-    <p>A NickelMenu action launches the command configured for it; NickelMenu is not an app sandbox. Cobalt apps run as separate unprivileged processes and declare the services they need, such as network, storage, audio, Bluetooth or frontlight access.</p>
-    <p>The runtime checks those requests. Store also verifies signed catalogs, packages, manifests and binaries before launch.</p>
+    <h2>How are apps isolated?</h2>
+    <p>Cobalt starts each app as a separate unprivileged process. Apps declare the services they need, such as network, storage, audio, Bluetooth or frontlight access, and the runtime checks each request.</p>
+    <p>Store also verifies signed catalogs, packages, manifests and binaries before launch.</p>
   </section>
 
   <section class="faq">
-    <h2>Can existing Kobo applications run inside Cobalt?</h2>
-    <p>Not automatically. KOReader, Plato and other standalone programs use their own application and device layers. Cobalt apps are built for the Cobalt SDK and runtime.</p>
-    <p>Leaving the Cobalt launcher returns to Kobo's stock interface, and a reboot always returns to the stock reader.</p>
+    <h2>How do developers build and test an app?</h2>
+    <p><code>kobo new</code> creates an app project. <code>kobo dev</code> runs it in the browser simulator, with the same screen model used on the reader.</p>
+    <p>When the app is ready, the tooling builds and packages it for supported Kobo hardware. The app does not need its own framebuffer, touch or service implementation.</p>
   </section>
 
   <section class="faq">

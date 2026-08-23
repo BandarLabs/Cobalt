@@ -54,16 +54,16 @@ new app can appear in Store without reinstalling or updating Cobalt.
 
 ## How it differs
 
-[NickelMenu](https://pgaskin.net/NickelMenu/),
-[KOReader](https://koreader.rocks/), and
-[Plato](https://github.com/baskerville/plato) are mature projects with
-different goals. NickelMenu extends Kobo's stock interface with custom menu
-actions, while KOReader and Plato are complete reading applications.
+Cobalt is an app platform, not a menu extension or a standalone reading app.
+[NickelMenu](https://pgaskin.net/NickelMenu/) adds custom actions to Kobo's
+stock interface. [KOReader](https://koreader.rocks/) and
+[Plato](https://github.com/baskerville/plato) are standalone reading
+applications.
 
-Cobalt is an app platform. Its shared runtime and SDK provide UI, app
-lifecycle, e-ink refresh planning, touch input, device services, process
-isolation, simulation, and signed distribution so each app does not have to
-build those pieces again.
+Cobalt gives app developers a shared runtime and SDK for UI, app lifecycle,
+framebuffer rendering, e-ink refreshes, touch input, device services, process
+isolation, simulation, and signed distribution. Each app can focus on its own
+logic instead of rebuilding that platform work.
 See the [FAQ](https://bandarlabs.github.io/Cobalt/faq.html) for a fuller
 comparison.
 
