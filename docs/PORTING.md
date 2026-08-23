@@ -97,7 +97,7 @@ The hardware-verified Clara HD probe is:
 profile: clara-hd-376 (Kobo Clara HD)
 device-tree compatible: fsl,imx6sll-lpddr3-arm2, fsl,imx6sll
 framebuffer: id=mxc_epdc_fb 1072x1448 virtual=1088x1536 offset=0,0 bpp=32 ...
-identity: model=N249 firmware=4.38.23684 kernel=4.1.15-00136-g12655eaaef89 device-code=376
+identity: model=N249 firmware=4.38.23697 kernel=4.1.15-00136-g12655eaaef89 device-code=376
 touch: cyttsp5_mt X=0..1447 Y=0..1071
 result: write ready
 ```

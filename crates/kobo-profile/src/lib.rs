@@ -56,7 +56,7 @@ pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     touch_y_min: 0,
     touch_y_max: 1071,
     serial_prefix: "N365",
-    firmware_version: "4.45.23697",
+    firmware_versions: &["4.45.23697"],
     kernel_release: "4.9.77",
     write_ready: true,
 };
@@ -109,7 +109,7 @@ pub const CLARA_HD_376: DeviceProfile = DeviceProfile {
     touch_y_min: 0,
     touch_y_max: 1071,
     serial_prefix: "N249",
-    firmware_version: "4.38.23684",
+    firmware_versions: &["4.38.23684", "4.38.23697"],
     kernel_release: "4.1.15-00136-g12655eaaef89",
     write_ready: true,
 };
@@ -162,7 +162,7 @@ pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
     touch_y_min: 0,
     touch_y_max: 1404,
     serial_prefix: "N605",
-    firmware_version: "4.38.23697",
+    firmware_versions: &["4.38.23697"],
     kernel_release: "4.9.77",
     write_ready: true,
 };
@@ -334,7 +334,8 @@ pub struct DeviceProfile {
     pub touch_y_min: i32,
     pub touch_y_max: i32,
     pub serial_prefix: &'static str,
-    pub firmware_version: &'static str,
+    /// Exact firmware releases covered by owner-attended evidence.
+    pub firmware_versions: &'static [&'static str],
     pub kernel_release: &'static str,
     /// True only after owner-attended hardware evidence has been reviewed.
     pub write_ready: bool,
@@ -445,10 +446,10 @@ impl DeviceProfile {
             self.serial_prefix,
             identity.serial_prefix.as_deref(),
         );
-        compare_identity(
+        compare_identity_one_of(
             &mut blockers,
             "firmware version",
-            self.firmware_version,
+            self.firmware_versions,
             identity.firmware_version.as_deref(),
         );
         compare_identity(
@@ -733,6 +734,25 @@ fn compare_identity(blockers: &mut Vec<String>, name: &str, expected: &str, actu
     }
 }
 
+fn compare_identity_one_of(
+    blockers: &mut Vec<String>,
+    name: &str,
+    expected: &[&str],
+    actual: Option<&str>,
+) {
+    match actual {
+        Some(value) if expected.contains(&value) => {}
+        Some(value) => {
+            let wanted = match expected {
+                [only] => (*only).to_owned(),
+                choices => format!("one of {}", choices.join(", ")),
+            };
+            blockers.push(format!("{name}: expected {wanted}, found {value}"));
+        }
+        None => blockers.push(format!("{name} could not be read")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -908,7 +928,7 @@ mod tests {
             length: 8,
             msb_right: 0,
         };
-        let snapshot = DeviceSnapshot {
+        let mut snapshot = DeviceSnapshot {
             compatible: vec!["fsl,imx6sll-lpddr3-arm2".into(), "fsl,imx6sll".into()],
             model: Some("Freescale i.MX6SLL NTX Board".into()),
             framebuffer: Some(FramebufferSnapshot {
@@ -955,11 +975,14 @@ mod tests {
                 device_code: Some(376),
             },
         };
-        let report = CLARA_HD_376.validate(&snapshot);
-        assert_eq!(report.readiness, Readiness::WriteReady);
-        assert!(report.mismatches.is_empty());
-        assert!(report.write_blockers.is_empty());
-        assert!(CLARA_HD_376.write_identity_blockers(&snapshot).is_empty());
+        for firmware in CLARA_HD_376.firmware_versions {
+            snapshot.identity.firmware_version = Some((*firmware).into());
+            let report = CLARA_HD_376.validate(&snapshot);
+            assert_eq!(report.readiness, Readiness::WriteReady);
+            assert!(report.mismatches.is_empty());
+            assert!(report.write_blockers.is_empty());
+            assert!(CLARA_HD_376.write_identity_blockers(&snapshot).is_empty());
+        }
         assert_eq!(super::identify_profile(&snapshot), Some(&CLARA_HD_376));
     }
 

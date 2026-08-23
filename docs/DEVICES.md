@@ -12,7 +12,7 @@ and touch profile. A matching model name alone is not sufficient.
 | Device | Exact tested identity | Evidence status | Installation status |
 |---|---|---|---|
 | Kobo Clara BW | N365, code 391, firmware 4.45.23697, kernel 4.9.77 | Read-only probe and owner-attended display, touch, exit, and recovery tests complete | Fully tested |
-| Kobo Clara HD | N249, code 376, firmware 4.38.23684, kernel 4.1.15-00136-g12655eaaef89 | Read-only probe and owner-attended display, touch, exit, suspend/resume, sandbox, and recovery tests complete | Fully tested |
+| Kobo Clara HD | N249, code 376, firmware 4.38.23684 or 4.38.23697, kernel 4.1.15-00136-g12655eaaef89 | Read-only probe and owner-attended display, touch, exit, suspend/resume, sandbox, and recovery tests complete | Fully tested |
 | Kobo Elipsa 2E | N605, code 389, firmware 4.38.23697, kernel 4.9.77 | Read-only probe and owner-attended display, touch, exit, suspend/resume, and recovery tests complete | Fully tested |
 
 `Read-only doctor match complete` means the profile describes the observed
