@@ -131,6 +131,19 @@ touch: cyttsp5_mt X=0..1447 Y=0..1071
 result: write ready
 ```
 
+The Libra Colour probe, from a device whose profile is registered but whose
+attended evidence is still pending, reads:
+
+```
+profile: libra-colour-390 (Kobo Libra Colour)
+device-tree compatible: mediatek,mt8110, mediatek,mt8512
+framebuffer: id=hwtcon 1264x1680 virtual=1264x1680 offset=0,0 bpp=32 ...
+identity: model=N428 firmware=4.45.23697 kernel=4.9.77 device-code=390
+touch: Elan Touchscreen at /dev/input/event1 X=0..1680 Y=0..1264
+result: read-only matched
+write blocker: owner-attended display, touch, exit, and recovery evidence is incomplete
+```
+
 Every field a profile needs is on that page. The doctor compares the probe with
 the registered profiles. A known device is named; an unknown device is reported
 as unsupported after its raw fields are printed, making that report the

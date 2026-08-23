@@ -502,8 +502,101 @@ pub const LIBRA_2_388: DeviceProfile = DeviceProfile {
     write_ready: true,
 };
 
-pub const SUPPORTED_PROFILES: &[&DeviceProfile] =
-    &[&CLARA_BW_391, &CLARA_HD_376, &ELIPSA_2E_389, &LIBRA_2_388];
+/// Kobo Libra Colour, a `MediaTek` HWTCON device like the Clara BW, and the
+/// first colour panel to reach this table.
+///
+/// Measured with `kobo doctor` against a device on firmware 4.45.23697, from a
+/// cold boot into Nickel with nothing else launched; the report is posted on
+/// the porting issue,
+/// <https://github.com/BandarLabs/Cobalt/issues/28>. The geometry is the
+/// portrait state, buttons on the right, which this device reports as
+/// `rotation: 1`. `memory_length` is exactly `stride * virtual_height`
+/// (5056 * 1680), and the bitfields are the Clara BW's RGBA order rather than
+/// the i.MX6 devices' BGRA.
+///
+/// The panel is a Kaleido 3: greyscale at 300 ppi with a colour filter array
+/// over it. The framebuffer reports the same 32-bit interface as every other
+/// device here, and `pixels_per_inch` is the greyscale figure, which is the
+/// one the layout engine should reason in. Nothing in this profile claims the
+/// colour path works; that is waveform behaviour, which no field here
+/// describes and only attended panel runs can show.
+///
+/// The touch transform was measured on the physical device with `kobo
+/// doctor`'s read-only observation on 2026-08-23: three taps in an L, one leg
+/// per physical axis, reader upright with the buttons on the right. Moving
+/// down the left edge drove `raw_x` *downward* from 1538 to 174, and moving
+/// right along the bottom drove `raw_y` upward from 106 to 1170, so the axes
+/// are exchanged and X is mirrored into display Y. That is the Elipsa 2E's
+/// `TransposeMirrorY`, not the Libra 2's plain `Transpose`, despite the Libra
+/// 2 being the physically closer device — same panel dimensions, same Elan
+/// controller, buttons on the right at the same rotation — which is one more
+/// reason this field is measured rather than inferred. `write_ready` stays
+/// false until the attended evidence in the device support matrix has been
+/// reviewed.
+pub const LIBRA_COLOUR_390: DeviceProfile = DeviceProfile {
+    id: "libra-colour-390",
+    model: "Kobo Libra Colour",
+    device_code: 390,
+    device_tree_model: "MediaTek MT8110 board",
+    compatible_fragments: &["mediatek,mt8110", "mediatek,mt8512"],
+    framebuffer_id: "hwtcon",
+    framebuffer_controller: FramebufferController::Hwtcon,
+    width: 1264,
+    height: 1680,
+    pixels_per_inch: 300,
+    virtual_width: 1264,
+    virtual_height: 1680,
+    x_offset: 0,
+    y_offset: 0,
+    bits_per_pixel: 32,
+    grayscale: 0,
+    stride: 5056,
+    memory_length: 8_494_080,
+    framebuffer_kind: 0,
+    framebuffer_visual: 2,
+    rotation: 1,
+    red: Bitfield {
+        offset: 0,
+        length: 8,
+        msb_right: 0,
+    },
+    green: Bitfield {
+        offset: 8,
+        length: 8,
+        msb_right: 0,
+    },
+    blue: Bitfield {
+        offset: 16,
+        length: 8,
+        msb_right: 0,
+    },
+    alpha: Bitfield {
+        offset: 24,
+        length: 8,
+        msb_right: 0,
+    },
+    touch_transform: TouchTransform::TransposeMirrorY,
+    reference_rotation: 1,
+    verified_rotations: &[1],
+    geometry_rule: GeometryRule::Fixed,
+    touch_name: "Elan Touchscreen",
+    touch_x_min: 0,
+    touch_x_max: 1680,
+    touch_y_min: 0,
+    touch_y_max: 1264,
+    serial_prefix: "N428",
+    firmware_versions: &["4.45.23697"],
+    kernel_release: "4.9.77",
+    write_ready: false,
+};
+
+pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[
+    &CLARA_BW_391,
+    &CLARA_HD_376,
+    &ELIPSA_2E_389,
+    &LIBRA_2_388,
+    &LIBRA_COLOUR_390,
+];
 
 pub const WRITE_EVIDENCE_PENDING: &str =
     "owner-attended display, touch, exit, and recovery evidence is incomplete";
@@ -1417,7 +1510,7 @@ mod tests {
 
     use super::{
         Bitfield, DeviceProfile, DeviceSnapshot, FramebufferSnapshot, IdentitySnapshot, Readiness,
-        TouchSnapshot, CLARA_BW_391, CLARA_HD_376, ELIPSA_2E_389, LIBRA_2_388,
+        TouchSnapshot, CLARA_BW_391, CLARA_HD_376, ELIPSA_2E_389, LIBRA_2_388, LIBRA_COLOUR_390,
         WRITE_EVIDENCE_PENDING,
     };
 
@@ -2031,6 +2124,170 @@ mod tests {
             .expect("flipped sample remains in range");
         assert_eq!(flipped_x, (909, 160));
         assert_eq!(flipped_y, (162, 1287));
+    }
+
+    /// The Libra Colour exactly as `kobo doctor` read it from a cold boot
+    /// into Nickel, in portrait with the buttons on the right. The values are
+    /// the ones posted on the porting issue, not values re-derived from the
+    /// profile they pin.
+    fn measured_libra_colour() -> DeviceSnapshot {
+        let red = Bitfield {
+            offset: 0,
+            length: 8,
+            msb_right: 0,
+        };
+        DeviceSnapshot {
+            compatible: vec!["mediatek,mt8110".into(), "mediatek,mt8512".into()],
+            model: Some("MediaTek MT8110 board".into()),
+            framebuffer: Some(FramebufferSnapshot {
+                id: "hwtcon".into(),
+                width: 1264,
+                height: 1680,
+                virtual_width: 1264,
+                virtual_height: 1680,
+                x_offset: 0,
+                y_offset: 0,
+                bits_per_pixel: 32,
+                grayscale: 0,
+                stride: 5056,
+                memory_length: 8_494_080,
+                kind: 0,
+                visual: 2,
+                rotation: 1,
+                red,
+                green: Bitfield { offset: 8, ..red },
+                blue: Bitfield { offset: 16, ..red },
+                alpha: Bitfield { offset: 24, ..red },
+            }),
+            touch: Some(TouchSnapshot {
+                path: "/dev/input/event1".into(),
+                name: "Elan Touchscreen".into(),
+                x_min: 0,
+                x_max: 1680,
+                y_min: 0,
+                y_max: 1264,
+            }),
+            identity: IdentitySnapshot {
+                serial_prefix: Some("N428".into()),
+                firmware_version: Some("4.45.23697".into()),
+                kernel_release: Some("4.9.77".into()),
+                device_code: Some(390),
+            },
+        }
+    }
+
+    /// The measured device matches the candidate profile, and matches it
+    /// read-only: the geometry and identity are exact, and the one blocker is
+    /// the pending attended evidence. This is the state stage 2 of the porting
+    /// process describes, and the assertion on the blocker is what has to
+    /// change — deliberately, here — when `write_ready` is ever set.
+    #[test]
+    fn libra_colour_doctor_snapshot_matches_read_only() {
+        let snapshot = measured_libra_colour();
+        let report = LIBRA_COLOUR_390.validate(&snapshot);
+        assert!(report.mismatches.is_empty(), "{:?}", report.mismatches);
+        assert_eq!(report.readiness, Readiness::ReadOnlyMatched);
+        assert_eq!(report.write_blockers, vec![WRITE_EVIDENCE_PENDING]);
+        assert!(
+            LIBRA_COLOUR_390
+                .write_identity_blockers(&snapshot)
+                .is_empty(),
+            "identity is exact; only the evidence is pending"
+        );
+        assert_eq!(
+            super::identify_profile(&snapshot).map(|profile| profile.id),
+            Some("libra-colour-390")
+        );
+    }
+
+    /// The Libra 2 has the same panel dimensions, the same touch controller
+    /// and the same rotation, and must still not claim this device: the
+    /// framebuffer driver differs, and geometry alone is not identity.
+    #[test]
+    fn libra_colour_is_not_claimed_by_the_libra_2_profile() {
+        let snapshot = measured_libra_colour();
+        let report = LIBRA_2_388.validate(&snapshot);
+        assert_eq!(report.readiness, Readiness::Rejected);
+        assert!(!report.mismatches.is_empty());
+    }
+
+    /// Captured from three physical taps on the real Libra Colour with the
+    /// doctor's read-only touch observation, in an L so that each leg moves
+    /// along exactly one physical axis: top-left, then straight down the left
+    /// edge, then straight across the bottom. The reader was upright with the
+    /// page-turn buttons on the right, which this device reports as
+    /// `rotation: 1`. The expected display values are hand-derived from the
+    /// raw samples under `TransposeMirrorY`; nothing under test computed them.
+    #[test]
+    fn libra_colour_touch_matches_three_physically_measured_taps() {
+        let pose = PanelPose::reference(&LIBRA_COLOUR_390);
+        // Tap 1, top-left corner.
+        let top_left = pose
+            .touch_to_display(1538, 122)
+            .expect("measured tap maps to the display");
+        // Tap 2, bottom-left: down the same edge, so only raw_x moved.
+        let bottom_left = pose
+            .touch_to_display(174, 106)
+            .expect("measured tap maps to the display");
+        // Tap 3, bottom-right: across the bottom, so only raw_y moved.
+        let bottom_right = pose
+            .touch_to_display(202, 1170)
+            .expect("measured tap maps to the display");
+
+        assert_eq!(top_left, (122, 142));
+        assert_eq!(bottom_left, (106, 1505));
+        assert_eq!(bottom_right, (1169, 1477));
+
+        // The shape of the L, stated independently of the exact numbers, so
+        // that a mirrored axis fails here even if the literals are edited.
+        assert!(top_left.1 < bottom_left.1, "the left edge runs downward");
+        assert!(
+            top_left.0.abs_diff(bottom_left.0) < 40,
+            "the left edge stays at one side"
+        );
+        assert!(
+            bottom_left.0 < bottom_right.0,
+            "the bottom edge runs rightward"
+        );
+        assert!(
+            bottom_left.1.abs_diff(bottom_right.1) < 40,
+            "the bottom edge stays at one end"
+        );
+
+        // Either plausible reversed axis still lands inside the panel, so only
+        // distance from the touched corner distinguishes them. Both are far
+        // from the top-left that was physically touched.
+        let flipped_x = pose
+            .touch_to_display(1538, 1264 - 122)
+            .expect("flipped sample remains in range");
+        let flipped_y = pose
+            .touch_to_display(1680 - 1538, 122)
+            .expect("flipped sample remains in range");
+        assert_eq!(flipped_x, (1141, 142));
+        assert_eq!(flipped_y, (122, 1537));
+    }
+
+    #[test]
+    fn libra_colour_touch_edges_stay_inside_the_panel_and_round_trip() {
+        let pose = PanelPose::reference(&LIBRA_COLOUR_390);
+        assert_eq!(pose.touch_to_display(0, 0), Some((0, 1679)));
+        assert_eq!(pose.touch_to_display(1680, 1264), Some((1263, 0)));
+        for raw in [(0, 0), (0, 1264), (1680, 0), (1680, 1264)] {
+            let display = pose
+                .touch_to_display(raw.0, raw.1)
+                .expect("edge maps to the display");
+            assert!(display.0 < LIBRA_COLOUR_390.width, "x escaped: {display:?}");
+            assert!(
+                display.1 < LIBRA_COLOUR_390.height,
+                "y escaped: {display:?}"
+            );
+        }
+        for display in [(0, 0), (1263, 0), (0, 1679), (1263, 1679), (632, 840)] {
+            let raw = pose
+                .display_to_touch(display.0, display.1)
+                .expect("display point maps to the controller");
+            assert_eq!(pose.touch_to_display(raw.0, raw.1), Some(display));
+        }
     }
 
     #[test]

@@ -15,6 +15,7 @@ and touch profile. A matching model name alone is not sufficient.
 | Kobo Clara HD | N249, code 376, firmware 4.38.23684 or 4.38.23697, kernel 4.1.15-00136-g12655eaaef89 | Read-only probe and owner-attended display, touch, exit, sandbox, and recovery tests complete | Fully tested |
 | Kobo Elipsa 2E | N605, code 389, firmware 4.38.23697, kernel 4.9.77 | Read-only probe and owner-attended display, touch, exit, suspend/resume, and recovery tests complete | Fully tested |
 | Kobo Libra 2 | N418, code 388, firmware 4.38.23697, kernel 4.1.15-00868-g58a2758be07 | Read-only probe and owner-attended display, touch, page-button, exit, and recovery tests complete | Fully tested |
+| Kobo Libra Colour | N428, code 390, firmware 4.45.23697, kernel 4.9.77 | Read-only probe complete and touch transform measured on the device by read-only observation; display, exit, and recovery tests not yet run. Evidence on [issue #28](https://github.com/BandarLabs/Cobalt/issues/28) | Profile registered, `write_ready: false` |
 
 `Read-only doctor match complete` means the profile describes the observed
 identity, framebuffer, and touch ranges. It does not prove the physical touch
