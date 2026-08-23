@@ -58,6 +58,7 @@ pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     serial_prefix: "N365",
     firmware_versions: &["4.45.23697"],
     kernel_release: "4.9.77",
+    key_press_feedback: true,
     write_ready: true,
 };
 
@@ -111,6 +112,7 @@ pub const CLARA_HD_376: DeviceProfile = DeviceProfile {
     serial_prefix: "N249",
     firmware_versions: &["4.38.23684", "4.38.23697"],
     kernel_release: "4.1.15-00136-g12655eaaef89",
+    key_press_feedback: true,
     write_ready: true,
 };
 
@@ -164,6 +166,7 @@ pub const NIA_382: DeviceProfile = DeviceProfile {
     serial_prefix: "N306",
     firmware_versions: &["4.38.23684"],
     kernel_release: "4.1.15-00463-g38afd5cea756",
+    key_press_feedback: false,
     write_ready: true,
 };
 
@@ -217,6 +220,7 @@ pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
     serial_prefix: "N605",
     firmware_versions: &["4.38.23697"],
     kernel_release: "4.9.77",
+    key_press_feedback: true,
     write_ready: true,
 };
 
@@ -391,6 +395,13 @@ pub struct DeviceProfile {
     /// Exact firmware releases covered by owner-attended evidence.
     pub firmware_versions: &'static [&'static str],
     pub kernel_release: &'static str,
+    /// Whether key-like grid cells need a separate pressed-state refresh.
+    ///
+    /// This is kept per profile because a press and its release are two
+    /// synchronous panel updates before the application can answer. On a
+    /// controller where those updates are slow, the application's own redraw
+    /// is both the first useful feedback and substantially more responsive.
+    pub key_press_feedback: bool,
     /// True only after owner-attended hardware evidence has been reviewed.
     pub write_ready: bool,
 }
@@ -1134,6 +1145,10 @@ mod tests {
         assert!(report.write_blockers.is_empty());
         assert!(NIA_382.write_identity_blockers(&snapshot).is_empty());
         assert_eq!(super::identify_profile(&snapshot), Some(&NIA_382));
+        assert!(
+            !NIA_382.key_press_feedback,
+            "the Nia must not put two slow decorative refreshes before a key action"
+        );
     }
 
     #[test]

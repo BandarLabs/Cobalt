@@ -4342,18 +4342,7 @@ impl LayoutDiagnostics {
 }
 
 impl Layout {
-    /// The control a finger is resting on, for drawing it pressed.
-    ///
-    /// Separate from [`Self::hit_test`] because the two answer different
-    /// questions. Hit testing asks what a completed tap should *do*, and
-    /// deliberately includes the page-turn zones, which cover half the panel
-    /// and have nothing to invert. This asks what the reader is touching, which
-    /// must be something with edges they can see change.
-    ///
-    /// The smallest containing control wins, so a button inside a card inverts
-    /// the button.
-    #[must_use]
-    pub fn pressed_control(&self, x: i32, y: i32) -> Option<Rect> {
+    fn pressed_control_node(&self, x: i32, y: i32) -> Option<&LayoutNode> {
         self.nodes
             .iter()
             .filter(|node| node.rect.contains(x, y))
@@ -4382,7 +4371,33 @@ impl Layout {
             .min_by_key(|node| {
                 i64::from(node.rect.width.max(0)) * i64::from(node.rect.height.max(0))
             })
-            .map(|node| node.rect)
+    }
+
+    /// The control a finger is resting on, for drawing it pressed.
+    ///
+    /// Separate from [`Self::hit_test`] because the two answer different
+    /// questions. Hit testing asks what a completed tap should *do*, and
+    /// deliberately includes the page-turn zones, which cover half the panel
+    /// and have nothing to invert. This asks what the reader is touching, which
+    /// must be something with edges they can see change.
+    ///
+    /// The smallest containing control wins, so a button inside a card inverts
+    /// the button.
+    #[must_use]
+    pub fn pressed_control(&self, x: i32, y: i32) -> Option<Rect> {
+        self.pressed_control_node(x, y).map(|node| node.rect)
+    }
+
+    /// Whether the control under a finger is a key-like grid cell.
+    ///
+    /// Some panels are slow enough that drawing a key down and back up delays
+    /// the action by seconds. The runtime can omit that decorative pair for a
+    /// profile while retaining press feedback for ordinary controls, whose
+    /// actions may take long enough that feedback is essential.
+    #[must_use]
+    pub fn pressed_control_is_key(&self, x: i32, y: i32) -> bool {
+        self.pressed_control_node(x, y)
+            .is_some_and(|node| matches!(node.kind, LayoutKind::Cell(_, CellStyle::Key)))
     }
 
     /// How much of the band between the bars is already spoken for.
@@ -18068,6 +18083,36 @@ mod press_feedback_tests {
             .pressed_control(button.x + button.width / 2, button.y + button.height / 2)
             .expect("a finger in the middle of the button is on the button");
         assert_eq!(inside, button);
+        assert!(!layout
+            .pressed_control_is_key(button.x + button.width / 2, button.y + button.height / 2));
+    }
+
+    #[test]
+    fn a_keyboard_cell_is_identified_without_mistaking_a_board_for_one() {
+        let laid_out = |square| {
+            Screen::new(
+                1,
+                vec![Node::Grid {
+                    id: NodeId(1),
+                    columns: 2,
+                    square,
+                    cells: vec![Cell::new(ActionId(1), "a"), Cell::new(ActionId(2), "b")],
+                }],
+            )
+            .layout_with(&CLARA_BW_METRICS, &Chrome::default())
+        };
+        let is_key = |layout: &Layout| {
+            let cell = layout
+                .nodes
+                .iter()
+                .find(|node| matches!(node.kind, LayoutKind::Cell(..)))
+                .expect("a grid cell")
+                .rect;
+            layout.pressed_control_is_key(cell.x + cell.width / 2, cell.y + cell.height / 2)
+        };
+
+        assert!(is_key(&laid_out(false)));
+        assert!(!is_key(&laid_out(true)));
     }
 
     #[test]
