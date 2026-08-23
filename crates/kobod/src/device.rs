@@ -1383,14 +1383,22 @@ fn host_applications(
                             let forward = (button == gpio::Button::Page194) == forward_is_194;
                             if let Some(index) = index_of(&apps, front) {
                                 let at_home = apps[index].path == home;
-                                let screen = apps[index].screen.as_ref();
-                                let chrome =
-                                    screen.map(|current| chrome_for(current, at_home, &mut status));
-                                if let Some(message) = page_key_message(
-                                    screen,
-                                    chrome.as_ref().unwrap_or(&Chrome::default()),
-                                    forward,
-                                ) {
+                                let message = match apps[index].screen.as_ref() {
+                                    Some(current) => {
+                                        // The chrome the frame was drawn with,
+                                        // for the same reason `action_for`
+                                        // uses it: laying out with a different
+                                        // one resolves the press against a
+                                        // screen the reader cannot see.
+                                        let chrome = chrome_for(current, at_home, &mut status);
+                                        page_key_message(current, &chrome, forward)
+                                    }
+                                    // Nothing painted yet, so there is nothing
+                                    // to resolve against and the application
+                                    // hears the raw intent.
+                                    None => Some(kobo_protocol::Message::PageTurn { forward }),
+                                };
+                                if let Some(message) = message {
                                     apps[index].send(message)?;
                                 }
                             }
@@ -2781,26 +2789,21 @@ fn action_for(
 ///
 /// `None` means the press is dropped. That is not the same as an application
 /// choosing to ignore it, which is why the three states are matched rather
-/// than collapsed: see [`kobo_ui::PageTurnZones`].
+/// than collapsed: see [`kobo_ui::PagingState`].
 fn page_key_message(
-    screen: Option<&Screen>,
+    screen: &Screen,
     chrome: &Chrome,
     forward: bool,
 ) -> Option<kobo_protocol::Message> {
-    let zones = screen.map_or(kobo_ui::PageTurnZones::None, |current| {
-        current
-            .layout_with(&metrics_for(current), chrome)
-            .page_turns
-    });
-    match zones {
-        kobo_ui::PageTurnZones::Declared(turns) => Some(kobo_protocol::Message::Action {
+    match screen.layout_with(&metrics_for(screen), chrome).page_turns {
+        kobo_ui::PagingState::Declared(turns) => Some(kobo_protocol::Message::Action {
             action: if forward { turns.next } else { turns.previous },
         }),
-        kobo_ui::PageTurnZones::None => Some(kobo_protocol::Message::PageTurn { forward }),
+        kobo_ui::PagingState::None => Some(kobo_protocol::Message::PageTurn { forward }),
         // Dropped, but not silently: a press that does nothing is
         // indistinguishable from a broken button, and this is the record that
         // says which it was.
-        kobo_ui::PageTurnZones::SuppressedByOverlay => {
+        kobo_ui::PagingState::SuppressedByOverlay => {
             trace("page key dropped: an overlay is up");
             None
         }
@@ -3464,13 +3467,13 @@ mod tests {
         // tap on the side zone would have.
         let declared = Screen::new(1, vec![page()]).with_page_turns(ActionId(11), ActionId(12));
         assert!(matches!(
-            page_key_message(Some(&declared), &chrome, true),
+            page_key_message(&declared, &chrome, true),
             Some(kobo_protocol::Message::Action {
                 action: ActionId(12)
             })
         ));
         assert!(matches!(
-            page_key_message(Some(&declared), &chrome, false),
+            page_key_message(&declared, &chrome, false),
             Some(kobo_protocol::Message::Action {
                 action: ActionId(11)
             })
@@ -3480,10 +3483,13 @@ mod tests {
         // press, so it hears the raw intent.
         let undeclared = Screen::new(1, vec![page()]);
         assert!(matches!(
-            page_key_message(Some(&undeclared), &chrome, true),
+            page_key_message(&undeclared, &chrome, true),
             Some(kobo_protocol::Message::PageTurn { forward: true })
         ));
-        assert!(page_key_message(None, &chrome, true).is_some());
+        assert!(matches!(
+            page_key_message(&undeclared, &chrome, false),
+            Some(kobo_protocol::Message::PageTurn { forward: false })
+        ));
 
         // Covered by a dialog: nothing is sent. Not the declared action, and
         // not the raw intent either -- an application that handled the raw
@@ -3501,17 +3507,13 @@ mod tests {
             }],
         );
         assert_eq!(
-            page_key_message(
-                Some(&declared.clone().with_overlay(modal.clone())),
-                &chrome,
-                true
-            ),
+            page_key_message(&declared.clone().with_overlay(modal.clone()), &chrome, true),
             None
         );
         // Including when the screen never declared turns: the dialog is what
         // the reader is answering either way.
         assert_eq!(
-            page_key_message(Some(&undeclared.with_overlay(modal)), &chrome, true),
+            page_key_message(&undeclared.with_overlay(modal), &chrome, true),
             None
         );
     }

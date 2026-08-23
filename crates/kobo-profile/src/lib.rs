@@ -1895,10 +1895,15 @@ mod tests {
         assert_eq!(flipped_y, (109, 1337));
     }
 
-    /// Captured from a physical touch about a centimetre in from the top-left
-    /// of the Elipsa 2E. Carried over from the pre-`PanelPose` API unchanged:
-    /// the expected values are the ones measured on that hardware, not values
-    /// re-derived from the transform they are meant to pin.
+    /// Captured from a physical top-left touch on the real Elipsa 2E with
+    /// `kobo touch-probe`, read-only and ungrabbed. The raw controller sample
+    /// `(1838, 30)` mapped to display `(30, 34)`, matching where the owner
+    /// touched rather than merely mapping the controller's corner set onto the
+    /// panel's corner set.
+    ///
+    /// Carried over from the pre-`PanelPose` API unchanged: the expected
+    /// values are the ones measured on that hardware, not values re-derived
+    /// from the transform they are meant to pin.
     #[test]
     fn elipsa_touch_transform_matches_a_physically_measured_touch() {
         let mapped = ELIPSA_2E_POSE

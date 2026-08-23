@@ -1362,7 +1362,7 @@ pub struct Screen {
 /// press while a dialog was up fell through to the raw intent and an
 /// application that handled it paged the content underneath.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum PageTurnZones {
+pub enum PagingState {
     /// The screen declares no page turns and nothing is covering it.
     #[default]
     None,
@@ -1372,7 +1372,7 @@ pub enum PageTurnZones {
     SuppressedByOverlay,
 }
 
-impl PageTurnZones {
+impl PagingState {
     /// The live turns, if paging means anything at all here.
     #[must_use]
     pub const fn declared(self) -> Option<PageTurns> {
@@ -1702,8 +1702,8 @@ impl Screen {
         // the navigation are the two things a reader must be able to hit
         // without thinking, and a mistimed page turn there would be maddening.
         layout.page_turns = match self.page_turns {
-            Some(turns) => PageTurnZones::Declared(turns),
-            None => PageTurnZones::None,
+            Some(turns) => PagingState::Declared(turns),
+            None => PagingState::None,
         };
         layout.hold = self.hold;
         if let Some((turns, (page, of))) = self
@@ -1767,7 +1767,7 @@ impl Screen {
             // left of the content area, and "left over" must not include the
             // thing drawn over it. Said as suppression rather than absence, so
             // that whatever reads this can tell "covered" from "never asked".
-            layout.page_turns = PageTurnZones::SuppressedByOverlay;
+            layout.page_turns = PagingState::SuppressedByOverlay;
             layout.hold = None;
         }
         layout
@@ -4179,8 +4179,8 @@ pub struct Layout {
     /// The band between the bars, which is what the page-turn zones cover.
     pub content: Rect,
     /// What paging means here, including when the answer is "nothing, for
-    /// now": see [`PageTurnZones`].
-    pub page_turns: PageTurnZones,
+    /// now": see [`PagingState`].
+    pub page_turns: PagingState,
     /// Set when the screen asked to hear about a held finger.
     pub hold: Option<ActionId>,
     /// Word rectangles derived during layout. These are kept outside `nodes`
@@ -16617,10 +16617,10 @@ mod prose_tests {
         // covered must not read as one that never declared any. The physical
         // page keys tell those apart, and paged the content underneath the
         // dialog while they could not.
-        assert_eq!(layout.page_turns, PageTurnZones::SuppressedByOverlay);
+        assert_eq!(layout.page_turns, PagingState::SuppressedByOverlay);
         let uncovered =
             Screen::new(1, Vec::new()).layout_with(&CLARA_BW_METRICS, &Chrome::default());
-        assert_eq!(uncovered.page_turns, PageTurnZones::None);
+        assert_eq!(uncovered.page_turns, PagingState::None);
     }
 
     /// A modal is deliberately not dismissed by a tap that misses it, so
