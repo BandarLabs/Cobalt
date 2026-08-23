@@ -21,6 +21,10 @@ pub mod display;
 /// though only a register on the light driver, which a reboot restores.
 #[cfg(feature = "device-write")]
 pub mod frontlight;
+/// The physical buttons and the orientation channel, read without a grab.
+/// Not gated: like [`cover`], watching the node takes nothing away from the
+/// stock reader.
+pub mod gpio;
 #[cfg(feature = "device-write")]
 pub mod input;
 /// Putting the network back after a handoff. Available only with
@@ -47,9 +51,9 @@ pub mod touch;
 
 pub use battery::Battery;
 #[cfg(feature = "device-write")]
-pub use display::{DisplayError, DisplaySession, OWNER_UNLOCK_PHRASE};
+pub use display::{DisplayError, DisplaySession, RefreshTiming, OWNER_UNLOCK_PHRASE};
 pub use observe::{observe_touch, ObserveError, TouchObservation};
 pub use probe::{probe_device, ProbeError};
-pub use refresh::{Rect, RefreshIntent, RefreshPlan, RefreshWaveform, UpdateMarker};
+pub use refresh::{Backend, Rect, RefreshIntent, RefreshPlan, UpdateMarker};
 pub use surface::{read_region, RegionPlacement, RegionSnapshot, SurfaceError, SurfaceGeometry};
 pub use touch::{InputEvent32, TouchDecoder, TouchEvent};

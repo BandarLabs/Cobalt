@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use kobo_policy::{shelf::Shelf, store::Store, DeviceServices, TaskRunner};
-use kobo_profile::{DeviceProfile, CLARA_BW_391};
+use kobo_profile::{DeviceProfile, PanelPose, CLARA_BW_391};
 use kobo_protocol::{read_from, write_to, Frame, Lifecycle, Message};
 use kobo_ui::{
     ActionId, DisplayMetrics, FramePlanner, FrameTransition, Node, NodeId, PanelWaveform, Screen,
@@ -22,6 +22,11 @@ use kobo_ui::{
 
 const MAX_HTTP_HEADER: usize = 8 * 1024;
 const PROFILE: &DeviceProfile = &CLARA_BW_391;
+/// The simulator asserts an orientation rather than observing one, because it
+/// has no device. That is legitimate here and nowhere near a real framebuffer:
+/// it means the browser exercises exactly the transform the Clara BW profile
+/// was measured at.
+const POSE: PanelPose<'static> = PanelPose::reference(PROFILE);
 
 fn profile_metrics() -> DisplayMetrics {
     DisplayMetrics {
@@ -252,8 +257,8 @@ impl Simulator {
 
     pub fn touch(&mut self, x: i32, y: i32) -> Option<ActionId> {
         let (display_x, display_y) = (u32::try_from(x).ok()?, u32::try_from(y).ok()?);
-        let raw = PROFILE.display_to_touch(display_x, display_y)?;
-        let display = PROFILE.touch_to_display(raw.0, raw.1)?;
+        let raw = POSE.display_to_touch(display_x, display_y)?;
+        let display = POSE.touch_to_display(raw.0, raw.1)?;
         self.last_touch = Some(SimulatedTouch { display, raw });
         let action = self.screen.hit_test(
             i32::try_from(display.0).ok()?,
@@ -1116,8 +1121,8 @@ impl AppSession {
 
     fn touch_action(&self, x: i32, y: i32) -> Option<ActionId> {
         let display = (u32::try_from(x).ok()?, u32::try_from(y).ok()?);
-        let raw = PROFILE.display_to_touch(display.0, display.1)?;
-        let mapped = PROFILE.touch_to_display(raw.0, raw.1)?;
+        let raw = POSE.display_to_touch(display.0, display.1)?;
+        let mapped = POSE.touch_to_display(raw.0, raw.1)?;
         let mut state = self
             .state
             .lock()
@@ -2758,7 +2763,7 @@ mod tests {
         simulator.touch(x, y).expect("button is touchable");
 
         let payload = simulator.simulation_json();
-        let raw = PROFILE
+        let raw = POSE
             .display_to_touch(
                 u32::try_from(x).expect("positive display x"),
                 u32::try_from(y).expect("positive display y"),

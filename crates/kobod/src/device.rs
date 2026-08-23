@@ -34,6 +34,7 @@
 
 use crate::blackbox::{self, trace};
 use kobo_hal::display::{DisplaySession, OWNER_UNLOCK_PHRASE};
+use kobo_hal::gpio::{self, GpioEvent, GpioSession};
 use kobo_hal::input::TouchSession;
 use kobo_hal::reader::{Reader, Watchdog, WATCHDOG_CHECK};
 use kobo_hal::soc_watchdog::SocWatchdog;
@@ -41,7 +42,6 @@ use kobo_hal::supervisor::Suspended;
 use kobo_hal::touch::TouchEvent;
 use kobo_hal::{Rect, RefreshIntent, RefreshPlan, RegionSnapshot};
 use kobo_policy::{Backends, Capability, Declared, DeviceServices, PowerPolicy, TaskRunner};
-use kobo_profile::DeviceProfile;
 use kobo_protocol::{Frame, Lifecycle, Message, TaskError, TaskOutcome};
 use kobo_ui::{
     render_all, ActionId, Chrome, FontHandle, FramePlanner, PanelWaveform, PictureCache, Screen,
@@ -408,6 +408,8 @@ const APP_STOP_GRACE: Duration = Duration::from_secs(3);
 /// battery life.
 enum Event {
     Touch(TouchEvent),
+    /// A button or orientation report from the `gpio-keys` node.
+    Gpio(GpioEvent),
     App(u64, Box<Frame>),
     /// An application's end of the socket closed.
     AppGone(u64),
@@ -531,7 +533,17 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
         .map(|t| t.path.clone())
         .ok_or_else(|| "touch probe was unavailable".to_owned())?;
 
-    let mut touch = TouchSession::acquire(Path::new(&touch_path), profile)
+    let framebuffer = display
+        .snapshot()
+        .framebuffer
+        .as_ref()
+        .ok_or_else(|| "framebuffer probe was unavailable".to_owned())?;
+    // Resolved rather than assumed: the transform that places every tap is
+    // only correct at the orientation it was measured at, so a reader held the
+    // other way up has to refuse the session rather than mislocate touches.
+    let pose = kobo_profile::PanelPose::resolve(profile, framebuffer)
+        .map_err(|error| format!("take the touch panel: {error}"))?;
+    let mut touch = TouchSession::acquire(Path::new(&touch_path), pose)
         .map_err(|error| format!("take the touch panel: {error}"))?;
 
     // Without this the device reboots itself partway through the session, so a
@@ -564,13 +576,36 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     let taps = TouchSink::default();
     pump_touch(&mut touch, &taps);
 
+    // The buttons and the orientation channel, on hardware that has them.
+    // Absence is not a failure: not every supported device has page keys,
+    // and a session without buttons is the state every session was in
+    // before this existed.
+    let mut buttons =
+        gpio::discover_buttons_path().and_then(|path| match GpioSession::acquire(&path) {
+            Ok(session) => Some(session),
+            Err(error) => {
+                trace(&format!("buttons unavailable: {error}"));
+                None
+            }
+        });
+    if let Some(session) = buttons.as_mut() {
+        pump_gpio(session, &taps);
+    }
+
+    // Which page key means "forward" depends on how the reader is held. At
+    // the profile's reference pose (buttons on the right, on the Libra 2)
+    // the lower key, 194, pages forward — KOReader's assignment, to be
+    // confirmed on the device. A half turn swaps them, and pose resolution
+    // has already refused anything else.
+    let forward_is_194 = pose.rotation() % 4 == profile.reference_rotation % 4;
+
     let outcome = host_applications(
         application,
         &display,
         whole_screen,
         &taps,
         limits,
-        profile,
+        forward_is_194,
         &watchdog,
     );
     trace("session finished, handing the panel back");
@@ -940,6 +975,18 @@ impl AppLaunch {
     }
 
     fn sandboxed(path: &Path, id: u64) -> Result<Self, String> {
+        if !kobo_abi::sandbox::network_boundary_available() {
+            // Kobo's 4.1 i.MX6 kernels ship without CONFIG_SECCOMP and
+            // CONFIG_NET_NS, so neither in-kernel network boundary exists
+            // there. The chroot, the privilege ceiling and the identity drop
+            // hold as everywhere, and on these kernels the runtime supervises
+            // the application's syscalls over ptrace instead. Said once per
+            // launch so a session transcript names which mechanism held.
+            trace(
+                "application network boundary enforced by ptrace supervision \
+                 on this kernel; seccomp and network namespaces are absent",
+            );
+        }
         let root = std::env::temp_dir().join(format!("kobo-app-{}-{id}", std::process::id()));
         fs::create_dir(&root)
             .map_err(|error| format!("create application sandbox {}: {error}", root.display()))?;
@@ -1011,10 +1058,13 @@ fn host_applications(
     whole_screen: Rect,
     touch: &TouchSink,
     limits: Limits,
-    profile: &'static DeviceProfile,
+    forward_is_194: bool,
     watchdog: &Arc<Watchdog>,
 ) -> Result<String, String> {
-    let _ = profile;
+    // Kept current by the orientation channel: a reader flipped mid-session
+    // keeps "forward" pointing forward even though the image does not rotate
+    // yet.
+    let mut forward_is_194 = forward_is_194;
     let catalogue = application
         .parent()
         .map_or_else(|| PathBuf::from("/tmp"), Path::to_path_buf);
@@ -1285,6 +1335,70 @@ fn host_applications(
                             &home,
                             &mut status,
                         )?;
+                    }
+                }
+                Ok(Event::Gpio(event)) => {
+                    last_activity = Instant::now();
+                    match event {
+                        // On the press, not the release: a page turn should
+                        // not wait for a finger to lift. Only the foreground
+                        // application hears it, for the same reason as taps
+                        // and the cover: the press happened in front of the
+                        // reader, and a background application has no
+                        // standing to react to it.
+                        //
+                        // A screen that declares its page turns gets the
+                        // declared action, exactly as if the side zone had
+                        // been tapped, so a book, a shelf and a catalogue all
+                        // page without knowing buttons exist. The layout is
+                        // consulted rather than the screen because an overlay
+                        // takes the page turns away, and a press while a
+                        // dialog is up must not turn the page underneath it.
+                        // Only a screen that declares nothing receives the
+                        // raw intent, as `Message::PageTurn`.
+                        GpioEvent::Button {
+                            button: button @ (gpio::Button::Page193 | gpio::Button::Page194),
+                            pressed: true,
+                        } => {
+                            let forward = (button == gpio::Button::Page194) == forward_is_194;
+                            if let Some(index) = index_of(&apps, front) {
+                                let at_home = apps[index].path == home;
+                                let turns = apps[index].screen.as_ref().and_then(|current| {
+                                    let chrome = chrome_for(current, at_home, &mut status);
+                                    current
+                                        .layout_with(&metrics_for(current), &chrome)
+                                        .page_turns
+                                });
+                                let message = match turns {
+                                    Some(turns) => kobo_protocol::Message::Action {
+                                        action: if forward { turns.next } else { turns.previous },
+                                    },
+                                    None => kobo_protocol::Message::PageTurn { forward },
+                                };
+                                apps[index].send(message)?;
+                            }
+                        }
+                        GpioEvent::Button {
+                            button: gpio::Button::Power,
+                            pressed,
+                        } => {
+                            // Meaning arrives with the power sub-feature:
+                            // short press sleep, long press shutdown. Until
+                            // then the press is at least on the record.
+                            trace(&format!("power button pressed={pressed}"));
+                        }
+                        // The kernel's digested accelerometer verdict. Only
+                        // the two portrait poses move the key mapping; the
+                        // image itself does not rotate mid-session yet.
+                        // Which MSC_RAW value is which physical pose is
+                        // KOReader's naming, to be confirmed on the device.
+                        GpioEvent::Orientation(gpio::Orientation::PortraitUp) => {
+                            forward_is_194 = true;
+                        }
+                        GpioEvent::Orientation(gpio::Orientation::PortraitDown) => {
+                            forward_is_194 = false;
+                        }
+                        GpioEvent::Button { .. } | GpioEvent::Orientation(_) => {}
                     }
                 }
                 Ok(Event::Touch(event)) => {
@@ -2015,6 +2129,7 @@ fn host_applications(
                         | Message::DeviceResult(_)
                         | Message::StoreResult(_)
                         | Message::CoverChanged { .. }
+                        | Message::PageTurn { .. }
                         | Message::ShellEvent(_) => {
                             return Err(format!(
                                 "{} sent a runtime-only message",
@@ -2872,12 +2987,32 @@ impl Painter {
             PanelWaveform::Gc16 => RefreshIntent::QualityContent,
         };
 
-        let frame =
-            RegionSnapshot::from_grayscale(display.geometry(), whole_screen, &surface.pixels)
-                .map_err(|error| format!("prepare the frame: {error}"))?;
+        let started = Instant::now();
+        // Convert and write only the rows the transition touches. The write
+        // path runs at a few megabytes per second on the i.MX6's uncached
+        // framebuffer, so writing the whole screen for every frame cost about
+        // 1.6 seconds per tap regardless of how small the change was.
+        let region_gray = {
+            let out_of_surface = || "the transition region is not inside the surface".to_owned();
+            let x = usize::try_from(transition.region.x).map_err(|_| out_of_surface())?;
+            let y = usize::try_from(transition.region.y).map_err(|_| out_of_surface())?;
+            let width = usize::try_from(transition.region.width).map_err(|_| out_of_surface())?;
+            let height = usize::try_from(transition.region.height).map_err(|_| out_of_surface())?;
+            let mut gray = Vec::with_capacity(width.saturating_mul(height));
+            for row in 0..height {
+                let start = (y + row) * surface.width + x;
+                let end = start + width;
+                gray.extend_from_slice(surface.pixels.get(start..end).ok_or_else(out_of_surface)?);
+            }
+            gray
+        };
+        let frame = RegionSnapshot::from_grayscale(display.geometry(), region, &region_gray)
+            .map_err(|error| format!("prepare the frame: {error}"))?;
+        let converted = started.elapsed();
         display
             .restore(&frame)
             .map_err(|error| format!("write the frame: {error}"))?;
+        let written = started.elapsed();
         let plan = RefreshPlan::new(
             region,
             intent,
@@ -2886,9 +3021,24 @@ impl Painter {
             whole_screen.height,
         )
         .ok_or_else(|| "the refresh region is not inside the screen".to_owned())?;
-        display
-            .refresh(plan)
+        let timing = display
+            .refresh_timed(plan)
             .map_err(|error| format!("show the frame: {error}"))?;
+        // One line per frame while the delay on the Libra 2 is being chased:
+        // how long the grayscale conversion, the framebuffer write and the
+        // two ioctls each took, and what was refreshed with which waveform.
+        // Stderr rather than the black box: start.sh already captures it, and
+        // the black box costs an fsync per line.
+        eprintln!(
+            "frame {}x{} wf={} convert={}ms write={}ms submit={}us wait={}ms",
+            region.width,
+            region.height,
+            timing.submitted_waveform,
+            converted.as_millis(),
+            written.saturating_sub(converted).as_millis(),
+            timing.submit.as_micros(),
+            timing.wait.as_millis(),
+        );
 
         if !self.frames.commit(surface, transition) {
             return Err("the frame planner rejected a completed refresh".to_owned());
@@ -2931,6 +3081,18 @@ impl TouchSink {
             let _ignored = sender.send(Event::Touch(event));
         }
     }
+
+    /// Same policy as taps: between applications a press is dropped, not
+    /// queued for whatever comes up next.
+    fn send_gpio(&self, event: GpioEvent) {
+        let guard = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(sender) = guard.as_ref() {
+            let _ignored = sender.send(Event::Gpio(event));
+        }
+    }
 }
 
 fn pump_touch(touch: &mut TouchSession, sink: &TouchSink) {
@@ -2941,6 +3103,21 @@ fn pump_touch(touch: &mut TouchSession, sink: &TouchSink) {
     thread::spawn(move || {
         while let Ok(event) = events.recv() {
             sink.send(event);
+        }
+    });
+}
+
+/// One reader thread on the button device for the whole panel session,
+/// mirroring [`pump_touch`] for the same reason: the destination changes as
+/// applications come and go, the thread does not.
+fn pump_gpio(buttons: &mut GpioSession, sink: &TouchSink) {
+    let Some(events) = buttons.take_events() else {
+        return;
+    };
+    let sink = sink.clone();
+    thread::spawn(move || {
+        while let Ok(event) = events.recv() {
+            sink.send_gpio(event);
         }
     });
 }

@@ -18,6 +18,8 @@ _Static_assert(HWTCON_SEND_UPDATE == 0x4024462eUL, "send ioctl");
 _Static_assert(HWTCON_WAIT_FOR_UPDATE_COMPLETE == 0xc008462fUL, "wait ioctl");
 _Static_assert(WAVEFORM_MODE_DU == 1, "DU waveform");
 _Static_assert(WAVEFORM_MODE_GC16 == 2, "GC16 waveform");
+/* Asserted because the mxcfb backend picks a different number for this one. */
+_Static_assert(WAVEFORM_MODE_GL16 == 3, "GL16 waveform");
 _Static_assert(WAVEFORM_MODE_GLR16 == 4, "GLR16 waveform");
 _Static_assert(WAVEFORM_MODE_A2 == 6, "A2 waveform");
 

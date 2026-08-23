@@ -388,6 +388,18 @@ pub mod input {
     pub const EV_SYN: u16 = 0x00;
     pub const EV_KEY: u16 = 0x01;
     pub const EV_ABS: u16 = 0x03;
+    pub const EV_MSC: u16 = 0x04;
+    /// The one `EV_MSC` code the NTX kernels use: digested accelerometer
+    /// orientation, delivered on the `gpio-keys` node.
+    pub const MSC_RAW: u16 = 0x03;
+    /// The power button, as `gpio-keys` reports it.
+    pub const KEY_POWER: u16 = 116;
+    /// The page-turn keys on devices that have them. Linux names these
+    /// `KEY_F23` and `KEY_F24`; which one means "forward" depends on how the
+    /// reader is held, so the codes stay neutral here and the meaning is
+    /// assigned where the pose is known. Captured on a Libra 2 on 2026-08-23.
+    pub const KEY_PAGE_193: u16 = 193;
+    pub const KEY_PAGE_194: u16 = 194;
     pub const SYN_REPORT: u16 = 0;
     pub const BTN_TOUCH: u16 = 330;
 
@@ -581,13 +593,27 @@ pub mod hwtcon {
     }
 }
 
-/// Mark 7 i.MX6SLL electrophoretic display controller ABI.
+/// The i.MX6 EPDC framebuffer interface, as used by the Kobo Mark 7 devices.
 ///
-/// These declarations match Kobo's vendor `mxcfb_update_data_v2` interface.
-/// It uses the same ioctl numbers as HWTCON, but a different update structure
-/// and different numeric values for some waveforms. Keeping it as a separate
-/// module makes accidentally submitting one controller's structure to the
-/// other controller difficult.
+/// This is the second display backend beside [`hwtcon`], and the two are more
+/// alike than they look. `MediaTek` kept the i.MX ioctl numbering, so both
+/// backends send updates on `'F', 0x2e` and wait on `'F', 0x2f`. Two things
+/// differ, and both are load-bearing:
+///
+/// 1. The update struct is 72 bytes here against 36 on hwtcon, because Mark 7
+///    takes the v2 layout with `temp`, `dither_mode`, `quant_bit` and an
+///    alternate buffer descriptor. The size is encoded in the request number,
+///    so the two `SEND_UPDATE` constants are genuinely different values.
+/// 2. The waveform *numbers* differ. `GL16` is 5 here and 3 on hwtcon; `A2` is
+///    4 here and 6 there. A waveform constant from the wrong backend is a
+///    silently wrong picture, not an error.
+///
+/// The wait request, by contrast, is bit-identical to the hwtcon one: the same
+/// number over the same eight-byte marker struct.
+///
+/// Every declaration here was read out of the Kobo Libra 2's own published
+/// kernel source, `include/uapi/linux/mxcfb.h` and
+/// `drivers/video/fbdev/mxc/mxc_epdc_v2_fb.c`, rather than reconstructed.
 pub mod mxcfb {
     use super::{iow, iowr};
     #[cfg(feature = "device-write")]
@@ -597,15 +623,40 @@ pub mod mxcfb {
 
     pub const UPDATE_MODE_PARTIAL: u32 = 0;
     pub const UPDATE_MODE_FULL: u32 = 1;
+
+    // Defined in the driver rather than the uapi header, at
+    // `mxc_epdc_v2_fb.c:204`. Note the ordering difference against hwtcon.
+    //
+    // These are not the numbers the panel controller itself uses. The driver
+    // maps the submitted constant through a table it builds from the waveform
+    // file on the device, and sends the hardware's own index on in its place
+    // (`mxc_epdc_v2_fb.c:5305`).
+    //
+    // hwtcon works the same way, through `struct hwtcon_waveform_modes`, so
+    // that indirection is not what separates the two backends. What separates
+    // them is duller: the two vendors chose different values for the same
+    // waveforms, and the ranges overlap, so a constant from the wrong one is
+    // accepted and drawn.
+    //
+    // One consequence of the table being built per device: which hardware
+    // waveform a constant reaches depends on the waveform file. `DU`, `GC16`
+    // and `GL16` are present in every known table; `GC4` is not dependable.
     pub const WAVEFORM_INIT: u32 = 0;
     pub const WAVEFORM_DU: u32 = 1;
     pub const WAVEFORM_GC16: u32 = 2;
+    pub const WAVEFORM_GC4: u32 = 3;
+    pub const WAVEFORM_A2: u32 = 4;
     pub const WAVEFORM_GL16: u32 = 5;
     pub const WAVEFORM_GLR16: u32 = 6;
     pub const WAVEFORM_GLD16: u32 = 7;
     pub const WAVEFORM_AUTO: u32 = 257;
+
+    /// Ask the panel controller to use its own ambient temperature reading.
+    ///
+    /// hwtcon has no equivalent field. Every other known consumer of this
+    /// interface sends this value, and nothing here has a better number to
+    /// offer, so it is not exposed as a choice.
     pub const TEMP_USE_AMBIENT: i32 = 0x1000;
-    pub const DITHER_PASSTHROUGH: i32 = 0;
 
     #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
     #[repr(C)]
@@ -616,29 +667,8 @@ pub mod mxcfb {
         pub height: u32,
     }
 
-    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-    #[repr(C)]
-    pub struct MxcfbAltBufferData {
-        pub physical_address: u32,
-        pub width: u32,
-        pub height: u32,
-        pub update_region: MxcfbRect,
-    }
-
-    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-    #[repr(C)]
-    pub struct MxcfbUpdateDataV2 {
-        pub update_region: MxcfbRect,
-        pub waveform_mode: u32,
-        pub update_mode: u32,
-        pub update_marker: u32,
-        pub temperature: i32,
-        pub flags: u32,
-        pub dither_mode: i32,
-        pub quant_bit: i32,
-        pub alt_buffer_data: MxcfbAltBufferData,
-    }
-
+    /// The marker half of the interface, identical in layout and in request
+    /// number to [`hwtcon::HwtconUpdateMarkerData`](super::hwtcon::HwtconUpdateMarkerData).
     #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
     #[repr(C)]
     pub struct MxcfbUpdateMarkerData {
@@ -646,35 +676,73 @@ pub mod mxcfb {
         pub collision_test: u32,
     }
 
-    const _: [(); 16] = [(); std::mem::size_of::<MxcfbRect>()];
-    const _: [(); 28] = [(); std::mem::size_of::<MxcfbAltBufferData>()];
-    const _: [(); 72] = [(); std::mem::size_of::<MxcfbUpdateDataV2>()];
-    const _: [(); 8] = [(); std::mem::size_of::<MxcfbUpdateMarkerData>()];
-
-    pub const MXCFB_SEND_UPDATE_V2: u64 = iow(b'F', 0x2e, 72);
-    pub const MXCFB_WAIT_FOR_UPDATE_COMPLETE_V3: u64 = iowr(b'F', 0x2f, 8);
-
-    /// Submits a Mark 7 MXCFB v2 update. Available only with `device-write`.
+    /// An alternate source buffer for an update, addressed physically.
     ///
-    /// # Errors
-    ///
-    /// Returns the kernel error from `MXCFB_SEND_UPDATE_V2`.
-    #[cfg(feature = "device-write")]
-    pub fn send_update_v2(file: &File, update: &mut MxcfbUpdateDataV2) -> io::Result<()> {
-        mutating_ioctl(file, MXCFB_SEND_UPDATE_V2, update)
+    /// Nothing here uses it: updates always come from the framebuffer itself,
+    /// so every field stays zero. It exists because it occupies the last 28
+    /// bytes of the update struct, and the struct's size is part of the ioctl
+    /// request number.
+    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+    #[repr(C)]
+    pub struct MxcfbAltBufferData {
+        pub phys_addr: u32,
+        pub width: u32,
+        pub height: u32,
+        pub alt_update_region: MxcfbRect,
     }
 
-    /// Waits for a Mark 7 MXCFB update marker.
+    /// The Mark 7 update descriptor, `mxcfb_update_data_v2` in the kernel.
+    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+    #[repr(C)]
+    pub struct MxcfbUpdateData {
+        pub update_region: MxcfbRect,
+        pub waveform_mode: u32,
+        pub update_mode: u32,
+        pub update_marker: u32,
+        pub temp: i32,
+        pub flags: u32,
+        pub dither_mode: i32,
+        pub quant_bit: i32,
+        pub alt_buffer_data: MxcfbAltBufferData,
+    }
+
+    const _: [(); 16] = [(); std::mem::size_of::<MxcfbRect>()];
+    const _: [(); 8] = [(); std::mem::size_of::<MxcfbUpdateMarkerData>()];
+    const _: [(); 28] = [(); std::mem::size_of::<MxcfbAltBufferData>()];
+    const _: [(); 72] = [(); std::mem::size_of::<MxcfbUpdateData>()];
+
+    pub const MXCFB_SEND_UPDATE: u64 = iow(b'F', 0x2e, 72);
+    pub const MXCFB_WAIT_FOR_UPDATE_COMPLETE: u64 = iowr(b'F', 0x2f, 8);
+
+    /// Submits an EPDC update. Available only with `device-write`.
+    ///
+    /// The request is declared write-only by the kernel header, but the driver
+    /// copies the descriptor back to user space, so it is passed mutably.
+    /// `update.waveform_mode` is overwritten in the process: what comes back
+    /// is the panel's own waveform number, not the constant that went in
+    /// (`mxc_epdc_v2_fb.c:5486`, "Pass selected waveform mode back to user").
+    /// Nothing here reads it back, but a caller that compared the field
+    /// against a `WAVEFORM_` constant after the call would find they differ.
     ///
     /// # Errors
     ///
-    /// Returns the kernel error from `MXCFB_WAIT_FOR_UPDATE_COMPLETE_V3`.
+    /// Returns the kernel error from `MXCFB_SEND_UPDATE`.
     #[cfg(feature = "device-write")]
-    pub fn wait_for_update_complete_v3(
+    pub fn send_update(file: &File, update: &mut MxcfbUpdateData) -> io::Result<()> {
+        mutating_ioctl(file, MXCFB_SEND_UPDATE, update)
+    }
+
+    /// Waits for the EPDC marker and returns its collision-test result.
+    ///
+    /// # Errors
+    ///
+    /// Returns the kernel error from `MXCFB_WAIT_FOR_UPDATE_COMPLETE`.
+    #[cfg(feature = "device-write")]
+    pub fn wait_for_update_complete(
         file: &File,
         marker: &mut MxcfbUpdateMarkerData,
     ) -> io::Result<()> {
-        mutating_ioctl(file, MXCFB_WAIT_FOR_UPDATE_COMPLETE_V3, marker)
+        mutating_ioctl(file, MXCFB_WAIT_FOR_UPDATE_COMPLETE, marker)
     }
 }
 
@@ -1289,6 +1357,36 @@ pub mod sandbox {
             u32::try_from(number).unwrap_or(u32::MAX)
         }
 
+        // Some architectures have no fork or vfork syscall at all, and libc
+        // defines no number for them: the C library implements both by calling
+        // clone, which this filter blocks in its own right. The device is
+        // armv7, where both numbers exist and the filter below is unchanged.
+        // This arm exists only so the workspace builds on such a development
+        // machine, arm64 Linux being the one people actually hit.
+        //
+        // The two slots are kept rather than removed. Every jump in the filter
+        // carries a relative offset -- socket lands on the AF_UNIX check, the
+        // rest land on RET ERRNO -- so dropping an instruction would silently
+        // retarget every jump above it. u32::MAX matches no syscall, which is
+        // the same fallback syscall() already uses, and leaves the offsets and
+        // the meaning of the program exactly as they are elsewhere.
+        //
+        // The list names the architectures that lack the calls, so that an
+        // unlisted future one fails to compile here rather than quietly
+        // dropping two entries from the filter.
+        #[cfg(any(
+            target_arch = "aarch64",
+            target_arch = "riscv64",
+            target_arch = "loongarch64"
+        ))]
+        let fork_calls: [u32; 2] = [u32::MAX, u32::MAX];
+        #[cfg(not(any(
+            target_arch = "aarch64",
+            target_arch = "riscv64",
+            target_arch = "loongarch64"
+        )))]
+        let fork_calls: [u32; 2] = [syscall(libc::SYS_fork), syscall(libc::SYS_vfork)];
+
         // seccomp_data.nr is at byte 0 and args[0] at byte 16 on the little-
         // endian ARM and x86 Linux targets supported by this workspace. SDK
         // applications are single-process event loops; their asynchronous work
@@ -1302,8 +1400,8 @@ pub mod sandbox {
             jump(syscall(libc::SYS_setpgid), 9, 0),
             jump(syscall(libc::SYS_unshare), 8, 0),
             jump(syscall(libc::SYS_setns), 7, 0),
-            jump(syscall(libc::SYS_fork), 6, 0),
-            jump(syscall(libc::SYS_vfork), 5, 0),
+            jump(fork_calls[0], 6, 0),
+            jump(fork_calls[1], 5, 0),
             jump(syscall(libc::SYS_clone), 4, 0),
             jump(syscall(libc::SYS_clone3), 3, 0),
             statement(RET_K, libc::SECCOMP_RET_ALLOW),
@@ -1326,6 +1424,21 @@ pub mod sandbox {
         } else {
             Ok(())
         }
+    }
+
+    /// Whether this kernel can put a network boundary around an application.
+    ///
+    /// True when either mechanism [`Sandbox::enter`] uses is available: a
+    /// seccomp filter, probed with `PR_GET_SECCOMP` (which a kernel built
+    /// without `CONFIG_SECCOMP` answers with `EINVAL`), or a private network
+    /// namespace, probed by the file the kernel publishes for it. Read-only:
+    /// nothing is installed or unshared.
+    #[cfg(target_os = "linux")]
+    #[must_use]
+    pub fn network_boundary_available() -> bool {
+        // SAFETY: PR_GET_SECCOMP reads the current mode and changes nothing.
+        let seccomp = unsafe { libc::prctl(libc::PR_GET_SECCOMP) } >= 0;
+        seccomp || Path::new("/proc/self/ns/net").exists()
     }
 
     /// Signals every process whose filesystem root is the prepared sandbox.
@@ -2055,17 +2168,73 @@ mod tests {
         assert_eq!(input::EVIOCGABS_MT_POSITION_Y, 0x8018_4576);
         assert_eq!(hwtcon::HWTCON_SEND_UPDATE, 0x4024_462e);
         assert_eq!(hwtcon::HWTCON_WAIT_FOR_UPDATE_COMPLETE, 0xc008_462f);
-        assert_eq!(mxcfb::MXCFB_SEND_UPDATE_V2, 0x4048_462e);
-        assert_eq!(mxcfb::MXCFB_WAIT_FOR_UPDATE_COMPLETE_V3, 0xc008_462f);
+        assert_eq!(mxcfb::MXCFB_SEND_UPDATE, 0x4048_462e);
+        assert_eq!(mxcfb::MXCFB_WAIT_FOR_UPDATE_COMPLETE, 0xc008_462f);
         assert_eq!(ior(b'E', 0x75, 24), 0x8018_4575);
         assert_eq!(iow(b'F', 0x2e, 36), 0x4024_462e);
+        assert_eq!(iow(b'F', 0x2e, 72), 0x4048_462e);
         assert_eq!(iowr(b'F', 0x2f, 8), 0xc008_462f);
     }
 
+    /// The two backends share a number here, and that is not a coincidence to
+    /// be tidied away: the marker struct is the same eight bytes on both, so
+    /// the wait half of the interface needs no second implementation.
     #[test]
-    fn hwtcon_waveforms_do_not_reuse_mxcfb_values() {
+    fn both_backends_wait_on_the_same_request() {
+        assert_eq!(
+            hwtcon::HWTCON_WAIT_FOR_UPDATE_COMPLETE,
+            mxcfb::MXCFB_WAIT_FOR_UPDATE_COMPLETE
+        );
+        assert_ne!(hwtcon::HWTCON_SEND_UPDATE, mxcfb::MXCFB_SEND_UPDATE);
+    }
+
+    /// A waveform constant taken from the wrong backend does not fail: it
+    /// draws the wrong thing. Ask an i.MX6 panel for hwtcon's `GL16` and it
+    /// runs `GC4`; ask it for hwtcon's `A2` and it runs `GLR16`.
+    #[test]
+    fn the_two_backends_number_their_waveforms_differently() {
         assert_eq!(hwtcon::WAVEFORM_GLR16, 4);
         assert_eq!(hwtcon::WAVEFORM_A2, 6);
+        assert_eq!(mxcfb::WAVEFORM_GL16, 5);
+        assert_eq!(mxcfb::WAVEFORM_A2, 4);
+        assert_ne!(hwtcon::WAVEFORM_GL16, mxcfb::WAVEFORM_GL16);
+        assert_ne!(hwtcon::WAVEFORM_A2, mxcfb::WAVEFORM_A2);
+
+        // The three the two backends genuinely agree on.
+        assert_eq!(hwtcon::WAVEFORM_INIT, mxcfb::WAVEFORM_INIT);
+        assert_eq!(hwtcon::WAVEFORM_DU, mxcfb::WAVEFORM_DU);
+        assert_eq!(hwtcon::WAVEFORM_GC16, mxcfb::WAVEFORM_GC16);
+        assert_eq!(hwtcon::WAVEFORM_AUTO, mxcfb::WAVEFORM_AUTO);
+    }
+
+    #[test]
+    fn mxcfb_offsets_match_vendor_c_layout() {
+        use std::mem::offset_of;
+
+        assert_eq!(offset_of!(mxcfb::MxcfbUpdateData, update_region), 0);
+        assert_eq!(offset_of!(mxcfb::MxcfbUpdateData, waveform_mode), 16);
+        assert_eq!(offset_of!(mxcfb::MxcfbUpdateData, update_mode), 20);
+        assert_eq!(offset_of!(mxcfb::MxcfbUpdateData, update_marker), 24);
+        assert_eq!(offset_of!(mxcfb::MxcfbUpdateData, temp), 28);
+        assert_eq!(offset_of!(mxcfb::MxcfbUpdateData, flags), 32);
+        assert_eq!(offset_of!(mxcfb::MxcfbUpdateData, dither_mode), 36);
+        assert_eq!(offset_of!(mxcfb::MxcfbUpdateData, quant_bit), 40);
+        assert_eq!(offset_of!(mxcfb::MxcfbUpdateData, alt_buffer_data), 44);
+
+        assert_eq!(offset_of!(mxcfb::MxcfbAltBufferData, phys_addr), 0);
+        assert_eq!(offset_of!(mxcfb::MxcfbAltBufferData, width), 4);
+        assert_eq!(offset_of!(mxcfb::MxcfbAltBufferData, height), 8);
+        assert_eq!(offset_of!(mxcfb::MxcfbAltBufferData, alt_update_region), 12);
+
+        // Without these, swapping `top` and `left` would keep every size and
+        // every offset above correct, and put every update in the wrong place.
+        assert_eq!(offset_of!(mxcfb::MxcfbRect, top), 0);
+        assert_eq!(offset_of!(mxcfb::MxcfbRect, left), 4);
+        assert_eq!(offset_of!(mxcfb::MxcfbRect, width), 8);
+        assert_eq!(offset_of!(mxcfb::MxcfbRect, height), 12);
+
+        assert_eq!(offset_of!(mxcfb::MxcfbUpdateMarkerData, update_marker), 0);
+        assert_eq!(offset_of!(mxcfb::MxcfbUpdateMarkerData, collision_test), 4);
     }
 
     #[test]
@@ -2080,21 +2249,6 @@ mod tests {
         assert_eq!(offset_of!(hwtcon::HwtconUpdateData, dither_mode), 32);
     }
 
-    #[test]
-    fn mxcfb_v2_offsets_match_the_mark_7_vendor_c_layout() {
-        use std::mem::offset_of;
-
-        assert_eq!(offset_of!(mxcfb::MxcfbUpdateDataV2, update_region), 0);
-        assert_eq!(offset_of!(mxcfb::MxcfbUpdateDataV2, waveform_mode), 16);
-        assert_eq!(offset_of!(mxcfb::MxcfbUpdateDataV2, update_mode), 20);
-        assert_eq!(offset_of!(mxcfb::MxcfbUpdateDataV2, update_marker), 24);
-        assert_eq!(offset_of!(mxcfb::MxcfbUpdateDataV2, temperature), 28);
-        assert_eq!(offset_of!(mxcfb::MxcfbUpdateDataV2, flags), 32);
-        assert_eq!(offset_of!(mxcfb::MxcfbUpdateDataV2, dither_mode), 36);
-        assert_eq!(offset_of!(mxcfb::MxcfbUpdateDataV2, quant_bit), 40);
-        assert_eq!(offset_of!(mxcfb::MxcfbUpdateDataV2, alt_buffer_data), 44);
-    }
-
     #[cfg(feature = "device-write")]
     #[test]
     fn device_write_wrappers_have_vendor_requests() {
@@ -2102,10 +2256,10 @@ mod tests {
             hwtcon::send_update;
         let wait: fn(&File, &mut hwtcon::HwtconUpdateMarkerData) -> std::io::Result<()> =
             hwtcon::wait_for_update_complete;
-        let mxcfb_send: fn(&File, &mut mxcfb::MxcfbUpdateDataV2) -> std::io::Result<()> =
-            mxcfb::send_update_v2;
+        let mxcfb_send: fn(&File, &mut mxcfb::MxcfbUpdateData) -> std::io::Result<()> =
+            mxcfb::send_update;
         let mxcfb_wait: fn(&File, &mut mxcfb::MxcfbUpdateMarkerData) -> std::io::Result<()> =
-            mxcfb::wait_for_update_complete_v3;
+            mxcfb::wait_for_update_complete;
         let _ = (send, wait, mxcfb_send, mxcfb_wait);
     }
 }

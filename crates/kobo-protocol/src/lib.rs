@@ -620,6 +620,18 @@ pub enum Message {
     CoverChanged {
         magnet_present: bool,
     },
+    /// A physical page-turn key was pressed, already resolved to intent.
+    ///
+    /// Unsolicited, the same shape as [`Message::CoverChanged`]. The runtime
+    /// owns the raw keycodes and how the reader is held; an application only
+    /// ever hears which way the reader wants to go. Sent on the press, not
+    /// the release, because a page turn should not wait for a finger to lift.
+    ///
+    /// An application that does nothing with this does nothing — there is no
+    /// runtime fallback, deliberately.
+    PageTurn {
+        forward: bool,
+    },
     /// Hands a decoded picture to the runtime, to be referred to afterwards by
     /// `handle`.
     ///
@@ -1570,6 +1582,7 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
             Lifecycle::Background => 1,
         }),
         Message::CoverChanged { magnet_present } => payload.push(u8::from(*magnet_present)),
+        Message::PageTurn { forward } => payload.push(u8::from(*forward)),
     }
     debug_assert_eq!(payload.len(), payload_len);
     let mut bytes = Vec::with_capacity(HEADER_LEN + payload.len());
@@ -2123,6 +2136,7 @@ fn encoded_message_layout(message: &Message) -> Result<(u8, usize), ProtocolErro
         }
         Message::CommitPicture { .. } => Ok((22, 4)),
         Message::CoverChanged { .. } => Ok((23, 1)),
+        Message::PageTurn { .. } => Ok((27, 1)),
         Message::PutFont { name, bytes, .. } => {
             if bytes.is_empty() || bytes.len() > MAX_FONT_BYTES {
                 return Err(ProtocolError::FrameTooLarge);
@@ -3781,6 +3795,9 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
         },
         23 => Message::CoverChanged {
             magnet_present: read_boolean(&mut reader, "cover magnet present")?,
+        },
+        27 => Message::PageTurn {
+            forward: read_boolean(&mut reader, "page turn direction")?,
         },
         24 => {
             let handle = FontHandle(reader.u32()?);
@@ -7605,6 +7622,8 @@ mod store_tests {
             Message::CoverChanged {
                 magnet_present: false,
             },
+            Message::PageTurn { forward: true },
+            Message::PageTurn { forward: false },
             Message::ShellRequest(ShellRequest::Open {
                 columns: 53,
                 rows: 20,

@@ -13,16 +13,16 @@
 //! a default build contains no callable display-write code at all.
 
 use crate::probe::{probe_device, ProbeError};
-use crate::refresh::{Rect, RefreshPlan};
+use crate::refresh::{Backend, Rect, RefreshPlan};
 use crate::surface::{self, RegionSnapshot, SurfaceError, SurfaceGeometry};
 use kobo_abi::{hwtcon, mxcfb};
-use kobo_profile::{DeviceProfile, DeviceSnapshot, FramebufferController, WRITE_EVIDENCE_PENDING};
+use kobo_profile::{DeviceProfile, DeviceSnapshot, WRITE_EVIDENCE_PENDING};
 use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read};
 use std::path::Path;
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// The exact phrase an owner must supply to open a write session.
 pub const OWNER_UNLOCK_PHRASE: &str = "OWNER_ATTENDED_DISPLAY_WRITE";
@@ -49,6 +49,9 @@ pub enum AttendedSmokeStage {
     ReversiblePixels,
     ScreenSnapshot,
     FastFeedback,
+    /// Measures the submit and wait ioctls across the three offered
+    /// waveforms, reversibly, on the fixed patch region.
+    WaitTiming,
 }
 
 impl AttendedSmokeStage {
@@ -113,6 +116,7 @@ impl From<io::Error> for DisplayError {
 pub struct DisplaySession {
     framebuffer: File,
     geometry: SurfaceGeometry,
+    backend: Backend,
     profile: &'static DeviceProfile,
     snapshot: DeviceSnapshot,
 }
@@ -199,6 +203,7 @@ impl DisplaySession {
         Ok(Self {
             framebuffer: file,
             geometry,
+            backend: Backend::from_controller(profile.framebuffer_controller),
             profile,
             snapshot,
         })
@@ -212,6 +217,12 @@ impl DisplaySession {
     #[must_use]
     pub fn snapshot(&self) -> &DeviceSnapshot {
         &self.snapshot
+    }
+
+    /// The panel-controller interface this device speaks.
+    #[must_use]
+    pub fn backend(&self) -> Backend {
+        self.backend
     }
 
     #[must_use]
@@ -254,31 +265,79 @@ impl DisplaySession {
     ///
     /// Returns an error when the region is invalid or either ioctl fails.
     pub fn refresh(&self, plan: RefreshPlan) -> Result<(), DisplayError> {
+        self.refresh_timed(plan).map(|_| ())
+    }
+
+    /// [`Self::refresh`], instrumented.
+    ///
+    /// Measures the submit and wait ioctls separately and reads back the
+    /// waveform the driver actually selected: both vendors' `SEND_UPDATE`
+    /// requests are in-out, and the driver copies the translated waveform mode
+    /// back into the struct. The regular [`Self::refresh`] path discards it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the region is invalid or either ioctl fails.
+    pub fn refresh_timed(&self, plan: RefreshPlan) -> Result<RefreshTiming, DisplayError> {
         // Validate the region against this exact surface before the kernel sees it.
         surface::RegionPlacement::new(self.geometry, plan.region)?;
         let marker = unique_marker()?;
-        match self.profile.framebuffer_controller {
-            FramebufferController::Hwtcon => {
+        // The two backends' wait requests happen to be the same number over
+        // the same struct, so one path would work for both. It is still
+        // written out twice: the coincidence belongs to this kernel, not to
+        // the interface, and a device whose wait struct grew a field would
+        // otherwise be served a MediaTek ioctl through an i.MX session with
+        // nothing in the code to make that visible.
+        let submitted_waveform = plan.waveform(self.backend);
+        let (translated_waveform, submit, wait) = match self.backend {
+            Backend::Hwtcon => {
                 let mut update = plan.hwtcon_update_data(marker);
+                let submit_started = Instant::now();
                 hwtcon::send_update(&self.framebuffer, &mut update)?;
+                let submit = submit_started.elapsed();
                 let mut wait = hwtcon::HwtconUpdateMarkerData {
                     update_marker: marker,
                     collision_test: 0,
                 };
+                let wait_started = Instant::now();
                 hwtcon::wait_for_update_complete(&self.framebuffer, &mut wait)?;
+                (update.waveform_mode, submit, wait_started.elapsed())
             }
-            FramebufferController::MxcfbV2 => {
+            Backend::Mxcfb => {
                 let mut update = plan.mxcfb_update_data(marker);
-                mxcfb::send_update_v2(&self.framebuffer, &mut update)?;
+                let submit_started = Instant::now();
+                mxcfb::send_update(&self.framebuffer, &mut update)?;
+                let submit = submit_started.elapsed();
                 let mut wait = mxcfb::MxcfbUpdateMarkerData {
                     update_marker: marker,
                     collision_test: 0,
                 };
-                mxcfb::wait_for_update_complete_v3(&self.framebuffer, &mut wait)?;
+                let wait_started = Instant::now();
+                mxcfb::wait_for_update_complete(&self.framebuffer, &mut wait)?;
+                (update.waveform_mode, submit, wait_started.elapsed())
             }
-        }
-        Ok(())
+        };
+        Ok(RefreshTiming {
+            submitted_waveform,
+            translated_waveform,
+            submit,
+            wait,
+        })
     }
+}
+
+/// What one instrumented refresh measured.
+#[derive(Clone, Copy, Debug)]
+pub struct RefreshTiming {
+    /// The waveform constant submitted with the update.
+    pub submitted_waveform: u32,
+    /// The waveform the driver copied back after translating the request
+    /// through the device's waveform table.
+    pub translated_waveform: u32,
+    /// How long the submit ioctl took.
+    pub submit: Duration,
+    /// How long the wait-for-complete ioctl blocked.
+    pub wait: Duration,
 }
 
 /// Runs one fixed, bounded, restoration-verified candidate display check.
@@ -324,6 +383,7 @@ pub fn run_attended_smoke(
             ))
         }
         AttendedSmokeStage::ScreenSnapshot => smoke_screen_snapshot_restore(&session),
+        AttendedSmokeStage::WaitTiming => smoke_wait_timing(&session),
         AttendedSmokeStage::FastFeedback => {
             let original = session.capture(SMOKE_FIXED_REGION)?;
             smoke_show_and_restore(&session, plan, &original)?;
@@ -333,6 +393,86 @@ pub fn run_attended_smoke(
             ))
         }
     }
+}
+
+const WAIT_TIMING_ROUNDS: usize = 4;
+
+/// Measures the submit and wait ioctls, reversibly, on the patch region.
+///
+/// Each of the three offered waveforms is driven [`WAIT_TIMING_ROUNDS`] times
+/// through an invert-and-restore pair, and every update reports the waveform
+/// the driver actually translated the request to alongside both ioctl
+/// durations. The screen is left exactly as found, and the restoration is
+/// verified byte for byte even when a refresh fails mid-run.
+fn smoke_wait_timing(session: &DisplaySession) -> Result<String, DisplayError> {
+    use std::fmt::Write as _;
+
+    let original = session.capture(SMOKE_PATCH_REGION)?;
+    let inverted = original.inverted_rgb();
+
+    let mut lines = String::from("update  intent   waveform  translated  submit_us  wait_us\n");
+    let mut run = || -> Result<(), DisplayError> {
+        let mut update = 0_usize;
+        for intent in [
+            crate::refresh::RefreshIntent::QualityContent,
+            crate::refresh::RefreshIntent::TextContent,
+            crate::refresh::RefreshIntent::FastFeedback,
+        ] {
+            let plan = smoke_plan_with_intent(session, SMOKE_PATCH_REGION, intent)?;
+            for _ in 0..WAIT_TIMING_ROUNDS {
+                for snapshot in [&inverted, &original] {
+                    session.restore(snapshot)?;
+                    let timing = session.refresh_timed(plan)?;
+                    update += 1;
+                    let _ = writeln!(
+                        lines,
+                        "{update:>6}  {:<8} {:>8}  {:>10}  {:>9}  {:>7}",
+                        match intent {
+                            crate::refresh::RefreshIntent::QualityContent => "GC16",
+                            crate::refresh::RefreshIntent::TextContent => "GL16",
+                            crate::refresh::RefreshIntent::FastFeedback => "DU",
+                        },
+                        timing.submitted_waveform,
+                        timing.translated_waveform,
+                        timing.submit.as_micros(),
+                        timing.wait.as_micros(),
+                    );
+                }
+            }
+        }
+        Ok(())
+    };
+    let outcome = run();
+
+    // Always leave the screen as found, even when a refresh failed mid-run.
+    let restored = session.restore(&original);
+    outcome?;
+    restored?;
+    let verify = session.capture(SMOKE_PATCH_REGION)?;
+    if !verify.matches(&original) {
+        return Err(DisplayError::Smoke(
+            "patch region does not match the original bytes".to_owned(),
+        ));
+    }
+    Ok(format!(
+        "{lines}wait timing completed; {} bytes restored and verified",
+        original.pixels().len()
+    ))
+}
+
+fn smoke_plan_with_intent(
+    session: &DisplaySession,
+    region: Rect,
+    intent: crate::refresh::RefreshIntent,
+) -> Result<RefreshPlan, DisplayError> {
+    RefreshPlan::new(
+        region,
+        intent,
+        false,
+        session.geometry().width,
+        session.geometry().height,
+    )
+    .ok_or_else(|| DisplayError::Smoke(format!("region {region:?} is not inside this screen")))
 }
 
 fn smoke_screen_snapshot_restore(session: &DisplaySession) -> Result<String, DisplayError> {
