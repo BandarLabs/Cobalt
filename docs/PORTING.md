@@ -13,8 +13,37 @@ read-only match is only a porting milestone, not permission to ship or install
 the profile. Review every other path that takes device ownership against the
 same identity boundary.
 
-This is a genuinely welcome pull request. Open an issue first so the profile
-shape can be agreed.
+Open or join a device issue before writing code. Check for an existing pull
+request and agree on the profile or backend shape there to avoid duplicate
+ports.
+
+## Help test a device
+
+Testing does not require a code contribution. Comment on the device's porting
+issue with its exact model and firmware, and say whether you can run attended
+tests. Mention any known hardware revision and whether the device has buttons
+or a stylus. Do not post the full serial number.
+
+Start with the read-only doctor report below. Panel and touch tests come later,
+after a maintainer has reviewed a candidate profile and named the exact commit
+to test. Keep the output and observations on the porting issue so the
+implementation PR and support matrix can link to the evidence.
+
+Do not infer support from a similar model. Normal writes remain blocked until
+the attended display, touch, exit, and recovery results have been reviewed.
+Additional testers are most useful on another firmware build or hardware
+revision.
+
+## Port stages
+
+1. **Identify:** post the complete read-only doctor report.
+2. **Implement:** add the narrow profile or backend with host tests. A profile
+   may remain registered with `write_ready: false` while evidence is pending.
+3. **Review:** a maintainer reviews the write boundary and names the exact
+   commit for attended testing.
+4. **Validate:** the device owner runs the bounded display stages, physical
+   touch check, recovery check, and clean exit.
+5. **Enable:** set `write_ready: true` only for the exact identity that passed.
 
 ## What is device-specific
 
@@ -127,3 +156,25 @@ session to the caller. It may ignore only the evidence-pending blocker;
 geometry, framebuffer safety, and exact identity remain mandatory. Normal
 runtime display, guard, synthetic-tap, and exclusive touch-grab paths stay
 blocked until `write_ready` is reviewed and enabled.
+
+## Evidence for write-ready support
+
+Post one evidence block on the porting issue and link it from the pull request:
+
+- tested commit, model prefix, device code, firmware, and kernel;
+- complete doctor output;
+- results for all four
+  [attended display stages](DEVICES.md#attended-display-smoke-tests);
+- a physical touch sample and an end-to-end tap;
+- guardian restoration and a clean return to the stock reader;
+- suspend/resume results when the port changes session or power behavior;
+- sandbox results when the kernel needs a different isolation path;
+- known gaps, including buttons, stylus support, driver quirks, firmware
+  coverage, or hardware revisions.
+
+Photos or recordings help review orientation and interaction, but they do not
+replace command output or restoration checks.
+
+For a new framebuffer controller, cite the vendor kernel or header used and add
+conformance tests for the ABI. Third-party projects can corroborate behavior,
+but should not be treated as proof that the target device passed the tests.

@@ -434,7 +434,7 @@ impl TextScale {
     }
 }
 
-/// The only panel with hardware support today.
+/// Default Clara BW metrics used by host-side helpers and the simulator.
 pub const CLARA_BW_METRICS: DisplayMetrics = DisplayMetrics {
     width: 1072,
     height: 1448,
@@ -442,7 +442,7 @@ pub const CLARA_BW_METRICS: DisplayMetrics = DisplayMetrics {
     text_scale: TextScale::Default,
 };
 
-/// Returns the supported panel with the process-level accessibility setting.
+/// Returns the default Clara BW metrics with the process-level text scale.
 #[must_use]
 pub fn display_metrics_from_env() -> DisplayMetrics {
     let mut metrics = CLARA_BW_METRICS;
@@ -746,7 +746,7 @@ pub enum Space {
 }
 
 impl Space {
-    /// Pixels on the only panel with hardware support.
+    /// Pixels using the default Clara BW metrics.
     ///
     /// Prefer [`DisplayMetrics::space`] wherever the target panel is known.
     #[must_use]
@@ -1520,7 +1520,7 @@ impl Screen {
         self
     }
 
-    /// Lays the screen out for the only panel with hardware support.
+    /// Lays the screen out using the default Clara BW metrics.
     #[must_use]
     pub fn layout(&self) -> Layout {
         self.layout_for(&CLARA_BW_METRICS)

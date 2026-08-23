@@ -4439,9 +4439,9 @@ impl<A: KoboApp> AppRunner<A> {
 
     /// Runs an application against a specific panel.
     ///
-    /// [`AppRunner::new`] assumes the only panel with hardware support, which
-    /// is right for a test and wrong for the device: the runtime states which
-    /// panel it owns during the handshake.
+    /// [`AppRunner::new`] assumes the default Clara BW metrics, which is right
+    /// for a test and wrong for the device: the runtime states which panel it
+    /// owns during the handshake.
     #[must_use]
     pub fn with_metrics(app: A, metrics: DisplayMetrics) -> Self {
         #[cfg(feature = "text")]
