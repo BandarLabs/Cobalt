@@ -48,14 +48,13 @@ fn main() {
 
 ## 0. Your own application, end to end
 
-Before anything else: **this has only ever been run on a Kobo Clara BW (N365,
-device code 391).** It is AGPL-3.0 licensed and comes with no warranty. Every device
-write is gated on an exact hardware match, so another reader is refused rather
-than guessed at, but nobody can promise your device will be fine. Do not run it
-on a reader you cannot afford to lose. If you want to add another model, that
-is a pull request this project would genuinely welcome; open an issue first so
-the profile shape can be agreed. [Porting to another
-Kobo](docs/PORTING.md) sets out what is actually involved.
+Before anything else: Cobalt is hardware-tested on the exact Clara BW, Elipsa
+2E, and Clara HD identities in the
+[device support matrix](docs/DEVICES.md#device-support-matrix). It is
+AGPL-3.0 licensed and comes with no warranty. Every device write is gated on an
+exact hardware match; do not install it on an unlisted identity or firmware.
+To help support another model, start with
+[Porting to another Kobo](docs/PORTING.md).
 
 Six steps from nothing to a tile on the reader's launcher.
 
