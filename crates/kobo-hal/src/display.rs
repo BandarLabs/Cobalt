@@ -55,10 +55,39 @@ pub enum AttendedSmokeStage {
 }
 
 impl AttendedSmokeStage {
+    /// Every stage there is, so a test can walk them.
+    ///
+    /// Written out rather than derived, and kept beside [`Self::intents`],
+    /// which matches exhaustively: adding a stage breaks the match, and the
+    /// compiler asks what waveforms it drives.
+    #[cfg(test)]
+    const ALL: [Self; 5] = [
+        Self::DisplayOnly,
+        Self::ReversiblePixels,
+        Self::ScreenSnapshot,
+        Self::FastFeedback,
+        Self::WaitTiming,
+    ];
+
     const fn intent(self) -> crate::refresh::RefreshIntent {
         match self {
             Self::FastFeedback => crate::refresh::RefreshIntent::FastFeedback,
             _ => crate::refresh::RefreshIntent::QualityContent,
+        }
+    }
+
+    /// Every intent the stage may submit, not just the one it opens with.
+    ///
+    /// [`Self::intent`] answers for a single update; `WaitTiming` submits
+    /// three, one per offered waveform, and an invariant stated over
+    /// [`Self::intent`] alone would miss two of them.
+    #[cfg(test)]
+    const fn intents(self) -> &'static [crate::refresh::RefreshIntent] {
+        use crate::refresh::RefreshIntent::{FastFeedback, QualityContent, TextContent};
+        match self {
+            Self::DisplayOnly | Self::ReversiblePixels | Self::ScreenSnapshot => &[QualityContent],
+            Self::FastFeedback => &[FastFeedback],
+            Self::WaitTiming => &[QualityContent, TextContent, FastFeedback],
         }
     }
 }
@@ -585,10 +614,10 @@ mod tests {
         SMOKE_PATCH_REGION, SMOKE_VISIBLE_HOLD,
     };
     use crate::surface::{RegionPlacement, SurfaceGeometry};
-    use kobo_abi::hwtcon;
+    use kobo_abi::{hwtcon, mxcfb};
     use kobo_profile::{
         DeviceProfile, DeviceSnapshot, FramebufferSnapshot, IdentitySnapshot, TouchSnapshot,
-        CLARA_BW_391, CLARA_HD_376, ELIPSA_2E_389, WRITE_EVIDENCE_PENDING,
+        CLARA_BW_391, ELIPSA_2E_389, WRITE_EVIDENCE_PENDING,
     };
     use std::path::Path;
 
@@ -753,7 +782,7 @@ mod tests {
 
     #[test]
     fn hal_owned_smoke_regions_are_bounded_on_every_registered_panel() {
-        for profile in [&CLARA_BW_391, &CLARA_HD_376, &ELIPSA_2E_389] {
+        for profile in kobo_profile::SUPPORTED_PROFILES {
             let geometry = SurfaceGeometry {
                 width: profile.width,
                 height: profile.height,
@@ -779,24 +808,63 @@ mod tests {
     }
 
     #[test]
-    fn hal_owned_smoke_stages_use_only_partial_gc16_or_du_updates() {
-        for (stage, waveform) in [
-            (AttendedSmokeStage::DisplayOnly, hwtcon::WAVEFORM_GC16),
-            (AttendedSmokeStage::ReversiblePixels, hwtcon::WAVEFORM_GC16),
-            (AttendedSmokeStage::ScreenSnapshot, hwtcon::WAVEFORM_GC16),
-            (AttendedSmokeStage::FastFeedback, hwtcon::WAVEFORM_DU),
-        ] {
-            let plan = RefreshPlan::new(
-                SMOKE_FIXED_REGION,
-                stage.intent(),
-                false,
-                CLARA_BW_391.width,
-                CLARA_BW_391.height,
-            )
-            .expect("fixed plan");
-            let update = plan.hwtcon_update_data(0x4000_0001);
-            assert_eq!(update.waveform_mode, waveform);
-            assert_eq!(update.update_mode, hwtcon::UPDATE_MODE_PARTIAL);
+    fn hal_owned_smoke_stages_use_only_partial_reversible_updates() {
+        for profile in kobo_profile::SUPPORTED_PROFILES {
+            let backend = crate::refresh::Backend::from_framebuffer_id(profile.framebuffer_id)
+                .expect("every supported profile names a backend the HAL drives");
+            // The waveforms a smoke stage may ask for, per controller. Both
+            // are grayscale and both are reversible; what is excluded is the
+            // panel-wide INIT and the two-tone A2, neither of which belongs in
+            // a stage the owner is watching.
+            let allowed = match backend {
+                crate::refresh::Backend::Hwtcon => [
+                    hwtcon::WAVEFORM_GC16,
+                    hwtcon::WAVEFORM_GL16,
+                    hwtcon::WAVEFORM_DU,
+                ],
+                crate::refresh::Backend::Mxcfb => [
+                    mxcfb::WAVEFORM_GC16,
+                    mxcfb::WAVEFORM_GL16,
+                    mxcfb::WAVEFORM_DU,
+                ],
+            };
+            for stage in AttendedSmokeStage::ALL {
+                for intent in stage.intents() {
+                    let plan = RefreshPlan::new(
+                        SMOKE_FIXED_REGION,
+                        *intent,
+                        false,
+                        profile.width,
+                        profile.height,
+                    )
+                    .expect("fixed plan");
+                    let (waveform, update_mode, partial) = match backend {
+                        crate::refresh::Backend::Hwtcon => {
+                            let update = plan.hwtcon_update_data(0x4000_0001);
+                            (
+                                update.waveform_mode,
+                                update.update_mode,
+                                hwtcon::UPDATE_MODE_PARTIAL,
+                            )
+                        }
+                        crate::refresh::Backend::Mxcfb => {
+                            let update = plan.mxcfb_update_data(0x4000_0001);
+                            (
+                                update.waveform_mode,
+                                update.update_mode,
+                                mxcfb::UPDATE_MODE_PARTIAL,
+                            )
+                        }
+                    };
+                    assert!(
+                        allowed.contains(&waveform),
+                        "{} stage {stage:?} asked {} for waveform {waveform}",
+                        profile.id,
+                        profile.framebuffer_id,
+                    );
+                    assert_eq!(update_mode, partial, "{} stage {stage:?}", profile.id);
+                }
+            }
         }
         assert!(SMOKE_VISIBLE_HOLD.as_secs() < 5);
     }
