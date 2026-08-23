@@ -1092,24 +1092,6 @@ fn page_total(pages: usize) -> u16 {
 }
 
 impl KoboApp for Arxiv {
-    fn on_page_turn(&mut self, context: &mut Context, forward: bool) {
-        // Only while a paper's full text is open; everywhere else the press
-        // does nothing until paging a listing is designed deliberately. The
-        // press routes through on_action so a button behaves exactly like a
-        // tap on the same page-turn zone.
-        if self.view != View::FullText {
-            return;
-        }
-        self.on_action(
-            context,
-            action_id(if forward {
-                kobo_read::action::FORWARD
-            } else {
-                kobo_read::action::BACK
-            }),
-        );
-    }
-
     fn on_start(&mut self, context: &mut Context) {
         context.store().load(LIBRARY_KEY);
         self.show(context);

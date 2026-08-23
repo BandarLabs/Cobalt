@@ -1287,6 +1287,16 @@ fn host_applications(
                         // and the cover: the press happened in front of the
                         // reader, and a background application has no
                         // standing to react to it.
+                        //
+                        // A screen that declares its page turns gets the
+                        // declared action, exactly as if the side zone had
+                        // been tapped, so a book, a shelf and a catalogue all
+                        // page without knowing buttons exist. The layout is
+                        // consulted rather than the screen because an overlay
+                        // takes the page turns away, and a press while a
+                        // dialog is up must not turn the page underneath it.
+                        // Only a screen that declares nothing receives the
+                        // raw intent, as `Message::PageTurn`.
                         GpioEvent::Button {
                             button: button @ (gpio::Button::Page193 | gpio::Button::Page194),
                             pressed: true,
@@ -1294,8 +1304,26 @@ fn host_applications(
                             let forward =
                                 (button == gpio::Button::Page194) == forward_is_194;
                             if let Some(index) = index_of(&apps, front) {
-                                apps[index]
-                                    .send(kobo_protocol::Message::PageTurn { forward })?;
+                                let at_home = apps[index].path == home;
+                                let turns =
+                                    apps[index].screen.as_ref().and_then(|current| {
+                                        let chrome =
+                                            chrome_for(current, at_home, &mut status);
+                                        current
+                                            .layout_with(&metrics_for(current), &chrome)
+                                            .page_turns
+                                    });
+                                let message = match turns {
+                                    Some(turns) => kobo_protocol::Message::Action {
+                                        action: if forward {
+                                            turns.next
+                                        } else {
+                                            turns.previous
+                                        },
+                                    },
+                                    None => kobo_protocol::Message::PageTurn { forward },
+                                };
+                                apps[index].send(message)?;
                             }
                         }
                         GpioEvent::Button { button: gpio::Button::Power, pressed } => {

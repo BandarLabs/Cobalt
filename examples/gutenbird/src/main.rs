@@ -2994,23 +2994,6 @@ fn main() -> ExitCode {
 }
 
 impl KoboApp for Gutenbird {
-    fn on_page_turn(&mut self, context: &mut Context, forward: bool) {
-        // Only while a book is open. A page key paging the shelf or the
-        // catalog would be a feature of its own, and doing nothing until it
-        // is designed beats doing something surprising.
-        if self.view != View::Reading {
-            return;
-        }
-        self.read_action(
-            context,
-            action_id(if forward {
-                kobo_read::action::FORWARD
-            } else {
-                kobo_read::action::BACK
-            }),
-        );
-    }
-
     fn on_start(&mut self, context: &mut Context) {
         context.shelf().list();
         context.store().load(REGISTRY_KEY);
