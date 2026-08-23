@@ -607,9 +607,11 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
 
     // Which page key means "forward" depends on how the reader is held. At
     // the profile's reference pose (buttons on the right, on the Libra 2)
-    // the lower key, 194, pages forward — KOReader's assignment, to be
-    // confirmed on the device. A half turn swaps them, and pose resolution
-    // has already refused anything else.
+    // the lower key, 194, pages forward. Measured on the device rather than
+    // borrowed: an ungrabbed capture on `gpio-keys` reported 193 for the
+    // upper key and 194 for the lower one at buttons-right, and paging that
+    // way round was confirmed in a session. A half turn swaps them, which was
+    // confirmed too, and pose resolution has already refused anything else.
     let forward_is_194 = pose.rotation() % 4 == profile.reference_rotation % 4;
 
     let outcome = host_applications(
@@ -1403,8 +1405,10 @@ fn host_applications(
                         // The kernel's digested accelerometer verdict. Only
                         // the two portrait poses move the key mapping; the
                         // image itself does not rotate mid-session yet.
-                        // Which MSC_RAW value is which physical pose is
-                        // KOReader's naming, to be confirmed on the device.
+                        // KOReader's MSC_RAW pose naming was checked here by
+                        // a rotation-only capture, and then in use: a reader
+                        // turned end for end mid-session, with no restart,
+                        // goes on paging the way it is now held.
                         GpioEvent::Orientation(gpio::Orientation::PortraitUp) => {
                             forward_is_194 = true;
                         }
