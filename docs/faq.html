@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cobalt FAQ</title>
+<meta name="description" content="How Cobalt differs from NickelMenu, KOReader and Plato, and what its SDK, runtime and Store do.">
+<link rel="canonical" href="https://bandarlabs.github.io/Cobalt/faq.html">
+<link rel="icon" href="logo.svg" type="image/svg+xml">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Cobalt FAQ">
+<meta property="og:description" content="How Cobalt's SDK, runtime, simulator and Store work on Kobo e-readers.">
+<meta property="og:url" content="https://bandarlabs.github.io/Cobalt/faq.html">
+<meta property="og:image" content="https://bandarlabs.github.io/Cobalt/media/site/og-card.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+:root {
+  --paper: #f6f2ea;
+  --paper-deep: #eee8db;
+  --ink: #1b1813;
+  --ink-soft: #5a5347;
+  --rule: #d9d1c0;
+  --cobalt: #1a41a8;
+  --dither-light: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8'%3E%3Crect x='0' y='0' width='1' height='1' fill='%23ffffff' fill-opacity='.22'/%3E%3Crect x='4' y='4' width='1' height='1' fill='%23ffffff' fill-opacity='.22'/%3E%3Crect x='6' y='2' width='1' height='1' fill='%23ffffff' fill-opacity='.12'/%3E%3Crect x='2' y='6' width='1' height='1' fill='%23ffffff' fill-opacity='.12'/%3E%3C/svg%3E");
+  --serif: "Charter", "Iowan Old Style", "Palatino", "Georgia", serif;
+  --mono: "SF Mono", "Menlo", "Consolas", monospace;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: var(--paper) url("media/site/grain.png") repeat;
+  background-size: 128px 128px;
+  background-blend-mode: multiply;
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: 18px;
+  line-height: 1.58;
+  -webkit-font-smoothing: antialiased;
+  border-top: 5px solid var(--cobalt);
+}
+::selection { background: var(--cobalt); color: var(--paper); }
+a { color: var(--cobalt); text-decoration: none; }
+a:hover { text-decoration: underline; text-underline-offset: 3px; }
+.wrap { max-width: 920px; margin: 0 auto; padding: 0 24px; }
+header.masthead { border-bottom: 1px solid var(--ink); padding: 18px 0; }
+.masthead .wrap {
+  max-width: 1120px; display: flex; align-items: baseline;
+  justify-content: space-between; gap: 24px; flex-wrap: wrap;
+}
+.brand { display: flex; align-items: center; }
+.brand img { height: 34px; width: auto; }
+nav.top { display: flex; gap: 24px; font-size: 16px; flex-wrap: wrap; }
+nav.top a { color: var(--ink); }
+nav.top a.active, nav.top a:hover { color: var(--cobalt); }
+main { padding-top: 68px; padding-bottom: 86px; }
+.intro { padding-bottom: 52px; border-bottom: 1px solid var(--ink); }
+.kicker {
+  font-family: var(--mono); font-size: 13px; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--cobalt); margin-bottom: 14px;
+}
+h1 {
+  font-size: clamp(38px, 6vw, 56px); line-height: 1.06;
+  letter-spacing: -.015em; margin-bottom: 22px;
+}
+.lede { font-size: 21px; max-width: 38em; }
+.faq { padding: 38px 0; border-bottom: 1px solid var(--rule); }
+.faq h2 { font-size: 27px; line-height: 1.2; margin-bottom: 14px; }
+.faq p { max-width: 43em; }
+.faq p + p { margin-top: 14px; }
+code {
+  font-family: var(--mono); font-size: .84em; background: var(--paper-deep);
+  border: 1px solid var(--rule); padding: 1px 5px;
+}
+.note {
+  border-left: 4px solid var(--cobalt); background: var(--paper-deep);
+  padding: 18px 21px; margin-top: 22px; color: var(--ink-soft);
+}
+.note strong { color: var(--ink); }
+footer {
+  background: var(--cobalt) var(--dither-light); background-size: 8px 8px;
+  padding: 46px 0 54px; font-size: 15px; color: #fff;
+}
+footer .wrap {
+  max-width: 1120px; display: flex; justify-content: space-between;
+  gap: 24px; flex-wrap: wrap;
+}
+footer a {
+  color: #fff; text-decoration: underline; text-underline-offset: 3px;
+  text-decoration-color: rgba(255,255,255,.45);
+}
+footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
+@media (max-width: 560px) {
+  body { font-size: 17px; }
+  .wrap { padding-left: 18px; padding-right: 18px; }
+  main { padding-top: 42px; padding-bottom: 60px; }
+  .intro { padding-bottom: 38px; }
+  .lede { font-size: 19px; }
+  .faq { padding: 30px 0; }
+  .faq h2 { font-size: 24px; }
+  .masthead .wrap { align-items: center; }
+  nav.top {
+    width: 100%; gap: 18px; font-size: 15px; flex-wrap: nowrap;
+    overflow-x: auto; padding-bottom: 4px;
+  }
+  nav.top a { white-space: nowrap; }
+  footer .wrap { display: block; }
+  footer nav { margin-top: 18px; }
+}
+</style>
+</head>
+<body>
+<header class="masthead">
+  <div class="wrap">
+    <a class="brand" href="index.html"><img src="logo.svg" alt="Cobalt" width="81" height="34"></a>
+    <nav class="top">
+      <a href="index.html">Home</a>
+      <a href="sdk.html">SDK</a>
+      <a class="active" href="faq.html">FAQ</a>
+      <a href="INSTALL.md">Install</a>
+      <a href="https://github.com/BandarLabs/Cobalt">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="intro">
+    <p class="kicker">FAQ</p>
+    <h1>Cobalt FAQ.</h1>
+    <p class="lede">Build Kobo apps without writing the device layer each time. Cobalt includes the SDK, runtime, simulator and Store.</p>
+  </div>
+
+  <section class="faq">
+    <h2>How is Cobalt different from NickelMenu?</h2>
+    <p><a href="https://pgaskin.net/NickelMenu/">NickelMenu</a> adds actions to Kobo's stock menu. Cobalt uses one action to add its entry to that menu.</p>
+    <p>Once started, Cobalt launches and manages apps. It handles their screens, lifecycle, e-ink drawing, partial refreshes, touch input, storage, networking and device access.</p>
+  </section>
+
+  <section class="faq">
+    <h2>How is Cobalt different from KOReader or Plato?</h2>
+    <p><a href="https://koreader.rocks/">KOReader</a> and <a href="https://github.com/baskerville/plato">Plato</a> are reading apps. Their code includes the UI and device support they need.</p>
+    <p>Cobalt is a platform for building many kinds of apps. Apps use the same SDK and runtime for the common device work.</p>
+  </section>
+
+  <section class="faq">
+    <h2>What does Cobalt handle for an app?</h2>
+    <p>Apps define their screens and behavior. Cobalt handles layout, framebuffer drawing, e-ink refreshes, touch input, lifecycle events, background work, private storage and device requests.</p>
+    <p>This code is shared by every Cobalt app. App authors do not need to build a new UI toolkit and device layer for each app.</p>
+  </section>
+
+  <section class="faq">
+    <h2>How are apps isolated?</h2>
+    <p>Cobalt starts each app as a separate unprivileged process. Apps declare the services they need, such as network, storage, audio, Bluetooth or frontlight access, and the runtime checks each request.</p>
+    <p>Store also verifies signed catalogs, packages, manifests and binaries before launch.</p>
+  </section>
+
+  <section class="faq">
+    <h2>How do developers build and test an app?</h2>
+    <p><code>kobo new</code> creates an app. <code>kobo dev</code> runs it in the browser simulator with the same screen model used on the reader.</p>
+    <p>The build tools then package it for supported Kobo hardware. The app does not need its own framebuffer, touch or device service code.</p>
+  </section>
+
+  <section class="faq">
+    <h2>What does the Store add?</h2>
+    <p>The first Cobalt installation uses USB. After that, Store can install, update and remove signed apps over Wi-Fi. App releases are separate from Cobalt platform releases, so publishing one app does not require reinstalling the platform.</p>
+    <div class="note"><strong>Hardware support is exact.</strong> Check the <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/DEVICES.md#device-support-matrix">device support matrix</a> before installing Cobalt.</div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>Cobalt · AGPL-3.0 · <a href="https://github.com/BandarLabs/Cobalt">BandarLabs/Cobalt</a></p>
+    <nav>
+      <a href="index.html">Home</a>
+      <a href="sdk.html">SDK docs</a>
+      <a href="INSTALL.md">Install</a>
+      <a href="https://github.com/BandarLabs/Cobalt/blob/main/SECURITY.md">Security</a>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>

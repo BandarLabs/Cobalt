@@ -52,6 +52,20 @@ new app can appear in Store without reinstalling or updating Cobalt.
 - Static ARMv7 binaries with no device-side package manager
 - Recovery-safe app and catalog transactions
 
+## How it differs
+
+[NickelMenu](https://pgaskin.net/NickelMenu/) adds actions to Kobo's stock
+menu. [KOReader](https://koreader.rocks/) and
+[Plato](https://github.com/baskerville/plato) are reading apps. Cobalt is a
+platform for building and installing apps.
+
+Cobalt handles the common parts: screens, app lifecycle, drawing to the e-ink
+display, partial refreshes, touch input, device access, process isolation,
+testing, and signed installs. App authors can focus on their app instead of
+building those parts again.
+See the [FAQ](https://bandarlabs.github.io/Cobalt/faq.html) for a fuller
+comparison.
+
 ## Apps
 
 Every screenshot below is a real capture from a Kobo Clara BW. Store manages
