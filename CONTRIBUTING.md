@@ -59,7 +59,7 @@ change. Add tests for changed behavior and run the relevant workspace checks:
 
 ```sh
 cargo fmt --all --check
-cargo test --workspace --all-features
+cargo test --workspace --all-targets --all-features
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
 
