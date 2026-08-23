@@ -29,7 +29,7 @@ pub mod pem;
 pub mod serve;
 pub mod sha256;
 
-use kobo_protocol::{Credential, SecretHeader, TaskError};
+use kobo_protocol::{Credential, CredentialUse, SecretHeader, TaskError};
 use std::borrow::Cow;
 use std::fmt::Write as _;
 use std::io::{Read, Write};
@@ -207,6 +207,21 @@ const AUDIOBOOK_VOICES: [&str; 6] = [
 /// hardware. That is the one thing this project is arranged to avoid.
 #[must_use]
 pub fn credential_allowed(app: &str, credential: &Credential, url: &str) -> bool {
+    credential_allowed_for(app, credential, url, CredentialUse::Fetch)
+}
+
+/// Method-aware credential policy used by the runtime immediately before it
+/// resolves a secret.
+#[must_use]
+pub fn credential_allowed_for(
+    app: &str,
+    credential: &Credential,
+    url: &str,
+    usage: CredentialUse,
+) -> bool {
+    if app == "zotero-reader" {
+        return usage == CredentialUse::Fetch && zotero_credential_allowed(credential, url);
+    }
     if app == "audiobook" {
         return match (&*credential.secret, &credential.header) {
             ("exa", SecretHeader::Named(header)) => {
@@ -251,6 +266,81 @@ pub fn credential_allowed(app: &str, credential: &Credential, url: &str) -> bool
         }
         _ => false,
     }
+}
+
+/// Binds a dedicated Zotero key to the exact read endpoints used by Zotero
+/// Reader. The app cannot send it to group libraries, key-management routes,
+/// file downloads, arbitrary queries, or a lookalike origin.
+fn zotero_credential_allowed(credential: &Credential, url: &str) -> bool {
+    if credential.secret != "zotero" || credential.header != SecretHeader::Bearer {
+        return false;
+    }
+    parse(url).is_ok_and(|target| {
+        target.host.eq_ignore_ascii_case("api.zotero.org")
+            && target.port == 443
+            && zotero_read_api_path(&target.path)
+    })
+}
+
+fn zotero_read_api_path(path_and_query: &str) -> bool {
+    if path_and_query.contains(['%', '\\']) {
+        return false;
+    }
+    let (path, query) = path_and_query
+        .split_once('?')
+        .map_or((path_and_query, None), |(path, query)| (path, Some(query)));
+    let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+    if parts.len() < 3
+        || parts[0] != "users"
+        || parts[1].is_empty()
+        || parts[1].len() > 20
+        || !parts[1].bytes().all(|byte| byte.is_ascii_digit())
+        || parts.iter().any(|part| matches!(*part, "." | ".."))
+    {
+        return false;
+    }
+    match parts.as_slice() {
+        ["users", _, "collections"] => {
+            query == Some("format=json&limit=100&sort=title&direction=asc")
+        }
+        ["users", _, "collections", collection, "items", "top"] if zotero_key(collection) => {
+            let Some(query) = query else {
+                return false;
+            };
+            let fields: Vec<&str> = query.split('&').collect();
+            if fields.len() != 6
+                || fields[0] != "format=json"
+                || fields[1] != "itemType=-attachment"
+                || fields[4] != "sort=dateAdded"
+                || fields[5] != "direction=desc"
+            {
+                return false;
+            }
+            let Some(limit) = fields[2].strip_prefix("limit=") else {
+                return false;
+            };
+            let Some(start) = fields[3].strip_prefix("start=") else {
+                return false;
+            };
+            let Ok(start) = start.parse::<usize>() else {
+                return false;
+            };
+            (limit == "25" && start < 500 && start % 25 == 0) || (limit == "1" && start == 500)
+        }
+        ["users", _, "items", item] if zotero_key(item) => query == Some("format=json"),
+        ["users", _, "items", item, "children"] if zotero_key(item) => {
+            query == Some("format=json&itemType=attachment&limit=100")
+        }
+        ["users", _, "items", item, "fulltext"] if zotero_key(item) => query.is_none(),
+        _ => false,
+    }
+}
+
+fn zotero_key(value: &str) -> bool {
+    value.len() == 8
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
 }
 
 /// What a server said, once the status line has been understood.
@@ -558,9 +648,17 @@ fn get(
     headers: &[(&str, &str)],
 ) -> Result<Vec<u8>, TaskError> {
     let mut target = url.to_string();
+    let mut forwarded = headers;
     for _ in 0..=MAX_REDIRECTS {
         let address = parse(&target)?;
-        let response = request(&address, &Method::Get { offset, headers }, max_bytes)?;
+        let response = request(
+            &address,
+            &Method::Get {
+                offset,
+                headers: forwarded,
+            },
+            max_bytes,
+        )?;
         match split_response(&response, max_bytes)? {
             Response::Body(body) => {
                 return if body.len() > max_bytes as usize {
@@ -569,10 +667,41 @@ fn get(
                     Ok(body.to_vec())
                 };
             }
-            Response::Redirect(location) => target = resolve_redirect(&address, &location)?,
+            Response::Redirect(location) => {
+                let next = resolve_redirect(&address, &location)?;
+                let next_address = parse(&next)?;
+                forwarded = redirect_headers(&address, &next_address, forwarded)?;
+                target = next;
+            }
         }
     }
     Err(TaskError::Unreachable)
+}
+
+/// Keeps ordinary application headers on same-origin redirects, but never
+/// forwards an authorization credential outside its authorized origin and
+/// path set.
+fn redirect_headers<'a>(
+    current: &Address,
+    next: &Address,
+    headers: &'a [(&'a str, &'a str)],
+) -> Result<&'a [(&'a str, &'a str)], TaskError> {
+    let authorization = headers
+        .iter()
+        .any(|(name, _)| name.eq_ignore_ascii_case("authorization"));
+    if next.host.eq_ignore_ascii_case(&current.host) && next.port == current.port {
+        let leaves_zotero_policy = current.host.eq_ignore_ascii_case("api.zotero.org")
+            && zotero_read_api_path(&current.path)
+            && !zotero_read_api_path(&next.path);
+        if authorization && leaves_zotero_policy {
+            return Err(TaskError::Denied);
+        }
+        return Ok(headers);
+    }
+    if authorization {
+        return Err(TaskError::Denied);
+    }
+    Ok(&[])
 }
 
 /// What is sent, beyond the address.
@@ -1250,6 +1379,100 @@ mod tests {
         ] {
             assert!(!super::credential_allowed("audiobook", &elevenlabs, url));
         }
+    }
+
+    #[test]
+    fn zotero_key_is_bound_to_exact_read_routes() {
+        use kobo_protocol::{Credential, CredentialUse};
+
+        let key = Credential::bearer("zotero");
+        for url in [
+            "https://api.zotero.org/users/12345/collections?format=json&limit=100&sort=title&direction=asc",
+            "https://api.zotero.org/users/12345/collections/COLL1234/items/top?format=json&itemType=-attachment&limit=25&start=475&sort=dateAdded&direction=desc",
+            "https://api.zotero.org/users/12345/collections/COLL1234/items/top?format=json&itemType=-attachment&limit=1&start=500&sort=dateAdded&direction=desc",
+            "https://api.zotero.org/users/12345/items/PAPER001?format=json",
+            "https://api.zotero.org/users/12345/items/PAPER001/children?format=json&itemType=attachment&limit=100",
+            "https://api.zotero.org/users/12345/items/PDF12345/fulltext",
+        ] {
+            assert!(super::credential_allowed_for(
+                "zotero-reader",
+                &key,
+                url,
+                CredentialUse::Fetch
+            ));
+            assert!(!super::credential_allowed_for(
+                "zotero-reader",
+                &key,
+                url,
+                CredentialUse::Post
+            ));
+        }
+    }
+
+    #[test]
+    fn zotero_key_refuses_other_apps_credentials_and_destinations() {
+        use kobo_protocol::{Credential, CredentialUse};
+
+        let key = Credential::bearer("zotero");
+        let item = "https://api.zotero.org/users/12345/items/PAPER001?format=json";
+        assert!(!super::credential_allowed_for(
+            "other",
+            &key,
+            item,
+            CredentialUse::Fetch
+        ));
+        assert!(!super::credential_allowed_for(
+            "zotero-reader",
+            &Credential::bearer("other"),
+            item,
+            CredentialUse::Fetch
+        ));
+        for url in [
+            "http://api.zotero.org/users/12345/items/PAPER001?format=json",
+            "https://api.zotero.org:8443/users/12345/items/PAPER001?format=json",
+            "https://user@api.zotero.org/users/12345/items/PAPER001?format=json",
+            "https://api.zotero.org.attacker.invalid/users/12345/items/PAPER001?format=json",
+            "https://api.zotero.org/groups/12345/items/PAPER001?format=json",
+            "https://api.zotero.org/users/name/items/PAPER001?format=json",
+            "https://api.zotero.org/users/12345/items",
+            "https://api.zotero.org/users/12345/items/paper001?format=json",
+            "https://api.zotero.org/users/12345/items/PAPER001/file",
+            "https://api.zotero.org/users/12345/items/PAPER001?format=json&key=leak",
+            "https://api.zotero.org/users/12345/items/%2e%2e/fulltext",
+            "https://api.zotero.org/users/12345/collections/COLL1234/items/top?format=json&itemType=-attachment&limit=100&start=0&sort=dateAdded&direction=desc",
+        ] {
+            assert!(!super::credential_allowed_for(
+                "zotero-reader",
+                &key,
+                url,
+                CredentialUse::Fetch
+            ), "accepted {url}");
+        }
+    }
+
+    #[test]
+    fn zotero_authorization_refuses_a_redirect_outside_its_read_routes() {
+        let current = super::parse("https://api.zotero.org/users/123/items/PAPER001?format=json")
+            .expect("Zotero item route");
+        let fulltext = super::parse("https://api.zotero.org/users/123/items/PDF12345/fulltext")
+            .expect("Zotero full-text route");
+        let keys = super::parse("https://api.zotero.org/keys/current")
+            .expect("Zotero route outside the reader policy");
+        let other_origin = super::parse("https://attacker.invalid/collect").expect("other origin");
+        let credential = [("Authorization", "Bearer private")];
+
+        assert_eq!(
+            super::redirect_headers(&current, &fulltext, &credential),
+            Ok(&credential[..])
+        );
+        assert_eq!(
+            super::redirect_headers(&current, &keys, &credential),
+            Err(TaskError::Denied)
+        );
+        assert_eq!(
+            super::redirect_headers(&current, &other_origin, &credential),
+            Err(TaskError::Denied)
+        );
     }
 
     use super::has_default_route;

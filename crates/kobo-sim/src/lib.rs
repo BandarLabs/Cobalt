@@ -2110,8 +2110,8 @@ fn simulated_tasks(name: &str) -> TaskRunner {
     runner
         .with_fetch(Arc::new(kobo_net::fetch_from))
         .with_post(Arc::new(kobo_net::post))
-        .with_credential_policy(Arc::new(move |credential, url, _usage| {
-            kobo_net::credential_allowed(&app, credential, url)
+        .with_credential_policy(Arc::new(move |credential, url, usage| {
+            kobo_net::credential_allowed_for(&app, credential, url, usage)
         }))
         .with_capabilities([kobo_policy::Capability::Network])
 }
