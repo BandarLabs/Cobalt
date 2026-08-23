@@ -1433,12 +1433,22 @@ pub mod sandbox {
     /// without `CONFIG_SECCOMP` answers with `EINVAL`), or a private network
     /// namespace, probed by the file the kernel publishes for it. Read-only:
     /// nothing is installed or unshared.
-    #[cfg(target_os = "linux")]
+    ///
+    /// Off Linux there is no sandbox to put a boundary around: [`is_root`]
+    /// answers false there, so [`Sandbox::enter`] is never reached. Answering
+    /// true keeps a development host from logging a degradation it is not in.
     #[must_use]
     pub fn network_boundary_available() -> bool {
-        // SAFETY: PR_GET_SECCOMP reads the current mode and changes nothing.
-        let seccomp = unsafe { libc::prctl(libc::PR_GET_SECCOMP) } >= 0;
-        seccomp || Path::new("/proc/self/ns/net").exists()
+        #[cfg(target_os = "linux")]
+        {
+            // SAFETY: PR_GET_SECCOMP reads the current mode and changes nothing.
+            let seccomp = unsafe { libc::prctl(libc::PR_GET_SECCOMP) } >= 0;
+            seccomp || Path::new("/proc/self/ns/net").exists()
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            true
+        }
     }
 
     /// Signals every process whose filesystem root is the prepared sandbox.
