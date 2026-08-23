@@ -161,7 +161,11 @@ fn discover_touch_path_from(content: &str) -> Option<PathBuf> {
         let name_matches = block
             .lines()
             .find(|line| line.starts_with("N: Name="))
-            .is_some_and(|line| line.contains("cyttsp5_mt") || line.contains("Elan Touchscreen"));
+            .is_some_and(|line| {
+                line.contains("cyttsp5_mt")
+                    || line.contains("Elan Touchscreen")
+                    || line.contains("elan-touch")
+            });
         if !name_matches {
             return None;
         }
@@ -206,6 +210,18 @@ H: Handlers=event0\n";
         assert_eq!(
             discover_touch_path_from(fixture).as_deref(),
             Some(Path::new("/dev/input/event2"))
+        );
+    }
+
+    #[test]
+    fn finds_nia_elan_touch_handler() {
+        let fixture = "I: Bus=0018 Vendor=0000 Product=0000 Version=0000\n\
+N: Name=\"elan-touch\"\n\
+H: Handlers=mouse0 event1\n\
+B: EV=b\n";
+        assert_eq!(
+            discover_touch_path_from(fixture).as_deref(),
+            Some(Path::new("/dev/input/event1"))
         );
     }
 }

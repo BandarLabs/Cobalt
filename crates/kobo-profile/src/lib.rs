@@ -114,6 +114,59 @@ pub const CLARA_HD_376: DeviceProfile = DeviceProfile {
     write_ready: true,
 };
 
+pub const NIA_382: DeviceProfile = DeviceProfile {
+    id: "nia-382",
+    model: "Kobo Nia",
+    device_code: 382,
+    device_tree_model: "Freescale i.MX6 ULL DDR3 NTX Board",
+    compatible_fragments: &["fsl,imx6ull-ddr3-arm2", "fsl,imx6ull"],
+    framebuffer_id: "mxc_epdc_fb",
+    framebuffer_controller: FramebufferController::MxcfbV2,
+    width: 758,
+    height: 1024,
+    pixels_per_inch: 212,
+    virtual_width: 768,
+    virtual_height: 1024,
+    x_offset: 0,
+    y_offset: 0,
+    bits_per_pixel: 32,
+    grayscale: 0,
+    stride: 3072,
+    memory_length: 3_145_728,
+    framebuffer_kind: 0,
+    framebuffer_visual: 2,
+    rotation: 3,
+    red: Bitfield {
+        offset: 16,
+        length: 8,
+        msb_right: 0,
+    },
+    green: Bitfield {
+        offset: 8,
+        length: 8,
+        msb_right: 0,
+    },
+    blue: Bitfield {
+        offset: 0,
+        length: 8,
+        msb_right: 0,
+    },
+    alpha: Bitfield {
+        offset: 24,
+        length: 8,
+        msb_right: 0,
+    },
+    touch_name: "elan-touch",
+    touch_x_min: 0,
+    touch_x_max: 1024,
+    touch_y_min: 0,
+    touch_y_max: 758,
+    serial_prefix: "N306",
+    firmware_versions: &["4.38.23684"],
+    kernel_release: "4.1.15-00463-g38afd5cea756",
+    write_ready: true,
+};
+
 pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
     id: "elipsa-2e-389",
     model: "Kobo Elipsa 2E",
@@ -167,7 +220,8 @@ pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
     write_ready: true,
 };
 
-pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[&CLARA_BW_391, &CLARA_HD_376, &ELIPSA_2E_389];
+pub const SUPPORTED_PROFILES: &[&DeviceProfile] =
+    &[&CLARA_BW_391, &CLARA_HD_376, &NIA_382, &ELIPSA_2E_389];
 
 #[must_use]
 pub fn identify_profile(snapshot: &DeviceSnapshot) -> Option<&'static DeviceProfile> {
@@ -757,7 +811,7 @@ fn compare_identity_one_of(
 mod tests {
     use super::{
         Bitfield, DeviceProfile, DeviceSnapshot, FramebufferSnapshot, IdentitySnapshot, Readiness,
-        TouchSnapshot, CLARA_BW_391, CLARA_HD_376, ELIPSA_2E_389, WRITE_EVIDENCE_PENDING,
+        TouchSnapshot, CLARA_BW_391, CLARA_HD_376, ELIPSA_2E_389, NIA_382, WRITE_EVIDENCE_PENDING,
     };
 
     #[test]
@@ -1018,6 +1072,104 @@ mod tests {
             .expect("flipped sample remains in range");
         assert_eq!(flipped_x, (909, 160));
         assert_eq!(flipped_y, (162, 1287));
+    }
+
+    #[test]
+    fn nia_doctor_snapshot_is_write_ready_after_attended_hardware_validation() {
+        let channel = Bitfield {
+            offset: 16,
+            length: 8,
+            msb_right: 0,
+        };
+        let snapshot = DeviceSnapshot {
+            compatible: vec!["fsl,imx6ull-ddr3-arm2".into(), "fsl,imx6ull".into()],
+            model: Some("Freescale i.MX6 ULL DDR3 NTX Board".into()),
+            framebuffer: Some(FramebufferSnapshot {
+                id: "mxc_epdc_fb".into(),
+                width: 758,
+                height: 1024,
+                virtual_width: 768,
+                virtual_height: 1024,
+                x_offset: 0,
+                y_offset: 0,
+                bits_per_pixel: 32,
+                grayscale: 0,
+                stride: 3072,
+                memory_length: 3_145_728,
+                kind: 0,
+                visual: 2,
+                rotation: 3,
+                red: channel,
+                green: Bitfield {
+                    offset: 8,
+                    ..channel
+                },
+                blue: Bitfield {
+                    offset: 0,
+                    ..channel
+                },
+                alpha: Bitfield {
+                    offset: 24,
+                    ..channel
+                },
+            }),
+            touch: Some(TouchSnapshot {
+                path: "/dev/input/event1".into(),
+                name: "elan-touch".into(),
+                x_min: 0,
+                x_max: 1024,
+                y_min: 0,
+                y_max: 758,
+            }),
+            identity: IdentitySnapshot {
+                serial_prefix: Some("N306".into()),
+                firmware_version: Some("4.38.23684".into()),
+                kernel_release: Some("4.1.15-00463-g38afd5cea756".into()),
+                device_code: Some(382),
+            },
+        };
+        let report = NIA_382.validate(&snapshot);
+        assert_eq!(report.readiness, Readiness::WriteReady);
+        assert!(report.mismatches.is_empty());
+        assert!(report.write_blockers.is_empty());
+        assert!(NIA_382.write_identity_blockers(&snapshot).is_empty());
+        assert_eq!(super::identify_profile(&snapshot), Some(&NIA_382));
+    }
+
+    #[test]
+    fn nia_touch_edges_stay_inside_the_panel_and_display_points_round_trip() {
+        for raw in [(0, 0), (0, 758), (1024, 0), (1024, 758)] {
+            let display = NIA_382
+                .touch_to_display(raw.0, raw.1)
+                .expect("measured Nia edge maps to the display");
+            assert!(display.0 < NIA_382.width, "x escaped: {display:?}");
+            assert!(display.1 < NIA_382.height, "y escaped: {display:?}");
+        }
+        for display in [(0, 0), (757, 0), (0, 1023), (757, 1023), (379, 512)] {
+            let raw = NIA_382
+                .display_to_touch(display.0, display.1)
+                .expect("Nia display point maps to the controller");
+            assert_eq!(NIA_382.touch_to_display(raw.0, raw.1), Some(display));
+        }
+        assert_eq!(NIA_382.display_to_touch(758, 0), None);
+        assert_eq!(NIA_382.display_to_touch(0, 1024), None);
+    }
+
+    /// Captured from a physical touch about a centimetre in from the top-left
+    /// of the Nia. The raw controller sample `(109, 654)` mapped to display
+    /// `(104, 109)`, confirming both rotated axis directions.
+    #[test]
+    fn nia_touch_transform_matches_a_physically_measured_touch() {
+        assert_eq!(NIA_382.touch_to_display(109, 654), Some((104, 109)));
+
+        let flipped_x = NIA_382
+            .touch_to_display(109, 758 - 654)
+            .expect("flipped sample remains in range");
+        let flipped_y = NIA_382
+            .touch_to_display(1024 - 109, 654)
+            .expect("flipped sample remains in range");
+        assert_eq!(flipped_x, (653, 109));
+        assert_eq!(flipped_y, (104, 914));
     }
 
     #[test]

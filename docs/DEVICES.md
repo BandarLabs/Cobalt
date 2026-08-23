@@ -13,6 +13,7 @@ and touch profile. A matching model name alone is not sufficient.
 |---|---|---|---|
 | Kobo Clara BW | N365, code 391, firmware 4.45.23697, kernel 4.9.77 | Read-only probe and owner-attended display, touch, exit, and recovery tests complete | Fully tested |
 | Kobo Clara HD | N249, code 376, firmware 4.38.23684 or 4.38.23697, kernel 4.1.15-00136-g12655eaaef89 | Read-only probe and owner-attended display, touch, exit, sandbox, and recovery tests complete | Fully tested |
+| Kobo Nia | N306, code 382, firmware 4.38.23684, kernel 4.1.15-00463-g38afd5cea756 | Read-only probe and owner-attended display, touch, exit, ptrace-sandbox, and recovery tests complete | Fully tested |
 | Kobo Elipsa 2E | N605, code 389, firmware 4.38.23697, kernel 4.9.77 | Read-only probe and owner-attended display, touch, exit, suspend/resume, and recovery tests complete | Fully tested |
 
 `Read-only doctor match complete` means the profile describes the observed
@@ -550,6 +551,16 @@ failure; a Todo session rendered at 1404×1872 with physical taps reaching UI
 actions; release of panel and touch followed by a successful stock-reader
 restart; and suspend/resume with monotonic device uptime and no Cobalt process
 left running.
+
+Proven on the physical N306 at firmware 4.38.23684: the same four bounded
+display stages, including byte-exact region and whole-screen restoration; the
+Elan touch transform against physical corner samples; guardian restoration
+after a deliberate child failure; and a Todo session with keyboard input and
+UI actions. The 4.1 kernel selected the legacy ptrace sandbox: the application
+ran as UID and GID 65534 in its private `/tmp/kobo-app-*` root with a nonzero
+`TracerPid`. Clean stop restored the stock reader, resumed its freeze watchdog,
+removed the runtime and sandbox processes and directories, and left Nickel
+running again.
 
 Update markers are random and at least `0x40000000`, because markers are a
 global namespace shared with the stock reader and a low fixed marker could be

@@ -436,7 +436,7 @@ mod tests {
     use kobo_abi::hwtcon;
     use kobo_profile::{
         DeviceProfile, DeviceSnapshot, FramebufferSnapshot, IdentitySnapshot, TouchSnapshot,
-        CLARA_BW_391, CLARA_HD_376, ELIPSA_2E_389, WRITE_EVIDENCE_PENDING,
+        CLARA_BW_391, CLARA_HD_376, ELIPSA_2E_389, NIA_382, WRITE_EVIDENCE_PENDING,
     };
     use std::path::Path;
 
@@ -601,7 +601,7 @@ mod tests {
 
     #[test]
     fn hal_owned_smoke_regions_are_bounded_on_every_registered_panel() {
-        for profile in [&CLARA_BW_391, &CLARA_HD_376, &ELIPSA_2E_389] {
+        for profile in [&CLARA_BW_391, &CLARA_HD_376, &NIA_382, &ELIPSA_2E_389] {
             let geometry = SurfaceGeometry {
                 width: profile.width,
                 height: profile.height,
