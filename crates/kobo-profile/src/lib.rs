@@ -75,17 +75,17 @@ pub enum TouchTransform {
     /// Axes exchanged and Y mirrored.
     ///
     /// This is what every `rotation: 1` device did before the transform became
-    /// explicit. It is preserved for the Elipsa 2E so that its behaviour does
-    /// not change, but it has never been checked against a real finger: its
-    /// test asserts only the arithmetic it was derived from. The Libra 2 is
-    /// also `rotation: 1`, also an Elan controller, and measured as a plain
-    /// `Transpose`, so this variant is the likeliest place for a latent bug on
-    /// a device nobody here can test.
+    /// explicit. It is preserved for the Elipsa 2E, where it is backed by a
+    /// touch captured on the real device: see
+    /// `elipsa_touch_transform_matches_a_physically_measured_touch`. The Libra
+    /// 2 is also `rotation: 1`, also an Elan controller, and measured as a
+    /// plain `Transpose`, so the two `rotation: 1` devices genuinely differ
+    /// and neither can be inferred from the other.
     TransposeMirrorY,
     /// Axes exchanged and X mirrored.
     ///
-    /// Confirmed on the Clara BW, which is the only transform here backed by a
-    /// physically captured touch.
+    /// Confirmed on the Clara BW and the Clara HD, each by a physically
+    /// captured touch.
     TransposeMirrorX,
 }
 
@@ -1413,10 +1413,12 @@ mod tests {
     const LIBRA_2_POSE: PanelPose<'static> = PanelPose::reference(&LIBRA_2_388);
     const CLARA_BW_POSE: PanelPose<'static> = PanelPose::reference(&CLARA_BW_391);
     const ELIPSA_2E_POSE: PanelPose<'static> = PanelPose::reference(&ELIPSA_2E_389);
+    const CLARA_HD_POSE: PanelPose<'static> = PanelPose::reference(&CLARA_HD_376);
 
     use super::{
         Bitfield, DeviceProfile, DeviceSnapshot, FramebufferSnapshot, IdentitySnapshot, Readiness,
-        TouchSnapshot, CLARA_BW_391, ELIPSA_2E_389, LIBRA_2_388, WRITE_EVIDENCE_PENDING,
+        TouchSnapshot, CLARA_BW_391, CLARA_HD_376, ELIPSA_2E_389, LIBRA_2_388,
+        WRITE_EVIDENCE_PENDING,
     };
 
     /// The Libra 2 as `kobo doctor` read it from a cold boot into Nickel, in
@@ -1891,6 +1893,131 @@ mod tests {
             .expect("in range");
         assert_eq!(flipped_x, (962, 110));
         assert_eq!(flipped_y, (109, 1337));
+    }
+
+    /// Captured from a physical touch about a centimetre in from the top-left
+    /// of the Elipsa 2E. Carried over from the pre-`PanelPose` API unchanged:
+    /// the expected values are the ones measured on that hardware, not values
+    /// re-derived from the transform they are meant to pin.
+    #[test]
+    fn elipsa_touch_transform_matches_a_physically_measured_touch() {
+        let mapped = ELIPSA_2E_POSE
+            .touch_to_display(1838, 30)
+            .expect("the measured raw Elipsa sample is in range");
+        assert_eq!(mapped, (30, 34));
+
+        // Either plausible reversed axis still produces an in-range point,
+        // but places it far from the top-left location that was touched.
+        let flipped_x = ELIPSA_2E_POSE
+            .touch_to_display(1838, 1404 - 30)
+            .expect("in range");
+        let flipped_y = ELIPSA_2E_POSE
+            .touch_to_display(1872 - 1838, 30)
+            .expect("in range");
+        assert_eq!(flipped_x, (1373, 34));
+        assert_eq!(flipped_y, (30, 1837));
+    }
+
+    /// A doctor snapshot taken from a real Clara HD, matched against the
+    /// strict profile across every reviewed firmware. This is the only pin on
+    /// hardware none of us can re-measure.
+    #[test]
+    fn clara_hd_doctor_snapshot_matches_its_strict_profile() {
+        let channel = Bitfield {
+            offset: 16,
+            length: 8,
+            msb_right: 0,
+        };
+        let mut snapshot = DeviceSnapshot {
+            compatible: vec!["fsl,imx6sll-lpddr3-arm2".into(), "fsl,imx6sll".into()],
+            model: Some("Freescale i.MX6SLL NTX Board".into()),
+            framebuffer: Some(FramebufferSnapshot {
+                id: "mxc_epdc_fb".into(),
+                width: 1072,
+                height: 1448,
+                virtual_width: 1088,
+                virtual_height: 1536,
+                x_offset: 0,
+                y_offset: 0,
+                bits_per_pixel: 32,
+                grayscale: 0,
+                stride: 4352,
+                memory_length: 6_782_976,
+                kind: 0,
+                visual: 2,
+                rotation: 3,
+                red: channel,
+                green: Bitfield {
+                    offset: 8,
+                    ..channel
+                },
+                blue: Bitfield {
+                    offset: 0,
+                    ..channel
+                },
+                alpha: Bitfield {
+                    offset: 24,
+                    ..channel
+                },
+            }),
+            touch: Some(TouchSnapshot {
+                path: "/dev/input/event1".into(),
+                name: "cyttsp5_mt".into(),
+                x_min: 0,
+                x_max: 1447,
+                y_min: 0,
+                y_max: 1071,
+            }),
+            identity: IdentitySnapshot {
+                serial_prefix: Some("N249".into()),
+                firmware_version: Some("4.38.23684".into()),
+                kernel_release: Some("4.1.15-00136-g12655eaaef89".into()),
+                device_code: Some(376),
+            },
+        };
+        for firmware in CLARA_HD_376.firmware_versions {
+            snapshot.identity.firmware_version = Some((*firmware).into());
+            let report = CLARA_HD_376.validate(&snapshot);
+            assert_eq!(report.readiness, Readiness::WriteReady);
+            assert!(report.mismatches.is_empty());
+            assert!(report.write_blockers.is_empty());
+            assert!(CLARA_HD_376.write_identity_blockers(&snapshot).is_empty());
+        }
+        assert_eq!(super::identify_profile(&snapshot), Some(&CLARA_HD_376));
+    }
+
+    #[test]
+    fn clara_hd_touch_edges_map_inside_the_panel_and_round_trip() {
+        for raw in [(0, 0), (0, 1071), (1447, 0), (1447, 1071)] {
+            let display = CLARA_HD_POSE
+                .touch_to_display(raw.0, raw.1)
+                .expect("measured Clara HD edge maps to the display");
+            assert!(display.0 < CLARA_HD_376.width, "x escaped: {display:?}");
+            assert!(display.1 < CLARA_HD_376.height, "y escaped: {display:?}");
+        }
+        for display in [(0, 0), (1071, 0), (0, 1447), (1071, 1447), (536, 724)] {
+            let raw = CLARA_HD_POSE
+                .display_to_touch(display.0, display.1)
+                .expect("Clara HD display point maps to the controller");
+            assert_eq!(CLARA_HD_POSE.touch_to_display(raw.0, raw.1), Some(display));
+        }
+    }
+
+    /// Captured from a physical touch about a centimetre in from the top-left
+    /// of the Clara HD. The axis ranges prove that the controller is rotated;
+    /// this sample proves the direction of both axes.
+    #[test]
+    fn clara_hd_touch_transform_matches_a_physically_measured_touch() {
+        assert_eq!(CLARA_HD_POSE.touch_to_display(160, 909), Some((162, 160)));
+
+        let flipped_x = CLARA_HD_POSE
+            .touch_to_display(160, 1071 - 909)
+            .expect("flipped sample remains in range");
+        let flipped_y = CLARA_HD_POSE
+            .touch_to_display(1447 - 160, 909)
+            .expect("flipped sample remains in range");
+        assert_eq!(flipped_x, (909, 160));
+        assert_eq!(flipped_y, (162, 1287));
     }
 
     #[test]

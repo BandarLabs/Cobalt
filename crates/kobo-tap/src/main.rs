@@ -374,6 +374,26 @@ mod tests {
         assert!(matches!(reported.last(), Some(TouchEvent::Up { .. })));
     }
 
+    /// The positive path: an Elipsa whose attended evidence is complete and
+    /// whose identity matches exactly is authorised for a synthetic touch.
+    /// The negative test below only proves the gate closes; this one proves it
+    /// opens, on hardware none of us can re-measure.
+    #[test]
+    fn reviewed_elipsa_with_exact_identity_can_receive_a_tap() {
+        let snapshot = snapshot_for(
+            &ELIPSA_2E_389,
+            IdentitySnapshot {
+                serial_prefix: Some("N605".into()),
+                firmware_version: Some("4.38.23697".into()),
+                kernel_release: Some("4.9.77".into()),
+                device_code: Some(389),
+            },
+        );
+        let pose = writable_pose(&snapshot)
+            .expect("completed attended evidence authorizes synthetic touch");
+        assert_eq!(pose.profile().id, ELIPSA_2E_389.id);
+    }
+
     #[test]
     fn matching_geometry_without_exact_identity_cannot_receive_a_tap() {
         let snapshot = snapshot_for(&ELIPSA_2E_389, IdentitySnapshot::default());
