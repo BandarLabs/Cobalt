@@ -205,11 +205,6 @@ const AUDIOBOOK_VOICES: [&str; 6] = [
 /// installed no policy at all, so every credentialed request was refused off
 /// the device, and the two applications that need a key could only be run on
 /// hardware. That is the one thing this project is arranged to avoid.
-#[must_use]
-pub fn credential_allowed(app: &str, credential: &Credential, url: &str) -> bool {
-    credential_allowed_for(app, credential, url, CredentialUse::Fetch)
-}
-
 /// Method-aware credential policy used by the runtime immediately before it
 /// resolves a secret.
 #[must_use]
@@ -286,10 +281,16 @@ fn zotero_read_api_path(path_and_query: &str) -> bool {
     if path_and_query.contains(['%', '\\']) {
         return false;
     }
+    let Some(path_and_query) = path_and_query.strip_prefix('/') else {
+        return false;
+    };
+    if path_and_query.starts_with('/') {
+        return false;
+    }
     let (path, query) = path_and_query
         .split_once('?')
         .map_or((path_and_query, None), |(path, query)| (path, Some(query)));
-    let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+    let parts: Vec<&str> = path.split('/').collect();
     if parts.len() < 3
         || parts[0] != "users"
         || parts[1].is_empty()
@@ -340,7 +341,7 @@ fn zotero_key(value: &str) -> bool {
     value.len() == 8
         && value
             .bytes()
-            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+            .all(|byte| matches!(byte, b'2'..=b'9' | b'A'..=b'N' | b'P'..=b'Z'))
 }
 
 /// What a server said, once the status line has been understood.
@@ -678,28 +679,22 @@ fn get(
     Err(TaskError::Unreachable)
 }
 
-/// Keeps ordinary application headers on same-origin redirects, but never
-/// forwards an authorization credential outside its authorized origin and
-/// path set.
+/// Keeps ordinary application headers on same-origin redirects. Any redirect
+/// carrying an authorization credential is denied: the target cannot be
+/// re-authorized after the server chooses it, even when it has the same origin.
 fn redirect_headers<'a>(
     current: &Address,
     next: &Address,
     headers: &'a [(&'a str, &'a str)],
 ) -> Result<&'a [(&'a str, &'a str)], TaskError> {
-    let authorization = headers
+    if headers
         .iter()
-        .any(|(name, _)| name.eq_ignore_ascii_case("authorization"));
-    if next.host.eq_ignore_ascii_case(&current.host) && next.port == current.port {
-        let leaves_zotero_policy = current.host.eq_ignore_ascii_case("api.zotero.org")
-            && zotero_read_api_path(&current.path)
-            && !zotero_read_api_path(&next.path);
-        if authorization && leaves_zotero_policy {
-            return Err(TaskError::Denied);
-        }
-        return Ok(headers);
-    }
-    if authorization {
+        .any(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+    {
         return Err(TaskError::Denied);
+    }
+    if next.host.eq_ignore_ascii_case(&current.host) && next.port == current.port {
+        return Ok(headers);
     }
     Ok(&[])
 }
@@ -1318,13 +1313,14 @@ mod tests {
     /// first. In the device runtime they only ran under a feature flag.
     #[test]
     fn chat_credentials_are_bound_to_their_exact_service() {
-        use kobo_protocol::Credential;
+        use kobo_protocol::{Credential, CredentialUse};
 
         let openai = Credential::bearer("openai");
-        assert!(super::credential_allowed(
+        assert!(super::credential_allowed_for(
             "chat",
             &openai,
-            "https://api.openai.com/v1/chat/completions"
+            "https://api.openai.com/v1/chat/completions",
+            CredentialUse::Fetch
         ));
         for (app, url) in [
             ("other", "https://api.openai.com/v1/chat/completions"),
@@ -1334,13 +1330,18 @@ mod tests {
             ),
             ("chat", "https://attacker.invalid/collect"),
         ] {
-            assert!(!super::credential_allowed(app, &openai, url));
+            assert!(!super::credential_allowed_for(
+                app,
+                &openai,
+                url,
+                CredentialUse::Fetch
+            ));
         }
     }
 
     #[test]
     fn audiobook_credentials_are_bound_to_exact_provider_requests() {
-        use kobo_protocol::Credential;
+        use kobo_protocol::{Credential, CredentialUse};
 
         let requests = [
             (
@@ -1361,12 +1362,23 @@ mod tests {
             )
         });
         for (credential, url) in requests.into_iter().chain(voices) {
-            assert!(super::credential_allowed("audiobook", &credential, &url));
-            assert!(!super::credential_allowed("chat", &credential, &url));
-            assert!(!super::credential_allowed(
+            assert!(super::credential_allowed_for(
                 "audiobook",
                 &credential,
-                "https://attacker.invalid/collect"
+                &url,
+                CredentialUse::Fetch
+            ));
+            assert!(!super::credential_allowed_for(
+                "chat",
+                &credential,
+                &url,
+                CredentialUse::Fetch
+            ));
+            assert!(!super::credential_allowed_for(
+                "audiobook",
+                &credential,
+                "https://attacker.invalid/collect",
+                CredentialUse::Fetch
             ));
         }
         // A different voice, a different format, or a path dressed up as a
@@ -1377,7 +1389,12 @@ mod tests {
             "https://api.elevenlabs.io/v1/text-to-speech/JBFqnCBsd6RMkjVDRZzb?output_format=mp3_22050_32",
             "https://api.elevenlabs.io.attacker.invalid/v1/text-to-speech/JBFqnCBsd6RMkjVDRZzb?output_format=mp3_44100_128",
         ] {
-            assert!(!super::credential_allowed("audiobook", &elevenlabs, url));
+            assert!(!super::credential_allowed_for(
+                "audiobook",
+                &elevenlabs,
+                url,
+                CredentialUse::Fetch
+            ));
         }
     }
 
@@ -1388,11 +1405,11 @@ mod tests {
         let key = Credential::bearer("zotero");
         for url in [
             "https://api.zotero.org/users/12345/collections?format=json&limit=100&sort=title&direction=asc",
-            "https://api.zotero.org/users/12345/collections/COLL1234/items/top?format=json&itemType=-attachment&limit=25&start=475&sort=dateAdded&direction=desc",
-            "https://api.zotero.org/users/12345/collections/COLL1234/items/top?format=json&itemType=-attachment&limit=1&start=500&sort=dateAdded&direction=desc",
-            "https://api.zotero.org/users/12345/items/PAPER001?format=json",
-            "https://api.zotero.org/users/12345/items/PAPER001/children?format=json&itemType=attachment&limit=100",
-            "https://api.zotero.org/users/12345/items/PDF12345/fulltext",
+            "https://api.zotero.org/users/12345/collections/ABCD2345/items/top?format=json&itemType=-attachment&limit=25&start=475&sort=dateAdded&direction=desc",
+            "https://api.zotero.org/users/12345/collections/ABCD2345/items/top?format=json&itemType=-attachment&limit=1&start=500&sort=dateAdded&direction=desc",
+            "https://api.zotero.org/users/12345/items/EFGH6789?format=json",
+            "https://api.zotero.org/users/12345/items/EFGH6789/children?format=json&itemType=attachment&limit=100",
+            "https://api.zotero.org/users/12345/items/JKLM2345/fulltext",
         ] {
             assert!(super::credential_allowed_for(
                 "zotero-reader",
@@ -1440,6 +1457,10 @@ mod tests {
             "https://api.zotero.org/users/12345/items/PAPER001?format=json&key=leak",
             "https://api.zotero.org/users/12345/items/%2e%2e/fulltext",
             "https://api.zotero.org/users/12345/collections/COLL1234/items/top?format=json&itemType=-attachment&limit=100&start=0&sort=dateAdded&direction=desc",
+            "https://api.zotero.org/users/12345/items/ABCD0EFG?format=json",
+            "https://api.zotero.org/users/12345/items/ABCD1EFG?format=json",
+            "https://api.zotero.org/users/12345/items/ABCDOEFG?format=json",
+            "https://api.zotero.org//users/12345/items/ABCD2345?format=json",
         ] {
             assert!(!super::credential_allowed_for(
                 "zotero-reader",
@@ -1451,27 +1472,48 @@ mod tests {
     }
 
     #[test]
-    fn zotero_authorization_refuses_a_redirect_outside_its_read_routes() {
-        let current = super::parse("https://api.zotero.org/users/123/items/PAPER001?format=json")
-            .expect("Zotero item route");
-        let fulltext = super::parse("https://api.zotero.org/users/123/items/PDF12345/fulltext")
-            .expect("Zotero full-text route");
-        let keys = super::parse("https://api.zotero.org/keys/current")
-            .expect("Zotero route outside the reader policy");
+    fn authorization_headers_are_refused_on_any_redirect() {
+        let zotero_current =
+            super::parse("https://api.zotero.org/users/123/items/ABCD2345?format=json")
+                .expect("Zotero item route");
+        let zotero_next =
+            super::parse("https://api.zotero.org/users/123/items/EFGH6789?format=json")
+                .expect("Zotero full-text route");
+        let other_current =
+            super::parse("https://api.openai.com/v1/chat/completions").expect("OpenAI route");
+        let other_next =
+            super::parse("https://api.openai.com/v1/responses").expect("same-origin OpenAI route");
         let other_origin = super::parse("https://attacker.invalid/collect").expect("other origin");
         let credential = [("Authorization", "Bearer private")];
 
+        for (current, next) in [
+            (&zotero_current, &zotero_next),
+            (&other_current, &other_next),
+            (&other_current, &other_origin),
+        ] {
+            assert_eq!(
+                super::redirect_headers(current, next, &credential),
+                Err(TaskError::Denied)
+            );
+        }
+    }
+
+    #[test]
+    fn ordinary_headers_survive_same_origin_redirects() {
+        let current =
+            super::parse("https://api.openai.com/v1/chat/completions").expect("OpenAI route");
+        let same_origin =
+            super::parse("https://api.openai.com/v1/responses").expect("same-origin route");
+        let other_origin = super::parse("https://attacker.invalid/collect").expect("other origin");
+        let ordinary = [("Accept", "application/json")];
+
         assert_eq!(
-            super::redirect_headers(&current, &fulltext, &credential),
-            Ok(&credential[..])
+            super::redirect_headers(&current, &same_origin, &ordinary),
+            Ok(&ordinary[..])
         );
         assert_eq!(
-            super::redirect_headers(&current, &keys, &credential),
-            Err(TaskError::Denied)
-        );
-        assert_eq!(
-            super::redirect_headers(&current, &other_origin, &credential),
-            Err(TaskError::Denied)
+            super::redirect_headers(&current, &other_origin, &ordinary),
+            Ok(&[][..])
         );
     }
 
