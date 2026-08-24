@@ -116,6 +116,12 @@ pub struct Reader {
     arguments: Vec<OsString>,
     environment: BTreeMap<OsString, OsString>,
     working_directory: PathBuf,
+    /// How the process was recognised, so that every later identity check
+    /// asks the same question that found it. A daemon found by its `exe` link
+    /// carries a bare zeroth argument, and re-checking it by argv concludes
+    /// the process has changed identity when it has not moved at all — which
+    /// turns `stop` into a refusal that never sends a signal.
+    identity: Identity,
 }
 
 impl Reader {
@@ -246,6 +252,7 @@ impl Reader {
             arguments,
             environment,
             working_directory,
+            identity,
         })
     }
 
@@ -256,8 +263,12 @@ impl Reader {
     }
 
     fn still_running_in(&self, proc_root: &Path) -> bool {
-        read_argv(proc_root, self.pid)
-            .is_some_and(|argv| argv.first().is_some_and(|first| *first == self.executable))
+        match self.identity {
+            Identity::ZerothArgument => read_argv(proc_root, self.pid)
+                .is_some_and(|argv| argv.first().is_some_and(|first| *first == self.executable)),
+            Identity::Executable => fs::read_link(proc_root.join(self.pid.to_string()).join("exe"))
+                .is_ok_and(|target| target == Path::new(&self.executable)),
+        }
     }
 
     /// Asks the reader to exit, escalating to `SIGKILL` if it will not.
@@ -421,6 +432,9 @@ impl Reader {
             arguments,
             environment,
             working_directory: PathBuf::from(OsString::from_vec(cwd)),
+            // A saved description names the reader, which is always started
+            // with its absolute path as its zeroth argument.
+            identity: Identity::ZerothArgument,
         })
     }
 }
@@ -725,6 +739,31 @@ mod tests {
         // The same pid now belongs to something else entirely.
         fs::write(root.join("360").join("cmdline"), b"/bin/sh\0").expect("rewrite cmdline");
         assert!(!reader.still_running_in(&root));
+        let _ignored = fs::remove_dir_all(&root);
+    }
+
+    /// The defect this pins was found on a device: the supplicant was found
+    /// by its `exe` link, because Nickel starts it with a bare zeroth
+    /// argument, and `stop` then re-checked it by argv, concluded the identity
+    /// had changed, and refused without sending a signal. The identity that
+    /// found a process is the one every later check must use.
+    #[test]
+    fn a_daemon_found_by_its_exe_link_is_still_recognised_by_it() {
+        let root = fake_proc("exe_link", &[(500, "wpa_supplicant", &["-B"])]);
+        // The exe link points at the real binary however the process was
+        // launched; /bin/sh exists on every machine the tests run on.
+        std::os::unix::fs::symlink("/bin/sh", root.join("500").join("exe"))
+            .expect("create exe link");
+        let daemon = Reader::find_matching_in(&root, "/bin/sh", super::Identity::Executable)
+            .expect("daemon found");
+        assert_eq!(daemon.pid(), 500);
+        assert!(
+            daemon.still_running_in(&root),
+            "a daemon that has not moved was declared a different process"
+        );
+        // Once the process is gone the same check must say so.
+        fs::remove_file(root.join("500").join("exe")).expect("remove exe link");
+        assert!(!daemon.still_running_in(&root));
         let _ignored = fs::remove_dir_all(&root);
     }
 

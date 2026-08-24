@@ -678,6 +678,29 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
             )
         });
     }
+    // Nickel launches its supplicant detached, so stopping the reader never
+    // took it down and it has been running for the whole session. A restarted
+    // Nickel starts a supplicant of its own on top of it, the two fight over
+    // the interface, and Wi-Fi stays down until a reboot. On the profiles
+    // that declare it, the leftover one is stopped here, after the panel is
+    // given up and before the reader returns, so the new Nickel comes up
+    // alone. This is a reap, not radio configuration: the interface, the
+    // association and the choice to reconnect stay Nickel's.
+    //
+    // Nothing here is fatal. A supplicant that is absent, ambiguous, or will
+    // not die leaves the owner exactly where every session left them before
+    // this existed: reconnecting by hand or rebooting.
+    if profile.reap_nickel_supplicant {
+        match Reader::find_running(kobo_hal::network::SUPPLICANT_EXECUTABLE) {
+            Ok(supplicant) => {
+                trace("stopping the leftover supplicant before the reader returns");
+                if let Err(error) = supplicant.stop(STOP_GRACE) {
+                    trace(&format!("the leftover supplicant would not stop: {error}"));
+                }
+            }
+            Err(error) => trace(&format!("no leftover supplicant to stop: {error}")),
+        }
+    }
     trace("panel and touch released, restarting the reader");
     println!("panel released, restarting the reader");
     let restarted = reader.start(START_GRACE);
