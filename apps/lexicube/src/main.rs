@@ -419,6 +419,9 @@ struct App {
     /// The board as a published picture, `None` until a game has been shaken
     /// or when the typeface could not be loaded.
     picture: Option<TilePicture>,
+    /// The same tiles with no letters in them, shown while paused so the
+    /// covered board is exactly the size of the revealed one.
+    hidden_picture: Option<TilePicture>,
     phase: Phase,
     view: View,
     elapsed: u32,
@@ -433,6 +436,7 @@ impl Default for App {
             board: [""; BOARD_CELLS],
             turns: [0; BOARD_CELLS],
             picture: None,
+            hidden_picture: None,
             phase: Phase::Ready,
             view: View::Game,
             elapsed: 0,
@@ -456,6 +460,15 @@ impl App {
                 grey,
             )
         });
+        self.hidden_picture =
+            board_art::render(&[""; BOARD_CELLS], &[0; BOARD_CELLS]).and_then(|grey| {
+                context.put_picture(
+                    PictureHandle(2),
+                    board_art::BOARD_EDGE,
+                    board_art::BOARD_EDGE,
+                    grey,
+                )
+            });
         self.phase = Phase::Playing;
         self.view = View::Game;
         self.elapsed = 0;
@@ -521,13 +534,18 @@ impl App {
         });
     }
 
-    /// Whether the rotated-picture board is what the screen should carry.
+    /// The picture the board should show at this phase, if any.
     ///
-    /// Not while paused — the picture has letters in it, and pausing has to
-    /// actually hide them — and not when the typeface failed to load, where
-    /// the upright text board answers instead.
-    fn shows_picture(&self) -> bool {
-        self.phase != Phase::Ready && self.phase != Phase::Paused && self.picture.is_some()
+    /// While paused it is the letterless twin, drawn by the same renderer at
+    /// the same size, so covering the board never changes its shape — and
+    /// never leaks a letter, because the hidden picture contains none. `None`
+    /// falls back to the upright text board.
+    fn board_picture(&self) -> Option<TilePicture> {
+        match self.phase {
+            Phase::Ready => None,
+            Phase::Paused => self.hidden_picture,
+            Phase::Playing | Phase::Finished => self.picture,
+        }
     }
 
     /// What a board cell shows. The board is the whole game, so pausing has
@@ -572,10 +590,12 @@ impl App {
                  means, with no Wi-Fi needed.",
             );
         }
-        if self.shows_picture() {
+        if let Some(picture) = self.board_picture() {
             // Unframed: the tiles draw their own outlines, and a frame around
-            // an already-outlined board is two answers to one question.
-            screen = screen.unframed_picture(self.picture.expect("shows_picture checked"), 110);
+            // an already-outlined board is two answers to one question. The
+            // height allowance clears every panel's width, so the board is
+            // always as wide as the content area allows.
+            screen = screen.unframed_picture(picture, 180);
         } else if self.phase != Phase::Ready {
             let cells = (0..BOARD_CELLS).map(|cell| (die_name(cell), self.cell_label(cell), None));
             screen = screen.board(BOARD_COLUMNS, cells);
@@ -594,15 +614,16 @@ impl App {
             }
         }
         actions.push(("instructions", "How to play"));
-        // Room between the board and the controls, so a hurried mid-game tap
-        // at the tray's edge cannot land on New game.
+        // The controls sit at the foot of the panel, clear of the board, with
+        // a strip of paper under them so they do not touch the bezel.
         screen
-            .spacer(Space::Large)
+            .fill()
             .grid(
                 u8::try_from(actions.len()).unwrap_or(u8::MAX),
                 false,
                 actions,
             )
+            .spacer(Space::Small)
             .build()
     }
 
