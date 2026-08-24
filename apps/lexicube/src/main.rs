@@ -561,6 +561,17 @@ impl App {
         } else {
             screen.secondary(self.status())
         };
+        if self.phase == Phase::Ready {
+            // The launcher's splash flashes past on an app this quick to
+            // start, so the words worth reading live here, on the one screen
+            // with nothing else to do.
+            screen = screen.text(
+                "Sixteen letter dice, three minutes on the clock. Find words \
+                 in touching chains of letters and write them on your paper. \
+                 When the pens go down, check any word and read what it \
+                 means, with no Wi-Fi needed.",
+            );
+        }
         if self.shows_picture() {
             // Unframed: the tiles draw their own outlines, and a frame around
             // an already-outlined board is two answers to one question.
