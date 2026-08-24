@@ -1,16 +1,18 @@
 [package]
 name = "kobo-lexicube"
-version = "1.0.0"
-edition = "2021"
-license = "AGPL-3.0-only"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
 publish = false
 
-[[bin]]
-name = "kobo-lexicube"
-path = "src/main.rs"
-
 [dependencies]
+fontdue = "0.9"
 kobo-sdk = { path = "../../crates/kobo-sdk" }
+kobo-text = { path = "../../crates/kobo-text" }
 
 [dev-dependencies]
 kobo-ui = { path = "../../crates/kobo-ui" }
+
+[lints]
+workspace = true

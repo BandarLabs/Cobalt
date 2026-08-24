@@ -740,6 +740,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-lexicube"
+version = "0.2.6"
+dependencies = [
+ "fontdue",
+ "kobo-sdk",
+ "kobo-text",
+ "kobo-ui",
+]
+
+[[package]]
 name = "kobo-magnet"
 version = "0.3.1"
 dependencies = [

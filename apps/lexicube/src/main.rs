@@ -9,15 +9,16 @@
 //! come from the runtime's offline dictionaries when the owner has installed
 //! any.
 //!
-//! The letters stay upright rather than rotated as the physical dice would
-//! land. On this panel a rotated N is a Z, and the tabletop game itself has to
-//! underline half its alphabet to survive that ambiguity; upright letters need
-//! no such apology.
+//! The dice lie rotated the way they landed, as on the table. Text cells
+//! only draw upright, so the board is rendered as one picture: outlined
+//! tiles, each letter rasterized from the platform's own display face and
+//! turned in quarter turns. The face is Atkinson Hyperlegible, whose letter
+//! forms keep a turned N from reading as a Z.
 
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, ActionId, Context, DictionaryEntry, Heartbeat, KoboApp, Screen, ScreenBuilder,
-    TaskId, TaskOutcome,
+    action_id, ActionId, Context, DictionaryEntry, Heartbeat, KoboApp, PictureHandle, Screen,
+    ScreenBuilder, Space, TaskId, TaskOutcome, TilePicture,
 };
 use std::collections::HashSet;
 use std::process::ExitCode;
@@ -45,6 +46,7 @@ const DICE: [[&str; 6]; 16] = [
 ];
 
 const BOARD_SIDE: usize = 4;
+const BOARD_COLUMNS: u8 = 4;
 const BOARD_CELLS: usize = BOARD_SIDE * BOARD_SIDE;
 const GAME_SECONDS: u32 = 3 * 60;
 /// How many near misses are worth offering before the list is noise.
@@ -119,7 +121,10 @@ impl Rng {
     fn from_clock() -> Self {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0x9e37_79b9, |elapsed| elapsed.as_nanos() as u64);
+            .map_or(0x9e37_79b9, |elapsed| {
+                // The low bits are the fast-moving ones, and all a seed needs.
+                u64::try_from(elapsed.as_nanos() & u128::from(u64::MAX)).unwrap_or(0x9e37_79b9)
+            });
         Self(nanos | 1)
     }
 
@@ -132,7 +137,8 @@ impl Rng {
     }
 
     fn below(&mut self, bound: usize) -> usize {
-        (self.next() % bound.max(1) as u64) as usize
+        let bound = u64::try_from(bound.max(1)).unwrap_or(1);
+        usize::try_from(self.next() % bound).unwrap_or(0)
     }
 }
 
@@ -146,6 +152,234 @@ fn shake(rng: &mut Rng) -> [&'static str; BOARD_CELLS] {
         let die = DICE[order[cell]];
         die[rng.below(die.len())]
     })
+}
+
+/// How each die landed: a quarter-turn count per cell, as on the table.
+fn spin(rng: &mut Rng) -> [u8; BOARD_CELLS] {
+    let mut turns = [0_u8; BOARD_CELLS];
+    for turn in &mut turns {
+        *turn = u8::try_from(rng.below(4)).unwrap_or(0);
+    }
+    turns
+}
+
+/// The board drawn as one picture, because that is the only way a die can lie
+/// rotated the way it landed: text cells draw upright, and a board where every
+/// letter faces the reader is a different, easier game.
+mod board_art {
+    use super::{BOARD_CELLS, BOARD_SIDE};
+
+    /// The published bitmap's edge. Chosen to out-resolve every panel the
+    /// layout tests cover while staying inside the protocol's inline picture
+    /// limit (800 * 800 = 640,000 bytes of grey).
+    ///
+    /// Written twice, in the two types its two consumers need, because a
+    /// `usize` indexes the buffer here while `put_picture` speaks `u32`; the
+    /// tests pin that the two never drift apart.
+    pub const BOARD_PX: usize = 800;
+    pub const BOARD_EDGE: u32 = 800;
+    const TILE_GAP: usize = 12;
+    const TILE_PX: usize = (BOARD_PX - (BOARD_SIDE + 1) * TILE_GAP) / BOARD_SIDE;
+    const BORDER_PX: usize = 3;
+    const WHITE: u8 = 255;
+    const INK: u8 = 0;
+    /// The letter's height as a share of its tile, sized down for `Qu`. The
+    /// operands are tile-sized, far inside `f32`'s exact range.
+    #[allow(clippy::cast_precision_loss)]
+    const SINGLE_PX: f32 = TILE_PX as f32 * 0.58;
+    #[allow(clippy::cast_precision_loss)]
+    const DOUBLE_PX: f32 = TILE_PX as f32 * 0.40;
+
+    /// A rasterized die face: coverage, 0 for paper through 255 for full ink.
+    struct Stamp {
+        width: usize,
+        height: usize,
+        coverage: Vec<u8>,
+    }
+
+    impl Stamp {
+        /// The same face a quarter turn clockwise. Four turns is the identity,
+        /// which the tests pin, because an off-by-one here is a mirrored
+        /// letter and a mirrored letter is a different letter.
+        fn quarter_turn(&self) -> Self {
+            let width = self.height;
+            let height = self.width;
+            let mut coverage = vec![0_u8; self.coverage.len()];
+            for y in 0..height {
+                for x in 0..width {
+                    coverage[y * width + x] = self.coverage[(self.height - 1 - x) * self.width + y];
+                }
+            }
+            Self {
+                width,
+                height,
+                coverage,
+            }
+        }
+
+        fn turned(mut self, quarter_turns: u8) -> Self {
+            for _ in 0..quarter_turns % 4 {
+                self = self.quarter_turn();
+            }
+            self
+        }
+    }
+
+    /// Rasterizes one face, `Qu` as two glyphs on a shared baseline.
+    ///
+    /// Every quantity in here is a glyph measurement: a few hundred pixels,
+    /// far inside every cast's exact range.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_possible_wrap,
+        clippy::cast_sign_loss
+    )]
+    fn stamp(font: &fontdue::Font, face: &str, px: f32) -> Stamp {
+        let glyphs: Vec<(fontdue::Metrics, Vec<u8>)> = face
+            .chars()
+            .map(|letter| font.rasterize(letter, px))
+            .collect();
+        let spacing = (px / 12.0) as usize;
+        let ascent = glyphs
+            .iter()
+            .map(|(metrics, _)| metrics.height as i32 + metrics.ymin)
+            .max()
+            .unwrap_or(0);
+        let descent = glyphs
+            .iter()
+            .map(|(metrics, _)| -metrics.ymin)
+            .max()
+            .unwrap_or(0)
+            .max(0);
+        let width: usize = glyphs
+            .iter()
+            .map(|(metrics, _)| metrics.width)
+            .sum::<usize>()
+            + spacing * glyphs.len().saturating_sub(1);
+        let height = (ascent + descent).max(1) as usize;
+        let mut coverage = vec![0_u8; width.max(1) * height];
+        let mut pen = 0_usize;
+        for (metrics, bitmap) in &glyphs {
+            let top = (ascent - (metrics.height as i32 + metrics.ymin)).max(0) as usize;
+            for row in 0..metrics.height {
+                for column in 0..metrics.width {
+                    let target = (top + row) * width.max(1) + pen + column;
+                    coverage[target] = coverage[target].max(bitmap[row * metrics.width + column]);
+                }
+            }
+            pen += metrics.width + spacing;
+        }
+        Stamp {
+            width: width.max(1),
+            height,
+            coverage,
+        }
+    }
+
+    /// Draws the whole board: outlined tiles, each letter turned the way its
+    /// die landed. `None` when the bundled typeface cannot be loaded, which
+    /// the caller answers with the upright text board instead.
+    pub fn render(
+        board: &[&'static str; BOARD_CELLS],
+        turns: &[u8; BOARD_CELLS],
+    ) -> Option<Vec<u8>> {
+        let font =
+            fontdue::Font::from_bytes(kobo_text::DISPLAY_FONT, fontdue::FontSettings::default())
+                .ok()?;
+        let mut grey = vec![WHITE; BOARD_PX * BOARD_PX];
+        for cell in 0..BOARD_CELLS {
+            let row = cell / BOARD_SIDE;
+            let column = cell % BOARD_SIDE;
+            let left = TILE_GAP + column * (TILE_PX + TILE_GAP);
+            let top = TILE_GAP + row * (TILE_PX + TILE_GAP);
+            let interior = BORDER_PX..TILE_PX - BORDER_PX;
+            for y in 0..TILE_PX {
+                for x in 0..TILE_PX {
+                    if !interior.contains(&y) || !interior.contains(&x) {
+                        grey[(top + y) * BOARD_PX + left + x] = INK;
+                    }
+                }
+            }
+            let face = board[cell];
+            if face.is_empty() {
+                continue;
+            }
+            let size = if face.chars().count() == 1 {
+                SINGLE_PX
+            } else {
+                DOUBLE_PX
+            };
+            let letter = stamp(&font, face, size).turned(turns[cell]);
+            let offset_x = left + (TILE_PX.saturating_sub(letter.width)) / 2;
+            let offset_y = top + (TILE_PX.saturating_sub(letter.height)) / 2;
+            for y in 0..letter.height.min(TILE_PX) {
+                for x in 0..letter.width.min(TILE_PX) {
+                    let ink = letter.coverage[y * letter.width + x];
+                    let target = (offset_y + y) * BOARD_PX + offset_x + x;
+                    grey[target] = grey[target].min(WHITE - ink);
+                }
+            }
+        }
+        Some(grey)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn the_two_spellings_of_the_edge_agree() {
+            assert_eq!(u32::try_from(BOARD_PX).expect("edge fits"), BOARD_EDGE);
+        }
+
+        #[test]
+        fn four_quarter_turns_are_the_identity() {
+            let stamp = Stamp {
+                width: 3,
+                height: 2,
+                coverage: vec![1, 2, 3, 4, 5, 6],
+            };
+            let turned = stamp
+                .quarter_turn()
+                .quarter_turn()
+                .quarter_turn()
+                .quarter_turn();
+            assert_eq!(turned.coverage, vec![1, 2, 3, 4, 5, 6]);
+            assert_eq!((turned.width, turned.height), (3, 2));
+        }
+
+        #[test]
+        fn a_quarter_turn_swaps_the_dimensions() {
+            let stamp = Stamp {
+                width: 3,
+                height: 2,
+                coverage: vec![1, 2, 3, 4, 5, 6],
+            };
+            let turned = stamp.quarter_turn();
+            assert_eq!((turned.width, turned.height), (2, 3));
+            // The bottom-left corner becomes the top-left under a clockwise
+            // turn: hand-derived, not computed by the code under test.
+            assert_eq!(turned.coverage[0], 4);
+        }
+
+        #[test]
+        fn the_board_renders_with_ink_and_the_rotation_changes_it() {
+            let board: [&'static str; BOARD_CELLS] = [
+                "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "Qu",
+            ];
+            let upright = render(&board, &[0; BOARD_CELLS]).expect("a rendered board");
+            assert_eq!(upright.len(), BOARD_PX * BOARD_PX);
+            assert!(upright.iter().any(|pixel| *pixel < 128), "no ink was laid");
+            let mut turns = [0_u8; BOARD_CELLS];
+            turns[0] = 1;
+            let turned = render(&board, &turns).expect("a rendered board");
+            assert_ne!(upright, turned, "a turned die must draw differently");
+            // The same input draws the same picture: the renderer holds no
+            // hidden state, so a repaint never subtly changes the board.
+            let again = render(&board, &[0; BOARD_CELLS]).expect("a rendered board");
+            assert_eq!(upright, again);
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -180,6 +414,11 @@ struct Checked {
 
 struct App {
     board: [&'static str; BOARD_CELLS],
+    /// Quarter turns per die, matching how the physical dice lie.
+    turns: [u8; BOARD_CELLS],
+    /// The board as a published picture, `None` until a game has been shaken
+    /// or when the typeface could not be loaded.
+    picture: Option<TilePicture>,
     phase: Phase,
     view: View,
     elapsed: u32,
@@ -192,6 +431,8 @@ impl Default for App {
     fn default() -> Self {
         Self {
             board: [""; BOARD_CELLS],
+            turns: [0; BOARD_CELLS],
+            picture: None,
             phase: Phase::Ready,
             view: View::Game,
             elapsed: 0,
@@ -204,7 +445,17 @@ impl Default for App {
 
 impl App {
     fn new_game(&mut self, context: &mut Context) {
-        self.board = shake(&mut Rng::from_clock());
+        let mut rng = Rng::from_clock();
+        self.board = shake(&mut rng);
+        self.turns = spin(&mut rng);
+        self.picture = board_art::render(&self.board, &self.turns).and_then(|grey| {
+            context.put_picture(
+                PictureHandle(1),
+                board_art::BOARD_EDGE,
+                board_art::BOARD_EDGE,
+                grey,
+            )
+        });
         self.phase = Phase::Playing;
         self.view = View::Game;
         self.elapsed = 0;
@@ -270,6 +521,15 @@ impl App {
         });
     }
 
+    /// Whether the rotated-picture board is what the screen should carry.
+    ///
+    /// Not while paused — the picture has letters in it, and pausing has to
+    /// actually hide them — and not when the typeface failed to load, where
+    /// the upright text board answers instead.
+    fn shows_picture(&self) -> bool {
+        self.phase != Phase::Ready && self.phase != Phase::Paused && self.picture.is_some()
+    }
+
     /// What a board cell shows. The board is the whole game, so pausing has
     /// to actually hide it: a paused clock over visible letters is extra
     /// thinking time, not a pause.
@@ -290,12 +550,22 @@ impl App {
     }
 
     fn game_screen(&self) -> Screen {
-        let mut screen = ScreenBuilder::new("lexicube")
-            .top_bar("Lexicube")
-            .secondary(self.status());
-        if self.phase != Phase::Ready {
+        let mut screen = ScreenBuilder::new("lexicube").top_bar("Lexicube");
+        // The clock is read mid-game from arm's length, so while the game
+        // runs it is set as the screen's display type rather than a
+        // secondary line.
+        screen = if self.phase == Phase::Playing {
+            screen.heading(self.status())
+        } else {
+            screen.secondary(self.status())
+        };
+        if self.shows_picture() {
+            // Unframed: the tiles draw their own outlines, and a frame around
+            // an already-outlined board is two answers to one question.
+            screen = screen.unframed_picture(self.picture.expect("shows_picture checked"), 110);
+        } else if self.phase != Phase::Ready {
             let cells = (0..BOARD_CELLS).map(|cell| (die_name(cell), self.cell_label(cell), None));
-            screen = screen.board(BOARD_SIDE as u8, cells);
+            screen = screen.board(BOARD_COLUMNS, cells);
         }
         let mut actions: Vec<(&str, &str)> = Vec::new();
         match self.phase {
@@ -311,7 +581,16 @@ impl App {
             }
         }
         actions.push(("instructions", "How to play"));
-        screen.grid(actions.len() as u8, false, actions).build()
+        // Room between the board and the controls, so a hurried mid-game tap
+        // at the tray's edge cannot land on New game.
+        screen
+            .spacer(Space::Large)
+            .grid(
+                u8::try_from(actions.len()).unwrap_or(u8::MAX),
+                false,
+                actions,
+            )
+            .build()
     }
 
     fn lookup_screen(&self) -> Screen {
