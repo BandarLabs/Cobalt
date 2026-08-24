@@ -1,0 +1,16 @@
+[package]
+name = "kobo-lexicube"
+version = "1.0.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+
+[[bin]]
+name = "kobo-lexicube"
+path = "src/main.rs"
+
+[dependencies]
+kobo-sdk = { path = "../../crates/kobo-sdk" }
+
+[dev-dependencies]
+kobo-ui = { path = "../../crates/kobo-ui" }

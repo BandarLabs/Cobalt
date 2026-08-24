@@ -79,6 +79,17 @@
       "capabilities": ["network"]
     },
     {
+      "package": "kobo-lexicube",
+      "id": "lexicube",
+      "display_name": "Lexicube",
+      "short_label": "Lexicube",
+      "summary": "Shake sixteen letter dice, find words for three minutes, then look them up.",
+      "version": "1.0.0",
+      "minimum_cobalt_version": "0.2.0",
+      "glyph": "grid",
+      "capabilities": []
+    },
+    {
       "package": "kobo-magnet",
       "id": "magnet",
       "display_name": "Magnet",
