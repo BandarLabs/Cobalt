@@ -172,24 +172,25 @@ fn spin(rng: &mut Rng) -> [u8; BOARD_CELLS] {
 mod board_art {
     use super::{BOARD_CELLS, BOARD_SIDE};
 
-    /// The published bitmap's edge. Chosen to out-resolve every panel the
-    /// layout tests cover while staying inside the protocol's inline picture
-    /// limit (800 * 800 = 640,000 bytes of grey).
+    /// The published bitmap's edge. The renderer never scales a picture past
+    /// its own pixels, so the edge has to reach the widest content area the
+    /// board should fill: 1200 covers the Libra Colour's panel edge to edge.
+    /// The 1.44 MB of grey travels on the protocol's chunked path, far inside
+    /// its picture bound.
     ///
     /// Written twice, in the two types its two consumers need, because a
     /// `usize` indexes the buffer here while `put_picture` speaks `u32`; the
     /// tests pin that the two never drift apart.
-    pub const BOARD_PX: usize = 800;
-    pub const BOARD_EDGE: u32 = 800;
+    pub const BOARD_PX: usize = 1200;
+    pub const BOARD_EDGE: u32 = 1200;
     /// The dice face: a bold serif, as the plastic dice are printed, whose
     /// serifs tell a turned N from a Z. `DejaVu Serif`, under the Bitstream
     /// Vera licence beside it in `fonts/LICENSE-DejaVu.txt`.
     const SERIF_FONT: &[u8] = include_bytes!("../fonts/DejaVuSerif-Bold.ttf");
-    const TILE_GAP: usize = 12;
+    const TILE_GAP: usize = 18;
     const TILE_PX: usize = (BOARD_PX - (BOARD_SIDE + 1) * TILE_GAP) / BOARD_SIDE;
-    const BORDER_PX: usize = 3;
+    const BORDER_PX: usize = 4;
     const WHITE: u8 = 255;
-    const INK: u8 = 0;
     /// The letter's height as a share of its tile, sized down for `Qu`. The
     /// operands are tile-sized, far inside `f32`'s exact range.
     #[allow(clippy::cast_precision_loss)]
@@ -283,12 +284,15 @@ mod board_art {
         }
     }
 
-    /// Draws the whole board: outlined tiles, each letter turned the way its
-    /// die landed. `None` when the bundled typeface cannot be loaded, which
-    /// the caller answers with the upright text board instead.
+    /// Draws the whole board: tiles outlined in `border` ink, each letter
+    /// turned the way its die landed. The covered board passes a lighter
+    /// border so a glance says "not in play". `None` when the bundled
+    /// typeface cannot be loaded, which the caller answers with the upright
+    /// text board instead.
     pub fn render(
         board: &[&'static str; BOARD_CELLS],
         turns: &[u8; BOARD_CELLS],
+        border: u8,
     ) -> Option<Vec<u8>> {
         let font = fontdue::Font::from_bytes(SERIF_FONT, fontdue::FontSettings::default())
             .or_else(|_| {
@@ -307,7 +311,7 @@ mod board_art {
             for y in 0..TILE_PX {
                 for x in 0..TILE_PX {
                     if !interior.contains(&y) || !interior.contains(&x) {
-                        grey[(top + y) * BOARD_PX + left + x] = INK;
+                        grey[(top + y) * BOARD_PX + left + x] = border;
                     }
                 }
             }
@@ -332,6 +336,39 @@ mod board_art {
             }
         }
         Some(grey)
+    }
+
+    /// One line of text as a picture: the runtime's text nodes offer no size
+    /// and tone control together, and a picture gives both exactly. Drawn in
+    /// the platform's own regular face so it matches the rest of the screen.
+    /// The full-coverage tone is `tone`, so the words come out grey rather
+    /// than ink.
+    ///
+    /// The padding cast is a glyph measurement, a few dozen pixels and never
+    /// negative.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    pub fn banner(text: &str, px: f32, tone: u8) -> Option<(u32, u32, Vec<u8>)> {
+        let font =
+            fontdue::Font::from_bytes(kobo_text::TEXT_FONT, fontdue::FontSettings::default())
+                .ok()?;
+        let words = stamp(&font, text, px);
+        let pad = (px / 8.0).max(4.0) as usize;
+        let width = words.width + pad * 2;
+        let height = words.height + pad * 2;
+        let mut grey = vec![WHITE; width * height];
+        let span = u32::from(WHITE - tone);
+        for y in 0..words.height {
+            for x in 0..words.width {
+                let ink = u32::from(words.coverage[y * words.width + x]);
+                let value = WHITE - u8::try_from(ink * span / 255).unwrap_or(0);
+                grey[(pad + y) * width + pad + x] = value;
+            }
+        }
+        Some((
+            u32::try_from(width).ok()?,
+            u32::try_from(height).ok()?,
+            grey,
+        ))
     }
 
     #[cfg(test)]
@@ -378,17 +415,38 @@ mod board_art {
             let board: [&'static str; BOARD_CELLS] = [
                 "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "Qu",
             ];
-            let upright = render(&board, &[0; BOARD_CELLS]).expect("a rendered board");
+            let upright = render(&board, &[0; BOARD_CELLS], 0).expect("a rendered board");
             assert_eq!(upright.len(), BOARD_PX * BOARD_PX);
             assert!(upright.iter().any(|pixel| *pixel < 128), "no ink was laid");
             let mut turns = [0_u8; BOARD_CELLS];
             turns[0] = 1;
-            let turned = render(&board, &turns).expect("a rendered board");
+            let turned = render(&board, &turns, 0).expect("a rendered board");
             assert_ne!(upright, turned, "a turned die must draw differently");
             // The same input draws the same picture: the renderer holds no
             // hidden state, so a repaint never subtly changes the board.
-            let again = render(&board, &[0; BOARD_CELLS]).expect("a rendered board");
+            let again = render(&board, &[0; BOARD_CELLS], 0).expect("a rendered board");
             assert_eq!(upright, again);
+        }
+
+        #[test]
+        fn the_covered_board_is_drawn_in_half_strength_ink() {
+            let covered = render(&[""; BOARD_CELLS], &[0; BOARD_CELLS], 128)
+                .expect("a rendered covered board");
+            // Borders at half strength and paper elsewhere: nothing on a
+            // covered board may be darker than its own outline.
+            let darkest = covered.iter().copied().min().unwrap_or(255);
+            assert_eq!(darkest, 128, "the covered board leaked darker ink");
+        }
+
+        #[test]
+        fn the_banner_is_grey_words_on_paper() {
+            let (width, height, grey) = banner("Paused.", 64.0, 120).expect("a banner");
+            assert_eq!(grey.len(), (width * height) as usize);
+            let darkest = grey.iter().copied().min().unwrap_or(255);
+            // Full coverage lands on the asked-for tone, and anti-aliased
+            // edges are lighter, never darker.
+            assert_eq!(darkest, 120, "the banner is not the asked-for grey");
+            assert!(width > height, "a line of words is wider than it is tall");
         }
     }
 }
@@ -433,6 +491,9 @@ struct App {
     /// The same tiles with no letters in them, shown while paused so the
     /// covered board is exactly the size of the revealed one.
     hidden_picture: Option<TilePicture>,
+    /// "Paused." at the clock's size in a lighter grey, drawn as a picture
+    /// because the text nodes offer no size and tone control together.
+    paused_banner: Option<TilePicture>,
     phase: Phase,
     view: View,
     elapsed: u32,
@@ -448,6 +509,7 @@ impl Default for App {
             turns: [0; BOARD_CELLS],
             picture: None,
             hidden_picture: None,
+            paused_banner: None,
             phase: Phase::Ready,
             view: View::Game,
             elapsed: 0,
@@ -463,7 +525,7 @@ impl App {
         let mut rng = Rng::from_clock();
         self.board = shake(&mut rng);
         self.turns = spin(&mut rng);
-        self.picture = board_art::render(&self.board, &self.turns).and_then(|grey| {
+        self.picture = board_art::render(&self.board, &self.turns, 0).and_then(|grey| {
             context.put_picture(
                 PictureHandle(1),
                 board_art::BOARD_EDGE,
@@ -471,14 +533,19 @@ impl App {
                 grey,
             )
         });
-        self.hidden_picture =
-            board_art::render(&[""; BOARD_CELLS], &[0; BOARD_CELLS]).and_then(|grey| {
+        // Half-strength borders: a covered board should read as out of play.
+        self.hidden_picture = board_art::render(&[""; BOARD_CELLS], &[0; BOARD_CELLS], 128)
+            .and_then(|grey| {
                 context.put_picture(
                     PictureHandle(2),
                     board_art::BOARD_EDGE,
                     board_art::BOARD_EDGE,
                     grey,
                 )
+            });
+        self.paused_banner =
+            board_art::banner("Paused.", 64.0, 120).and_then(|(width, height, grey)| {
+                context.put_picture(PictureHandle(3), width, height, grey)
             });
         self.phase = Phase::Playing;
         self.view = View::Game;
@@ -592,6 +659,12 @@ impl App {
             screen
                 .heading_at_level(2, self.status())
                 .text_linking(DEV_END_LABEL, [("dev-end", 0, DEV_END_LABEL.len())])
+        } else if self.phase == Phase::Paused {
+            match self.paused_banner {
+                // The clock's size in a lighter grey, where the clock was.
+                Some(banner) => screen.unframed_picture(banner, 12),
+                None => screen.secondary(self.status()),
+            }
         } else {
             screen.secondary(self.status())
         };
