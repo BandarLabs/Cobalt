@@ -125,9 +125,8 @@ Restart the reader and open **Cobalt** from Kobo's menu. Future applications
 are installed from **Store** over Wi-Fi. Full Cobalt updates remain under
 **Settings**.
 
-Readers running Cobalt `0.1.x` need the `0.2.0` platform update once to add
-Store. After that update, new and updated apps arrive independently through
-the app catalog.
+If you already use NickelMenu, Cobalt is added to it; existing entries are
+left alone.
 
 See [docs/INSTALL.md](docs/INSTALL.md) for the complete walkthrough and
 recovery steps.
