@@ -53,9 +53,9 @@ const GAME_SECONDS: u32 = 3 * 60;
 const MAX_SUGGESTIONS: usize = 12;
 /// Below this a word scores nothing at the table, so it is not worth checking.
 const MIN_WORD_LETTERS: usize = 3;
-/// The development shortcut's label, named once so the link range that makes
+/// The early-finish control's label, named once so the link range that makes
 /// it tappable can never disagree with the words it covers.
-const DEV_END_LABEL: &str = "tap to end the round (dev)";
+const END_EARLY_LABEL: &str = "End the game early";
 
 /// Every word SOWPODS accepts, one per line, embedded so the answer needs no
 /// radio. Parsed once, on the first lookup rather than at launch, so starting
@@ -653,12 +653,12 @@ impl App {
         // runs it is set at title size: larger than a secondary line, lighter
         // on the panel than full display type.
         screen = if self.phase == Phase::Playing {
-            // A development shortcut under the clock: ends the round two
-            // ticks after the tap. Strip or gate this line before the app is
-            // submitted to the store.
+            // Ending early is a real move at the table: everyone is out of
+            // words, so why sit out the clock. The round ends two ticks after
+            // the tap, keeping the brief pens-down moment.
             screen
                 .heading_at_level(2, self.status())
-                .text_linking(DEV_END_LABEL, [("dev-end", 0, DEV_END_LABEL.len())])
+                .text_linking(END_EARLY_LABEL, [("end-early", 0, END_EARLY_LABEL.len())])
         } else if self.phase == Phase::Paused {
             match self.paused_banner {
                 // The clock's size in a lighter grey, where the clock was.
@@ -851,7 +851,7 @@ impl KoboApp for App {
             self.view = View::Instructions;
         } else if action == action_id("back") {
             self.view = View::Game;
-        } else if action == action_id("dev-end") {
+        } else if action == action_id("end-early") {
             if self.phase == Phase::Playing {
                 self.elapsed = GAME_SECONDS.saturating_sub(2);
             }
