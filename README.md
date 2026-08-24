@@ -68,7 +68,7 @@ comparison.
 
 ## Apps
 
-Every screenshot below is a real capture from a Kobo Clara BW. Store manages
+Every screenshot below is a real capture from Kobo hardware. Store manages
 the installable applications; Settings and Terminal remain protected system
 utilities.
 

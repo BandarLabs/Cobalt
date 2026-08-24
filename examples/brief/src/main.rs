@@ -207,18 +207,16 @@ impl Brief {
                 ],
             );
             // Numbered rather than illustrated: the same note icon beside
-            // every headline is decoration, and a briefing is ordered, so the
-            // position is the one thing the well can usefully say.
-            screen = screen
-                .section("Top stories")
-                .rows(self.stories.iter().enumerate().map(|(index, story)| {
-                    (
-                        "story",
-                        story.title.clone(),
-                        story.site.clone(),
-                        u16::try_from(index + 1).unwrap_or(u16::MAX),
-                    )
-                }));
+            // every headline is decoration, and a briefing is ordered. These
+            // are prose rather than rows because the brief has no browser to
+            // open them in; drawing a control that ignores its tap promises a
+            // destination the application cannot provide.
+            screen = screen.section("Top stories");
+            for (index, story) in self.stories.iter().enumerate() {
+                screen = screen
+                    .text(format!("{}. {}", index + 1, story.title))
+                    .secondary(story.site.clone());
+            }
         }
         if self.fetching == Fetching::Nothing {
             // Pinned to the foot of the panel rather than set after the last
@@ -489,7 +487,7 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{decode, encode, parse_story, site_of, Brief, Fetching, Story, REFRESH, STORIES};
-    use kobo_sdk::{action_id, Command, Context, KoboApp, Task, TaskId, TaskOutcome};
+    use kobo_sdk::{action_id, Command, Context, KoboApp, Node, Task, TaskId, TaskOutcome};
 
     fn spawned(commands: &[Command]) -> TaskId {
         commands
@@ -519,6 +517,32 @@ mod tests {
             loaded: true,
             ..Brief::default()
         }
+    }
+
+    #[test]
+    fn headlines_are_read_only_content_rather_than_controls() {
+        let mut brief = ready();
+        brief.stories = vec![Story {
+            title: "A headline".into(),
+            site: "example.org".into(),
+        }];
+
+        let screen = brief.screen();
+        assert!(screen
+            .nodes
+            .iter()
+            .any(|node| matches!(node, Node::Text { text, .. } if text == "1. A headline")));
+        assert!(screen
+            .nodes
+            .iter()
+            .any(|node| matches!(node, Node::Secondary { text, .. } if text == "example.org")));
+        assert!(
+            screen
+                .nodes
+                .iter()
+                .all(|node| !matches!(node, Node::Rows { .. })),
+            "a headline still affords a tap"
+        );
     }
 
     fn refreshing(context: &mut Context) -> (Brief, TaskId, Vec<Command>) {

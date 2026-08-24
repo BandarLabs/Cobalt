@@ -9,7 +9,7 @@ extra steps: the whole point is what happens when you *leave*.
 ![The brief: stories and sources side by side, then the top stories
 numbered](screenshots/brief.png)
 
-*Captured from a Kobo Clara BW over Wi-Fi with `kobo shot --device`.*
+*Captured from a Kobo Elipsa 2E over Wi-Fi with `kobo shot --device`.*
 
 ## What it demonstrates
 
