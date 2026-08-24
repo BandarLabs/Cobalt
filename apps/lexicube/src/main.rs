@@ -781,16 +781,15 @@ fn instructions_screen() -> Screen {
         )
         .section("Scoring")
         .text(
-            "A word scores its letter count minus two: one point for a \
-             three-letter word, and one more for every letter after that.",
+            "One point for a three-letter word, and one more for every \
+             letter beyond that. Qu counts as two letters, and a plural is \
+             its own word, found and scored beside its singular.",
         )
         .facts([
-            ("3 letters", "1 point"),
-            ("4 letters", "2 points"),
-            ("5 letters", "3 points"),
-            ("Every letter after", "1 more point"),
-            ("Qu", "counts as 2 letters"),
-            ("Plurals", "their own word: bird 2, birds 3"),
+            ("cat", "1 point"),
+            ("bird", "2 points"),
+            ("birds", "3 points, its own word beside bird"),
+            ("quiz", "2 points, because Qu is two letters"),
         ])
         .build()
 }
@@ -1112,5 +1111,56 @@ mod tests {
         assert_eq!(timecode(180), "03:00");
         assert_eq!(timecode(61), "01:01");
         assert_eq!(timecode(0), "00:00");
+    }
+
+    /// The button bar is anchored to the foot of the panel, not hung under
+    /// the board, so it holds one position as the game moves between phases
+    /// and a thumb that learned where Pause lives keeps finding it there.
+    #[test]
+    fn the_button_bar_holds_one_position_across_every_phase() {
+        let libra = DisplayMetrics {
+            width: 1264,
+            height: 1680,
+            pixels_per_inch: 300,
+            text_scale: TextScale::Default,
+        };
+        let mut app = App {
+            board: shake(&mut Rng(7)),
+            picture: Some(kobo_sdk::TilePicture::new(
+                kobo_sdk::PictureHandle(1),
+                board_art::BOARD_EDGE,
+                board_art::BOARD_EDGE,
+            )),
+            hidden_picture: Some(kobo_sdk::TilePicture::new(
+                kobo_sdk::PictureHandle(2),
+                board_art::BOARD_EDGE,
+                board_art::BOARD_EDGE,
+            )),
+            paused_banner: Some(kobo_sdk::TilePicture::new(
+                kobo_sdk::PictureHandle(3),
+                420,
+                90,
+            )),
+            ..App::default()
+        };
+        let mut positions = Vec::new();
+        for phase in [Phase::Ready, Phase::Playing, Phase::Paused, Phase::Finished] {
+            app.phase = phase;
+            let layout = app.game_screen().layout_with(&libra, &Chrome::default());
+            let bar = layout
+                .rect_of_action(action_id("instructions"))
+                .unwrap_or_else(|| panic!("How to play is missing at {phase:?}"));
+            positions.push((phase, bar.y));
+            assert!(
+                bar.y + bar.height >= libra.height - libra.height / 10,
+                "the bar floats at {phase:?}: bottom {} of {}",
+                bar.y + bar.height,
+                libra.height
+            );
+        }
+        let first = positions[0].1;
+        for (phase, y) in &positions {
+            assert_eq!(*y, first, "the bar moved at {phase:?}: {positions:?}");
+        }
     }
 }
