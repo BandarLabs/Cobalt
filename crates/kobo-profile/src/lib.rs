@@ -290,6 +290,63 @@ pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     write_ready: true,
 };
 
+pub const CLARA_BW_395: DeviceProfile = DeviceProfile {
+    id: "clara-bw-395",
+    model: "Kobo Clara BW",
+    device_code: 395,
+    device_tree_model: "MediaTek MT8110 TPV board",
+    compatible_fragments: &["mediatek,mt8110", "mediatek,mt8512"],
+    framebuffer_id: "hwtcon",
+    framebuffer_controller: FramebufferController::Hwtcon,
+    width: 1072,
+    height: 1448,
+    pixels_per_inch: 300,
+    virtual_width: 1072,
+    virtual_height: 1448,
+    x_offset: 0,
+    y_offset: 0,
+    bits_per_pixel: 32,
+    grayscale: 0,
+    stride: 4288,
+    memory_length: 6_243_328,
+    framebuffer_kind: 0,
+    framebuffer_visual: 2,
+    rotation: 3,
+    red: Bitfield {
+        offset: 0,
+        length: 8,
+        msb_right: 0,
+    },
+    green: Bitfield {
+        offset: 8,
+        length: 8,
+        msb_right: 0,
+    },
+    blue: Bitfield {
+        offset: 16,
+        length: 8,
+        msb_right: 0,
+    },
+    alpha: Bitfield {
+        offset: 24,
+        length: 8,
+        msb_right: 0,
+    },
+    touch_transform: TouchTransform::TransposeMirrorX,
+    reference_rotation: 3,
+    verified_rotations: &[3],
+    geometry_rule: GeometryRule::Fixed,
+    touch_name: "cyttsp5_mt",
+    touch_x_min: 0,
+    touch_x_max: 1447,
+    touch_y_min: 0,
+    touch_y_max: 1071,
+    serial_prefix: "P365",
+    firmware_versions: &["4.45.23697"],
+    kernel_release: "4.9.77",
+    write_ready: true,
+};
+
 /// The Kobo Clara HD, added upstream without i.MX6 hardware to test on.
 ///
 /// Its constants satisfy the [`GeometryRule::MxcEpdcV2`] derivation exactly
@@ -503,7 +560,7 @@ pub const LIBRA_2_388: DeviceProfile = DeviceProfile {
 };
 
 pub const SUPPORTED_PROFILES: &[&DeviceProfile] =
-    &[&CLARA_BW_391, &CLARA_HD_376, &ELIPSA_2E_389, &LIBRA_2_388];
+    &[&CLARA_BW_391, &CLARA_BW_395, &CLARA_HD_376, &ELIPSA_2E_389, &LIBRA_2_388];
 
 pub const WRITE_EVIDENCE_PENDING: &str =
     "owner-attended display, touch, exit, and recovery evidence is incomplete";
