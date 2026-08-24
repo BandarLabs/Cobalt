@@ -550,7 +550,9 @@ impl App {
     }
 
     fn game_screen(&self) -> Screen {
-        let mut screen = ScreenBuilder::new("lexicube").top_bar("Lexicube");
+        let mut screen = ScreenBuilder::new("lexicube")
+            .top_bar("Lexicube")
+            .top_bar_action("exit", "Exit");
         // The clock is read mid-game from arm's length, so while the game
         // runs it is set as the screen's display type rather than a
         // secondary line.
@@ -729,6 +731,11 @@ impl KoboApp for App {
             self.view = View::Instructions;
         } else if action == action_id("back") {
             self.view = View::Game;
+        } else if action == action_id("exit") {
+            // Hands control back to whatever launched the app: the launcher,
+            // or the end of the session when the app was presented alone.
+            context.exit();
+            return;
         } else {
             return;
         }
