@@ -11,9 +11,9 @@
 //!
 //! The dice lie rotated the way they landed, as on the table. Text cells
 //! only draw upright, so the board is rendered as one picture: outlined
-//! tiles, each letter rasterized from the platform's own display face and
-//! turned in quarter turns. The face is Atkinson Hyperlegible, whose letter
-//! forms keep a turned N from reading as a Z.
+//! tiles, each letter rasterized and turned in quarter turns. The letters
+//! are set in a bold serif, as the plastic dice are printed — the serifs
+//! are what tell a turned N from a Z.
 
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
@@ -53,6 +53,9 @@ const GAME_SECONDS: u32 = 3 * 60;
 const MAX_SUGGESTIONS: usize = 12;
 /// Below this a word scores nothing at the table, so it is not worth checking.
 const MIN_WORD_LETTERS: usize = 3;
+/// The development shortcut's label, named once so the link range that makes
+/// it tappable can never disagree with the words it covers.
+const DEV_END_LABEL: &str = "tap to end the round (dev)";
 
 /// Every word SOWPODS accepts, one per line, embedded so the answer needs no
 /// radio. Parsed once, on the first lookup rather than at launch, so starting
@@ -178,6 +181,10 @@ mod board_art {
     /// tests pin that the two never drift apart.
     pub const BOARD_PX: usize = 800;
     pub const BOARD_EDGE: u32 = 800;
+    /// The dice face: a bold serif, as the plastic dice are printed, whose
+    /// serifs tell a turned N from a Z. `DejaVu Serif`, under the Bitstream
+    /// Vera licence beside it in `fonts/LICENSE-DejaVu.txt`.
+    const SERIF_FONT: &[u8] = include_bytes!("../fonts/DejaVuSerif-Bold.ttf");
     const TILE_GAP: usize = 12;
     const TILE_PX: usize = (BOARD_PX - (BOARD_SIDE + 1) * TILE_GAP) / BOARD_SIDE;
     const BORDER_PX: usize = 3;
@@ -283,9 +290,13 @@ mod board_art {
         board: &[&'static str; BOARD_CELLS],
         turns: &[u8; BOARD_CELLS],
     ) -> Option<Vec<u8>> {
-        let font =
-            fontdue::Font::from_bytes(kobo_text::DISPLAY_FONT, fontdue::FontSettings::default())
-                .ok()?;
+        let font = fontdue::Font::from_bytes(SERIF_FONT, fontdue::FontSettings::default())
+            .or_else(|_| {
+                // The platform's own display face, so a damaged serif file
+                // costs the board its look rather than its letters.
+                fontdue::Font::from_bytes(kobo_text::DISPLAY_FONT, fontdue::FontSettings::default())
+            })
+            .ok()?;
         let mut grey = vec![WHITE; BOARD_PX * BOARD_PX];
         for cell in 0..BOARD_CELLS {
             let row = cell / BOARD_SIDE;
@@ -572,10 +583,15 @@ impl App {
             .top_bar("Lexicube")
             .top_bar_action("exit", "Exit");
         // The clock is read mid-game from arm's length, so while the game
-        // runs it is set as the screen's display type rather than a
-        // secondary line.
+        // runs it is set at title size: larger than a secondary line, lighter
+        // on the panel than full display type.
         screen = if self.phase == Phase::Playing {
-            screen.heading(self.status())
+            // A development shortcut under the clock: ends the round two
+            // ticks after the tap. Strip or gate this line before the app is
+            // submitted to the store.
+            screen
+                .heading_at_level(2, self.status())
+                .text_linking(DEV_END_LABEL, [("dev-end", 0, DEV_END_LABEL.len())])
         } else {
             screen.secondary(self.status())
         };
@@ -763,6 +779,10 @@ impl KoboApp for App {
             self.view = View::Instructions;
         } else if action == action_id("back") {
             self.view = View::Game;
+        } else if action == action_id("dev-end") {
+            if self.phase == Phase::Playing {
+                self.elapsed = GAME_SECONDS.saturating_sub(2);
+            }
         } else if action == action_id("exit") {
             // Hands control back to whatever launched the app: the launcher,
             // or the end of the session when the app was presented alone.
