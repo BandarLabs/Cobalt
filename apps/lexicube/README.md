@@ -8,6 +8,12 @@ they can find on their own paper, exactly as they would around a physical
 tray. The app supplies the shake, the clock, and the part every table wants
 when the pens go down — settling whether a word is real.
 
+| Mid-game | Checking a word |
+| --- | --- |
+| ![Sixteen serif letter dice lying rotated on a 4x4 board under a countdown clock](screenshots/board.png) | ![A checked word marked valid, with two offline WordNet definitions above the keyboard](screenshots/lookup.png) |
+
+*Captured from a Kobo Libra Colour with `kobo shot --device`.*
+
 ## Playing
 
 Shake with **New game**. The dice land rotated, as plastic dice do, drawn in a
