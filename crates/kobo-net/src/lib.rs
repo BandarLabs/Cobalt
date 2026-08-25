@@ -592,7 +592,7 @@ fn decode_chunked(mut body: &[u8]) -> Result<Vec<u8>, TaskError> {
 /// past the ceiling is [`TaskError::TooLarge`], and a refusal by the server is
 /// [`TaskError::NotFound`].
 pub fn fetch(url: &str, max_bytes: u32) -> Result<Vec<u8>, TaskError> {
-    get(url, None, max_bytes, &[])
+    get(url, None, max_bytes, None, &[])
 }
 
 /// Fetches `url` starting `offset` bytes in, returning at most `max_bytes`.
@@ -611,6 +611,9 @@ pub fn fetch(url: &str, max_bytes: u32) -> Result<Vec<u8>, TaskError> {
 /// the ceiling then reports it as too large rather than handing back the
 /// beginning of the book labelled as the middle.
 ///
+/// `credential`, when present, is the runtime-owned secret header, kept apart
+/// so redirects cannot mistake it for an ordinary application header.
+///
 /// `headers` are the non-secret headers the application asked for, already
 /// checked by the runtime against the ones it owns itself: an application
 /// cannot be one of these headers, because `offset` is the only thing
@@ -624,6 +627,7 @@ pub fn fetch_from(
     url: &str,
     offset: u32,
     max_bytes: u32,
+    credential: Option<(&str, &str)>,
     headers: &[(&str, &str)],
 ) -> Result<Vec<u8>, TaskError> {
     // The last gate before the socket, and the same one `post` applies to its
@@ -632,13 +636,14 @@ pub fn fetch_from(
     let valid_header = |name: &str, value: &str| {
         name.parse::<http::HeaderName>().is_ok() && value.parse::<http::HeaderValue>().is_ok()
     };
-    if headers
-        .iter()
-        .any(|(name, value)| !valid_header(name, value))
+    if credential.is_some_and(|(name, value)| !valid_header(name, value))
+        || headers
+            .iter()
+            .any(|(name, value)| !valid_header(name, value))
     {
         return Err(TaskError::Denied);
     }
-    get(url, Some(offset), max_bytes, headers)
+    get(url, Some(offset), max_bytes, credential, headers)
 }
 
 /// The one implementation behind [`fetch`] and [`fetch_from`].
@@ -646,6 +651,7 @@ fn get(
     url: &str,
     offset: Option<u32>,
     max_bytes: u32,
+    credential: Option<(&str, &str)>,
     headers: &[(&str, &str)],
 ) -> Result<Vec<u8>, TaskError> {
     let mut target = url.to_string();
@@ -656,6 +662,7 @@ fn get(
             &address,
             &Method::Get {
                 offset,
+                credential,
                 headers: forwarded,
             },
             max_bytes,
@@ -671,7 +678,7 @@ fn get(
             Response::Redirect(location) => {
                 let next = resolve_redirect(&address, &location)?;
                 let next_address = parse(&next)?;
-                forwarded = redirect_headers(&address, &next_address, forwarded)?;
+                forwarded = redirect_headers(&address, &next_address, credential, forwarded)?;
                 target = next;
             }
         }
@@ -680,17 +687,15 @@ fn get(
 }
 
 /// Keeps ordinary application headers on same-origin redirects. Any redirect
-/// carrying an authorization credential is denied: the target cannot be
-/// re-authorized after the server chooses it, even when it has the same origin.
+/// carrying a runtime credential is denied: the target cannot be re-authorized
+/// after the server chooses it, even when it has the same origin.
 fn redirect_headers<'a>(
     current: &Address,
     next: &Address,
+    credential: Option<(&str, &str)>,
     headers: &'a [(&'a str, &'a str)],
 ) -> Result<&'a [(&'a str, &'a str)], TaskError> {
-    if headers
-        .iter()
-        .any(|(name, _)| name.eq_ignore_ascii_case("authorization"))
-    {
+    if credential.is_some() {
         return Err(TaskError::Denied);
     }
     if next.host.eq_ignore_ascii_case(&current.host) && next.port == current.port {
@@ -705,6 +710,9 @@ enum Method<'a> {
         /// Where to start reading, as a byte offset, or `None` to ask for the
         /// whole document with no range header at all.
         offset: Option<u32>,
+        /// The runtime-owned credential, kept separate from application
+        /// headers so redirect handling retains its provenance.
+        credential: Option<(&'a str, &'a str)>,
         /// Further headers the request needs, none of them secret and none of
         /// them `Range`: that one is derived from `offset` alone, in [`head`],
         /// so an application cannot widen or move the piece it was granted.
@@ -838,7 +846,11 @@ fn head(address: &Address, method: &Method<'_>, max_bytes: u32) -> String {
         "{verb} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: {connection}\r\nAccept-Encoding: {encoding}\r\nUser-Agent: kobo-runtime\r\n"
     );
     match method {
-        Method::Get { offset, headers } => {
+        Method::Get {
+            offset,
+            credential,
+            headers,
+        } => {
             // Closed at both ends, because an open-ended range invites the
             // server to send the rest of a book that does not fit. Sent for
             // the first piece as well as later ones: a request for the opening
@@ -848,6 +860,9 @@ fn head(address: &Address, method: &Method<'_>, max_bytes: u32) -> String {
                 let last = u64::from(*start) + u64::from(max_bytes) - 1;
                 write!(head, "Range: bytes={start}-{last}\r\n")
                     .expect("writing to a String cannot fail");
+            }
+            if let Some((name, value)) = credential {
+                write!(head, "{name}: {value}\r\n").expect("writing to a String cannot fail");
             }
             // Written after `Range`, and never able to replace it: `headers`
             // here has already been through the same reserved-name gate
@@ -1472,7 +1487,7 @@ mod tests {
     }
 
     #[test]
-    fn authorization_headers_are_refused_on_any_redirect() {
+    fn runtime_credentials_are_refused_on_any_redirect() {
         let zotero_current =
             super::parse("https://api.zotero.org/users/123/items/ABCD2345?format=json")
                 .expect("Zotero item route");
@@ -1484,17 +1499,22 @@ mod tests {
         let other_next =
             super::parse("https://api.openai.com/v1/responses").expect("same-origin OpenAI route");
         let other_origin = super::parse("https://attacker.invalid/collect").expect("other origin");
-        let credential = [("Authorization", "Bearer private")];
-
-        for (current, next) in [
-            (&zotero_current, &zotero_next),
-            (&other_current, &other_next),
-            (&other_current, &other_origin),
+        for credential in [
+            ("Authorization", "Bearer private"),
+            ("x-api-key", "private"),
+            ("x-goog-api-key", "private"),
+            ("xi-api-key", "private"),
         ] {
-            assert_eq!(
-                super::redirect_headers(current, next, &credential),
-                Err(TaskError::Denied)
-            );
+            for (current, next) in [
+                (&zotero_current, &zotero_next),
+                (&other_current, &other_next),
+                (&other_current, &other_origin),
+            ] {
+                assert_eq!(
+                    super::redirect_headers(current, next, Some(credential), &[]),
+                    Err(TaskError::Denied)
+                );
+            }
         }
     }
 
@@ -1508,11 +1528,11 @@ mod tests {
         let ordinary = [("Accept", "application/json")];
 
         assert_eq!(
-            super::redirect_headers(&current, &same_origin, &ordinary),
+            super::redirect_headers(&current, &same_origin, None, &ordinary),
             Ok(&ordinary[..])
         );
         assert_eq!(
-            super::redirect_headers(&current, &other_origin, &ordinary),
+            super::redirect_headers(&current, &other_origin, None, &ordinary),
             Ok(&[][..])
         );
     }
@@ -1700,6 +1720,7 @@ mod tests {
             &address,
             &Method::Get {
                 offset: None,
+                credential: None,
                 headers: &[]
             },
             1024
@@ -1709,6 +1730,7 @@ mod tests {
             &address,
             &Method::Get {
                 offset: Some(1024),
+                credential: None,
                 headers: &[]
             },
             1024
@@ -1753,6 +1775,7 @@ mod tests {
             &book(),
             &Method::Get {
                 offset: Some(0),
+                credential: None,
                 headers: &[],
             },
             262_144,
@@ -1769,6 +1792,7 @@ mod tests {
             &book(),
             &Method::Get {
                 offset: Some(262_144),
+                credential: None,
                 headers: &[],
             },
             262_144,
@@ -1787,6 +1811,7 @@ mod tests {
             &book(),
             &Method::Get {
                 offset: None,
+                credential: None,
                 headers: &[],
             },
             262_144,
@@ -1888,6 +1913,7 @@ mod tests {
             &address,
             &Method::Get {
                 offset: None,
+                credential: None,
                 headers: &[],
             },
             1024,
@@ -2028,6 +2054,7 @@ mod tests {
             &address,
             &Method::Get {
                 offset: None,
+                credential: None,
                 headers: &[],
             },
             512 * 1024,
@@ -2060,6 +2087,7 @@ mod tests {
             &address,
             &Method::Get {
                 offset: Some(262_144),
+                credential: None,
                 headers: &[],
             },
             262_144,
@@ -2237,7 +2265,7 @@ mod tests {
         // and nothing on this side could see it: the failure appears as a 401
         // from the far end.
         let address = parse("https://api.anthropic.com/v1/messages").expect("a URL");
-        let head = head(
+        let post_head = head(
             &address,
             &Method::Post {
                 body: b"{}",
@@ -2247,10 +2275,34 @@ mod tests {
             },
             1024,
         );
-        assert!(head.contains("x-api-key: not-a-real-key\r\n"), "{head}");
-        assert!(head.contains("anthropic-version: 2023-06-01\r\n"), "{head}");
-        assert!(!head.contains('*'), "{head}");
-        assert!(head.contains("Content-Length: 2\r\n"), "{head}");
+        assert!(
+            post_head.contains("x-api-key: not-a-real-key\r\n"),
+            "{post_head}"
+        );
+        assert!(
+            post_head.contains("anthropic-version: 2023-06-01\r\n"),
+            "{post_head}"
+        );
+        assert!(!post_head.contains('*'), "{post_head}");
+        assert!(post_head.contains("Content-Length: 2\r\n"), "{post_head}");
+
+        let fetch_head = head(
+            &address,
+            &Method::Get {
+                offset: None,
+                credential: Some(("x-api-key", "not-a-real-key")),
+                headers: &[("anthropic-version", "2023-06-01")],
+            },
+            1024,
+        );
+        assert!(
+            fetch_head.contains("x-api-key: not-a-real-key\r\n"),
+            "{fetch_head}"
+        );
+        assert!(
+            fetch_head.contains("anthropic-version: 2023-06-01\r\n"),
+            "{fetch_head}"
+        );
     }
 
     #[test]

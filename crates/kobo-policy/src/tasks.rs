@@ -61,11 +61,13 @@ struct Running {
 ///
 /// It is a named type because the runtime, its builder and the worker all
 /// mention it, and spelling the whole signature in three places invites them
-/// to drift apart. The fourth argument is the non-secret headers the
-/// application asked for, already checked against the ones the runtime owns,
-/// the same guarantee `Poster` makes for `Post`.
-pub type Fetcher =
-    dyn Fn(&str, u32, u32, &[(&str, &str)]) -> Result<Vec<u8>, TaskError> + Send + Sync;
+/// to drift apart. The fourth argument is the resolved runtime credential,
+/// kept separate so the backend retains its provenance; the fifth is the
+/// application's non-secret headers, already checked against the ones the
+/// runtime owns. These are the same guarantees `Poster` makes for `Post`.
+pub type Fetcher = dyn Fn(&str, u32, u32, Option<(&str, &str)>, &[(&str, &str)]) -> Result<Vec<u8>, TaskError>
+    + Send
+    + Sync;
 
 /// The host-provided implementation a `Post` task runs through.
 ///
@@ -107,13 +109,6 @@ pub fn header_is_the_applications_to_set(name: &str) -> bool {
     !RESERVED_HEADERS.contains(&name.to_ascii_lowercase().as_str())
 }
 
-/// Checks a task's headers against the ones the runtime owns and, if none of
-/// them are reserved, hands back the pairs a network backend can use.
-///
-/// Shared by `Fetch` and `Post` rather than duplicated, because the two
-/// checks have to keep agreeing: `Range` is reserved for exactly the reason
-/// `Authorization` is, and a fork here is how one of them would quietly stop
-/// enforcing it.
 /// Turns a named credential into the header it will be sent as.
 ///
 /// The one place that has both the naming convention and the value, so nothing
@@ -154,6 +149,13 @@ fn resolved_credential(
     )))
 }
 
+/// Checks a task's headers against the ones the runtime owns and, if none of
+/// them are reserved, hands back the pairs a network backend can use.
+///
+/// Shared by `Fetch` and `Post` rather than duplicated, because the two
+/// checks have to keep agreeing: `Range` is reserved for exactly the reason
+/// `Authorization` is, and a fork here is how one of them would quietly stop
+/// enforcing it.
 fn own_headers(headers: &[kobo_protocol::Header]) -> Result<Vec<(&str, &str)>, TaskError> {
     if headers
         .iter()
@@ -568,7 +570,7 @@ fn run_fetch(
     };
     // `Range` and the runtime-owned credential cannot be replaced by app
     // headers; `own_headers` applies the same gate used for POST.
-    let mut extra = match own_headers(headers) {
+    let extra = match own_headers(headers) {
         Ok(extra) => extra,
         Err(error) => return TaskOutcome::Failed(error),
     };
@@ -582,10 +584,15 @@ fn run_fetch(
         Ok(credential) => credential,
         Err(error) => return TaskOutcome::Failed(error),
     };
-    if let Some((name, value)) = &resolved {
-        extra.push((name.as_str(), value.as_str()));
-    }
-    match fetch(url, offset, max_bytes.min(MAX_TASK_BYTES_U32), &extra) {
+    match fetch(
+        url,
+        offset,
+        max_bytes.min(MAX_TASK_BYTES_U32),
+        resolved
+            .as_ref()
+            .map(|(name, value)| (name.as_str(), value.as_str())),
+        &extra,
+    ) {
         Ok(bytes) => TaskOutcome::Completed(bytes),
         Err(error) => TaskOutcome::Failed(error),
     }
@@ -905,7 +912,9 @@ mod tests {
     fn a_granted_fetch_reaches_the_backend() {
         let mut runner = TaskRunner::simulated(temp_root("fetch"))
             .with_capabilities([Capability::Network])
-            .with_fetch(Arc::new(|url: &str, _, _, _| Ok(url.as_bytes().to_vec())));
+            .with_fetch(Arc::new(|url: &str, _, _, _, _| {
+                Ok(url.as_bytes().to_vec())
+            }));
         runner
             .submit(
                 TaskId(1),
@@ -929,7 +938,7 @@ mod tests {
     fn a_fetch_header_reaches_the_backend_the_application_asked_for_it_by() {
         let mut runner = TaskRunner::simulated(temp_root("fetch-headers"))
             .with_capabilities([Capability::Network])
-            .with_fetch(Arc::new(|_, _, _, headers: &[(&str, &str)]| {
+            .with_fetch(Arc::new(|_, _, _, _, headers: &[(&str, &str)]| {
                 Ok(headers
                     .iter()
                     .map(|(name, value)| format!("{name}: {value}"))
@@ -964,7 +973,7 @@ mod tests {
         // outright rather than sent with two.
         let mut runner = TaskRunner::simulated(temp_root("fetch-range"))
             .with_capabilities([Capability::Network])
-            .with_fetch(Arc::new(|_, _, _, _| Ok(b"should not run".to_vec())));
+            .with_fetch(Arc::new(|_, _, _, _, _| Ok(b"should not run".to_vec())));
         runner
             .submit(
                 TaskId(1),
@@ -1152,7 +1161,11 @@ mod tests {
                     && url == "https://example.invalid/items"
                     && usage == CredentialUse::Fetch
             }))
-            .with_fetch(Arc::new(|_, _, _, _| Ok(b"[]".to_vec())))
+            .with_fetch(Arc::new(|_, _, _, credential, headers| {
+                assert_eq!(credential, Some(("x-api-key", "not-a-real-key")));
+                assert!(headers.is_empty());
+                Ok(b"[]".to_vec())
+            }))
             .with_post(Arc::new(|_, _, _, _, _, _| Ok(b"{}".to_vec())));
         runner
             .submit(
@@ -1161,7 +1174,7 @@ mod tests {
                     url: "https://example.invalid/items".into(),
                     offset: 0,
                     max_bytes: 1024,
-                    credential: Some(Credential::bearer("openai")),
+                    credential: Some(Credential::in_header("openai", "x-api-key")),
                     headers: Vec::new(),
                 },
             )
