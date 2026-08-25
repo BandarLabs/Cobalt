@@ -344,7 +344,7 @@ pub const CLARA_BW_395: DeviceProfile = DeviceProfile {
     serial_prefix: "P365",
     firmware_versions: &["4.45.23697"],
     kernel_release: "4.9.77",
-    write_ready: true,
+    write_ready: false,
 };
 
 /// The Kobo Clara HD, added upstream without i.MX6 hardware to test on.
@@ -559,8 +559,13 @@ pub const LIBRA_2_388: DeviceProfile = DeviceProfile {
     write_ready: true,
 };
 
-pub const SUPPORTED_PROFILES: &[&DeviceProfile] =
-    &[&CLARA_BW_391, &CLARA_BW_395, &CLARA_HD_376, &ELIPSA_2E_389, &LIBRA_2_388];
+pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[
+    &CLARA_BW_391,
+    &CLARA_BW_395,
+    &CLARA_HD_376,
+    &ELIPSA_2E_389,
+    &LIBRA_2_388,
+];
 
 pub const WRITE_EVIDENCE_PENDING: &str =
     "owner-attended display, touch, exit, and recovery evidence is incomplete";

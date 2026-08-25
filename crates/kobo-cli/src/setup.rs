@@ -138,7 +138,9 @@ pub fn parse_version(line: &str) -> (String, String) {
 #[must_use]
 pub fn is_kobo_serial(serial: &str) -> bool {
     let bytes = serial.as_bytes();
-    bytes.len() >= 4 && (bytes[0] == b'N' || bytes[0] == b'P') && bytes[1..4].iter().all(u8::is_ascii_digit)
+    bytes.len() >= 4
+        && (bytes[0] == b'N' || bytes[0] == b'P')
+        && bytes[1..4].iter().all(u8::is_ascii_digit)
 }
 
 /// Every place a removable volume is mounted on this operating system.
