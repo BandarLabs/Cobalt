@@ -230,7 +230,7 @@ impl Identity {
 
     /// True when this answer came from something that is recognisably a Kobo.
     ///
-    /// Every Kobo serial begins with an `N` followed by three digits, and no
+    /// Every known Kobo serial begins with an `N` or `P` followed by three digits, and no
     /// other machine on a home network has a `/mnt/onboard/.kobo/version` at
     /// all, so the presence of the file is most of the evidence.
     #[must_use]
@@ -346,6 +346,14 @@ mod tests {
         assert_eq!(identity.firmware, "4.45.23697");
         assert!(identity.is_kobo());
         assert!(identity.summary().contains("Cobalt 0.1.0"));
+    }
+
+    #[test]
+    fn a_p_prefixed_reader_is_recognised_over_the_network() {
+        let identity =
+            Identity::parse("serial=P365410043013\nfirmware=4.45.23697\nmodel=\ncobalt=\n");
+        assert!(identity.is_kobo());
+        assert_eq!(identity.model_code(), "P365");
     }
 
     #[test]

@@ -34,6 +34,9 @@ new app can appear in Store without reinstalling or updating Cobalt.
 > support matrix. See the
 > [device support matrix](docs/DEVICES.md#device-support-matrix) before
 > installing.
+> The 2025 **Kobo Clara BW P365 (device code 395)** hardware refresh is also
+> supported: its measured panel, touch, firmware, and kernel facts match the
+> attended-tested N365 Clara BW.
 > It is an independent project and is not affiliated with Rakuten Kobo.
 
 > [!TIP]
