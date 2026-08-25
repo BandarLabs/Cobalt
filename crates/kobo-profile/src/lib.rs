@@ -597,6 +597,10 @@ pub const LIBRA_COLOUR_390: DeviceProfile = DeviceProfile {
     firmware_versions: &["4.45.23697"],
     kernel_release: "4.9.77",
     write_ready: true,
+    // Off until measured here. The evidence behind the reap is from a Realtek
+    // radio on i.MX6SLL; this is a MediaTek device whose Wi-Fi stack is shared
+    // with Bluetooth and known to behave differently.
+    reap_nickel_supplicant: false,
 };
 
 pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[
@@ -1629,6 +1633,7 @@ mod tests {
                 ("clara-hd-376", false),
                 ("elipsa-2e-389", false),
                 ("libra-2-388", true),
+                ("libra-colour-390", false),
             ]
         );
     }
