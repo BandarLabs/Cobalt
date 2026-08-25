@@ -346,6 +346,7 @@ pub const CLARA_BW_395: DeviceProfile = DeviceProfile {
     firmware_versions: &["4.45.23697"],
     kernel_release: "4.9.77",
     write_ready: false,
+    reap_nickel_supplicant: false,
 };
 
 /// The Kobo Clara HD, added upstream without i.MX6 hardware to test on.
