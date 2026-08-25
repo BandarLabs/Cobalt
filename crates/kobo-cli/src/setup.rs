@@ -132,13 +132,15 @@ pub fn parse_version(line: &str) -> (String, String) {
 
 /// True when a serial is recognisably a Kobo's.
 ///
-/// Every Kobo serial begins with `N` and three digits. This is the same test
+/// Every known Kobo serial begins with `N` or `P` and three digits. This is the same test
 /// [`crate::connect::Identity::is_kobo`] applies over the network, kept
 /// separate because the evidence arrives by a different route.
 #[must_use]
 pub fn is_kobo_serial(serial: &str) -> bool {
     let bytes = serial.as_bytes();
-    bytes.len() >= 4 && bytes[0] == b'N' && bytes[1..4].iter().all(u8::is_ascii_digit)
+    bytes.len() >= 4
+        && (bytes[0] == b'N' || bytes[0] == b'P')
+        && bytes[1..4].iter().all(u8::is_ascii_digit)
 }
 
 /// Every place a removable volume is mounted on this operating system.
@@ -1302,11 +1304,14 @@ mod tests {
     }
 
     #[test]
-    fn only_an_n_and_three_digits_is_a_reader() {
+    fn only_a_known_prefix_and_three_digits_is_a_reader() {
         assert!(is_kobo_serial("N365410043013"));
+        assert!(is_kobo_serial("P365410043013"));
         assert!(!is_kobo_serial("Macintosh HD"));
         assert!(!is_kobo_serial("N36"));
         assert!(!is_kobo_serial("NABC410043013"));
+        assert!(!is_kobo_serial("PABC410043013"));
+        assert!(!is_kobo_serial("Q365410043013"));
     }
 
     #[test]

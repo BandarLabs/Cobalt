@@ -291,6 +291,72 @@ pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     reap_nickel_supplicant: false,
 };
 
+/// The 2025 P365 hardware refresh of the Clara BW. Kobo lists N365 and P365
+/// under the same product; this profile records the distinct device code and
+/// `TPV board` identity reported by the refreshed hardware.
+///
+/// The framebuffer and touch facts were captured by `kobo doctor` on the
+/// owner's P365 running firmware 4.45.23697. They exactly match the N365 panel,
+/// controller, ranges, firmware, and kernel, so the N365 attended display,
+/// touch-direction, exit, and recovery evidence also covers this refresh.
+pub const CLARA_BW_395: DeviceProfile = DeviceProfile {
+    id: "clara-bw-395",
+    model: "Kobo Clara BW",
+    device_code: 395,
+    device_tree_model: "MediaTek MT8110 TPV board",
+    compatible_fragments: &["mediatek,mt8110", "mediatek,mt8512"],
+    framebuffer_id: "hwtcon",
+    framebuffer_controller: FramebufferController::Hwtcon,
+    width: 1072,
+    height: 1448,
+    pixels_per_inch: 300,
+    virtual_width: 1072,
+    virtual_height: 1448,
+    x_offset: 0,
+    y_offset: 0,
+    bits_per_pixel: 32,
+    grayscale: 0,
+    stride: 4288,
+    memory_length: 6_243_328,
+    framebuffer_kind: 0,
+    framebuffer_visual: 2,
+    rotation: 3,
+    red: Bitfield {
+        offset: 0,
+        length: 8,
+        msb_right: 0,
+    },
+    green: Bitfield {
+        offset: 8,
+        length: 8,
+        msb_right: 0,
+    },
+    blue: Bitfield {
+        offset: 16,
+        length: 8,
+        msb_right: 0,
+    },
+    alpha: Bitfield {
+        offset: 24,
+        length: 8,
+        msb_right: 0,
+    },
+    touch_transform: TouchTransform::TransposeMirrorX,
+    reference_rotation: 3,
+    verified_rotations: &[3],
+    geometry_rule: GeometryRule::Fixed,
+    touch_name: "cyttsp5_mt",
+    touch_x_min: 0,
+    touch_x_max: 1447,
+    touch_y_min: 0,
+    touch_y_max: 1071,
+    serial_prefix: "P365",
+    firmware_versions: &["4.45.23697"],
+    kernel_release: "4.9.77",
+    write_ready: true,
+    reap_nickel_supplicant: false,
+};
+
 /// The Kobo Clara HD, added upstream without i.MX6 hardware to test on.
 ///
 /// Its constants satisfy the [`GeometryRule::MxcEpdcV2`] derivation exactly
@@ -624,6 +690,7 @@ pub const LIBRA_COLOUR_390: DeviceProfile = DeviceProfile {
 
 pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[
     &CLARA_BW_391,
+    &CLARA_BW_395,
     &CLARA_HD_376,
     &CLARA_COLOUR_393,
     &ELIPSA_2E_389,
@@ -1573,8 +1640,8 @@ mod tests {
 
     use super::{
         identify_profile, Bitfield, DeviceProfile, DeviceSnapshot, FramebufferSnapshot,
-        IdentitySnapshot, Readiness, TouchSnapshot, CLARA_BW_391, CLARA_COLOUR_393, CLARA_HD_376,
-        ELIPSA_2E_389, LIBRA_2_388, LIBRA_COLOUR_390, WRITE_EVIDENCE_PENDING,
+        IdentitySnapshot, Readiness, TouchSnapshot, CLARA_BW_391, CLARA_BW_395, CLARA_COLOUR_393,
+        CLARA_HD_376, ELIPSA_2E_389, LIBRA_2_388, LIBRA_COLOUR_390, WRITE_EVIDENCE_PENDING,
     };
 
     /// The Libra 2 as `kobo doctor` read it from a cold boot into Nickel, in
@@ -1662,6 +1729,7 @@ mod tests {
             declared,
             [
                 ("clara-bw-391", false),
+                ("clara-bw-395", false),
                 ("clara-hd-376", false),
                 ("clara-colour-393", false),
                 ("elipsa-2e-389", false),
@@ -2444,6 +2512,64 @@ mod tests {
         let report = CLARA_BW_391.validate(&DeviceSnapshot::default());
         assert_eq!(report.readiness, Readiness::Rejected);
         assert!(!report.mismatches.is_empty());
+    }
+
+    /// Exact values reported by `kobo doctor` on the owner's P365 refresh.
+    /// Kobo identifies this as the same Clara BW product, and every measured
+    /// panel, touch, firmware, and kernel fact matches the attended N365.
+    #[test]
+    fn clara_bw_395_doctor_snapshot_is_write_ready() {
+        let red = Bitfield {
+            offset: 0,
+            length: 8,
+            msb_right: 0,
+        };
+        let snapshot = DeviceSnapshot {
+            compatible: vec!["mediatek,mt8110".into(), "mediatek,mt8512".into()],
+            model: Some("MediaTek MT8110 TPV board".into()),
+            framebuffer: Some(FramebufferSnapshot {
+                id: "hwtcon".into(),
+                width: 1072,
+                height: 1448,
+                virtual_width: 1072,
+                virtual_height: 1448,
+                x_offset: 0,
+                y_offset: 0,
+                bits_per_pixel: 32,
+                grayscale: 0,
+                stride: 4288,
+                memory_length: 6_243_328,
+                kind: 0,
+                visual: 2,
+                rotation: 3,
+                red,
+                green: Bitfield { offset: 8, ..red },
+                blue: Bitfield { offset: 16, ..red },
+                alpha: Bitfield { offset: 24, ..red },
+            }),
+            touch: Some(TouchSnapshot {
+                path: "/dev/input/event1".into(),
+                name: "cyttsp5_mt".into(),
+                x_min: 0,
+                x_max: 1447,
+                y_min: 0,
+                y_max: 1071,
+            }),
+            identity: IdentitySnapshot {
+                serial_prefix: Some("P365".into()),
+                firmware_version: Some("4.45.23697".into()),
+                kernel_release: Some("4.9.77".into()),
+                device_code: Some(395),
+            },
+        };
+        let report = CLARA_BW_395.validate(&snapshot);
+        assert_eq!(report.readiness, Readiness::WriteReady);
+        assert!(report.mismatches.is_empty(), "{:?}", report.mismatches);
+        assert!(report.write_blockers.is_empty());
+        assert_eq!(
+            super::identify_profile(&snapshot).map(|profile| profile.id),
+            Some("clara-bw-395")
+        );
     }
 
     #[test]

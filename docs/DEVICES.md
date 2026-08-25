@@ -12,6 +12,7 @@ and touch profile. A matching model name alone is not sufficient.
 | Device | Exact tested identity | Evidence status | Installation status |
 |---|---|---|---|
 | Kobo Clara BW | N365, code 391, firmware 4.45.23697, kernel 4.9.77 | Read-only probe and owner-attended display, touch, exit, and recovery tests complete | Fully tested |
+| Kobo Clara BW (2025 refresh) | P365, code 395, firmware 4.45.23697, kernel 4.9.77 | Read-only doctor matches the N365 panel, touch controller and ranges, firmware, and kernel exactly; write evidence inherited from the same official Clara BW product | Supported |
 | Kobo Clara Colour | N367, code 393, firmware 4.45.23697, kernel 4.9.77 | Read-only doctor match and owner-attended Cobalt launcher and application testing complete on the physical device. The measured framebuffer geometry, HWTCON interface, and touch controller match Clara BW; the device instead has a Kaleido 3 panel and dual-core MT8113T. Evidence and screenshots on [issue #30](https://github.com/BandarLabs/Cobalt/issues/30) and [PR #38](https://github.com/BandarLabs/Cobalt/pull/38) | Fully tested |
 | Kobo Clara HD | N249, code 376, firmware 4.38.23684 or 4.38.23697, kernel 4.1.15-00136-g12655eaaef89 | Read-only probe and owner-attended display, touch, exit, sandbox, and recovery tests complete | Fully tested |
 | Kobo Elipsa 2E | N605, code 389, firmware 4.38.23697, kernel 4.9.77 | Read-only probe and owner-attended display, touch, exit, suspend/resume, and recovery tests complete | Fully tested |
