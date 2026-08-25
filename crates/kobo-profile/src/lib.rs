@@ -530,9 +530,11 @@ pub const LIBRA_2_388: DeviceProfile = DeviceProfile {
 /// `TransposeMirrorY`, not the Libra 2's plain `Transpose`, despite the Libra
 /// 2 being the physically closer device — same panel dimensions, same Elan
 /// controller, buttons on the right at the same rotation — which is one more
-/// reason this field is measured rather than inferred. `write_ready` stays
-/// false until the attended evidence in the device support matrix has been
-/// reviewed.
+/// reason this field is measured rather than inferred. `write_ready` was set
+/// after the attended evidence in the device support matrix — the four
+/// bounded display stages, wait timing, guardian restoration, an end-to-end
+/// tap, page-button presses, and a clean stock-reader restart — was reviewed
+/// upstream on PR #49.
 pub const LIBRA_COLOUR_390: DeviceProfile = DeviceProfile {
     id: "libra-colour-390",
     model: "Kobo Libra Colour",
@@ -587,7 +589,7 @@ pub const LIBRA_COLOUR_390: DeviceProfile = DeviceProfile {
     serial_prefix: "N428",
     firmware_versions: &["4.45.23697"],
     kernel_release: "4.9.77",
-    write_ready: false,
+    write_ready: true,
 };
 
 pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[
@@ -2176,24 +2178,24 @@ mod tests {
         }
     }
 
-    /// The measured device matches the candidate profile, and matches it
-    /// read-only: the geometry and identity are exact, and the one blocker is
-    /// the pending attended evidence. This is the state stage 2 of the porting
-    /// process describes, and the assertion on the blocker is what has to
-    /// change — deliberately, here — when `write_ready` is ever set.
+    /// The measured device matches its profile write-ready: the geometry and
+    /// identity are exact, and the attended evidence — display stages, touch,
+    /// buttons, exit, and recovery — was reviewed upstream on PR #49 before
+    /// `write_ready` was set.
     #[test]
-    fn libra_colour_doctor_snapshot_matches_read_only() {
+    fn libra_colour_doctor_snapshot_is_write_ready() {
         let snapshot = measured_libra_colour();
         let report = LIBRA_COLOUR_390.validate(&snapshot);
         assert!(report.mismatches.is_empty(), "{:?}", report.mismatches);
-        assert_eq!(report.readiness, Readiness::ReadOnlyMatched);
-        assert_eq!(report.write_blockers, vec![WRITE_EVIDENCE_PENDING]);
+        assert_eq!(report.readiness, Readiness::WriteReady);
         assert!(
-            LIBRA_COLOUR_390
-                .write_identity_blockers(&snapshot)
-                .is_empty(),
-            "identity is exact; only the evidence is pending"
+            report.write_blockers.is_empty(),
+            "{:?}",
+            report.write_blockers
         );
+        assert!(LIBRA_COLOUR_390
+            .write_identity_blockers(&snapshot)
+            .is_empty());
         assert_eq!(
             super::identify_profile(&snapshot).map(|profile| profile.id),
             Some("libra-colour-390")
