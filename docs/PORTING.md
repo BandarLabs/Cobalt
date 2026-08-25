@@ -2,8 +2,9 @@
 
 Part of [Cobalt](../README.md).
 
-Cobalt selects a device profile at runtime. The Clara BW, Elipsa 2E, and
-Clara HD profiles are fully hardware-tested at their recorded identity and
+Cobalt selects a device profile at runtime. The Clara BW, Elipsa 2E,
+Clara HD, Libra 2, and Libra Colour profiles are fully hardware-tested at
+their recorded identity and
 firmware boundaries. The current status and exact boundaries are recorded in
 the [device support matrix](DEVICES.md#device-support-matrix).
 
@@ -129,6 +130,19 @@ framebuffer: id=mxc_epdc_fb 1072x1448 virtual=1088x1536 offset=0,0 bpp=32 ...
 identity: model=N249 firmware=4.38.23697 kernel=4.1.15-00136-g12655eaaef89 device-code=376
 touch: cyttsp5_mt X=0..1447 Y=0..1071
 result: write ready
+```
+
+The Libra Colour probe, from a device whose profile is registered but whose
+attended evidence is still pending, reads:
+
+```
+profile: libra-colour-390 (Kobo Libra Colour)
+device-tree compatible: mediatek,mt8110, mediatek,mt8512
+framebuffer: id=hwtcon 1264x1680 virtual=1264x1680 offset=0,0 bpp=32 ...
+identity: model=N428 firmware=4.45.23697 kernel=4.9.77 device-code=390
+touch: Elan Touchscreen at /dev/input/event1 X=0..1680 Y=0..1264
+result: read-only matched
+write blocker: owner-attended display, touch, exit, and recovery evidence is incomplete
 ```
 
 Every field a profile needs is on that page. The doctor compares the probe with

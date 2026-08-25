@@ -4,6 +4,13 @@
 
 <p align="center"><strong>Apps and an SDK for Kobo e-readers.</strong></p>
 
+<p align="center">
+  <a href="https://github.com/BandarLabs/Cobalt/actions/workflows/ci.yml"><img src="https://github.com/BandarLabs/Cobalt/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://github.com/BandarLabs/Cobalt/actions/workflows/apps.yml"><img src="https://github.com/BandarLabs/Cobalt/actions/workflows/apps.yml/badge.svg?branch=main" alt="Publish apps"></a>
+  <a href="https://github.com/BandarLabs/Cobalt/releases/latest"><img src="https://img.shields.io/github/v/release/BandarLabs/Cobalt?color=brightgreen" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/BandarLabs/Cobalt?color=brightgreen" alt="License"></a>
+</p>
+
 Cobalt is an open-source application platform for Kobo. It provides a launcher,
 an App Store, a Rust SDK, a runtime with capability isolation, and a Clara BW
 simulator.
@@ -21,9 +28,10 @@ new app can appear in Store without reinstalling or updating Cobalt.
 
 > [!IMPORTANT]
 > The **Kobo Clara BW N365 (device code 391)**, **Kobo Elipsa 2E N605 (device
-> code 389)**, and **Kobo Clara HD N249 (device code 376)** are fully
-> hardware-tested on the exact firmware and kernel versions in the support
-> matrix. See the
+> code 389)**, **Kobo Clara HD N249 (device code 376)**, **Kobo Libra 2 N418
+> (device code 388)**, and **Kobo Libra Colour N428 (device code 390)** are
+> fully hardware-tested on the exact firmware and kernel versions in the
+> support matrix. See the
 > [device support matrix](docs/DEVICES.md#device-support-matrix) before
 > installing.
 > It is an independent project and is not affiliated with Rakuten Kobo.
@@ -32,9 +40,7 @@ new app can appear in Store without reinstalling or updating Cobalt.
 > **Own an unsupported Kobo? Help test its port.** No coding is required.
 > Read the thread and comment with your exact model, firmware, and whether you
 > can run attended tests:
-> [Libra Colour](https://github.com/BandarLabs/Cobalt/issues/28),
-> [Libra 2](https://github.com/BandarLabs/Cobalt/issues/29),
-> [Clara Colour](https://github.com/BandarLabs/Cobalt/issues/30),
+> [Clara Colour](https://github.com/BandarLabs/Cobalt/issues/30)
 > or [Aura](https://github.com/BandarLabs/Cobalt/issues/32).
 > Start with read-only checks; run panel tests only against the commit named by
 > a maintainer. See
