@@ -288,6 +288,7 @@ pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     firmware_versions: &["4.45.23697"],
     kernel_release: "4.9.77",
     write_ready: true,
+    reap_nickel_supplicant: false,
 };
 
 /// The Kobo Clara HD, added upstream without i.MX6 hardware to test on.
@@ -354,6 +355,7 @@ pub const CLARA_HD_376: DeviceProfile = DeviceProfile {
     firmware_versions: &["4.38.23684", "4.38.23697"],
     kernel_release: "4.1.15-00136-g12655eaaef89",
     write_ready: true,
+    reap_nickel_supplicant: false,
 };
 
 pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
@@ -411,6 +413,7 @@ pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
     firmware_versions: &["4.38.23697"],
     kernel_release: "4.9.77",
     write_ready: true,
+    reap_nickel_supplicant: false,
 };
 
 /// Kobo Libra 2, codename `io`, an i.MX6SLL Mark 7 device driven by
@@ -500,6 +503,10 @@ pub const LIBRA_2_388: DeviceProfile = DeviceProfile {
     // Owner-attended display, touch, exit and recovery evidence was filmed on
     // the device and reviewed upstream before this was set.
     write_ready: true,
+    // Both halves measured on the device: the two-supplicant collision after
+    // a normal hand-back, and the clean recovery after the leftover one was
+    // killed during a live session.
+    reap_nickel_supplicant: true,
 };
 
 /// Kobo Libra Colour, a `MediaTek` HWTCON device like the Clara BW, and the
@@ -806,6 +813,24 @@ pub struct DeviceProfile {
     pub kernel_release: &'static str,
     /// True only after owner-attended hardware evidence has been reviewed.
     pub write_ready: bool,
+    /// Whether the hand-back must stop Nickel's leftover `wpa_supplicant`
+    /// before the reader is restarted.
+    ///
+    /// Nickel launches its supplicant detached (`-B`, parented to init), so
+    /// stopping the reader never takes it down and it survives the whole
+    /// Cobalt session. On the Libra 2 the restarted Nickel then starts a
+    /// supplicant of its own, two of them fight over `wlan0`, and Wi-Fi stays
+    /// down until a reboot. Measured on the device: killing the leftover
+    /// supplicant before the hand-back gives a clean recovery, every time,
+    /// and leaving it gives the retry loop, every time.
+    ///
+    /// Per profile rather than unconditional for the usual reason: the
+    /// evidence is from one radio, a Realtek `8723ds` on i.MX6SLL, and the
+    /// `MediaTek` devices share their Wi-Fi stack with Bluetooth and are known
+    /// to behave differently. Do not silently change a device nobody here
+    /// can test; enable this per device once the symptom and the fix are
+    /// observed on it.
+    pub reap_nickel_supplicant: bool,
 }
 
 /// Pose geometry derived by a profile's [`GeometryRule`].
@@ -1582,6 +1607,29 @@ mod tests {
         assert_eq!(
             super::identify_profile(&snapshot).map(|profile| profile.id),
             Some("libra-2-388")
+        );
+    }
+
+    /// The supplicant reap is declared, not guessed. The Libra 2 is the one
+    /// device where both halves were measured: the two-supplicant collision
+    /// after a normal hand-back, and the clean recovery once the leftover one
+    /// was killed. Every other profile keeps its current behaviour until the
+    /// same evidence exists for it, so a change to one of these values is a
+    /// claim about a device and needs the measurement to go with it.
+    #[test]
+    fn the_supplicant_reap_is_declared_only_where_it_was_measured() {
+        let declared = super::SUPPORTED_PROFILES
+            .iter()
+            .map(|profile| (profile.id, profile.reap_nickel_supplicant))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            declared,
+            [
+                ("clara-bw-391", false),
+                ("clara-hd-376", false),
+                ("elipsa-2e-389", false),
+                ("libra-2-388", true),
+            ]
         );
     }
 
