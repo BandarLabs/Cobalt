@@ -14,6 +14,7 @@ path = "src/main.rs"
 kobo-abi = { path = "../kobo-abi" }
 kobo-app-store = { path = "../kobo-app-store" }
 kobo-hal = { path = "../kobo-hal", default-features = false }
+kobo-json = { path = "../kobo-json" }
 kobo-net = { path = "../kobo-net" }
 kobo-policy = { path = "../kobo-policy" }
 kobo-shell = { path = "../kobo-shell" }
@@ -21,6 +22,11 @@ kobo-profile = { path = "../kobo-profile" }
 kobo-protocol = { path = "../kobo-protocol" }
 kobo-text = { path = "../kobo-text" }
 kobo-ui = { path = "../kobo-ui" }
+p256 = { version = "0.13.2", features = ["ecdh"] }
+ring = "0.17"
+base64 = "0.22"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "1"
 
 [lints]
 workspace = true

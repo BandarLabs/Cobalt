@@ -11,6 +11,34 @@ Installed readers use the fixed app channel:
 - `https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog.json`
 - `https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog.json.sig`
 
+## Install links
+
+Each catalog app also has a shareable page at
+`https://bandarlabs.github.io/Cobalt/apps/<app-id>/`. A reader can link a
+browser without creating an account:
+
+1. Open **App Store** on the Kobo and select **Install links**.
+2. Scan the QR code, or open the displayed address and enter its eight-character
+   pairing code.
+3. Choose **Install** on an app page.
+
+The browser encrypts the app identity for that Kobo before sending it. The
+relay cannot read the request, and it never receives package URLs or signing
+keys. `kobod` resolves the identity through the signed catalog and performs the
+same package verification as an install started on the device.
+
+Install requests wait for up to 24 hours. If the Kobo is offline, open Cobalt
+App Store after reconnecting to process the queue. The result distinguishes a
+new install, an update, an app already at the current version, an app included
+with Cobalt, and an app unavailable from the current catalog.
+
+Use **Disconnect all** on the Kobo to revoke every linked browser. With SSH
+enabled, the host maintenance command can do the same:
+
+```sh
+kobo app-link unpair --device <reader-address>
+```
+
 ## Registry
 
 Store apps are workspace packages declared in `apps/catalog.json`. The

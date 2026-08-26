@@ -2035,6 +2035,29 @@ fn host_applications(
                                         }
                                         app_store_done(result)
                                     }
+                                    kobo_protocol::DeviceRequest::ReadAppLink => app_link_result(
+                                        crate::app_link::read(Path::new(COBALT_ROOT)),
+                                    ),
+                                    kobo_protocol::DeviceRequest::BeginAppLink => app_link_result(
+                                        crate::app_link::begin(Path::new(COBALT_ROOT)),
+                                    ),
+                                    kobo_protocol::DeviceRequest::PollAppLink => {
+                                        let result = crate::app_link::poll(Path::new(COBALT_ROOT));
+                                        if let Ok(kobo_protocol::DeviceResult::RemoteInstall(
+                                            outcome,
+                                        )) = &result
+                                        {
+                                            if let Some(id) = remote_installed_id(outcome) {
+                                                stop_named_application(&mut apps, id);
+                                            }
+                                        }
+                                        app_link_result(result)
+                                    }
+                                    kobo_protocol::DeviceRequest::DisconnectAppLink => {
+                                        app_link_result(crate::app_link::disconnect(Path::new(
+                                            COBALT_ROOT,
+                                        )))
+                                    }
                                     _ => services.handle(request.clone()),
                                 }
                             };
@@ -2344,8 +2367,29 @@ fn system_request_allowed(app: &str, request: &kobo_protocol::DeviceRequest) -> 
         kobo_protocol::DeviceRequest::ReadAppCatalog
         | kobo_protocol::DeviceRequest::RefreshAppCatalog
         | kobo_protocol::DeviceRequest::InstallApp { .. }
-        | kobo_protocol::DeviceRequest::UninstallApp { .. } => app == "store",
+        | kobo_protocol::DeviceRequest::UninstallApp { .. }
+        | kobo_protocol::DeviceRequest::ReadAppLink
+        | kobo_protocol::DeviceRequest::BeginAppLink
+        | kobo_protocol::DeviceRequest::PollAppLink
+        | kobo_protocol::DeviceRequest::DisconnectAppLink => app == "store",
         _ => true,
+    }
+}
+
+fn app_link_result(
+    result: Result<kobo_protocol::DeviceResult, kobo_protocol::DeviceError>,
+) -> kobo_protocol::DeviceResult {
+    result.unwrap_or_else(kobo_protocol::DeviceResult::Failed)
+}
+
+fn remote_installed_id(outcome: &kobo_protocol::RemoteInstallOutcome) -> Option<&str> {
+    match outcome {
+        kobo_protocol::RemoteInstallOutcome::Installed { id }
+        | kobo_protocol::RemoteInstallOutcome::Updated { id } => Some(id),
+        kobo_protocol::RemoteInstallOutcome::None
+        | kobo_protocol::RemoteInstallOutcome::AlreadyInstalled { .. }
+        | kobo_protocol::RemoteInstallOutcome::Included { .. }
+        | kobo_protocol::RemoteInstallOutcome::Unavailable { .. } => None,
     }
 }
 
@@ -3767,5 +3811,15 @@ mod hosting_tests {
             "launcher",
             &DeviceRequest::RefreshAppCatalog
         ));
+        for request in [
+            DeviceRequest::ReadAppLink,
+            DeviceRequest::BeginAppLink,
+            DeviceRequest::PollAppLink,
+            DeviceRequest::DisconnectAppLink,
+        ] {
+            assert!(super::system_request_allowed("store", &request));
+            assert!(!super::system_request_allowed("settings", &request));
+            assert!(!super::system_request_allowed("todo", &request));
+        }
     }
 }

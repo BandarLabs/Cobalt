@@ -58,6 +58,7 @@ fn remember_device_profile(profile: &kobo_profile::DeviceProfile) -> Result<(), 
 
 use std::process::ExitCode;
 
+mod app_link;
 mod app_store;
 #[cfg(feature = "device-write")]
 mod blackbox;
@@ -116,7 +117,15 @@ fn run(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     if arguments.len() == 3 && arguments[0] == "--fetch" {
         return fetch_once(&arguments[1], &arguments[2]);
     }
-    Err("usage: kobod [--sim-socket PATH --frame PATH] [--present APP] [--fetch URL BYTES] [--key-test SECONDS]".into())
+    if arguments.len() == 2 && arguments[0] == "--app-link" {
+        println!(
+            "{}",
+            app_link::maintenance(Path::new("/mnt/onboard/.adds/cobalt"), &arguments[1])
+                .map_err(|error| format!("app link: {error}"))?
+        );
+        return Ok(());
+    }
+    Err("usage: kobod [--sim-socket PATH --frame PATH] [--present APP] [--fetch URL BYTES] [--key-test SECONDS] [--app-link status|unpair]".into())
 }
 
 #[cfg(feature = "device-write")]

@@ -6,14 +6,15 @@
 //! [`AppRunner::action`] from their platform event loop.
 
 pub use kobo_protocol::{
-    is_valid_key, AppInfo, AudioPlaybackState, AudioSource, BatteryDetail, BluetoothDevice,
-    BluetoothDeviceKind, Credential, DenyReason, DeviceError, DeviceRequest, DeviceResult,
-    DictionaryEntry, Frame, Header, Lifecycle, LogLevel, Message, SecretHeader, ShellError,
-    ShellEvent, ShellRequest, StoreError, StoreRequest, StoreResult, StreamError, Task, TaskError,
-    TaskId, TaskOutcome, WifiNetwork, CACHE_PREFIX, MAX_CACHE_KEYS, MAX_FONT_BYTES, MAX_HEADERS,
-    MAX_HEADER_NAME, MAX_HEADER_VALUE, MAX_INLINE_PICTURE_BYTES, MAX_LOOKUP_WORD_BYTES,
-    MAX_PICTURE_BYTES, MAX_PICTURE_CHUNK_BYTES, MAX_RADIO_DEVICES, MAX_RADIO_NAME, MAX_SHELF_CHUNK,
-    MAX_SHELL_CHUNK, MAX_STORE_KEYS, MAX_STORE_VALUE, MAX_TASK_BYTES, MAX_URL_LEN,
+    is_valid_key, AppInfo, AppLinkState, AudioPlaybackState, AudioSource, BatteryDetail,
+    BluetoothDevice, BluetoothDeviceKind, Credential, DenyReason, DeviceError, DeviceRequest,
+    DeviceResult, DictionaryEntry, Frame, Header, Lifecycle, LogLevel, Message,
+    RemoteInstallOutcome, SecretHeader, ShellError, ShellEvent, ShellRequest, StoreError,
+    StoreRequest, StoreResult, StreamError, Task, TaskError, TaskId, TaskOutcome, WifiNetwork,
+    CACHE_PREFIX, MAX_CACHE_KEYS, MAX_FONT_BYTES, MAX_HEADERS, MAX_HEADER_NAME, MAX_HEADER_VALUE,
+    MAX_INLINE_PICTURE_BYTES, MAX_LOOKUP_WORD_BYTES, MAX_PICTURE_BYTES, MAX_PICTURE_CHUNK_BYTES,
+    MAX_RADIO_DEVICES, MAX_RADIO_NAME, MAX_SHELF_CHUNK, MAX_SHELL_CHUNK, MAX_STORE_KEYS,
+    MAX_STORE_VALUE, MAX_TASK_BYTES, MAX_URL_LEN,
 };
 pub use kobo_ui::QuoteRole;
 pub use kobo_ui::{
@@ -48,13 +49,14 @@ pub use audio::{AudioMetadata, AudioPlayer};
 
 pub mod prelude {
     pub use crate::{
-        action_id, ActionId, AppIcon, AppMetadata, AppRunner, AppShelf, AppShell, AppStore,
-        AudioMetadata, AudioPlaybackState, AudioPlayer, AudioSource, BluetoothDevice,
+        action_id, ActionId, AppIcon, AppLinkState, AppMetadata, AppRunner, AppShelf, AppShell,
+        AppStore, AudioMetadata, AudioPlaybackState, AudioPlayer, AudioSource, BluetoothDevice,
         BluetoothDeviceKind, Capability, Client, ClientEvent, Command, Context, ControlState,
         DenyReason, Device, DeviceError, DeviceRequest, DeviceResult, DialogAction, Failure, Grant,
-        Grants, Heartbeat, KoboApp, Lifecycle, Navigator, Node, NodeId, PowerPolicy, Screen,
-        ScreenBuilder, ShelfDownload, ShelfProgress, ShelfUpload, ShellError, ShellEvent,
-        ShellRequest, StandardState, StoreError, StoreRequest, StoreResult, WifiNetwork,
+        Grants, Heartbeat, KoboApp, Lifecycle, Navigator, Node, NodeId, PowerPolicy,
+        RemoteInstallOutcome, Screen, ScreenBuilder, ShelfDownload, ShelfProgress, ShelfUpload,
+        ShellError, ShellEvent, ShellRequest, StandardState, StoreError, StoreRequest, StoreResult,
+        WifiNetwork,
     };
 }
 
@@ -3439,6 +3441,34 @@ pub struct AppStore<'a> {
 }
 
 impl AppStore<'_> {
+    /// Begins a browser-link pairing attempt.
+    pub fn begin_link(&mut self) {
+        self.context
+            .commands
+            .push(Command::Device(DeviceRequest::BeginAppLink));
+    }
+
+    /// Reads the current browser-link state.
+    pub fn read_link(&mut self) {
+        self.context
+            .commands
+            .push(Command::Device(DeviceRequest::ReadAppLink));
+    }
+
+    /// Polls for pairing and remote installation progress.
+    pub fn poll_link(&mut self) {
+        self.context
+            .commands
+            .push(Command::Device(DeviceRequest::PollAppLink));
+    }
+
+    /// Disconnects every paired browser.
+    pub fn disconnect_link(&mut self) {
+        self.context
+            .commands
+            .push(Command::Device(DeviceRequest::DisconnectAppLink));
+    }
+
     /// Writes a value, replacing whatever was under that key.
     ///
     /// The write is atomic: a reader sees the previous value or the new one and
@@ -5031,6 +5061,27 @@ mod tests {
             .filter(|command| matches!(command, Command::Device(DeviceRequest::Update { .. })))
             .count();
         assert_eq!(queued, 1, "only the well-formed request may be queued");
+    }
+
+    #[test]
+    fn app_store_link_helpers_queue_device_requests() {
+        let mut context = Context::default();
+        {
+            let mut store = context.store();
+            store.begin_link();
+            store.read_link();
+            store.poll_link();
+            store.disconnect_link();
+        }
+        assert_eq!(
+            context.take_commands(),
+            vec![
+                Command::Device(DeviceRequest::BeginAppLink),
+                Command::Device(DeviceRequest::ReadAppLink),
+                Command::Device(DeviceRequest::PollAppLink),
+                Command::Device(DeviceRequest::DisconnectAppLink),
+            ]
+        );
     }
 
     #[test]

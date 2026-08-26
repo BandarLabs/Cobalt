@@ -3,7 +3,7 @@
 use kobo_app_store::{
     parse_public_bundle, verify, Catalog, DetachedSignature, Ed25519PublicKey, Manifest,
 };
-use kobo_protocol::{AppInfo, DeviceError};
+use kobo_protocol::{AppInfo, DeviceError, RemoteInstallOutcome};
 use kobo_ui::Glyph;
 use std::collections::BTreeSet;
 use std::fs;
@@ -182,7 +182,11 @@ pub fn catalog(root: &Path) -> Result<Vec<AppInfo>, DeviceError> {
 
 pub fn installed(root: &Path) -> Result<Vec<AppInfo>, DeviceError> {
     let key = public_key()?;
-    let mut entries = installed_manifests(root, &key)?
+    installed_with_key(root, &key)
+}
+
+fn installed_with_key(root: &Path, key: &Ed25519PublicKey) -> Result<Vec<AppInfo>, DeviceError> {
+    let mut entries = installed_manifests(root, key)?
         .into_iter()
         .map(|manifest| manifest_info(&manifest, Some(manifest.version())))
         .collect::<Result<Vec<_>, _>>()?;
@@ -202,6 +206,79 @@ pub fn installed(root: &Path) -> Result<Vec<AppInfo>, DeviceError> {
 pub fn install(root: &Path, id: &str) -> Result<(), DeviceError> {
     install_with(root, id, &public_key()?, |url, maximum| {
         kobo_net::fetch(url, maximum).map_err(network_error)
+    })
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RemoteInstallPlan {
+    pub outcome: RemoteInstallOutcome,
+    pub install: bool,
+}
+
+pub fn prepare_remote_install(root: &Path, id: &str) -> Result<RemoteInstallPlan, DeviceError> {
+    let key = public_key()?;
+    prepare_remote_install_with(root, id, &key, |url, maximum| {
+        kobo_net::fetch(url, maximum).map_err(network_error)
+    })
+}
+
+fn prepare_remote_install_with(
+    root: &Path,
+    id: &str,
+    key: &Ed25519PublicKey,
+    mut fetch: impl FnMut(&str, u32) -> Result<Vec<u8>, DeviceError>,
+) -> Result<RemoteInstallPlan, DeviceError> {
+    if !kobo_protocol::valid_app_id(id) || kobo_app_store::is_public_reserved_app_id(id) {
+        return Err(DeviceError::InvalidInput);
+    }
+    let json = fetch(CATALOG_URL, CATALOG_LIMIT)?;
+    let signature = fetch(CATALOG_SIGNATURE_URL, SIGNATURE_LIMIT)?;
+    let catalog = verify_catalog(&json, &signature, key)?;
+    write_catalog_cache(root, &json, &signature)?;
+    let Some(entry) = catalog
+        .entries()
+        .iter()
+        .find(|entry| entry.manifest().id() == id)
+    else {
+        return Ok(RemoteInstallPlan {
+            outcome: RemoteInstallOutcome::Unavailable { id: id.to_owned() },
+            install: false,
+        });
+    };
+    if !kobo_app_store::cobalt_version_at_least(
+        env!("CARGO_PKG_VERSION"),
+        entry.manifest().minimum_cobalt_version(),
+    ) {
+        return Ok(RemoteInstallPlan {
+            outcome: RemoteInstallOutcome::Unavailable { id: id.to_owned() },
+            install: false,
+        });
+    }
+
+    let installed = installed_with_key(root, key)?;
+    let current = installed.iter().find(|candidate| candidate.id == id);
+    if current.and_then(|candidate| candidate.installed_version.as_deref())
+        == Some(entry.manifest().version())
+    {
+        let included = managed_builtin(id).is_some()
+            && builtin_is_installed(root, id)?
+            && !safe_directory(&apps_root(root).join(id))?;
+        return Ok(RemoteInstallPlan {
+            outcome: if included {
+                RemoteInstallOutcome::Included { id: id.to_owned() }
+            } else {
+                RemoteInstallOutcome::AlreadyInstalled { id: id.to_owned() }
+            },
+            install: false,
+        });
+    }
+    Ok(RemoteInstallPlan {
+        outcome: if current.is_some() {
+            RemoteInstallOutcome::Updated { id: id.to_owned() }
+        } else {
+            RemoteInstallOutcome::Installed { id: id.to_owned() }
+        },
+        install: true,
     })
 }
 
@@ -379,9 +456,9 @@ fn read_catalog_directory(
 fn catalog_info(
     root: &Path,
     catalog: &Catalog,
-    _key: &Ed25519PublicKey,
+    key: &Ed25519PublicKey,
 ) -> Result<Vec<AppInfo>, DeviceError> {
-    let installed = installed(root)?;
+    let installed = installed_with_key(root, key)?;
     let mut entries = catalog
         .entries()
         .iter()
@@ -1025,6 +1102,124 @@ mod tests {
         assert!(!apps_root(&root)
             .join(format!("word-count.{UNINSTALLED_SUFFIX}"))
             .exists());
+        let _ignored = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn remote_install_plans_distinguish_new_updated_current_and_included_apps() {
+        let root = root();
+        let seed = [9_u8; 32];
+        let key = derive_public_key(&seed).expect("key");
+        let (json, signature, package) = release(&seed);
+        let plan = prepare_remote_install_with(&root, "word-count", &key, |url, _| {
+            if url == CATALOG_URL {
+                Ok(json.clone())
+            } else {
+                Ok(signature.clone())
+            }
+        })
+        .expect("new plan");
+        assert_eq!(
+            plan,
+            RemoteInstallPlan {
+                outcome: RemoteInstallOutcome::Installed {
+                    id: "word-count".to_owned()
+                },
+                install: true
+            }
+        );
+        install_with(&root, "word-count", &key, |_, _| Ok(package.clone())).expect("install");
+        let plan = prepare_remote_install_with(&root, "word-count", &key, |url, _| {
+            if url == CATALOG_URL {
+                Ok(json.clone())
+            } else {
+                Ok(signature.clone())
+            }
+        })
+        .expect("current plan");
+        assert_eq!(
+            plan.outcome,
+            RemoteInstallOutcome::AlreadyInstalled {
+                id: "word-count".to_owned()
+            }
+        );
+        assert!(!plan.install);
+
+        let (updated_json, updated_signature, _) = release_for(&seed, "word-count", "1.1.0");
+        let plan = prepare_remote_install_with(&root, "word-count", &key, |url, _| {
+            if url == CATALOG_URL {
+                Ok(updated_json.clone())
+            } else {
+                Ok(updated_signature.clone())
+            }
+        })
+        .expect("update plan");
+        assert_eq!(
+            plan.outcome,
+            RemoteInstallOutcome::Updated {
+                id: "word-count".to_owned()
+            }
+        );
+        assert!(plan.install);
+
+        let included_root = root.with_extension("included");
+        let _ignored = fs::remove_dir_all(&included_root);
+        fs::create_dir_all(included_root.join("bin")).expect("built-in directory");
+        fs::write(builtin_binary(&included_root, "todo"), b"built-in todo").expect("built-in Todo");
+        let (included_json, included_signature, _) = release_for(&seed, "todo", "1.0.0");
+        let plan = prepare_remote_install_with(&included_root, "todo", &key, |url, _| {
+            if url == CATALOG_URL {
+                Ok(included_json.clone())
+            } else {
+                Ok(included_signature.clone())
+            }
+        })
+        .expect("included plan");
+        assert_eq!(
+            plan.outcome,
+            RemoteInstallOutcome::Included {
+                id: "todo".to_owned()
+            }
+        );
+        assert!(!plan.install);
+        let _ignored = fs::remove_dir_all(root);
+        let _ignored = fs::remove_dir_all(included_root);
+    }
+
+    #[test]
+    fn an_installed_app_absent_from_the_signed_catalog_is_unavailable() {
+        let root = root();
+        let seed = [9_u8; 32];
+        let key = derive_public_key(&seed).expect("key");
+        let (json, signature, package) = release(&seed);
+        refresh_with(&root, &key, |url, _| {
+            if url == CATALOG_URL {
+                Ok(json.clone())
+            } else {
+                Ok(signature.clone())
+            }
+        })
+        .expect("refresh");
+        install_with(&root, "word-count", &key, |_, _| Ok(package.clone())).expect("install");
+
+        let (other_json, other_signature, _) = release_for(&seed, "notes", "1.0.0");
+        let plan = prepare_remote_install_with(&root, "word-count", &key, |url, _| {
+            if url == CATALOG_URL {
+                Ok(other_json.clone())
+            } else {
+                Ok(other_signature.clone())
+            }
+        })
+        .expect("unavailable plan");
+        assert_eq!(
+            plan.outcome,
+            RemoteInstallOutcome::Unavailable {
+                id: "word-count".to_owned()
+            }
+        );
+        assert!(!plan.install);
+        let installed = installed_with_key(&root, &key).expect("installed app remains");
+        assert!(installed.iter().any(|app| app.id == "word-count"));
         let _ignored = fs::remove_dir_all(root);
     }
 
