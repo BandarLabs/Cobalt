@@ -372,6 +372,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "build" => build_device(arguments.iter().any(|argument| is_device_flag(argument))),
         "doctor" => doctor(&arguments[1..]),
         "devices" => list_devices(&arguments[1..]),
+        "app-link" => app_link_command(&arguments[1..]),
         "session" => dev_session(&arguments[1..]),
         "wait" => wait_for_device(&arguments[1..]),
         "logs" => device_logs(&arguments[1..]),
@@ -1448,6 +1449,7 @@ fn list_devices(arguments: &[String]) -> Result<(), String> {
                 println!("{address}  {}", identity.summary());
                 readers.push(*address);
             }
+
             _ => others += 1,
         }
     }
@@ -1464,6 +1466,42 @@ fn list_devices(arguments: &[String]) -> Result<(), String> {
     };
     println!("use it with --device, for example: kobo doctor --device {first}");
     Ok(())
+}
+
+fn app_link_command(arguments: &[String]) -> Result<(), String> {
+    let (action, host) = parse_app_link(arguments)?;
+    let script = format!(
+        "set -eu\nexec '{}/bin/kobod' --app-link '{action}'\n",
+        connect::INSTALL_DIRECTORY
+    );
+    let output = run_remote_shell(&format!("root@{host}"), &script, REMOTE_COMMAND_TIMEOUT)
+        .map_err(unreachable_device)?;
+    if !output.status.success() {
+        return Err(unreachable_if_ssh_gave_up(
+            remote_shell_error(
+                format!("app-link {action} on {host} exited with {}", output.status),
+                &output.stdout,
+                &output.stderr,
+            ),
+            &output,
+        ));
+    }
+    print!("{}", String::from_utf8_lossy(&output.stdout));
+    Ok(())
+}
+
+fn parse_app_link(arguments: &[String]) -> Result<(&str, &str), String> {
+    const USAGE: &str = "usage: kobo app-link status|unpair --device HOST";
+    let [action, flag, host] = arguments else {
+        return Err(USAGE.to_owned());
+    };
+    if !matches!(action.as_str(), "status" | "unpair")
+        || !is_device_flag(flag)
+        || !valid_device_host(host)
+    {
+        return Err(USAGE.to_owned());
+    }
+    Ok((action, host))
 }
 
 /// Reads a host's identity, or `None` when it is not something we can talk to.
@@ -5241,6 +5279,7 @@ fn print_help() {
            build [--device]       Build host workspace or ARM safe doctor, disabled kobod, and sample app\n\
            doctor [--device IP]   Run read-only device diagnostics\n\
            devices [--subnet A.B.C]  Find every reader on the local network\n\
+           app-link status|unpair --device IP  Inspect or revoke browser pairing\n\
            session --device IP    Keep a device awake and on Wi-Fi while developing\n\
            session --device IP --hold [minutes]  Keep it reachable for unattended testing\n\
            wait --device IP       Block until a device answers again\n\
@@ -6799,6 +6838,40 @@ mod tests {
         fn refuses_unknown_flags() {
             let given = arguments(&["--device", "192.0.2.1", "--forever"]);
             assert!(parse_wait(&given).is_err());
+        }
+    }
+
+    #[test]
+    fn app_link_maintenance_accepts_only_fixed_actions_and_safe_hosts() {
+        let status = vec![
+            "status".to_owned(),
+            "--device".to_owned(),
+            "192.0.2.1".to_owned(),
+        ];
+        assert_eq!(super::parse_app_link(&status), Ok(("status", "192.0.2.1")));
+        let unpair = vec![
+            "unpair".to_owned(),
+            "-s".to_owned(),
+            "reader.local".to_owned(),
+        ];
+        assert_eq!(
+            super::parse_app_link(&unpair),
+            Ok(("unpair", "reader.local"))
+        );
+        for invalid in [
+            vec![
+                "delete".to_owned(),
+                "--device".to_owned(),
+                "reader".to_owned(),
+            ],
+            vec![
+                "status".to_owned(),
+                "--device".to_owned(),
+                "reader;reboot".to_owned(),
+            ],
+            vec!["status".to_owned()],
+        ] {
+            assert!(super::parse_app_link(&invalid).is_err());
         }
     }
 }

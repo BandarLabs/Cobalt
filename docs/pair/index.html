@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Link your Kobo to Cobalt apps</title>
+<meta name="description" content="Link this browser to your Kobo to install signed Cobalt apps.">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<link rel="stylesheet" href="../apps/install.css">
+</head>
+<body>
+<header><div class="wrap"><a class="brand" href="../">Cobalt</a><a class="back" href="../#apps">All apps</a></div></header>
+<main class="wrap">
+  <p class="eyebrow">Install links</p>
+  <h1>Link your Kobo</h1>
+  <p class="summary">Pair this browser once, then install signed apps from any Cobalt app page.</p>
+  <section class="panel">
+    <h2>Confirm your Kobo</h2>
+    <p>Enter the pairing code and verification key shown in Cobalt App Store. QR scans fill these securely for you.</p>
+    <form id="pair-form">
+      <div class="field">
+        <label for="pair-code">Pairing code</label>
+        <input id="pair-code" name="code" inputmode="text" autocomplete="one-time-code" maxlength="8" required>
+      </div>
+      <div class="field" id="pair-secret-field">
+        <label for="pair-secret">Verification key</label>
+        <input class="secret" id="pair-secret" name="secret" inputmode="text" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="45" required>
+      </div>
+      <button type="submit">Link Kobo</button>
+    </form>
+    <p class="status" id="pair-status" role="status" aria-live="polite"></p>
+    <div class="actions" id="continue" hidden><a href="../#apps">Choose an app</a></div>
+    <p class="privacy">No account is required. Install requests are encrypted in this browser and can only be opened by the linked Kobo.</p>
+  </section>
+</main>
+<script src="pair.js" defer></script>
+</body>
+</html>

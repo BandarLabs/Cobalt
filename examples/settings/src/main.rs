@@ -15,6 +15,7 @@ const BATTERY: &str = "battery";
 const UPDATE: &str = "update";
 const CHECK: &str = "check";
 const INSTALL: &str = "install";
+const CLOSE: &str = "close";
 const TOGGLE: &str = "toggle";
 const RESCAN: &str = "rescan";
 const MORE: &str = "more";
@@ -274,41 +275,55 @@ impl Settings {
     fn update(&self) -> Screen {
         let mut screen = ScreenBuilder::new("settings-update")
             .top_bar("Software update")
-            .owns_back(true)
-            .section_with_value("Installed", VERSION);
+            .owns_back(true);
         match &self.update {
             UpdateFlow::Idle => {
                 screen = screen
+                    .section_with_value("Installed", VERSION)
                     .text("Checking asks GitHub for the newest published release. Nothing is downloaded until you choose to install it.")
                     .button(CHECK, "Check for updates");
             }
             UpdateFlow::Checking | UpdateFlow::Digest { .. } => {
-                screen = screen.text("Checking for the newest release.");
+                screen = screen
+                    .section_with_value("Installed", VERSION)
+                    .text("Checking for the newest release.");
             }
             UpdateFlow::UpToDate { latest } => {
                 screen = screen
+                    .section_with_value("Installed", VERSION)
                     .text(format!("{latest} is the newest published release, and it is what this reader is running."))
                     .button(CHECK, "Check again");
             }
             UpdateFlow::Ready { version, .. } => {
                 screen = screen
-                    .text(
-                        "The download is checked against its published digest before anything is replaced, and the release you are running now is kept for one step back.",
+                    .banner(
+                        kobo_sdk::BannerLevel::Info,
+                        format!("Cobalt {version} is available."),
                     )
-                    .button(INSTALL, format!("Update to {version}"));
+                    .facts([("Installed", VERSION), ("Available", version.as_str())])
+                    .text(
+                        "The package is verified before installation. The current release is kept for rollback.",
+                    )
+                    .primary_button(INSTALL, "Install update");
             }
             UpdateFlow::Installing { version } => {
-                screen = screen.text(format!(
-                    "Installing {version}. Keep the reader awake; this screen will change when it is done."
-                ));
+                screen = screen.section_with_value("Installing", version).text(
+                    "Keep the reader awake. This screen will change when installation is complete.",
+                );
             }
             UpdateFlow::Installed { version } => {
-                screen = screen.text(format!(
-                    "Updated to {version}. Close Cobalt and open it again from the menu to run the new release."
-                ));
+                screen = screen
+                    .facts([("Installed", version)])
+                    .splash(
+                        Some(Glyph::Check),
+                        "Update complete",
+                        "Close Cobalt, then reopen it from the menu.",
+                    )
+                    .primary_button(CLOSE, "Close Cobalt");
             }
             UpdateFlow::Failed(reason) => {
                 screen = screen
+                    .section_with_value("Installed", VERSION)
                     .banner(kobo_sdk::BannerLevel::Attention, reason.clone())
                     .button(CHECK, "Try again");
             }
@@ -806,6 +821,9 @@ impl KoboApp for Settings {
             self.show(context);
         } else if action == action_id(INSTALL) {
             self.install_update(context);
+        } else if action == action_id(CLOSE) && matches!(self.update, UpdateFlow::Installed { .. })
+        {
+            context.exit();
         } else if action == action_id(TOGGLE) {
             match self.view {
                 View::Bluetooth => context
@@ -939,7 +957,9 @@ impl KoboApp for Settings {
             | DeviceResult::Cover { .. }
             | DeviceResult::Audio { .. }
             | DeviceResult::Dictionary { .. }
-            | DeviceResult::Apps { .. } => {}
+            | DeviceResult::Apps { .. }
+            | DeviceResult::AppLink(_)
+            | DeviceResult::RemoteInstall(_) => {}
         }
         self.show(context);
     }
@@ -1140,8 +1160,8 @@ fn main() -> ExitCode {
 mod tests {
     use super::{RadioState, Settings, DEVICE_ACTIONS, MORE, NETWORK_ACTIONS, PREVIOUS, RESCAN};
     use kobo_sdk::{
-        action_id, BatteryDetail, BluetoothDevice, BluetoothDeviceKind, Chrome, WifiNetwork,
-        CLARA_BW_METRICS,
+        action_id, BannerLevel, BatteryDetail, BluetoothDevice, BluetoothDeviceKind, Chrome,
+        Emphasis, Glyph, Node, WifiNetwork, CLARA_BW_METRICS,
     };
 
     fn bluetooth_device(index: usize) -> BluetoothDevice {
@@ -1524,5 +1544,75 @@ mod tests {
             layout.rect_of_action(action_id(super::CHECK)).is_none(),
             "a check that is already running must not be restartable"
         );
+    }
+
+    #[test]
+    fn an_available_update_has_a_clear_status_versions_and_primary_action() {
+        let screen = Settings {
+            view: super::View::Update,
+            update: super::UpdateFlow::Ready {
+                version: "9.9.9".to_owned(),
+                url: "https://example.test/KoboRoot.tgz".to_owned(),
+                sha256: "a".repeat(64),
+            },
+            ..Settings::default()
+        }
+        .update();
+
+        assert!(screen.nodes.iter().any(|node| matches!(
+            node,
+            Node::Banner {
+                level: BannerLevel::Info,
+                text,
+                ..
+            } if text == "Cobalt 9.9.9 is available."
+        )));
+        assert!(screen.nodes.iter().any(|node| matches!(
+            node,
+            Node::Facts { entries, .. }
+                if entries == &[("Installed".to_owned(), super::VERSION.to_owned()),
+                    ("Available".to_owned(), "9.9.9".to_owned())]
+        )));
+        assert!(screen.nodes.iter().any(|node| matches!(
+            node,
+            Node::Button {
+                action,
+                label,
+                emphasis: Emphasis::Primary,
+                ..
+            } if *action == action_id(super::INSTALL) && label == "Install update"
+        )));
+    }
+
+    #[test]
+    fn a_completed_update_has_a_checkmark_and_a_primary_way_to_close() {
+        let screen = Settings {
+            view: super::View::Update,
+            update: super::UpdateFlow::Installed {
+                version: "9.9.9".to_owned(),
+            },
+            ..Settings::default()
+        }
+        .update();
+
+        assert!(screen.nodes.iter().any(|node| matches!(
+            node,
+            Node::Splash {
+                glyph: Some(Glyph::Check),
+                title,
+                summary,
+                ..
+            } if title == "Update complete"
+                && summary == "Close Cobalt, then reopen it from the menu."
+        )));
+        assert!(screen.nodes.iter().any(|node| matches!(
+            node,
+            Node::Button {
+                action,
+                label,
+                emphasis: Emphasis::Primary,
+                ..
+            } if *action == action_id(super::CLOSE) && label == "Close Cobalt"
+        )));
     }
 }

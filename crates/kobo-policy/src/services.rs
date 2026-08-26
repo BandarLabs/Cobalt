@@ -310,6 +310,10 @@ impl DeviceServices {
             DeviceRequest::LookupWord { word, language } => {
                 self.lookup_word(word, language.as_deref())
             }
+            DeviceRequest::ReadAppLink
+            | DeviceRequest::BeginAppLink
+            | DeviceRequest::PollAppLink
+            | DeviceRequest::DisconnectAppLink => DeviceResult::Denied(DenyReason::Unsupported),
         }
     }
 
@@ -589,7 +593,11 @@ pub fn request_capability(request: &DeviceRequest) -> Option<Capability> {
         | DeviceRequest::RefreshAppCatalog
         | DeviceRequest::InstallApp { .. }
         | DeviceRequest::UninstallApp { .. }
-        | DeviceRequest::LookupWord { .. } => return None,
+        | DeviceRequest::LookupWord { .. }
+        | DeviceRequest::ReadAppLink
+        | DeviceRequest::BeginAppLink
+        | DeviceRequest::PollAppLink
+        | DeviceRequest::DisconnectAppLink => return None,
     })
 }
 

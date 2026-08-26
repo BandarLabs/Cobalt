@@ -123,6 +123,12 @@ over Wi-Fi.
 Each app can be installed, updated or removed independently. Installed apps
 appear in the launcher without rebooting.
 
+For app links shared on the web, open **Install links** in App Store and scan
+the QR code, or enter its pairing code and verification key in the browser.
+This links the browser without an account. Future app-page installs use Wi-Fi
+and do not need the USB cable. If the Kobo is offline, reconnect it and open
+App Store within 72 hours to continue.
+
 For the `0.2.0` release, **Sudoku** is the end-to-end Store test: it is not in
 the USB package. Seeing it in Store, installing it, and then seeing it appear
 in the launcher proves that catalog refresh, package verification, installation

@@ -51,6 +51,7 @@ new app can appear in Store without reinstalling or updating Cobalt.
 ## Features
 
 - Signed Wi-Fi app installation, updates, and removal
+- Shareable app pages with encrypted QR or pairing-code installation
 - Separate Settings-based updates for the Cobalt platform
 - Apps run as separate unprivileged processes
 - Per-app capability checks for network, storage, audio, frontlight, and other
@@ -151,6 +152,12 @@ first `0.2.0` platform install appear as installed, can be removed and
 reinstalled in the same session, and can be updated in place without creating
 a second launcher entry. Platform utilities such as Settings and Terminal are
 shown as installed system apps and cannot be removed.
+
+Open **Install links** in Store to link a phone or computer without an
+account. The **Install** button on any
+[Cobalt app page](https://bandarlabs.github.io/Cobalt/#apps) then sends an
+encrypted request to that Kobo. If the reader is offline, reconnect it and
+open Store within 72 hours to continue.
 
 Apps are published automatically when an app PR is merged into `main`.
 Publishing an app does **not** require changing the Cobalt version or creating

@@ -124,6 +124,8 @@ pub const MAX_APP_VERSION_LEN: usize = 64;
 /// Capability declarations are drawn as a short list and are also bounded by
 /// the complete capability vocabulary.
 pub const MAX_APP_CAPABILITIES: usize = 16;
+const MAX_APP_LINK_EXPIRES_IN: u32 = 10 * 60;
+const MAX_APP_LINK_BROWSERS: u8 = 8;
 
 /// Human-readable radio identifiers are deliberately shorter than an ordinary
 /// protocol string. They are drawn on one row and are also accepted from local
@@ -1035,6 +1037,39 @@ pub enum DeviceRequest {
         word: String,
         language: Option<String>,
     },
+    /// Report the current browser-link state.
+    ReadAppLink,
+    /// Begin a new browser-link attempt.
+    BeginAppLink,
+    /// Poll for pairing and remote installation progress.
+    PollAppLink,
+    /// Disconnect every paired browser.
+    DisconnectAppLink,
+}
+
+/// Current state of the runtime-owned App Store browser link.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AppLinkState {
+    Unpaired,
+    Pairing {
+        code: String,
+        url: String,
+        expires_in: u32,
+    },
+    Paired {
+        browsers: u8,
+    },
+}
+
+/// Result of processing one remotely requested application installation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RemoteInstallOutcome {
+    None,
+    Installed { id: String },
+    Updated { id: String },
+    AlreadyInstalled { id: String },
+    Included { id: String },
+    Unavailable { id: String },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1181,6 +1216,10 @@ pub enum DeviceResult {
         word: String,
         entries: Vec<DictionaryEntry>,
     },
+    /// Current state of the App Store browser link.
+    AppLink(AppLinkState),
+    /// Outcome of the latest remote installation request.
+    RemoteInstall(RemoteInstallOutcome),
     /// The backend exists, but the requested operation failed.
     Failed(DeviceError),
     /// The request was refused, with the exact reason.
@@ -2279,6 +2318,10 @@ fn encode_device_request(
             push_string(output, word)?;
             push_optional_string(output, language.as_deref())?;
         }
+        DeviceRequest::ReadAppLink => output.push(38),
+        DeviceRequest::BeginAppLink => output.push(39),
+        DeviceRequest::PollAppLink => output.push(40),
+        DeviceRequest::DisconnectAppLink => output.push(41),
     }
     Ok(())
 }
@@ -2529,6 +2572,10 @@ fn decode_device_request(reader: &mut Reader<'_>) -> Result<DeviceRequest, Proto
             validate_lookup(&word, language.as_deref())?;
             Ok(DeviceRequest::LookupWord { word, language })
         }
+        38 => Ok(DeviceRequest::ReadAppLink),
+        39 => Ok(DeviceRequest::BeginAppLink),
+        40 => Ok(DeviceRequest::PollAppLink),
+        41 => Ok(DeviceRequest::DisconnectAppLink),
         _ => Err(ProtocolError::InvalidValue("device request")),
     }
 }
@@ -2700,8 +2747,75 @@ fn encode_device_result(output: &mut Vec<u8>, result: &DeviceResult) -> Result<(
                 push_string(output, &entry.definition)?;
             }
         }
+        DeviceResult::AppLink(state) => {
+            output.push(14);
+            encode_app_link(output, state)?;
+        }
+        DeviceResult::RemoteInstall(outcome) => {
+            output.push(15);
+            encode_remote_install(output, outcome)?;
+        }
     }
     Ok(())
+}
+
+fn valid_app_link_code(code: &str) -> bool {
+    code.len() == 8
+        && code
+            .bytes()
+            .all(|byte| b"23456789ABCDEFGHJKLMNPQRSTUVWXYZ".contains(&byte))
+}
+
+fn encode_app_link(output: &mut Vec<u8>, state: &AppLinkState) -> Result<(), ProtocolError> {
+    match state {
+        AppLinkState::Unpaired => output.push(1),
+        AppLinkState::Pairing {
+            code,
+            url,
+            expires_in,
+        } => {
+            if !valid_app_link_code(code)
+                || !url.starts_with("https://")
+                || url.len() > MAX_URL_LEN
+                || *expires_in > MAX_APP_LINK_EXPIRES_IN
+            {
+                return Err(ProtocolError::InvalidValue("application link"));
+            }
+            output.push(2);
+            push_string(output, code)?;
+            push_string(output, url)?;
+            push_u32(output, *expires_in);
+        }
+        AppLinkState::Paired { browsers } if *browsers <= MAX_APP_LINK_BROWSERS => {
+            output.extend_from_slice(&[3, *browsers]);
+        }
+        AppLinkState::Paired { .. } => {
+            return Err(ProtocolError::InvalidValue("application link"));
+        }
+    }
+    Ok(())
+}
+
+fn encode_remote_install(
+    output: &mut Vec<u8>,
+    outcome: &RemoteInstallOutcome,
+) -> Result<(), ProtocolError> {
+    let (tag, id) = match outcome {
+        RemoteInstallOutcome::None => {
+            output.push(1);
+            return Ok(());
+        }
+        RemoteInstallOutcome::Installed { id } => (2, id),
+        RemoteInstallOutcome::Updated { id } => (3, id),
+        RemoteInstallOutcome::AlreadyInstalled { id } => (4, id),
+        RemoteInstallOutcome::Included { id } => (5, id),
+        RemoteInstallOutcome::Unavailable { id } => (6, id),
+    };
+    if !valid_app_id(id) {
+        return Err(ProtocolError::InvalidValue("application id"));
+    }
+    output.push(tag);
+    push_string(output, id)
 }
 
 fn encode_app_info(output: &mut Vec<u8>, entry: &AppInfo) -> Result<(), ProtocolError> {
@@ -2859,8 +2973,65 @@ fn decode_device_result(reader: &mut Reader<'_>) -> Result<DeviceResult, Protoco
         9 => decode_audio_result(reader),
         12 => decode_apps_result(reader),
         13 => decode_dictionary_result(reader),
+        14 => decode_app_link(reader),
+        15 => decode_remote_install(reader),
         _ => Err(ProtocolError::InvalidValue("device result")),
     }
+}
+
+fn decode_app_link(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
+    let state = match reader.u8()? {
+        1 => AppLinkState::Unpaired,
+        2 => {
+            let code = reader.string()?;
+            let url = reader.string()?;
+            let expires_in = reader.u32()?;
+            if !valid_app_link_code(&code)
+                || !url.starts_with("https://")
+                || url.len() > MAX_URL_LEN
+                || expires_in > MAX_APP_LINK_EXPIRES_IN
+            {
+                return Err(ProtocolError::InvalidValue("application link"));
+            }
+            AppLinkState::Pairing {
+                code,
+                url,
+                expires_in,
+            }
+        }
+        3 => {
+            let browsers = reader.u8()?;
+            if browsers > MAX_APP_LINK_BROWSERS {
+                return Err(ProtocolError::InvalidValue("application link"));
+            }
+            AppLinkState::Paired { browsers }
+        }
+        _ => return Err(ProtocolError::InvalidValue("application link")),
+    };
+    Ok(DeviceResult::AppLink(state))
+}
+
+fn decode_remote_install(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
+    let tag = reader.u8()?;
+    if tag == 1 {
+        return Ok(DeviceResult::RemoteInstall(RemoteInstallOutcome::None));
+    }
+    if !(2..=6).contains(&tag) {
+        return Err(ProtocolError::InvalidValue("remote install outcome"));
+    }
+    let id = reader.string()?;
+    if !valid_app_id(&id) {
+        return Err(ProtocolError::InvalidValue("application id"));
+    }
+    let outcome = match tag {
+        2 => RemoteInstallOutcome::Installed { id },
+        3 => RemoteInstallOutcome::Updated { id },
+        4 => RemoteInstallOutcome::AlreadyInstalled { id },
+        5 => RemoteInstallOutcome::Included { id },
+        6 => RemoteInstallOutcome::Unavailable { id },
+        _ => unreachable!("tag range checked above"),
+    };
+    Ok(DeviceResult::RemoteInstall(outcome))
 }
 
 fn validate_lookup(word: &str, language: Option<&str>) -> Result<(), ProtocolError> {
@@ -6079,6 +6250,10 @@ mod tests {
             DeviceRequest::UninstallApp {
                 id: "word-count".to_owned(),
             },
+            DeviceRequest::ReadAppLink,
+            DeviceRequest::BeginAppLink,
+            DeviceRequest::PollAppLink,
+            DeviceRequest::DisconnectAppLink,
         ];
         for request in requests {
             let frame = Frame {
@@ -6217,6 +6392,43 @@ mod tests {
     }
 
     #[test]
+    fn every_app_link_result_round_trips() {
+        let results = [
+            DeviceResult::AppLink(AppLinkState::Unpaired),
+            DeviceResult::AppLink(AppLinkState::Pairing {
+                code: "2345ABCD".to_owned(),
+                url: "https://store.example/link".to_owned(),
+                expires_in: 600,
+            }),
+            DeviceResult::AppLink(AppLinkState::Paired { browsers: 8 }),
+            DeviceResult::RemoteInstall(RemoteInstallOutcome::None),
+            DeviceResult::RemoteInstall(RemoteInstallOutcome::Installed {
+                id: "word-count".to_owned(),
+            }),
+            DeviceResult::RemoteInstall(RemoteInstallOutcome::Updated {
+                id: "word-count".to_owned(),
+            }),
+            DeviceResult::RemoteInstall(RemoteInstallOutcome::AlreadyInstalled {
+                id: "word-count".to_owned(),
+            }),
+            DeviceResult::RemoteInstall(RemoteInstallOutcome::Included {
+                id: "word-count".to_owned(),
+            }),
+            DeviceResult::RemoteInstall(RemoteInstallOutcome::Unavailable {
+                id: "word-count".to_owned(),
+            }),
+        ];
+        for result in results {
+            let frame = Frame {
+                request_id: 11,
+                message: Message::DeviceResult(result),
+            };
+            let bytes = encode(&frame).expect("encode");
+            assert_eq!(decode(&bytes).expect("decode"), frame);
+        }
+    }
+
+    #[test]
     fn app_requests_and_results_are_bounded_and_validated() {
         let ids = vec![
             String::new(),
@@ -6327,6 +6539,144 @@ mod tests {
         assert_eq!(
             decode(&bad_reason),
             Err(ProtocolError::InvalidValue("deny reason"))
+        );
+    }
+
+    #[test]
+    fn app_link_and_remote_install_payloads_are_bounded_and_validated() {
+        let pairing = |code: String, url: String, expires_in| Frame {
+            request_id: 1,
+            message: Message::DeviceResult(DeviceResult::AppLink(AppLinkState::Pairing {
+                code,
+                url,
+                expires_in,
+            })),
+        };
+        for code in [
+            "2345ABC".to_owned(),
+            "2345ABCDE".to_owned(),
+            "2345ABCI".to_owned(),
+            "2345abcD".to_owned(),
+        ] {
+            assert!(encode(&pairing(code, "https://store.example/link".to_owned(), 60)).is_err());
+        }
+        assert!(encode(&pairing(
+            "2345ABCD".to_owned(),
+            "http://store.example/link".to_owned(),
+            60
+        ))
+        .is_err());
+        assert!(encode(&pairing(
+            "2345ABCD".to_owned(),
+            format!("https://{}", "a".repeat(MAX_URL_LEN)),
+            60
+        ))
+        .is_err());
+        assert!(encode(&pairing(
+            "2345ABCD".to_owned(),
+            "https://store.example/link".to_owned(),
+            601
+        ))
+        .is_err());
+        assert!(encode(&Frame {
+            request_id: 1,
+            message: Message::DeviceResult(DeviceResult::AppLink(AppLinkState::Paired {
+                browsers: 9,
+            })),
+        })
+        .is_err());
+        assert!(encode(&Frame {
+            request_id: 1,
+            message: Message::DeviceResult(DeviceResult::RemoteInstall(
+                RemoteInstallOutcome::Installed {
+                    id: "../store".to_owned(),
+                },
+            )),
+        })
+        .is_err());
+    }
+
+    #[test]
+    fn malformed_app_link_payloads_are_rejected() {
+        let pairing = |code: String, url: String, expires_in| Frame {
+            request_id: 1,
+            message: Message::DeviceResult(DeviceResult::AppLink(AppLinkState::Pairing {
+                code,
+                url,
+                expires_in,
+            })),
+        };
+        let valid_pairing = encode(&pairing(
+            "2345ABCD".to_owned(),
+            "https://store.example/link".to_owned(),
+            600,
+        ))
+        .expect("valid pairing");
+        let mut bad_code = valid_pairing.clone();
+        bad_code[HEADER_LEN + 6] = b'I';
+        assert_eq!(
+            decode(&bad_code),
+            Err(ProtocolError::InvalidValue("application link"))
+        );
+        let mut bad_expiry = valid_pairing;
+        let last = bad_expiry.len() - 1;
+        bad_expiry[last] = 0x59;
+        assert_eq!(
+            decode(&bad_expiry),
+            Err(ProtocolError::InvalidValue("application link"))
+        );
+
+        let mut bad_url = encode(&pairing(
+            "2345ABCD".to_owned(),
+            "https://store.example/link".to_owned(),
+            600,
+        ))
+        .expect("valid pairing");
+        bad_url[HEADER_LEN + 18] = b'x';
+        assert_eq!(
+            decode(&bad_url),
+            Err(ProtocolError::InvalidValue("application link"))
+        );
+
+        let mut bad_browsers = encode(&Frame {
+            request_id: 1,
+            message: Message::DeviceResult(DeviceResult::AppLink(AppLinkState::Paired {
+                browsers: 8,
+            })),
+        })
+        .expect("valid paired state");
+        let last = bad_browsers.len() - 1;
+        bad_browsers[last] = 9;
+        assert_eq!(
+            decode(&bad_browsers),
+            Err(ProtocolError::InvalidValue("application link"))
+        );
+
+        let mut bad_id = encode(&Frame {
+            request_id: 1,
+            message: Message::DeviceResult(DeviceResult::RemoteInstall(
+                RemoteInstallOutcome::Installed {
+                    id: "word-count".to_owned(),
+                },
+            )),
+        })
+        .expect("valid outcome");
+        bad_id[HEADER_LEN + 6] = b'W';
+        assert_eq!(
+            decode(&bad_id),
+            Err(ProtocolError::InvalidValue("application id"))
+        );
+
+        let mut bad_outcome = encode(&Frame {
+            request_id: 1,
+            message: Message::DeviceResult(DeviceResult::RemoteInstall(RemoteInstallOutcome::None)),
+        })
+        .expect("valid empty outcome");
+        let last = bad_outcome.len() - 1;
+        bad_outcome[last] = 7;
+        assert_eq!(
+            decode(&bad_outcome),
+            Err(ProtocolError::InvalidValue("remote install outcome"))
         );
     }
 

@@ -27,7 +27,11 @@ jobs:
         run: cargo build --locked -p kobo-cli
       - name: Validate the registry
         id: registry
-        run: echo "packages=$(target/debug/kobo app-list --registry apps/catalog.json)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "packages=$(target/debug/kobo app-list --registry apps/catalog.json)" >> "$GITHUB_OUTPUT"
+          node tools/generate-app-pages.mjs
+          git status --porcelain -- docs/apps
+          test -z "$(git status --porcelain -- docs/apps)"
       - name: Save the release tool
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

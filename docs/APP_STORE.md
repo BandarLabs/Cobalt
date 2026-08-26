@@ -11,6 +11,44 @@ Installed readers use the fixed app channel:
 - `https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog.json`
 - `https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog.json.sig`
 
+## Install links
+
+Each catalog app also has a shareable page at
+`https://bandarlabs.github.io/Cobalt/apps/<app-id>/`. A reader can link a
+browser without creating an account:
+
+1. Open **App Store** on the Kobo and select **Install links**.
+2. Scan the QR code, or open the displayed address and enter its pairing code
+   and verification key.
+3. Choose **Install** on an app page.
+
+The browser encrypts the app identity for that Kobo before sending it. The
+relay cannot read the request, and it never receives package URLs or signing
+keys. `kobod` resolves the identity through the signed catalog and performs the
+same package verification as an install started on the device.
+
+The relay is not trusted with installs. During pairing the browser registers
+its own signing key, and the Kobo pins that key only while its pairing window
+is open. The QR link carries the device key fingerprint and a pairing secret
+in the URL fragment, which never reaches the relay. Manual entry uses the same
+values through the displayed verification key. Both paths prove the browser
+saw the device screen and detect a substituted device key. Every later install
+request is signed by the pinned browser key and seals a unique request
+identifier and timestamp inside the encrypted envelope, so the relay cannot
+mint, alter, or replay install commands.
+
+Install requests wait for up to 72 hours. If the Kobo is offline, open Cobalt
+App Store after reconnecting to process the queue. The result distinguishes a
+new install, an update, an app already at the current version, an app included
+with Cobalt, and an app unavailable from the current catalog.
+
+Use **Disconnect all** on the Kobo to revoke every linked browser. With SSH
+enabled, the host maintenance command can do the same:
+
+```sh
+kobo app-link unpair --device <reader-address>
+```
+
 ## Registry
 
 Store apps are workspace packages declared in `apps/catalog.json`. The
