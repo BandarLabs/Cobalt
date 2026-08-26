@@ -4,6 +4,28 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const catalog = JSON.parse(readFileSync(resolve(root, "apps/catalog.json"), "utf8"));
+const systemApps = [
+  {
+    id: "launcher",
+    display_name: "Launcher",
+    summary: "Opens installed apps and always keeps a route back to the Kobo reader."
+  },
+  {
+    id: "store",
+    display_name: "App Store",
+    summary: "Installs, updates, removes and reinstalls signed apps over Wi-Fi."
+  },
+  {
+    id: "terminal",
+    display_name: "Terminal",
+    summary: "A panel-native shell with keys that send input immediately."
+  },
+  {
+    id: "settings",
+    display_name: "Settings",
+    summary: "Connectivity, hardware and platform updates, kept separate from Store."
+  }
+];
 const appsRoot = resolve(root, "docs/apps");
 for (const app of catalog.apps) {
   if (
@@ -17,7 +39,7 @@ for (const app of catalog.apps) {
     throw new Error(`invalid app id: ${String(app.id)}`);
   }
 }
-const appIds = new Set(catalog.apps.map(app => app.id));
+const appIds = new Set([...catalog.apps, ...systemApps].map(app => app.id));
 
 mkdirSync(appsRoot, { recursive: true });
 for (const entry of readdirSync(appsRoot, { withFileTypes: true })) {
@@ -114,8 +136,55 @@ for (const app of catalog.apps) {
   writeFileSync(output, html);
 }
 
+for (const app of systemApps) {
+  const id = escape(app.id);
+  const name = escape(app.display_name);
+  const summary = escape(app.summary);
+  const canonical = `https://bandarlabs.github.io/Cobalt/apps/${id}/`;
+  const html = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${name} for Cobalt</title>
+<meta name="description" content="${summary}">
+<link rel="canonical" href="${canonical}">
+<meta property="og:type" content="website">
+<meta property="og:title" content="${name} for Cobalt">
+<meta property="og:description" content="${summary}">
+<meta property="og:url" content="${canonical}">
+<meta property="og:image" content="https://bandarlabs.github.io/Cobalt/media/site/og-card.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="${name} for Cobalt">
+<meta name="twitter:description" content="${summary}">
+<meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/og-card.jpg">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'">
+<link rel="stylesheet" href="../install.css">
+</head>
+<body>
+<header><div class="wrap"><a class="brand" href="../../">Cobalt</a><a class="back" href="../../#apps">All apps</a></div></header>
+<main class="wrap">
+  <p class="eyebrow">Cobalt system app</p>
+  <h1>${name}</h1>
+  <p class="summary">${summary}</p>
+  <div class="meta"><span>Included with Cobalt</span></div>
+  <section class="panel setup">
+    <p class="eyebrow">No separate install needed</p>
+    <h2>Available after Cobalt setup</h2>
+    <p>${name} is part of the Cobalt platform and is installed automatically with Cobalt. It does not need a separate App Store download.</p>
+    <a class="button-link" href="../../#install">Set up Cobalt</a>
+  </section>
+</main>
+</body>
+</html>
+`;
+  const output = resolve(root, "docs/apps", app.id, "index.html");
+  mkdirSync(dirname(output), { recursive: true });
+  writeFileSync(output, html);
+}
+
 const home = readFileSync(resolve(root, "docs/index.html"), "utf8");
-for (const app of catalog.apps) {
+for (const app of [...catalog.apps, ...systemApps]) {
   if (!home.includes(`href="apps/${app.id}/"`)) {
     throw new Error(`docs/index.html does not link to app page: ${app.id}`);
   }
