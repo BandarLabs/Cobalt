@@ -15,11 +15,53 @@ const installStatus = document.querySelector("#install-status");
 const installButton = document.querySelector("#install");
 const forgetButton = document.querySelector("#forget");
 const deviceName = document.querySelector("#device-name");
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const APP_ID = /^[a-z][a-z0-9-]{0,31}$/;
+const BASE64URL = /^[A-Za-z0-9_-]+$/;
+
+function validString(value, length) {
+  return typeof value === "string" && value.length === length && BASE64URL.test(value);
+}
+
+function normalizedPending(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const entries = value.appId ? [[value.appId, value]] : Object.entries(value);
+  return Object.fromEntries(entries.filter(([id, pending]) =>
+    APP_ID.test(id)
+    && !id.endsWith("-")
+    && !id.includes("--")
+    && pending
+    && typeof pending === "object"
+    && UUID.test(pending.commandId)
+    && typeof pending.expiresAt === "string"
+  ));
+}
+
+function connectionValue(value) {
+  if (
+    !value
+    || typeof value !== "object"
+    || Array.isArray(value)
+    || !UUID.test(value.deviceId)
+    || !validString(value.browserToken, 43)
+    || !validString(value.publicKey, 122)
+  ) {
+    return null;
+  }
+  return {
+    deviceId: value.deviceId,
+    browserToken: value.browserToken,
+    publicKey: value.publicKey,
+    deviceName: typeof value.deviceName === "string" && value.deviceName.length <= 64
+      ? value.deviceName || "Kobo reader"
+      : "Kobo reader",
+    pending: normalizedPending(value.pending)
+  };
+}
 
 function connection() {
   try {
-    const value = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    return value?.deviceId && value?.browserToken && value?.publicKey ? value : null;
+    return connectionValue(JSON.parse(localStorage.getItem(STORAGE_KEY)));
   } catch {
     return null;
   }
@@ -240,12 +282,22 @@ pairForm.addEventListener("submit", async event => {
   setStatus(pairStatus, "Linking…");
   try {
     const claimed = await claim(code);
-    const value = {
+    if (
+      typeof claimed.device_name !== "string"
+      || claimed.device_name.length === 0
+      || claimed.device_name.length > 64
+    ) {
+      throw new Error("The install service returned an invalid pairing response.");
+    }
+    const value = connectionValue({
       deviceId: claimed.device_id,
       browserToken: claimed.browser_token,
       publicKey: claimed.device_public_key,
       deviceName: claimed.device_name
-    };
+    });
+    if (!value || typeof claimed.device_online !== "boolean") {
+      throw new Error("The install service returned an invalid pairing response.");
+    }
     saveConnection(value);
     showConnection(value);
     installPanel.querySelector("h2").tabIndex = -1;

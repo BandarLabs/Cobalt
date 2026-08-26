@@ -1148,7 +1148,9 @@ fn valid_pairing_code(value: &str) -> bool {
 }
 
 fn valid_https_url(value: &str) -> bool {
-    value.starts_with("https://") && value.len() <= kobo_protocol::MAX_URL_LEN
+    value.starts_with("https://")
+        && value.len() <= kobo_protocol::MAX_URL_LEN
+        && !value.chars().any(char::is_control)
 }
 
 fn parse_timestamp(value: &str) -> Option<u64> {
@@ -1621,5 +1623,15 @@ mod tests {
         assert_eq!(parse_timestamp("2026-13-26T12:46:31Z"), None);
         assert_eq!(parse_timestamp("2026-02-29T12:46:31Z"), None);
         assert_eq!(COMMAND_TTL_SECONDS, 86_400);
+    }
+
+    #[test]
+    fn relay_urls_are_https_and_single_line() {
+        assert!(valid_https_url(
+            "https://bandarlabs.github.io/Cobalt/pair/?code=2345ABCD"
+        ));
+        assert!(!valid_https_url("http://example.test/pair"));
+        assert!(!valid_https_url("https://example.test/pair\nforged"));
+        assert!(!valid_https_url("https://example.test/\u{7f}forged"));
     }
 }
