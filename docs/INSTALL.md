@@ -127,7 +127,7 @@ For app links shared on the web, open **Install links** in App Store and scan
 the QR code or enter its eight-character code in the browser. This links the
 browser without an account. Future app-page installs use Wi-Fi and do not need
 the USB cable. If the Kobo is offline, reconnect it and open App Store within
-24 hours to continue.
+72 hours to continue.
 
 For the `0.2.0` release, **Sudoku** is the end-to-end Store test: it is not in
 the USB package. Seeing it in Store, installing it, and then seeing it appear

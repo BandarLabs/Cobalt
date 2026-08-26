@@ -157,7 +157,7 @@ Open **Install links** in Store to link a phone or computer without an
 account. The **Install** button on any
 [Cobalt app page](https://bandarlabs.github.io/Cobalt/#apps) then sends an
 encrypted request to that Kobo. If the reader is offline, reconnect it and
-open Store within 24 hours to continue.
+open Store within 72 hours to continue.
 
 Apps are published automatically when an app PR is merged into `main`.
 Publishing an app does **not** require changing the Cobalt version or creating

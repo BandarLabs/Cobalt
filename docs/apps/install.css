@@ -111,6 +111,8 @@ button.secondary:hover { border-color: var(--ink); background: var(--paper-deep)
   text-decoration: none;
 }
 .button-link:hover { background: var(--blue-dark); text-decoration: none; }
+.button-link.secondary { border-color: #918878; background: transparent; color: var(--ink); }
+.button-link.secondary:hover { border-color: var(--ink); background: #fff; }
 .actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .status {
   min-height: 1.55em;

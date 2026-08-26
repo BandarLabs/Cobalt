@@ -23,7 +23,7 @@ const PENDING_FILE: &str = "pending.json";
 const COMPLETED_FILE: &str = "completed";
 const MAX_RELAY_BODY: u32 = 16 * 1024;
 const MAX_HTTP_RESPONSE: u64 = 48 * 1024;
-const COMMAND_TTL_SECONDS: u64 = 24 * 60 * 60;
+const COMMAND_TTL_SECONDS: u64 = 72 * 60 * 60;
 const INSTALL_COMPLETION_TTL_SECONDS: u64 = 15 * 60;
 const CLOCK_SKEW_SECONDS: u64 = 5 * 60;
 const COMPLETED_LIMIT: usize = 64;
@@ -1613,7 +1613,7 @@ mod tests {
     }
 
     #[test]
-    fn timestamps_are_strict_and_expiry_is_bounded_to_twenty_four_hours() {
+    fn timestamps_are_strict_and_expiry_is_bounded_to_seventy_two_hours() {
         assert_eq!(parse_timestamp("1970-01-01T00:00:00.000Z"), Some(0));
         assert_eq!(
             parse_timestamp("2026-08-26T12:46:31.167Z"),
@@ -1622,7 +1622,7 @@ mod tests {
         assert_eq!(parse_timestamp("2026-08-26 12:46:31Z"), None);
         assert_eq!(parse_timestamp("2026-13-26T12:46:31Z"), None);
         assert_eq!(parse_timestamp("2026-02-29T12:46:31Z"), None);
-        assert_eq!(COMMAND_TTL_SECONDS, 86_400);
+        assert_eq!(COMMAND_TTL_SECONDS, 259_200);
     }
 
     #[test]

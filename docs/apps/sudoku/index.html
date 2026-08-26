@@ -25,20 +25,9 @@
   <h1>Sudoku</h1>
   <p class="summary">A crisp touch-first Sudoku built for the e-ink panel.</p>
   <div class="meta"><span>Version 1.0.1</span><span>No additional permissions</span></div>
-  <section class="panel setup" id="setup-panel">
-    <p class="eyebrow">First-time setup</p>
-    <h2>New to Cobalt? Set it up once.</h2>
-    <p>Cobalt adds a secure app platform without replacing the Kobo reader. The first setup uses a USB cable; after that, apps install and update over Wi-Fi.</p>
-    <ol>
-      <li>Check that your Kobo model and firmware are supported.</li>
-      <li>Connect the charged Kobo to a Mac or Linux computer and run the guided setup.</li>
-      <li>Restart, open Cobalt, and return here. You will not need the cable for future apps.</li>
-    </ol>
-    <a class="button-link" href="https://github.com/BandarLabs/Cobalt/blob/main/docs/INSTALL.md">View the setup guide</a>
-  </section>
   <section class="panel" id="pair-panel">
-    <p class="eyebrow">Already using Cobalt?</p>
-    <h2>Link your Kobo</h2>
+    <p class="eyebrow">Install with Cobalt</p>
+    <h2>Link your Kobo to install</h2>
     <p>On your Kobo, open <strong>App Store</strong>, then <strong>Install links</strong>. Scan the QR code or enter the code shown there.</p>
     <form id="pair-form">
       <div class="field">
@@ -49,6 +38,17 @@
     </form>
     <p class="status" id="pair-status" role="status" aria-live="polite"></p>
     <p class="privacy">No account is required. The install request is encrypted in this browser and can only be opened by the linked Kobo.</p>
+  </section>
+  <section class="panel setup" id="setup-panel">
+    <p class="eyebrow">Cobalt not installed?</p>
+    <h2>Set up Cobalt first</h2>
+    <p>Install Cobalt once over USB, then return to this page. Future apps install and update over Wi-Fi without reconnecting the cable.</p>
+    <ol>
+      <li>Check that your Kobo model and firmware are supported.</li>
+      <li>Connect the charged Kobo to a Mac or Linux computer and follow the setup guide.</li>
+      <li>Restart your Kobo, open Cobalt App Store, and return here to link it.</li>
+    </ol>
+    <a class="button-link secondary" href="https://github.com/BandarLabs/Cobalt/blob/main/docs/INSTALL.md">Set up Cobalt</a>
   </section>
   <section class="panel" id="install-panel" hidden>
     <h2>Install on <span id="device-name">your Kobo</span></h2>

@@ -27,7 +27,7 @@ relay cannot read the request, and it never receives package URLs or signing
 keys. `kobod` resolves the identity through the signed catalog and performs the
 same package verification as an install started on the device.
 
-Install requests wait for up to 24 hours. If the Kobo is offline, open Cobalt
+Install requests wait for up to 72 hours. If the Kobo is offline, open Cobalt
 App Store after reconnecting to process the queue. The result distinguishes a
 new install, an update, an app already at the current version, an app included
 with Cobalt, and an app unavailable from the current catalog.
