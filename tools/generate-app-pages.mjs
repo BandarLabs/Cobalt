@@ -46,6 +46,13 @@ const screenshots = {
   tictactoe: ["tictactoe.png", "A completed game of tic-tac-toe on a Kobo"],
   todo: ["todo.png", "A to-do list with completed items on a Kobo"]
 };
+const screenshotFor = app => {
+  const screenshot = screenshots[app.id];
+  if (!screenshot) {
+    throw new Error(`missing screenshot metadata for app: ${app.id}`);
+  }
+  return screenshot;
+};
 const appsRoot = resolve(root, "docs/apps");
 for (const app of catalog.apps) {
   if (
@@ -82,7 +89,7 @@ for (const app of catalog.apps) {
     ? app.capabilities.map(escape).join(", ")
     : "No additional permissions";
   const canonical = `https://bandarlabs.github.io/Cobalt/apps/${id}/`;
-  const [screenshot, screenshotAlt] = screenshots[app.id];
+  const [screenshot, screenshotAlt] = screenshotFor(app);
   const html = `<!doctype html>
 <html lang="en">
 <head>
@@ -182,7 +189,7 @@ for (const app of systemApps) {
   const name = escape(app.display_name);
   const summary = escape(app.summary);
   const canonical = `https://bandarlabs.github.io/Cobalt/apps/${id}/`;
-  const [screenshot, screenshotAlt] = screenshots[app.id];
+  const [screenshot, screenshotAlt] = screenshotFor(app);
   const html = `<!doctype html>
 <html lang="en">
 <head>

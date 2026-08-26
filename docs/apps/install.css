@@ -160,7 +160,7 @@ button.secondary:hover { border-color: var(--ink); background: var(--paper-deep)
 [hidden] { display: none !important; }
 
 @media (max-width: 540px) {
-  .wrap { width: min(100% - 36px, 1080px); }
+  .wrap { width: min(calc(100% - 36px), 1080px); }
   main { padding-top: 34px; }
   .masthead .wrap { align-items: center; }
   nav.top {
