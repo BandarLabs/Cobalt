@@ -124,9 +124,9 @@ if [ -s \"$staged_key\" ]; then
   sync
 fi
 # The terminal opens a pty: ptsname names /dev/pts/N and the child opens it.
-# Kobo does not mount devpts, so without this every terminal is refused with
-# Failed. A kernel mount, not a write to the root filesystem, and gone again at
-# the next reboot.
+# Some Kobo firmware does not mount devpts, so without this every terminal is
+# refused with Failed. A kernel mount, not a write to the root filesystem, and
+# gone again at the next reboot.
 if ! grep -q ' /dev/pts ' /proc/mounts 2>/dev/null; then
   mkdir -p /dev/pts
   mount -t devpts devpts /dev/pts -o mode=0620,ptmxmode=0666 || true
