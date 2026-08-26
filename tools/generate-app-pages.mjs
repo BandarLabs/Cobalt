@@ -83,7 +83,6 @@ for (const app of catalog.apps) {
       <button type="submit">Link Kobo</button>
     </form>
     <p class="status" id="pair-status" role="status" aria-live="polite"></p>
-    <p class="privacy">No account is required. The install request is encrypted in this browser and can only be opened by the linked Kobo.</p>
   </section>
   <section class="panel setup" id="setup-panel">
     <p class="eyebrow">Cobalt not installed?</p>
