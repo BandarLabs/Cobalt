@@ -27,6 +27,15 @@ relay cannot read the request, and it never receives package URLs or signing
 keys. `kobod` resolves the identity through the signed catalog and performs the
 same package verification as an install started on the device.
 
+The relay is not trusted with installs. During pairing the browser registers
+its own signing key, and the Kobo pins that key only while its pairing window
+is open. The QR link carries the device key fingerprint and a pairing secret
+in the URL fragment, which never reaches the relay, so a QR-scanned browser
+proves it saw the device screen and detects a substituted device key. Every
+install request is signed by a pinned browser key and seals a unique request
+identifier and timestamp inside the encrypted envelope, so the relay cannot
+mint, alter, or replay install commands.
+
 Install requests wait for up to 72 hours. If the Kobo is offline, open Cobalt
 App Store after reconnecting to process the queue. The result distinguishes a
 new install, an update, an app already at the current version, an app included

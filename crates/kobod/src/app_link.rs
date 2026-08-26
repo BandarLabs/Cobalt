@@ -3,9 +3,10 @@ use base64::Engine as _;
 use kobo_json::{ObjectBuilder, Value};
 use kobo_protocol::{AppLinkState, DeviceError, DeviceResult, RemoteInstallOutcome};
 use p256::ecdh::diffie_hellman;
+use p256::ecdsa::signature::Verifier as _;
 use p256::pkcs8::{DecodePublicKey, EncodePublicKey};
 use p256::{PublicKey, SecretKey};
-use ring::{aead, hkdf};
+use ring::{aead, digest, hkdf, hmac};
 use std::fmt::Write as _;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
@@ -21,13 +22,17 @@ const PRIVATE_KEY_FILE: &str = "device-key";
 const CREDENTIAL_FILE: &str = "credential.json";
 const PENDING_FILE: &str = "pending.json";
 const COMPLETED_FILE: &str = "completed";
+const BROWSERS_FILE: &str = "browsers";
 const MAX_RELAY_BODY: u32 = 16 * 1024;
 const MAX_HTTP_RESPONSE: u64 = 48 * 1024;
 const COMMAND_TTL_SECONDS: u64 = 72 * 60 * 60;
 const INSTALL_COMPLETION_TTL_SECONDS: u64 = 15 * 60;
 const CLOCK_SKEW_SECONDS: u64 = 5 * 60;
 const COMPLETED_LIMIT: usize = 64;
+const PINNED_BROWSER_LIMIT: usize = 8;
 const HKDF_INFO: &[u8] = b"cobalt-app-install-v1";
+const PAIR_PROOF_CONTEXT: &str = "cobalt-pair-proof-v1";
+const INSTALL_SIGNATURE_CONTEXT: &str = "cobalt-install-v2";
 static RELAY_TLS_CONFIG: OnceLock<Arc<rustls::ClientConfig>> = OnceLock::new();
 
 pub fn read(root: &Path) -> Result<DeviceResult, DeviceError> {
@@ -178,11 +183,29 @@ impl Relay for HttpsRelay {
         if response.len() as u64 > MAX_HTTP_RESPONSE {
             return Err(DeviceError::Backend);
         }
-        match kobo_net::split_response(&response, MAX_RELAY_BODY).map_err(network_error)? {
-            kobo_net::Response::Body(body) => Ok(body.into_owned()),
-            kobo_net::Response::Redirect(_) => Err(DeviceError::Unreachable),
+        match kobo_net::split_response(&response, MAX_RELAY_BODY) {
+            Ok(kobo_net::Response::Body(body)) => Ok(body.into_owned()),
+            Ok(kobo_net::Response::Redirect(_)) => Err(DeviceError::Unreachable),
+            // A relay overload or outage is retryable; only a definite client
+            // error such as 404 may be treated as the relay's final verdict.
+            Err(kobo_protocol::TaskError::NotFound) if transient_status(&response) => {
+                Err(DeviceError::Unreachable)
+            }
+            Err(error) => Err(network_error(error)),
         }
     }
+}
+
+fn transient_status(response: &[u8]) -> bool {
+    let line = response.split(|byte| *byte == b'\r').next().unwrap_or(&[]);
+    let mut parts = line
+        .split(|byte| *byte == b' ')
+        .filter(|part| !part.is_empty());
+    parts
+        .nth(1)
+        .and_then(|code| std::str::from_utf8(code).ok())
+        .and_then(|code| code.parse::<u16>().ok())
+        .is_some_and(|code| matches!(code, 408 | 425 | 429 | 500..=599))
 }
 
 fn relay_tls_config() -> Result<Arc<rustls::ClientConfig>, DeviceError> {
@@ -236,9 +259,7 @@ impl Identity {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 let mut bytes = [0_u8; 32];
                 let secret = loop {
-                    File::open("/dev/urandom")
-                        .and_then(|mut random| random.read_exact(&mut bytes))
-                        .map_err(|_| DeviceError::Backend)?;
+                    random_bytes(&mut bytes)?;
                     if let Ok(secret) = SecretKey::from_slice(&bytes) {
                         break secret;
                     }
@@ -257,6 +278,26 @@ impl Identity {
             .map(|document| URL_SAFE_NO_PAD.encode(document.as_bytes()))
             .map_err(|_| DeviceError::Backend)
     }
+
+    /// A short digest of the public key, published only through the QR code
+    /// fragment so a browser can detect a relay substituting its own key.
+    fn public_key_fingerprint(&self) -> Result<String, DeviceError> {
+        let public = self.public_key()?;
+        let digest = digest::digest(&digest::SHA256, public.as_bytes());
+        Ok(URL_SAFE_NO_PAD.encode(&digest.as_ref()[..16]))
+    }
+}
+
+fn random_bytes(bytes: &mut [u8]) -> Result<(), DeviceError> {
+    File::open("/dev/urandom")
+        .and_then(|mut random| random.read_exact(bytes))
+        .map_err(|_| DeviceError::Backend)
+}
+
+fn new_link_secret() -> Result<String, DeviceError> {
+    let mut bytes = [0_u8; 16];
+    random_bytes(&mut bytes)?;
+    Ok(URL_SAFE_NO_PAD.encode(bytes))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -271,6 +312,9 @@ struct Pairing {
     code: String,
     url: String,
     expires_at: u64,
+    /// Shared only through the QR code fragment, never through the relay.
+    /// A browser proves its signing key with an HMAC keyed by this secret.
+    secret: String,
 }
 
 impl Credential {
@@ -295,12 +339,14 @@ impl Credential {
             Some(value) => {
                 let code = value.get("code").and_then(Value::as_str);
                 let url = value.get("url").and_then(Value::as_str);
+                let secret = value.get("secret").and_then(Value::as_str);
                 let expires_at = value
                     .get("expires_at")
                     .and_then(Value::as_str)
                     .and_then(|value| value.parse::<u64>().ok());
                 if !code.is_some_and(valid_pairing_code)
                     || !url.is_some_and(valid_https_url)
+                    || !secret.is_some_and(valid_link_secret)
                     || expires_at.is_none()
                 {
                     return Err(DeviceError::Integrity);
@@ -309,6 +355,7 @@ impl Credential {
                     code: code.unwrap_or_default().to_owned(),
                     url: url.unwrap_or_default().to_owned(),
                     expires_at: expires_at.unwrap_or_default(),
+                    secret: secret.unwrap_or_default().to_owned(),
                 })
             }
         };
@@ -325,6 +372,7 @@ impl Credential {
                 .set("code", pairing.code.clone())
                 .set("url", pairing.url.clone())
                 .set("expires_at", pairing.expires_at.to_string())
+                .set("secret", pairing.secret.clone())
                 .build()
         });
         let body = ObjectBuilder::new()
@@ -352,7 +400,9 @@ fn begin_with(
     let mut credential = if let Some(mut credential) = Credential::load(root)? {
         let path = format!("/v1/devices/{}/pairings", credential.device_id);
         let response = relay.send("POST", &path, Some(&credential.token), Some("{}"))?;
-        credential.pairing = Some(parse_pairing(&response)?);
+        let mut pairing = parse_pairing(&response)?;
+        pairing.secret = new_link_secret()?;
+        credential.pairing = Some(pairing);
         credential.save(root)?;
         credential
     } else {
@@ -372,12 +422,15 @@ fn begin_with(
         let credential = Credential {
             device_id,
             token,
-            pairing: Some(pairing),
+            pairing: Some(Pairing {
+                secret: new_link_secret()?,
+                ..pairing
+            }),
         };
         credential.save(root)?;
         credential
     };
-    let state = local_pairing_state(&credential, now).unwrap_or(AppLinkState::Unpaired);
+    let state = local_pairing_state(&credential, &identity, now).unwrap_or(AppLinkState::Unpaired);
     if matches!(state, AppLinkState::Unpaired) {
         credential.pairing = None;
         credential.save(root)?;
@@ -406,16 +459,146 @@ fn read_with(root: &Path, relay: &mut impl Relay, now: u64) -> Result<DeviceResu
         if browsers == 0 {
             return Err(DeviceError::Integrity);
         }
-        if credential.pairing.take().is_some() {
+        let pairing = credential.pairing.take();
+        sync_browser_pins(root, pairing.as_ref(), &value)?;
+        if pairing.is_some() {
             credential.save(root)?;
         }
         return Ok(DeviceResult::AppLink(AppLinkState::Paired { browsers }));
     }
-    let state = local_pairing_state(&credential, now).unwrap_or(AppLinkState::Unpaired);
+    let identity = Identity::load_or_create(root)?;
+    let state = local_pairing_state(&credential, &identity, now).unwrap_or(AppLinkState::Unpaired);
     if matches!(state, AppLinkState::Unpaired) && credential.pairing.take().is_some() {
         credential.save(root)?;
     }
     Ok(DeviceResult::AppLink(state))
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PinnedBrowser {
+    public_key: String,
+    proven: bool,
+}
+
+/// Pins browser signing keys reported by the relay. A key joins the pinned
+/// set only while a pairing this device created is outstanding: a valid HMAC
+/// proof from the QR fragment secret pins a verified sender, and a single
+/// claim without one is trusted once at pairing time. Keys the relay reports
+/// at any other moment are ignored, so a later-compromised relay cannot add
+/// senders.
+fn sync_browser_pins(
+    root: &Path,
+    pairing: Option<&Pairing>,
+    value: &Value,
+) -> Result<(), DeviceError> {
+    let entries = value
+        .get("browser_keys")
+        .and_then(Value::as_array)
+        .ok_or(DeviceError::Integrity)?;
+    if entries.len() > PINNED_BROWSER_LIMIT {
+        return Err(DeviceError::Integrity);
+    }
+    let mut pinned = load_browsers(root)?;
+    let mut changed = false;
+    let mut unproven_allowance = 1;
+    for entry in entries {
+        let key = entry
+            .get("public_key")
+            .and_then(Value::as_str)
+            .filter(|key| valid_browser_key(key))
+            .ok_or(DeviceError::Integrity)?;
+        if pinned.iter().any(|browser| browser.public_key == key) {
+            continue;
+        }
+        let proof = match entry.get("proof") {
+            None | Some(Value::Null) => None,
+            Some(proof) => Some(
+                proof
+                    .as_str()
+                    .filter(|proof| valid_pair_proof(proof))
+                    .ok_or(DeviceError::Integrity)?,
+            ),
+        };
+        let Some(pairing) = pairing else { continue };
+        let proven = if let Some(proof) = proof {
+            if !verify_pair_proof(&pairing.secret, key, proof) {
+                continue;
+            }
+            true
+        } else {
+            if unproven_allowance == 0 {
+                continue;
+            }
+            unproven_allowance -= 1;
+            false
+        };
+        if pinned.len() >= PINNED_BROWSER_LIMIT {
+            break;
+        }
+        pinned.push(PinnedBrowser {
+            public_key: key.to_owned(),
+            proven,
+        });
+        changed = true;
+    }
+    if changed {
+        save_browsers(root, &pinned)?;
+    }
+    Ok(())
+}
+
+fn verify_pair_proof(secret: &str, browser_key: &str, proof: &str) -> bool {
+    let Ok(secret) = URL_SAFE_NO_PAD.decode(secret) else {
+        return false;
+    };
+    let Ok(proof) = URL_SAFE_NO_PAD.decode(proof) else {
+        return false;
+    };
+    let key = hmac::Key::new(hmac::HMAC_SHA256, &secret);
+    let mut message = Vec::new();
+    message.extend_from_slice(PAIR_PROOF_CONTEXT.as_bytes());
+    message.push(b'\n');
+    message.extend_from_slice(browser_key.as_bytes());
+    hmac::verify(&key, &message, &proof).is_ok()
+}
+
+fn load_browsers(root: &Path) -> Result<Vec<PinnedBrowser>, DeviceError> {
+    let text = match fs::read_to_string(state_root(root).join(BROWSERS_FILE)) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(_) => return Err(DeviceError::Backend),
+    };
+    let mut browsers = Vec::new();
+    for line in text.lines() {
+        let (kind, key) = line.split_once(' ').ok_or(DeviceError::Integrity)?;
+        let proven = match kind {
+            "proven" => true,
+            "tofu" => false,
+            _ => return Err(DeviceError::Integrity),
+        };
+        if !valid_browser_key(key) || browsers.len() >= PINNED_BROWSER_LIMIT {
+            return Err(DeviceError::Integrity);
+        }
+        browsers.push(PinnedBrowser {
+            public_key: key.to_owned(),
+            proven,
+        });
+    }
+    Ok(browsers)
+}
+
+fn save_browsers(root: &Path, browsers: &[PinnedBrowser]) -> Result<(), DeviceError> {
+    let mut body = String::new();
+    for browser in browsers {
+        body.push_str(if browser.proven { "proven " } else { "tofu " });
+        body.push_str(&browser.public_key);
+        body.push('\n');
+    }
+    atomic_write(
+        &state_root(root).join(BROWSERS_FILE),
+        body.as_bytes(),
+        0o600,
+    )
 }
 
 fn poll_with(
@@ -447,6 +630,70 @@ fn poll_with(
     process_command(root, relay, &credential, command, now, prepare, install)
 }
 
+fn validate_command(
+    root: &Path,
+    credential: &Credential,
+    command: &Value,
+    now: u64,
+) -> Result<(InstallRequest, u64), (Option<&'static str>, DeviceError)> {
+    let invalid = |error| (Some("invalid-command"), error);
+    let (created_at, expires_at) = required_string(command, "created_at")
+        .and_then(|value| parse_timestamp(&value).ok_or(DeviceError::Integrity))
+        .and_then(|created_at| {
+            required_string(command, "expires_at")
+                .and_then(|value| parse_timestamp(&value).ok_or(DeviceError::Integrity))
+                .map(|expires_at| (created_at, expires_at))
+        })
+        .map_err(invalid)?;
+    if expires_at <= now
+        || expires_at.saturating_sub(created_at) > COMMAND_TTL_SECONDS
+        || created_at > now.saturating_add(CLOCK_SKEW_SECONDS)
+    {
+        return Err((Some("expired"), DeviceError::InvalidInput));
+    }
+    let envelope = command
+        .get("envelope")
+        .ok_or_else(|| invalid(DeviceError::Integrity))?;
+    let sender = command
+        .get("browser_public_key")
+        .and_then(Value::as_str)
+        .filter(|key| valid_browser_key(key))
+        .ok_or_else(|| invalid(DeviceError::Integrity))?;
+    let signature = command
+        .get("signature")
+        .and_then(Value::as_str)
+        .filter(|signature| valid_install_signature(signature))
+        .ok_or_else(|| invalid(DeviceError::Integrity))?;
+    if !load_browsers(root)
+        .map_err(|error| (None, error))?
+        .iter()
+        .any(|browser| browser.public_key == sender)
+    {
+        return Err((Some("unknown-sender"), DeviceError::Integrity));
+    }
+    if !verify_install_signature(sender, signature, &credential.device_id, envelope) {
+        return Err((Some("invalid-signature"), DeviceError::Integrity));
+    }
+    let identity = Identity::load_or_create(root).map_err(|error| (None, error))?;
+    let request = decrypt_command(envelope, &identity.secret, &credential.device_id)
+        .map_err(|error| (Some("invalid-envelope"), error))?;
+    // Freshness and uniqueness come from inside the sealed request, so the
+    // relay cannot replay an old envelope under a new command identity.
+    if request.requested_at > now.saturating_add(CLOCK_SKEW_SECONDS)
+        || now > request.requested_at.saturating_add(COMMAND_TTL_SECONDS)
+    {
+        return Err((Some("expired"), DeviceError::InvalidInput));
+    }
+    if completed(root)
+        .map_err(|error| (None, error))?
+        .iter()
+        .any(|known| known == &request.request_id)
+    {
+        return Err((Some("replayed-command"), DeviceError::Integrity));
+    }
+    Ok((request, expires_at))
+}
+
 fn process_command(
     root: &Path,
     relay: &mut impl Relay,
@@ -460,76 +707,14 @@ fn process_command(
     if !valid_uuid(&command_id) {
         return Err(DeviceError::Integrity);
     }
-    if completed(root)?.iter().any(|known| known == &command_id) {
-        return reject_command(
-            root,
-            relay,
-            credential,
-            &command_id,
-            "replayed-command",
-            DeviceError::Integrity,
-        );
-    }
-    let timestamps = required_string(command, "created_at")
-        .and_then(|value| parse_timestamp(&value).ok_or(DeviceError::Integrity))
-        .and_then(|created_at| {
-            required_string(command, "expires_at")
-                .and_then(|value| parse_timestamp(&value).ok_or(DeviceError::Integrity))
-                .map(|expires_at| (created_at, expires_at))
-        });
-    let (created_at, expires_at) = match timestamps {
-        Ok(timestamps) => timestamps,
-        Err(error) => {
-            return reject_command(
-                root,
-                relay,
-                credential,
-                &command_id,
-                "invalid-command",
-                error,
-            );
+    let (request, expires_at) = match validate_command(root, credential, command, now) {
+        Ok(validated) => validated,
+        Err((None, error)) => return Err(error),
+        Err((Some(failure), error)) => {
+            return reject_command(root, relay, credential, &command_id, failure, error);
         }
     };
-    if expires_at <= now
-        || expires_at.saturating_sub(created_at) > COMMAND_TTL_SECONDS
-        || created_at > now.saturating_add(CLOCK_SKEW_SECONDS)
-    {
-        return reject_command(
-            root,
-            relay,
-            credential,
-            &command_id,
-            "expired",
-            DeviceError::InvalidInput,
-        );
-    }
-    let Some(envelope) = command.get("envelope") else {
-        return reject_command(
-            root,
-            relay,
-            credential,
-            &command_id,
-            "invalid-command",
-            DeviceError::Integrity,
-        );
-    };
-    let app_id = match decrypt_command(
-        envelope,
-        &Identity::load_or_create(root)?.secret,
-        &credential.device_id,
-    ) {
-        Ok(id) => id,
-        Err(error) => {
-            return reject_command(
-                root,
-                relay,
-                credential,
-                &command_id,
-                "invalid-envelope",
-                error,
-            );
-        }
-    };
+    let app_id = request.app_id;
     let plan = match prepare(root, &app_id) {
         Ok(plan) => plan,
         Err(error) => {
@@ -545,6 +730,7 @@ fn process_command(
     };
     let pending = Pending {
         command_id,
+        request_id: request.request_id,
         app_id,
         expires_at,
         phase: PendingPhase::Ready {
@@ -613,7 +799,9 @@ fn finish_pending(
     };
     match send_ack(relay, credential, &pending.command_id, ack) {
         Ok(()) | Err(DeviceError::NotFound) => {
-            remember_completed(root, &pending.command_id)?;
+            if !pending.request_id.is_empty() {
+                remember_completed(root, &pending.request_id)?;
+            }
             remove_state_file(root, PENDING_FILE)?;
         }
         Err(error) => return Err(error),
@@ -634,6 +822,7 @@ fn reject_command(
 ) -> Result<DeviceResult, DeviceError> {
     let pending = Pending {
         command_id: command_id.to_owned(),
+        request_id: String::new(),
         app_id: String::new(),
         expires_at: now(),
         phase: PendingPhase::Final {
@@ -646,15 +835,19 @@ fn reject_command(
 }
 
 fn disconnect_with(root: &Path, relay: &mut impl Relay) -> Result<DeviceResult, DeviceError> {
-    let remote = if let Some(credential) = Credential::load(root)? {
-        let path = format!("/v1/devices/{}", credential.device_id);
-        relay.send("DELETE", &path, Some(&credential.token), None)
-    } else {
-        Ok(Vec::new())
+    // A missing or unreadable credential cannot authenticate a remote revoke,
+    // but unpairing must still succeed as a guaranteed local reset.
+    let remote = match Credential::load(root) {
+        Ok(Some(credential)) => {
+            let path = format!("/v1/devices/{}", credential.device_id);
+            relay.send("DELETE", &path, Some(&credential.token), None)
+        }
+        Ok(None) | Err(_) => Ok(Vec::new()),
     };
     remove_state_file(root, CREDENTIAL_FILE)?;
     remove_state_file(root, PENDING_FILE)?;
     remove_state_file(root, COMPLETED_FILE)?;
+    remove_state_file(root, BROWSERS_FILE)?;
     remove_state_file(root, PRIVATE_KEY_FILE)?;
     match remote {
         Ok(_)
@@ -693,24 +886,77 @@ fn parse_pairing_value(value: &Value) -> Result<Pairing, DeviceError> {
         code: code.to_owned(),
         url: url.to_owned(),
         expires_at,
+        secret: String::new(),
     })
 }
 
-fn local_pairing_state(credential: &Credential, now: u64) -> Option<AppLinkState> {
+fn local_pairing_state(
+    credential: &Credential,
+    identity: &Identity,
+    now: u64,
+) -> Option<AppLinkState> {
     let pairing = credential.pairing.as_ref()?;
     let remaining = pairing.expires_at.checked_sub(now)?;
+    // The fragment travels inside the QR code only: browsers never send it to
+    // the relay, so it can carry the device key digest and the pairing proof
+    // secret that keep the relay honest.
+    let url = format!(
+        "{}#k={}&s={}",
+        pairing.url,
+        identity.public_key_fingerprint().ok()?,
+        pairing.secret
+    );
     Some(AppLinkState::Pairing {
         code: pairing.code.clone(),
-        url: pairing.url.clone(),
+        url,
         expires_in: u32::try_from(remaining.min(10 * 60)).unwrap_or(10 * 60),
     })
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct InstallRequest {
+    app_id: String,
+    request_id: String,
+    requested_at: u64,
+}
+
+fn verify_install_signature(
+    sender: &str,
+    signature: &str,
+    device_id: &str,
+    envelope: &Value,
+) -> bool {
+    let (Some(ephemeral), Some(nonce), Some(ciphertext)) = (
+        envelope.get("ephemeral_public_key").and_then(Value::as_str),
+        envelope.get("nonce").and_then(Value::as_str),
+        envelope.get("ciphertext").and_then(Value::as_str),
+    ) else {
+        return false;
+    };
+    let Ok(sender) = URL_SAFE_NO_PAD.decode(sender) else {
+        return false;
+    };
+    let Ok(signature) = URL_SAFE_NO_PAD.decode(signature) else {
+        return false;
+    };
+    let Ok(key) = PublicKey::from_public_key_der(&sender) else {
+        return false;
+    };
+    let Ok(signature) = p256::ecdsa::Signature::from_slice(&signature) else {
+        return false;
+    };
+    let message =
+        format!("{INSTALL_SIGNATURE_CONTEXT}\n{device_id}\n{ephemeral}\n{nonce}\n{ciphertext}");
+    p256::ecdsa::VerifyingKey::from(&key)
+        .verify(message.as_bytes(), &signature)
+        .is_ok()
 }
 
 fn decrypt_command(
     envelope: &Value,
     secret: &SecretKey,
     device_id: &str,
-) -> Result<String, DeviceError> {
+) -> Result<InstallRequest, DeviceError> {
     if required_string(envelope, "algorithm")? != "ECDH-P256-AES-256-GCM" {
         return Err(DeviceError::Integrity);
     }
@@ -742,10 +988,7 @@ fn decrypt_command(
     let Value::Object(fields) = &value else {
         return Err(DeviceError::InvalidInput);
     };
-    if fields.len() != 2
-        || value.get("version").and_then(Value::as_i64) != Some(1)
-        || value.get("app_id").and_then(Value::as_str).is_none()
-    {
+    if fields.len() != 4 || value.get("version").and_then(Value::as_i64) != Some(2) {
         return Err(DeviceError::InvalidInput);
     }
     let id = value
@@ -755,7 +998,21 @@ fn decrypt_command(
     if !kobo_protocol::valid_app_id(id) {
         return Err(DeviceError::InvalidInput);
     }
-    Ok(id.to_owned())
+    let request_id = value
+        .get("request_id")
+        .and_then(Value::as_str)
+        .filter(|request_id| valid_request_id(request_id))
+        .ok_or(DeviceError::InvalidInput)?;
+    let requested_at = value
+        .get("requested_at")
+        .and_then(Value::as_i64)
+        .and_then(|requested_at| u64::try_from(requested_at).ok())
+        .ok_or(DeviceError::InvalidInput)?;
+    Ok(InstallRequest {
+        app_id: id.to_owned(),
+        request_id: request_id.to_owned(),
+        requested_at,
+    })
 }
 
 struct AesKeyLength;
@@ -769,6 +1026,7 @@ impl hkdf::KeyType for AesKeyLength {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Pending {
     command_id: String,
+    request_id: String,
     app_id: String,
     expires_at: u64,
     phase: PendingPhase,
@@ -811,11 +1069,18 @@ impl Pending {
             return Err(DeviceError::Integrity);
         }
         let command_id = required_string(&value, "command_id")?;
+        let request_id = value
+            .get("request_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
         let app_id = required_string(&value, "app_id")?;
         let expires_at = required_string(&value, "expires_at")?
             .parse::<u64>()
             .map_err(|_| DeviceError::Integrity)?;
-        if !valid_uuid(&command_id) || (!app_id.is_empty() && !kobo_protocol::valid_app_id(&app_id))
+        if !valid_uuid(&command_id)
+            || (!app_id.is_empty() && !kobo_protocol::valid_app_id(&app_id))
+            || (!request_id.is_empty() && !valid_request_id(&request_id))
         {
             return Err(DeviceError::Integrity);
         }
@@ -853,6 +1118,7 @@ impl Pending {
         };
         Ok(Some(Self {
             command_id,
+            request_id,
             app_id,
             expires_at,
             phase,
@@ -863,6 +1129,7 @@ impl Pending {
         let mut body = ObjectBuilder::new()
             .set("version", 1_i32)
             .set("command_id", self.command_id.clone())
+            .set("request_id", self.request_id.clone())
             .set("app_id", self.app_id.clone())
             .set("expires_at", self.expires_at.to_string());
         body = match &self.phase {
@@ -1033,7 +1300,9 @@ fn completed(root: &Path) -> Result<Vec<String>, DeviceError> {
     };
     let mut ids = Vec::new();
     for line in text.lines() {
-        if !valid_uuid(line) {
+        // Uuids are accepted for journals written before entries became
+        // browser-chosen request identifiers.
+        if !valid_request_id(line) && !valid_uuid(line) {
             return Err(DeviceError::Integrity);
         }
         ids.push(line.to_owned());
@@ -1041,10 +1310,10 @@ fn completed(root: &Path) -> Result<Vec<String>, DeviceError> {
     Ok(ids)
 }
 
-fn remember_completed(root: &Path, command_id: &str) -> Result<(), DeviceError> {
+fn remember_completed(root: &Path, request_id: &str) -> Result<(), DeviceError> {
     let mut ids = completed(root)?;
-    ids.retain(|known| known != command_id);
-    ids.push(command_id.to_owned());
+    ids.retain(|known| known != request_id);
+    ids.push(request_id.to_owned());
     if ids.len() > COMPLETED_LIMIT {
         ids.drain(..ids.len() - COMPLETED_LIMIT);
     }
@@ -1123,10 +1392,34 @@ fn decode_bounded(value: &str, minimum: usize, maximum: usize) -> Result<Vec<u8>
 }
 
 fn valid_token(value: &str) -> bool {
-    value.len() == 43
+    valid_base64url(value, 43)
+}
+
+fn valid_base64url(value: &str, length: usize) -> bool {
+    value.len() == length
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+}
+
+fn valid_link_secret(value: &str) -> bool {
+    valid_base64url(value, 22)
+}
+
+fn valid_request_id(value: &str) -> bool {
+    valid_base64url(value, 22)
+}
+
+fn valid_browser_key(value: &str) -> bool {
+    valid_base64url(value, 122)
+}
+
+fn valid_pair_proof(value: &str) -> bool {
+    valid_base64url(value, 43)
+}
+
+fn valid_install_signature(value: &str) -> bool {
+    valid_base64url(value, 86)
 }
 
 fn valid_uuid(value: &str) -> bool {
@@ -1255,11 +1548,79 @@ mod tests {
         }
     }
 
+    fn pairing() -> Pairing {
+        Pairing {
+            code: "2345ABCD".to_owned(),
+            url: "https://example.test/pair/?code=2345ABCD".to_owned(),
+            expires_at: 2_000_000_000,
+            secret: URL_SAFE_NO_PAD.encode([9_u8; 16]),
+        }
+    }
+
+    fn request_id() -> String {
+        URL_SAFE_NO_PAD.encode([0_u8; 16])
+    }
+
+    fn browser_signing_key() -> p256::ecdsa::SigningKey {
+        p256::ecdsa::SigningKey::from_slice(&[3_u8; 32]).expect("browser key")
+    }
+
+    fn browser_public_key() -> String {
+        URL_SAFE_NO_PAD.encode(
+            browser_signing_key()
+                .verifying_key()
+                .to_public_key_der()
+                .expect("browser public key")
+                .as_bytes(),
+        )
+    }
+
+    fn pin_browser(root: &Path) {
+        save_browsers(
+            root,
+            &[PinnedBrowser {
+                public_key: browser_public_key(),
+                proven: true,
+            }],
+        )
+        .expect("pin browser");
+    }
+
+    fn sign_command(device_id: &str, envelope: &Value) -> String {
+        use p256::ecdsa::signature::Signer as _;
+        let message = format!(
+            "{INSTALL_SIGNATURE_CONTEXT}\n{device_id}\n{}\n{}\n{}",
+            envelope
+                .get("ephemeral_public_key")
+                .and_then(Value::as_str)
+                .expect("ephemeral key"),
+            envelope
+                .get("nonce")
+                .and_then(Value::as_str)
+                .expect("nonce"),
+            envelope
+                .get("ciphertext")
+                .and_then(Value::as_str)
+                .expect("ciphertext"),
+        );
+        let signature: p256::ecdsa::Signature = browser_signing_key().sign(message.as_bytes());
+        URL_SAFE_NO_PAD.encode(signature.to_bytes())
+    }
+
     fn pairing_response() -> &'static str {
         r#"{"pairing_code":"2345ABCD","pairing_url":"https://example.test/pair/?code=2345ABCD","expires_at":"2026-08-26T13:00:00.000Z"}"#
     }
 
-    fn encrypted_envelope(identity: &Identity, device_id: &str, id: &str) -> Value {
+    fn paired_response() -> &'static str {
+        r#"{"paired":true,"browser_count":1,"pairing":null,"browser_keys":[]}"#
+    }
+
+    fn encrypted_envelope(
+        identity: &Identity,
+        device_id: &str,
+        id: &str,
+        requested_at: u64,
+    ) -> Value {
         let ephemeral = EphemeralSecret::random(&mut OsRng);
         let public = PublicKey::from(&ephemeral);
         let shared = ephemeral.diffie_hellman(&identity.secret.public_key());
@@ -1273,12 +1634,11 @@ mod tests {
             .map(aead::LessSafeKey::new)
             .expect("AES key");
         let nonce = [7_u8; 12];
-        let mut plaintext = ObjectBuilder::new()
-            .set("version", 1_i32)
-            .set("app_id", id)
-            .build()
-            .to_json()
-            .into_bytes();
+        let mut plaintext = format!(
+            r#"{{"version":2,"app_id":"{id}","request_id":"{}","requested_at":{requested_at}}}"#,
+            request_id()
+        )
+        .into_bytes();
         key.seal_in_place_append_tag(
             aead::Nonce::assume_unique_for_key(nonce),
             aead::Aad::from(device_id.as_bytes()),
@@ -1376,10 +1736,14 @@ mod tests {
         let root = root("decrypt");
         let identity = Identity::load_or_create(&root).expect("identity");
         let device_id = credential().device_id;
-        let envelope = encrypted_envelope(&identity, &device_id, "word-count");
+        let envelope = encrypted_envelope(&identity, &device_id, "word-count", 1_787_748_392);
         assert_eq!(
             decrypt_command(&envelope, &identity.secret, &device_id).expect("decrypt"),
-            "word-count"
+            InstallRequest {
+                app_id: "word-count".to_owned(),
+                request_id: request_id(),
+                requested_at: 1_787_748_392,
+            }
         );
         assert_eq!(
             decrypt_command(
@@ -1420,12 +1784,16 @@ mod tests {
             .set("nonce", "AAECAwQFBgcICQoL")
             .set(
                 "ciphertext",
-                "-h-bS-QE5N6219s7MC9U0Om5uE6i7wLT1unUn0jXykNwlfr69mWa5Y6zED2tc4kWaq9u",
+                "-h-bS-QE5N6219s4MC9U0Om5uE6i7wLT1unUn0jXykNwlauxLiOWLzQdMzWBsA9HCSZ7wVZyPOK7k0gkTxQjkviE2KpYGhsk7FNeIBEduCw-udeu8P8n2Xiw-IFO3UPRhA5Pny75yV3GRrJ1zzARRpT_Kw",
             )
             .build();
         assert_eq!(
             decrypt_command(&envelope, &secret, "12345678-1234-4123-8123-123456789abc"),
-            Ok("word-count".to_owned())
+            Ok(InstallRequest {
+                app_id: "word-count".to_owned(),
+                request_id: "AAAAAAAAAAAAAAAAAAAAAA".to_owned(),
+                requested_at: 1_787_748_000,
+            })
         );
     }
 
@@ -1434,11 +1802,20 @@ mod tests {
         let root = root("poll");
         let credential = credential();
         credential.save(&root).expect("credential");
+        pin_browser(&root);
         let identity = Identity::load_or_create(&root).expect("identity");
-        let envelope = encrypted_envelope(&identity, &credential.device_id, "word-count");
+        let envelope = encrypted_envelope(
+            &identity,
+            &credential.device_id,
+            "word-count",
+            1_787_748_392,
+        );
+        let signature = sign_command(&credential.device_id, &envelope);
         let command = ObjectBuilder::new()
             .set("id", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
             .set("envelope", envelope)
+            .set("browser_public_key", browser_public_key())
+            .set("signature", signature)
             .set("created_at", "2026-08-26T12:46:31.000Z")
             .set("expires_at", "2026-08-26T12:47:00.000Z")
             .build();
@@ -1447,7 +1824,7 @@ mod tests {
             .build()
             .to_json();
         let mut relay = FakeRelay::default()
-            .response(r#"{"paired":true,"browser_count":1,"pairing":null}"#)
+            .response(paired_response())
             .response(&response)
             .response("{}")
             .response("{}");
@@ -1525,7 +1902,7 @@ mod tests {
         credential().save(&root).expect("credential");
         let response = r#"{"command":{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","envelope":{},"created_at":"2026-08-25T12:46:31.000Z","expires_at":"2026-08-26T12:46:31.000Z"}}"#;
         let mut relay = FakeRelay::default()
-            .response(r#"{"paired":true,"browser_count":1,"pairing":null}"#)
+            .response(paired_response())
             .response(response)
             .response("{}");
         let result = poll_with(
@@ -1550,6 +1927,7 @@ mod tests {
         credential.save(&root).expect("credential");
         let pending = Pending {
             command_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa".to_owned(),
+            request_id: request_id(),
             app_id: "word-count".to_owned(),
             expires_at: 2_000_000_000,
             phase: PendingPhase::Final {
@@ -1576,10 +1954,7 @@ mod tests {
             DeviceResult::RemoteInstall(RemoteInstallOutcome::Installed { .. })
         ));
         assert!(Pending::load(&root).expect("pending state").is_none());
-        assert_eq!(
-            completed(&root).expect("completed"),
-            vec!["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"]
-        );
+        assert_eq!(completed(&root).expect("completed"), vec![request_id()]);
         let _ignored = fs::remove_dir_all(root);
     }
 
@@ -1609,6 +1984,328 @@ mod tests {
         assert_eq!(result, DeviceResult::AppLink(AppLinkState::Unpaired));
         assert!(Credential::load(&root).expect("credential state").is_none());
         assert!(!state_root(&root).join(PRIVATE_KEY_FILE).exists());
+        let _ignored = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_corrupt_credential_still_unpairs_and_clears_local_state() {
+        let root = root("disconnect-corrupt");
+        Identity::load_or_create(&root).expect("identity");
+        atomic_write(
+            &state_root(&root).join(CREDENTIAL_FILE),
+            b"{not json",
+            0o600,
+        )
+        .expect("corrupt credential");
+        let mut relay = FakeRelay::default();
+        let result = disconnect_with(&root, &mut relay).expect("unpair");
+        assert_eq!(result, DeviceResult::AppLink(AppLinkState::Unpaired));
+        assert!(relay.requests.is_empty());
+        assert!(!state_root(&root).join(CREDENTIAL_FILE).exists());
+        assert!(!state_root(&root).join(PRIVATE_KEY_FILE).exists());
+        let _ignored = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_relay_outage_during_the_final_acknowledgement_keeps_the_pending_record() {
+        let root = root("ack-outage");
+        credential().save(&root).expect("credential");
+        let pending = Pending {
+            command_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa".to_owned(),
+            request_id: request_id(),
+            app_id: "word-count".to_owned(),
+            expires_at: 2_000_000_000,
+            phase: PendingPhase::Final {
+                ack: Ack::Installed(RemoteInstallOutcome::Installed {
+                    id: "word-count".to_owned(),
+                }),
+                report: Report::Outcome(RemoteInstallOutcome::Installed {
+                    id: "word-count".to_owned(),
+                }),
+            },
+        };
+        pending.save(&root).expect("pending");
+        let mut relay = FakeRelay::default().failure(DeviceError::Unreachable);
+        let result = poll_with(
+            &root,
+            &mut relay,
+            1_800_000_000,
+            |_, _| panic!("a final acknowledgement must not prepare"),
+            |_, _| panic!("a final acknowledgement must not install"),
+        );
+        assert_eq!(result, Err(DeviceError::Unreachable));
+        assert!(Pending::load(&root).expect("pending state").is_some());
+        assert!(completed(&root).expect("completed").is_empty());
+        let _ignored = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn relay_status_codes_distinguish_outages_from_final_verdicts() {
+        assert!(transient_status(
+            b"HTTP/1.1 500 Internal Server Error\r\n\r\n"
+        ));
+        assert!(transient_status(
+            b"HTTP/1.1 503 Service Unavailable\r\n\r\n"
+        ));
+        assert!(transient_status(b"HTTP/1.1 429 Too Many Requests\r\n\r\n"));
+        assert!(!transient_status(b"HTTP/1.1 404 Not Found\r\n\r\n"));
+        assert!(!transient_status(b"HTTP/1.1 409 Conflict\r\n\r\n"));
+        assert!(!transient_status(b"garbage"));
+    }
+
+    fn pair_proof(secret: &str, key: &str) -> String {
+        let secret = URL_SAFE_NO_PAD.decode(secret).expect("secret");
+        let hmac_key = hmac::Key::new(hmac::HMAC_SHA256, &secret);
+        let mut message = Vec::new();
+        message.extend_from_slice(PAIR_PROOF_CONTEXT.as_bytes());
+        message.push(b'\n');
+        message.extend_from_slice(key.as_bytes());
+        URL_SAFE_NO_PAD.encode(hmac::sign(&hmac_key, &message).as_ref())
+    }
+
+    fn second_browser_key() -> String {
+        URL_SAFE_NO_PAD.encode(
+            p256::ecdsa::SigningKey::from_slice(&[4_u8; 32])
+                .expect("second browser key")
+                .verifying_key()
+                .to_public_key_der()
+                .expect("second public key")
+                .as_bytes(),
+        )
+    }
+
+    #[test]
+    fn browser_keys_pin_only_while_a_device_created_pairing_is_outstanding() {
+        let root = root("pins");
+        let pairing = pairing();
+        let key = browser_public_key();
+        let proven = ObjectBuilder::new()
+            .set(
+                "browser_keys",
+                vec![ObjectBuilder::new()
+                    .set("public_key", key.clone())
+                    .set("proof", pair_proof(&pairing.secret, &key))
+                    .build()],
+            )
+            .build();
+        sync_browser_pins(&root, Some(&pairing), &proven).expect("pin proven");
+        assert_eq!(
+            load_browsers(&root).expect("browsers"),
+            vec![PinnedBrowser {
+                public_key: key.clone(),
+                proven: true,
+            }]
+        );
+        let unproven = ObjectBuilder::new()
+            .set(
+                "browser_keys",
+                vec![ObjectBuilder::new()
+                    .set("public_key", second_browser_key())
+                    .build()],
+            )
+            .build();
+        sync_browser_pins(&root, None, &unproven).expect("ignore without pairing");
+        assert_eq!(load_browsers(&root).expect("browsers").len(), 1);
+        sync_browser_pins(&root, Some(&pairing), &unproven).expect("pin at pairing time");
+        assert_eq!(
+            load_browsers(&root).expect("browsers")[1],
+            PinnedBrowser {
+                public_key: second_browser_key(),
+                proven: false,
+            }
+        );
+        let forged = ObjectBuilder::new()
+            .set(
+                "browser_keys",
+                vec![ObjectBuilder::new()
+                    .set("public_key", "B".repeat(122))
+                    .set(
+                        "proof",
+                        pair_proof(&URL_SAFE_NO_PAD.encode([1_u8; 16]), "B"),
+                    )
+                    .build()],
+            )
+            .build();
+        sync_browser_pins(&root, Some(&pairing), &forged).expect("ignore forged proof");
+        assert_eq!(load_browsers(&root).expect("browsers").len(), 2);
+        let _ignored = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn commands_from_unknown_senders_are_rejected_without_decryption() {
+        let root = root("unknown-sender");
+        let credential = credential();
+        credential.save(&root).expect("credential");
+        let identity = Identity::load_or_create(&root).expect("identity");
+        let envelope = encrypted_envelope(
+            &identity,
+            &credential.device_id,
+            "word-count",
+            1_787_748_392,
+        );
+        let signature = sign_command(&credential.device_id, &envelope);
+        let command = ObjectBuilder::new()
+            .set("id", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+            .set("envelope", envelope)
+            .set("browser_public_key", browser_public_key())
+            .set("signature", signature)
+            .set("created_at", "2026-08-26T12:46:31.000Z")
+            .set("expires_at", "2026-08-26T12:47:00.000Z")
+            .build();
+        let response = ObjectBuilder::new()
+            .set("command", command)
+            .build()
+            .to_json();
+        let mut relay = FakeRelay::default()
+            .response(paired_response())
+            .response(&response)
+            .response("{}");
+        let result = poll_with(
+            &root,
+            &mut relay,
+            1_787_748_392,
+            |_, _| panic!("an unknown sender must not prepare"),
+            |_, _| panic!("an unknown sender must not install"),
+        );
+        assert_eq!(result, Err(DeviceError::Integrity));
+        assert!(relay.requests[2].3.as_deref().is_some_and(|body| {
+            body.contains(r#""state":"failed""#) && body.contains(r#""failure":"unknown-sender""#)
+        }));
+        let _ignored = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_tampered_signature_is_rejected_before_decryption() {
+        let root = root("bad-signature");
+        let credential = credential();
+        credential.save(&root).expect("credential");
+        pin_browser(&root);
+        let identity = Identity::load_or_create(&root).expect("identity");
+        let envelope = encrypted_envelope(
+            &identity,
+            &credential.device_id,
+            "word-count",
+            1_787_748_392,
+        );
+        let command = ObjectBuilder::new()
+            .set("id", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+            .set("envelope", envelope)
+            .set("browser_public_key", browser_public_key())
+            .set("signature", "C".repeat(86))
+            .set("created_at", "2026-08-26T12:46:31.000Z")
+            .set("expires_at", "2026-08-26T12:47:00.000Z")
+            .build();
+        let response = ObjectBuilder::new()
+            .set("command", command)
+            .build()
+            .to_json();
+        let mut relay = FakeRelay::default()
+            .response(paired_response())
+            .response(&response)
+            .response("{}");
+        let result = poll_with(
+            &root,
+            &mut relay,
+            1_787_748_392,
+            |_, _| panic!("a forged command must not prepare"),
+            |_, _| panic!("a forged command must not install"),
+        );
+        assert_eq!(result, Err(DeviceError::Integrity));
+        assert!(relay.requests[2]
+            .3
+            .as_deref()
+            .is_some_and(|body| { body.contains(r#""failure":"invalid-signature""#) }));
+        let _ignored = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_replayed_request_is_rejected_even_under_a_fresh_command_identity() {
+        let root = root("replay");
+        let credential = credential();
+        credential.save(&root).expect("credential");
+        pin_browser(&root);
+        remember_completed(&root, &request_id()).expect("journal");
+        let identity = Identity::load_or_create(&root).expect("identity");
+        let envelope = encrypted_envelope(
+            &identity,
+            &credential.device_id,
+            "word-count",
+            1_787_748_392,
+        );
+        let signature = sign_command(&credential.device_id, &envelope);
+        let command = ObjectBuilder::new()
+            .set("id", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+            .set("envelope", envelope)
+            .set("browser_public_key", browser_public_key())
+            .set("signature", signature)
+            .set("created_at", "2026-08-26T12:46:31.000Z")
+            .set("expires_at", "2026-08-26T12:47:00.000Z")
+            .build();
+        let response = ObjectBuilder::new()
+            .set("command", command)
+            .build()
+            .to_json();
+        let mut relay = FakeRelay::default()
+            .response(paired_response())
+            .response(&response)
+            .response("{}");
+        let result = poll_with(
+            &root,
+            &mut relay,
+            1_787_748_392,
+            |_, _| panic!("a replayed request must not prepare"),
+            |_, _| panic!("a replayed request must not install"),
+        );
+        assert_eq!(result, Err(DeviceError::Integrity));
+        assert!(relay.requests[2]
+            .3
+            .as_deref()
+            .is_some_and(|body| { body.contains(r#""failure":"replayed-command""#) }));
+        let _ignored = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_stale_sealed_request_is_rejected_as_expired() {
+        let root = root("stale-request");
+        let credential = credential();
+        credential.save(&root).expect("credential");
+        pin_browser(&root);
+        let identity = Identity::load_or_create(&root).expect("identity");
+        let envelope = encrypted_envelope(
+            &identity,
+            &credential.device_id,
+            "word-count",
+            1_787_748_392 - COMMAND_TTL_SECONDS - 1,
+        );
+        let signature = sign_command(&credential.device_id, &envelope);
+        let command = ObjectBuilder::new()
+            .set("id", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+            .set("envelope", envelope)
+            .set("browser_public_key", browser_public_key())
+            .set("signature", signature)
+            .set("created_at", "2026-08-26T12:46:31.000Z")
+            .set("expires_at", "2026-08-26T12:47:00.000Z")
+            .build();
+        let response = ObjectBuilder::new()
+            .set("command", command)
+            .build()
+            .to_json();
+        let mut relay = FakeRelay::default()
+            .response(paired_response())
+            .response(&response)
+            .response("{}");
+        let result = poll_with(
+            &root,
+            &mut relay,
+            1_787_748_392,
+            |_, _| panic!("a stale request must not prepare"),
+            |_, _| panic!("a stale request must not install"),
+        );
+        assert_eq!(result, Err(DeviceError::InvalidInput));
+        assert!(relay.requests[2]
+            .3
+            .as_deref()
+            .is_some_and(|body| body.contains(r#""failure":"expired""#)));
         let _ignored = fs::remove_dir_all(root);
     }
 

@@ -22,7 +22,7 @@ kobo-profile = { path = "../kobo-profile" }
 kobo-protocol = { path = "../kobo-protocol" }
 kobo-text = { path = "../kobo-text" }
 kobo-ui = { path = "../kobo-ui" }
-p256 = { version = "0.13.2", features = ["ecdh"] }
+p256 = { version = "0.13.2", features = ["ecdh", "ecdsa"] }
 ring = "0.17"
 base64 = "0.22"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }

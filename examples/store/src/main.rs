@@ -196,7 +196,11 @@ impl Store {
                 screen
                     .facts([
                         ("Pairing code", code.clone()),
-                        ("Address", url.clone()),
+                        (
+                            "Address",
+                            url.split_once('#')
+                                .map_or_else(|| url.clone(), |(base, _)| base.to_owned()),
+                        ),
                         (
                             "Expires",
                             format!("in {minutes} minute{}", if minutes == 1 { "" } else { "s" }),

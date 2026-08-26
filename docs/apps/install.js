@@ -37,6 +37,15 @@ function normalizedPending(value) {
   ));
 }
 
+function validPrivateJwk(value) {
+  return Boolean(value)
+    && typeof value === "object"
+    && !Array.isArray(value)
+    && value.kty === "EC"
+    && value.crv === "P-256"
+    && typeof value.d === "string";
+}
+
 function connectionValue(value) {
   if (
     !value
@@ -45,6 +54,8 @@ function connectionValue(value) {
     || !UUID.test(value.deviceId)
     || !validString(value.browserToken, 43)
     || !validString(value.publicKey, 122)
+    || !validString(value.browserPublicKey, 122)
+    || !validPrivateJwk(value.browserPrivateKey)
   ) {
     return null;
   }
@@ -52,6 +63,8 @@ function connectionValue(value) {
     deviceId: value.deviceId,
     browserToken: value.browserToken,
     publicKey: value.publicKey,
+    browserPublicKey: value.browserPublicKey,
+    browserPrivateKey: value.browserPrivateKey,
     deviceName: typeof value.deviceName === "string" && value.deviceName.length <= 64
       ? value.deviceName || "Kobo reader"
       : "Kobo reader",
@@ -147,12 +160,62 @@ async function json(response) {
   return body;
 }
 
-async function claim(code) {
+async function claim(code, body) {
   return json(await fetch(`${RELAY}/v1/pairings/${encodeURIComponent(code)}/claim`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: "{}"
+    body: JSON.stringify(body)
   }));
+}
+
+function fragmentParams() {
+  return new URLSearchParams(location.hash.slice(1));
+}
+
+async function generateBrowserKey() {
+  const pair = await crypto.subtle.generateKey(
+    { name: "ECDSA", namedCurve: "P-256" },
+    true,
+    ["sign"]
+  );
+  return {
+    publicKey: base64Url(await crypto.subtle.exportKey("spki", pair.publicKey)),
+    privateKey: await crypto.subtle.exportKey("jwk", pair.privateKey)
+  };
+}
+
+async function deviceKeyMatchesFragment(publicKey, expected) {
+  const digest = await crypto.subtle.digest("SHA-256", encoder.encode(publicKey));
+  return base64Url(new Uint8Array(digest).slice(0, 16)) === expected;
+}
+
+async function pairProof(secret, browserPublicKey) {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    fromBase64Url(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  return base64Url(await crypto.subtle.sign(
+    "HMAC",
+    key,
+    encoder.encode(`cobalt-pair-proof-v1\n${browserPublicKey}`)
+  ));
+}
+
+async function signInstall(value, envelope) {
+  const key = await crypto.subtle.importKey(
+    "jwk",
+    value.browserPrivateKey,
+    { name: "ECDSA", namedCurve: "P-256" },
+    false,
+    ["sign"]
+  );
+  const message = encoder.encode(
+    `cobalt-install-v2\n${value.deviceId}\n${envelope.ephemeral_public_key}\n${envelope.nonce}\n${envelope.ciphertext}`
+  );
+  return base64Url(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, key, message));
 }
 
 async function envelopeFor(value) {
@@ -187,7 +250,12 @@ async function envelopeFor(value) {
     ["encrypt"]
   );
   const nonce = crypto.getRandomValues(new Uint8Array(12));
-  const plaintext = encoder.encode(JSON.stringify({ version: 1, app_id: appId }));
+  const plaintext = encoder.encode(JSON.stringify({
+    version: 2,
+    app_id: appId,
+    request_id: base64Url(crypto.getRandomValues(new Uint8Array(16))),
+    requested_at: Math.floor(Date.now() / 1000)
+  }));
   const ciphertext = await crypto.subtle.encrypt(
     { name: "AES-GCM", iv: nonce, additionalData: encoder.encode(value.deviceId) },
     key,
@@ -203,13 +271,14 @@ async function envelopeFor(value) {
 
 async function queueInstall(value) {
   const envelope = await envelopeFor(value);
+  const signature = await signInstall(value, envelope);
   return json(await fetch(`${RELAY}/v1/devices/${value.deviceId}/installs`, {
     method: "POST",
     headers: {
       authorization: `Bearer ${value.browserToken}`,
       "content-type": "application/json"
     },
-    body: JSON.stringify({ envelope })
+    body: JSON.stringify({ envelope, signature })
   }));
 }
 
@@ -281,7 +350,13 @@ pairForm.addEventListener("submit", async event => {
   button.disabled = true;
   setStatus(pairStatus, "Linking…");
   try {
-    const claimed = await claim(code);
+    const fragment = fragmentParams();
+    const secret = fragment.get("s");
+    const browserKey = await generateBrowserKey();
+    const claimed = await claim(code, {
+      browser_public_key: browserKey.publicKey,
+      ...secret && { proof: await pairProof(secret, browserKey.publicKey) }
+    });
     if (
       typeof claimed.device_name !== "string"
       || claimed.device_name.length === 0
@@ -289,10 +364,16 @@ pairForm.addEventListener("submit", async event => {
     ) {
       throw new Error("The install service returned an invalid pairing response.");
     }
+    const expected = fragment.get("k");
+    if (expected && !(await deviceKeyMatchesFragment(claimed.device_public_key, expected))) {
+      throw new Error("The install service returned a key that does not match your Kobo. Nothing was linked.");
+    }
     const value = connectionValue({
       deviceId: claimed.device_id,
       browserToken: claimed.browser_token,
       publicKey: claimed.device_public_key,
+      browserPublicKey: browserKey.publicKey,
+      browserPrivateKey: browserKey.privateKey,
       deviceName: claimed.device_name
     });
     if (!value || typeof claimed.device_online !== "boolean") {

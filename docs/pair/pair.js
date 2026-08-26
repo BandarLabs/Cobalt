@@ -37,6 +37,56 @@ function pairingValue(value) {
   };
 }
 
+function fragmentParams() {
+  return new URLSearchParams(location.hash.slice(1));
+}
+
+const encoder = new TextEncoder();
+
+function base64Url(bytes) {
+  let binary = "";
+  for (const byte of new Uint8Array(bytes)) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+}
+
+function fromBase64Url(value) {
+  const padded = value.replaceAll("-", "+").replaceAll("_", "/").padEnd(Math.ceil(value.length / 4) * 4, "=");
+  const binary = atob(padded);
+  return Uint8Array.from(binary, character => character.charCodeAt(0));
+}
+
+async function generateBrowserKey() {
+  const pair = await crypto.subtle.generateKey(
+    { name: "ECDSA", namedCurve: "P-256" },
+    true,
+    ["sign"]
+  );
+  return {
+    publicKey: base64Url(await crypto.subtle.exportKey("spki", pair.publicKey)),
+    privateKey: await crypto.subtle.exportKey("jwk", pair.privateKey)
+  };
+}
+
+async function deviceKeyMatchesFragment(publicKey, expected) {
+  const digest = await crypto.subtle.digest("SHA-256", encoder.encode(publicKey));
+  return base64Url(new Uint8Array(digest).slice(0, 16)) === expected;
+}
+
+async function pairProof(secret, browserPublicKey) {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    fromBase64Url(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  return base64Url(await crypto.subtle.sign(
+    "HMAC",
+    key,
+    encoder.encode(`cobalt-pair-proof-v1\n${browserPublicKey}`)
+  ));
+}
+
 function setStatus(message, tone = "") {
   if (status.textContent === message && status.dataset.tone === tone) return;
   status.textContent = message;
@@ -62,18 +112,30 @@ form.addEventListener("submit", async event => {
   button.disabled = true;
   setStatus("Linking…");
   try {
+    const fragment = fragmentParams();
+    const secret = fragment.get("s");
+    const browserKey = await generateBrowserKey();
     const claimed = pairingValue(await responseJson(await fetch(
       `${RELAY}/v1/pairings/${encodeURIComponent(code)}/claim`,
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: "{}"
+        body: JSON.stringify({
+          browser_public_key: browserKey.publicKey,
+          ...secret && { proof: await pairProof(secret, browserKey.publicKey) }
+        })
       }
     )));
+    const expected = fragment.get("k");
+    if (expected && !(await deviceKeyMatchesFragment(claimed.publicKey, expected))) {
+      throw new Error("The install service returned a key that does not match your Kobo. Nothing was linked.");
+    }
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       deviceId: claimed.deviceId,
       browserToken: claimed.browserToken,
       publicKey: claimed.publicKey,
+      browserPublicKey: browserKey.publicKey,
+      browserPrivateKey: browserKey.privateKey,
       deviceName: claimed.deviceName
     }));
     form.hidden = true;
