@@ -18,8 +18,8 @@ Each catalog app also has a shareable page at
 browser without creating an account:
 
 1. Open **App Store** on the Kobo and select **Install links**.
-2. Scan the QR code, or open the displayed address and enter its eight-character
-   pairing code.
+2. Scan the QR code, or open the displayed address and enter its pairing code
+   and verification key.
 3. Choose **Install** on an app page.
 
 The browser encrypts the app identity for that Kobo before sending it. The
@@ -30,9 +30,10 @@ same package verification as an install started on the device.
 The relay is not trusted with installs. During pairing the browser registers
 its own signing key, and the Kobo pins that key only while its pairing window
 is open. The QR link carries the device key fingerprint and a pairing secret
-in the URL fragment, which never reaches the relay, so a QR-scanned browser
-proves it saw the device screen and detects a substituted device key. Every
-install request is signed by a pinned browser key and seals a unique request
+in the URL fragment, which never reaches the relay. Manual entry uses the same
+values through the displayed verification key. Both paths prove the browser
+saw the device screen and detect a substituted device key. Every later install
+request is signed by the pinned browser key and seals a unique request
 identifier and timestamp inside the encrypted envelope, so the relay cannot
 mint, alter, or replay install commands.
 

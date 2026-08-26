@@ -187,15 +187,21 @@ impl Store {
                 expires_in,
             } => {
                 let minutes = (*expires_in).div_ceil(60);
-                let mut screen = screen
-                    .heading("Scan or enter the code")
-                    .text("Scan the code with your phone, or open the address below and enter the pairing code.");
+                let verification = pairing_verification(url).unwrap_or_else(|| "Unavailable".into());
+                let mut screen = screen.heading("Link this browser").text(
+                    "Scan the QR code. To pair manually, open the address below and enter both values.",
+                );
                 if let Some(picture) = self.pairing_qr {
                     screen = screen.picture(picture, 58);
                 }
                 screen
+                    .section("Enter manually")
+                    .splash(
+                        None,
+                        format!("{} {}", &code[..4], &code[4..]),
+                        format!("Verification key\n{verification}"),
+                    )
                     .facts([
-                        ("Pairing code", code.clone()),
                         (
                             "Address",
                             url.split_once('#')
@@ -213,7 +219,7 @@ impl Store {
                 .splash(
                     Some(Glyph::Check),
                     "Browser linked",
-                    "Install requests are checked while App Store is open. Requests sent while this Kobo is offline remain queued for up to 24 hours.",
+                    "Install requests are checked while App Store is open. Requests sent while this Kobo is offline remain queued for up to 72 hours.",
                 )
                 .facts([(
                     "Linked browsers",
@@ -622,6 +628,21 @@ fn qr_picture(context: &mut Context, value: &str) -> Option<TilePicture> {
     context.put_picture(QR_HANDLE, side, side, grey)
 }
 
+fn pairing_verification(url: &str) -> Option<String> {
+    let fragment = url.split_once('#')?.1;
+    let mut fingerprint = None;
+    let mut secret = None;
+    for entry in fragment.split('&') {
+        let (name, value) = entry.split_once('=')?;
+        match name {
+            "k" if value.len() == 22 => fingerprint = Some(value),
+            "s" if value.len() == 22 => secret = Some(value),
+            _ => {}
+        }
+    }
+    Some(format!("{}.{}", fingerprint?, secret?))
+}
+
 fn remote_install_notice(outcome: &RemoteInstallOutcome, entries: &[AppInfo]) -> Option<String> {
     let name = |id: &str| {
         entries
@@ -898,13 +919,34 @@ mod tests {
         });
         let commands = runner.device_result(DeviceResult::AppLink(AppLinkState::Pairing {
             code: "23456789".to_owned(),
-            url: "https://bandarlabs.github.io/Cobalt/pair/?code=23456789".to_owned(),
+            url: format!(
+                "https://bandarlabs.github.io/Cobalt/pair/?code=23456789#k={}&s={}",
+                "A".repeat(22),
+                "B".repeat(22)
+            ),
             expires_in: 600,
         }));
         assert!(commands
             .iter()
             .any(|command| matches!(command, Command::PutPicture { .. })));
         assert!(runner.app().link_poll.is_running());
+        let screen = runner.app().app_link();
+        let display = format!("{screen:?}");
+        assert!(display.contains("2345 6789"));
+        assert!(display.contains(&format!("{}.{}", "A".repeat(22), "B".repeat(22))));
+    }
+
+    #[test]
+    fn manual_pairing_verification_combines_the_fragment_values() {
+        assert_eq!(
+            pairing_verification(&format!(
+                "https://example.test/pair#k={}&s={}",
+                "A".repeat(22),
+                "B".repeat(22)
+            )),
+            Some(format!("{}.{}", "A".repeat(22), "B".repeat(22)))
+        );
+        assert_eq!(pairing_verification("https://example.test/pair"), None);
     }
 
     #[test]

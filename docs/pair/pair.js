@@ -4,6 +4,8 @@ const RELAY = "https://cobalt-install-relay.anandabhishek.workers.dev";
 const STORAGE_KEY = "cobalt.install-link.v1";
 const form = document.querySelector("#pair-form");
 const input = document.querySelector("#pair-code");
+const secretInput = document.querySelector("#pair-secret");
+const secretField = document.querySelector("#pair-secret-field");
 const status = document.querySelector("#pair-status");
 const next = document.querySelector("#continue");
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -39,6 +41,19 @@ function pairingValue(value) {
 
 function fragmentParams() {
   return new URLSearchParams(location.hash.slice(1));
+}
+
+function pairingCredentials() {
+  const fragment = fragmentParams();
+  const fingerprint = fragment.get("k");
+  const secret = fragment.get("s");
+  if (validString(fingerprint, 22) && validString(secret, 22)) {
+    return { fingerprint, secret };
+  }
+  const parts = secretInput.value.trim().split(".");
+  return parts.length === 2 && validString(parts[0], 22) && validString(parts[1], 22)
+    ? { fingerprint: parts[0], secret: parts[1] }
+    : null;
 }
 
 const encoder = new TextEncoder();
@@ -108,12 +123,15 @@ form.addEventListener("submit", async event => {
     setStatus("Enter the 8-character code shown on your Kobo.", "error");
     return;
   }
+  const credentials = pairingCredentials();
+  if (!credentials) {
+    setStatus("Enter the verification key shown on your Kobo.", "error");
+    return;
+  }
   const button = form.querySelector("button");
   button.disabled = true;
   setStatus("Linking…");
   try {
-    const fragment = fragmentParams();
-    const secret = fragment.get("s");
     const browserKey = await generateBrowserKey();
     const claimed = pairingValue(await responseJson(await fetch(
       `${RELAY}/v1/pairings/${encodeURIComponent(code)}/claim`,
@@ -122,12 +140,11 @@ form.addEventListener("submit", async event => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           browser_public_key: browserKey.publicKey,
-          ...secret && { proof: await pairProof(secret, browserKey.publicKey) }
+          proof: await pairProof(credentials.secret, browserKey.publicKey)
         })
       }
     )));
-    const expected = fragment.get("k");
-    if (expected && !(await deviceKeyMatchesFragment(claimed.publicKey, expected))) {
+    if (!(await deviceKeyMatchesFragment(claimed.publicKey, credentials.fingerprint))) {
       throw new Error("The install service returned a key that does not match your Kobo. Nothing was linked.");
     }
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
@@ -157,3 +174,7 @@ form.addEventListener("submit", async event => {
 
 const code = new URLSearchParams(location.search).get("code");
 if (code) input.value = code.toUpperCase();
+if (pairingCredentials()) {
+  secretInput.required = false;
+  secretField.hidden = true;
+}

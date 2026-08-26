@@ -10,6 +10,8 @@ const pairPanel = document.querySelector("#pair-panel");
 const installPanel = document.querySelector("#install-panel");
 const pairForm = document.querySelector("#pair-form");
 const pairCode = document.querySelector("#pair-code");
+const pairSecret = document.querySelector("#pair-secret");
+const pairSecretField = document.querySelector("#pair-secret-field");
 const pairStatus = document.querySelector("#pair-status");
 const installStatus = document.querySelector("#install-status");
 const installButton = document.querySelector("#install");
@@ -18,9 +20,18 @@ const deviceName = document.querySelector("#device-name");
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const APP_ID = /^[a-z][a-z0-9-]{0,31}$/;
 const BASE64URL = /^[A-Za-z0-9_-]+$/;
+const COMMAND_TTL_MS = 72 * 60 * 60 * 1000;
+const INSTALL_COMPLETION_TTL_MS = 15 * 60 * 1000;
+const CLOCK_SKEW_MS = 5 * 60 * 1000;
 
 function validString(value, length) {
   return typeof value === "string" && value.length === length && BASE64URL.test(value);
+}
+
+function timestamp(value) {
+  if (typeof value !== "string") return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value ? parsed : null;
 }
 
 function normalizedPending(value) {
@@ -33,7 +44,7 @@ function normalizedPending(value) {
     && pending
     && typeof pending === "object"
     && UUID.test(pending.commandId)
-    && typeof pending.expiresAt === "string"
+    && timestamp(pending.expiresAt) !== null
   ));
 }
 
@@ -172,6 +183,19 @@ function fragmentParams() {
   return new URLSearchParams(location.hash.slice(1));
 }
 
+function pairingCredentials() {
+  const fragment = fragmentParams();
+  const fingerprint = fragment.get("k");
+  const secret = fragment.get("s");
+  if (validString(fingerprint, 22) && validString(secret, 22)) {
+    return { fingerprint, secret };
+  }
+  const parts = pairSecret.value.trim().split(".");
+  return parts.length === 2 && validString(parts[0], 22) && validString(parts[1], 22)
+    ? { fingerprint: parts[0], secret: parts[1] }
+    : null;
+}
+
 async function generateBrowserKey() {
   const pair = await crypto.subtle.generateKey(
     { name: "ECDSA", namedCurve: "P-256" },
@@ -272,7 +296,7 @@ async function envelopeFor(value) {
 async function queueInstall(value) {
   const envelope = await envelopeFor(value);
   const signature = await signInstall(value, envelope);
-  return json(await fetch(`${RELAY}/v1/devices/${value.deviceId}/installs`, {
+  const queued = await json(await fetch(`${RELAY}/v1/devices/${value.deviceId}/installs`, {
     method: "POST",
     headers: {
       authorization: `Bearer ${value.browserToken}`,
@@ -280,12 +304,59 @@ async function queueInstall(value) {
     },
     body: JSON.stringify({ envelope, signature })
   }));
+  const expiresAt = timestamp(queued?.expires_at);
+  if (
+    !queued
+    || typeof queued !== "object"
+    || Array.isArray(queued)
+    || !UUID.test(queued.command_id)
+    || queued.state !== "queued"
+    || typeof queued.device_online !== "boolean"
+    || expiresAt === null
+    || expiresAt < Date.now() - CLOCK_SKEW_MS
+    || expiresAt > Date.now() + COMMAND_TTL_MS + CLOCK_SKEW_MS
+  ) {
+    throw new Error("The install service returned an invalid queue response.");
+  }
+  return queued;
 }
 
 async function installState(value, commandId) {
-  return json(await fetch(`${RELAY}/v1/devices/${value.deviceId}/installs/${commandId}`, {
+  const state = await json(await fetch(`${RELAY}/v1/devices/${value.deviceId}/installs/${commandId}`, {
     headers: { authorization: `Bearer ${value.browserToken}` }
   }));
+  const active = state?.state === "queued" || state?.state === "installing";
+  const installed = state?.state === "installed";
+  const failed = state?.state === "failed";
+  const validOutcome = ["installed", "updated", "already-installed", "included"].includes(state?.outcome);
+  const validFailure = typeof state?.failure === "string"
+    && state.failure.length > 0
+    && state.failure.length <= 96
+    && !/[\u0000-\u001f\u007f]/.test(state.failure);
+  const createdAt = timestamp(state?.created_at);
+  const updatedAt = timestamp(state?.updated_at);
+  const expiresAt = timestamp(state?.expires_at);
+  if (
+    !state
+    || typeof state !== "object"
+    || Array.isArray(state)
+    || state.command_id !== commandId
+    || typeof state.device_online !== "boolean"
+    || createdAt === null
+    || updatedAt === null
+    || expiresAt === null
+    || updatedAt < createdAt
+    || updatedAt > Date.now() + CLOCK_SKEW_MS
+    || expiresAt < createdAt
+    || expiresAt > createdAt + COMMAND_TTL_MS + INSTALL_COMPLETION_TTL_MS
+    || !(active || installed || failed)
+    || (active && (state.outcome !== null || state.failure !== null))
+    || (installed && (!validOutcome || state.failure !== null))
+    || (failed && (state.outcome !== null || !validFailure))
+  ) {
+    throw new Error("The install service returned an invalid status response.");
+  }
+  return state;
 }
 
 function resultMessage(state) {
@@ -315,10 +386,21 @@ function resultMessage(state) {
   return { tone: "", text: state.state === "installing" ? "Installing on your Kobo…" : "Sent to your Kobo…" };
 }
 
-async function watch(value, commandId) {
+async function watch(value, commandId, expiresAt) {
+  let deadline = timestamp(expiresAt);
   for (;;) {
+    if (deadline === null || Date.now() >= deadline) {
+      clearPending(value, commandId);
+      setStatus(installStatus, "The install request expired. Send it again.", "warning");
+      return;
+    }
     try {
       const state = await installState(value, commandId);
+      deadline = timestamp(state.expires_at);
+      if (state.expires_at !== expiresAt) {
+        expiresAt = state.expires_at;
+        savePending(value, { appId, commandId, expiresAt });
+      }
       const message = resultMessage(state);
       setStatus(installStatus, message.text, message.tone);
       if (state.state === "installed" || state.state === "failed") {
@@ -333,6 +415,7 @@ async function watch(value, commandId) {
         throw error;
       }
       if (error.status === 401 || error.status === 403) throw error;
+      if (!(error instanceof ApiError) && !(error instanceof TypeError)) throw error;
       setStatus(installStatus, "Status is temporarily unavailable. The request remains queued.", "warning");
       await new Promise(resolve => setTimeout(resolve, 30000));
     }
@@ -346,16 +429,19 @@ pairForm.addEventListener("submit", async event => {
     setStatus(pairStatus, "Enter the 8-character code shown on your Kobo.", "error");
     return;
   }
+  const credentials = pairingCredentials();
+  if (!credentials) {
+    setStatus(pairStatus, "Enter the verification key shown on your Kobo.", "error");
+    return;
+  }
   const button = pairForm.querySelector("button");
   button.disabled = true;
   setStatus(pairStatus, "Linking…");
   try {
-    const fragment = fragmentParams();
-    const secret = fragment.get("s");
     const browserKey = await generateBrowserKey();
     const claimed = await claim(code, {
       browser_public_key: browserKey.publicKey,
-      ...secret && { proof: await pairProof(secret, browserKey.publicKey) }
+      proof: await pairProof(credentials.secret, browserKey.publicKey)
     });
     if (
       typeof claimed.device_name !== "string"
@@ -364,8 +450,7 @@ pairForm.addEventListener("submit", async event => {
     ) {
       throw new Error("The install service returned an invalid pairing response.");
     }
-    const expected = fragment.get("k");
-    if (expected && !(await deviceKeyMatchesFragment(claimed.device_public_key, expected))) {
+    if (!(await deviceKeyMatchesFragment(claimed.device_public_key, credentials.fingerprint))) {
       throw new Error("The install service returned a key that does not match your Kobo. Nothing was linked.");
     }
     const value = connectionValue({
@@ -402,7 +487,7 @@ installButton.addEventListener("click", async () => {
   if (pending) {
     installButton.disabled = true;
     try {
-      await watch(value, pending.commandId);
+      await watch(value, pending.commandId, pending.expiresAt);
     } finally {
       installButton.disabled = false;
     }
@@ -420,7 +505,7 @@ installButton.addEventListener("click", async () => {
     savePending(value, pending);
     const message = resultMessage(queued);
     setStatus(installStatus, message.text, message.tone);
-    await watch(value, queued.command_id);
+    await watch(value, queued.command_id, queued.expires_at);
   } catch (error) {
     if (error.status === 401 || error.status === 403) {
       const latest = connection();
@@ -457,12 +542,16 @@ forgetButton.addEventListener("click", () => {
 
 const queryCode = new URLSearchParams(location.search).get("code");
 if (queryCode) pairCode.value = queryCode.toUpperCase();
+if (pairingCredentials()) {
+  pairSecret.required = false;
+  pairSecretField.hidden = true;
+}
 const saved = connection();
 showConnection(saved);
 const pending = pendingFor(saved);
 if (saved && pending) {
   installButton.disabled = true;
-  watch(saved, pending.commandId)
+  watch(saved, pending.commandId, pending.expiresAt)
     .catch(error => {
       if (error.status === 401 || error.status === 403) {
         const latest = connection();

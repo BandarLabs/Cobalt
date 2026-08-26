@@ -442,6 +442,14 @@ fn read_with(root: &Path, relay: &mut impl Relay, now: u64) -> Result<DeviceResu
     let Some(mut credential) = Credential::load(root)? else {
         return Ok(DeviceResult::AppLink(AppLinkState::Unpaired));
     };
+    if credential
+        .pairing
+        .as_ref()
+        .is_some_and(|pairing| pairing.expires_at <= now)
+    {
+        credential.pairing = None;
+        credential.save(root)?;
+    }
     let path = format!("/v1/devices/{}/pairing", credential.device_id);
     let response = relay.send("GET", &path, Some(&credential.token), None)?;
     let value = parse_json(&response)?;
@@ -459,10 +467,17 @@ fn read_with(root: &Path, relay: &mut impl Relay, now: u64) -> Result<DeviceResu
         if browsers == 0 {
             return Err(DeviceError::Integrity);
         }
-        let pairing = credential.pairing.take();
-        sync_browser_pins(root, pairing.as_ref(), &value)?;
+        let pairing = credential.pairing.as_ref();
+        let added = sync_browser_pins(root, pairing, &value)?;
         if pairing.is_some() {
+            if added == 0 {
+                return Err(DeviceError::Integrity);
+            }
+            credential.pairing = None;
             credential.save(root)?;
+        }
+        if load_browsers(root)?.is_empty() {
+            return Err(DeviceError::Integrity);
         }
         return Ok(DeviceResult::AppLink(AppLinkState::Paired { browsers }));
     }
@@ -482,15 +497,15 @@ struct PinnedBrowser {
 
 /// Pins browser signing keys reported by the relay. A key joins the pinned
 /// set only while a pairing this device created is outstanding: a valid HMAC
-/// proof from the QR fragment secret pins a verified sender, and a single
-/// claim without one is trusted once at pairing time. Keys the relay reports
-/// at any other moment are ignored, so a later-compromised relay cannot add
-/// senders.
+/// proof from the QR fragment secret pins a verified sender. Manual entry uses
+/// that same secret, so a proofless relay key is never accepted. Keys the relay
+/// reports at any other moment are ignored, so a later-compromised relay cannot
+/// add senders.
 fn sync_browser_pins(
     root: &Path,
     pairing: Option<&Pairing>,
     value: &Value,
-) -> Result<(), DeviceError> {
+) -> Result<usize, DeviceError> {
     let entries = value
         .get("browser_keys")
         .and_then(Value::as_array)
@@ -500,7 +515,7 @@ fn sync_browser_pins(
     }
     let mut pinned = load_browsers(root)?;
     let mut changed = false;
-    let mut unproven_allowance = 1;
+    let mut added = 0;
     for entry in entries {
         let key = entry
             .get("public_key")
@@ -520,31 +535,24 @@ fn sync_browser_pins(
             ),
         };
         let Some(pairing) = pairing else { continue };
-        let proven = if let Some(proof) = proof {
-            if !verify_pair_proof(&pairing.secret, key, proof) {
-                continue;
-            }
-            true
-        } else {
-            if unproven_allowance == 0 {
-                continue;
-            }
-            unproven_allowance -= 1;
-            false
-        };
+        let Some(proof) = proof else { continue };
+        if !verify_pair_proof(&pairing.secret, key, proof) {
+            continue;
+        }
         if pinned.len() >= PINNED_BROWSER_LIMIT {
             break;
         }
         pinned.push(PinnedBrowser {
             public_key: key.to_owned(),
-            proven,
+            proven: true,
         });
         changed = true;
+        added += 1;
     }
     if changed {
         save_browsers(root, &pinned)?;
     }
-    Ok(())
+    Ok(added)
 }
 
 fn verify_pair_proof(secret: &str, browser_key: &str, proof: &str) -> bool {
@@ -1900,6 +1908,7 @@ mod tests {
     fn an_expired_command_is_failed_without_decryption_or_installation() {
         let root = root("expired");
         credential().save(&root).expect("credential");
+        pin_browser(&root);
         let response = r#"{"command":{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","envelope":{},"created_at":"2026-08-25T12:46:31.000Z","expires_at":"2026-08-26T12:46:31.000Z"}}"#;
         let mut relay = FakeRelay::default()
             .response(paired_response())
@@ -2082,13 +2091,21 @@ mod tests {
         let proven = ObjectBuilder::new()
             .set(
                 "browser_keys",
-                vec![ObjectBuilder::new()
-                    .set("public_key", key.clone())
-                    .set("proof", pair_proof(&pairing.secret, &key))
-                    .build()],
+                vec![
+                    ObjectBuilder::new()
+                        .set("public_key", second_browser_key())
+                        .build(),
+                    ObjectBuilder::new()
+                        .set("public_key", key.clone())
+                        .set("proof", pair_proof(&pairing.secret, &key))
+                        .build(),
+                ],
             )
             .build();
-        sync_browser_pins(&root, Some(&pairing), &proven).expect("pin proven");
+        assert_eq!(
+            sync_browser_pins(&root, Some(&pairing), &proven).expect("pin proven"),
+            1
+        );
         assert_eq!(
             load_browsers(&root).expect("browsers"),
             vec![PinnedBrowser {
@@ -2106,14 +2123,11 @@ mod tests {
             .build();
         sync_browser_pins(&root, None, &unproven).expect("ignore without pairing");
         assert_eq!(load_browsers(&root).expect("browsers").len(), 1);
-        sync_browser_pins(&root, Some(&pairing), &unproven).expect("pin at pairing time");
         assert_eq!(
-            load_browsers(&root).expect("browsers")[1],
-            PinnedBrowser {
-                public_key: second_browser_key(),
-                proven: false,
-            }
+            sync_browser_pins(&root, Some(&pairing), &unproven).expect("reject proofless pairing"),
+            0
         );
+        assert_eq!(load_browsers(&root).expect("browsers").len(), 1);
         let forged = ObjectBuilder::new()
             .set(
                 "browser_keys",
@@ -2127,7 +2141,68 @@ mod tests {
             )
             .build();
         sync_browser_pins(&root, Some(&pairing), &forged).expect("ignore forged proof");
-        assert_eq!(load_browsers(&root).expect("browsers").len(), 2);
+        assert_eq!(load_browsers(&root).expect("browsers").len(), 1);
+        let _ignored = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn pairing_remains_open_when_no_browser_key_can_be_pinned() {
+        let root = root("empty-pins");
+        let credential = Credential {
+            pairing: Some(pairing()),
+            ..credential()
+        };
+        credential.save(&root).expect("credential");
+        let mut relay = FakeRelay::default().response(paired_response());
+
+        assert_eq!(
+            read_with(&root, &mut relay, 1_787_748_392),
+            Err(DeviceError::Integrity)
+        );
+        assert!(Credential::load(&root)
+            .expect("credential state")
+            .expect("credential")
+            .pairing
+            .is_some());
+        let _ignored = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn expired_pairing_cannot_pin_a_browser_key() {
+        let root = root("expired-pairing");
+        let pairing = pairing();
+        let key = browser_public_key();
+        Credential {
+            pairing: Some(pairing.clone()),
+            ..credential()
+        }
+        .save(&root)
+        .expect("credential");
+        let response = ObjectBuilder::new()
+            .set("paired", true)
+            .set("browser_count", 1)
+            .set("pairing", Value::Null)
+            .set(
+                "browser_keys",
+                vec![ObjectBuilder::new()
+                    .set("public_key", key.clone())
+                    .set("proof", pair_proof(&pairing.secret, &key))
+                    .build()],
+            )
+            .build()
+            .to_json();
+        let mut relay = FakeRelay::default().response(&response);
+
+        assert_eq!(
+            read_with(&root, &mut relay, pairing.expires_at),
+            Err(DeviceError::Integrity)
+        );
+        assert!(Credential::load(&root)
+            .expect("credential state")
+            .expect("credential")
+            .pairing
+            .is_none());
+        assert!(load_browsers(&root).expect("browsers").is_empty());
         let _ignored = fs::remove_dir_all(root);
     }
 
@@ -2136,6 +2211,14 @@ mod tests {
         let root = root("unknown-sender");
         let credential = credential();
         credential.save(&root).expect("credential");
+        save_browsers(
+            &root,
+            &[PinnedBrowser {
+                public_key: second_browser_key(),
+                proven: true,
+            }],
+        )
+        .expect("pin other browser");
         let identity = Identity::load_or_create(&root).expect("identity");
         let envelope = encrypted_envelope(
             &identity,

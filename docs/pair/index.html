@@ -15,12 +15,16 @@
   <h1>Link your Kobo</h1>
   <p class="summary">Pair this browser once, then install signed apps from any Cobalt app page.</p>
   <section class="panel">
-    <h2>Confirm the pairing code</h2>
-    <p>The code must match the one shown in Cobalt App Store on your Kobo.</p>
+    <h2>Confirm your Kobo</h2>
+    <p>Enter the pairing code and verification key shown in Cobalt App Store. QR scans fill these securely for you.</p>
     <form id="pair-form">
       <div class="field">
         <label for="pair-code">Pairing code</label>
         <input id="pair-code" name="code" inputmode="text" autocomplete="one-time-code" maxlength="8" required>
+      </div>
+      <div class="field" id="pair-secret-field">
+        <label for="pair-secret">Verification key</label>
+        <input class="secret" id="pair-secret" name="secret" inputmode="text" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="45" required>
       </div>
       <button type="submit">Link Kobo</button>
     </form>
