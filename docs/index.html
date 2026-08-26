@@ -146,6 +146,15 @@ p.quiet { color: var(--ink-soft); }
 .tour { display: grid; grid-template-columns: minmax(260px, 380px) 1fr; gap: 64px; align-items: start; }
 .tour figure img { border: 1px solid var(--rule); width: 100%; }
 .tour .measure { padding-top: 8px; }
+.tested-devices {
+  margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--rule);
+}
+.tested-devices h3 { font-size: 18px; margin-bottom: 12px; }
+.tested-devices ol {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 7px 28px;
+  padding-left: 24px; color: var(--ink-soft); font-size: 16px;
+}
+.tested-devices p { margin-top: 16px; color: var(--ink-soft); font-size: 15px; }
 
 /* ---------- field photos ---------- */
 .field-grid {
@@ -169,6 +178,13 @@ p.quiet { color: var(--ink-soft); }
 .app h3 a { color: var(--ink); }
 .app p { color: var(--ink-soft); line-height: 1.45; }
 .app h3 .tag { margin-left: 8px; vertical-align: 2px; }
+.suggest-app {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 28px;
+  align-items: center; margin-top: 48px; padding: 28px 30px;
+  border: 1px solid var(--rule); background: var(--paper-deep);
+}
+.suggest-app h3 { font-size: 24px; line-height: 1.2; margin-bottom: 8px; }
+.suggest-app p { color: var(--ink-soft); max-width: 43em; font-size: 16px; }
 
 /* ---------- SDK ---------- */
 .hero .wrap > *, .tour > *, .sdk > *, .store > * { min-width: 0; }
@@ -250,8 +266,10 @@ footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
   body { font-size: 17px; }
   pre { font-size: 12px; padding: 16px 18px; white-space: pre-wrap; word-break: break-word; }
   .hero .wrap, .tour, .sdk, .store { grid-template-columns: 1fr; gap: 40px; }
+  .suggest-app { grid-template-columns: 1fr; }
   .field-grid { grid-template-columns: 1fr 1fr; }
   .field-wide { grid-template-columns: 1fr; }
+  .tested-devices ol { grid-template-columns: 1fr; }
   section { padding: 56px 0; }
   .hero { padding: 32px 0 48px; }
   .hero .wrap { gap: 28px; }
@@ -327,6 +345,18 @@ footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
     <div class="measure">
       <h2>Running on a Kobo.</h2>
       <p>Every app is a static ARM binary running as its own unprivileged process on stock hardware. The App Store installs, updates and removes them over Wi-Fi, with signatures verified before anything launches.</p>
+      <div class="tested-devices">
+        <h3>Tested devices</h3>
+        <ol>
+          <li>Kobo Clara BW N365</li>
+          <li>Kobo Clara Colour N367</li>
+          <li>Kobo Elipsa 2E N605</li>
+          <li>Kobo Clara HD N249</li>
+          <li>Kobo Libra 2 N418</li>
+          <li>Kobo Libra Colour N428</li>
+        </ol>
+        <p>The 2025 Clara BW P365 refresh is also supported after matching the tested N365 hardware and firmware. More devices are coming. To help test yours, <a href="https://github.com/BandarLabs/Cobalt/issues">join an existing device thread or create a new one</a>.</p>
+      </div>
     </div>
   </div>
 </section>
@@ -464,6 +494,13 @@ footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
         <p>Locates the hall sensor behind the bezel and reports its changes.</p>
       </div>
     </div>
+    <aside class="suggest-app" aria-labelledby="suggest-app-title">
+      <div>
+        <h3 id="suggest-app-title">Suggest an app</h3>
+        <p>What would you use on your Kobo? It could be a game, a reading tool, a home-automation control, or a replacement for an Android or iOS app.</p>
+      </div>
+      <a class="btn" href="https://github.com/BandarLabs/Cobalt/issues/41">Add your request</a>
+    </aside>
   </div>
 </section>
 
@@ -604,7 +641,7 @@ cargo run -p kobo-cli -- setup</code></pre>
       <li><strong>Run it on your own device.</strong> A real, fully supported reader, not just the Clara-sized simulator.</li>
       <li><strong>Open a PR with a gif or photos of it running.</strong> Once reviewed and merged, the publish workflow signs it and it appears in Store. No platform release needed.</li>
     </ol>
-    <p class="measure quiet" style="margin-top:22px">Own an unsupported Kobo? No coding is required to help test it. Join the active <a href="https://github.com/BandarLabs/Cobalt/issues/32">Aura</a> thread and follow the <a href="https://github.com/BandarLabs/Cobalt/blob/main/CONTRIBUTING.md#device-testing">device testing guide</a>. App details are in <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/CONTRIBUTING_APPS.md">docs/CONTRIBUTING_APPS.md</a>.</p>
+    <p class="measure quiet" style="margin-top:22px">Own a different Kobo? No coding is required to help test it. <a href="https://github.com/BandarLabs/Cobalt/issues">Join an existing thread for your model or create a new one</a>, then follow the <a href="https://github.com/BandarLabs/Cobalt/blob/main/CONTRIBUTING.md#device-testing">device testing guide</a>. App details are in <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/CONTRIBUTING_APPS.md">docs/CONTRIBUTING_APPS.md</a>.</p>
   </div>
 </section>
 

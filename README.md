@@ -42,10 +42,10 @@ new app can appear in Store without reinstalling or updating Cobalt.
 
 > [!TIP]
 > **Own an unsupported Kobo? Help test its port.** No coding is required.
-> Read the thread and comment with your exact model, firmware, and whether you
-> can run attended tests: [Aura](https://github.com/BandarLabs/Cobalt/issues/32).
-> Start with read-only checks; run panel tests only against the commit named by
-> a maintainer. See
+> [Join an existing device thread or create a new one](https://github.com/BandarLabs/Cobalt/issues)
+> with your exact model, firmware, and whether you can run attended tests.
+> Start with read-only checks; run panel tests only against the commit named
+> by a maintainer. See
 > [Contributing](CONTRIBUTING.md#device-testing).
 
 ## Features
@@ -117,6 +117,12 @@ utilities.
 <td></td>
 </tr>
 </table>
+
+### Suggest an app
+
+What would you use on your Kobo? It could be a game, a reading tool, a
+home-automation control, or a replacement for an Android or iOS app. Add it to
+the [app request thread](https://github.com/BandarLabs/Cobalt/issues/41).
 
 ## Install
 
