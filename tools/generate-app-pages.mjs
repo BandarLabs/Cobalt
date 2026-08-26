@@ -26,6 +26,26 @@ const systemApps = [
     summary: "Connectivity, hardware and platform updates, kept separate from Store."
   }
 ];
+const screenshots = {
+  arxiv: ["arxiv.png", "The newest machine learning preprints listed in the arXiv app on a Kobo"],
+  audiobook: ["audiobook.png", "An audiobook player with cover art and playback controls on a Kobo"],
+  brief: ["brief.png", "A numbered daily news brief on a Kobo"],
+  chat: ["chat.png", "An answer displayed for touch-friendly reading on a Kobo"],
+  gallery: ["components.png", "Cobalt typography and interface components on a Kobo"],
+  gutenbird: ["gutenbird.png", "A shelf of books from an OPDS library on a Kobo"],
+  hn: ["hackernews.png", "A ranked list of Hacker News stories on a Kobo"],
+  launcher: ["launcher.png", "The Cobalt launcher showing installed apps on a Kobo"],
+  magnet: ["magnet.png", "The Kobo hall sensor responding to a magnet"],
+  morse: ["morse.png", "A letter filling the Kobo screen while the front light sends Morse code"],
+  rss: ["feeds.png", "Subscribed feeds and articles in the Feeds app on a Kobo"],
+  settings: ["settings.png", "Battery status and hardware information in Cobalt Settings"],
+  sidekick: ["sidekick.png", "A coding-agent request with tappable responses on a Kobo"],
+  store: ["store.png", "The Cobalt App Store listing installed and available apps"],
+  sudoku: ["sudoku.png", "A Sudoku game designed for the Kobo touch screen"],
+  terminal: ["terminal.png", "A shell and touch keyboard on a Kobo"],
+  tictactoe: ["tictactoe.png", "A completed game of tic-tac-toe on a Kobo"],
+  todo: ["todo.png", "A to-do list with completed items on a Kobo"]
+};
 const appsRoot = resolve(root, "docs/apps");
 for (const app of catalog.apps) {
   if (
@@ -62,6 +82,7 @@ for (const app of catalog.apps) {
     ? app.capabilities.map(escape).join(", ")
     : "No additional permissions";
   const canonical = `https://bandarlabs.github.io/Cobalt/apps/${id}/`;
+  const [screenshot, screenshotAlt] = screenshots[app.id];
   const html = `<!doctype html>
 <html lang="en">
 <head>
@@ -83,12 +104,32 @@ for (const app of catalog.apps) {
 <link rel="stylesheet" href="../install.css">
 </head>
 <body>
-<header><div class="wrap"><a class="brand" href="../../">Cobalt</a><a class="back" href="../../#apps">All apps</a></div></header>
+<header class="masthead">
+  <div class="wrap">
+    <a class="brand" href="../../"><img src="../../logo.svg" alt="Cobalt" width="81" height="34"></a>
+    <nav class="top" aria-label="Main navigation">
+      <a class="active" href="../../#apps">Apps</a>
+      <a href="../../sdk.html">SDK</a>
+      <a href="../../faq.html">FAQ</a>
+      <a href="../../#store">Store</a>
+      <a href="../../#install">Install</a>
+      <a href="../../#contributing">Contributing</a>
+      <a href="https://github.com/BandarLabs/Cobalt">GitHub</a>
+    </nav>
+  </div>
+</header>
 <main class="wrap" data-app-id="${id}">
-  <p class="eyebrow">Kobo app</p>
-  <h1>${name}</h1>
-  <p class="summary">${summary}</p>
-  <div class="meta"><span>Version ${escape(app.version)}</span><span>${capabilities}</span></div>
+  <div class="app-hero">
+    <div class="app-copy">
+      <p class="eyebrow">Kobo app</p>
+      <h1>${name}</h1>
+      <p class="summary">${summary}</p>
+      <div class="meta"><span>Version ${escape(app.version)}</span><span>${capabilities}</span></div>
+    </div>
+    <figure class="app-shot">
+      <img src="../../media/site/apps/${screenshot}" width="1072" height="1448" alt="${escape(screenshotAlt)}">
+    </figure>
+  </div>
   <section class="panel" id="pair-panel">
     <p class="eyebrow">Install with Cobalt</p>
     <h2>Link your Kobo to install</h2>
@@ -141,6 +182,7 @@ for (const app of systemApps) {
   const name = escape(app.display_name);
   const summary = escape(app.summary);
   const canonical = `https://bandarlabs.github.io/Cobalt/apps/${id}/`;
+  const [screenshot, screenshotAlt] = screenshots[app.id];
   const html = `<!doctype html>
 <html lang="en">
 <head>
@@ -162,12 +204,32 @@ for (const app of systemApps) {
 <link rel="stylesheet" href="../install.css">
 </head>
 <body>
-<header><div class="wrap"><a class="brand" href="../../">Cobalt</a><a class="back" href="../../#apps">All apps</a></div></header>
+<header class="masthead">
+  <div class="wrap">
+    <a class="brand" href="../../"><img src="../../logo.svg" alt="Cobalt" width="81" height="34"></a>
+    <nav class="top" aria-label="Main navigation">
+      <a class="active" href="../../#apps">Apps</a>
+      <a href="../../sdk.html">SDK</a>
+      <a href="../../faq.html">FAQ</a>
+      <a href="../../#store">Store</a>
+      <a href="../../#install">Install</a>
+      <a href="../../#contributing">Contributing</a>
+      <a href="https://github.com/BandarLabs/Cobalt">GitHub</a>
+    </nav>
+  </div>
+</header>
 <main class="wrap">
-  <p class="eyebrow">Cobalt system app</p>
-  <h1>${name}</h1>
-  <p class="summary">${summary}</p>
-  <div class="meta"><span>Included with Cobalt</span></div>
+  <div class="app-hero">
+    <div class="app-copy">
+      <p class="eyebrow">Cobalt system app</p>
+      <h1>${name}</h1>
+      <p class="summary">${summary}</p>
+      <div class="meta"><span>Included with Cobalt</span></div>
+    </div>
+    <figure class="app-shot">
+      <img src="../../media/site/apps/${screenshot}" width="1072" height="1448" alt="${escape(screenshotAlt)}">
+    </figure>
+  </div>
   <section class="panel setup">
     <p class="eyebrow">No separate install needed</p>
     <h2>Available after Cobalt setup</h2>
