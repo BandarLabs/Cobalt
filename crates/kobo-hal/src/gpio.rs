@@ -1,10 +1,12 @@
 //! The physical buttons and the orientation channel.
 //!
-//! On NTX hardware the `gpio-keys` node carries three unrelated things: the
-//! page-turn keys, the power button, and the kernel's digested accelerometer
-//! verdicts (`EV_MSC`/`MSC_RAW` with one value per orientation). One session
-//! reads the node and hands all of them to the runtime, which decides what
-//! each means.
+//! On i.MX `NTX` hardware (Clara HD, Libra 2) the `gpio-keys` node carries
+//! the page-turn keys, the power button, and the kernel's digested
+//! accelerometer verdicts (`EV_MSC`/`MSC_RAW`). `MediaTek` boards (Clara BW
+//! and the other `MT8110` devices) split that: `gpio-keys` is only the
+//! sleep-cover hall sensor (`KEY=8 0`, bit 35), and the power button is a
+//! separate `bd71828-pwrkey` node (`KEY_POWER` 116). A session opens every
+//! node it finds and the decoder decides what each event means.
 //!
 //! Unlike the touch panel this device is never grabbed. Inside a panel
 //! session nothing else consumes buttons — the stock reader is stopped, and
@@ -29,8 +31,12 @@ use std::thread;
 const EVENT_BYTES: usize = 16;
 const READ_CHUNK_EVENTS: usize = 64;
 
-/// The device name this module owns. Every NTX Kobo ships it.
+/// The combined keys/orientation node on i.MX boards, and the cover sensor
+/// on `MediaTek` boards. Every NTX Kobo ships it.
 const DEVICE_NAME: &str = "gpio-keys";
+/// Substring the `MediaTek` power-button node uses (`bd71828-pwrkey` on the
+/// Clara BW). Matched on the evdev name, not a path: the event number moves.
+const POWER_KEY_NAME: &str = "pwrkey";
 
 /// A physical button, named by what it is rather than what it means.
 ///
@@ -123,24 +129,45 @@ pub fn discover_buttons_path() -> Option<PathBuf> {
     discover_buttons_path_from(&content)
 }
 
+/// Finds the dedicated power-button node (`bd71828-pwrkey` on `MediaTek`
+/// boards), or nothing on hardware that reports power on `gpio-keys`.
+#[must_use]
+pub fn discover_power_path() -> Option<PathBuf> {
+    let content = std::fs::read_to_string("/proc/bus/input/devices").ok()?;
+    discover_power_path_from(&content)
+}
+
 fn discover_buttons_path_from(content: &str) -> Option<PathBuf> {
+    discover_named_path_from(content, |name| name.contains(DEVICE_NAME))
+}
+
+fn discover_power_path_from(content: &str) -> Option<PathBuf> {
+    discover_named_path_from(content, |name| name.contains(POWER_KEY_NAME))
+}
+
+fn discover_named_path_from(content: &str, wanted: impl Fn(&str) -> bool) -> Option<PathBuf> {
     content.split("\n\n").find_map(|block| {
-        let name_matches = block
-            .lines()
-            .find(|line| line.starts_with("N: Name="))
-            .is_some_and(|line| line.contains(DEVICE_NAME));
-        if !name_matches {
+        let name = block.lines().find(|line| line.starts_with("N: Name="))?;
+        if !wanted(name) {
             return None;
         }
-        let handlers = block
-            .lines()
-            .find(|line| line.starts_with("H: Handlers="))?;
-        let event = handlers
-            .strip_prefix("H: Handlers=")?
-            .split_whitespace()
-            .find(|handler| handler.starts_with("event"))?;
-        Some(Path::new("/dev/input").join(event))
+        event_path_from(block)
     })
+}
+
+fn event_path_from(block: &str) -> Option<PathBuf> {
+    let handlers = block
+        .lines()
+        .find(|line| line.starts_with("H: Handlers="))?;
+    let event = handlers
+        .strip_prefix("H: Handlers=")?
+        .split_whitespace()
+        .find(|handler| handler.starts_with("event"))?;
+    Some(Path::new("/dev/input").join(event))
+}
+
+fn accepts_device_name(name: &str) -> bool {
+    name == DEVICE_NAME || name.contains(POWER_KEY_NAME)
 }
 
 #[derive(Debug)]
@@ -157,7 +184,7 @@ impl fmt::Display for GpioError {
         match self {
             Self::WrongDevice { found } => write!(
                 formatter,
-                "button device is {found:?}, but this module requires {DEVICE_NAME:?}"
+                "button device is {found:?}, but this module requires {DEVICE_NAME:?} or a {POWER_KEY_NAME} node"
             ),
             Self::Io(error) => write!(formatter, "{error}"),
         }
@@ -185,12 +212,12 @@ impl GpioSession {
     ///
     /// # Errors
     ///
-    /// Returns an error when the device cannot be opened or is not
-    /// `gpio-keys`.
+    /// Returns an error when the device cannot be opened or is neither
+    /// `gpio-keys` nor a `pwrkey` node.
     pub fn acquire(path: &Path) -> Result<Self, GpioError> {
         let device = File::open(path)?;
         let name = input::device_name(&device)?;
-        if name != DEVICE_NAME {
+        if !accepts_device_name(&name) {
             return Err(GpioError::WrongDevice { found: name });
         }
         let (sender, events) = mpsc::channel();
@@ -229,7 +256,10 @@ impl GpioSession {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode, discover_buttons_path_from, Button, GpioEvent, Orientation};
+    use super::{
+        accepts_device_name, decode, discover_buttons_path_from, discover_power_path_from, Button,
+        GpioEvent, Orientation,
+    };
     use crate::touch::InputEvent32;
     use std::path::Path;
 
@@ -341,5 +371,58 @@ H: Handlers=event1\n";
             discover_buttons_path_from(fixture).as_deref(),
             Some(Path::new("/dev/input/event0"))
         );
+        assert_eq!(discover_power_path_from(fixture), None);
+    }
+
+    #[test]
+    fn a_clara_bw_reports_power_on_pwrkey_not_gpio_keys() {
+        // `/proc/bus/input/devices` as read from the owner's Clara BW N365
+        // on 2026-08-27. `gpio-keys` is KEY bit 35 (the cover); power is
+        // `bd71828-pwrkey` on event2, KEY 116.
+        let fixture = "\
+I: Bus=0019 Vendor=0001 Product=0001 Version=0100\n\
+N: Name=\"gpio-keys\"\n\
+P: Phys=gpio-keys/input0\n\
+S: Sysfs=/devices/platform/ntx_event0/input/input0\n\
+U: Uniq=\n\
+H: Handlers=event0 perfmgr \n\
+B: PROP=0\n\
+B: EV=100013\n\
+B: KEY=8 0\n\
+B: MSC=8\n\
+\n\
+I: Bus=0000 Vendor=0000 Product=0000 Version=0000\n\
+N: Name=\"cyttsp5_mt\"\n\
+P: Phys=2-0024/input0\n\
+S: Sysfs=/devices/platform/1001e000.i2c/i2c-2/2-0024/input/input1\n\
+U: Uniq=\n\
+H: Handlers=event1 perfmgr \n\
+B: PROP=2\n\
+B: EV=f\n\
+B: KEY=421 0 0 0 0 0 0 100000 0 0 0\n\
+B: REL=0\n\
+B: ABS=ef30000 1000003\n\
+\n\
+I: Bus=0019 Vendor=0001 Product=0001 Version=0100\n\
+N: Name=\"bd71828-pwrkey\"\n\
+P: Phys=\n\
+S: Sysfs=/devices/platform/10019000.i2c/i2c-1/1-004b/bd71828-pwrkey.6.auto/input/input2\n\
+U: Uniq=\n\
+H: Handlers=event2 perfmgr \n\
+B: PROP=0\n\
+B: EV=13\n\
+B: KEY=100000 0 0 0\n\
+B: MSC=8\n";
+        assert_eq!(
+            discover_buttons_path_from(fixture).as_deref(),
+            Some(Path::new("/dev/input/event0"))
+        );
+        assert_eq!(
+            discover_power_path_from(fixture).as_deref(),
+            Some(Path::new("/dev/input/event2"))
+        );
+        assert!(accepts_device_name("gpio-keys"));
+        assert!(accepts_device_name("bd71828-pwrkey"));
+        assert!(!accepts_device_name("cyttsp5_mt"));
     }
 }

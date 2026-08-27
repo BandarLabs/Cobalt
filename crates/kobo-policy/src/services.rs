@@ -12,6 +12,7 @@
 use crate::{Capability, Declared, Grant, Grants, PowerPolicy};
 use kobo_protocol::{
     AudioPlaybackState, DenyReason, DeviceError, DeviceRequest, DeviceResult, DictionaryEntry,
+    IdleSleep,
 };
 use std::collections::BTreeSet;
 use std::time::Duration;
@@ -94,6 +95,7 @@ pub struct DeviceServices {
     audio_duration_ms: u32,
     audio_volume: u8,
     dictionaries: kobo_dict::Index,
+    idle_sleep: IdleSleep,
 }
 
 impl DeviceServices {
@@ -133,6 +135,7 @@ impl DeviceServices {
             audio_duration_ms: 0,
             audio_volume: 70,
             dictionaries: kobo_dict::Index::default(),
+            idle_sleep: IdleSleep::default(),
         }
     }
 
@@ -211,6 +214,7 @@ impl DeviceServices {
     }
 
     /// Answers exactly one request.
+    #[allow(clippy::too_many_lines, reason = "one explicit device-request table")]
     pub fn handle(&mut self, request: DeviceRequest) -> DeviceResult {
         match request {
             DeviceRequest::ReadBattery => self.read_battery(),
@@ -309,6 +313,11 @@ impl DeviceServices {
             }
             DeviceRequest::LookupWord { word, language } => {
                 self.lookup_word(word, language.as_deref())
+            }
+            DeviceRequest::ReadIdleSleep => DeviceResult::IdleSleep(self.idle_sleep),
+            DeviceRequest::SetIdleSleep(timeout) => {
+                self.idle_sleep = timeout;
+                DeviceResult::IdleSleep(self.idle_sleep)
             }
             DeviceRequest::ReadAppLink
             | DeviceRequest::BeginAppLink
@@ -597,7 +606,9 @@ pub fn request_capability(request: &DeviceRequest) -> Option<Capability> {
         | DeviceRequest::ReadAppLink
         | DeviceRequest::BeginAppLink
         | DeviceRequest::PollAppLink
-        | DeviceRequest::DisconnectAppLink => return None,
+        | DeviceRequest::DisconnectAppLink
+        | DeviceRequest::ReadIdleSleep
+        | DeviceRequest::SetIdleSleep(_) => return None,
     })
 }
 
@@ -609,7 +620,7 @@ fn clamp_seconds(duration: Duration) -> u32 {
 mod tests {
     use super::{Backends, DeviceServices, DeviceState};
     use crate::{Capability, Declared, PowerPolicy};
-    use kobo_protocol::{DenyReason, DeviceRequest, DeviceResult};
+    use kobo_protocol::{DenyReason, DeviceRequest, DeviceResult, IdleSleep};
 
     fn seconds_of(duration: std::time::Duration) -> u32 {
         u32::try_from(duration.as_secs()).expect("policy fits in u32")
@@ -849,6 +860,27 @@ mod tests {
             DeviceResult::Granted {
                 seconds: seconds_of(PowerPolicy::DEFAULT.minimum_wake_interval),
             }
+        );
+    }
+
+    #[test]
+    fn idle_sleep_defaults_to_five_minutes_and_is_remembered() {
+        let mut services = DeviceServices::simulated();
+        assert_eq!(
+            services.handle(DeviceRequest::ReadIdleSleep),
+            DeviceResult::IdleSleep(IdleSleep::FiveMinutes)
+        );
+        assert_eq!(
+            services.handle(DeviceRequest::SetIdleSleep(IdleSleep::Never)),
+            DeviceResult::IdleSleep(IdleSleep::Never)
+        );
+        assert_eq!(
+            services.handle(DeviceRequest::ReadIdleSleep),
+            DeviceResult::IdleSleep(IdleSleep::Never)
+        );
+        assert_eq!(
+            services.handle(DeviceRequest::SetIdleSleep(IdleSleep::OneMinute)),
+            DeviceResult::IdleSleep(IdleSleep::OneMinute)
         );
     }
 

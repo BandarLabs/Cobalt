@@ -8,7 +8,7 @@
 pub use kobo_protocol::{
     is_valid_key, AppInfo, AppLinkState, AudioPlaybackState, AudioSource, BatteryDetail,
     BluetoothDevice, BluetoothDeviceKind, Credential, DenyReason, DeviceError, DeviceRequest,
-    DeviceResult, DictionaryEntry, Frame, Header, Lifecycle, LogLevel, Message,
+    DeviceResult, DictionaryEntry, Frame, Header, IdleSleep, Lifecycle, LogLevel, Message,
     RemoteInstallOutcome, SecretHeader, ShellError, ShellEvent, ShellRequest, StoreError,
     StoreRequest, StoreResult, StreamError, Task, TaskError, TaskId, TaskOutcome, WifiNetwork,
     CACHE_PREFIX, MAX_CACHE_KEYS, MAX_FONT_BYTES, MAX_HEADERS, MAX_HEADER_NAME, MAX_HEADER_VALUE,
@@ -4075,6 +4075,16 @@ impl Device<'_> {
     /// Asks for the current front light percentage.
     pub fn read_frontlight(&mut self) {
         self.request(DeviceRequest::ReadFrontlight);
+    }
+
+    /// Asks how long the session waits idle before sleeping.
+    pub fn read_idle_sleep(&mut self) {
+        self.request(DeviceRequest::ReadIdleSleep);
+    }
+
+    /// Sets how long the session waits idle before sleeping.
+    pub fn set_idle_sleep(&mut self, timeout: IdleSleep) {
+        self.request(DeviceRequest::SetIdleSleep(timeout));
     }
 
     /// Asks whether Bluetooth is available and powered, including remembered

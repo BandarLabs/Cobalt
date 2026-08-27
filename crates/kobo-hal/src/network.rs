@@ -30,6 +30,7 @@
 use crate::reader::{Reader, ReaderError};
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -144,6 +145,34 @@ pub fn is_online(link: &str) -> bool {
     fs::read_to_string("/proc/net/route").is_ok_and(|table| has_default_route(&table, link))
 }
 
+/// Asks for a DHCP lease on `link` without becoming a second owner of the radio.
+///
+/// If the firmware's `dhcpcd` is already running, this is a renew. If it is
+/// not, a one-shot client gets an address and exits, leaving the kernel
+/// holding the lease. Starting a long-lived `dhcpcd` here would leave it
+/// running when the stock reader returned, which is the two-owner mistake
+/// this module used to make on purpose.
+pub fn renew_lease(link: &str) {
+    let dhcpcd = Path::new(DHCP_EXECUTABLE);
+    if dhcpcd.is_file() && Reader::find_running(DHCP_EXECUTABLE).is_ok() {
+        let _ignored = Command::new(DHCP_EXECUTABLE).args(["-n", link]).status();
+        return;
+    }
+    for tool in ["/sbin/udhcpc", "/bin/udhcpc"] {
+        if Path::new(tool).is_file() {
+            let _ignored = Command::new(tool)
+                .args(["-i", link, "-n", "-q", "-t", "5"])
+                .status();
+            return;
+        }
+    }
+    if dhcpcd.is_file() {
+        let _ignored = Command::new(DHCP_EXECUTABLE)
+            .args(["-1", "-q", link])
+            .status();
+    }
+}
+
 /// Watches `link` for `settle`, returning whether it was ever seen offline.
 ///
 /// Returning early on the first offline reading keeps the common case cheap;
@@ -161,7 +190,14 @@ fn went_offline(link: &str, settle: Duration) -> bool {
     }
 }
 
-fn wait_until_online(link: &str, within: Duration) -> bool {
+/// Waits until `link` has a default route, or `within` elapses.
+///
+/// Used after asking the firmware supplicant to reconnect: association is
+/// not the same as a usable network, and a default route is what a fetch
+/// actually needs. Returns as soon as the route appears so a reader who
+/// associated in a second is not held for the rest of the allowance.
+#[must_use]
+pub fn wait_until_online(link: &str, within: Duration) -> bool {
     let deadline = Instant::now() + within;
     loop {
         if is_online(link) {

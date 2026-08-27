@@ -131,6 +131,7 @@ impl Relay for HttpsRelay {
             return Err(DeviceError::InvalidInput);
         }
         let address = kobo_net::parse(&format!("{}{}", self.base, path)).map_err(network_error)?;
+        kobo_net::prepare();
         let config = relay_tls_config()?;
         let server_name = address
             .host

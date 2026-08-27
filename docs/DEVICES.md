@@ -33,7 +33,22 @@ a new read-only probe and the applicable attended evidence have been reviewed.
 Nickel is stopped for the session, so the power button belongs to Cobalt. A
 short press sleeps in place and a hold of two seconds powers off. Wake returns
 to the same application. Closing a sleep cover sleeps; opening it wakes. Idle
-also sleeps in Cobalt rather than handing the panel back to Nickel.
+also sleeps in Cobalt rather than handing the panel back to Nickel, after the
+delay chosen in Settings (1, 5, 10 or 30 minutes, or never). Five minutes is
+the default. Sleep keeps the current screen and writes "Sleeping" in the
+status strip; it does not replace the panel with a splash. The radio is
+powered down for sleep and brought back on wake when it was up. If it is
+still down when an application fetches, and the firmware supplicant still
+has a remembered network, Cobalt turns the radio on, asks it to reconnect,
+and waits for a default route. Nickel is not running to hold that
+association, so Cobalt does: while the session is awake and still wants
+the radio, a link that comes back and then dies is put back, the lease is
+renewed rather than bouncing a handshake in flight, and chip power-save is
+turned off so the driver does not idle the radio out from under the panel.
+
+On MediaTek boards the power button is the `bd71828-pwrkey` input node, not
+`gpio-keys` (that node is only the sleep-cover hall sensor). i.MX boards
+(Clara HD, Libra 2) still report power on `gpio-keys`.
 
 MediaTek boards (Clara BW, Clara Colour, Elipsa 2E, Libra Colour) do not write
 `mem` while a charger is attached: that combination hangs the kernel. They stay
@@ -332,13 +347,19 @@ showing an empty file when the trace is not there.
 
 ### Wi-Fi across a session
 
+While Cobalt owns the panel, a fetch or post from an application brings the
+radio up through the firmware's own `wpa_cli` when a remembered network is
+already in the supplicant. That is on-demand join, not a second owner of
+the interface. It does not survive handing the panel back.
+
 Stopping and restarting the stock reader reliably drops the Wi-Fi connection.
 The reader owns the radio and drives it inside `libnickel`, and the restarted
 one begins from its own "not connected" state; there is no D-Bus service, no
 script and no supported way to ask it to reconnect. So every session costs the
 connection, and the reader picks it up again by itself.
 
-The runtime does **not** put the link back, and there is no option to make it.
+The runtime does **not** put the link back at session end, and there is no
+option to make it.
 It used to be able to, by restarting the supplicant and DHCP client it had
 recorded. Those daemons attach to `wlan0`; the restarted reader drives the same
 radio from inside libnickel and cannot be told what we started behind it; and
