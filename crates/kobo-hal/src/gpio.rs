@@ -86,8 +86,8 @@ pub enum GpioEvent {
 ///
 /// The sleep-cover key (code 35) is deliberately not claimed: the cover
 /// watcher owns it through its own open of the same node. Auto-repeat
-/// (value 2) is dropped for now — no capture has produced one, and
-/// hold-to-turn is a decision for the runtime once it exists.
+/// (value 2) is dropped: hold-to-power-off is timed from press to release
+/// in [`crate::power`], not from kernel repeats.
 #[must_use]
 pub fn decode(event: InputEvent32) -> Option<GpioEvent> {
     match (event.kind, event.code) {

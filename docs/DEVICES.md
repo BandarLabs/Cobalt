@@ -28,6 +28,22 @@ fixture results are not substitutes.
 Firmware versions not listed here are unsupported even on the same model until
 a new read-only probe and the applicable attended evidence have been reviewed.
 
+### Sleep while Cobalt owns the panel
+
+Nickel is stopped for the session, so the power button belongs to Cobalt. A
+short press sleeps in place and a hold of two seconds powers off. Wake returns
+to the same application. Closing a sleep cover sleeps; opening it wakes. Idle
+also sleeps in Cobalt rather than handing the panel back to Nickel.
+
+MediaTek boards (Clara BW, Clara Colour, Elipsa 2E, Libra Colour) do not write
+`mem` while a charger is attached: that combination hangs the kernel. They stay
+on the sleep screen until the charger is removed or the owner wakes the device.
+i.MX boards (Clara HD, Libra 2) suspend while charging.
+
+In-session sleep is new. The Elipsa 2E suspend/resume evidence above is for a
+session that had already ended. Libra Colour still has no attended sleep/wake
+run; treat that path as unproven there.
+
 ## Connecting a device
 
 The reader has to be on the same wireless network as the machine you work from.

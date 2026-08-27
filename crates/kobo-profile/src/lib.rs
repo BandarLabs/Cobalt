@@ -969,6 +969,16 @@ pub struct ValidationReport {
 }
 
 impl DeviceProfile {
+    /// `MediaTek` kernels on the Clara BW/Colour, Elipsa 2E and Libra Colour
+    /// hang if suspend-to-RAM is requested while a charger is attached.
+    /// The i.MX6SLL boards (Clara HD, Libra 2) do not.
+    #[must_use]
+    pub fn kernel_suspend_hangs_while_charging(&self) -> bool {
+        self.compatible_fragments
+            .iter()
+            .any(|fragment| fragment.contains("mediatek"))
+    }
+
     #[must_use]
     pub fn validate(&self, snapshot: &DeviceSnapshot) -> ValidationReport {
         let mut mismatches = Vec::new();
@@ -2619,6 +2629,17 @@ mod tests {
         assert!(!CLARA_COLOUR_393
             .write_identity_blockers(&clara_bw)
             .is_empty());
+    }
+
+    #[test]
+    fn media_tek_boards_skip_kernel_suspend_while_charging_and_imx_boards_do_not() {
+        assert!(CLARA_BW_391.kernel_suspend_hangs_while_charging());
+        assert!(CLARA_BW_395.kernel_suspend_hangs_while_charging());
+        assert!(CLARA_COLOUR_393.kernel_suspend_hangs_while_charging());
+        assert!(ELIPSA_2E_389.kernel_suspend_hangs_while_charging());
+        assert!(LIBRA_COLOUR_390.kernel_suspend_hangs_while_charging());
+        assert!(!CLARA_HD_376.kernel_suspend_hangs_while_charging());
+        assert!(!LIBRA_2_388.kernel_suspend_hangs_while_charging());
     }
 
     #[test]
