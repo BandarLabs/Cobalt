@@ -32,9 +32,8 @@ pub mod input;
 #[cfg(feature = "device-write")]
 pub mod network;
 pub mod observe;
-/// Suspend-to-RAM while a Cobalt session owns the panel. Writes the kernel
-/// power nodes, so it is as consequential as [`frontlight`]; the classifier
-/// is pure.
+/// Power-button classification is always available: it writes nothing.
+/// Kernel suspend writes live in the same module behind `device-write`.
 pub mod power;
 pub mod probe;
 /// Stopping and restarting the stock reader. Available only with

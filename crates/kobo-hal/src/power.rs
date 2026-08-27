@@ -10,8 +10,11 @@
 //! The hold-to-power-off classification lives here so it can be tested without
 //! a panel session. The runtime decides when to call it.
 
+#[cfg(feature = "device-write")]
 use std::fs;
+#[cfg(feature = "device-write")]
 use std::io;
+#[cfg(feature = "device-write")]
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -77,12 +80,17 @@ impl PowerButton {
 }
 
 /// The kernel's suspend nodes, once they have been found.
+///
+/// Writes `mem` into `/sys/power/state`, so this type exists only with
+/// `device-write`. The classifier above is always available.
+#[cfg(feature = "device-write")]
 #[derive(Clone, Debug)]
 pub struct Power {
     state: PathBuf,
     extended: Option<PathBuf>,
 }
 
+#[cfg(feature = "device-write")]
 impl Power {
     /// The live nodes, or nothing on a machine that does not publish them.
     #[must_use]
@@ -151,21 +159,8 @@ impl Power {
 
 #[cfg(test)]
 mod tests {
-    use super::{ButtonAction, Power, PowerButton, HOLD_TO_POWER_OFF};
-    use std::fs;
-    use std::path::{Path, PathBuf};
+    use super::{ButtonAction, PowerButton, HOLD_TO_POWER_OFF};
     use std::time::{Duration, Instant};
-
-    fn root(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!("kobo-power-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&path);
-        fs::create_dir_all(&path).expect("temp power dir");
-        path
-    }
-
-    fn write(dir: &Path, name: &str, body: &str) {
-        fs::write(dir.join(name), body).expect("write power node");
-    }
 
     #[test]
     fn a_short_press_while_awake_sleeps() {
@@ -197,6 +192,24 @@ mod tests {
             "shutdown is armed once"
         );
         assert_eq!(button.release(false), None);
+    }
+}
+
+#[cfg(all(test, feature = "device-write"))]
+mod kernel_tests {
+    use super::Power;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    fn root(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("kobo-power-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir_all(&path).expect("temp power dir");
+        path
+    }
+
+    fn write(dir: &Path, name: &str, body: &str) {
+        fs::write(dir.join(name), body).expect("write power node");
     }
 
     #[test]

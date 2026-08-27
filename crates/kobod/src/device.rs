@@ -883,8 +883,16 @@ fn wifi_enabled(wifi: &kobo_hal::wifi::Wifi) -> bool {
 }
 
 fn charger_blocks_mem(display: &DisplaySession) -> bool {
-    display.profile().kernel_suspend_hangs_while_charging()
-        && kobo_hal::battery::read().is_some_and(|battery| battery.charging)
+    charger_blocks_mem_with(
+        display.profile().kernel_suspend_hangs_while_charging(),
+        kobo_hal::battery::read().map(|battery| battery.charging),
+    )
+}
+
+/// `MediaTek` boards hang if we write `mem` while charging. Unknown charging
+/// is treated as charging: a missed battery read must not enable a hang.
+fn charger_blocks_mem_with(hangs_while_charging: bool, charging: Option<bool>) -> bool {
+    hangs_while_charging && charging.unwrap_or(true)
 }
 
 fn enter_sleep(
@@ -4071,6 +4079,15 @@ mod hosting_tests {
         // there is no idle candidate the oldest busy one still goes.
         let seen = [(1, ago(30), BUSY), (2, ago(300), BUSY), (3, ago(5), IDLE)];
         assert_eq!(coldest(&seen, 3), Some(1));
+    }
+
+    #[test]
+    fn unknown_charging_on_mediatek_blocks_mem() {
+        assert!(super::charger_blocks_mem_with(true, None));
+        assert!(super::charger_blocks_mem_with(true, Some(true)));
+        assert!(!super::charger_blocks_mem_with(true, Some(false)));
+        assert!(!super::charger_blocks_mem_with(false, None));
+        assert!(!super::charger_blocks_mem_with(false, Some(true)));
     }
 
     #[test]

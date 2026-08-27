@@ -38,7 +38,8 @@ also sleeps in Cobalt rather than handing the panel back to Nickel.
 MediaTek boards (Clara BW, Clara Colour, Elipsa 2E, Libra Colour) do not write
 `mem` while a charger is attached: that combination hangs the kernel. They stay
 on the sleep screen until the charger is removed or the owner wakes the device.
-i.MX boards (Clara HD, Libra 2) suspend while charging.
+If charging cannot be read, those boards skip `mem` as well. i.MX boards
+(Clara HD, Libra 2) suspend while charging.
 
 In-session sleep is new. The Elipsa 2E suspend/resume evidence above is for a
 session that had already ended. Libra Colour still has no attended sleep/wake
