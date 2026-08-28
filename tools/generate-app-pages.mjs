@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -81,8 +82,11 @@ const escape = value => value
   .replaceAll(">", "&gt;")
   .replaceAll('"', "&quot;");
 const jsonLd = value => JSON.stringify(value, null, 2).replaceAll("<", "\\u003c");
-const pageDescription = app =>
+const scriptHash = value => createHash("sha256").update(value).digest("base64");
+const installableDescription = app =>
   `${app.summary} Install it on a supported Kobo e-reader with Cobalt.`;
+const systemDescription = app =>
+  `${app.summary} Included with Cobalt on supported Kobo e-readers.`;
 const appSchema = (app, canonical, screenshot, screenshotAlt) => ({
   "@context": "https://schema.org",
   "@graph": [
@@ -136,13 +140,15 @@ for (const app of catalog.apps) {
   const id = escape(app.id);
   const name = escape(app.display_name);
   const summary = escape(app.summary);
-  const description = escape(pageDescription(app));
+  const description = escape(installableDescription(app));
   const capabilities = app.capabilities.length
     ? app.capabilities.map(escape).join(", ")
     : "No additional permissions";
   const canonical = `https://bandarlabs.github.io/Cobalt/apps/${id}/`;
   const [screenshot, screenshotAlt] = screenshotFor(app);
   const image = `https://bandarlabs.github.io/Cobalt/media/site/apps/${screenshot}`;
+  const structuredData = jsonLd(appSchema(app, canonical, screenshot, screenshotAlt));
+  const structuredDataHash = scriptHash(structuredData);
   const html = `<!doctype html>
 <html lang="en">
 <head>
@@ -166,10 +172,8 @@ for (const app of catalog.apps) {
 <meta name="twitter:description" content="${description}">
 <meta name="twitter:image" content="${image}">
 <meta name="twitter:image:alt" content="${escape(screenshotAlt)}">
-<script type="application/ld+json">
-${jsonLd(appSchema(app, canonical, screenshot, screenshotAlt))}
-</script>
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-${structuredDataHash}'; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<script type="application/ld+json">${structuredData}</script>
 <link rel="stylesheet" href="../install.css">
 </head>
 <body>
@@ -265,10 +269,12 @@ for (const app of systemApps) {
   const id = escape(app.id);
   const name = escape(app.display_name);
   const summary = escape(app.summary);
-  const description = escape(pageDescription(app));
+  const description = escape(systemDescription(app));
   const canonical = `https://bandarlabs.github.io/Cobalt/apps/${id}/`;
   const [screenshot, screenshotAlt] = screenshotFor(app);
   const image = `https://bandarlabs.github.io/Cobalt/media/site/apps/${screenshot}`;
+  const structuredData = jsonLd(appSchema(app, canonical, screenshot, screenshotAlt));
+  const structuredDataHash = scriptHash(structuredData);
   const html = `<!doctype html>
 <html lang="en">
 <head>
@@ -292,10 +298,8 @@ for (const app of systemApps) {
 <meta name="twitter:description" content="${description}">
 <meta name="twitter:image" content="${image}">
 <meta name="twitter:image:alt" content="${escape(screenshotAlt)}">
-<script type="application/ld+json">
-${jsonLd(appSchema(app, canonical, screenshot, screenshotAlt))}
-</script>
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-${structuredDataHash}'; style-src 'self'; img-src 'self'; base-uri 'none'">
+<script type="application/ld+json">${structuredData}</script>
 <link rel="stylesheet" href="../install.css">
 </head>
 <body>
