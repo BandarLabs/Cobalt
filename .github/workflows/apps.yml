@@ -30,8 +30,8 @@ jobs:
         run: |
           echo "packages=$(target/debug/kobo app-list --registry apps/catalog.json)" >> "$GITHUB_OUTPUT"
           node tools/generate-app-pages.mjs
-          git status --porcelain -- docs/apps
-          test -z "$(git status --porcelain -- docs/apps)"
+          git status --porcelain -- docs/apps docs/sitemap.xml
+          test -z "$(git status --porcelain -- docs/apps docs/sitemap.xml)"
       - name: Save the release tool
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

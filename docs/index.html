@@ -82,6 +82,8 @@ header.masthead {
 nav.top { display: flex; gap: 26px; font-size: 16px; }
 nav.top a { color: var(--ink); }
 nav.top a:hover { color: var(--cobalt); }
+.icon-link { display: inline-flex; align-items: center; gap: 6px; }
+.icon-link svg { width: 15px; height: 15px; flex: none; fill: currentColor; }
 
 /* ---------- hero ---------- */
 .hero { padding: 72px 0 64px; border-bottom: 1px solid var(--rule); position: relative; }
@@ -108,9 +110,18 @@ nav.top a:hover { color: var(--cobalt); }
   display: inline-block; padding: 12px 22px; font-size: 17px;
   border: 1.5px solid var(--ink); color: var(--ink);
 }
+.btn.icon-btn { display: inline-flex; align-items: center; justify-content: center; gap: 9px; }
+.btn.icon-btn svg { width: 19px; height: 19px; flex: none; }
 .btn:hover { background: var(--ink); color: var(--paper); text-decoration: none; }
 .btn.primary { background: var(--cobalt); border-color: var(--cobalt); color: #fff; }
 .btn.primary:hover { background: var(--cobalt-deep); border-color: var(--cobalt-deep); }
+.hero-proof {
+  margin-top: 16px;
+  color: var(--ink-soft);
+  font-size: 14px;
+}
+.hero-proof a { color: var(--ink-soft); text-decoration: underline; text-underline-offset: 3px; }
+.hero-proof span + span::before { content: "·"; margin: 0 9px; color: var(--rule); }
 .hero figure { margin: 0; }
 .hero figure img { border: 1px solid var(--rule); }
 figcaption {
@@ -285,6 +296,9 @@ footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
   .masthead .wrap { gap: 12px; }
   nav.top { gap: 14px; flex-wrap: wrap; font-size: 15px; }
   .btn { padding: 11px 16px; font-size: 16px; }
+  .hero-proof span { display: block; }
+  .hero-proof span + span { margin-top: 3px; }
+  .hero-proof span + span::before { content: none; }
 }
 </style>
 </head>
@@ -302,7 +316,12 @@ footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
       <a href="#store">Store</a>
       <a href="#install">Install</a>
       <a href="#contributing">Contributing</a>
-      <a href="https://github.com/BandarLabs/Cobalt">GitHub</a>
+      <a class="icon-link" href="https://github.com/BandarLabs/Cobalt">
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.49c-2.23.49-2.7-1.08-2.7-1.08-.37-.93-.9-1.18-.9-1.18-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.72 1.23 1.88.87 2.34.67.07-.52.28-.87.51-1.07-1.78-.2-3.65-.89-3.65-3.96 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.22 2.2.82A7.66 7.66 0 0 1 8 3.72a7.7 7.7 0 0 1 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.08-1.88 3.75-3.66 3.95.29.25.54.74.54 1.5v2.32c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/>
+        </svg>
+        GitHub
+      </a>
     </nav>
   </div>
 </header>
@@ -317,6 +336,10 @@ footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
         <a class="btn primary" href="#install">Install on your Kobo</a>
         <a class="btn" href="https://github.com/BandarLabs/Cobalt">Read the source</a>
       </div>
+      <p class="hero-proof">
+        <span><a href="https://www.producthunt.com/products/cobalt-10?utm_source=cobalt-site&amp;utm_medium=referral">Featured on Product Hunt</a></span>
+        <span><a href="https://news.ycombinator.com/item?id=49390427">Aug 2026: #1 on Hacker News · 658 points</a></span>
+      </p>
     </div>
     <figure>
       <img src="media/site/cobalt-launcher-kobo-clara-bw.jpg" width="1400" height="1867"
@@ -496,10 +519,18 @@ footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
     </div>
     <aside class="suggest-app" aria-labelledby="suggest-app-title">
       <div>
-        <h3 id="suggest-app-title">Suggest an app</h3>
-        <p>What would you use on your Kobo? It could be a game, a reading tool, a home-automation control, or a replacement for an Android or iOS app.</p>
+        <h3 id="suggest-app-title">Help shape what comes next</h3>
+        <p>Join r/CobaltForKobo to request an app, suggest a feature, report a bug, or show what you are running on your Kobo.</p>
       </div>
-      <a class="btn" href="https://github.com/BandarLabs/Cobalt/issues/41">Add your request</a>
+      <a class="btn icon-btn" href="https://www.reddit.com/r/CobaltForKobo/">
+        <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="13" r="7"></circle>
+          <circle cx="9.5" cy="12" r=".8" fill="currentColor" stroke="none"></circle>
+          <circle cx="14.5" cy="12" r=".8" fill="currentColor" stroke="none"></circle>
+          <path d="M9 15c1.7 1.1 4.3 1.1 6 0M12.5 6l1-3 3.2.8M18.2 8.5a2 2 0 1 1 1.5 3.4M5.8 8.5a2 2 0 1 0-1.5 3.4"></path>
+        </svg>
+        Join the community
+      </a>
     </aside>
   </div>
 </section>
@@ -663,6 +694,7 @@ cargo run -p kobo-cli -- setup</code></pre>
     <nav>
       <a href="sdk.html">SDK docs</a>
       <a href="faq.html">FAQ</a>
+      <a href="https://www.reddit.com/r/CobaltForKobo/">Community</a>
       <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/INSTALL.md">Install</a>
       <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/CONTRIBUTING_APPS.md">Contribute an app</a>
       <a href="https://github.com/BandarLabs/Cobalt/blob/main/SECURITY.md">Security</a>
