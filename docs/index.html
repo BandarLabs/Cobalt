@@ -111,6 +111,13 @@ nav.top a:hover { color: var(--cobalt); }
 .btn:hover { background: var(--ink); color: var(--paper); text-decoration: none; }
 .btn.primary { background: var(--cobalt); border-color: var(--cobalt); color: #fff; }
 .btn.primary:hover { background: var(--cobalt-deep); border-color: var(--cobalt-deep); }
+.hero-proof {
+  margin-top: 16px;
+  color: var(--ink-soft);
+  font-size: 14px;
+}
+.hero-proof a { color: var(--ink-soft); text-decoration: underline; text-underline-offset: 3px; }
+.hero-proof span + span::before { content: "·"; margin: 0 9px; color: var(--rule); }
 .hero figure { margin: 0; }
 .hero figure img { border: 1px solid var(--rule); }
 figcaption {
@@ -285,6 +292,9 @@ footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
   .masthead .wrap { gap: 12px; }
   nav.top { gap: 14px; flex-wrap: wrap; font-size: 15px; }
   .btn { padding: 11px 16px; font-size: 16px; }
+  .hero-proof span { display: block; }
+  .hero-proof span + span { margin-top: 3px; }
+  .hero-proof span + span::before { content: none; }
 }
 </style>
 </head>
@@ -317,6 +327,10 @@ footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
         <a class="btn primary" href="#install">Install on your Kobo</a>
         <a class="btn" href="https://github.com/BandarLabs/Cobalt">Read the source</a>
       </div>
+      <p class="hero-proof">
+        <span><a href="https://www.producthunt.com/products/cobalt-10?utm_source=cobalt-site&amp;utm_medium=referral">Featured on Product Hunt</a></span>
+        <span><a href="https://news.ycombinator.com/item?id=49390427">#1 on Hacker News with 658 points</a></span>
+      </p>
     </div>
     <figure>
       <img src="media/site/cobalt-launcher-kobo-clara-bw.jpg" width="1400" height="1867"
@@ -496,10 +510,10 @@ footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
     </div>
     <aside class="suggest-app" aria-labelledby="suggest-app-title">
       <div>
-        <h3 id="suggest-app-title">Suggest an app</h3>
-        <p>What would you use on your Kobo? It could be a game, a reading tool, a home-automation control, or a replacement for an Android or iOS app.</p>
+        <h3 id="suggest-app-title">Help shape what comes next</h3>
+        <p>Join r/CobaltForKobo to request an app, suggest a feature, report a bug, or show what you are running on your Kobo.</p>
       </div>
-      <a class="btn" href="https://github.com/BandarLabs/Cobalt/issues/41">Add your request</a>
+      <a class="btn" href="https://www.reddit.com/r/CobaltForKobo/">Join the community</a>
     </aside>
   </div>
 </section>
@@ -663,6 +677,7 @@ cargo run -p kobo-cli -- setup</code></pre>
     <nav>
       <a href="sdk.html">SDK docs</a>
       <a href="faq.html">FAQ</a>
+      <a href="https://www.reddit.com/r/CobaltForKobo/">Community</a>
       <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/INSTALL.md">Install</a>
       <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/CONTRIBUTING_APPS.md">Contribute an app</a>
       <a href="https://github.com/BandarLabs/Cobalt/blob/main/SECURITY.md">Security</a>

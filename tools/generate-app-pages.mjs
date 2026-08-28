@@ -80,33 +80,95 @@ const escape = value => value
   .replaceAll("<", "&lt;")
   .replaceAll(">", "&gt;")
   .replaceAll('"', "&quot;");
+const jsonLd = value => JSON.stringify(value, null, 2).replaceAll("<", "\\u003c");
+const pageDescription = app =>
+  `${app.summary} Install it on a supported Kobo e-reader with Cobalt.`;
+const appSchema = (app, canonical, screenshot, screenshotAlt) => ({
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      name: app.display_name,
+      description: app.summary,
+      url: canonical,
+      image: {
+        "@type": "ImageObject",
+        url: `https://bandarlabs.github.io/Cobalt/media/site/apps/${screenshot}`,
+        width: 1072,
+        height: 1448,
+        caption: screenshotAlt
+      },
+      applicationSuite: "Cobalt",
+      applicationCategory: "SoftwareApplication",
+      operatingSystem: "Cobalt on supported Kobo e-readers",
+      ...(app.version ? { softwareVersion: app.version } : {}),
+      isAccessibleForFree: true,
+      offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+      installUrl: canonical
+    },
+    {
+      "@type": "BreadcrumbList",
+      itemListElement: [
+        {
+          "@type": "ListItem",
+          position: 1,
+          name: "Cobalt",
+          item: "https://bandarlabs.github.io/Cobalt/"
+        },
+        {
+          "@type": "ListItem",
+          position: 2,
+          name: "Apps",
+          item: "https://bandarlabs.github.io/Cobalt/#apps"
+        },
+        {
+          "@type": "ListItem",
+          position: 3,
+          name: app.display_name,
+          item: canonical
+        }
+      ]
+    }
+  ]
+});
 
 for (const app of catalog.apps) {
   const id = escape(app.id);
   const name = escape(app.display_name);
   const summary = escape(app.summary);
+  const description = escape(pageDescription(app));
   const capabilities = app.capabilities.length
     ? app.capabilities.map(escape).join(", ")
     : "No additional permissions";
   const canonical = `https://bandarlabs.github.io/Cobalt/apps/${id}/`;
   const [screenshot, screenshotAlt] = screenshotFor(app);
+  const image = `https://bandarlabs.github.io/Cobalt/media/site/apps/${screenshot}`;
   const html = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${name} for Cobalt</title>
-<meta name="description" content="${summary}">
+<title>Install ${name} on Kobo | Cobalt</title>
+<meta name="description" content="${description}">
 <link rel="canonical" href="${canonical}">
+<link rel="icon" href="../../logo.svg" type="image/svg+xml">
 <meta property="og:type" content="website">
-<meta property="og:title" content="${name} for Cobalt">
-<meta property="og:description" content="${summary}">
+<meta property="og:title" content="Install ${name} on Kobo | Cobalt">
+<meta property="og:description" content="${description}">
 <meta property="og:url" content="${canonical}">
-<meta property="og:image" content="https://bandarlabs.github.io/Cobalt/media/site/og-card.jpg">
-<meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="${name} for Cobalt">
-<meta name="twitter:description" content="${summary}">
-<meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/og-card.jpg">
+<meta property="og:site_name" content="Cobalt">
+<meta property="og:image" content="${image}">
+<meta property="og:image:width" content="1072">
+<meta property="og:image:height" content="1448">
+<meta property="og:image:alt" content="${escape(screenshotAlt)}">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Install ${name} on Kobo | Cobalt">
+<meta name="twitter:description" content="${description}">
+<meta name="twitter:image" content="${image}">
+<meta name="twitter:image:alt" content="${escape(screenshotAlt)}">
+<script type="application/ld+json">
+${jsonLd(appSchema(app, canonical, screenshot, screenshotAlt))}
+</script>
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <link rel="stylesheet" href="../install.css">
 </head>
@@ -174,7 +236,22 @@ for (const app of catalog.apps) {
     </div>
     <p class="status" id="install-status" role="status" aria-live="polite"></p>
   </section>
+  <aside class="community">
+    <strong>Want another Kobo app?</strong>
+    Request it, suggest a feature or report a bug in
+    <a href="https://www.reddit.com/r/CobaltForKobo/">r/CobaltForKobo</a>.
+  </aside>
 </main>
+<footer>
+  <div class="wrap">
+    <span>Cobalt · AGPL-3.0</span>
+    <nav aria-label="Footer navigation">
+      <a href="../../">Home</a>
+      <a href="https://www.reddit.com/r/CobaltForKobo/">Community</a>
+      <a href="https://github.com/BandarLabs/Cobalt">GitHub</a>
+    </nav>
+  </div>
+</footer>
 <script src="../install.js" defer></script>
 </body>
 </html>
@@ -188,25 +265,36 @@ for (const app of systemApps) {
   const id = escape(app.id);
   const name = escape(app.display_name);
   const summary = escape(app.summary);
+  const description = escape(pageDescription(app));
   const canonical = `https://bandarlabs.github.io/Cobalt/apps/${id}/`;
   const [screenshot, screenshotAlt] = screenshotFor(app);
+  const image = `https://bandarlabs.github.io/Cobalt/media/site/apps/${screenshot}`;
   const html = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${name} for Cobalt</title>
-<meta name="description" content="${summary}">
+<title>${name} for Kobo | Cobalt</title>
+<meta name="description" content="${description}">
 <link rel="canonical" href="${canonical}">
+<link rel="icon" href="../../logo.svg" type="image/svg+xml">
 <meta property="og:type" content="website">
-<meta property="og:title" content="${name} for Cobalt">
-<meta property="og:description" content="${summary}">
+<meta property="og:title" content="${name} for Kobo | Cobalt">
+<meta property="og:description" content="${description}">
 <meta property="og:url" content="${canonical}">
-<meta property="og:image" content="https://bandarlabs.github.io/Cobalt/media/site/og-card.jpg">
-<meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="${name} for Cobalt">
-<meta name="twitter:description" content="${summary}">
-<meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/og-card.jpg">
+<meta property="og:site_name" content="Cobalt">
+<meta property="og:image" content="${image}">
+<meta property="og:image:width" content="1072">
+<meta property="og:image:height" content="1448">
+<meta property="og:image:alt" content="${escape(screenshotAlt)}">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="${name} for Kobo | Cobalt">
+<meta name="twitter:description" content="${description}">
+<meta name="twitter:image" content="${image}">
+<meta name="twitter:image:alt" content="${escape(screenshotAlt)}">
+<script type="application/ld+json">
+${jsonLd(appSchema(app, canonical, screenshot, screenshotAlt))}
+</script>
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'">
 <link rel="stylesheet" href="../install.css">
 </head>
@@ -243,7 +331,22 @@ for (const app of systemApps) {
     <p>${name} is part of the Cobalt platform and is installed automatically with Cobalt. It does not need a separate App Store download.</p>
     <a class="button-link" href="../../#install">Set up Cobalt</a>
   </section>
+  <aside class="community">
+    <strong>Want another Kobo app?</strong>
+    Request it, suggest a feature or report a bug in
+    <a href="https://www.reddit.com/r/CobaltForKobo/">r/CobaltForKobo</a>.
+  </aside>
 </main>
+<footer>
+  <div class="wrap">
+    <span>Cobalt · AGPL-3.0</span>
+    <nav aria-label="Footer navigation">
+      <a href="../../">Home</a>
+      <a href="https://www.reddit.com/r/CobaltForKobo/">Community</a>
+      <a href="https://github.com/BandarLabs/Cobalt">GitHub</a>
+    </nav>
+  </div>
+</footer>
 </body>
 </html>
 `;
@@ -258,3 +361,18 @@ for (const app of [...catalog.apps, ...systemApps]) {
     throw new Error(`docs/index.html does not link to app page: ${app.id}`);
   }
 }
+
+const sitemapUrls = [
+  "https://bandarlabs.github.io/Cobalt/",
+  "https://bandarlabs.github.io/Cobalt/faq.html",
+  "https://bandarlabs.github.io/Cobalt/sdk.html",
+  ...[...catalog.apps, ...systemApps].map(
+    app => `https://bandarlabs.github.io/Cobalt/apps/${app.id}/`
+  )
+];
+const sitemap = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${sitemapUrls.map(url => `  <url><loc>${url}</loc></url>`).join("\n")}
+</urlset>
+`;
+writeFileSync(resolve(root, "docs/sitemap.xml"), sitemap);
