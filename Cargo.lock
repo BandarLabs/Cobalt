@@ -963,6 +963,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-wiki"
+version = "1.0.0"
+dependencies = [
+ "kobo-json",
+ "kobo-sdk",
+]
+
+[[package]]
 name = "kobo-xml"
 version = "0.3.1"
 
