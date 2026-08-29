@@ -74,6 +74,7 @@ const STORE_PACKAGES: &[&str] = &[
     "kobo-sudoku",
     "kobo-tictactoe",
     "kobo-todo",
+    "kobo-wiki",
 ];
 /// Proof that the daemon in the package can actually take the panel. The
 /// phrase only exists inside `present_on_panel`, which is behind
