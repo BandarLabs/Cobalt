@@ -2586,7 +2586,7 @@ fn start_application(
         .with_post(Arc::new(kobo_net::post))
         .with_secrets(SECRETS)
         .with_credential_policy(Arc::new(move |credential, url, usage| {
-            kobo_net::credential_allowed_for(&credential_app, credential, url, usage)
+            kobo_policy::credentials::allowed(&credential_app, credential, url, usage)
         }))
         .with_wake(Arc::new(move || {
             let _ = waker.send(Event::TaskReady);
