@@ -3025,6 +3025,29 @@ impl Context {
         kobo_ui::paginate_rows_with_trailing(rows, &self.metrics, self.area_for(nav_bar, position))
     }
 
+    /// The same, when one section header is drawn immediately above the rows.
+    ///
+    /// A section is content rather than chrome, so the panel area cannot
+    /// reserve it automatically. Measuring the rows against the whole content
+    /// area puts the final row underneath the bottom controls on a full page.
+    /// This subtracts both the header and the inter-node gap the layout engine
+    /// places after it.
+    #[must_use]
+    pub fn paginate_rows_with_trailing_after_section_at(
+        &self,
+        rows: &[(&str, &str, &str)],
+        nav_bar: bool,
+        position: Position,
+    ) -> Vec<Vec<usize>> {
+        let mut area = self.area_for(nav_bar, position);
+        area.height = area
+            .height
+            .saturating_sub(kobo_ui::section_height(&self.metrics))
+            .saturating_sub(area.gap)
+            .max(1);
+        kobo_ui::paginate_rows_with_trailing(rows, &self.metrics, area)
+    }
+
     /// The page a list gets, given where it says which page that is.
     fn area_for(&self, nav_bar: bool, position: Position) -> kobo_ui::ProseArea {
         match position {

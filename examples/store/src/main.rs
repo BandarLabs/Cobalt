@@ -86,11 +86,11 @@ impl Store {
             .map(|(entry, state)| (entry.title.as_str(), entry.summary.as_str(), state.as_str()))
             .collect::<Vec<_>>();
         let without_controls =
-            context.paginate_rows_with_trailing_at(&rows, false, Position::Elsewhere);
+            context.paginate_rows_with_trailing_after_section_at(&rows, false, Position::Elsewhere);
         // A one-page catalog draws no bottom bar and gets that room for apps.
         // Once it turns, measure again with the navigation bar it will draw.
         let page_indices = if without_controls.len() > 1 {
-            context.paginate_rows_with_trailing_at(&rows, true, Position::Elsewhere)
+            context.paginate_rows_with_trailing_after_section_at(&rows, true, Position::Elsewhere)
         } else {
             without_controls
         };
@@ -948,7 +948,7 @@ mod tests {
                     if store.page != requested_page {
                         break;
                     }
-                    let diagnostics = screen.diagnostics(&metrics, &Chrome::with_back(false));
+                    let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(false));
                     assert!(
                         diagnostics.issues.iter().all(|issue| !matches!(
                             issue.kind,
@@ -958,6 +958,17 @@ mod tests {
                          {metrics:?}: {:?}",
                         diagnostics.issues
                     );
+                    if screen.nav_bar.is_some() || screen.bottom_action.is_some() {
+                        let content_bottom = metrics.height - metrics.nav_bar_height();
+                        assert!(
+                            diagnostics.layout.nodes.iter().all(|node| {
+                                !matches!(node.kind, LayoutKind::Row(..))
+                                    || node.rect.y + node.rect.height <= content_bottom
+                            }),
+                            "catalog of {count} apps, page {requested_page}, put a row under \
+                             the bottom controls on {metrics:?}"
+                        );
+                    }
                     shown.extend(diagnostics.layout.nodes.iter().filter_map(
                         |node| match node.kind {
                             LayoutKind::Row(action) => Some(action),
