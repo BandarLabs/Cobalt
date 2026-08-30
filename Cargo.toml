@@ -57,6 +57,7 @@ members = [
     "examples/store",
     "apps/arxiv",
     "apps/backgammon",
+    "apps/bible",
     "apps/calibre-web",
     "apps/crossword",
     "apps/deck",

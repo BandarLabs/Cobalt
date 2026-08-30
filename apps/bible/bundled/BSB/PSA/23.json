@@ -1,0 +1,288 @@
+﻿{
+    "translation":  {
+                        "id":  "BSB",
+                        "name":  "Berean Standard Bible",
+                        "website":  "https://berean.bible/",
+                        "licenseUrl":  "https://berean.bible/",
+                        "shortName":  "BSB",
+                        "englishName":  "Berean Standard Bible",
+                        "language":  "eng",
+                        "textDirection":  "ltr",
+                        "sha256":  "6cc5238e442b4204b0f617cc5c932bc04f3bae4a0658e6393b0e319653ebe37f",
+                        "availableFormats":  [
+                                                 "json"
+                                             ],
+                        "listOfBooksApiLink":  "/api/BSB/books.json",
+                        "completeTranslationApiLink":  "/api/BSB/complete.json",
+                        "simpleCompleteTranslationApiLink":  "/api/BSB/complete.simple.json",
+                        "numberOfBooks":  66,
+                        "totalNumberOfChapters":  1189,
+                        "totalNumberOfVerses":  31086,
+                        "languageName":  "English",
+                        "languageEnglishName":  "English"
+                    },
+    "book":  {
+                 "id":  "PSA",
+                 "translationId":  "BSB",
+                 "name":  "Psalms",
+                 "commonName":  "Psalms",
+                 "title":  "Psalms",
+                 "order":  19,
+                 "numberOfChapters":  150,
+                 "sha256":  "b3e9f418541723262b4d6def2eab943763ebc0f50423be6940a1b1562774a4a9",
+                 "firstChapterNumber":  1,
+                 "firstChapterApiLink":  "/api/BSB/PSA/1.json",
+                 "firstChapterReference":  {
+                                               "translationId":  "BSB",
+                                               "book":  "PSA",
+                                               "chapter":  1
+                                           },
+                 "lastChapterNumber":  150,
+                 "lastChapterApiLink":  "/api/BSB/PSA/150.json",
+                 "lastChapterReference":  {
+                                              "translationId":  "BSB",
+                                              "book":  "PSA",
+                                              "chapter":  150
+                                          },
+                 "totalNumberOfVerses":  2461
+             },
+    "thisChapterLink":  "/api/BSB/PSA/23.simple.json",
+    "thisChapterReference":  {
+                                 "translationId":  "BSB",
+                                 "book":  "PSA",
+                                 "chapter":  23
+                             },
+    "thisChapterAudioLinks":  {
+                                  "david":  "https://audio.bible.helloao.org/api/BSB/PSA/23/audio/david.mp3",
+                                  "gilbert":  "https://openbible.com/audio/gilbert/BSB_19_Psa_023_G.mp3",
+                                  "hays":  "https://audio.bible.helloao.org/api/BSB/PSA/23/audio/hays.mp3",
+                                  "souer":  "https://audio.bible.helloao.org/api/BSB/PSA/23/audio/souer.mp3"
+                              },
+    "nextChapterApiLink":  "/api/BSB/PSA/24.simple.json",
+    "nextChapterReference":  {
+                                 "translationId":  "BSB",
+                                 "book":  "PSA",
+                                 "chapter":  24
+                             },
+    "nextChapterAudioLinks":  {
+                                  "david":  "https://audio.bible.helloao.org/api/BSB/PSA/24/audio/david.mp3",
+                                  "gilbert":  "https://openbible.com/audio/gilbert/BSB_19_Psa_024_G.mp3",
+                                  "hays":  "https://audio.bible.helloao.org/api/BSB/PSA/24/audio/hays.mp3",
+                                  "souer":  "https://audio.bible.helloao.org/api/BSB/PSA/24/audio/souer.mp3"
+                              },
+    "previousChapterApiLink":  "/api/BSB/PSA/22.simple.json",
+    "previousChapterReference":  {
+                                     "translationId":  "BSB",
+                                     "book":  "PSA",
+                                     "chapter":  22
+                                 },
+    "previousChapterAudioLinks":  {
+                                      "david":  "https://audio.bible.helloao.org/api/BSB/PSA/22/audio/david.mp3",
+                                      "gilbert":  "https://openbible.com/audio/gilbert/BSB_19_Psa_022_G.mp3",
+                                      "hays":  "https://audio.bible.helloao.org/api/BSB/PSA/22/audio/hays.mp3",
+                                      "souer":  "https://audio.bible.helloao.org/api/BSB/PSA/22/audio/souer.mp3"
+                                  },
+    "thisChapterAudioTimings":  {
+
+                                },
+    "nextChapterAudioTimings":  {
+
+                                },
+    "previousChapterAudioTimings":  {
+
+                                    },
+    "numberOfVerses":  6,
+    "chapter":  {
+                    "number":  23,
+                    "content":  [
+                                    {
+                                        "type":  "heading",
+                                        "text":  "The LORD Is My Shepherd"
+                                    },
+                                    {
+                                        "type":  "hebrew_subtitle",
+                                        "text":  "A Psalm of David.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  1,
+                                        "text":  "The LORD is my shepherd;\nI shall not want.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  50,
+                                                              "offset":  24,
+                                                              "text":  "See Revelation 7:17.",
+                                                              "caller":  "+"
+                                                          }
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  24,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  25,
+                                                         "end":  42,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  2,
+                                        "text":  "He makes me lie down in green pastures;\nHe leads me beside quiet waters.",
+                                        "footnotes":  [
+
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  39,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  40,
+                                                         "end":  72,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  3,
+                                        "text":  "He restores my soul;\nHe guides me in the paths of righteousness\nfor the sake of His name.",
+                                        "footnotes":  [
+
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  20,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  21,
+                                                         "end":  63,
+                                                         "level":  2
+                                                     },
+                                                     {
+                                                         "start":  64,
+                                                         "end":  89,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  4,
+                                        "text":  "Even though I walk through the valley of the shadow of death,\nI will fear no evil,\nfor You are with me;\nYour rod and Your staff, they comfort me.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  51,
+                                                              "offset":  61,
+                                                              "text":  "Or the valley of deep darkness",
+                                                              "caller":  "+"
+                                                          }
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  61,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  62,
+                                                         "end":  82,
+                                                         "level":  2
+                                                     },
+                                                     {
+                                                         "start":  83,
+                                                         "end":  103,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  104,
+                                                         "end":  145,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  5,
+                                        "text":  "You prepare a table before me\nin the presence of my enemies.\nYou anoint my head with oil;\nmy cup overflows.",
+                                        "footnotes":  [
+
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  29,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  30,
+                                                         "end":  60,
+                                                         "level":  2
+                                                     },
+                                                     {
+                                                         "start":  61,
+                                                         "end":  89,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  90,
+                                                         "end":  107,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  6,
+                                        "text":  "Surely goodness and mercy will follow me\nall the days of my life,\nand I will dwell in the house of the LORD\nforever.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  52,
+                                                              "offset":  116,
+                                                              "text":  "Literally for a length of days",
+                                                              "caller":  "+"
+                                                          }
+                                                      ],
+                                        "poem":  [
+                                                     {
+                                                         "start":  0,
+                                                         "end":  40,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  41,
+                                                         "end":  65,
+                                                         "level":  2
+                                                     },
+                                                     {
+                                                         "start":  66,
+                                                         "end":  107,
+                                                         "level":  1
+                                                     },
+                                                     {
+                                                         "start":  108,
+                                                         "end":  116,
+                                                         "level":  2
+                                                     }
+                                                 ]
+                                    }
+                                ],
+                    "footnotes":  [
+
+                                  ]
+                },
+    "fullChapterApiLink":  "/api/BSB/PSA/23.json"
+}

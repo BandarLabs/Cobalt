@@ -1,0 +1,677 @@
+﻿{
+    "translation":  {
+                        "id":  "BSB",
+                        "name":  "Berean Standard Bible",
+                        "website":  "https://berean.bible/",
+                        "licenseUrl":  "https://berean.bible/",
+                        "shortName":  "BSB",
+                        "englishName":  "Berean Standard Bible",
+                        "language":  "eng",
+                        "textDirection":  "ltr",
+                        "sha256":  "6cc5238e442b4204b0f617cc5c932bc04f3bae4a0658e6393b0e319653ebe37f",
+                        "availableFormats":  [
+                                                 "json"
+                                             ],
+                        "listOfBooksApiLink":  "/api/BSB/books.json",
+                        "completeTranslationApiLink":  "/api/BSB/complete.json",
+                        "simpleCompleteTranslationApiLink":  "/api/BSB/complete.simple.json",
+                        "numberOfBooks":  66,
+                        "totalNumberOfChapters":  1189,
+                        "totalNumberOfVerses":  31086,
+                        "languageName":  "English",
+                        "languageEnglishName":  "English"
+                    },
+    "book":  {
+                 "id":  "MRK",
+                 "translationId":  "BSB",
+                 "name":  "Mark",
+                 "commonName":  "Mark",
+                 "title":  "Mark",
+                 "order":  41,
+                 "numberOfChapters":  16,
+                 "sha256":  "2d36e67ab5278d172a50b7dbfb813f83da90d5ce936a52d0e3001a57a3ef75f7",
+                 "firstChapterNumber":  1,
+                 "firstChapterApiLink":  "/api/BSB/MRK/1.json",
+                 "firstChapterReference":  {
+                                               "translationId":  "BSB",
+                                               "book":  "MRK",
+                                               "chapter":  1
+                                           },
+                 "lastChapterNumber":  16,
+                 "lastChapterApiLink":  "/api/BSB/MRK/16.json",
+                 "lastChapterReference":  {
+                                              "translationId":  "BSB",
+                                              "book":  "MRK",
+                                              "chapter":  16
+                                          },
+                 "totalNumberOfVerses":  673
+             },
+    "thisChapterLink":  "/api/BSB/MRK/10.simple.json",
+    "thisChapterReference":  {
+                                 "translationId":  "BSB",
+                                 "book":  "MRK",
+                                 "chapter":  10
+                             },
+    "thisChapterAudioLinks":  {
+                                  "david":  "https://audio.bible.helloao.org/api/BSB/MRK/10/audio/david.mp3",
+                                  "gilbert":  "https://openbible.com/audio/gilbert/BSB_41_Mrk_010_G.mp3",
+                                  "hays":  "https://audio.bible.helloao.org/api/BSB/MRK/10/audio/hays.mp3",
+                                  "souer":  "https://audio.bible.helloao.org/api/BSB/MRK/10/audio/souer.mp3"
+                              },
+    "nextChapterApiLink":  "/api/BSB/MRK/11.simple.json",
+    "nextChapterReference":  {
+                                 "translationId":  "BSB",
+                                 "book":  "MRK",
+                                 "chapter":  11
+                             },
+    "nextChapterAudioLinks":  {
+                                  "david":  "https://audio.bible.helloao.org/api/BSB/MRK/11/audio/david.mp3",
+                                  "gilbert":  "https://openbible.com/audio/gilbert/BSB_41_Mrk_011_G.mp3",
+                                  "hays":  "https://audio.bible.helloao.org/api/BSB/MRK/11/audio/hays.mp3",
+                                  "souer":  "https://audio.bible.helloao.org/api/BSB/MRK/11/audio/souer.mp3"
+                              },
+    "previousChapterApiLink":  "/api/BSB/MRK/9.simple.json",
+    "previousChapterReference":  {
+                                     "translationId":  "BSB",
+                                     "book":  "MRK",
+                                     "chapter":  9
+                                 },
+    "previousChapterAudioLinks":  {
+                                      "david":  "https://audio.bible.helloao.org/api/BSB/MRK/9/audio/david.mp3",
+                                      "gilbert":  "https://openbible.com/audio/gilbert/BSB_41_Mrk_009_G.mp3",
+                                      "hays":  "https://audio.bible.helloao.org/api/BSB/MRK/9/audio/hays.mp3",
+                                      "souer":  "https://audio.bible.helloao.org/api/BSB/MRK/9/audio/souer.mp3"
+                                  },
+    "thisChapterAudioTimings":  {
+
+                                },
+    "nextChapterAudioTimings":  {
+
+                                },
+    "previousChapterAudioTimings":  {
+
+                                    },
+    "numberOfVerses":  52,
+    "chapter":  {
+                    "number":  10,
+                    "content":  [
+                                    {
+                                        "type":  "heading",
+                                        "text":  "Teachings about Divorce"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  1,
+                                        "text":  "Then Jesus left that place and went into the region of Judea, beyond the Jordan. Again the crowds came to Him and He taught them, as was His custom.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  2,
+                                        "text":  "Some Pharisees came to test Him. âIs it lawful for a man to divorce his wife?â they inquired.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  3,
+                                        "text":  "âWhat did Moses command you?â He replied.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  4,
+                                        "text":  "They answered, âMoses permitted a man to write his wife a certificate of divorce and send her away.â",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  62,
+                                                              "offset":  100,
+                                                              "text":  "See Deuteronomy 24:1.",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  5,
+                                        "text":  "But Jesus told them, âMoses wrote this commandment for you because of your hardness of heart.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  6,
+                                        "text":  "However, from the beginning of creation, âGod made them male and female.â",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  63,
+                                                              "offset":  73,
+                                                              "text":  "Genesis 1:27; Genesis 5:2",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  7,
+                                        "text":  "âFor this reason a man will leave his father and mother and be united to his wife,",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  64,
+                                                              "offset":  82,
+                                                              "text":  "NE and WH do not include and be united to his wife.",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  8,
+                                        "text":  "and the two will become one flesh.â So they are no longer two, but one flesh.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  65,
+                                                              "offset":  35,
+                                                              "text":  "Genesis 2:24 (see also LXX)",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  9,
+                                        "text":  "Therefore what God has joined together, let man not separate.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  10,
+                                        "text":  "When they were back inside the house, the disciples asked Jesus about this matter.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  11,
+                                        "text":  "So He told them, âWhoever divorces his wife and marries another woman commits adultery against her.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  12,
+                                        "text":  "And if a woman divorces her husband and marries another man, she commits adultery.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "Jesus Blesses the Children"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  13,
+                                        "text":  "Now people were bringing the little children to Jesus for Him to place His hands on them, and the disciples rebuked those who brought them.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  14,
+                                        "text":  "But when Jesus saw this, He was indignant and told them, âLet the little children come to Me, and do not hinder them! For the kingdom of God belongs to such as these.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  15,
+                                        "text":  "Truly I tell you, anyone who does not receive the kingdom of God like a little child will never enter it.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  16,
+                                        "text":  "And He took the children in His arms, placed His hands on them, and blessed them.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "The Rich Young Man"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  17,
+                                        "text":  "As Jesus started on His way, a man ran up and knelt before Him. âGood Teacher,â he asked, âwhat must I do to inherit eternal life?â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  18,
+                                        "text":  "âWhy do you call Me good?â Jesus replied. âNo one is good except God alone.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  19,
+                                        "text":  "You know the commandments: âDo not murder, do not commit adultery, do not steal, do not bear false witness, do not cheat others, honor your father and mother.â â",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  66,
+                                                              "offset":  159,
+                                                              "text":  "Exodus 20:12â16; Deuteronomy 5:16â20",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  20,
+                                        "text":  "âTeacher,â he replied, âall these I have kept from my youth.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  21,
+                                        "text":  "Jesus looked at him, loved him, and said to him, âThere is one thing you lack: Go, sell everything you own and give to the poor, and you will have treasure in heaven. Then come, follow Me. â",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  67,
+                                                              "offset":  188,
+                                                              "text":  "BYZ and TR Then come, take up the cross, and follow Me.",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  22,
+                                        "text":  "But the man was saddened by these words and went away in sorrow, because he had great wealth.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  23,
+                                        "text":  "Then Jesus looked around and said to His disciples, âHow hard it is for the rich to enter the kingdom of God!â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  24,
+                                        "text":  "And the disciples were amazed at His words.\nBut Jesus said to them again, âChildren, how hard it is to enter the kingdom of God!",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  68,
+                                                              "offset":  108,
+                                                              "text":  "BYZ and TR how hard it is for those who trust in riches to enter",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  25,
+                                        "text":  "It is easier for a camel to pass through the eye of a needle than for a rich man to enter the kingdom of God.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  26,
+                                        "text":  "They were even more astonished and said to one another, âWho then can be saved?â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  27,
+                                        "text":  "Jesus looked at them and said, âWith man this is impossible, but not with God. For all things are possible with God.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  28,
+                                        "text":  "Peter began to say to Him, âLook, we have left everything and followed You.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  29,
+                                        "text":  "âTruly I tell you,â Jesus replied, âno one who has left home or brothers or sisters or mother or father or children or fields for My sake and for the gospel",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  30,
+                                        "text":  "will fail to receive a hundredfold in the present ageâhouses and brothers and sisters and mothers and children and fields, along with persecutionsâand in the age to come, eternal life.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  31,
+                                        "text":  "But many who are first will be last, and the last will be first.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "The Third Prediction of the Passion"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  32,
+                                        "text":  "As they were going up the road to Jerusalem, Jesus was walking ahead of them. The disciples were amazed, but those who followed were afraid. Again Jesus took the Twelve aside and began to tell them what was going to happen to Him:",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  33,
+                                        "text":  "âLook, we are going up to Jerusalem, and the Son of Man will be delivered over to the chief priests and scribes. They will condemn Him to death and will deliver Him over to the Gentiles,",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  34,
+                                        "text":  "who will mock Him and spit on Him and flog Him and kill Him. And after three days He will rise again.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "The Request of James and John"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  35,
+                                        "text":  "Then James and John, the sons of Zebedee, came to Jesus and declared, âTeacher, we want You to do for us whatever we ask.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  36,
+                                        "text":  "âWhat do you want Me to do for you?â He inquired.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  37,
+                                        "text":  "They answered, âGrant that one of us may sit at Your right hand and the other at Your left in Your glory.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  38,
+                                        "text":  "âYou do not know what you are asking,â Jesus replied. âCan you drink the cup I will drink, or be baptized with the baptism I will undergo?â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  39,
+                                        "text":  "âWe can,â the brothers answered.\nâYou will drink the cup that I drink,â Jesus said, âand you will be baptized with the baptism that I undergo.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  40,
+                                        "text":  "But to sit at My right or left is not Mine to grant. These seats belong to those for whom they have been prepared.â",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  69,
+                                                              "offset":  89,
+                                                              "text":  "Literally Mine to grant, but for whom",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  41,
+                                        "text":  "When the ten heard about this, they became indignant with James and John.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  42,
+                                        "text":  "So Jesus called them together and said, âYou know that those regarded as rulers of the Gentiles lord it over them, and their superiors exercise authority over them.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  43,
+                                        "text":  "But it shall not be this way among you. Instead, whoever wants to become great among you must be your servant,",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  44,
+                                        "text":  "and whoever wants to be first must be the slave of all.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  45,
+                                        "text":  "For even the Son of Man did not come to be served, but to serve, and to give His life as a ransom for many.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "Jesus Heals Bartimaeus"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  46,
+                                        "text":  "Next, they came to Jericho. And as Jesus and His disciples were leaving Jericho with a large crowd, a blind beggar named Bartimaeus, the son of Timaeus, was sitting beside the road.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  47,
+                                        "text":  "When he heard that it was Jesus of Nazareth, he began to cry out, âJesus, Son of David, have mercy on me!â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  48,
+                                        "text":  "Many people admonished him to be silent, but he cried out all the louder, âSon of David, have mercy on me!â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  49,
+                                        "text":  "Jesus stopped and said, âCall him.â\nSo they called the blind man. âTake courage!â they said. âGet up! He is calling for you.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  50,
+                                        "text":  "Throwing off his cloak, Bartimaeus jumped up and came to Jesus.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  51,
+                                        "text":  "âWhat do you want Me to do for you?â Jesus asked.\nâRabboni,â said the blind man, âlet me see again.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  52,
+                                        "text":  "âGo,â said Jesus, âyour faith has healed you.â And immediately he received his sight and followed Jesus along the road.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    }
+                                ],
+                    "footnotes":  [
+
+                                  ]
+                },
+    "fullChapterApiLink":  "/api/BSB/MRK/10.json"
+}

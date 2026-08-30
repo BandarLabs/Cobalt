@@ -1,0 +1,366 @@
+﻿{
+    "translation":  {
+                        "id":  "BSB",
+                        "name":  "Berean Standard Bible",
+                        "website":  "https://berean.bible/",
+                        "licenseUrl":  "https://berean.bible/",
+                        "shortName":  "BSB",
+                        "englishName":  "Berean Standard Bible",
+                        "language":  "eng",
+                        "textDirection":  "ltr",
+                        "sha256":  "6cc5238e442b4204b0f617cc5c932bc04f3bae4a0658e6393b0e319653ebe37f",
+                        "availableFormats":  [
+                                                 "json"
+                                             ],
+                        "listOfBooksApiLink":  "/api/BSB/books.json",
+                        "completeTranslationApiLink":  "/api/BSB/complete.json",
+                        "simpleCompleteTranslationApiLink":  "/api/BSB/complete.simple.json",
+                        "numberOfBooks":  66,
+                        "totalNumberOfChapters":  1189,
+                        "totalNumberOfVerses":  31086,
+                        "languageName":  "English",
+                        "languageEnglishName":  "English"
+                    },
+    "book":  {
+                 "id":  "JHN",
+                 "translationId":  "BSB",
+                 "name":  "John",
+                 "commonName":  "John",
+                 "title":  "John",
+                 "order":  43,
+                 "numberOfChapters":  21,
+                 "sha256":  "791572ca3cd6b120a73156670c1547b4844aba6e0e1c61a4c44e94e21c3b54a8",
+                 "firstChapterNumber":  1,
+                 "firstChapterApiLink":  "/api/BSB/JHN/1.json",
+                 "firstChapterReference":  {
+                                               "translationId":  "BSB",
+                                               "book":  "JHN",
+                                               "chapter":  1
+                                           },
+                 "lastChapterNumber":  21,
+                 "lastChapterApiLink":  "/api/BSB/JHN/21.json",
+                 "lastChapterReference":  {
+                                              "translationId":  "BSB",
+                                              "book":  "JHN",
+                                              "chapter":  21
+                                          },
+                 "totalNumberOfVerses":  878
+             },
+    "thisChapterLink":  "/api/BSB/JHN/2.simple.json",
+    "thisChapterReference":  {
+                                 "translationId":  "BSB",
+                                 "book":  "JHN",
+                                 "chapter":  2
+                             },
+    "thisChapterAudioLinks":  {
+                                  "david":  "https://audio.bible.helloao.org/api/BSB/JHN/2/audio/david.mp3",
+                                  "gilbert":  "https://openbible.com/audio/gilbert/BSB_43_Jhn_002_G.mp3",
+                                  "hays":  "https://audio.bible.helloao.org/api/BSB/JHN/2/audio/hays.mp3",
+                                  "souer":  "https://audio.bible.helloao.org/api/BSB/JHN/2/audio/souer.mp3"
+                              },
+    "nextChapterApiLink":  "/api/BSB/JHN/3.simple.json",
+    "nextChapterReference":  {
+                                 "translationId":  "BSB",
+                                 "book":  "JHN",
+                                 "chapter":  3
+                             },
+    "nextChapterAudioLinks":  {
+                                  "david":  "https://audio.bible.helloao.org/api/BSB/JHN/3/audio/david.mp3",
+                                  "gilbert":  "https://openbible.com/audio/gilbert/BSB_43_Jhn_003_G.mp3",
+                                  "hays":  "https://audio.bible.helloao.org/api/BSB/JHN/3/audio/hays.mp3",
+                                  "souer":  "https://audio.bible.helloao.org/api/BSB/JHN/3/audio/souer.mp3"
+                              },
+    "previousChapterApiLink":  "/api/BSB/JHN/1.simple.json",
+    "previousChapterReference":  {
+                                     "translationId":  "BSB",
+                                     "book":  "JHN",
+                                     "chapter":  1
+                                 },
+    "previousChapterAudioLinks":  {
+                                      "david":  "https://audio.bible.helloao.org/api/BSB/JHN/1/audio/david.mp3",
+                                      "gilbert":  "https://openbible.com/audio/gilbert/BSB_43_Jhn_001_G.mp3",
+                                      "hays":  "https://audio.bible.helloao.org/api/BSB/JHN/1/audio/hays.mp3",
+                                      "souer":  "https://audio.bible.helloao.org/api/BSB/JHN/1/audio/souer.mp3"
+                                  },
+    "thisChapterAudioTimings":  {
+
+                                },
+    "nextChapterAudioTimings":  {
+
+                                },
+    "previousChapterAudioTimings":  {
+
+                                    },
+    "numberOfVerses":  25,
+    "chapter":  {
+                    "number":  2,
+                    "content":  [
+                                    {
+                                        "type":  "heading",
+                                        "text":  "The Wedding at Cana"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  1,
+                                        "text":  "On the third day a wedding took place at Cana in Galilee. Jesusâ mother was there,",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  2,
+                                        "text":  "and Jesus and His disciples had also been invited to the wedding.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  3,
+                                        "text":  "When the wine ran out, Jesusâ mother said to Him, âThey have no more wine.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  4,
+                                        "text":  "âWoman, what is that to you and to Me?â Jesus replied. âMy hour has not yet come.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  5,
+                                        "text":  "His mother said to the servants, âDo whatever He tells you.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  6,
+                                        "text":  "Now six stone water jars had been set there for the Jewish rites of purification. Each could hold from twenty to thirty gallons.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  10,
+                                                              "offset":  128,
+                                                              "text":  "Greek two or three metretae; that is, approximately 20.8 to 31.2 gallons (78.8 to 118.1 liters)",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  7,
+                                        "text":  "Jesus told the servants, âFill the jars with water.â\nSo they filled them to the brim.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  8,
+                                        "text":  "âNow draw some out,â He said, âand take it to the master of the banquet.â\nThey did so,",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  9,
+                                        "text":  "and the master of the banquet tasted the water that had been turned into wine. He did not know where it was from, but the servants who had drawn the water knew. Then he called the bridegroom aside",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  10,
+                                        "text":  "and said, âEveryone serves the fine wine first, and then the cheap wine after the guests are drunk. But you have saved the fine wine until now!â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  11,
+                                        "text":  "Jesus performed this, the first of His signs, at Cana in Galilee. He thus revealed His glory, and His disciples believed in Him.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "Jesus Cleanses the Temple"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  12,
+                                        "text":  "After this, He went down to Capernaum with His mother and brothers and His disciples, and they stayed there a few days.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  13,
+                                        "text":  "When the Jewish Passover was near, Jesus went up to Jerusalem.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  14,
+                                        "text":  "In the temple courts He found men selling cattle, sheep, and doves, and money changers seated at their tables.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  11,
+                                                              "offset":  20,
+                                                              "text":  "Literally the temple; also in verse 15",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  15,
+                                        "text":  "So He made a whip out of cords and drove all from the temple courts, both sheep and cattle. He poured out the coins of the money changers and overturned their tables.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  16,
+                                        "text":  "To those selling doves He said, âGet these out of here! How dare you turn My Fatherâs house into a marketplace!â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  17,
+                                        "text":  "His disciples remembered that it is written: âZeal for Your house will consume Me.â",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  12,
+                                                              "offset":  83,
+                                                              "text":  "Psalms 69:9",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  18,
+                                        "text":  "On account of this, the Jews demanded, âWhat sign can You show us to prove Your authority to do these things?â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  19,
+                                        "text":  "Jesus answered, âDestroy this temple, and in three days I will raise it up again.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  20,
+                                        "text":  "âThis temple took forty-six years to build,â the Jews replied, âand You are going to raise it up in three days?â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  21,
+                                        "text":  "But Jesus was speaking about the temple of His body.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  22,
+                                        "text":  "After He was raised from the dead, His disciples remembered that He had said this. Then they believed the Scripture and the word that Jesus had spoken.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  23,
+                                        "text":  "While He was in Jerusalem at the Passover Feast, many people saw the signs He was doing and believed in His name.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  24,
+                                        "text":  "But Jesus did not entrust Himself to them, for He knew them all.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  25,
+                                        "text":  "He did not need any testimony about man, for He knew what was in a man.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    }
+                                ],
+                    "footnotes":  [
+
+                                  ]
+                },
+    "fullChapterApiLink":  "/api/BSB/JHN/2.json"
+}
