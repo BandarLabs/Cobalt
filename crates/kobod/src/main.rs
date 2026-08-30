@@ -64,6 +64,7 @@ mod app_store;
 mod blackbox;
 #[cfg(feature = "device-write")]
 mod device;
+mod frame;
 mod update;
 
 fn main() -> ExitCode {
