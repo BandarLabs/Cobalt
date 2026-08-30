@@ -261,6 +261,7 @@ pub struct Listed {
 }
 
 fn safe_archive_path(path: &str) -> bool {
+    let path = path.strip_prefix("./").unwrap_or(path);
     let path = path.strip_suffix('/').unwrap_or(path);
     !path.is_empty()
         && path
@@ -269,6 +270,45 @@ fn safe_archive_path(path: &str) -> bool {
         && !path
             .split('/')
             .any(|component| component.is_empty() || component == "." || component == "..")
+}
+
+/// Reads the regular files in a checked archive.
+///
+/// Directory entries are omitted. The returned member modes retain whether
+/// each file is executable, which is all a mounted reader needs when the
+/// archive is installed as a plain folder.
+pub fn members(archive: &[u8]) -> Result<Vec<Member>, String> {
+    let listed = list(archive)?;
+    let mut offset = 0usize;
+    let mut members = Vec::new();
+    for entry in listed {
+        let payload_start = offset
+            .checked_add(BLOCK)
+            .ok_or_else(|| format!("{:?} has an overflowing offset", entry.path))?;
+        let payload_end = payload_start
+            .checked_add(entry.size)
+            .ok_or_else(|| format!("{:?} has an overflowing size", entry.path))?;
+        if payload_end > archive.len() {
+            return Err(format!("{:?} is truncated", entry.path));
+        }
+        if entry.kind == b'0' {
+            members.push(Member {
+                path: entry.path,
+                bytes: archive[payload_start..payload_end].to_vec(),
+                program: entry.mode & 0o111 != 0,
+            });
+        }
+        let payload_blocks = entry.size.div_ceil(BLOCK);
+        offset = payload_start
+            .checked_add(
+                payload_blocks
+                    .checked_mul(BLOCK)
+                    .ok_or("archive size overflow")?,
+            )
+            .ok_or("archive offset overflow")?;
+    }
+    check(&members)?;
+    Ok(members)
 }
 
 /// Reads an archive back, so a package can be inspected rather than trusted.
@@ -389,6 +429,7 @@ pub fn write_folder(members: &[Member], root: &Path) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(unix)]
 fn set_executable(path: &PathBuf) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     let mut permissions = fs::metadata(path)
@@ -398,9 +439,14 @@ fn set_executable(path: &PathBuf) -> Result<(), String> {
     fs::set_permissions(path, permissions).map_err(|error| format!("{}: {error}", path.display()))
 }
 
+#[cfg(not(unix))]
+fn set_executable(_path: &PathBuf) -> Result<(), String> {
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{check, header, list, tar, write_folder, Member, BLOCK, INSTALL_ROOT};
+    use super::{check, header, list, members, tar, write_folder, Member, BLOCK, INSTALL_ROOT};
 
     fn member(name: &str, bytes: &[u8]) -> Member {
         Member {
@@ -424,6 +470,16 @@ mod tests {
         assert_eq!(files[0].size, 6);
         assert_eq!(files[0].mode, 0o755);
         assert_eq!(files[1].mode, 0o644);
+    }
+
+    #[test]
+    fn archive_members_recover_file_bytes_and_modes() {
+        let expected = vec![
+            member("bin/kobod", b"ELF..."),
+            member("README.txt", b"how to remove this"),
+        ];
+        let archive = tar(&expected).expect("a valid package");
+        assert_eq!(members(&archive).expect("members"), expected);
     }
 
     /// The property the whole design rests on.

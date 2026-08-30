@@ -616,6 +616,7 @@ dependencies = [
 name = "kobo-cli"
 version = "0.3.0"
 dependencies = [
+ "flate2",
  "kobo-app-store",
  "kobo-image",
  "kobo-json",

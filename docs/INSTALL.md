@@ -31,6 +31,54 @@ at.
 - **An internet connection**, and **`curl`** on your path. Setup downloads
   NickelMenu v0.6.0 (the one piece that cannot live on the book partition) and
   checks it against a recorded SHA-256.
+
+For the shortest setup, download the archive for your computer from the
+[latest Cobalt release](https://github.com/BandarLabs/Cobalt/releases/latest).
+Each archive contains the `kobo` command and a short instruction file. Download
+the device package from the same release. Builds are available for Apple
+silicon and Intel macOS, x86-64 Linux, and x86-64 Windows.
+
+The macOS builds are not notarized, so macOS may ask you to approve the first
+run in Privacy & Security. The Windows build is not code-signed, so SmartScreen
+may show an unknown publisher warning. Cobalt publishes SHA-256 checksums for
+every archive so you can verify the file you downloaded. Linux does not use a
+platform signing prompt for a downloaded command.
+
+## 1. Connect the reader over USB
+
+1. Plug the reader into your computer.
+2. **The reader asks. Answer it.** Tap **Connect** on the reader's screen. Until
+   you do, the reader charges but does not mount.
+3. Wait for a volume named **`KOBOeReader`** to appear. That volume is the
+   reader's book partition, and it is the only thing Cobalt writes to.
+
+Leave it mounted. Setup ejects it when finished on macOS. Linux and Windows
+print when it is safe to eject the reader yourself.
+
+## 2. Run the released setup command
+
+Open a terminal in the extracted release folder and run:
+
+```sh
+# macOS or Linux
+./kobo setup --package cobalt-VERSION-KoboRoot.tgz
+
+# Windows PowerShell
+.\kobo.exe setup --package cobalt-VERSION-KoboRoot.tgz
+```
+
+Replace `VERSION` with the version in the downloaded filename. The command
+finds the mounted reader, validates the package, copies Cobalt into
+`.adds/cobalt`, reads every file back, adds the Cobalt menu entry, and reports
+what it changed. Add `--dry-run` to see the plan without writing anything.
+
+No Rust toolchain or ARM cross-compiler is needed for this path.
+
+## Building setup from source
+
+The source path is for contributors who want to build the device programs
+themselves. It needs the following tools in addition to the reader and cable:
+
 - [**rustup**](https://rustup.rs) with its stable Rust toolchain. You do not
   need a separate operating-system `rust` package: rustup supplies `rustc` and
   `cargo`. If stable is not installed, run `rustup toolchain install stable`;
@@ -49,7 +97,7 @@ at.
   Cobalt finds it under any of its usual names, and tells you which package to
   install if it is missing.
 
-## 1. Get the code and the cross-compilation target
+### Get the code and the cross-compilation target
 
 ```sh
 rustup toolchain install stable
@@ -59,7 +107,7 @@ rustup override set stable
 rustup target add armv7-unknown-linux-musleabihf
 ```
 
-## 2. Connect the reader over USB
+### Connect the reader over USB
 
 This is the step people get stuck on, so in full:
 
@@ -74,7 +122,7 @@ This is the step people get stuck on, so in full:
 
 Leave it mounted. Setup ejects it for you when it is finished.
 
-## 3. Run setup
+### Run setup from source
 
 ```sh
 cargo run -p kobo-cli -- setup
@@ -95,7 +143,7 @@ reader to support them.
 Not sure? Add `--dry-run` and it prints every step it would take and touches
 nothing.
 
-## 4. Restart the reader
+## 3. Restart the reader
 
 Hold the power button until it powers off, then turn it back on. This is the
 one step that has to happen on the device, and it is needed because the menu
@@ -107,7 +155,7 @@ a reader restarted again immediately comes up with the menu entry gone. This is
 its failsafe working as designed, and it is the reason the entry cannot leave
 you with an unbootable reader.
 
-## 5. Open Cobalt
+## 4. Open Cobalt
 
 On this firmware the entry is in the menu at the **bottom right** of the home
 screen. (NickelMenu puts its items in the top-left menu on old firmware and in

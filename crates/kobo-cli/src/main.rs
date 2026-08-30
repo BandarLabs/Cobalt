@@ -4,6 +4,7 @@ use std::ffi::OsStr;
 use std::fmt::Write as _;
 use std::fs;
 use std::io::{Read, Write};
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitCode, ExitStatus, Stdio};
@@ -1173,7 +1174,7 @@ impl DevSessionGuard {
             socket: root.join("app.sock"),
             root,
         };
-        if let Err(error) = fs::set_permissions(&session.root, fs::Permissions::from_mode(0o700)) {
+        if let Err(error) = protect_private_directory(&session.root) {
             let message = format!("protect {}: {error}", session.root.display());
             drop(session);
             return Err(message);
@@ -3097,6 +3098,7 @@ enum MenuEntry {
 #[allow(clippy::struct_excessive_bools)]
 struct SetupOptions {
     volume: Option<PathBuf>,
+    package: Option<PathBuf>,
     mode: SetupMode,
     menu: MenuEntry,
     eject: bool,
@@ -3114,6 +3116,7 @@ struct SetupOptions {
 fn parse_setup(arguments: &[String]) -> Result<SetupOptions, String> {
     let mut options = SetupOptions {
         volume: None,
+        package: None,
         mode: SetupMode::Install,
         menu: MenuEntry::Add,
         eject: true,
@@ -3132,6 +3135,13 @@ fn parse_setup(arguments: &[String]) -> Result<SetupOptions, String> {
                 options.volume = Some(PathBuf::from(value));
                 index += 1;
             }
+            "--package" | "-p" => {
+                let value = arguments
+                    .get(index + 1)
+                    .ok_or("--package needs a Cobalt KoboRoot.tgz path")?;
+                options.package = Some(PathBuf::from(value));
+                index += 1;
+            }
             "--undo" => options.mode = SetupMode::Undo,
             "--no-eject" => options.eject = false,
             "--no-wait" => options.wait = false,
@@ -3143,7 +3153,7 @@ fn parse_setup(arguments: &[String]) -> Result<SetupOptions, String> {
             other => {
                 return Err(format!(
                     "unknown option '{other}'\n\
-                     usage: kobo setup [--volume PATH] [--undo] [--enable-ssh] [--no-key] \
+                     usage: kobo setup [--volume PATH] [--package KoboRoot.tgz] [--undo] [--enable-ssh] [--no-key] \
                      [--no-eject] [--no-wait] [--menu] [--no-menu] [--dry-run]"
                 ))
             }
@@ -3203,7 +3213,10 @@ fn setup_device(arguments: &[String]) -> Result<(), String> {
 
     // Built before anything is written, so a build that fails leaves the
     // reader exactly as it was rather than half set up.
-    let built = build_package_bytes()?;
+    let built = match options.package.as_deref() {
+        Some(path) => read_package_bytes(path)?,
+        None => build_package_bytes()?,
+    };
     let installed = setup::write_payload(&built.members, &reader.volume)?;
     setup::verify_payload(&built.members, &reader.volume)?;
     let ssh = options
@@ -3248,6 +3261,29 @@ fn setup_device(arguments: &[String]) -> Result<(), String> {
         await_reader(&subnet);
     }
     Ok(())
+}
+
+/// Reads a published device package through the same checks as a local build.
+fn read_package_bytes(path: &Path) -> Result<BuiltPackage, String> {
+    let compressed = fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))?;
+    gzip_test(&compressed)?;
+    let archive = gunzip(&compressed)?;
+    let listed = package::list(&archive)?;
+    let outside = members_outside_install_root(&listed);
+    if !outside.is_empty() {
+        return Err(format!(
+            "refusing {}: {} would be written outside {}",
+            path.display(),
+            outside.join(", "),
+            package::INSTALL_ROOT
+        ));
+    }
+    let members = package::members(&archive)?;
+    Ok(BuiltPackage {
+        members,
+        listed,
+        compressed,
+    })
 }
 
 /// Puts this machine's public key where the reader will accept it.
@@ -3822,50 +3858,33 @@ fn parse_package(arguments: &[String]) -> Result<(PathBuf, Option<PathBuf>), Str
     Ok((tarball, folder))
 }
 
-/// Compresses with the system `gzip`.
-///
-/// `-n` keeps the name and timestamp out of the header, so the same input
-/// produces the same file and the checksum an owner compares is stable.
+/// Compresses without a filename or build timestamp in the gzip header.
 fn gzip(bytes: &[u8]) -> Result<Vec<u8>, String> {
-    pipe_through(Command::new("gzip").args(["-n", "-9", "-c"]), bytes)
+    let mut encoder = flate2::GzBuilder::new()
+        .mtime(0)
+        .write(Vec::new(), flate2::Compression::best());
+    encoder
+        .write_all(bytes)
+        .map_err(|error| format!("compress package: {error}"))?;
+    encoder
+        .finish()
+        .map_err(|error| format!("finish package compression: {error}"))
 }
 
 fn gunzip(bytes: &[u8]) -> Result<Vec<u8>, String> {
-    pipe_through(Command::new("gzip").args(["-d", "-c"]), bytes)
+    let mut decoder = flate2::read::GzDecoder::new(bytes);
+    let mut archive = Vec::new();
+    decoder
+        .read_to_end(&mut archive)
+        .map_err(|error| format!("decompress package: {error}"))?;
+    Ok(archive)
 }
 
 /// The integrity check `rcS` runs before it extracts anything.
 fn gzip_test(bytes: &[u8]) -> Result<(), String> {
-    pipe_through(Command::new("gzip").arg("-t"), bytes)
+    gunzip(bytes)
         .map(|_| ())
         .map_err(|error| format!("the package fails the check the device runs first: {error}"))
-}
-
-fn pipe_through(command: &mut Command, input: &[u8]) -> Result<Vec<u8>, String> {
-    let mut child = command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("run gzip: {error}"))?;
-    let mut stdin = child.stdin.take().ok_or("gzip has no standard input")?;
-    let bytes = input.to_vec();
-    // Written on a thread because a large archive fills the pipe buffer, and
-    // writing it all before reading anything would deadlock against a gzip
-    // that is waiting for somebody to read its output.
-    let writer = thread::spawn(move || stdin.write_all(&bytes));
-    let output = child
-        .wait_with_output()
-        .map_err(|error| format!("gzip: {error}"))?;
-    writer
-        .join()
-        .map_err(|_| "the gzip writer panicked".to_owned())?
-        .map_err(|error| format!("write to gzip: {error}"))?;
-    if output.status.success() {
-        Ok(output.stdout)
-    } else {
-        Err(String::from_utf8_lossy(&output.stderr).trim().to_owned())
-    }
 }
 
 fn run_simulation(arguments: &[String]) -> Result<(), String> {
@@ -3998,7 +4017,7 @@ impl SimulationGuard {
             daemon: None,
             daemon_frame_temporary: None,
         };
-        if let Err(error) = fs::set_permissions(&guard.root, fs::Permissions::from_mode(0o700)) {
+        if let Err(error) = protect_private_directory(&guard.root) {
             let message = format!("protect {}: {error}", guard.root.display());
             drop(guard);
             return Err(message);
@@ -4040,6 +4059,16 @@ impl SimulationGuard {
             },
         )
     }
+}
+
+#[cfg(unix)]
+fn protect_private_directory(path: &Path) -> std::io::Result<()> {
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+}
+
+#[cfg(not(unix))]
+fn protect_private_directory(_path: &Path) -> std::io::Result<()> {
+    Ok(())
 }
 
 impl Drop for SimulationGuard {
@@ -5311,8 +5340,9 @@ fn print_help() {
                                    Build and verify every registered Store app\n\
            app-release --registry PATH --seed PATH --out PATH --base-url HTTPS_URL [--prebuilt-dir PATH | --artifact-dir PATH]\n\
                                    Build and sign every registered Store app\n\
-           setup [--volume PATH] [--undo] [--enable-ssh] [--no-key]  Prepare a reader\n\
-                                   over USB; root SSH is an explicit opt-in, and it\n\
+           setup [--volume PATH] [--package KoboRoot.tgz] [--undo] [--enable-ssh] [--no-key]\n\
+                                   Prepare a reader over USB from a release package\n\
+                                   or a source build; root SSH is an explicit opt-in, and it\n\
                                    installs this machine's key unless --no-key\n\
            deploy --device IP [--package PATH]   Install over Wi-Fi, no reboot\n\
            secret set <name> [--from PATH] --device IP   Install a credential an app can name\n\
@@ -6690,6 +6720,22 @@ mod tests {
                 parsed.eject,
                 "declining the wait does not decline the eject"
             );
+        }
+
+        #[test]
+        fn a_release_package_can_be_named_without_changing_the_setup() {
+            let parsed = parse_setup(&arguments(&[
+                "--package",
+                "cobalt-0.3.0-KoboRoot.tgz",
+                "--no-wait",
+            ]))
+            .expect("parse");
+            assert_eq!(
+                parsed.package,
+                Some(PathBuf::from("cobalt-0.3.0-KoboRoot.tgz"))
+            );
+            assert_eq!(parsed.mode, SetupMode::Install);
+            assert!(!parsed.wait);
         }
 
         #[test]

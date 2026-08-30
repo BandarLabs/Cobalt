@@ -151,6 +151,10 @@ pub fn is_kobo_serial(serial: &str) -> bool {
 pub fn mount_roots() -> Vec<PathBuf> {
     if cfg!(target_os = "macos") {
         vec![PathBuf::from("/Volumes")]
+    } else if cfg!(target_os = "windows") {
+        (b'D'..=b'Z')
+            .map(|letter| PathBuf::from(format!("{}:\\", char::from(letter))))
+            .collect()
     } else {
         let mut roots = vec![PathBuf::from("/media"), PathBuf::from("/run/media")];
         if let Ok(user) = std::env::var("USER") {
@@ -172,6 +176,10 @@ pub fn mount_roots() -> Vec<PathBuf> {
 pub fn mounted_readers() -> Vec<Mounted> {
     let mut found = Vec::new();
     for root in mount_roots() {
+        if let Some(reader) = read_reader(&root) {
+            found.push(reader);
+            continue;
+        }
         let Ok(entries) = fs::read_dir(&root) else {
             continue;
         };
