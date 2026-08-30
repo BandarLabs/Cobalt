@@ -48,6 +48,11 @@ nav.top a.active, nav.top a:hover { color: var(--cobalt); }
 .icon-link { display: inline-flex; align-items: center; gap: 6px; }
 .icon-link svg { width: 15px; height: 15px; flex: none; fill: currentColor; }
 .intro { padding: 48px 0; border-bottom: 1px solid var(--rule); }
+.intro-grid { display: grid; grid-template-columns: 1fr; gap: 34px; align-items: start; }
+.intro-grid > * { min-width: 0; }
+.testimonial { width: 100%; max-width: 550px; overflow: hidden; }
+.testimonial .twitter-tweet { margin: 0 !important; }
+.testimonial iframe { width: 100% !important; max-width: 550px !important; }
 .kicker {
   font-family: var(--mono); font-size: 13px; letter-spacing: .14em;
   text-transform: uppercase; color: var(--cobalt); margin-bottom: 14px;
@@ -110,6 +115,7 @@ footer nav { display: flex; flex-wrap: wrap; gap: 16px 20px; margin-top: 20px; }
 }
 @media (min-width: 900px) {
   .intro { padding: 82px 0 76px; }
+  .intro-grid { grid-template-columns: minmax(0, .9fr) minmax(360px, 1.1fr); gap: 54px; align-items: center; }
   .path { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .example { grid-template-columns: minmax(240px, .75fr) minmax(0, 1.25fr); gap: 56px; }
 }
@@ -136,15 +142,23 @@ footer nav { display: flex; flex-wrap: wrap; gap: 16px 20px; margin-top: 20px; }
 
 <main>
   <div class="intro">
-    <div class="wrap">
-      <p class="kicker">Build for Cobalt</p>
-      <h1>Put your idea on an e-ink screen.</h1>
-      <p class="lede">Create a Rust app, run it in our simulator, try it on a supported reader, and publish it to Cobalt Store.</p>
-      <p class="quiet">You can start without a device. Hardware testing comes after the interaction works in the simulator.</p>
-      <div class="cta">
-        <a class="btn primary" href="sdk.html#quick-start">Create an app</a>
-        <a class="btn" href="https://github.com/BandarLabs/Cobalt/blob/main/docs/CONTRIBUTING_APPS.md">Publish an app</a>
+    <div class="wrap intro-grid">
+      <div>
+        <p class="kicker">Build for Cobalt</p>
+        <h1>Put your idea on an e-ink screen.</h1>
+        <p class="lede">Create a Rust app, run it in our simulator, try it on a supported reader, and publish it to Cobalt Store.</p>
+        <p class="quiet">You can start without a device. Hardware testing comes after the interaction works in the simulator.</p>
+        <div class="cta">
+          <a class="btn primary" href="sdk.html#quick-start">Create an app</a>
+          <a class="btn" href="https://github.com/BandarLabs/Cobalt/blob/main/docs/CONTRIBUTING_APPS.md">Publish an app</a>
+        </div>
       </div>
+      <aside class="testimonial" aria-label="Community testimonial">
+        <blockquote class="twitter-tweet" data-theme="dark" data-dnt="true">
+          <p lang="en" dir="ltr">Kobo Aura 2 with Cobalt.<br><br>Running Linux on my ebook reader is so funny.<br><br>Time to hack and see how far I can go with this new toy.<br><br>First test: Hermes Agent on it. <a href="https://t.co/2gEvzD0A0O">pic.twitter.com/2gEvzD0A0O</a></p>
+          <p>Marco Franzon (@mfranz_on), <a href="https://x.com/mfranz_on/status/2092370523556602367?ref_src=twsrc%5Etfw">August 25, 2026</a></p>
+        </blockquote>
+      </aside>
     </div>
   </div>
 
@@ -242,5 +256,6 @@ kobo dev</code></pre>
     </nav>
   </div>
 </footer>
+<script async src="https://platform.x.com/widgets.js" charset="utf-8"></script>
 </body>
 </html>
