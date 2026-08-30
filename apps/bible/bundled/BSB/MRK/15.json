@@ -1,0 +1,654 @@
+﻿{
+    "translation":  {
+                        "id":  "BSB",
+                        "name":  "Berean Standard Bible",
+                        "website":  "https://berean.bible/",
+                        "licenseUrl":  "https://berean.bible/",
+                        "shortName":  "BSB",
+                        "englishName":  "Berean Standard Bible",
+                        "language":  "eng",
+                        "textDirection":  "ltr",
+                        "sha256":  "6cc5238e442b4204b0f617cc5c932bc04f3bae4a0658e6393b0e319653ebe37f",
+                        "availableFormats":  [
+                                                 "json"
+                                             ],
+                        "listOfBooksApiLink":  "/api/BSB/books.json",
+                        "completeTranslationApiLink":  "/api/BSB/complete.json",
+                        "simpleCompleteTranslationApiLink":  "/api/BSB/complete.simple.json",
+                        "numberOfBooks":  66,
+                        "totalNumberOfChapters":  1189,
+                        "totalNumberOfVerses":  31086,
+                        "languageName":  "English",
+                        "languageEnglishName":  "English"
+                    },
+    "book":  {
+                 "id":  "MRK",
+                 "translationId":  "BSB",
+                 "name":  "Mark",
+                 "commonName":  "Mark",
+                 "title":  "Mark",
+                 "order":  41,
+                 "numberOfChapters":  16,
+                 "sha256":  "2d36e67ab5278d172a50b7dbfb813f83da90d5ce936a52d0e3001a57a3ef75f7",
+                 "firstChapterNumber":  1,
+                 "firstChapterApiLink":  "/api/BSB/MRK/1.json",
+                 "firstChapterReference":  {
+                                               "translationId":  "BSB",
+                                               "book":  "MRK",
+                                               "chapter":  1
+                                           },
+                 "lastChapterNumber":  16,
+                 "lastChapterApiLink":  "/api/BSB/MRK/16.json",
+                 "lastChapterReference":  {
+                                              "translationId":  "BSB",
+                                              "book":  "MRK",
+                                              "chapter":  16
+                                          },
+                 "totalNumberOfVerses":  673
+             },
+    "thisChapterLink":  "/api/BSB/MRK/15.simple.json",
+    "thisChapterReference":  {
+                                 "translationId":  "BSB",
+                                 "book":  "MRK",
+                                 "chapter":  15
+                             },
+    "thisChapterAudioLinks":  {
+                                  "david":  "https://audio.bible.helloao.org/api/BSB/MRK/15/audio/david.mp3",
+                                  "gilbert":  "https://openbible.com/audio/gilbert/BSB_41_Mrk_015_G.mp3",
+                                  "hays":  "https://audio.bible.helloao.org/api/BSB/MRK/15/audio/hays.mp3",
+                                  "souer":  "https://audio.bible.helloao.org/api/BSB/MRK/15/audio/souer.mp3"
+                              },
+    "nextChapterApiLink":  "/api/BSB/MRK/16.simple.json",
+    "nextChapterReference":  {
+                                 "translationId":  "BSB",
+                                 "book":  "MRK",
+                                 "chapter":  16
+                             },
+    "nextChapterAudioLinks":  {
+                                  "david":  "https://audio.bible.helloao.org/api/BSB/MRK/16/audio/david.mp3",
+                                  "gilbert":  "https://openbible.com/audio/gilbert/BSB_41_Mrk_016_G.mp3",
+                                  "hays":  "https://audio.bible.helloao.org/api/BSB/MRK/16/audio/hays.mp3",
+                                  "souer":  "https://audio.bible.helloao.org/api/BSB/MRK/16/audio/souer.mp3"
+                              },
+    "previousChapterApiLink":  "/api/BSB/MRK/14.simple.json",
+    "previousChapterReference":  {
+                                     "translationId":  "BSB",
+                                     "book":  "MRK",
+                                     "chapter":  14
+                                 },
+    "previousChapterAudioLinks":  {
+                                      "david":  "https://audio.bible.helloao.org/api/BSB/MRK/14/audio/david.mp3",
+                                      "gilbert":  "https://openbible.com/audio/gilbert/BSB_41_Mrk_014_G.mp3",
+                                      "hays":  "https://audio.bible.helloao.org/api/BSB/MRK/14/audio/hays.mp3",
+                                      "souer":  "https://audio.bible.helloao.org/api/BSB/MRK/14/audio/souer.mp3"
+                                  },
+    "thisChapterAudioTimings":  {
+
+                                },
+    "nextChapterAudioTimings":  {
+
+                                },
+    "previousChapterAudioTimings":  {
+
+                                    },
+    "numberOfVerses":  46,
+    "chapter":  {
+                    "number":  15,
+                    "content":  [
+                                    {
+                                        "type":  "heading",
+                                        "text":  "Jesus Delivered to Pilate"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  1,
+                                        "text":  "Early in the morning, the chief priests, elders, scribes, and the whole Sanhedrin devised a plan. They bound Jesus, led Him away, and handed Him over to Pilate.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  112,
+                                                              "offset":  81,
+                                                              "text":  "Or the whole Council",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  2,
+                                        "text":  "So Pilate questioned Him, âAre You the King of the Jews?â\nâYou have said so,â Jesus replied.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  3,
+                                        "text":  "And the chief priests began to accuse Him of many things.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  4,
+                                        "text":  "Then Pilate questioned Him again, âHave You no answer? Look how many charges they are bringing against You!â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  5,
+                                        "text":  "But to Pilateâs amazement, Jesus made no further reply.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "The Crowd Chooses Barabbas"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  6,
+                                        "text":  "Now it was Pilateâs custom at the feast to release to the people a prisoner of their choosing.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  113,
+                                                              "offset":  64,
+                                                              "text":  "Literally Now at the feast he would release to them",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  7,
+                                        "text":  "And a man named Barabbas was imprisoned with the rebels who had committed murder during the insurrection.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  8,
+                                        "text":  "So the crowd went up and began asking Pilate to keep his custom.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  9,
+                                        "text":  "âDo you want me to release to you the King of the Jews?â Pilate asked.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  10,
+                                        "text":  "For he knew it was out of envy that the chief priests had handed Jesus over.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  11,
+                                        "text":  "But the chief priests stirred up the crowd to have him release Barabbas to them instead.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "Pilate Delivers Up Jesus"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  12,
+                                        "text":  "So Pilate asked them again, âWhat then do you want me to do with the One you call the King of the Jews?â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  13,
+                                        "text":  "And they shouted back, âCrucify Him!â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  14,
+                                        "text":  "âWhy?â asked Pilate. âWhat evil has He done?â\nBut they shouted all the louder, âCrucify Him!â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  15,
+                                        "text":  "And wishing to satisfy the crowd, Pilate released Barabbas to them. But he had Jesus flogged, and handed Him over to be crucified.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "The Soldiers Mock Jesus"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  16,
+                                        "text":  "Then the soldiers led Jesus away into the palace (that is, the Praetorium) and called the whole company together.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  17,
+                                        "text":  "They dressed Him in a purple robe, twisted together a crown of thorns, and set it on His head.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  18,
+                                        "text":  "And they began to salute Him: âHail, King of the Jews!â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  19,
+                                        "text":  "They kept striking His head with a staff and spitting on Him. And they knelt down and bowed before Him.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  20,
+                                        "text":  "After they had mocked Him, they removed the purple robe and put His own clothes back on Him. Then they led Him out to crucify Him.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "The Crucifixion"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  21,
+                                        "text":  "Now Simon of Cyrene, the father of Alexander and Rufus, was passing by on his way in from the country, and the soldiers forced him to carry the cross of Jesus.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  22,
+                                        "text":  "They brought Jesus to a place called Golgotha, which means The Place of the Skull.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  23,
+                                        "text":  "There they offered Him wine mixed with myrrh, but He did not take it.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  24,
+                                        "text":  "And they crucified Him.\nThey also divided His garments by casting lots to decide what each of them would take.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  114,
+                                                              "offset":  110,
+                                                              "text":  "See Psalms 22:18.",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  25,
+                                        "text":  "It was the third hour when they crucified Him.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  115,
+                                                              "offset":  21,
+                                                              "text":  "That is, nine in the morning",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  26,
+                                        "text":  "And the charge inscribed against Him read:\nTHE KING OF THE JEWS.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  27,
+                                        "text":  "Along with Jesus, they crucified two robbers, one on His right and one on His left.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  116,
+                                                              "offset":  45,
+                                                              "text":  "Or insurrectionists",
+                                                              "caller":  "+"
+                                                          },
+                                                          {
+                                                              "noteId":  117,
+                                                              "offset":  83,
+                                                              "text":  "BYZ and TR include 28 So the Scripture was fulfilled that says, âAnd He was numbered with the transgressors.â See Isaiah 53:12 and Luke 22:37.",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  29,
+                                        "text":  "And those who passed by heaped abuse on Him, shaking their heads and saying, âAha! You who are going to destroy the temple and rebuild it in three days,",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  30,
+                                        "text":  "come down from the cross and save Yourself!â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  31,
+                                        "text":  "In the same way, the chief priests and scribes mocked Him among themselves, saying, âHe saved others, but He cannot save Himself!",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  32,
+                                        "text":  "Let the Christ, the King of Israel, come down now from the cross, so that we may see and believe!â And even those who were crucified with Him berated Him.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "The Death of Jesus"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  33,
+                                        "text":  "From the sixth hour until the ninth hour darkness came over all the land.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  118,
+                                                              "offset":  40,
+                                                              "text":  "That is, from noon until three in the afternoon",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  34,
+                                        "text":  "At the ninth hour, Jesus cried out in a loud voice, âEloi, Eloi, lema sabachthani?â which means, âMy God, My God, why have You forsaken Me?â",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  119,
+                                                              "offset":  140,
+                                                              "text":  "Psalms 22:1",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  35,
+                                        "text":  "When some of those standing nearby heard this, they said, âBehold, He is calling Elijah.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  36,
+                                        "text":  "And someone ran and filled a sponge with sour wine. He put it on a reed and held it up for Jesus to drink, saying, âLeave Him alone. Let us see if Elijah comes to take Him down.â",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  120,
+                                                              "offset":  51,
+                                                              "text":  "Or a sponge with wine vinegar",
+                                                              "caller":  "+"
+                                                          },
+                                                          {
+                                                              "noteId":  121,
+                                                              "offset":  106,
+                                                              "text":  "See Psalms 69:21.",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  37,
+                                        "text":  "But Jesus let out a loud cry and breathed His last.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  38,
+                                        "text":  "And the veil of the temple was torn in two from top to bottom.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  39,
+                                        "text":  "When the centurion standing there in front of Jesus saw how He had breathed His last, he said, âTruly this man was the Son of God!â",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  122,
+                                                              "offset":  85,
+                                                              "text":  "BYZ and TR saw how, having cried out, He had breathed His last",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  40,
+                                        "text":  "And there were also women watching from a distance. Among them were Mary Magdalene, Mary the mother of James the younger and of Joses, and Salome.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  123,
+                                                              "offset":  134,
+                                                              "text":  "Joses is a variant of Joseph; see Matthew 27:56.",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  41,
+                                        "text":  "These women had followed Jesus and ministered to Him while He was in Galilee, and there were many other women who had come up to Jerusalem with Him.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "The Burial of Jesus"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  42,
+                                        "text":  "Now it was already evening. Since it was Preparation Day (that is, the day before the Sabbath),",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  43,
+                                        "text":  "Joseph of Arimathea, a prominent Council member who himself was waiting for the kingdom of God, boldly went to Pilate to ask for the body of Jesus.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  44,
+                                        "text":  "Pilate was surprised to hear that Jesus was already dead, so he summoned the centurion to ask if this was so.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  45,
+                                        "text":  "When Pilate had confirmed it with the centurion, he granted the body to Joseph.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  46,
+                                        "text":  "So Joseph bought a linen cloth, took down the body of Jesus, wrapped it in the cloth, and placed it in a tomb that had been cut out of the rock. Then he rolled a stone against the entrance to the tomb.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  47,
+                                        "text":  "Mary Magdalene and Mary the mother of Joseph saw where His body was placed.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  124,
+                                                              "offset":  44,
+                                                              "text":  "Or Joses",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    }
+                                ],
+                    "footnotes":  [
+
+                                  ]
+                },
+    "fullChapterApiLink":  "/api/BSB/MRK/15.json"
+}

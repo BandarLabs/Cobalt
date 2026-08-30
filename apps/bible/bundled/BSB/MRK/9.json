@@ -1,0 +1,639 @@
+﻿{
+    "translation":  {
+                        "id":  "BSB",
+                        "name":  "Berean Standard Bible",
+                        "website":  "https://berean.bible/",
+                        "licenseUrl":  "https://berean.bible/",
+                        "shortName":  "BSB",
+                        "englishName":  "Berean Standard Bible",
+                        "language":  "eng",
+                        "textDirection":  "ltr",
+                        "sha256":  "6cc5238e442b4204b0f617cc5c932bc04f3bae4a0658e6393b0e319653ebe37f",
+                        "availableFormats":  [
+                                                 "json"
+                                             ],
+                        "listOfBooksApiLink":  "/api/BSB/books.json",
+                        "completeTranslationApiLink":  "/api/BSB/complete.json",
+                        "simpleCompleteTranslationApiLink":  "/api/BSB/complete.simple.json",
+                        "numberOfBooks":  66,
+                        "totalNumberOfChapters":  1189,
+                        "totalNumberOfVerses":  31086,
+                        "languageName":  "English",
+                        "languageEnglishName":  "English"
+                    },
+    "book":  {
+                 "id":  "MRK",
+                 "translationId":  "BSB",
+                 "name":  "Mark",
+                 "commonName":  "Mark",
+                 "title":  "Mark",
+                 "order":  41,
+                 "numberOfChapters":  16,
+                 "sha256":  "2d36e67ab5278d172a50b7dbfb813f83da90d5ce936a52d0e3001a57a3ef75f7",
+                 "firstChapterNumber":  1,
+                 "firstChapterApiLink":  "/api/BSB/MRK/1.json",
+                 "firstChapterReference":  {
+                                               "translationId":  "BSB",
+                                               "book":  "MRK",
+                                               "chapter":  1
+                                           },
+                 "lastChapterNumber":  16,
+                 "lastChapterApiLink":  "/api/BSB/MRK/16.json",
+                 "lastChapterReference":  {
+                                              "translationId":  "BSB",
+                                              "book":  "MRK",
+                                              "chapter":  16
+                                          },
+                 "totalNumberOfVerses":  673
+             },
+    "thisChapterLink":  "/api/BSB/MRK/9.simple.json",
+    "thisChapterReference":  {
+                                 "translationId":  "BSB",
+                                 "book":  "MRK",
+                                 "chapter":  9
+                             },
+    "thisChapterAudioLinks":  {
+                                  "david":  "https://audio.bible.helloao.org/api/BSB/MRK/9/audio/david.mp3",
+                                  "gilbert":  "https://openbible.com/audio/gilbert/BSB_41_Mrk_009_G.mp3",
+                                  "hays":  "https://audio.bible.helloao.org/api/BSB/MRK/9/audio/hays.mp3",
+                                  "souer":  "https://audio.bible.helloao.org/api/BSB/MRK/9/audio/souer.mp3"
+                              },
+    "nextChapterApiLink":  "/api/BSB/MRK/10.simple.json",
+    "nextChapterReference":  {
+                                 "translationId":  "BSB",
+                                 "book":  "MRK",
+                                 "chapter":  10
+                             },
+    "nextChapterAudioLinks":  {
+                                  "david":  "https://audio.bible.helloao.org/api/BSB/MRK/10/audio/david.mp3",
+                                  "gilbert":  "https://openbible.com/audio/gilbert/BSB_41_Mrk_010_G.mp3",
+                                  "hays":  "https://audio.bible.helloao.org/api/BSB/MRK/10/audio/hays.mp3",
+                                  "souer":  "https://audio.bible.helloao.org/api/BSB/MRK/10/audio/souer.mp3"
+                              },
+    "previousChapterApiLink":  "/api/BSB/MRK/8.simple.json",
+    "previousChapterReference":  {
+                                     "translationId":  "BSB",
+                                     "book":  "MRK",
+                                     "chapter":  8
+                                 },
+    "previousChapterAudioLinks":  {
+                                      "david":  "https://audio.bible.helloao.org/api/BSB/MRK/8/audio/david.mp3",
+                                      "gilbert":  "https://openbible.com/audio/gilbert/BSB_41_Mrk_008_G.mp3",
+                                      "hays":  "https://audio.bible.helloao.org/api/BSB/MRK/8/audio/hays.mp3",
+                                      "souer":  "https://audio.bible.helloao.org/api/BSB/MRK/8/audio/souer.mp3"
+                                  },
+    "thisChapterAudioTimings":  {
+
+                                },
+    "nextChapterAudioTimings":  {
+
+                                },
+    "previousChapterAudioTimings":  {
+
+                                    },
+    "numberOfVerses":  48,
+    "chapter":  {
+                    "number":  9,
+                    "content":  [
+                                    {
+                                        "type":  "heading",
+                                        "text":  "The Transfiguration"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  1,
+                                        "text":  "Then Jesus said to them, âTruly I tell you, there are some standing here who will not taste death before they see the kingdom of God arrive with power.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  2,
+                                        "text":  "After six days Jesus took with Him Peter, James, and John, and led them up a high mountain by themselves. There He was transfigured before them.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  3,
+                                        "text":  "His clothes became radiantly white, brighter than any launderer on earth could bleach them.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  4,
+                                        "text":  "And Elijah and Moses appeared before them, talking with Jesus.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  5,
+                                        "text":  "Peter said to Jesus, âRabbi, it is good for us to be here. Let us put up three shelters âone for You, one for Moses, and one for Elijah.â",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  53,
+                                                              "offset":  87,
+                                                              "text":  "Or three tabernacles",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  6,
+                                        "text":  "For they were all so terrified that Peter did not know what else to say.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  7,
+                                        "text":  "Then a cloud appeared and enveloped them, and a voice came from the cloud: âThis is My beloved Son. Listen to Him!â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  8,
+                                        "text":  "Suddenly, when they looked around, they saw no one with them except Jesus.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  9,
+                                        "text":  "As they were coming down the mountain, Jesus admonished them not to tell anyone what they had seen until the Son of Man had risen from the dead.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  10,
+                                        "text":  "So they kept this matter to themselves, discussing what it meant to rise from the dead.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  11,
+                                        "text":  "And they asked Jesus, âWhy do the scribes say that Elijah must come first?â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  12,
+                                        "text":  "He replied, âElijah does indeed come first, and he restores all things. Why then is it written that the Son of Man must suffer many things and be rejected?",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  13,
+                                        "text":  "But I tell you that Elijah has indeed come, and they have done to him whatever they wished, just as it is written about him.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "The Boy with an Evil Spirit"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  14,
+                                        "text":  "When they returned to the other disciples, they saw a large crowd around them, and scribes arguing with them.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  15,
+                                        "text":  "As soon as all the people saw Jesus, they were filled with awe and ran to greet Him.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  16,
+                                        "text":  "âWhat are you disputing with them?â He asked.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  17,
+                                        "text":  "Someone in the crowd replied, âTeacher, I brought You my son, who has a spirit that makes him mute.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  18,
+                                        "text":  "Whenever it seizes him, it throws him to the ground. He foams at the mouth, gnashes his teeth, and becomes rigid. I asked Your disciples to drive it out, but they were unable.â",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  54,
+                                                              "offset":  113,
+                                                              "text":  "Or and is withering away",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  19,
+                                        "text":  "âO unbelieving generation!â Jesus replied. âHow long must I remain with you? How long must I put up with you? Bring the boy to Me.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  20,
+                                        "text":  "So they brought him, and seeing Jesus, the spirit immediately threw the boy into a convulsion. He fell to the ground and rolled around, foaming at the mouth.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  21,
+                                        "text":  "Jesus asked the boyâs father, âHow long has this been with him?â\nâFrom childhood,â he said.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  22,
+                                        "text":  "âIt often throws him into the fire or into the water, trying to kill him. But if You can do anything, have compassion on us and help us.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  23,
+                                        "text":  "âIf You can?â echoed Jesus. âAll things are possible to him who believes!â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  24,
+                                        "text":  "Immediately the boyâs father cried out, âI do believe; help my unbelief!â",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  55,
+                                                              "offset":  39,
+                                                              "text":  "BYZ and TR cried out with tears",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  25,
+                                        "text":  "When Jesus saw that a crowd had come running, He rebuked the unclean spirit. âYou deaf and mute spirit,â He said, âI command you to come out and never enter him again.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  26,
+                                        "text":  "After shrieking and convulsing him violently, the spirit came out. The boy became like a corpse, so that many said, âHe is dead.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  27,
+                                        "text":  "But Jesus took him by the hand and helped him to his feet, and he stood up.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  28,
+                                        "text":  "After Jesus had gone into the house, His disciples asked Him privately, âWhy couldnât we drive it out?â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  29,
+                                        "text":  "Jesus answered, âThis kind cannot come out, except by prayer.â",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  56,
+                                                              "offset":  62,
+                                                              "text":  "BYZ and TR prayer and fasting",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "The Second Prediction of the Passion"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  30,
+                                        "text":  "Going on from there, they passed through Galilee. But Jesus did not want anyone to know,",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  31,
+                                        "text":  "because He was teaching His disciples. He told them, âThe Son of Man will be delivered into the hands of men. They will kill Him, and after three days He will rise.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  32,
+                                        "text":  "But they did not understand this statement, and they were afraid to ask Him about it.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "The Greatest in the Kingdom"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  33,
+                                        "text":  "Then they came to Capernaum. While Jesus was in the house, He asked them, âWhat were you discussing on the way?â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  34,
+                                        "text":  "But they were silent, for on the way they had been arguing about which of them was the greatest.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  35,
+                                        "text":  "Sitting down, Jesus called the Twelve and said, âIf anyone wants to be first, he must be the last of all and the servant of all.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  36,
+                                        "text":  "Then He had a little child stand among them. Taking the child in His arms, He said to them,",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  37,
+                                        "text":  "âWhoever welcomes one of these little children in My name welcomes Me, and whoever welcomes Me welcomes not only Me, but the One who sent Me.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  38,
+                                        "text":  "John said to Him, âTeacher, we saw someone else driving out demons in Your name, and we tried to stop him, because he does not accompany us.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  39,
+                                        "text":  "âDo not stop him,â Jesus replied. âFor no one who performs a miracle in My name can turn around and speak evil of Me.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  40,
+                                        "text":  "For whoever is not against us is for us.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  41,
+                                        "text":  "Indeed, if anyone gives you even a cup of water because you bear the name of Christ, truly I tell you, he will never lose his reward.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "Temptations and Trespasses"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  42,
+                                        "text":  "But if anyone causes one of these little ones who believe in Me to stumble, it would be better for him to have a large millstone hung around his neck and to be thrown into the sea.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  43,
+                                        "text":  "If your hand causes you to sin, cut it off. It is better for you to enter life crippled than to have two hands and go into hell, into the unquenchable fire.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  57,
+                                                              "offset":  128,
+                                                              "text":  "Greek Gehenna; also in verses 45 and 47",
+                                                              "caller":  "+"
+                                                          },
+                                                          {
+                                                              "noteId":  58,
+                                                              "offset":  156,
+                                                              "text":  "BYZ and TR include 44 where their worm never dies, and the fire is never quenched; see verse 48 and Isaiah 66:24.",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  45,
+                                        "text":  "If your foot causes you to sin, cut it off. It is better for you to enter life lame than to have two feet and be thrown into hell.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  59,
+                                                              "offset":  130,
+                                                              "text":  "BYZ and TR include 46 where their worm never dies, and the fire is never quenched; see verse 48 and Isaiah 66:24.",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  47,
+                                        "text":  "And if your eye causes you to sin, pluck it out. It is better for you to enter the kingdom of God with one eye than to have two eyes and be thrown into hell,",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  48,
+                                        "text":  "where âtheir worm never dies, and the fire is never quenched.â",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  60,
+                                                              "offset":  62,
+                                                              "text":  "Isaiah 66:24",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "Good Salt"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  49,
+                                        "text":  "For everyone will be salted with fire.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  61,
+                                                              "offset":  38,
+                                                              "text":  "BYZ and TR include and every sacrifice will be salted with salt.",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  50,
+                                        "text":  "Salt is good, but if the salt loses its saltiness, with what will you season it? Have salt among yourselves, and be at peace with one another.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    }
+                                ],
+                    "footnotes":  [
+
+                                  ]
+                },
+    "fullChapterApiLink":  "/api/BSB/MRK/9.json"
+}

@@ -1,0 +1,490 @@
+﻿{
+    "translation":  {
+                        "id":  "BSB",
+                        "name":  "Berean Standard Bible",
+                        "website":  "https://berean.bible/",
+                        "licenseUrl":  "https://berean.bible/",
+                        "shortName":  "BSB",
+                        "englishName":  "Berean Standard Bible",
+                        "language":  "eng",
+                        "textDirection":  "ltr",
+                        "sha256":  "6cc5238e442b4204b0f617cc5c932bc04f3bae4a0658e6393b0e319653ebe37f",
+                        "availableFormats":  [
+                                                 "json"
+                                             ],
+                        "listOfBooksApiLink":  "/api/BSB/books.json",
+                        "completeTranslationApiLink":  "/api/BSB/complete.json",
+                        "simpleCompleteTranslationApiLink":  "/api/BSB/complete.simple.json",
+                        "numberOfBooks":  66,
+                        "totalNumberOfChapters":  1189,
+                        "totalNumberOfVerses":  31086,
+                        "languageName":  "English",
+                        "languageEnglishName":  "English"
+                    },
+    "book":  {
+                 "id":  "MRK",
+                 "translationId":  "BSB",
+                 "name":  "Mark",
+                 "commonName":  "Mark",
+                 "title":  "Mark",
+                 "order":  41,
+                 "numberOfChapters":  16,
+                 "sha256":  "2d36e67ab5278d172a50b7dbfb813f83da90d5ce936a52d0e3001a57a3ef75f7",
+                 "firstChapterNumber":  1,
+                 "firstChapterApiLink":  "/api/BSB/MRK/1.json",
+                 "firstChapterReference":  {
+                                               "translationId":  "BSB",
+                                               "book":  "MRK",
+                                               "chapter":  1
+                                           },
+                 "lastChapterNumber":  16,
+                 "lastChapterApiLink":  "/api/BSB/MRK/16.json",
+                 "lastChapterReference":  {
+                                              "translationId":  "BSB",
+                                              "book":  "MRK",
+                                              "chapter":  16
+                                          },
+                 "totalNumberOfVerses":  673
+             },
+    "thisChapterLink":  "/api/BSB/MRK/3.simple.json",
+    "thisChapterReference":  {
+                                 "translationId":  "BSB",
+                                 "book":  "MRK",
+                                 "chapter":  3
+                             },
+    "thisChapterAudioLinks":  {
+                                  "david":  "https://audio.bible.helloao.org/api/BSB/MRK/3/audio/david.mp3",
+                                  "gilbert":  "https://openbible.com/audio/gilbert/BSB_41_Mrk_003_G.mp3",
+                                  "hays":  "https://audio.bible.helloao.org/api/BSB/MRK/3/audio/hays.mp3",
+                                  "souer":  "https://audio.bible.helloao.org/api/BSB/MRK/3/audio/souer.mp3"
+                              },
+    "nextChapterApiLink":  "/api/BSB/MRK/4.simple.json",
+    "nextChapterReference":  {
+                                 "translationId":  "BSB",
+                                 "book":  "MRK",
+                                 "chapter":  4
+                             },
+    "nextChapterAudioLinks":  {
+                                  "david":  "https://audio.bible.helloao.org/api/BSB/MRK/4/audio/david.mp3",
+                                  "gilbert":  "https://openbible.com/audio/gilbert/BSB_41_Mrk_004_G.mp3",
+                                  "hays":  "https://audio.bible.helloao.org/api/BSB/MRK/4/audio/hays.mp3",
+                                  "souer":  "https://audio.bible.helloao.org/api/BSB/MRK/4/audio/souer.mp3"
+                              },
+    "previousChapterApiLink":  "/api/BSB/MRK/2.simple.json",
+    "previousChapterReference":  {
+                                     "translationId":  "BSB",
+                                     "book":  "MRK",
+                                     "chapter":  2
+                                 },
+    "previousChapterAudioLinks":  {
+                                      "david":  "https://audio.bible.helloao.org/api/BSB/MRK/2/audio/david.mp3",
+                                      "gilbert":  "https://openbible.com/audio/gilbert/BSB_41_Mrk_002_G.mp3",
+                                      "hays":  "https://audio.bible.helloao.org/api/BSB/MRK/2/audio/hays.mp3",
+                                      "souer":  "https://audio.bible.helloao.org/api/BSB/MRK/2/audio/souer.mp3"
+                                  },
+    "thisChapterAudioTimings":  {
+
+                                },
+    "nextChapterAudioTimings":  {
+
+                                },
+    "previousChapterAudioTimings":  {
+
+                                    },
+    "numberOfVerses":  35,
+    "chapter":  {
+                    "number":  3,
+                    "content":  [
+                                    {
+                                        "type":  "heading",
+                                        "text":  "Jesus Heals on the Sabbath"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  1,
+                                        "text":  "Once again Jesus entered the synagogue, and a man with a withered hand was there.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  2,
+                                        "text":  "In order to accuse Jesus, they were watching to see if He would heal on the Sabbath.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  3,
+                                        "text":  "Then Jesus said to the man with the withered hand, âStand up among us.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  4,
+                                        "text":  "And He asked them, âWhich is lawful on the Sabbath: to do good or to do evil, to save life or to destroy it?â\nBut they were silent.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  5,
+                                        "text":  "Jesus looked around at them with anger and sorrow at their hardness of heart. Then He said to the man, âStretch out your hand.â So he stretched it out, and it was restored.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  6,
+                                        "text":  "At this, the Pharisees went out and began plotting with the Herodians how they might kill Jesus.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "Jesus Heals the Multitudes"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  7,
+                                        "text":  "So Jesus withdrew with His disciples to the sea, accompanied by a large crowd from Galilee, Judea,",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  8,
+                                        "text":  "Jerusalem, Idumea, the region beyond the Jordan, and the vicinity of Tyre and Sidon. The large crowd came to Him when they heard what great things He was doing.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  9,
+                                        "text":  "Jesus asked His disciples to have a boat ready for Him so that the crowd would not crush Him.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  10,
+                                        "text":  "For He had healed so many that all who had diseases were pressing forward to touch Him.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  11,
+                                        "text":  "And when the unclean spirits saw Him, they fell down before Him and cried out, âYou are the Son of God!â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  12,
+                                        "text":  "But He warned them sternly not to make Him known.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "The Twelve Apostles"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  13,
+                                        "text":  "Then Jesus went up on the mountain and called for those He wanted, and they came to Him.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  14,
+                                        "text":  "He appointed twelve of them, whom He designated as apostles, to accompany Him, to be sent out to preach,",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  14,
+                                                              "offset":  60,
+                                                              "text":  "ECM, SBL, NE, BYZ, and TR do not include whom He designated as apostles.",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  15,
+                                        "text":  "and to have authority to drive out demons.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  15,
+                                                              "offset":  21,
+                                                              "text":  "BYZ and TR include to heal sicknesses, and",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  16,
+                                        "text":  "These are the twelve He appointed: Simon (whom He named Peter),",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  16,
+                                                              "offset":  34,
+                                                              "text":  "SBL, NE, and WH; ECM, BYZ, and TR do not include These are the twelve He appointed.",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  17,
+                                        "text":  "James son of Zebedee and his brother John (whom He named Boanerges, meaning âSons of Thunderâ),",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  18,
+                                        "text":  "Andrew, Philip, Bartholomew, Matthew, Thomas, James son of Alphaeus, Thaddaeus, Simon the Zealot,",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  17,
+                                                              "offset":  97,
+                                                              "text":  "Greek Simon the Cananean",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  19,
+                                        "text":  "and Judas Iscariot, who betrayed Jesus.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  18,
+                                                              "offset":  39,
+                                                              "text":  "Literally who also betrayed Him",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "A House Divided"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  20,
+                                        "text":  "Then Jesus went home, and once again a crowd gathered, so that He and His disciples could not even eat.",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  19,
+                                                              "offset":  21,
+                                                              "text":  "Literally Then He comes to a house",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  21,
+                                        "text":  "When His family heard about this, they went out to take custody of Him, saying, âHe is out of His mind.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  22,
+                                        "text":  "And the scribes who had come down from Jerusalem were saying, âHe is possessed by Beelzebul, â and, âBy the prince of the demons He drives out demons.â",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  20,
+                                                              "offset":  92,
+                                                              "text":  "WH Beezeboul; Vulgate Beelzebub",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  23,
+                                        "text":  "So Jesus called them together and began to speak to them in parables: âHow can Satan drive out Satan?",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  24,
+                                        "text":  "If a kingdom is divided against itself, it cannot stand.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  25,
+                                        "text":  "If a house is divided against itself, it cannot stand.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  26,
+                                        "text":  "And if Satan is divided and rises against himself, he cannot stand; his end has come.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  27,
+                                        "text":  "Indeed, no one can enter a strong manâs house to steal his possessions unless he first ties up the strong man. Then he can plunder his house.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "The Unpardonable Sin"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  28,
+                                        "text":  "Truly I tell you, the sons of men will be forgiven all sins and blasphemies, as many as they utter.",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  29,
+                                        "text":  "But whoever blasphemes against the Holy Spirit will never be forgiven; he is guilty of eternal sin.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  30,
+                                        "text":  "Jesus made this statement because they were saying, âHe has an unclean spirit.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "heading",
+                                        "text":  "Jesusâ Mother and Brothers"
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  31,
+                                        "text":  "Then Jesusâ mother and brothers came and stood outside. They sent someone in to summon Him,",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  32,
+                                        "text":  "and a crowd was sitting around Him. âLook,â He was told, âYour mother and brothers are outside, asking for You.â",
+                                        "footnotes":  [
+                                                          {
+                                                              "noteId":  21,
+                                                              "offset":  82,
+                                                              "text":  "ECM, SBL, WH, and TR; NE and BYZ include and Your sisters.",
+                                                              "caller":  "+"
+                                                          }
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "line_break"
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  33,
+                                        "text":  "But Jesus replied, âWho are My mother and My brothers?â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  34,
+                                        "text":  "Looking at those seated in a circle around Him, He said, âHere are My mother and My brothers!",
+                                        "footnotes":  [
+
+                                                      ]
+                                    },
+                                    {
+                                        "type":  "verse",
+                                        "number":  35,
+                                        "text":  "For whoever does the will of God is My brother and sister and mother.â",
+                                        "footnotes":  [
+
+                                                      ]
+                                    }
+                                ],
+                    "footnotes":  [
+
+                                  ]
+                },
+    "fullChapterApiLink":  "/api/BSB/MRK/3.json"
+}
