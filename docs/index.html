@@ -198,6 +198,16 @@ p.quiet { color: var(--ink-soft); }
 .suggest-app h3 { font-size: 24px; line-height: 1.2; margin-bottom: 8px; }
 .suggest-app p { color: var(--ink-soft); max-width: 43em; font-size: 16px; }
 
+/* ---------- reasons ---------- */
+.reasons {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px; margin-top: 36px; border: 1px solid var(--rule);
+  background: var(--rule);
+}
+.reason { padding: 28px; background: var(--paper); }
+.reason h3 { font-size: 20px; line-height: 1.2; margin-bottom: 9px; }
+.reason p { color: var(--ink-soft); font-size: 16px; }
+
 /* ---------- SDK ---------- */
 .hero .wrap > *, .tour > *, .sdk > *, .store > * { min-width: 0; }
 .sdk { display: grid; grid-template-columns: 1fr 1fr; gap: 64px; align-items: start; }
@@ -279,6 +289,7 @@ footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
   pre { font-size: 12px; padding: 16px 18px; white-space: pre-wrap; word-break: break-word; }
   .hero .wrap, .tour, .sdk, .store { grid-template-columns: 1fr; gap: 40px; }
   .suggest-app { grid-template-columns: 1fr; }
+  .reasons { grid-template-columns: 1fr; }
   .field-grid { grid-template-columns: 1fr; }
   .field-wide { grid-template-columns: 1fr; }
   .tested-devices ol { grid-template-columns: 1fr; }
@@ -333,7 +344,7 @@ footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
     </a>
     <nav class="top">
       <a href="#apps">Apps</a>
-      <a href="sdk.html">Developers</a>
+      <a href="developers.html">Developers</a>
       <a href="faq.html">FAQ</a>
       <a href="#store">Store</a>
       <a href="#install">Install</a>
@@ -400,6 +411,32 @@ footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
           <li>Kobo Libra Colour N428</li>
         </ol>
         <p>The 2025 Clara BW P365 refresh is also supported after matching the tested N365 hardware and firmware. More devices are coming. To help test yours, <a href="https://github.com/BandarLabs/Cobalt/issues">join an existing device thread or create a new one</a>.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="why-cobalt">
+  <div class="wrap">
+    <p class="kicker">Why Cobalt</p>
+    <h2 class="measure">More freedom without giving up your reader.</h2>
+    <p class="measure quiet">Cobalt adds a place for useful e-ink apps while keeping the reading experience and library already on the device.</p>
+    <div class="reasons">
+      <div class="reason">
+        <h3>Keep the reader you bought</h3>
+        <p>Open Cobalt from the reader's menu, use an app, then return to the original reader. A restart always returns there too.</p>
+      </div>
+      <div class="reason">
+        <h3>Install apps on the device</h3>
+        <p>After one USB setup, browse, install, update, and remove apps over Wi-Fi. You do not need to reconnect a cable for every app.</p>
+      </div>
+      <div class="reason">
+        <h3>Choose only what belongs</h3>
+        <p>Apps are separate choices, not a bundle you must accept. Remove one without disturbing the others or reinstalling Cobalt.</p>
+      </div>
+      <div class="reason">
+        <h3>Made for an e-ink screen</h3>
+        <p>Large touch targets, deliberate refreshes, readable type, and simple screens make the device feel like itself rather than a small tablet.</p>
       </div>
     </div>
   </div>
@@ -564,12 +601,30 @@ footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
       <p>Browse available apps on the reader, install one over Wi-Fi, and remove it when you no longer want it. App updates arrive without reinstalling Cobalt.</p>
       <p>Every package is checked before it opens. An interrupted install or update leaves the working version in place.</p>
       <p class="quiet">Cobalt updates remain separate from app updates, so the Store cannot replace the platform itself.</p>
-      <p style="margin-top:20px"><a href="sdk.html">Build and publish an app</a></p>
+      <p style="margin-top:20px"><a href="developers.html">Build and publish an app</a></p>
     </div>
     <figure>
       <img src="media/store-demo.gif" width="430" height="580" loading="lazy"
            alt="The Cobalt App Store installing an app over Wi-Fi on a Kobo Clara BW">
       <figcaption>Sudoku arriving over Wi-Fi.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section id="build">
+  <div class="wrap sdk">
+    <div class="measure">
+      <p class="kicker">Create</p>
+      <h2>Make the app you wish this screen had.</h2>
+      <p>Start a Rust app, run it in the browser simulator, test it on a supported reader, and submit it to Store. An app can ship without waiting for a Cobalt platform release.</p>
+      <div class="cta" style="margin-top:26px">
+        <a class="btn primary" href="developers.html">Build for Cobalt</a>
+        <a class="btn" href="sdk.html">SDK reference</a>
+      </div>
+    </div>
+    <figure>
+      <img src="media/site/apps/components.png" width="1072" height="1448" loading="lazy" alt="Cobalt interface controls and typography rendered on an e-ink screen">
+      <figcaption>The component gallery on a supported reader.</figcaption>
     </figure>
   </div>
 </section>
@@ -636,7 +691,7 @@ cargo run -p kobo-cli -- setup</code></pre>
       <p>Cobalt · AGPL-3.0 · <a href="https://github.com/BandarLabs/Cobalt">BandarLabs/Cobalt</a></p>
     </div>
     <nav>
-      <a href="sdk.html">Developers</a>
+      <a href="developers.html">Developers</a>
       <a href="faq.html">FAQ</a>
       <a href="https://www.reddit.com/r/CobaltForKobo/">Community</a>
       <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/INSTALL.md">Install</a>
