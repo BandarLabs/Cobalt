@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: cobalt-app-catalog
@@ -83,8 +84,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
       - name: Load the release tool
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -95,6 +99,21 @@ jobs:
         with:
           pattern: verified-app-*
           path: dist/artifacts
+      - name: Require versions for changed app packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          published_sha="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/apps.yml/runs?status=success&per_page=1" \
+            --jq '.workflow_runs[0].head_sha')"
+          test -n "$published_sha"
+          curl --fail --location --retry 3 \
+            --output published-app-catalog.json \
+            https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog.json
+          node tools/check-app-versions.mjs \
+            --registry apps/catalog.json \
+            --published-catalog published-app-catalog.json \
+            --base "$published_sha"
       - name: Sign the app packages and catalog
         env:
           COBALT_APP_SIGNING_SEED: ${{ secrets.COBALT_APP_SIGNING_SEED }}

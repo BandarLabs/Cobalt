@@ -1082,11 +1082,25 @@ pub enum AppLinkState {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RemoteInstallOutcome {
     None,
-    Installed { id: String },
-    Updated { id: String },
-    AlreadyInstalled { id: String },
-    Included { id: String },
-    Unavailable { id: String },
+    Installed {
+        id: String,
+    },
+    Updated {
+        id: String,
+    },
+    AlreadyInstalled {
+        id: String,
+    },
+    Included {
+        id: String,
+    },
+    Unavailable {
+        id: String,
+    },
+    RequiresCobalt {
+        id: String,
+        minimum_cobalt_version: String,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1257,6 +1271,8 @@ pub struct AppInfo {
     pub label: String,
     pub summary: String,
     pub version: String,
+    /// Oldest Cobalt platform release that can run this app package.
+    pub minimum_cobalt_version: String,
     pub glyph: Glyph,
     pub capabilities: Vec<String>,
     /// The installed version when present. A different `version` means an
@@ -1276,6 +1292,33 @@ impl AppInfo {
             .as_ref()
             .is_some_and(|installed| installed != &self.version)
     }
+
+    #[must_use]
+    pub fn is_compatible_with(&self, cobalt_version: &str) -> bool {
+        numeric_version_at_least(cobalt_version, &self.minimum_cobalt_version)
+    }
+}
+
+fn numeric_version_at_least(current: &str, minimum: &str) -> bool {
+    let parse = |version: &str| -> Option<Vec<u64>> {
+        version
+            .split('.')
+            .map(|part| {
+                if part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()) {
+                    None
+                } else {
+                    part.parse().ok()
+                }
+            })
+            .collect()
+    };
+    let (Some(mut current), Some(mut minimum)) = (parse(current), parse(minimum)) else {
+        return false;
+    };
+    let width = current.len().max(minimum.len());
+    current.resize(width, 0);
+    minimum.resize(width, 0);
+    current >= minimum
 }
 
 /// A source accepted by the runtime-owned audio player.
@@ -2834,22 +2877,33 @@ fn encode_remote_install(
     output: &mut Vec<u8>,
     outcome: &RemoteInstallOutcome,
 ) -> Result<(), ProtocolError> {
-    let (tag, id) = match outcome {
+    let (tag, id, minimum_cobalt_version) = match outcome {
         RemoteInstallOutcome::None => {
             output.push(1);
             return Ok(());
         }
-        RemoteInstallOutcome::Installed { id } => (2, id),
-        RemoteInstallOutcome::Updated { id } => (3, id),
-        RemoteInstallOutcome::AlreadyInstalled { id } => (4, id),
-        RemoteInstallOutcome::Included { id } => (5, id),
-        RemoteInstallOutcome::Unavailable { id } => (6, id),
+        RemoteInstallOutcome::Installed { id } => (2, id, None),
+        RemoteInstallOutcome::Updated { id } => (3, id, None),
+        RemoteInstallOutcome::AlreadyInstalled { id } => (4, id, None),
+        RemoteInstallOutcome::Included { id } => (5, id, None),
+        RemoteInstallOutcome::Unavailable { id } => (6, id, None),
+        RemoteInstallOutcome::RequiresCobalt {
+            id,
+            minimum_cobalt_version,
+        } => (7, id, Some(minimum_cobalt_version)),
     };
     if !valid_app_id(id) {
         return Err(ProtocolError::InvalidValue("application id"));
     }
+    if minimum_cobalt_version.is_some_and(|version| !valid_cobalt_version(version)) {
+        return Err(ProtocolError::InvalidValue("Cobalt version"));
+    }
     output.push(tag);
-    push_string(output, id)
+    push_string(output, id)?;
+    if let Some(version) = minimum_cobalt_version {
+        push_string(output, version)?;
+    }
+    Ok(())
 }
 
 fn encode_app_info(output: &mut Vec<u8>, entry: &AppInfo) -> Result<(), ProtocolError> {
@@ -2860,6 +2914,7 @@ fn encode_app_info(output: &mut Vec<u8>, entry: &AppInfo) -> Result<(), Protocol
         &entry.label,
         &entry.summary,
         &entry.version,
+        &entry.minimum_cobalt_version,
     ] {
         push_string(output, text)?;
     }
@@ -2887,6 +2942,7 @@ fn validate_app_info(entry: &AppInfo) -> Result<(), ProtocolError> {
         || entry.summary.is_empty()
         || entry.summary.len() > 512
         || !valid_version(&entry.version)
+        || !valid_cobalt_version(&entry.minimum_cobalt_version)
         || entry
             .installed_version
             .as_deref()
@@ -2908,6 +2964,14 @@ fn valid_version(version: &str) -> bool {
         && version
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'+'))
+}
+
+fn valid_cobalt_version(version: &str) -> bool {
+    !version.is_empty()
+        && version.len() <= MAX_APP_VERSION_LEN
+        && version
+            .split('.')
+            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
 }
 
 fn decode_device_result(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
@@ -3061,7 +3125,7 @@ fn decode_remote_install(reader: &mut Reader<'_>) -> Result<DeviceResult, Protoc
     if tag == 1 {
         return Ok(DeviceResult::RemoteInstall(RemoteInstallOutcome::None));
     }
-    if !(2..=6).contains(&tag) {
+    if !(2..=7).contains(&tag) {
         return Err(ProtocolError::InvalidValue("remote install outcome"));
     }
     let id = reader.string()?;
@@ -3074,6 +3138,16 @@ fn decode_remote_install(reader: &mut Reader<'_>) -> Result<DeviceResult, Protoc
         4 => RemoteInstallOutcome::AlreadyInstalled { id },
         5 => RemoteInstallOutcome::Included { id },
         6 => RemoteInstallOutcome::Unavailable { id },
+        7 => {
+            let minimum_cobalt_version = reader.string()?;
+            if !valid_cobalt_version(&minimum_cobalt_version) {
+                return Err(ProtocolError::InvalidValue("Cobalt version"));
+            }
+            RemoteInstallOutcome::RequiresCobalt {
+                id,
+                minimum_cobalt_version,
+            }
+        }
         _ => unreachable!("tag range checked above"),
     };
     Ok(DeviceResult::RemoteInstall(outcome))
@@ -3143,6 +3217,7 @@ fn decode_apps_result(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolE
         let label = reader.string()?;
         let summary = reader.string()?;
         let version = reader.string()?;
+        let minimum_cobalt_version = reader.string()?;
         let glyph =
             decode_glyph(reader.u8()?).ok_or(ProtocolError::InvalidValue("application glyph"))?;
         let capability_count = usize::from(reader.u8()?);
@@ -3166,6 +3241,7 @@ fn decode_apps_result(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolE
             label,
             summary,
             version,
+            minimum_cobalt_version,
             glyph,
             capabilities,
             installed_version,
@@ -6429,6 +6505,7 @@ mod tests {
                     label: "Words".to_owned(),
                     summary: "Counts words in a note.".to_owned(),
                     version: "1.2.0".to_owned(),
+                    minimum_cobalt_version: "0.3.0".to_owned(),
                     glyph: Glyph::Note,
                     capabilities: vec!["shared-files".to_owned()],
                     installed_version: Some("1.1.0".to_owned()),
@@ -6485,6 +6562,10 @@ mod tests {
             DeviceResult::RemoteInstall(RemoteInstallOutcome::Unavailable {
                 id: "word-count".to_owned(),
             }),
+            DeviceResult::RemoteInstall(RemoteInstallOutcome::RequiresCobalt {
+                id: "word-count".to_owned(),
+                minimum_cobalt_version: "0.4.0".to_owned(),
+            }),
         ];
         for result in results {
             let frame = Frame {
@@ -6528,6 +6609,7 @@ mod tests {
                     label: "App".to_owned(),
                     summary: "One application.".to_owned(),
                     version: "1.0.0".to_owned(),
+                    minimum_cobalt_version: "0.3.0".to_owned(),
                     glyph: Glyph::App,
                     capabilities: Vec::new(),
                     installed_version: None,
@@ -6546,6 +6628,7 @@ mod tests {
             label: "Version".to_owned(),
             summary: "Checks the application version wire bound.".to_owned(),
             version,
+            minimum_cobalt_version: "0.3.0".to_owned(),
             glyph: Glyph::App,
             capabilities: Vec::new(),
             installed_version: None,
@@ -6564,6 +6647,31 @@ mod tests {
             }),
         })
         .is_err());
+    }
+
+    #[test]
+    fn app_compatibility_uses_numeric_cobalt_versions() {
+        let app = AppInfo {
+            id: "version-test".to_owned(),
+            title: "Version Test".to_owned(),
+            label: "Version".to_owned(),
+            summary: "Checks minimum Cobalt versions.".to_owned(),
+            version: "1.0.0".to_owned(),
+            minimum_cobalt_version: "0.2.4".to_owned(),
+            glyph: Glyph::App,
+            capabilities: Vec::new(),
+            installed_version: None,
+        };
+        assert!(app.is_compatible_with("0.3.0"));
+        assert!(app.is_compatible_with("0.3"));
+        assert!(!app.is_compatible_with("0.2.3"));
+        assert!(!app.is_compatible_with("nightly"));
+
+        let newer = AppInfo {
+            minimum_cobalt_version: "0.4.0".to_owned(),
+            ..app
+        };
+        assert!(!newer.is_compatible_with("0.3.0"));
     }
 
     #[test]
@@ -6741,7 +6849,7 @@ mod tests {
         })
         .expect("valid empty outcome");
         let last = bad_outcome.len() - 1;
-        bad_outcome[last] = 7;
+        bad_outcome[last] = 8;
         assert_eq!(
             decode(&bad_outcome),
             Err(ProtocolError::InvalidValue("remote install outcome"))

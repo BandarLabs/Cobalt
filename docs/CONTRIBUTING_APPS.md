@@ -24,13 +24,18 @@ Registry fields:
 | `display_name` | Full Store title |
 | `short_label` | Compact launcher label |
 | `summary` | Short Store description |
-| `version` | App version, independent from Cobalt |
-| `minimum_cobalt_version` | Oldest compatible platform version |
+| `version` | App release version, independent from Cobalt. Bump it whenever the published binary or metadata changes |
+| `minimum_cobalt_version` | Oldest platform release that supports the SDK protocol and every runtime service the app uses |
 | `glyph` | A built-in Cobalt glyph name |
 | `capabilities` | Runtime services the app needs |
 
 Public apps cannot use a platform-reserved ID or request the `shell`
 capability. Request only capabilities the app actually uses.
+
+Apps built from the current SDK require Cobalt 0.2.4 or newer because that is
+the first release supporting the current wire protocol. A newer runtime
+service can require a higher minimum. CI rejects a registry entry below the
+SDK protocol floor.
 
 ## Test the app
 
@@ -93,9 +98,14 @@ install pages, or sitemap entries after merge.
 
 Open a pull request containing the app source, tests, workspace and Store
 entries, registry metadata, README, clean screenshot, generated website files,
-and physical-device evidence. Increment only the app's `version` when updating
-that app. A Cobalt version change is needed only when the app requires a new
-platform or SDK capability.
+and physical-device evidence. Increment the app's `version` whenever its code,
+local dependencies, release inputs, or public metadata change. Shared SDK and
+protocol changes count because they produce a different binary. CI compares
+each package with the last published catalog and rejects a reused version.
+
+Do not change the Cobalt platform version for an ordinary app update. Raise
+`minimum_cobalt_version` when the app starts using a protocol or runtime
+service absent from older platform releases.
 
 After merge to `main`, `.github/workflows/apps.yml`:
 

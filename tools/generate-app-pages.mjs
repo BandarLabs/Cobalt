@@ -182,7 +182,7 @@ for (const app of catalog.apps) {
     <a class="brand" href="../../"><img src="../../logo.svg" alt="Cobalt" width="81" height="34"></a>
     <nav class="top" aria-label="Main navigation">
       <a class="active" href="../../#apps">Apps</a>
-      <a href="../../sdk.html">Developers</a>
+      <a href="../../developers.html">Developers</a>
       <a href="../../faq.html">FAQ</a>
       <a href="../../#store">Store</a>
       <a href="../../#install">Install</a>
@@ -191,7 +191,7 @@ for (const app of catalog.apps) {
     </nav>
   </div>
 </header>
-<main class="wrap" data-app-id="${id}">
+<main class="wrap" data-app-id="${id}" data-minimum-cobalt-version="${escape(app.minimum_cobalt_version)}">
   <div class="app-hero">
     <div class="app-copy">
       <p class="eyebrow">Kobo app</p>
@@ -308,7 +308,7 @@ for (const app of systemApps) {
     <a class="brand" href="../../"><img src="../../logo.svg" alt="Cobalt" width="81" height="34"></a>
     <nav class="top" aria-label="Main navigation">
       <a class="active" href="../../#apps">Apps</a>
-      <a href="../../sdk.html">Developers</a>
+      <a href="../../developers.html">Developers</a>
       <a href="../../faq.html">FAQ</a>
       <a href="../../#store">Store</a>
       <a href="../../#install">Install</a>
@@ -368,6 +368,7 @@ for (const app of [...catalog.apps, ...systemApps]) {
 
 const sitemapUrls = [
   "https://bandarlabs.github.io/Cobalt/",
+  "https://bandarlabs.github.io/Cobalt/developers.html",
   "https://bandarlabs.github.io/Cobalt/faq.html",
   "https://bandarlabs.github.io/Cobalt/sdk.html",
   ...[...catalog.apps, ...systemApps].map(

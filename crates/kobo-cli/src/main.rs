@@ -6602,7 +6602,7 @@ mod tests {
                     .iter()
                     .find(|app| app.id == "sudoku")
                     .expect("Sudoku registry entry");
-                assert_eq!(sudoku.version, "1.0.1");
+                assert_eq!(sudoku.version, "1.0.2");
             }
         }
     }
