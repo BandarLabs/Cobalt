@@ -132,51 +132,49 @@ impl PanelPreview {
         if transition.full {
             self.visible.copy_from_slice(&surface.pixels);
         } else {
-            self.apply_partial(surface, transition);
+            self.apply_partial(surface, &transition);
         }
-        if self.planner.commit(surface, transition) {
+        if self.planner.commit(surface, &transition) {
             self.last = Some(transition);
         }
     }
 
-    fn apply_partial(&mut self, surface: &Surface, transition: FrameTransition) {
-        let Ok(left) = usize::try_from(transition.region.x) else {
-            return;
-        };
-        let Ok(top) = usize::try_from(transition.region.y) else {
-            return;
-        };
-        let Ok(width) = usize::try_from(transition.region.width) else {
-            return;
-        };
-        let Ok(height) = usize::try_from(transition.region.height) else {
-            return;
-        };
-        for y in top..top.saturating_add(height) {
-            let row = y.saturating_mul(surface.width);
-            for x in left..left.saturating_add(width) {
-                let index = row.saturating_add(x);
-                let Some(target) = surface.pixels.get(index).copied() else {
-                    continue;
-                };
-                let Some(visible) = self.visible.get_mut(index) else {
-                    continue;
-                };
-                let target = match transition.waveform {
-                    PanelWaveform::Du => {
-                        if target < 128 {
-                            kobo_ui::tone::INK
-                        } else {
-                            kobo_ui::tone::PAPER
+    fn apply_partial(&mut self, surface: &Surface, transition: &FrameTransition) {
+        for update in &transition.regions {
+            let (Ok(left), Ok(top), Ok(width), Ok(height)) = (
+                usize::try_from(update.region.x),
+                usize::try_from(update.region.y),
+                usize::try_from(update.region.width),
+                usize::try_from(update.region.height),
+            ) else {
+                continue;
+            };
+            for y in top..top.saturating_add(height) {
+                let row = y.saturating_mul(surface.width);
+                for x in left..left.saturating_add(width) {
+                    let index = row.saturating_add(x);
+                    let Some(target) = surface.pixels.get(index).copied() else {
+                        continue;
+                    };
+                    let Some(visible) = self.visible.get_mut(index) else {
+                        continue;
+                    };
+                    let target = match update.waveform {
+                        PanelWaveform::Du => {
+                            if target < 128 {
+                                kobo_ui::tone::INK
+                            } else {
+                                kobo_ui::tone::PAPER
+                            }
                         }
-                    }
-                    PanelWaveform::Gl16 | PanelWaveform::Gc16 => target,
-                };
-                // An LCD cannot reproduce electrophoretic residue. Retaining
-                // one sixteenth of the previous displayed value makes stale
-                // edges visible without claiming hardware-measured physics.
-                *visible = u8::try_from((u16::from(target) * 15 + u16::from(*visible)) / 16)
-                    .unwrap_or(target);
+                        PanelWaveform::Gl16 | PanelWaveform::Gc16 => target,
+                    };
+                    // An LCD cannot reproduce electrophoretic residue. Retaining
+                    // one sixteenth of the previous displayed value makes stale
+                    // edges visible without claiming hardware-measured physics.
+                    *visible = u8::try_from((u16::from(target) * 15 + u16::from(*visible)) / 16)
+                        .unwrap_or(target);
+                }
             }
         }
     }
@@ -1300,19 +1298,35 @@ fn simulation_json(
     lifecycle: Lifecycle,
     touch: Option<SimulatedTouch>,
 ) -> String {
-    let transition = panel.last.map_or_else(
+    let transition = panel.last.as_ref().map_or_else(
         || "null".to_owned(),
         |transition| {
+            let regions = transition
+                .regions
+                .iter()
+                .map(|update| {
+                    format!(
+                        "{{\"waveform\":\"{}\",\"region\":{{\"x\":{},\"y\":{},\"width\":{},\"height\":{}}}}}",
+                        update.waveform.name(),
+                        update.region.x,
+                        update.region.y,
+                        update.region.width,
+                        update.region.height,
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",");
             format!(
                 concat!(
                     "{{\"waveform\":\"{}\",\"full\":{},\"refresh\":{},",
-                    "\"dirty\":{},\"region\":",
+                    "\"dirty\":{},\"regions\":[{}],\"region\":",
                     "{{\"x\":{},\"y\":{},\"width\":{},\"height\":{}}}}}"
                 ),
                 transition.waveform.name(),
                 transition.full,
                 transition.refresh,
                 transition.dirty,
+                regions,
                 transition.region.x,
                 transition.region.y,
                 transition.region.width,
@@ -2403,8 +2417,8 @@ let point={x:536,y:177},issues=[],profile={width:1072,height:1448},transition=nu
 function checked(response){if(!response.ok)throw Error("Simulator request failed ("+response.status+")");return response;}
 function showDiagnostics(){list.replaceChildren();if(!issues.length){const item=document.createElement("li");item.textContent="No layout issues.";list.append(item);return;}for(const issue of issues){const item=document.createElement("li");item.className=issue.severity;item.textContent=issue.message;list.append(item);}}
 function outline(rect,color,width){if(!rect)return;ctx.save();ctx.lineWidth=width;ctx.strokeStyle=color;ctx.strokeRect(rect.x+width/2,rect.y+width/2,Math.max(0,rect.width-width),Math.max(0,rect.height-width));ctx.restore();}
-function drawOverlays(){if(refreshRegion.checked&&transition)outline(transition.region,"#006fbb",6);if(!overlay.checked)return;for(const issue of issues){outline(issue.rect,issue.severity==="error"?"#d00000":"#b56a00",5);}}
-function showSimulation(sim){profile=sim.profile;transition=sim.transition;scenario.value=sim.scenario;document.getElementById("profile-badge").textContent=profile.id;document.getElementById("geometry").textContent=profile.width+" × "+profile.height;document.getElementById("density").textContent=profile.pixelsPerInch+" PPI";document.getElementById("rotation").textContent=profile.rotation;document.getElementById("lifecycle").textContent=sim.lifecycle;const touch=sim.touch;document.getElementById("display-touch").textContent=touch?touch.display.x+", "+touch.display.y:"—";document.getElementById("raw-touch").textContent=touch?touch.raw.x+", "+touch.raw.y:"—";document.getElementById("waveform").textContent=transition?transition.waveform:"—";document.getElementById("update-kind").textContent=transition?(transition.full?"full / cleaning":"partial"):"unchanged";document.getElementById("region").textContent=transition?transition.region.width+"×"+transition.region.height+" @ "+transition.region.x+","+transition.region.y:"—";document.getElementById("refresh-count").textContent=sim.refreshCount;document.getElementById("partial-count").textContent=sim.partialsSinceClean+" / 8";}
+function drawOverlays(){if(refreshRegion.checked&&transition)for(const update of transition.regions)outline(update.region,"#006fbb",6);if(!overlay.checked)return;for(const issue of issues){outline(issue.rect,issue.severity==="error"?"#d00000":"#b56a00",5);}}
+function showSimulation(sim){profile=sim.profile;transition=sim.transition;scenario.value=sim.scenario;document.getElementById("profile-badge").textContent=profile.id;document.getElementById("geometry").textContent=profile.width+" × "+profile.height;document.getElementById("density").textContent=profile.pixelsPerInch+" PPI";document.getElementById("rotation").textContent=profile.rotation;document.getElementById("lifecycle").textContent=sim.lifecycle;const touch=sim.touch;document.getElementById("display-touch").textContent=touch?touch.display.x+", "+touch.display.y:"—";document.getElementById("raw-touch").textContent=touch?touch.raw.x+", "+touch.raw.y:"—";document.getElementById("waveform").textContent=transition?transition.waveform:"—";document.getElementById("update-kind").textContent=transition?(transition.full?"full / cleaning":"partial"):"unchanged";document.getElementById("region").textContent=transition?(transition.regions.length===1?transition.region.width+"×"+transition.region.height+" @ "+transition.region.x+","+transition.region.y:transition.regions.length+" regions"):"—";document.getElementById("refresh-count").textContent=sim.refreshCount;document.getElementById("partial-count").textContent=sim.partialsSinceClean+" / 8";}
 async function frame(){const path=ideal.checked?"/ideal-frame":"/frame";const response=checked(await fetch(path,{cache:"no-store"}));const raw=new Uint8Array(await response.arrayBuffer());const [diagnostics,simulation]=await Promise.all([fetch("/diagnostics",{cache:"no-store"}).then(checked).then(r=>r.json()),fetch("/simulation",{cache:"no-store"}).then(checked).then(r=>r.json())]);issues=diagnostics.issues;showSimulation(simulation);if(raw.length!==profile.width*profile.height)throw Error("Invalid "+profile.id+" frame");if(canvas.width!==profile.width||canvas.height!==profile.height){canvas.width=profile.width;canvas.height=profile.height;}const image=ctx.createImageData(profile.width,profile.height);for(let i=0;i<raw.length;i++){const p=i*4;image.data[p]=image.data[p+1]=image.data[p+2]=raw[i];image.data[p+3]=255;}ctx.putImageData(image,0,0);showDiagnostics();drawOverlays();if(!ideal.checked&&transition&&transition.full&&transition.refresh!==lastFlash){lastFlash=transition.refresh;canvas.classList.remove("clean-flash");void canvas.offsetWidth;canvas.classList.add("clean-flash");}status.textContent=issues.length?"Frame loaded with "+issues.length+" diagnostic"+(issues.length===1?"":"s")+".":"Frame loaded; layout clean.";}
 function touchLocation(event){const rect=canvas.getBoundingClientRect();return{x:Math.floor((event.clientX-rect.left)*profile.width/rect.width),y:Math.floor((event.clientY-rect.top)*profile.height/rect.height)};}
 async function touch(next){point=next;checked(await fetch("/touch",{method:"POST",headers:{"Content-Type":"text/plain"},body:"x="+point.x+"&y="+point.y}));await frame();status.textContent="Touch delivered through the Clara BW transform.";}

@@ -8984,18 +8984,34 @@ impl PanelWaveform {
     }
 }
 
-/// One refresh the runtime will ask the panel controller to perform.
+/// One region the runtime will ask the panel controller to update.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct FrameTransition {
+pub struct FrameRegion {
     pub region: Rect,
     pub waveform: PanelWaveform,
+}
+
+/// One logical frame, which may use several panel regions.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FrameTransition {
+    /// The box containing every region, retained for diagnostics.
+    pub region: Rect,
+    /// The slowest waveform used by any region, retained for diagnostics.
+    pub waveform: PanelWaveform,
+    pub regions: Vec<FrameRegion>,
     pub full: bool,
     /// One-based number of the refresh in this session.
     pub refresh: u64,
     /// Pixels that will have been repainted since the last cleaning refresh,
     /// once this transition has been applied. Zero directly after a clean.
     pub dirty: u64,
+    exact_damage: bool,
 }
+
+/// Nearby changes are cheaper as one panel update than as many tiny updates.
+const DAMAGE_JOIN_GAP: i32 = 8;
+/// Prevents one frame from exhausting either the runtime or controller queue.
+const MAX_FRAME_REGIONS: usize = 8;
 
 /// Shared state machine for choosing Kobo panel transitions.
 ///
@@ -9031,61 +9047,111 @@ impl FramePlanner {
     /// changed. Call [`Self::commit`] only after the update succeeds.
     #[must_use]
     pub fn plan(&self, surface: &Surface) -> Option<FrameTransition> {
-        if surface.width != self.width
-            || surface.height != self.height
-            || surface.pixels.len() != self.previous.len()
-        {
+        if !self.matches(surface) {
             return None;
         }
-        let whole = Rect {
-            x: 0,
-            y: 0,
-            width: i32::try_from(self.width).ok()?,
-            height: i32::try_from(self.height).ok()?,
-        };
-        let (region, waveform, dirty) = if self.started {
-            let (changed, flipped) = self.changed(surface)?;
+        let whole = self.whole()?;
+        let (regions, dirty) = if self.started {
+            let (changed, flipped) = self.changed_regions(surface)?;
             // The budget is checked before this update is added to it, so that
             // a full panel's worth of repainting still buys exactly
             // PANEL_CLEAN_INTERVAL updates before anything flashes, as it did
             // when updates rather than pixels were being counted.
             if self.dirty >= self.clean_after() {
-                (whole, PanelWaveform::Gc16, 0)
-            } else if Self::has_grey(surface, changed) {
                 (
-                    changed,
-                    PanelWaveform::Gl16,
-                    self.dirty.saturating_add(flipped),
+                    vec![FrameRegion {
+                        region: whole,
+                        waveform: PanelWaveform::Gc16,
+                    }],
+                    0,
                 )
             } else {
                 (
-                    changed,
-                    PanelWaveform::Du,
+                    changed
+                        .into_iter()
+                        .map(|region| FrameRegion {
+                            region,
+                            waveform: if Self::has_grey(surface, region) {
+                                PanelWaveform::Gl16
+                            } else {
+                                PanelWaveform::Du
+                            },
+                        })
+                        .collect(),
                     self.dirty.saturating_add(flipped),
                 )
             }
         } else {
-            (whole, PanelWaveform::Gc16, 0)
+            (
+                vec![FrameRegion {
+                    region: whole,
+                    waveform: PanelWaveform::Gc16,
+                }],
+                0,
+            )
         };
-        Some(FrameTransition {
-            region,
-            waveform,
-            full: waveform == PanelWaveform::Gc16,
-            refresh: self.refreshes.saturating_add(1),
-            dirty,
-        })
+        self.transition(regions, dirty, false)
+    }
+
+    /// Plans an update for a region whose pixels and waveform are already
+    /// known by the caller.
+    ///
+    /// This path does not compare the full surface. It is intended for direct
+    /// interaction feedback where the renderer has just changed one known
+    /// rectangle. The ordinary planner remains responsible for application
+    /// frames whose damage is not known in advance.
+    #[must_use]
+    pub fn plan_damage(
+        &self,
+        surface: &Surface,
+        damage: Rect,
+        waveform: PanelWaveform,
+    ) -> Option<FrameTransition> {
+        if !self.matches(surface) {
+            return None;
+        }
+        let whole = self.whole()?;
+        if !self.started || self.dirty >= self.clean_after() {
+            return self.transition(
+                vec![FrameRegion {
+                    region: whole,
+                    waveform: PanelWaveform::Gc16,
+                }],
+                0,
+                false,
+            );
+        }
+        let region = damage.intersection(whole)?;
+        let area = u64::try_from(region.width)
+            .ok()?
+            .saturating_mul(u64::try_from(region.height).ok()?);
+        self.transition(
+            vec![FrameRegion { region, waveform }],
+            self.dirty.saturating_add(area),
+            true,
+        )
     }
 
     /// Records a successfully applied transition.
-    pub fn commit(&mut self, surface: &Surface, transition: FrameTransition) -> bool {
-        if surface.width != self.width
-            || surface.height != self.height
-            || surface.pixels.len() != self.previous.len()
-            || transition.refresh != self.refreshes.saturating_add(1)
-        {
+    pub fn commit(&mut self, surface: &Surface, transition: &FrameTransition) -> bool {
+        if !self.matches(surface) || transition.refresh != self.refreshes.saturating_add(1) {
             return false;
         }
-        self.previous.copy_from_slice(&surface.pixels);
+        if transition.exact_damage {
+            for update in &transition.regions {
+                if !Self::copy_region(
+                    self.width,
+                    self.height,
+                    &mut self.previous,
+                    &surface.pixels,
+                    update.region,
+                ) {
+                    return false;
+                }
+            }
+        } else {
+            self.previous.copy_from_slice(&surface.pixels);
+        }
         self.dirty = transition.dirty;
         self.refreshes = transition.refresh;
         self.started = true;
@@ -9103,43 +9169,234 @@ impl FramePlanner {
         self.dirty
     }
 
-    /// The box enclosing every changed pixel, and how many actually changed.
-    ///
-    /// Both come out of one pass because the count is what the cleaning budget
-    /// is spent from and the box is what the controller is asked to repaint.
-    /// They are deliberately different quantities: one keystroke changes a word
-    /// at the top and a key at the bottom, so the box between them is most of
-    /// the panel while the pixels that moved are a rounding error. Charging the
-    /// box would put typing back where it started.
-    fn changed(&self, surface: &Surface) -> Option<(Rect, u64)> {
-        let (mut left, mut right) = (usize::MAX, 0usize);
-        let (mut top, mut bottom) = (usize::MAX, 0usize);
-        let mut flipped = 0_u64;
-        for (index, _) in surface
-            .pixels
-            .iter()
-            .zip(self.previous.iter())
-            .enumerate()
-            .filter(|(_, (current, previous))| current != previous)
-        {
-            let (x, y) = (index % self.width, index / self.width);
-            left = left.min(x);
-            right = right.max(x);
-            top = top.min(y);
-            bottom = bottom.max(y);
-            flipped = flipped.saturating_add(1);
-        }
-        (left <= right).then(|| {
-            (
-                Rect {
-                    x: i32::try_from(left).unwrap_or(i32::MAX),
-                    y: i32::try_from(top).unwrap_or(i32::MAX),
-                    width: i32::try_from(right - left + 1).unwrap_or(i32::MAX),
-                    height: i32::try_from(bottom - top + 1).unwrap_or(i32::MAX),
-                },
-                flipped,
-            )
+    fn matches(&self, surface: &Surface) -> bool {
+        surface.width == self.width
+            && surface.height == self.height
+            && surface.pixels.len() == self.previous.len()
+    }
+
+    fn whole(&self) -> Option<Rect> {
+        Some(Rect {
+            x: 0,
+            y: 0,
+            width: i32::try_from(self.width).ok()?,
+            height: i32::try_from(self.height).ok()?,
         })
+    }
+
+    fn transition(
+        &self,
+        regions: Vec<FrameRegion>,
+        dirty: u64,
+        exact_damage: bool,
+    ) -> Option<FrameTransition> {
+        let region = Self::bounding_region(&regions)?;
+        let waveform = regions
+            .iter()
+            .map(|update| update.waveform)
+            .max_by_key(|waveform| match waveform {
+                PanelWaveform::Du => 0,
+                PanelWaveform::Gl16 => 1,
+                PanelWaveform::Gc16 => 2,
+            })?;
+        Some(FrameTransition {
+            region,
+            waveform,
+            full: waveform == PanelWaveform::Gc16,
+            regions,
+            refresh: self.refreshes.saturating_add(1),
+            dirty,
+            exact_damage,
+        })
+    }
+
+    /// Changed regions and the exact number of pixels that changed.
+    ///
+    /// Whole-row slice comparisons find the vertical bounds using the library
+    /// comparison path. Pixel scanning then runs only on rows that differ.
+    fn changed_regions(&self, surface: &Surface) -> Option<(Vec<Rect>, u64)> {
+        let current_rows = surface.pixels.chunks_exact(self.width);
+        let previous_rows = self.previous.chunks_exact(self.width);
+        let top = current_rows
+            .clone()
+            .zip(previous_rows.clone())
+            .position(|(current, previous)| current != previous)?;
+        let bottom = current_rows
+            .clone()
+            .zip(previous_rows.clone())
+            .rposition(|(current, previous)| current != previous)?;
+        let mut regions = Vec::new();
+        let mut flipped = 0_u64;
+        for y in top..=bottom {
+            let current = surface.pixels.get(y * self.width..(y + 1) * self.width)?;
+            let previous = self.previous.get(y * self.width..(y + 1) * self.width)?;
+            if current == previous {
+                continue;
+            }
+            flipped = flipped.saturating_add(
+                current
+                    .iter()
+                    .zip(previous)
+                    .filter(|(now, before)| now != before)
+                    .count() as u64,
+            );
+            let mut x = 0;
+            while x < self.width {
+                let Some(relative) = current[x..]
+                    .iter()
+                    .zip(&previous[x..])
+                    .position(|(now, before)| now != before)
+                else {
+                    break;
+                };
+                let start = x + relative;
+                let mut last_changed = start;
+                let mut cursor = start + 1;
+                while cursor < self.width {
+                    if current[cursor] != previous[cursor] {
+                        last_changed = cursor;
+                    } else if cursor.saturating_sub(last_changed) > DAMAGE_JOIN_GAP as usize {
+                        break;
+                    }
+                    cursor += 1;
+                }
+                Self::merge_region(
+                    &mut regions,
+                    Rect {
+                        x: i32::try_from(start).ok()?,
+                        y: i32::try_from(y).ok()?,
+                        width: i32::try_from(last_changed - start + 1).ok()?,
+                        height: 1,
+                    },
+                );
+                x = last_changed + 1;
+            }
+        }
+        Self::limit_regions(&mut regions);
+        regions.sort_by_key(|region| (region.y, region.x));
+        Some((regions, flipped))
+    }
+
+    fn merge_region(regions: &mut Vec<Rect>, mut incoming: Rect) {
+        let mut index = 0;
+        while index < regions.len() {
+            if Self::regions_are_near(regions[index], incoming) {
+                incoming = Self::union(regions.swap_remove(index), incoming);
+                index = 0;
+            } else {
+                index += 1;
+            }
+        }
+        regions.push(incoming);
+    }
+
+    fn regions_are_near(left: Rect, right: Rect) -> bool {
+        let horizontal_gap = if left.x.saturating_add(left.width) < right.x {
+            right.x.saturating_sub(left.x.saturating_add(left.width))
+        } else if right.x.saturating_add(right.width) < left.x {
+            left.x.saturating_sub(right.x.saturating_add(right.width))
+        } else {
+            0
+        };
+        let vertical_gap = if left.y.saturating_add(left.height) < right.y {
+            right.y.saturating_sub(left.y.saturating_add(left.height))
+        } else if right.y.saturating_add(right.height) < left.y {
+            left.y.saturating_sub(right.y.saturating_add(right.height))
+        } else {
+            0
+        };
+        horizontal_gap <= DAMAGE_JOIN_GAP && vertical_gap <= DAMAGE_JOIN_GAP
+    }
+
+    fn union(left: Rect, right: Rect) -> Rect {
+        let x = left.x.min(right.x);
+        let y = left.y.min(right.y);
+        let far_x = left
+            .x
+            .saturating_add(left.width)
+            .max(right.x.saturating_add(right.width));
+        let far_y = left
+            .y
+            .saturating_add(left.height)
+            .max(right.y.saturating_add(right.height));
+        Rect {
+            x,
+            y,
+            width: far_x.saturating_sub(x),
+            height: far_y.saturating_sub(y),
+        }
+    }
+
+    fn bounding_region(regions: &[FrameRegion]) -> Option<Rect> {
+        regions
+            .iter()
+            .map(|update| update.region)
+            .reduce(Self::union)
+    }
+
+    fn limit_regions(regions: &mut Vec<Rect>) {
+        while regions.len() > MAX_FRAME_REGIONS {
+            let mut best = None;
+            for left in 0..regions.len() {
+                for right in left + 1..regions.len() {
+                    let union = Self::union(regions[left], regions[right]);
+                    let cost = Self::area(union)
+                        .saturating_sub(Self::area(regions[left]))
+                        .saturating_sub(Self::area(regions[right]));
+                    if best.is_none_or(|(_, _, best_cost)| cost < best_cost) {
+                        best = Some((left, right, cost));
+                    }
+                }
+            }
+            let Some((left, right, _)) = best else {
+                break;
+            };
+            let combined = Self::union(regions[left], regions[right]);
+            regions.swap_remove(right);
+            regions.swap_remove(left);
+            regions.push(combined);
+        }
+    }
+
+    fn area(region: Rect) -> u64 {
+        u64::try_from(region.width)
+            .unwrap_or(0)
+            .saturating_mul(u64::try_from(region.height).unwrap_or(0))
+    }
+
+    fn copy_region(
+        width: usize,
+        height: usize,
+        destination: &mut [u8],
+        source: &[u8],
+        region: Rect,
+    ) -> bool {
+        let Some(region) = region.intersection(Rect {
+            x: 0,
+            y: 0,
+            width: i32::try_from(width).unwrap_or(i32::MAX),
+            height: i32::try_from(height).unwrap_or(i32::MAX),
+        }) else {
+            return false;
+        };
+        let (Ok(x), Ok(y), Ok(region_width), Ok(region_height)) = (
+            usize::try_from(region.x),
+            usize::try_from(region.y),
+            usize::try_from(region.width),
+            usize::try_from(region.height),
+        ) else {
+            return false;
+        };
+        for row in y..y.saturating_add(region_height) {
+            let start = row.saturating_mul(width).saturating_add(x);
+            let end = start.saturating_add(region_width);
+            let (Some(to), Some(from)) = (destination.get_mut(start..end), source.get(start..end))
+            else {
+                return false;
+            };
+            to.copy_from_slice(from);
+        }
+        true
     }
 
     /// Changed pixels that may accumulate before the panel is cleaned.
@@ -13206,7 +13463,7 @@ mod tests {
         let first = planner.plan(&frame).expect("first frame refreshes");
         assert_eq!(first.waveform, PanelWaveform::Gc16);
         assert!(first.full);
-        assert!(planner.commit(&frame, first));
+        assert!(planner.commit(&frame, &first));
         assert!(planner.plan(&frame).is_none(), "unchanged frame refreshes");
 
         frame.pixels[2 * 8 + 3] = tone::INK;
@@ -13221,12 +13478,12 @@ mod tests {
                 height: 1,
             }
         );
-        assert!(planner.commit(&frame, black_and_white));
+        assert!(planner.commit(&frame, &black_and_white));
 
         frame.pixels[2 * 8 + 3] = tone::MUTED;
         let grey = planner.plan(&frame).expect("grey changed");
         assert_eq!(grey.waveform, PanelWaveform::Gl16);
-        assert!(planner.commit(&frame, grey));
+        assert!(planner.commit(&frame, &grey));
 
         frame.pixels[0] = tone::INK;
         let grey_outside_change = planner.plan(&frame).expect("black pixel changed");
@@ -13240,7 +13497,7 @@ mod tests {
         let mut planner = FramePlanner::new(2, 1);
         let mut frame = Surface::new(2, 1);
         let first = planner.plan(&frame).expect("first");
-        assert!(planner.commit(&frame, first));
+        assert!(planner.commit(&frame, &first));
         for index in 0..PANEL_CLEAN_INTERVAL {
             let tone = if index % 2 == 0 {
                 tone::INK
@@ -13251,7 +13508,7 @@ mod tests {
             frame.pixels[1] = tone;
             let partial = planner.plan(&frame).expect("partial");
             assert!(!partial.full, "repaint {index} should not flash");
-            assert!(planner.commit(&frame, partial));
+            assert!(planner.commit(&frame, &partial));
         }
         frame.pixels[0] = tone::MUTED;
         let cleaning = planner.plan(&frame).expect("cleaning refresh");
@@ -13271,7 +13528,7 @@ mod tests {
         let mut frame = Surface::new(64, 64);
         frame.clear(tone::PAPER);
         let first = planner.plan(&frame).expect("first");
-        assert!(planner.commit(&frame, first));
+        assert!(planner.commit(&frame, &first));
         let mut flashes = 0;
         for keystroke in 0..64 {
             // One character somewhere near the top, one key near the bottom.
@@ -13281,7 +13538,7 @@ mod tests {
             if update.full {
                 flashes += 1;
             }
-            assert!(planner.commit(&frame, update));
+            assert!(planner.commit(&frame, &update));
         }
         assert_eq!(
             flashes, 0,
@@ -13291,23 +13548,89 @@ mod tests {
 
     #[test]
     fn the_budget_is_spent_on_pixels_that_moved_not_on_the_box_around_them() {
-        // A keystroke's changed box spans the panel, from the text at the top
-        // to the key at the bottom. Charging the box rather than the pixels is
-        // exactly what made typing flash, so the two must stay different.
+        // A keystroke can change the text at the top and a key at the bottom.
+        // Those changes stay as separate panel regions and only the pixels
+        // that moved spend the cleaning budget.
         let mut planner = FramePlanner::new(32, 32);
         let mut frame = Surface::new(32, 32);
         frame.clear(tone::PAPER);
         let first = planner.plan(&frame).expect("first");
-        assert!(planner.commit(&frame, first));
+        assert!(planner.commit(&frame, &first));
         frame.pixels[0] = tone::INK;
         frame.pixels[32 * 32 - 1] = tone::INK;
         let update = planner.plan(&frame).expect("two corners");
         assert_eq!(
             (update.region.width, update.region.height),
             (32, 32),
-            "the controller is asked to repaint the whole box between them"
+            "the diagnostic bound still contains both changes"
         );
+        assert_eq!(update.regions.len(), 2);
+        assert!(update.regions.iter().any(|part| part.region
+            == Rect {
+                x: 0,
+                y: 0,
+                width: 1,
+                height: 1,
+            }));
+        assert!(update.regions.iter().any(|part| part.region
+            == Rect {
+                x: 31,
+                y: 31,
+                width: 1,
+                height: 1,
+            }));
         assert_eq!(update.dirty, 2, "but only two pixels are charged for");
+    }
+
+    #[test]
+    fn known_feedback_damage_does_not_hide_other_changes() {
+        let mut planner = FramePlanner::new(32, 32);
+        let mut frame = Surface::new(32, 32);
+        let first = planner.plan(&frame).expect("first");
+        assert!(planner.commit(&frame, &first));
+
+        frame.pixels[4 * 32 + 4] = tone::INK;
+        frame.pixels[28 * 32 + 28] = tone::INK;
+        let feedback = planner
+            .plan_damage(
+                &frame,
+                Rect {
+                    x: 2,
+                    y: 2,
+                    width: 6,
+                    height: 6,
+                },
+                PanelWaveform::Du,
+            )
+            .expect("feedback");
+        assert_eq!(feedback.regions.len(), 1);
+        assert_eq!(feedback.waveform, PanelWaveform::Du);
+        assert!(planner.commit(&frame, &feedback));
+
+        let remaining = planner.plan(&frame).expect("unhinted change remains");
+        assert_eq!(
+            remaining.region,
+            Rect {
+                x: 28,
+                y: 28,
+                width: 1,
+                height: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn one_frame_has_a_bounded_number_of_panel_regions() {
+        let mut planner = FramePlanner::new(256, 32);
+        let mut frame = Surface::new(256, 32);
+        let first = planner.plan(&frame).expect("first");
+        assert!(planner.commit(&frame, &first));
+        for index in 0..16 {
+            frame.pixels[index * 16] = tone::INK;
+        }
+        let update = planner.plan(&frame).expect("separated changes");
+        assert!(update.regions.len() <= MAX_FRAME_REGIONS);
+        assert_eq!(update.dirty, 16);
     }
 
     #[test]
