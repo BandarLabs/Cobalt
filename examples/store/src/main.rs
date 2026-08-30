@@ -18,6 +18,7 @@ const BEGIN_LINK: &str = "begin-link";
 const DISCONNECT_LINK: &str = "disconnect-link";
 const PREVIOUS: &str = "previous";
 const NEXT: &str = "next";
+const UPDATE_COBALT: &str = "update-cobalt";
 const QR_HANDLE: PictureHandle = PictureHandle(1);
 const QR_SCALE: u32 = 7;
 const QR_QUIET_ZONE: i32 = 4;
@@ -329,6 +330,7 @@ impl Store {
         };
         let installed = entry.installed_version.as_deref();
         let system = is_system_app(id);
+        let compatible = entry.is_compatible_with(env!("CARGO_PKG_VERSION"));
         let mut screen = ScreenBuilder::new("store-detail")
             .top_bar(entry.title.clone())
             .owns_back(true)
@@ -340,6 +342,7 @@ impl Store {
             .facts([
                 ("Available", entry.version.clone()),
                 ("Installed", installed.unwrap_or("Not installed").to_owned()),
+                ("Requires Cobalt", entry.minimum_cobalt_version.clone()),
                 (
                     "Management",
                     if system {
@@ -359,6 +362,20 @@ impl Store {
             ]);
         screen = if system {
             screen.bottom_action_marked(open_action(id), "Open", entry.glyph)
+        } else if !compatible {
+            if installed.is_some() {
+                screen.action_bar_marked(vec![
+                    (
+                        UPDATE_COBALT.to_owned(),
+                        "Update Cobalt",
+                        Some(Glyph::Refresh),
+                    ),
+                    (open_action(id), "Open", Some(entry.glyph)),
+                    (remove_action(id), "Uninstall", Some(Glyph::Trash)),
+                ])
+            } else {
+                screen.bottom_action_marked(UPDATE_COBALT, "Update Cobalt", Glyph::Refresh)
+            }
         } else if installed.is_some() {
             let mut actions = vec![
                 (open_action(id), "Open", Some(entry.glyph)),
@@ -474,6 +491,10 @@ impl KoboApp for Store {
             context.applications().refresh_catalog();
             return;
         }
+        if action == action_id(UPDATE_COBALT) {
+            context.launch("settings");
+            return;
+        }
         if action == action_id(PREVIOUS) || action == action_id(NEXT) {
             self.page = if action == action_id(NEXT) {
                 self.page.saturating_add(1)
@@ -498,10 +519,13 @@ impl KoboApp for Store {
                 || action == action_id(&remove_action(&entry.id))
         }) {
             let id = entry.id.clone();
+            let compatible = entry.is_compatible_with(env!("CARGO_PKG_VERSION"));
             if action == action_id(&open_action(&id)) {
                 context.launch(id);
             } else if action == action_id(&remove_action(&id)) {
                 self.request_uninstall(context, id);
+            } else if !compatible {
+                context.launch("settings");
             } else {
                 self.request_install(context, id);
             }
@@ -676,6 +700,14 @@ fn remote_install_notice(outcome: &RemoteInstallOutcome, entries: &[AppInfo]) ->
             "{} is not available in the current catalog. Nothing changed.",
             name(id)
         )),
+        RemoteInstallOutcome::RequiresCobalt {
+            id,
+            minimum_cobalt_version,
+        } => Some(format!(
+            "{} requires Cobalt {}. Update Cobalt, then try again.",
+            name(id),
+            minimum_cobalt_version
+        )),
     }
 }
 
@@ -694,6 +726,9 @@ fn denied(reason: DenyReason) -> &'static str {
 fn app_state(entry: &AppInfo) -> String {
     if is_system_app(&entry.id) {
         return "Installed · system".to_owned();
+    }
+    if !entry.is_compatible_with(env!("CARGO_PKG_VERSION")) {
+        return format!("Requires Cobalt {}", entry.minimum_cobalt_version);
     }
     match &entry.installed_version {
         None => "Available".to_owned(),
@@ -755,6 +790,7 @@ mod tests {
             label: id.to_owned(),
             summary: "A useful public Cobalt application.".to_owned(),
             version: "1.1.0".to_owned(),
+            minimum_cobalt_version: env!("CARGO_PKG_VERSION").to_owned(),
             glyph: Glyph::App,
             capabilities: vec!["network".to_owned()],
             installed_version: installed.map(str::to_owned),
@@ -821,6 +857,58 @@ mod tests {
         assert!(!commands
             .iter()
             .any(|command| matches!(command, Command::Device(DeviceRequest::Update { .. }))));
+    }
+
+    #[test]
+    fn an_incompatible_app_opens_the_cobalt_updater_instead_of_installing() {
+        let mut incompatible = app("notes", None);
+        incompatible.minimum_cobalt_version = "9.0.0".to_owned();
+        assert_eq!(app_state(&incompatible), "Requires Cobalt 9.0.0");
+
+        let mut runner = AppRunner::new(Store::default());
+        runner.start();
+        runner.device_result(DeviceResult::Apps {
+            entries: vec![incompatible.clone()],
+        });
+        runner.device_result(DeviceResult::AppLink(AppLinkState::Unpaired));
+        runner.device_result(DeviceResult::Apps {
+            entries: vec![incompatible],
+        });
+        runner.action(action_id(&app_action("notes")));
+        let commands = runner.action(action_id(&install_action("notes")));
+        assert!(commands
+            .iter()
+            .any(|command| matches!(command, Command::Launch(id) if id == "settings")));
+        assert!(!commands
+            .iter()
+            .any(|command| matches!(command, Command::Device(DeviceRequest::InstallApp { .. }))));
+    }
+
+    #[test]
+    fn an_incompatible_installed_app_can_still_open_or_be_removed() {
+        let mut incompatible = app("notes", Some("1.0.0"));
+        incompatible.minimum_cobalt_version = "9.0.0".to_owned();
+
+        let mut runner = AppRunner::new(Store::default());
+        runner.start();
+        runner.device_result(DeviceResult::Apps {
+            entries: vec![incompatible.clone()],
+        });
+        runner.device_result(DeviceResult::AppLink(AppLinkState::Unpaired));
+        runner.device_result(DeviceResult::Apps {
+            entries: vec![incompatible],
+        });
+        runner.action(action_id(&app_action("notes")));
+        let open = runner.action(action_id(&open_action("notes")));
+        assert!(open
+            .iter()
+            .any(|command| matches!(command, Command::Launch(id) if id == "notes")));
+
+        let remove = runner.action(action_id(&remove_action("notes")));
+        assert!(remove.iter().any(|command| matches!(
+            command,
+            Command::Device(DeviceRequest::UninstallApp { id }) if id == "notes"
+        )));
     }
 
     #[test]
@@ -1079,6 +1167,17 @@ mod tests {
             )
             .as_deref(),
             Some("removed-app is not available in the current catalog. Nothing changed.")
+        );
+        assert_eq!(
+            remote_install_notice(
+                &RemoteInstallOutcome::RequiresCobalt {
+                    id: "sudoku".to_owned(),
+                    minimum_cobalt_version: "0.4.0".to_owned(),
+                },
+                &[app("sudoku", None)]
+            )
+            .as_deref(),
+            Some("sudoku app requires Cobalt 0.4.0. Update Cobalt, then try again.")
         );
     }
 

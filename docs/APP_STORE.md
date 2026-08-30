@@ -5,6 +5,8 @@ Cobalt platform releases and Store app releases are separate:
 - Tagged `v*` releases publish the USB-installable Cobalt platform package.
 - Every accepted merge to `main` runs the app publishing workflow.
 - App-only changes do not require a Cobalt version bump or platform update.
+- Every changed app package requires a new app version, including changes from
+  a shared SDK or protocol dependency.
 
 Installed readers use the fixed app channel:
 
@@ -40,7 +42,9 @@ mint, alter, or replay install commands.
 Install requests wait for up to 72 hours. If the Kobo is offline, open Cobalt
 App Store after reconnecting to process the queue. The result distinguishes a
 new install, an update, an app already at the current version, an app included
-with Cobalt, and an app unavailable from the current catalog.
+with Cobalt, an app unavailable from the current catalog, and an app that
+requires a newer Cobalt release. In the last case the device reports the exact
+minimum release and does not download or run the app.
 
 Use **Disconnect all** on the Kobo to revoke every linked browser. With SSH
 enabled, the host maintenance command can do the same:
@@ -54,6 +58,11 @@ kobo app-link unpair --device <reader-address>
 Store apps are workspace packages declared in `apps/catalog.json`. The
 registry supplies public metadata; binary size and SHA-256 are calculated from
 the exact ARM release binary during publishing.
+
+`minimum_cobalt_version` must cover both the SDK wire protocol and the runtime
+services used by the app. Current SDK builds require Cobalt 0.2.4 or newer.
+The publishing check rejects a lower value, and a future protocol version
+cannot publish until its first compatible Cobalt release is recorded.
 
 The initial Cobalt applications are registered too. Their `0.2.0` copies are
 bundled for a useful first boot, appear as installed in Store, and can later be
@@ -73,8 +82,11 @@ See [CONTRIBUTING_APPS.md](CONTRIBUTING_APPS.md) for the contribution format.
    executable load segment.
 4. Uploads exactly one immutable artifact from each app runner.
 5. Downloads those artifacts on a fresh runner that has not executed app code.
-6. Builds and signs the packages and catalog only after that isolation.
-7. Replaces the assets on the fixed `app-catalog` GitHub release.
+6. Compares each app's code, local dependencies and public manifest with the
+   last successfully published catalog, and requires a new app version for any
+   change.
+7. Builds and signs the packages and catalog only after that isolation.
+8. Replaces the assets on the fixed `app-catalog` GitHub release.
 
 The workflow uses the protected `COBALT_APP_SIGNING_SEED` secret. Publishing
 fails if the seed does not derive the public key pinned in released runtimes.
