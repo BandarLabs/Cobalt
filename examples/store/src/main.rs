@@ -6,13 +6,12 @@
 
 use kobo_sdk::{
     action_id, ActionId, AppInfo, AppLinkState, Context, DenyReason, DeviceRequest, DeviceResult,
-    Glyph, Heartbeat, KoboApp, PictureHandle, RemoteInstallOutcome, RowLead, Screen, ScreenBuilder,
-    TaskId, TaskOutcome, TilePicture,
+    Glyph, Heartbeat, KoboApp, PictureHandle, Position, RemoteInstallOutcome, RowLead, Screen,
+    ScreenBuilder, TaskId, TaskOutcome, TilePicture,
 };
 use qrcodegen::{QrCode, QrCodeEcc};
 use std::process::ExitCode;
 
-const PAGE_SIZE: usize = 5;
 const REFRESH: &str = "refresh";
 const APP_LINK: &str = "app-link";
 const BEGIN_LINK: &str = "begin-link";
@@ -70,7 +69,7 @@ impl Default for Store {
 impl Store {
     fn show(&mut self, context: &mut Context) {
         let screen = match self.view.clone() {
-            View::Catalog => self.catalog(),
+            View::Catalog => self.catalog(context),
             View::Detail(id) => self.detail(&id),
             View::Working { id, action } => self.working(&id, action),
             View::AppLink => self.app_link(),
@@ -78,8 +77,24 @@ impl Store {
         context.set_screen(screen);
     }
 
-    fn catalog(&mut self) -> Screen {
-        let pages = self.entries.len().max(1).div_ceil(PAGE_SIZE);
+    fn catalog(&mut self, context: &Context) -> Screen {
+        let states = self.entries.iter().map(app_state).collect::<Vec<_>>();
+        let rows = self
+            .entries
+            .iter()
+            .zip(&states)
+            .map(|(entry, state)| (entry.title.as_str(), entry.summary.as_str(), state.as_str()))
+            .collect::<Vec<_>>();
+        let without_controls =
+            context.paginate_rows_with_trailing_after_section_at(&rows, false, Position::Elsewhere);
+        // A one-page catalog draws no bottom bar and gets that room for apps.
+        // Once it turns, measure again with the navigation bar it will draw.
+        let page_indices = if without_controls.len() > 1 {
+            context.paginate_rows_with_trailing_after_section_at(&rows, true, Position::Elsewhere)
+        } else {
+            without_controls
+        };
+        let pages = page_indices.len();
         self.page = self.page.min(pages - 1);
         let mut screen = ScreenBuilder::new("store-catalog")
             .top_bar("App Store")
@@ -106,7 +121,6 @@ impl Store {
                 .bottom_action_marked(REFRESH, "Refresh", Glyph::Refresh);
             return screen.build();
         }
-        let start = self.page * PAGE_SIZE;
         screen = screen
             .section_with_value(
                 if self.refreshing {
@@ -117,10 +131,9 @@ impl Store {
                 format!("{} / {pages}", self.page + 1),
             )
             .rows_with_trailing(
-                self.entries
+                page_indices[self.page]
                     .iter()
-                    .skip(start)
-                    .take(PAGE_SIZE)
+                    .filter_map(|index| self.entries.get(*index))
                     .map(|entry| {
                         (
                             app_action(&entry.id),
@@ -385,9 +398,6 @@ impl Store {
                 .then_with(|| left.id.cmp(&right.id))
         });
         self.entries = entries;
-        self.page = self
-            .page
-            .min(self.entries.len().max(1).div_ceil(PAGE_SIZE) - 1);
     }
 
     fn request_install(&mut self, context: &mut Context, id: String) {
@@ -726,7 +736,17 @@ fn main() -> ExitCode {
 mod tests {
     use super::*;
     use kobo_sdk::{AppRunner, Command};
-    use kobo_ui::{Chrome, LayoutKind, CLARA_BW_METRICS};
+    use kobo_ui::{
+        Chrome, DisplayMetrics, LayoutIssueKind, LayoutKind, TextScale, CLARA_BW_METRICS,
+    };
+    use std::collections::BTreeSet;
+
+    const ELIPSA_2E_METRICS: DisplayMetrics = DisplayMetrics {
+        width: 1404,
+        height: 1872,
+        pixels_per_inch: 227,
+        text_scale: TextScale::Default,
+    };
 
     fn app(id: &str, installed: Option<&str>) -> AppInfo {
         AppInfo {
@@ -878,7 +898,8 @@ mod tests {
                 .map(|index| app(&format!("app-{index}"), None))
                 .collect(),
         );
-        let screen = store.catalog();
+        let context = AppRunner::new(Store::default()).context();
+        let screen = store.catalog(&context);
         let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(false));
         assert!(layout
             .nodes
@@ -888,6 +909,84 @@ mod tests {
             .nodes
             .iter()
             .all(|node| { node.rect.y + node.rect.height <= CLARA_BW_METRICS.height }));
+    }
+
+    #[test]
+    fn catalog_uses_the_room_available_on_the_elipsa_panel() {
+        let mut store = Store::default();
+        store.replace_entries(
+            (0..6)
+                .map(|index| app(&format!("app-{index}"), None))
+                .collect(),
+        );
+        let context = AppRunner::with_metrics(Store::default(), ELIPSA_2E_METRICS).context();
+        let screen = store.catalog(&context);
+        let layout = screen.layout_with(&ELIPSA_2E_METRICS, &Chrome::with_back(false));
+        let rows = layout
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, LayoutKind::Row(..)))
+            .count();
+        assert_eq!(rows, 6, "the sixth app was moved to another page");
+    }
+
+    #[test]
+    fn measured_catalog_pages_show_every_app_without_clipping() {
+        for metrics in [CLARA_BW_METRICS, ELIPSA_2E_METRICS] {
+            for count in (1..=12).chain([30]) {
+                let mut store = Store::default();
+                store.replace_entries(
+                    (0..count)
+                        .map(|index| app(&format!("app-{index}"), None))
+                        .collect(),
+                );
+                let context = AppRunner::with_metrics(Store::default(), metrics).context();
+                let mut shown = BTreeSet::new();
+                for requested_page in 0..store.entries.len() {
+                    store.page = requested_page;
+                    let screen = store.catalog(&context);
+                    if store.page != requested_page {
+                        break;
+                    }
+                    let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(false));
+                    assert!(
+                        diagnostics.issues.iter().all(|issue| !matches!(
+                            issue.kind,
+                            LayoutIssueKind::ContentOverflow { .. } | LayoutIssueKind::Clipped
+                        )),
+                        "catalog of {count} apps, page {requested_page}, did not fit \
+                         {metrics:?}: {:?}",
+                        diagnostics.issues
+                    );
+                    if screen.nav_bar.is_some() || screen.bottom_action.is_some() {
+                        let content_bottom = metrics.height - metrics.nav_bar_height();
+                        assert!(
+                            diagnostics.layout.nodes.iter().all(|node| {
+                                !matches!(node.kind, LayoutKind::Row(..))
+                                    || node.rect.y + node.rect.height <= content_bottom
+                            }),
+                            "catalog of {count} apps, page {requested_page}, put a row under \
+                             the bottom controls on {metrics:?}"
+                        );
+                    }
+                    shown.extend(diagnostics.layout.nodes.iter().filter_map(
+                        |node| match node.kind {
+                            LayoutKind::Row(action) => Some(action),
+                            _ => None,
+                        },
+                    ));
+                }
+                let expected = store
+                    .entries
+                    .iter()
+                    .map(|entry| action_id(&app_action(&entry.id)))
+                    .collect::<BTreeSet<_>>();
+                assert_eq!(
+                    shown, expected,
+                    "a catalog of {count} apps lost entries on {metrics:?}"
+                );
+            }
+        }
     }
 
     #[test]
