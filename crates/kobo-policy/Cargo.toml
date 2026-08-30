@@ -11,6 +11,7 @@ description = "Capability, task, storage, and credential policy for Kobo applica
 [dependencies]
 kobo-abi = { version = "0.3.0", path = "../kobo-abi" }
 kobo-dict = { version = "0.3.0", path = "../kobo-dict" }
+kobo-net = { version = "0.3.0", path = "../kobo-net" }
 kobo-protocol = { version = "0.3.0", path = "../kobo-protocol" }
 
 [lints]

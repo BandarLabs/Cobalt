@@ -781,6 +781,7 @@ version = "0.3.0"
 dependencies = [
  "kobo-abi",
  "kobo-dict",
+ "kobo-net",
  "kobo-protocol",
 ]
 

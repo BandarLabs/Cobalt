@@ -29,7 +29,7 @@ pub mod pem;
 pub mod serve;
 pub mod sha256;
 
-use kobo_protocol::{Credential, SecretHeader, TaskError};
+use kobo_protocol::TaskError;
 use std::borrow::Cow;
 use std::fmt::Write as _;
 use std::io::{Read, Write};
@@ -180,77 +180,6 @@ pub fn parse(url: &str) -> Result<Address, TaskError> {
 #[must_use]
 pub fn has_origin(url: &str, host: &str, port: u16) -> bool {
     parse(url).is_ok_and(|address| address.host.eq_ignore_ascii_case(host) && address.port == port)
-}
-
-/// The narration voices the audiobook application may spend its `ElevenLabs`
-/// key on: one per offered language, native accents. The application holds
-/// the same list in its pipeline; a voice added there must be added here.
-const AUDIOBOOK_VOICES: [&str; 6] = [
-    "JBFqnCBsd6RMkjVDRZzb", // George, English
-    "1qEiC6qsybMkmnNdVMbK", // Monika Sogam, Hindi
-    "l1zE9xgNpUTaQCZzpNJa", // Alberto Rodríguez, Spanish
-    "aQROLel5sQbj1vuIVi6B", // Nicolas, French
-    "7eVMgwCnXydb3CikjV7a", // Lea, German
-    "4VZIsMPtgggwNg7OXbPY", // James Gao, Chinese
-];
-
-/// Whether a shipped application may attach one named secret to this URL.
-///
-/// The application selects a service, but the runtime independently binds the
-/// secret, header convention and HTTPS origin. A modified application can no
-/// longer turn a stored credential into a POST to an address it controls.
-///
-/// It lives here, beside [`has_origin`], because both the device runtime and
-/// the simulator have to apply the same answer. They did not: the simulator
-/// installed no policy at all, so every credentialed request was refused off
-/// the device, and the two applications that need a key could only be run on
-/// hardware. That is the one thing this project is arranged to avoid.
-#[must_use]
-pub fn credential_allowed(app: &str, credential: &Credential, url: &str) -> bool {
-    if app == "audiobook" {
-        return match (&*credential.secret, &credential.header) {
-            ("exa", SecretHeader::Named(header)) => {
-                header.eq_ignore_ascii_case("x-api-key")
-                    && url == "https://api.exa.ai/agent/runs"
-                    && has_origin(url, "api.exa.ai", 443)
-            }
-            ("openai", SecretHeader::Bearer) => {
-                url == "https://api.openai.com/v1/responses"
-                    && has_origin(url, "api.openai.com", 443)
-            }
-            ("elevenlabs", SecretHeader::Named(header)) => {
-                header.eq_ignore_ascii_case("xi-api-key")
-                    && AUDIOBOOK_VOICES.iter().any(|voice| {
-                        url == format!(
-                            "https://api.elevenlabs.io/v1/text-to-speech/{voice}?output_format=mp3_44100_128"
-                        )
-                    })
-                    && has_origin(url, "api.elevenlabs.io", 443)
-            }
-            _ => false,
-        };
-    }
-    if app != "chat" {
-        return false;
-    }
-    match (&*credential.secret, &credential.header) {
-        ("openai", SecretHeader::Bearer) => {
-            url == "https://api.openai.com/v1/chat/completions"
-                && has_origin(url, "api.openai.com", 443)
-        }
-        ("anthropic", SecretHeader::Named(header)) => {
-            header.eq_ignore_ascii_case("x-api-key")
-                && url == "https://api.anthropic.com/v1/messages"
-                && has_origin(url, "api.anthropic.com", 443)
-        }
-        ("gemini", SecretHeader::Named(header)) => {
-            header.eq_ignore_ascii_case("x-goog-api-key")
-                && url
-                    == "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-                && has_origin(url, "generativelanguage.googleapis.com", 443)
-        }
-        _ => false,
-    }
 }
 
 /// What a server said, once the status line has been understood.
@@ -501,7 +430,7 @@ fn decode_chunked(mut body: &[u8]) -> Result<Vec<u8>, TaskError> {
 /// past the ceiling is [`TaskError::TooLarge`], and a refusal by the server is
 /// [`TaskError::NotFound`].
 pub fn fetch(url: &str, max_bytes: u32) -> Result<Vec<u8>, TaskError> {
-    get(url, None, max_bytes, &[])
+    get(url, None, max_bytes, None, &[])
 }
 
 /// Fetches `url` starting `offset` bytes in, returning at most `max_bytes`.
@@ -520,6 +449,9 @@ pub fn fetch(url: &str, max_bytes: u32) -> Result<Vec<u8>, TaskError> {
 /// the ceiling then reports it as too large rather than handing back the
 /// beginning of the book labelled as the middle.
 ///
+/// `credential`, when present, is the runtime-owned secret header, kept apart
+/// so redirects cannot mistake it for an ordinary application header.
+///
 /// `headers` are the non-secret headers the application asked for, already
 /// checked by the runtime against the ones it owns itself: an application
 /// cannot be one of these headers, because `offset` is the only thing
@@ -533,6 +465,7 @@ pub fn fetch_from(
     url: &str,
     offset: u32,
     max_bytes: u32,
+    credential: Option<(&str, &str)>,
     headers: &[(&str, &str)],
 ) -> Result<Vec<u8>, TaskError> {
     // The last gate before the socket, and the same one `post` applies to its
@@ -541,13 +474,14 @@ pub fn fetch_from(
     let valid_header = |name: &str, value: &str| {
         name.parse::<http::HeaderName>().is_ok() && value.parse::<http::HeaderValue>().is_ok()
     };
-    if headers
-        .iter()
-        .any(|(name, value)| !valid_header(name, value))
+    if credential.is_some_and(|(name, value)| !valid_header(name, value))
+        || headers
+            .iter()
+            .any(|(name, value)| !valid_header(name, value))
     {
         return Err(TaskError::Denied);
     }
-    get(url, Some(offset), max_bytes, headers)
+    get(url, Some(offset), max_bytes, credential, headers)
 }
 
 /// The one implementation behind [`fetch`] and [`fetch_from`].
@@ -555,12 +489,22 @@ fn get(
     url: &str,
     offset: Option<u32>,
     max_bytes: u32,
+    credential: Option<(&str, &str)>,
     headers: &[(&str, &str)],
 ) -> Result<Vec<u8>, TaskError> {
     let mut target = url.to_string();
+    let mut forwarded = headers;
     for _ in 0..=MAX_REDIRECTS {
         let address = parse(&target)?;
-        let response = request(&address, &Method::Get { offset, headers }, max_bytes)?;
+        let response = request(
+            &address,
+            &Method::Get {
+                offset,
+                credential,
+                headers: forwarded,
+            },
+            max_bytes,
+        )?;
         match split_response(&response, max_bytes)? {
             Response::Body(body) => {
                 return if body.len() > max_bytes as usize {
@@ -569,10 +513,33 @@ fn get(
                     Ok(body.to_vec())
                 };
             }
-            Response::Redirect(location) => target = resolve_redirect(&address, &location)?,
+            Response::Redirect(location) => {
+                let next = resolve_redirect(&address, &location)?;
+                let next_address = parse(&next)?;
+                forwarded = redirect_headers(&address, &next_address, credential, forwarded)?;
+                target = next;
+            }
         }
     }
     Err(TaskError::Unreachable)
+}
+
+/// Keeps ordinary application headers on same-origin redirects. Any redirect
+/// carrying a runtime credential is denied: the target cannot be re-authorized
+/// after the server chooses it, even when it has the same origin.
+fn redirect_headers<'a>(
+    current: &Address,
+    next: &Address,
+    credential: Option<(&str, &str)>,
+    headers: &'a [(&'a str, &'a str)],
+) -> Result<&'a [(&'a str, &'a str)], TaskError> {
+    if credential.is_some() {
+        return Err(TaskError::Denied);
+    }
+    if next.host.eq_ignore_ascii_case(&current.host) && next.port == current.port {
+        return Ok(headers);
+    }
+    Ok(&[])
 }
 
 /// What is sent, beyond the address.
@@ -581,6 +548,9 @@ enum Method<'a> {
         /// Where to start reading, as a byte offset, or `None` to ask for the
         /// whole document with no range header at all.
         offset: Option<u32>,
+        /// The runtime-owned credential, kept separate from application
+        /// headers so redirect handling retains its provenance.
+        credential: Option<(&'a str, &'a str)>,
         /// Further headers the request needs, none of them secret and none of
         /// them `Range`: that one is derived from `offset` alone, in [`head`],
         /// so an application cannot widen or move the piece it was granted.
@@ -714,7 +684,11 @@ fn head(address: &Address, method: &Method<'_>, max_bytes: u32) -> String {
         "{verb} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: {connection}\r\nAccept-Encoding: {encoding}\r\nUser-Agent: kobo-runtime\r\n"
     );
     match method {
-        Method::Get { offset, headers } => {
+        Method::Get {
+            offset,
+            credential,
+            headers,
+        } => {
             // Closed at both ends, because an open-ended range invites the
             // server to send the rest of a book that does not fit. Sent for
             // the first piece as well as later ones: a request for the opening
@@ -724,6 +698,9 @@ fn head(address: &Address, method: &Method<'_>, max_bytes: u32) -> String {
                 let last = u64::from(*start) + u64::from(max_bytes) - 1;
                 write!(head, "Range: bytes={start}-{last}\r\n")
                     .expect("writing to a String cannot fail");
+            }
+            if let Some((name, value)) = credential {
+                write!(head, "{name}: {value}\r\n").expect("writing to a String cannot fail");
             }
             // Written after `Range`, and never able to replace it: `headers`
             // here has already been through the same reserved-name gate
@@ -1184,72 +1161,55 @@ mod tests {
     /// enough that nothing in this module ever reaches it.
     const CEILING: u32 = 64 * 1024;
 
-    /// The policy is one function for both runtimes, so the tests that pin
-    /// it live beside it rather than in whichever runtime happened to own it
-    /// first. In the device runtime they only ran under a feature flag.
     #[test]
-    fn chat_credentials_are_bound_to_their_exact_service() {
-        use kobo_protocol::Credential;
-
-        let openai = Credential::bearer("openai");
-        assert!(super::credential_allowed(
-            "chat",
-            &openai,
-            "https://api.openai.com/v1/chat/completions"
-        ));
-        for (app, url) in [
-            ("other", "https://api.openai.com/v1/chat/completions"),
-            (
-                "chat",
-                "https://api.openai.com.attacker.invalid/v1/chat/completions",
-            ),
-            ("chat", "https://attacker.invalid/collect"),
+    fn runtime_credentials_are_refused_on_any_redirect() {
+        let zotero_current =
+            super::parse("https://api.zotero.org/users/123/items/ABCD2345?format=json")
+                .expect("Zotero item route");
+        let zotero_next =
+            super::parse("https://api.zotero.org/users/123/items/EFGH6789?format=json")
+                .expect("Zotero full-text route");
+        let other_current =
+            super::parse("https://api.openai.com/v1/chat/completions").expect("OpenAI route");
+        let other_next =
+            super::parse("https://api.openai.com/v1/responses").expect("same-origin OpenAI route");
+        let other_origin = super::parse("https://attacker.invalid/collect").expect("other origin");
+        for credential in [
+            ("Authorization", "Bearer private"),
+            ("x-api-key", "private"),
+            ("x-goog-api-key", "private"),
+            ("xi-api-key", "private"),
         ] {
-            assert!(!super::credential_allowed(app, &openai, url));
+            for (current, next) in [
+                (&zotero_current, &zotero_next),
+                (&other_current, &other_next),
+                (&other_current, &other_origin),
+            ] {
+                assert_eq!(
+                    super::redirect_headers(current, next, Some(credential), &[]),
+                    Err(TaskError::Denied)
+                );
+            }
         }
     }
 
     #[test]
-    fn audiobook_credentials_are_bound_to_exact_provider_requests() {
-        use kobo_protocol::Credential;
+    fn ordinary_headers_survive_same_origin_redirects() {
+        let current =
+            super::parse("https://api.openai.com/v1/chat/completions").expect("OpenAI route");
+        let same_origin =
+            super::parse("https://api.openai.com/v1/responses").expect("same-origin route");
+        let other_origin = super::parse("https://attacker.invalid/collect").expect("other origin");
+        let ordinary = [("Accept", "application/json")];
 
-        let requests = [
-            (
-                Credential::in_header("exa", "x-api-key"),
-                "https://api.exa.ai/agent/runs".to_owned(),
-            ),
-            (
-                Credential::bearer("openai"),
-                "https://api.openai.com/v1/responses".to_owned(),
-            ),
-        ];
-        let voices = super::AUDIOBOOK_VOICES.map(|voice| {
-            (
-                Credential::in_header("elevenlabs", "xi-api-key"),
-                format!(
-                    "https://api.elevenlabs.io/v1/text-to-speech/{voice}?output_format=mp3_44100_128"
-                ),
-            )
-        });
-        for (credential, url) in requests.into_iter().chain(voices) {
-            assert!(super::credential_allowed("audiobook", &credential, &url));
-            assert!(!super::credential_allowed("chat", &credential, &url));
-            assert!(!super::credential_allowed(
-                "audiobook",
-                &credential,
-                "https://attacker.invalid/collect"
-            ));
-        }
-        // A different voice, a different format, or a path dressed up as a
-        // query must all be refused: the key is bound to these narrators.
-        let elevenlabs = Credential::in_header("elevenlabs", "xi-api-key");
-        for url in [
-            "https://api.elevenlabs.io/v1/text-to-speech/AAAAAAAAAAAAAAAAAAAA?output_format=mp3_44100_128",
-            "https://api.elevenlabs.io/v1/text-to-speech/JBFqnCBsd6RMkjVDRZzb?output_format=mp3_22050_32",
-            "https://api.elevenlabs.io.attacker.invalid/v1/text-to-speech/JBFqnCBsd6RMkjVDRZzb?output_format=mp3_44100_128",
-        ] {
-            assert!(!super::credential_allowed("audiobook", &elevenlabs, url));
-        }
+        assert_eq!(
+            super::redirect_headers(&current, &same_origin, None, &ordinary),
+            Ok(&ordinary[..])
+        );
+        assert_eq!(
+            super::redirect_headers(&current, &other_origin, None, &ordinary),
+            Ok(&[][..])
+        );
     }
 
     use super::has_default_route;
@@ -1435,6 +1395,7 @@ mod tests {
             &address,
             &Method::Get {
                 offset: None,
+                credential: None,
                 headers: &[]
             },
             1024
@@ -1444,6 +1405,7 @@ mod tests {
             &address,
             &Method::Get {
                 offset: Some(1024),
+                credential: None,
                 headers: &[]
             },
             1024
@@ -1488,6 +1450,7 @@ mod tests {
             &book(),
             &Method::Get {
                 offset: Some(0),
+                credential: None,
                 headers: &[],
             },
             262_144,
@@ -1504,6 +1467,7 @@ mod tests {
             &book(),
             &Method::Get {
                 offset: Some(262_144),
+                credential: None,
                 headers: &[],
             },
             262_144,
@@ -1522,6 +1486,7 @@ mod tests {
             &book(),
             &Method::Get {
                 offset: None,
+                credential: None,
                 headers: &[],
             },
             262_144,
@@ -1623,6 +1588,7 @@ mod tests {
             &address,
             &Method::Get {
                 offset: None,
+                credential: None,
                 headers: &[],
             },
             1024,
@@ -1763,6 +1729,7 @@ mod tests {
             &address,
             &Method::Get {
                 offset: None,
+                credential: None,
                 headers: &[],
             },
             512 * 1024,
@@ -1795,6 +1762,7 @@ mod tests {
             &address,
             &Method::Get {
                 offset: Some(262_144),
+                credential: None,
                 headers: &[],
             },
             262_144,
@@ -1972,7 +1940,7 @@ mod tests {
         // and nothing on this side could see it: the failure appears as a 401
         // from the far end.
         let address = parse("https://api.anthropic.com/v1/messages").expect("a URL");
-        let head = head(
+        let post_head = head(
             &address,
             &Method::Post {
                 body: b"{}",
@@ -1982,10 +1950,34 @@ mod tests {
             },
             1024,
         );
-        assert!(head.contains("x-api-key: not-a-real-key\r\n"), "{head}");
-        assert!(head.contains("anthropic-version: 2023-06-01\r\n"), "{head}");
-        assert!(!head.contains('*'), "{head}");
-        assert!(head.contains("Content-Length: 2\r\n"), "{head}");
+        assert!(
+            post_head.contains("x-api-key: not-a-real-key\r\n"),
+            "{post_head}"
+        );
+        assert!(
+            post_head.contains("anthropic-version: 2023-06-01\r\n"),
+            "{post_head}"
+        );
+        assert!(!post_head.contains('*'), "{post_head}");
+        assert!(post_head.contains("Content-Length: 2\r\n"), "{post_head}");
+
+        let fetch_head = head(
+            &address,
+            &Method::Get {
+                offset: None,
+                credential: Some(("x-api-key", "not-a-real-key")),
+                headers: &[("anthropic-version", "2023-06-01")],
+            },
+            1024,
+        );
+        assert!(
+            fetch_head.contains("x-api-key: not-a-real-key\r\n"),
+            "{fetch_head}"
+        );
+        assert!(
+            fetch_head.contains("anthropic-version: 2023-06-01\r\n"),
+            "{fetch_head}"
+        );
     }
 
     #[test]

@@ -1157,7 +1157,7 @@ fn host_applications(
         }
     };
     let audio_fetcher: kobo_hal::audio::StreamFetcher = Arc::new(|url, offset, max_bytes| {
-        kobo_net::fetch_from(url, offset, max_bytes, &[]).map_err(|error| match error {
+        kobo_net::fetch_from(url, offset, max_bytes, None, &[]).map_err(|error| match error {
             // A reader with no route and a service that will not answer are
             // different things everywhere else, but `DeviceError` is the radio
             // vocabulary and has one word for both. Unreachable is the honest
@@ -2585,8 +2585,8 @@ fn start_application(
         .with_fetch(Arc::new(kobo_net::fetch_from))
         .with_post(Arc::new(kobo_net::post))
         .with_secrets(SECRETS)
-        .with_credential_policy(Arc::new(move |credential, url| {
-            kobo_net::credential_allowed(&credential_app, credential, url)
+        .with_credential_policy(Arc::new(move |credential, url, usage| {
+            kobo_policy::credentials::allowed(&credential_app, credential, url, usage)
         }))
         .with_wake(Arc::new(move || {
             let _ = waker.send(Event::TaskReady);
