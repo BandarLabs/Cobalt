@@ -17,10 +17,12 @@ use crate::refresh::{Backend, Rect, RefreshPlan};
 use crate::surface::{self, RegionSnapshot, SurfaceError, SurfaceGeometry};
 use kobo_abi::{hwtcon, mxcfb};
 use kobo_profile::{DeviceProfile, DeviceSnapshot, WRITE_EVIDENCE_PENDING};
+use std::collections::VecDeque;
 use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read};
 use std::path::Path;
+use std::sync::Mutex;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
@@ -169,6 +171,45 @@ pub struct DisplaySession {
     backend: Backend,
     profile: &'static DeviceProfile,
     snapshot: DeviceSnapshot,
+    panel_work: Mutex<PanelWork>,
+}
+
+/// Maximum number of panel updates Cobalt will leave unfinished at once.
+///
+/// The controller has its own finite queue, but that capacity is not part of
+/// either stable userspace interface. Keeping a smaller bound here prevents a
+/// burst of disjoint changes from depending on an undocumented driver limit.
+const PANEL_WORK_LIMIT: usize = 8;
+
+#[derive(Debug)]
+struct PanelRefresh {
+    marker: u32,
+    region: Rect,
+    sent_at: Instant,
+}
+
+#[derive(Debug, Default)]
+struct PanelWork {
+    unfinished: VecDeque<PanelRefresh>,
+}
+
+impl PanelWork {
+    fn remove_where(
+        &mut self,
+        mut selected: impl FnMut(&PanelRefresh) -> bool,
+    ) -> VecDeque<PanelRefresh> {
+        let mut removed = VecDeque::new();
+        let mut retained = VecDeque::with_capacity(self.unfinished.len());
+        while let Some(refresh) = self.unfinished.pop_front() {
+            if selected(&refresh) {
+                removed.push_back(refresh);
+            } else {
+                retained.push_back(refresh);
+            }
+        }
+        self.unfinished = retained;
+        removed
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -256,6 +297,7 @@ impl DisplaySession {
             backend: Backend::from_controller(profile.framebuffer_controller),
             profile,
             snapshot,
+            panel_work: Mutex::new(PanelWork::default()),
         })
     }
 
@@ -286,6 +328,7 @@ impl DisplaySession {
     ///
     /// Returns an error when the region is invalid or the read fails.
     pub fn capture(&self, region: Rect) -> Result<RegionSnapshot, DisplayError> {
+        let _work = self.lock_panel_work()?;
         Ok(surface::read_region(
             &self.framebuffer,
             self.geometry,
@@ -299,10 +342,35 @@ impl DisplaySession {
     ///
     /// # Errors
     ///
-    /// Returns an error when the write fails.
+    /// Returns an error when an overlapping panel update cannot be completed
+    /// or the write fails.
     pub fn restore(&self, snapshot: &RegionSnapshot) -> Result<(), DisplayError> {
+        self.restore_timed(snapshot).map(|_| ())
+    }
+
+    /// [`Self::restore`], with the time spent making the destination safe to
+    /// overwrite.
+    ///
+    /// Panel updates read from the shared framebuffer after submission. A
+    /// later write may proceed immediately when it is elsewhere on the panel,
+    /// but an overlapping write first completes the earlier update. The lock
+    /// covers both that check and the write, so two callers cannot race a new
+    /// overlapping submission into the gap.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the work lock is unavailable, an overlapping
+    /// update cannot be completed, or the framebuffer write fails.
+    pub fn restore_timed(
+        &self,
+        snapshot: &RegionSnapshot,
+    ) -> Result<RefreshFenceTiming, DisplayError> {
+        let mut work = self.lock_panel_work()?;
+        let region = snapshot.placement().region();
+        let timing =
+            self.finish_matching(&mut work, |unfinished| unfinished.region.intersects(region))?;
         surface::write_region(&self.framebuffer, self.geometry, snapshot)?;
-        Ok(())
+        Ok(timing)
     }
 
     /// Submits one hardware update for `plan` and waits for it to complete.
@@ -318,6 +386,62 @@ impl DisplaySession {
         self.refresh_timed(plan).map(|_| ())
     }
 
+    /// Submits one update without waiting for the panel to finish it.
+    ///
+    /// The update remains owned by this session. Before a later framebuffer
+    /// write touches the same region, [`Self::restore`] completes it. Full
+    /// cleaning updates first complete all earlier work so the controller
+    /// cannot combine a clean with stale partial updates. The outstanding set
+    /// is bounded even when every update is disjoint.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the region is invalid, the work lock is
+    /// unavailable, an earlier update cannot be completed, or submission
+    /// fails.
+    pub fn refresh_deferred(
+        &self,
+        plan: RefreshPlan,
+    ) -> Result<RefreshSubmissionTiming, DisplayError> {
+        surface::RegionPlacement::new(self.geometry, plan.region)?;
+        let mut work = self.lock_panel_work()?;
+        let prior = if plan.full {
+            self.finish_matching(&mut work, |_| true)?
+        } else if work.unfinished.len() >= PANEL_WORK_LIMIT {
+            let oldest = work.unfinished.front().map(|refresh| refresh.marker);
+            self.finish_matching(&mut work, |refresh| Some(refresh.marker) == oldest)?
+        } else {
+            RefreshFenceTiming::default()
+        };
+        let issued = self.issue(plan)?;
+        work.unfinished.push_back(PanelRefresh {
+            marker: issued.marker,
+            region: plan.region,
+            sent_at: Instant::now(),
+        });
+        Ok(RefreshSubmissionTiming {
+            submitted_waveform: issued.submitted_waveform,
+            translated_waveform: issued.translated_waveform,
+            submit: issued.submit,
+            prior,
+            unfinished: work.unfinished.len(),
+        })
+    }
+
+    /// Completes every update submitted through [`Self::refresh_deferred`].
+    ///
+    /// Called before the panel is handed back to the stock reader and before
+    /// lifecycle operations that change display ownership.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the work lock is unavailable or an unfinished
+    /// update cannot be completed.
+    pub fn finish_pending(&self) -> Result<RefreshFenceTiming, DisplayError> {
+        let mut work = self.lock_panel_work()?;
+        self.finish_matching(&mut work, |_| true)
+    }
+
     /// [`Self::refresh`], instrumented.
     ///
     /// Measures the submit and wait ioctls separately and reads back the
@@ -331,49 +455,126 @@ impl DisplaySession {
     pub fn refresh_timed(&self, plan: RefreshPlan) -> Result<RefreshTiming, DisplayError> {
         // Validate the region against this exact surface before the kernel sees it.
         surface::RegionPlacement::new(self.geometry, plan.region)?;
+        let mut work = self.lock_panel_work()?;
+        self.finish_matching(&mut work, |_| true)?;
+        let issued = self.issue(plan)?;
+        let wait_started = Instant::now();
+        self.wait_for_marker(issued.marker)?;
+        Ok(RefreshTiming {
+            submitted_waveform: issued.submitted_waveform,
+            translated_waveform: issued.translated_waveform,
+            submit: issued.submit,
+            wait: wait_started.elapsed(),
+        })
+    }
+
+    fn issue(&self, plan: RefreshPlan) -> Result<IssuedRefresh, DisplayError> {
         let marker = unique_marker()?;
-        // The two backends' wait requests happen to be the same number over
-        // the same struct, so one path would work for both. It is still
-        // written out twice: the coincidence belongs to this kernel, not to
-        // the interface, and a device whose wait struct grew a field would
-        // otherwise be served a MediaTek ioctl through an i.MX session with
-        // nothing in the code to make that visible.
         let submitted_waveform = plan.waveform(self.backend);
-        let (translated_waveform, submit, wait) = match self.backend {
+        let (translated_waveform, submit) = match self.backend {
             Backend::Hwtcon => {
                 let mut update = plan.hwtcon_update_data(marker);
                 let submit_started = Instant::now();
                 hwtcon::send_update(&self.framebuffer, &mut update)?;
-                let submit = submit_started.elapsed();
-                let mut wait = hwtcon::HwtconUpdateMarkerData {
-                    update_marker: marker,
-                    collision_test: 0,
-                };
-                let wait_started = Instant::now();
-                hwtcon::wait_for_update_complete(&self.framebuffer, &mut wait)?;
-                (update.waveform_mode, submit, wait_started.elapsed())
+                (update.waveform_mode, submit_started.elapsed())
             }
             Backend::Mxcfb => {
                 let mut update = plan.mxcfb_update_data(marker);
                 let submit_started = Instant::now();
                 mxcfb::send_update(&self.framebuffer, &mut update)?;
-                let submit = submit_started.elapsed();
+                (update.waveform_mode, submit_started.elapsed())
+            }
+        };
+        Ok(IssuedRefresh {
+            marker,
+            submitted_waveform,
+            translated_waveform,
+            submit,
+        })
+    }
+
+    fn wait_for_marker(&self, marker: u32) -> Result<(), DisplayError> {
+        // The two backends currently use the same request shape. Keeping the
+        // calls separate makes the hardware boundary explicit if either ABI
+        // changes later.
+        match self.backend {
+            Backend::Hwtcon => {
+                let mut wait = hwtcon::HwtconUpdateMarkerData {
+                    update_marker: marker,
+                    collision_test: 0,
+                };
+                hwtcon::wait_for_update_complete(&self.framebuffer, &mut wait)?;
+            }
+            Backend::Mxcfb => {
                 let mut wait = mxcfb::MxcfbUpdateMarkerData {
                     update_marker: marker,
                     collision_test: 0,
                 };
-                let wait_started = Instant::now();
                 mxcfb::wait_for_update_complete(&self.framebuffer, &mut wait)?;
-                (update.waveform_mode, submit, wait_started.elapsed())
             }
-        };
-        Ok(RefreshTiming {
-            submitted_waveform,
-            translated_waveform,
-            submit,
-            wait,
-        })
+        }
+        Ok(())
     }
+
+    fn finish_matching(
+        &self,
+        work: &mut PanelWork,
+        selected: impl FnMut(&PanelRefresh) -> bool,
+    ) -> Result<RefreshFenceTiming, DisplayError> {
+        let mut timing = RefreshFenceTiming::default();
+        for refresh in work.remove_where(selected) {
+            timing.oldest = timing.oldest.max(refresh.sent_at.elapsed());
+            let wait_started = Instant::now();
+            self.wait_for_marker(refresh.marker)?;
+            timing.wait += wait_started.elapsed();
+            timing.completed += 1;
+        }
+        Ok(timing)
+    }
+
+    fn lock_panel_work(&self) -> Result<std::sync::MutexGuard<'_, PanelWork>, DisplayError> {
+        self.panel_work
+            .lock()
+            .map_err(|_| DisplayError::Io(io::Error::other("display work lock was poisoned")))
+    }
+}
+
+impl Drop for DisplaySession {
+    fn drop(&mut self) {
+        let _ = self.finish_pending();
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct IssuedRefresh {
+    marker: u32,
+    submitted_waveform: u32,
+    translated_waveform: u32,
+    submit: Duration,
+}
+
+/// Work completed before a framebuffer write or refresh submission could
+/// safely proceed.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RefreshFenceTiming {
+    /// Number of earlier updates completed.
+    pub completed: usize,
+    /// Time spent inside completion ioctls.
+    pub wait: Duration,
+    /// Age of the oldest completed update when the fence began.
+    pub oldest: Duration,
+}
+
+/// What one non-blocking refresh submission measured.
+#[derive(Clone, Copy, Debug)]
+pub struct RefreshSubmissionTiming {
+    pub submitted_waveform: u32,
+    pub translated_waveform: u32,
+    pub submit: Duration,
+    /// Earlier work completed before this update could be submitted.
+    pub prior: RefreshFenceTiming,
+    /// Number of unfinished updates retained after submission.
+    pub unfinished: usize,
 }
 
 /// What one instrumented refresh measured.
@@ -636,9 +837,9 @@ fn unique_marker() -> Result<u32, DisplayError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        unique_marker, AttendedSmokeStage, DisplayError, DisplaySession, Rect, RefreshPlan,
-        WritePolicy, ATTENDED_SMOKE_UNLOCK_PHRASE, OWNER_UNLOCK_PHRASE, SMOKE_FIXED_REGION,
-        SMOKE_PATCH_REGION, SMOKE_UPDATE_IS_FULL, SMOKE_VISIBLE_HOLD,
+        unique_marker, AttendedSmokeStage, DisplayError, DisplaySession, PanelRefresh, PanelWork,
+        Rect, RefreshPlan, WritePolicy, ATTENDED_SMOKE_UNLOCK_PHRASE, OWNER_UNLOCK_PHRASE,
+        SMOKE_FIXED_REGION, SMOKE_PATCH_REGION, SMOKE_UPDATE_IS_FULL, SMOKE_VISIBLE_HOLD,
     };
     use crate::surface::{RegionPlacement, SurfaceGeometry};
     use kobo_abi::{hwtcon, mxcfb};
@@ -647,6 +848,69 @@ mod tests {
         CLARA_BW_391, ELIPSA_2E_389, WRITE_EVIDENCE_PENDING,
     };
     use std::path::Path;
+    use std::time::Instant;
+
+    fn pending(marker: u32, region: Rect) -> PanelRefresh {
+        PanelRefresh {
+            marker,
+            region,
+            sent_at: Instant::now(),
+        }
+    }
+
+    #[test]
+    fn selecting_overlapping_panel_work_keeps_disjoint_updates_in_order() {
+        let mut work = PanelWork::default();
+        work.unfinished.push_back(pending(
+            1,
+            Rect {
+                x: 0,
+                y: 0,
+                width: 20,
+                height: 20,
+            },
+        ));
+        work.unfinished.push_back(pending(
+            2,
+            Rect {
+                x: 100,
+                y: 100,
+                width: 20,
+                height: 20,
+            },
+        ));
+        work.unfinished.push_back(pending(
+            3,
+            Rect {
+                x: 10,
+                y: 10,
+                width: 20,
+                height: 20,
+            },
+        ));
+        let write = Rect {
+            x: 15,
+            y: 15,
+            width: 2,
+            height: 2,
+        };
+
+        let selected = work.remove_where(|refresh| refresh.region.intersects(write));
+        assert_eq!(
+            selected
+                .iter()
+                .map(|refresh| refresh.marker)
+                .collect::<Vec<_>>(),
+            vec![1, 3]
+        );
+        assert_eq!(
+            work.unfinished
+                .iter()
+                .map(|refresh| refresh.marker)
+                .collect::<Vec<_>>(),
+            vec![2]
+        );
+    }
 
     fn matched_snapshot() -> DeviceSnapshot {
         snapshot_for(

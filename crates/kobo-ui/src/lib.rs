@@ -4196,6 +4196,19 @@ pub struct Layout {
     pub prose_face: Face,
 }
 
+/// The visible control under a finger and the feedback cadence it needs.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PressRegion {
+    pub rect: Rect,
+    pub class: PressClass,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PressClass {
+    Control,
+    KeyboardKey,
+}
+
 /// How urgently a screen diagnostic should be treated.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum DiagnosticSeverity {
@@ -4397,6 +4410,17 @@ impl Layout {
     /// the button.
     #[must_use]
     pub fn pressed_control(&self, x: i32, y: i32) -> Option<Rect> {
+        self.press_region(x, y).map(|press| press.rect)
+    }
+
+    /// The pressed rectangle together with whether it belongs to the compact
+    /// keyboard path.
+    ///
+    /// Keyboard keys change both the key and the field they feed. Naming that
+    /// here lets the runtime briefly hold the release so those changes can be
+    /// submitted together, without guessing from a rectangle's dimensions.
+    #[must_use]
+    pub fn press_region(&self, x: i32, y: i32) -> Option<PressRegion> {
         self.nodes
             .iter()
             .filter(|node| node.rect.contains(x, y))
@@ -4425,7 +4449,14 @@ impl Layout {
             .min_by_key(|node| {
                 i64::from(node.rect.width.max(0)) * i64::from(node.rect.height.max(0))
             })
-            .map(|node| node.rect)
+            .map(|node| PressRegion {
+                rect: node.rect,
+                class: if matches!(node.kind, LayoutKind::Cell(_, CellStyle::Key)) {
+                    PressClass::KeyboardKey
+                } else {
+                    PressClass::Control
+                },
+            })
     }
 
     /// How much of the band between the bars is already spoken for.
@@ -18145,6 +18176,34 @@ mod press_feedback_tests {
         assert_eq!(
             layout.pressed_control(text.x + text.width / 2, text.y + text.height / 2),
             None
+        );
+    }
+
+    #[test]
+    fn a_non_square_text_grid_identifies_keyboard_feedback() {
+        let screen = Screen::new(
+            1,
+            vec![Node::Grid {
+                id: NodeId(1),
+                columns: 2,
+                square: false,
+                cells: vec![Cell::new(ActionId(1), "A"), Cell::new(ActionId(2), "B")],
+            }],
+        );
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        let key = layout
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::Cell(_, CellStyle::Key)))
+            .expect("a key was laid out")
+            .rect;
+
+        assert_eq!(
+            layout.press_region(key.x + key.width / 2, key.y + key.height / 2),
+            Some(PressRegion {
+                rect: key,
+                class: PressClass::KeyboardKey,
+            })
         );
     }
 
