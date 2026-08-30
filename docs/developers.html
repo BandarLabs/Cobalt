@@ -53,14 +53,6 @@ nav.top a.active, nav.top a:hover { color: var(--cobalt); }
 .testimonial { width: 100%; max-width: 550px; overflow: hidden; }
 .testimonial .twitter-tweet { margin: 0 !important; }
 .testimonial iframe { width: 100% !important; max-width: 550px !important; }
-.kicker {
-  font-family: var(--mono); font-size: 13px; letter-spacing: .14em;
-  text-transform: uppercase; color: var(--cobalt); margin-bottom: 14px;
-}
-.kicker::before {
-  content: ""; display: inline-block; width: 9px; height: 9px;
-  margin-right: 10px; background: var(--cobalt);
-}
 h1 { font-size: 38px; line-height: 1.06; letter-spacing: -.015em; max-width: 13em; }
 .lede { margin-top: 20px; max-width: 38em; font-size: 20px; }
 .quiet { margin-top: 10px; color: var(--ink-soft); max-width: 43em; }
@@ -72,6 +64,12 @@ h1 { font-size: 38px; line-height: 1.06; letter-spacing: -.015em; max-width: 13e
 .btn:hover { color: var(--paper); background: var(--ink); text-decoration: none; }
 .btn.primary { color: #fff; background: var(--cobalt); border-color: var(--cobalt); }
 .btn.primary:hover { background: var(--cobalt-deep); border-color: var(--cobalt-deep); }
+.hero-start { margin-top: 34px; max-width: 34em; }
+.hero-start > p {
+  color: var(--ink-soft); font: 12px/1.4 var(--mono);
+  letter-spacing: .12em; text-transform: uppercase;
+}
+.hero-start pre { margin-top: 10px; }
 section { padding: 48px 0; border-bottom: 1px solid var(--rule); }
 h2 { font-size: 30px; line-height: 1.12; margin-bottom: 18px; }
 .path, .resources { display: grid; grid-template-columns: 1fr; gap: 1px; background: var(--rule); border: 1px solid var(--rule); }
@@ -144,13 +142,19 @@ footer nav { display: flex; flex-wrap: wrap; gap: 16px 20px; margin-top: 20px; }
   <div class="intro">
     <div class="wrap intro-grid">
       <div>
-        <p class="kicker">Build for Cobalt</p>
         <h1>Put your idea on an e-ink screen.</h1>
         <p class="lede">Create a Rust app, run it in our simulator, try it on a supported reader, and publish it to Cobalt Store.</p>
         <p class="quiet">You can start without a device. Hardware testing comes after the interaction works in the simulator.</p>
         <div class="cta">
           <a class="btn primary" href="sdk.html#quick-start">Create an app</a>
           <a class="btn" href="https://github.com/BandarLabs/Cobalt/blob/main/docs/CONTRIBUTING_APPS.md">Publish an app</a>
+        </div>
+        <div class="hero-start">
+          <p>Start in the simulator</p>
+<pre><code>cargo install --path crates/kobo-cli
+kobo new my-app
+cd my-app
+kobo dev</code></pre>
         </div>
       </div>
       <aside class="testimonial" aria-label="Community testimonial">
@@ -171,10 +175,6 @@ footer nav { display: flex; flex-wrap: wrap; gap: 16px 20px; margin-top: 20px; }
         <div class="step"><b>3. Test</b><p>Confirm the final interface and device behavior on supported hardware.</p></div>
         <div class="step"><b>4. Publish</b><p>Submit the app for review and independent Store delivery.</p></div>
       </div>
-<pre><code>cargo install --path crates/kobo-cli
-kobo new my-app
-cd my-app
-kobo dev</code></pre>
     </div>
   </section>
 
