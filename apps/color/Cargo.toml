@@ -1,0 +1,11 @@
+[package]
+name = "kobo-color"
+version = "0.1.0"
+edition = "2021"
+authors = ["Cobalt Contributors"]
+license = "MIT OR Apache-2.0"
+description = "Color test and pattern evaluator for Color E Ink displays"
+
+[dependencies]
+kobo-sdk = { path = "../../crates/kobo-sdk" }
+kobo-ui = { path = "../../crates/kobo-ui" }
