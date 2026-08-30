@@ -128,8 +128,8 @@ fi
 # refused with Failed. A kernel mount, not a write to the root filesystem, and
 # gone again at the next reboot.
 if ! grep -q ' /dev/pts ' /proc/mounts 2>/dev/null; then
-  mkdir -p /dev/pts
-  mount -t devpts devpts /dev/pts -o mode=0620,ptmxmode=0666 || true
+  mkdir -p /dev/pts 2>/dev/null &&
+    mount -t devpts devpts /dev/pts -o mode=0620,ptmxmode=0666 || true
 fi
 KOBO_PRESENT_UNLOCK=OWNER_ATTENDED_PANEL_SESSION \\
   exec \"$root/bin/kobod\" --present \"$root/bin/kobo-launcher\" > /mnt/onboard/kobod.txt 2>&1
