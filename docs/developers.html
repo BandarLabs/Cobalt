@@ -76,10 +76,20 @@ h2 { font-size: 30px; line-height: 1.12; margin-bottom: 18px; }
 .resource h3 { margin-bottom: 7px; font-size: 20px; }
 .resource a { color: var(--ink); }
 .resource a:hover { color: var(--cobalt); }
+.example { display: grid; grid-template-columns: 1fr; gap: 28px; align-items: start; }
+.example > * { min-width: 0; }
+.example p { color: var(--ink-soft); }
+.example p + p { margin-top: 14px; }
 pre {
   margin-top: 24px; padding: 16px 18px; overflow-wrap: anywhere;
   white-space: pre-wrap; border-left: 3px solid var(--cobalt);
   background: var(--ink); color: #e8e2d4; font: 13px/1.6 var(--mono);
+}
+pre .kw { color: #8fb4ff; }
+pre .str { color: #c9b98a; }
+code.inline {
+  padding: 2px 6px; border: 1px solid var(--rule); background: var(--paper-deep);
+  font: .82em var(--mono);
 }
 footer { padding: 42px 0 48px; color: #fff; background: var(--cobalt); font-size: 15px; }
 footer a { color: #fff; text-decoration: underline; text-underline-offset: 3px; }
@@ -101,6 +111,7 @@ footer nav { display: flex; flex-wrap: wrap; gap: 16px 20px; margin-top: 20px; }
 @media (min-width: 900px) {
   .intro { padding: 82px 0 76px; }
   .path { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .example { grid-template-columns: minmax(240px, .75fr) minmax(0, 1.25fr); gap: 56px; }
 }
 </style>
 </head>
@@ -150,6 +161,60 @@ footer nav { display: flex; flex-wrap: wrap; gap: 16px 20px; margin-top: 20px; }
 kobo new my-app
 cd my-app
 kobo dev</code></pre>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap example">
+      <div>
+        <h2>An app is one Rust file.</h2>
+        <p>Implement <code class="inline">KoboApp</code>, draw the current screen, and handle named actions.</p>
+        <p>This counter has one value and one button. Run it with <code class="inline">kobo dev</code>, then add only the services the app needs.</p>
+        <p><a href="sdk.html#quick-start">Continue with the SDK reference</a></p>
+      </div>
+<pre><code><span class="kw">use</span> kobo_sdk::{
+    action_id, ActionId, Context,
+    KoboApp, ScreenBuilder,
+};
+
+#[derive(Default)]
+<span class="kw">struct</span> Counter { taps: u32 }
+
+<span class="kw">impl</span> KoboApp <span class="kw">for</span> Counter {
+    <span class="kw">fn</span> on_start(&amp;<span class="kw">mut</span> self, ctx: &amp;<span class="kw">mut</span> Context) {
+        self.show(ctx);
+    }
+
+    <span class="kw">fn</span> on_action(
+        &amp;<span class="kw">mut</span> self,
+        ctx: &amp;<span class="kw">mut</span> Context,
+        action: ActionId,
+    ) {
+        <span class="kw">if</span> action == action_id(<span class="str">"tap"</span>) {
+            self.taps += 1;
+        }
+        self.show(ctx);
+    }
+}
+
+<span class="kw">impl</span> Counter {
+    <span class="kw">fn</span> show(&amp;self, ctx: &amp;<span class="kw">mut</span> Context) {
+        ctx.set_screen(
+            ScreenBuilder::new(<span class="str">"counter"</span>)
+                .top_bar(<span class="str">"Counter"</span>)
+                .heading(format!(<span class="str">"{} taps"</span>, self.taps))
+                .primary_button(<span class="str">"tap"</span>, <span class="str">"Tap"</span>)
+                .build(),
+        );
+    }
+}
+
+<span class="kw">fn</span> main() {
+    <span class="kw">let</span> _ = kobo_sdk::run(
+        <span class="str">"counter"</span>,
+        Counter::default(),
+    );
+}</code></pre>
     </div>
   </section>
 
