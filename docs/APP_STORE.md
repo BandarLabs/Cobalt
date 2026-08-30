@@ -5,6 +5,8 @@ Cobalt platform releases and Store app releases are separate:
 - Tagged `v*` releases publish the USB-installable Cobalt platform package.
 - Every accepted merge to `main` runs the app publishing workflow.
 - App-only changes do not require a Cobalt version bump or platform update.
+- Every changed app package requires a new app version, including changes from
+  a shared SDK or protocol dependency.
 
 Installed readers use the fixed app channel:
 
@@ -56,6 +58,11 @@ kobo app-link unpair --device <reader-address>
 Store apps are workspace packages declared in `apps/catalog.json`. The
 registry supplies public metadata; binary size and SHA-256 are calculated from
 the exact ARM release binary during publishing.
+
+`minimum_cobalt_version` must cover both the SDK wire protocol and the runtime
+services used by the app. Current SDK builds require Cobalt 0.2.4 or newer.
+The publishing check rejects a lower value, and a future protocol version
+cannot publish until its first compatible Cobalt release is recorded.
 
 The initial Cobalt applications are registered too. Their `0.2.0` copies are
 bundled for a useful first boot, appear as installed in Store, and can later be
