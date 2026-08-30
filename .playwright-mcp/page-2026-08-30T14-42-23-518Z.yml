@@ -1,0 +1,713 @@
+- generic [active] [ref=f1e1]:
+  - banner [ref=f1e2]:
+    - generic [ref=f1e3]:
+      - link [ref=f1e4] [cursor=pointer]:
+        - /url: index.html
+        - img "Cobalt" [ref=f1e5]
+      - navigation [ref=f1e6]:
+        - link "Home" [ref=f1e7] [cursor=pointer]:
+          - /url: index.html
+        - link "Developers" [ref=f1e8] [cursor=pointer]:
+          - /url: sdk.html
+        - link "FAQ" [ref=f1e9] [cursor=pointer]:
+          - /url: faq.html
+        - link "App Store" [ref=f1e10] [cursor=pointer]:
+          - /url: APP_STORE.md
+        - link "Install" [ref=f1e11] [cursor=pointer]:
+          - /url: INSTALL.md
+        - link "GitHub" [ref=f1e12] [cursor=pointer]:
+          - /url: https://github.com/BandarLabs/Cobalt
+  - main [ref=f1e13]:
+    - article [ref=f1e14]:
+      - generic [ref=f1e15]:
+        - heading "Build apps for Cobalt." [level=1] [ref=f1e16]
+        - paragraph [ref=f1e17]: Create a Rust application, run it in the simulator, and publish it for supported e-readers.
+        - paragraph [ref=f1e18]: Cobalt provides the interface, device services, application lifecycle, packaging, and Store delivery.
+        - generic [ref=f1e19]:
+          - link "Quick start" [ref=f1e20] [cursor=pointer]:
+            - /url: "#quick-start"
+          - link "Publish an app" [ref=f1e21] [cursor=pointer]:
+            - /url: CONTRIBUTING_APPS.md
+      - generic [ref=f1e22]:
+        - heading "From idea to Store" [level=2] [ref=f1e23]
+        - generic [ref=f1e24]:
+          - generic [ref=f1e25]:
+            - heading "1. Create" [level=3] [ref=f1e26]
+            - paragraph [ref=f1e27]: Start from the application template and describe each screen with the public SDK.
+          - generic [ref=f1e28]:
+            - heading "2. Test" [level=3] [ref=f1e29]
+            - paragraph [ref=f1e30]: Run the browser and runtime simulators, check failure states, and verify the interface on a supported reader.
+          - generic [ref=f1e31]:
+            - heading "3. Submit" [level=3] [ref=f1e32]
+            - paragraph [ref=f1e33]: Open a pull request with tests, a clean panel screenshot, and evidence from the physical device.
+          - generic [ref=f1e34]:
+            - heading "4. Publish" [level=3] [ref=f1e35]
+            - paragraph [ref=f1e36]: After review, the release workflow signs the application and adds it to Store without a platform release.
+        - generic [ref=f1e37]:
+          - link "Application contribution guide" [ref=f1e38] [cursor=pointer]:
+            - /url: CONTRIBUTING_APPS.md
+          - link "Worked examples" [ref=f1e39] [cursor=pointer]:
+            - /url: https://github.com/BandarLabs/Cobalt/tree/main/examples
+          - link "Component gallery" [ref=f1e40] [cursor=pointer]:
+            - /url: https://github.com/BandarLabs/Cobalt/tree/main/examples/gallery
+      - generic [ref=f1e41]:
+        - heading "Create an application" [level=2] [ref=f1e42]
+        - paragraph [ref=f1e43]: "Install the CLI, create an application and start the browser simulator:"
+        - code [ref=f1e45]: cargo install --path crates/kobo-cli kobo new my-app cd my-app kobo dev
+        - paragraph [ref=f1e46]:
+          - text: Implement
+          - code [ref=f1e47]: KoboApp
+          - text: ", render the current state and handle named actions:"
+        - code [ref=f1e49]: "use kobo_sdk::{action_id, ActionId, Context, KoboApp, ScreenBuilder}; #[derive(Default)] struct Counter { taps: u32 } impl KoboApp for Counter { fn on_start(&mut self, context: &mut Context) { self.show(context); } fn on_action(&mut self, context: &mut Context, action: ActionId) { if action == action_id(\"tap\") { self.taps += 1; } self.show(context); } } impl Counter { fn show(&self, context: &mut Context) { context.set_screen( ScreenBuilder::new(\"counter\") .top_bar(\"Counter\") .heading(format!(\"{} taps\", self.taps)) .primary_button(\"tap\", \"Tap\") .build(), ); } } fn main() { let _ = kobo_sdk::run(\"counter\", Counter::default()); }"
+        - generic [ref=f1e50]:
+          - strong [ref=f1e51]: Hardware support.
+          - text: The Kobo Clara BW N365, device code 391; Kobo Clara Colour N367, device code 393; Kobo Elipsa 2E N605, device code 389; Kobo Clara HD N249, device code 376; Kobo Libra 2 N418, device code 388; and Kobo Libra Colour N428, device code 390 are fully hardware-tested at the exact firmware and kernel versions in the
+          - link "device support matrix" [ref=f1e52] [cursor=pointer]:
+            - /url: https://github.com/BandarLabs/Cobalt/blob/main/docs/DEVICES.md#device-support-matrix
+          - text: .
+      - generic [ref=f1e53]:
+        - heading "Application callbacks" [level=2] [ref=f1e54]
+        - paragraph [ref=f1e55]:
+          - text: The runtime delivers events to one
+          - code [ref=f1e56]: KoboApp
+          - text: . Rebuild the screen after state changes. Do not block callbacks or retain renderer objects.
+        - table [ref=f1e58]:
+          - rowgroup [ref=f1e59]:
+            - row [ref=f1e60]:
+              - columnheader "Callback" [ref=f1e61]
+              - columnheader "When it runs" [ref=f1e62]
+          - rowgroup [ref=f1e63]:
+            - row [ref=f1e64]:
+              - cell [ref=f1e65]:
+                - code [ref=f1e66]: on_start
+              - cell "The application session starts. Draw the first screen and request initial data." [ref=f1e67]
+            - row [ref=f1e68]:
+              - cell [ref=f1e69]:
+                - code [ref=f1e70]: on_action
+              - cell "A named button, row, tile, key, navigation item or Back action was activated." [ref=f1e71]
+            - row [ref=f1e72]:
+              - cell [ref=f1e73]:
+                - code [ref=f1e74]: on_text_hold
+              - cell "A selectable rich-text word was held, with stable text coordinates." [ref=f1e75]
+            - row [ref=f1e76]:
+              - cell [ref=f1e77]:
+                - code [ref=f1e78]: on_task
+              - cell "An asynchronous fetch, post, file read or sleep completed, failed or was cancelled." [ref=f1e79]
+            - row [ref=f1e80]:
+              - cell [ref=f1e81]:
+                - code [ref=f1e82]: on_device_result
+              - cell "A device, radio, audio, dictionary, update or app-catalog request answered." [ref=f1e83]
+            - row [ref=f1e84]:
+              - cell [ref=f1e85]:
+                - code [ref=f1e86]: on_store
+              - cell "Private key-value or shelf storage answered." [ref=f1e87]
+            - row [ref=f1e88]:
+              - cell [ref=f1e89]:
+                - code [ref=f1e90]: on_shell_event
+              - cell "The runtime-owned terminal opened, produced bytes, closed or was refused." [ref=f1e91]
+            - row [ref=f1e92]:
+              - cell [ref=f1e93]:
+                - code [ref=f1e94]: on_cover_change
+              - cell "The hall sensor's settled magnet state changed while the app was foregrounded." [ref=f1e95]
+            - row [ref=f1e96]:
+              - cell [ref=f1e97]:
+                - code [ref=f1e98]: on_background
+                - text: /
+                - code [ref=f1e99]: on_foreground
+              - cell "The reader left for another app and later returned. Work continues while backgrounded." [ref=f1e100]
+            - row [ref=f1e101]:
+              - cell [ref=f1e102]:
+                - code [ref=f1e103]: on_suspend
+                - text: /
+                - code [ref=f1e104]: on_resume
+              - cell "The device session suspends and resumes." [ref=f1e105]
+            - row [ref=f1e106]:
+              - cell [ref=f1e107]:
+                - code [ref=f1e108]: on_scheduled_wake
+              - cell "A capability-gated background wake is delivered." [ref=f1e109]
+            - row [ref=f1e110]:
+              - cell [ref=f1e111]:
+                - code [ref=f1e112]: on_exit
+              - cell "The application session is ending." [ref=f1e113]
+        - paragraph [ref=f1e114]:
+          - text: Callbacks have a 250 ms deadline. Hand slow work to
+          - code [ref=f1e115]: Context::spawn
+          - text: and render an activity or skeleton state while it runs.
+      - generic [ref=f1e116]:
+        - heading "UI components" [level=2] [ref=f1e117]
+        - paragraph [ref=f1e118]:
+          - code [ref=f1e119]: ScreenBuilder
+          - text: provides 94 component and configuration methods. The renderer handles physical size, wrapping, grayscale tone, touch geometry and refresh strategy.
+        - generic [ref=f1e120]:
+          - generic [ref=f1e121]:
+            - heading "Text and documents" [level=3] [ref=f1e122]
+            - paragraph [ref=f1e123]:
+              - code [ref=f1e124]: heading
+              - text: ", hierarchical headings, plain and linked text, styled and selectable rich text, inline formulae, metadata, sections, facts, quotes, bylines, tables and pictures."
+          - generic [ref=f1e125]:
+            - heading "Actions and input" [level=3] [ref=f1e126]
+            - paragraph [ref=f1e127]: Primary, secondary and disabled buttons, fields with clear actions, chips, choices, steppers, text entry and terminal keyboards.
+          - generic [ref=f1e128]:
+            - heading "Collections and media" [level=3] [ref=f1e129]
+            - paragraph [ref=f1e130]: Rows, checklists, trailing values, row menus, paged lists, tiles, app tiles, picture tiles, configurable tile grids, boards and glyph controls.
+          - generic [ref=f1e131]:
+            - heading "Navigation and overlays" [level=3] [ref=f1e132]
+            - paragraph [ref=f1e133]: Top bars, tabs, destination bars, action bars, pinned bottom actions, page turns, reading menus, holds, popovers, overflow menus and modal sheets.
+          - generic [ref=f1e134]:
+            - heading "Feedback and states" [level=3] [ref=f1e135]
+            - paragraph [ref=f1e136]: Banners, progress, activity, cancellation, byte transfers, skeletons, splash screens, confirmations and standard empty, offline, denied and error states.
+          - generic [ref=f1e137]:
+            - heading "Adaptive layout" [level=3] [ref=f1e138]
+            - paragraph [ref=f1e139]: Semantic spacing, dividers, bottom fill and two- or three-slot bands. Bands stack automatically on narrow panels.
+        - generic [ref=f1e140]:
+          - link "Method-by-method UI reference" [ref=f1e141] [cursor=pointer]:
+            - /url: https://github.com/BandarLabs/Cobalt/blob/main/SDK.md#3-ui-component-reference
+          - link "Rendered component gallery" [ref=f1e142] [cursor=pointer]:
+            - /url: https://github.com/BandarLabs/Cobalt/tree/main/examples/gallery
+      - generic [ref=f1e143]:
+        - heading "Runtime services" [level=2] [ref=f1e144]
+        - table [ref=f1e146]:
+          - rowgroup [ref=f1e151]:
+            - row [ref=f1e152]:
+              - columnheader "Surface" [ref=f1e153]
+              - columnheader "Developer API" [ref=f1e154]
+              - columnheader "Purpose" [ref=f1e155]
+          - rowgroup [ref=f1e156]:
+            - row [ref=f1e157]:
+              - cell "Display" [ref=f1e158]
+              - cell [ref=f1e159]:
+                - code [ref=f1e160]: set_screen
+                - text: ","
+                - code [ref=f1e161]: put_picture
+                - text: ","
+                - code [ref=f1e162]: put_font
+              - cell [ref=f1e163]:
+                - text: Publish a screen and bounded picture or book-font resources; release them with
+                - code [ref=f1e164]: drop_picture
+                - text: and
+                - code [ref=f1e165]: drop_font
+                - text: .
+            - row [ref=f1e166]:
+              - cell "Async work" [ref=f1e167]
+              - cell [ref=f1e168]:
+                - code [ref=f1e169]: spawn
+                - text: ","
+                - code [ref=f1e170]: spawn_retrying
+                - text: ","
+                - code [ref=f1e171]: cancel
+              - cell "HTTPS fetch/post, app-private file reads and sleeps without blocking the event loop." [ref=f1e172]
+            - row [ref=f1e173]:
+              - cell "Small state" [ref=f1e174]
+              - cell [ref=f1e175]:
+                - code [ref=f1e176]: store().save/load/cache/load_cached/forget/list
+              - cell "Atomic app-private keyed state and evictable cache values." [ref=f1e177]
+            - row [ref=f1e178]:
+              - cell "Large state" [ref=f1e179]
+              - cell [ref=f1e180]:
+                - code [ref=f1e181]: shelf()
+                - text: ","
+                - code [ref=f1e182]: ShelfUpload
+                - text: ","
+                - code [ref=f1e183]: ShelfDownload
+              - cell "App-private books, audio, covers and other large blobs transferred in bounded chunks." [ref=f1e184]
+            - row [ref=f1e185]:
+              - cell "Application handoff" [ref=f1e186]
+              - cell [ref=f1e187]:
+                - code [ref=f1e188]: launch
+              - cell "Ask the runtime to open an installed catalog application by stable ID." [ref=f1e189]
+            - row [ref=f1e190]:
+              - cell "App catalog" [ref=f1e191]
+              - cell [ref=f1e192]:
+                - code [ref=f1e193]: applications()
+              - cell "List installed apps, read or refresh the signed catalog, install/update and uninstall. Identity-authorized for launcher and Store apps." [ref=f1e194]
+            - row [ref=f1e195]:
+              - cell "Power and schedule" [ref=f1e196]
+              - cell [ref=f1e197]:
+                - code [ref=f1e198]: device().hold_wifi/release_wifi/keep_awake/allow_sleep/schedule_wake/cancel_wake
+              - cell "Request bounded power-policy exceptions and scheduled refreshes." [ref=f1e199]
+            - row [ref=f1e200]:
+              - cell "Device readings" [ref=f1e201]
+              - cell [ref=f1e202]:
+                - code [ref=f1e203]: read_battery
+                - text: ","
+                - code [ref=f1e204]: read_battery_detail
+                - text: ","
+                - code [ref=f1e205]: read_cover
+                - text: ","
+                - code [ref=f1e206]: read_frontlight
+              - cell "Read typed hardware state; every request receives one result or refusal." [ref=f1e207]
+            - row [ref=f1e208]:
+              - cell "Wi-Fi and Bluetooth" [ref=f1e209]
+              - cell [ref=f1e210]:
+                - code [ref=f1e211]: read/set/scan/join/connect/disconnect/forget
+              - cell "Capability-gated radio control through firmware-owned services." [ref=f1e212]
+            - row [ref=f1e213]:
+              - cell "Audio" [ref=f1e214]
+              - cell [ref=f1e215]:
+                - code [ref=f1e216]: load/play/pause/seek/stop/set_audio_volume
+                - text: ","
+                - code [ref=f1e217]: AudioPlayer
+              - cell "Play app-shelf audio or bounded unauthenticated HTTPS streams through the active output." [ref=f1e218]
+            - row [ref=f1e219]:
+              - cell "Dictionary" [ref=f1e220]
+              - cell [ref=f1e221]:
+                - code [ref=f1e222]: lookup_word
+              - cell "Use runtime-installed dictionaries offline, with an optional language tag." [ref=f1e223]
+            - row [ref=f1e224]:
+              - cell "Terminal" [ref=f1e225]
+              - cell [ref=f1e226]:
+                - code [ref=f1e227]: shell()
+                - text: ","
+                - code [ref=f1e228]: TerminalKeys
+              - cell "Send bytes to a runtime-owned terminal and receive output events; apps never choose a program path." [ref=f1e229]
+            - row [ref=f1e230]:
+              - cell "Platform update" [ref=f1e231]
+              - cell [ref=f1e232]:
+                - code [ref=f1e233]: device().update
+              - cell "Settings-only replacement from an HTTPS release archive with an exact SHA-256 digest." [ref=f1e234]
+            - row [ref=f1e235]:
+              - cell "Diagnostics" [ref=f1e236]
+              - cell [ref=f1e237]:
+                - code [ref=f1e238]: log
+                - text: ","
+                - code [ref=f1e239]: build_checked
+                - text: ","
+                - code [ref=f1e240]: AppRunner
+              - cell "Structured runtime logs, screen validation and host-side deterministic app tests." [ref=f1e241]
+      - generic [ref=f1e242]:
+        - heading "Capabilities" [level=2] [ref=f1e243]
+        - paragraph [ref=f1e244]: Capabilities use exact manifest names. Device results distinguish undeclared, battery-withheld and unsupported operations.
+        - table [ref=f1e246]:
+          - rowgroup [ref=f1e247]:
+            - row [ref=f1e248]:
+              - columnheader "Capability" [ref=f1e249]
+              - columnheader "Current SDK surface" [ref=f1e250]
+          - rowgroup [ref=f1e251]:
+            - row [ref=f1e252]:
+              - cell [ref=f1e253]:
+                - code [ref=f1e254]: network
+              - cell [ref=f1e255]:
+                - text: Foreground
+                - code [ref=f1e256]: Task::Fetch
+                - text: and
+                - code [ref=f1e257]: Task::Post
+                - text: .
+            - row [ref=f1e258]:
+              - cell [ref=f1e259]:
+                - code [ref=f1e260]: background-network
+              - cell [ref=f1e261]:
+                - text: Network tasks during a scheduled background wake; requires
+                - code [ref=f1e262]: scheduled-wake
+                - text: .
+            - row [ref=f1e263]:
+              - cell [ref=f1e264]:
+                - code [ref=f1e265]: hold-wifi
+              - cell [ref=f1e266]:
+                - text: Bounded Wi-Fi association hold; requires
+                - code [ref=f1e267]: network
+                - text: .
+            - row [ref=f1e268]:
+              - cell [ref=f1e269]:
+                - code [ref=f1e270]: keep-awake
+              - cell "Bounded foreground suspend prevention." [ref=f1e271]
+            - row [ref=f1e272]:
+              - cell [ref=f1e273]:
+                - code [ref=f1e274]: scheduled-wake
+              - cell "Schedule and cancel a runtime-coalesced wake." [ref=f1e275]
+            - row [ref=f1e276]:
+              - cell [ref=f1e277]:
+                - code [ref=f1e278]: battery-read
+              - cell "Battery summary and detailed optional gauge readings." [ref=f1e279]
+            - row [ref=f1e280]:
+              - cell [ref=f1e281]:
+                - code [ref=f1e282]: frontlight-control
+              - cell "Read and set front-light percentage." [ref=f1e283]
+            - row [ref=f1e284]:
+              - cell [ref=f1e285]:
+                - code [ref=f1e286]: wifi-control
+              - cell "Power, scan, join and disconnect Wi-Fi." [ref=f1e287]
+            - row [ref=f1e288]:
+              - cell [ref=f1e289]:
+                - code [ref=f1e290]: bluetooth-control
+              - cell "Power, scan, pair, connect, disconnect and forget Bluetooth devices." [ref=f1e291]
+            - row [ref=f1e292]:
+              - cell [ref=f1e293]:
+                - code [ref=f1e294]: audio
+              - cell "Load and control playback." [ref=f1e295]
+            - row [ref=f1e296]:
+              - cell [ref=f1e297]:
+                - code [ref=f1e298]: bluetooth-audio
+              - cell [ref=f1e299]:
+                - text: Bluetooth audio output; requires
+                - code [ref=f1e300]: audio
+                - text: .
+            - row [ref=f1e301]:
+              - cell [ref=f1e302]:
+                - code [ref=f1e303]: cover-sensor
+              - cell "Initial hall-sensor read and foreground change events." [ref=f1e304]
+            - row [ref=f1e305]:
+              - cell [ref=f1e306]:
+                - code [ref=f1e307]: shell
+              - cell "Runtime-owned terminal. Reserved to the Terminal application by current platform policy." [ref=f1e308]
+            - row [ref=f1e309]:
+              - cell [ref=f1e310]:
+                - code [ref=f1e311]: sleep-screen
+              - cell [ref=f1e312]:
+                - text: Reserved manifest vocabulary; no public
+                - code [ref=f1e313]: kobo-sdk
+                - text: application call yet.
+            - row [ref=f1e314]:
+              - cell [ref=f1e315]:
+                - code [ref=f1e316]: notifications
+              - cell [ref=f1e317]:
+                - text: Reserved manifest vocabulary; no public
+                - code [ref=f1e318]: kobo-sdk
+                - text: application call yet.
+            - row [ref=f1e319]:
+              - cell [ref=f1e320]:
+                - code [ref=f1e321]: shared-files
+              - cell [ref=f1e322]:
+                - text: Reserved manifest vocabulary; no public
+                - code [ref=f1e323]: kobo-sdk
+                - text: application call yet.
+                - code [ref=f1e324]: Context::shelf
+                - text: is private, not user-visible.
+        - paragraph [ref=f1e325]: App launching, catalog management and platform updates are authorized by caller identity rather than by public manifest capabilities.
+      - generic [ref=f1e326]:
+        - heading "Application-facing crates" [level=2] [ref=f1e327]
+        - paragraph [ref=f1e328]:
+          - text: Use
+          - code [ref=f1e329]: kobo-sdk
+          - text: for the application API. Add companion crates for specific data formats and reading surfaces.
+        - table [ref=f1e331]:
+          - rowgroup [ref=f1e332]:
+            - row [ref=f1e333]:
+              - columnheader "Crate" [ref=f1e334]
+              - columnheader "Use it when" [ref=f1e335]
+              - columnheader "Reference app" [ref=f1e336]
+          - rowgroup [ref=f1e337]:
+            - row [ref=f1e338]:
+              - cell [ref=f1e339]:
+                - code [ref=f1e340]: kobo-sdk
+              - 'cell "Every app: lifecycle, UI, tasks, storage and runtime services." [ref=f1e341]'
+              - cell "All examples and apps" [ref=f1e342]
+            - row [ref=f1e343]:
+              - cell [ref=f1e344]:
+                - code [ref=f1e345]: kobo-ui
+              - cell [ref=f1e346]:
+                - text: You need advanced public UI types, pagination helpers or renderer-level layout assertions. Most component types are re-exported by
+                - code [ref=f1e347]: kobo-sdk
+                - text: .
+              - cell "Gallery, Sudoku tests" [ref=f1e348]
+            - row [ref=f1e349]:
+              - cell [ref=f1e350]:
+                - code [ref=f1e351]: kobo-image
+              - cell [ref=f1e352]:
+                - text: Decode bounded JPEG/PNG bytes, fit/crop them and dither to panel greys before
+                - code [ref=f1e353]: put_picture
+                - text: .
+              - cell "Gallery, readers" [ref=f1e354]
+            - row [ref=f1e355]:
+              - cell [ref=f1e356]:
+                - code [ref=f1e357]: kobo-json
+              - cell "Parse untrusted JSON or build request objects without Serde." [ref=f1e358]
+              - cell "Brief, Chat, RSS" [ref=f1e359]
+            - row [ref=f1e360]:
+              - cell [ref=f1e361]:
+                - code [ref=f1e362]: kobo-html
+              - cell "Turn untrusted HTML fragments into bounded text, or rasterise mathematical formulae with its optional feature." [ref=f1e363]
+              - cell "Hacker News, RSS, arXiv" [ref=f1e364]
+            - row [ref=f1e365]:
+              - cell [ref=f1e366]:
+                - code [ref=f1e367]: kobo-xml
+              - cell "Scan bounded XML/Atom/RSS input without external entities or recursive allocation." [ref=f1e368]
+              - cell "RSS, arXiv" [ref=f1e369]
+            - row [ref=f1e370]:
+              - cell [ref=f1e371]:
+                - code [ref=f1e372]: kobo-opds
+              - cell "Read OPDS 1.2 Atom and OPDS 2.0 JSON catalogues into one model." [ref=f1e373]
+              - cell "Store/catalog clients" [ref=f1e374]
+            - row [ref=f1e375]:
+              - cell [ref=f1e376]:
+                - code [ref=f1e377]: kobo-doc
+              - cell "Sniff and parse EPUB, HTML, Markdown or plain-text bytes into structured document blocks." [ref=f1e378]
+              - cell "arXiv, book readers" [ref=f1e379]
+            - row [ref=f1e380]:
+              - cell [ref=f1e381]:
+                - code [ref=f1e382]: kobo-read
+              - cell "Paginate a structured document and manage stable locations, contents, search and annotations." [ref=f1e383]
+              - cell "arXiv" [ref=f1e384]
+            - row [ref=f1e385]:
+              - cell [ref=f1e386]:
+                - code [ref=f1e387]: kobo-bookview
+              - cell "You need an end-to-end reading surface with deferred image loading and stable repagination." [ref=f1e388]
+              - cell "arXiv" [ref=f1e389]
+            - row [ref=f1e390]:
+              - cell [ref=f1e391]:
+                - code [ref=f1e392]: kobo-term
+              - cell [ref=f1e393]:
+                - text: Turn VT100 output bytes into rows and a cursor for
+                - code [ref=f1e394]: ScreenBuilder::terminal
+                - text: .
+              - cell "Terminal" [ref=f1e395]
+        - generic [ref=f1e396]:
+          - strong [ref=f1e397]: Internal crates.
+          - code [ref=f1e398]: kobo-protocol
+          - text: ","
+          - code [ref=f1e399]: kobo-policy
+          - text: ","
+          - code [ref=f1e400]: kobo-net
+          - text: ","
+          - code [ref=f1e401]: kobo-text
+          - text: ","
+          - code [ref=f1e402]: kobo-hal
+          - text: ","
+          - code [ref=f1e403]: kobo-shell
+          - text: ","
+          - code [ref=f1e404]: kobod
+          - text: and the install tools implement the runtime. Applications should use SDK re-exports instead.
+      - generic [ref=f1e405]:
+        - heading "CLI commands" [level=2] [ref=f1e406]
+        - paragraph [ref=f1e407]:
+          - text: The CLI creates and tests applications, manages developer devices, and builds Store artifacts. Commands accepting
+          - code [ref=f1e408]: "--device"
+          - text: also accept
+          - code [ref=f1e409]: "-s"
+          - text: .
+        - heading "Build and exercise applications" [level=3] [ref=f1e410]
+        - table [ref=f1e412]:
+          - rowgroup [ref=f1e413]:
+            - row [ref=f1e414]:
+              - columnheader "Command" [ref=f1e415]
+              - columnheader "Purpose" [ref=f1e416]
+          - rowgroup [ref=f1e417]:
+            - row [ref=f1e418]:
+              - cell [ref=f1e419]:
+                - code [ref=f1e420]: new <name>
+              - cell [ref=f1e421]:
+                - text: "Create a Rust SDK application. Aliases:"
+                - code [ref=f1e422]: init
+                - text: ","
+                - code [ref=f1e423]: create
+                - text: .
+            - row [ref=f1e424]:
+              - cell [ref=f1e425]:
+                - code [ref=f1e426]: dev [--builtin] [address]
+              - cell [ref=f1e427]:
+                - text: "Run the current SDK app in the browser simulator. Aliases:"
+                - code [ref=f1e428]: sim
+                - text: ","
+                - code [ref=f1e429]: simulator
+                - text: .
+            - row [ref=f1e430]:
+              - cell [ref=f1e431]:
+                - code [ref=f1e432]: run --sim [--app NAME]
+              - cell "Run the SDK transport, daemon and one application together on the host." [ref=f1e433]
+            - row [ref=f1e434]:
+              - cell [ref=f1e435]:
+                - code [ref=f1e436]: drive --script PATH
+              - cell "Drive a running simulator with taps, typing, expectations, scenarios and PNG screenshots." [ref=f1e437]
+            - row [ref=f1e438]:
+              - cell [ref=f1e439]:
+                - code [ref=f1e440]: shot [--device HOST]
+              - cell "Save a PNG of the simulated or real panel. Device capture is read-only." [ref=f1e441]
+            - row [ref=f1e442]:
+              - cell [ref=f1e443]:
+                - code [ref=f1e444]: build [--device]
+              - cell "Build the host workspace or the ARM safe doctor, disabled runtime and sample app." [ref=f1e445]
+            - row [ref=f1e446]:
+              - cell [ref=f1e447]:
+                - code [ref=f1e448]: package [--out PATH] [--folder PATH]
+              - cell [ref=f1e449]:
+                - text: Build the
+                - code [ref=f1e450]: KoboRoot.tgz
+                - text: an owner installs over USB.
+            - row [ref=f1e451]:
+              - cell [ref=f1e452]:
+                - code [ref=f1e453]: inspect <package>
+              - cell "List a package and verify that no entry can write outside Cobalt's install folder." [ref=f1e454]
+            - row [ref=f1e455]:
+              - cell [ref=f1e456]:
+                - code [ref=f1e457]: verify <arm-binary>
+              - cell "Verify static ARMv7 hard-float binary format." [ref=f1e458]
+            - row [ref=f1e459]:
+              - cell [ref=f1e460]:
+                - code [ref=f1e461]: version
+              - cell "Print the CLI version." [ref=f1e462]
+        - heading "Work with a developer device" [level=3] [ref=f1e463]
+        - table [ref=f1e465]:
+          - rowgroup [ref=f1e466]:
+            - row [ref=f1e467]:
+              - columnheader "Command" [ref=f1e468]
+              - columnheader "Purpose" [ref=f1e469]
+          - rowgroup [ref=f1e470]:
+            - row [ref=f1e471]:
+              - cell [ref=f1e472]:
+                - code [ref=f1e473]: setup [--volume PATH] [--undo] [--enable-ssh] [--no-key]
+              - cell "Prepare or undo a reader over USB. Root SSH is an explicit development opt-in." [ref=f1e474]
+            - row [ref=f1e475]:
+              - cell [ref=f1e476]:
+                - code [ref=f1e477]: deploy --device IP [--package PATH]
+              - cell [ref=f1e478]:
+                - text: "Install over Wi-Fi without rebooting. Alias:"
+                - code [ref=f1e479]: install
+                - text: .
+            - row [ref=f1e480]:
+              - cell [ref=f1e481]:
+                - code [ref=f1e482]: devices [--subnet A.B.C]
+              - cell "Find readers on the local network and report hardware, firmware and Cobalt versions." [ref=f1e483]
+            - row [ref=f1e484]:
+              - cell [ref=f1e485]:
+                - code [ref=f1e486]: doctor [--device IP]
+              - cell "Run read-only host or device diagnostics." [ref=f1e487]
+            - row [ref=f1e488]:
+              - cell [ref=f1e489]:
+                - code [ref=f1e490]: present <app> --device IP [--seconds N]
+              - cell "Run one installed application on the real panel for a bounded presentation." [ref=f1e491]
+            - row [ref=f1e492]:
+              - cell [ref=f1e493]:
+                - code [ref=f1e494]: stop --device IP
+              - cell "Stop the Cobalt session and hand the panel back to the stock reader." [ref=f1e495]
+            - row [ref=f1e496]:
+              - cell [ref=f1e497]:
+                - code [ref=f1e498]: session --device IP [--hold [minutes]]
+              - cell "Keep a development device reachable, awake and associated with Wi-Fi." [ref=f1e499]
+            - row [ref=f1e500]:
+              - cell [ref=f1e501]:
+                - code [ref=f1e502]: wait --device IP
+              - cell [ref=f1e503]:
+                - text: "Block until a device answers again. Alias:"
+                - code [ref=f1e504]: wait-for-device
+                - text: .
+            - row [ref=f1e505]:
+              - cell [ref=f1e506]:
+                - code [ref=f1e507]: logs --device IP [--follow] [--lines N]
+              - cell [ref=f1e508]:
+                - text: "Read or follow the runtime trace. Alias:"
+                - code [ref=f1e509]: logcat
+                - text: .
+            - row [ref=f1e510]:
+              - cell [ref=f1e511]:
+                - code [ref=f1e512]: shell --device IP [command ...]
+              - cell "Run one developer command on the reader, or open an interactive SSH session." [ref=f1e513]
+            - row [ref=f1e514]:
+              - cell [ref=f1e515]:
+                - code [ref=f1e516]: record --device IP [--seconds N] [--fps F] [--out DIR]
+              - cell "Capture a read-only sequence of panel frames." [ref=f1e517]
+            - row [ref=f1e518]:
+              - cell [ref=f1e519]:
+                - code [ref=f1e520]: touch-probe --device IP [--seconds N]
+              - cell "Watch touch input read-only to verify the hardware profile's coordinate transform." [ref=f1e521]
+            - row [ref=f1e522]:
+              - cell [ref=f1e523]:
+                - code [ref=f1e524]: guard-test --device IP --confirm ...
+              - cell "Attended proof that the session guardian restores the previous screen." [ref=f1e525]
+        - heading "Credentials, trust and Store releases" [level=3] [ref=f1e526]
+        - table [ref=f1e528]:
+          - rowgroup [ref=f1e529]:
+            - row [ref=f1e530]:
+              - columnheader "Command" [ref=f1e531]
+              - columnheader "Purpose" [ref=f1e532]
+          - rowgroup [ref=f1e533]:
+            - row [ref=f1e534]:
+              - cell [ref=f1e535]:
+                - code [ref=f1e536]: secret set/list/remove
+              - cell "Install, name or remove runtime-held application credentials without printing their values." [ref=f1e537]
+            - row [ref=f1e538]:
+              - cell [ref=f1e539]:
+                - code [ref=f1e540]: trust set/list/remove
+              - cell "Manage owner TLS roots for private HTTPS services." [ref=f1e541]
+            - row [ref=f1e542]:
+              - cell [ref=f1e543]:
+                - code [ref=f1e544]: app-key --seed PATH
+              - cell "Print the Ed25519 public key for a Store release seed." [ref=f1e545]
+            - row [ref=f1e546]:
+              - cell [ref=f1e547]:
+                - code [ref=f1e548]: app-bundle ...
+              - cell [ref=f1e549]:
+                - text: Build one signed, pathless
+                - code [ref=f1e550]: .cobalt-app
+                - text: package.
+            - row [ref=f1e551]:
+              - cell [ref=f1e552]:
+                - code [ref=f1e553]: app-catalog ...
+              - cell "Build and sign the public application catalog." [ref=f1e554]
+            - row [ref=f1e555]:
+              - cell [ref=f1e556]:
+                - code [ref=f1e557]: app-list --registry PATH
+              - cell "List validated Store registry entries as JSON." [ref=f1e558]
+            - row [ref=f1e559]:
+              - cell [ref=f1e560]:
+                - code [ref=f1e561]: app-check --registry PATH ...
+              - cell "Build and verify registered Store applications." [ref=f1e562]
+            - row [ref=f1e563]:
+              - cell [ref=f1e564]:
+                - code [ref=f1e565]: app-release --registry PATH ...
+              - cell "Build and sign the complete registered application release." [ref=f1e566]
+        - generic [ref=f1e567]:
+          - strong [ref=f1e568]: Device-write feature.
+          - text: Build
+          - code [ref=f1e569]: kobo-cli
+          - text: with
+          - code [ref=f1e570]: "--features device-write"
+          - text: to enable
+          - code [ref=f1e571]: tap --device IP X,Y [MS:X,Y ...]
+          - text: and
+          - code [ref=f1e572]: smoke-display --device IP --confirm ...
+          - text: . These commands write to the device input or display.
+      - generic [ref=f1e573]:
+        - heading "Testing and shipping" [level=2] [ref=f1e574]
+        - code [ref=f1e576]: "# Browser simulator from an app directory kobo dev # Host runtime cargo run -p kobo-cli -- run --sim --app my-app # Drive taps, typing, expectations and screenshots cargo run -p kobo-cli -- drive --script tour.kobo --shots target/shots # Targeted application tests cargo test -p kobo-my-app # Package a device build cargo run -p kobo-cli -- package"
+        - paragraph [ref=f1e577]: The simulator uses the production layout, renderer, hit testing and refresh planner. Failure scenarios cover offline, timeout, low battery, denied capability, missing credentials, storage pressure and image-cache pressure.
+        - generic [ref=f1e578]:
+          - link "Repository development" [ref=f1e579] [cursor=pointer]:
+            - /url: DEVELOPING.md
+          - link "Contributing an app" [ref=f1e580] [cursor=pointer]:
+            - /url: CONTRIBUTING_APPS.md
+          - link "Publishing and the App Store" [ref=f1e581] [cursor=pointer]:
+            - /url: APP_STORE.md
+      - generic [ref=f1e582]:
+        - heading "Platform constraints" [level=2] [ref=f1e583]
+        - generic [ref=f1e584]:
+          - generic [ref=f1e585]:
+            - heading "Callback duration" [level=3] [ref=f1e586]
+            - paragraph [ref=f1e587]: Callbacks must return quickly. Network, files, sleeps and device operations use asynchronous requests.
+          - generic [ref=f1e588]:
+            - heading "Brokered access" [level=3] [ref=f1e589]
+            - paragraph [ref=f1e590]: Applications do not open sockets, device nodes, shared paths or processes. Runtime requests return a result or refusal.
+          - generic [ref=f1e591]:
+            - heading "Bounded data" [level=3] [ref=f1e592]
+            - paragraph [ref=f1e593]: Rows, cells, choices, pictures, tasks, keys and wire strings have explicit limits. Diagnostics report truncation and overflow.
+          - generic [ref=f1e594]:
+            - heading "Pagination" [level=3] [ref=f1e595]
+            - paragraph [ref=f1e596]: Long prose, rows and tiles are measured into pages. The SDK does not provide continuous scrolling.
+          - generic [ref=f1e597]:
+            - heading "Credentials" [level=3] [ref=f1e598]
+            - paragraph [ref=f1e599]: Requests name runtime-held credentials. Values do not enter application memory or follow redirects.
+          - generic [ref=f1e600]:
+            - heading "Hardware profiles" [level=3] [ref=f1e601]
+            - paragraph [ref=f1e602]: Device support requires an exact profile. Unknown models are refused.
+        - generic [ref=f1e603]:
+          - link "Detailed SDK guide" [ref=f1e604] [cursor=pointer]:
+            - /url: https://github.com/BandarLabs/Cobalt/blob/main/SDK.md
+          - link "SDK Rust source and rustdoc comments" [ref=f1e605] [cursor=pointer]:
+            - /url: https://github.com/BandarLabs/Cobalt/tree/main/crates/kobo-sdk/src
+          - link "Worked examples" [ref=f1e606] [cursor=pointer]:
+            - /url: https://github.com/BandarLabs/Cobalt/tree/main/examples
+  - contentinfo [ref=f1e607]:
+    - generic [ref=f1e608]:
+      - paragraph [ref=f1e609]:
+        - text: Cobalt SDK · AGPL-3.0 ·
+        - link "BandarLabs/Cobalt" [ref=f1e610] [cursor=pointer]:
+          - /url: https://github.com/BandarLabs/Cobalt
+      - navigation [ref=f1e611]:
+        - link "Home" [ref=f1e612] [cursor=pointer]:
+          - /url: index.html
+        - link "FAQ" [ref=f1e613] [cursor=pointer]:
+          - /url: faq.html
+        - link "Detailed guide" [ref=f1e614] [cursor=pointer]:
+          - /url: https://github.com/BandarLabs/Cobalt/blob/main/SDK.md
+        - link "Install" [ref=f1e615] [cursor=pointer]:
+          - /url: INSTALL.md
+        - link "Contribute an app" [ref=f1e616] [cursor=pointer]:
+          - /url: CONTRIBUTING_APPS.md

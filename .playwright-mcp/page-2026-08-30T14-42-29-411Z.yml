@@ -1,0 +1,303 @@
+- generic [active] [ref=f2e1]:
+  - banner [ref=f2e2]:
+    - generic [ref=f2e3]:
+      - link [ref=f2e4] [cursor=pointer]:
+        - /url: https://bandarlabs.github.io/Cobalt/
+        - img "Cobalt" [ref=f2e5]
+      - navigation [ref=f2e6]:
+        - link "Apps" [ref=f2e7] [cursor=pointer]:
+          - /url: "#apps"
+        - link "Developers" [ref=f2e8] [cursor=pointer]:
+          - /url: sdk.html
+        - link "FAQ" [ref=f2e9] [cursor=pointer]:
+          - /url: faq.html
+        - link "Store" [ref=f2e10] [cursor=pointer]:
+          - /url: "#store"
+        - link "Install" [ref=f2e11] [cursor=pointer]:
+          - /url: "#install"
+        - link "GitHub" [ref=f2e12] [cursor=pointer]:
+          - /url: https://github.com/BandarLabs/Cobalt
+  - generic [ref=f2e16]:
+    - generic [ref=f2e17]:
+      - heading "Your Kobo can run apps now." [level=1] [ref=f2e18]
+      - paragraph [ref=f2e19]: "Cobalt is an open-source application platform for Kobo e-readers: a launcher, a signed App Store, a Rust SDK, and a runtime that keeps every app in its own unprivileged process."
+      - generic [ref=f2e20]:
+        - link "Install on your Kobo" [ref=f2e21] [cursor=pointer]:
+          - /url: "#install"
+        - link "Read the source" [ref=f2e22] [cursor=pointer]:
+          - /url: https://github.com/BandarLabs/Cobalt
+      - paragraph [ref=f2e23]:
+        - link "Featured on Product Hunt" [ref=f2e25] [cursor=pointer]:
+          - /url: https://www.producthunt.com/products/cobalt-10?utm_source=cobalt-site&utm_medium=referral
+        - 'link "Aug 2026: #1 on Hacker News · 658 points" [ref=f2e27] [cursor=pointer]':
+          - /url: https://news.ycombinator.com/item?id=49390427
+    - figure "The launcher on a Kobo Clara BW." [ref=f2e28]:
+      - img "The Cobalt launcher on a Kobo Clara BW showing Settings, App Store, Terminal, AI Chat, Audiobooks, Components, Daily Brief, Feeds and Gutenbird" [ref=f2e29]
+  - generic [ref=f2e31]: Not affiliated with Rakuten Kobo
+  - generic [ref=f2e35]:
+    - figure [ref=f2e36]:
+      - link [ref=f2e37] [cursor=pointer]:
+        - /url: cobalt-tour.mp4
+        - img "A Kobo Clara BW running Audiobook Studio, Gutenbird, Terminal, Hacker News, Sidekick and the App Store, then installing, playing, removing and reinstalling Sudoku over Wi-Fi" [ref=f2e38]
+      - generic [ref=f2e39]:
+        - text: Recorded on-device at 3× speed.
+        - link "Watch as video." [ref=f2e40] [cursor=pointer]:
+          - /url: cobalt-tour.mp4
+    - generic [ref=f2e41]:
+      - heading "More to do on the reader." [level=2] [ref=f2e42]
+      - paragraph [ref=f2e43]: Read books and papers, follow feeds, play a game, listen to audio, or check a task without changing devices. Install only the apps you want, then update or remove them over Wi-Fi.
+      - generic [ref=f2e44]:
+        - heading "Tested devices" [level=3] [ref=f2e45]
+        - list [ref=f2e46]:
+          - listitem [ref=f2e47]: Kobo Clara BW N365
+          - listitem [ref=f2e48]: Kobo Clara Colour N367
+          - listitem [ref=f2e49]: Kobo Elipsa 2E N605
+          - listitem [ref=f2e50]: Kobo Clara HD N249
+          - listitem [ref=f2e51]: Kobo Libra 2 N418
+          - listitem [ref=f2e52]: Kobo Libra Colour N428
+        - paragraph [ref=f2e53]:
+          - text: The 2025 Clara BW P365 refresh is also supported after matching the tested N365 hardware and firmware. More devices are coming. To help test yours,
+          - link "join an existing device thread or create a new one" [ref=f2e54] [cursor=pointer]:
+            - /url: https://github.com/BandarLabs/Cobalt/issues
+          - text: .
+  - generic [ref=f2e56]:
+    - heading "Read papers. Answer requests. Stay on the reader." [level=2] [ref=f2e57]
+    - paragraph [ref=f2e58]: Read complete papers with sections, mathematics, tables, and figures. When work needs a simple decision, answer it from the same screen. Every photograph below is from a supported device.
+    - generic [ref=f2e59]:
+      - figure "A preprint, page 8 of 54, on the panel." [ref=f2e60]:
+        - img "An arXiv preprint section titled 'A hard optimization problem and its relaxation' rendered on a Kobo Clara BW" [ref=f2e61]
+      - figure "A results table from the same paper." [ref=f2e63]:
+        - img "A results table from an arXiv paper comparing language models, rendered on a Kobo e-reader" [ref=f2e64]
+      - figure "Math notation and a numbered algorithm." [ref=f2e66]:
+        - img "Mathematical notation and a numbered algorithm from an arXiv paper on a Kobo e-reader" [ref=f2e67]
+    - generic [ref=f2e69]:
+      - figure "Sidekick showing a question from Claude Code, with tappable answers." [ref=f2e70]:
+        - img "Sidekick on a Kobo showing a question from Claude Code with three tappable answers and a 'Leave it for the terminal' button" [ref=f2e71]
+      - figure "Sidekick paired over the local network, waiting for the next question." [ref=f2e73]:
+        - img "Sidekick's watching screen on a Kobo, paired with a machine on the local network, showing the last answer sent" [ref=f2e74]
+  - generic [ref=f2e77]:
+    - paragraph [ref=f2e78]: Apps
+    - heading "The apps." [level=2] [ref=f2e79]
+    - paragraph [ref=f2e80]: Every screenshot below is a capture from a Kobo Clara BW. Open an app to set up Cobalt or install it on a linked reader. Cobalt is installed once over USB; later apps arrive over Wi-Fi.
+    - generic [ref=f2e81]:
+      - generic [ref=f2e82]:
+        - link [ref=f2e83] [cursor=pointer]:
+          - /url: apps/launcher/
+          - img "Cobalt launcher app grid on e-ink" [ref=f2e84]
+        - heading [level=3] [ref=f2e85]:
+          - link "Launcher" [ref=f2e86] [cursor=pointer]:
+            - /url: apps/launcher/
+        - paragraph [ref=f2e87]: Opens installed apps and always keeps a route back to the Kobo reader.
+      - generic [ref=f2e88]:
+        - link [ref=f2e89] [cursor=pointer]:
+          - /url: apps/store/
+          - img "Cobalt App Store catalog listing installed and available apps" [ref=f2e90]
+        - heading [level=3] [ref=f2e91]:
+          - link "App Store" [ref=f2e92] [cursor=pointer]:
+            - /url: apps/store/
+        - paragraph [ref=f2e93]: Installs, updates, removes and reinstalls signed apps over Wi-Fi.
+      - generic [ref=f2e94]:
+        - link [ref=f2e95] [cursor=pointer]:
+          - /url: apps/arxiv/
+          - img "Newest machine learning preprints listed in the arXiv app on a Kobo" [ref=f2e96]
+        - heading [level=3] [ref=f2e97]:
+          - link "arXiv" [ref=f2e98] [cursor=pointer]:
+            - /url: apps/arxiv/
+        - paragraph [ref=f2e99]: Browses a subject's newest preprints and reads the full text on the panel.
+      - generic [ref=f2e100]:
+        - link [ref=f2e101] [cursor=pointer]:
+          - /url: apps/sudoku/
+          - img "A complete 81-cell Sudoku game on a Kobo Clara BW" [ref=f2e102]
+        - heading [level=3] [ref=f2e103]:
+          - link "Sudoku" [ref=f2e104] [cursor=pointer]:
+            - /url: apps/sudoku/
+        - paragraph [ref=f2e105]: "Store-only by design: installing it proves delivery of an app the USB package never contained."
+      - generic [ref=f2e106]:
+        - link [ref=f2e107] [cursor=pointer]:
+          - /url: apps/morse/
+          - img "The letter S filling the Kobo panel while the front light sends it in Morse" [ref=f2e108]
+        - heading [level=3] [ref=f2e109]:
+          - link "Morse" [ref=f2e110] [cursor=pointer]:
+            - /url: apps/morse/
+        - paragraph [ref=f2e111]: Sends a typed message in Morse on the front light, one letter across the whole panel.
+      - generic [ref=f2e112]:
+        - link [ref=f2e113] [cursor=pointer]:
+          - /url: apps/audiobook/
+          - img "An audiobook player with cover art, position and transport controls on e-ink" [ref=f2e114]
+        - heading [level=3] [ref=f2e115]:
+          - link "Audiobook Studio" [ref=f2e116] [cursor=pointer]:
+            - /url: apps/audiobook/
+        - paragraph [ref=f2e117]: Researches, writes, narrates and plays an original audiobook.
+      - generic [ref=f2e118]:
+        - link [ref=f2e119] [cursor=pointer]:
+          - /url: apps/gutenbird/
+          - img "A shelf of book covers from an OPDS catalogue on a Kobo" [ref=f2e120]
+        - heading [level=3] [ref=f2e121]:
+          - link "Gutenbird" [ref=f2e122] [cursor=pointer]:
+            - /url: apps/gutenbird/
+        - paragraph [ref=f2e123]: "Reads any OPDS library: Project Gutenberg, Standard Ebooks, Open Library, or yours."
+      - generic [ref=f2e124]:
+        - link [ref=f2e125] [cursor=pointer]:
+          - /url: apps/hn/
+          - img "A ranked list of Hacker News stories on a Kobo e-reader" [ref=f2e126]
+        - heading [level=3] [ref=f2e127]:
+          - link "Hacker News" [ref=f2e128] [cursor=pointer]:
+            - /url: apps/hn/
+        - paragraph [ref=f2e129]: Top, New, Ask and Show stories with complete comment threads.
+      - generic [ref=f2e130]:
+        - link [ref=f2e131] [cursor=pointer]:
+          - /url: apps/rss/
+          - img "Subscribed feeds and articles in the Feeds app" [ref=f2e132]
+        - heading [level=3] [ref=f2e133]:
+          - link "Feeds" [ref=f2e134] [cursor=pointer]:
+            - /url: apps/rss/
+        - paragraph [ref=f2e135]: Discovers a site's feed and presents its articles without the site's layout.
+      - generic [ref=f2e136]:
+        - link [ref=f2e137] [cursor=pointer]:
+          - /url: apps/brief/
+          - img "A numbered daily news brief on e-ink" [ref=f2e138]
+        - heading [level=3] [ref=f2e139]:
+          - link "Daily Brief" [ref=f2e140] [cursor=pointer]:
+            - /url: apps/brief/
+        - paragraph [ref=f2e141]: Collects the day's stories in the background while you use another app.
+      - generic [ref=f2e142]:
+        - link [ref=f2e143] [cursor=pointer]:
+          - /url: apps/chat/
+          - img "An AI answer displayed as readable text on the Kobo panel" [ref=f2e144]
+        - heading [level=3] [ref=f2e145]:
+          - link "AI Command Center" [ref=f2e146] [cursor=pointer]:
+            - /url: apps/chat/
+        - paragraph [ref=f2e147]: Asks a question and turns the answer into touch-friendly reading.
+      - generic [ref=f2e148]:
+        - link [ref=f2e149] [cursor=pointer]:
+          - /url: apps/sidekick/
+          - img "A coding agent request with tappable responses in Sidekick" [ref=f2e150]
+        - heading [level=3] [ref=f2e151]:
+          - link "Sidekick" [ref=f2e152] [cursor=pointer]:
+            - /url: apps/sidekick/
+        - paragraph [ref=f2e153]: Approve or deny requests from coding agents, away from the keyboard.
+      - generic [ref=f2e154]:
+        - link [ref=f2e155] [cursor=pointer]:
+          - /url: apps/terminal/
+          - img "A shell and touch keyboard on the Kobo display" [ref=f2e156]
+        - heading [level=3] [ref=f2e157]:
+          - link "Terminal" [ref=f2e158] [cursor=pointer]:
+            - /url: apps/terminal/
+        - paragraph [ref=f2e159]: A panel-native shell with keys that send input immediately.
+      - generic [ref=f2e160]:
+        - link [ref=f2e161] [cursor=pointer]:
+          - /url: apps/gallery/
+          - img "Cobalt typography and UI components on e-ink" [ref=f2e162]
+        - heading [level=3] [ref=f2e163]:
+          - link "Components" [ref=f2e164] [cursor=pointer]:
+            - /url: apps/gallery/
+        - paragraph [ref=f2e165]: The UI toolkit's controls, layouts, typography and states, on the panel.
+      - generic [ref=f2e166]:
+        - link [ref=f2e167] [cursor=pointer]:
+          - /url: apps/settings/
+          - img "Battery status and hardware facts in Settings" [ref=f2e168]
+        - heading [level=3] [ref=f2e169]:
+          - link "Settings" [ref=f2e170] [cursor=pointer]:
+            - /url: apps/settings/
+        - paragraph [ref=f2e171]: Connectivity, hardware, and platform updates, kept separate from Store.
+      - generic [ref=f2e172]:
+        - link [ref=f2e173] [cursor=pointer]:
+          - /url: apps/todo/
+          - img "A persistent to-do list with completed items" [ref=f2e174]
+        - heading [level=3] [ref=f2e175]:
+          - link "Todo" [ref=f2e176] [cursor=pointer]:
+            - /url: apps/todo/
+        - paragraph [ref=f2e177]: A persistent list with touch entry and completed-item states.
+      - generic [ref=f2e178]:
+        - link [ref=f2e179] [cursor=pointer]:
+          - /url: apps/tictactoe/
+          - img "A completed game of tic-tac-toe on e-ink" [ref=f2e180]
+        - heading [level=3] [ref=f2e181]:
+          - link "Tic-tac-toe" [ref=f2e182] [cursor=pointer]:
+            - /url: apps/tictactoe/
+        - paragraph [ref=f2e183]: Two players, partial refreshes for individual cells.
+      - generic [ref=f2e184]:
+        - link [ref=f2e185] [cursor=pointer]:
+          - /url: apps/magnet/
+          - img "The Kobo hall sensor responding to a magnet" [ref=f2e186]
+        - heading [level=3] [ref=f2e187]:
+          - link "Magnet" [ref=f2e188] [cursor=pointer]:
+            - /url: apps/magnet/
+        - paragraph [ref=f2e189]: Locates the hall sensor behind the bezel and reports its changes.
+    - complementary [ref=f2e190]:
+      - generic [ref=f2e191]:
+        - heading "Help shape what comes next" [level=3] [ref=f2e192]
+        - paragraph [ref=f2e193]: Join r/CobaltForKobo to request an app, suggest a feature, report a bug, or show what you are running on your Kobo.
+      - link "Join the community" [ref=f2e194] [cursor=pointer]:
+        - /url: https://www.reddit.com/r/CobaltForKobo/
+  - generic [ref=f2e201]:
+    - generic [ref=f2e202]:
+      - paragraph [ref=f2e203]: The Store
+      - heading "Add an app without reconnecting USB." [level=2] [ref=f2e204]
+      - paragraph [ref=f2e205]: Browse available apps on the reader, install one over Wi-Fi, and remove it when you no longer want it. App updates arrive without reinstalling Cobalt.
+      - paragraph [ref=f2e206]: Every package is checked before it opens. An interrupted install or update leaves the working version in place.
+      - paragraph [ref=f2e207]: Cobalt updates remain separate from app updates, so the Store cannot replace the platform itself.
+      - paragraph [ref=f2e208]:
+        - link "Build and publish an app" [ref=f2e209] [cursor=pointer]:
+          - /url: sdk.html
+    - figure "Sudoku arriving over Wi-Fi." [ref=f2e210]:
+      - img "The Cobalt App Store installing an app over Wi-Fi on a Kobo Clara BW" [ref=f2e211]
+  - generic [ref=f2e214]:
+    - paragraph [ref=f2e215]: Install
+    - heading "One USB installation." [level=2] [ref=f2e216]
+    - list [ref=f2e217]:
+      - listitem [ref=f2e218]:
+        - strong [ref=f2e219]: Charge a fully supported reader
+        - text: and connect it over USB. The Clara BW N365, Clara Colour N367, Elipsa 2E N605, Clara HD N249, Libra 2 N418, and Libra Colour N428 are fully tested at the exact versions in the
+        - link "device support matrix" [ref=f2e220] [cursor=pointer]:
+          - /url: https://github.com/BandarLabs/Cobalt/blob/main/docs/DEVICES.md#device-support-matrix
+        - text: .
+      - listitem [ref=f2e221]:
+        - strong [ref=f2e222]: "Run the setup:"
+    - code [ref=f2e224]: git clone https://github.com/BandarLabs/Cobalt.git cd Cobalt rustup target add armv7-unknown-linux-musleabihf cargo run -p kobo-cli -- setup
+    - list [ref=f2e225]:
+      - listitem [ref=f2e226]:
+        - strong [ref=f2e227]: Restart the reader
+        - text: and open
+        - strong [ref=f2e228]: Cobalt
+        - text: from Kobo's menu.
+      - listitem [ref=f2e229]:
+        - strong [ref=f2e230]: Open Store.
+        - text: Everything from here on arrives over Wi-Fi.
+    - paragraph [ref=f2e231]:
+      - text: "The 2025 Clara BW P365 (device code 395) hardware refresh is also supported: its measured panel, touch, firmware, and kernel facts match the attended-tested N365 Clara BW. The complete walkthrough, including recovery steps, is in"
+      - link "docs/INSTALL.md" [ref=f2e232] [cursor=pointer]:
+        - /url: https://github.com/BandarLabs/Cobalt/blob/main/docs/INSTALL.md
+      - text: .
+  - generic [ref=f2e234]:
+    - paragraph [ref=f2e235]: Safety
+    - heading "Your original reader stays available." [level=2] [ref=f2e236]
+    - paragraph [ref=f2e237]: Cobalt does not replace Kobo's boot chain. Normal panel-write entry points require an exact hardware and firmware match, and a reboot returns to the stock reader. The first installation does modify files on the user storage partition, and it is provided without warranty.
+    - paragraph [ref=f2e238]:
+      - text: The Clara BW N365, Clara BW P365 refresh, Clara Colour N367, Elipsa 2E N605, Clara HD N249, Libra 2 N418, and Libra Colour N428 profiles are supported at the exact firmware and kernel versions in the
+      - link "device support matrix" [ref=f2e239] [cursor=pointer]:
+        - /url: https://github.com/BandarLabs/Cobalt/blob/main/docs/DEVICES.md#device-support-matrix
+      - text: . P365 support inherits the attended N365 evidence after its read-only doctor report matched the same panel, touch, firmware, and kernel. Other identity or firmware combinations remain unsupported until separately verified. Cobalt is an independent project, not affiliated with Rakuten Kobo.
+  - contentinfo [ref=f2e240]:
+    - generic [ref=f2e241]:
+      - generic [ref=f2e242]:
+        - generic [ref=f2e243]:
+          - generic [ref=f2e244]: "27"
+          - text: Co
+        - paragraph [ref=f2e245]:
+          - text: Cobalt · AGPL-3.0 ·
+          - link "BandarLabs/Cobalt" [ref=f2e246] [cursor=pointer]:
+            - /url: https://github.com/BandarLabs/Cobalt
+      - navigation [ref=f2e247]:
+        - link "Developers" [ref=f2e248] [cursor=pointer]:
+          - /url: sdk.html
+        - link "FAQ" [ref=f2e249] [cursor=pointer]:
+          - /url: faq.html
+        - link "Community" [ref=f2e250] [cursor=pointer]:
+          - /url: https://www.reddit.com/r/CobaltForKobo/
+        - link "Install" [ref=f2e251] [cursor=pointer]:
+          - /url: https://github.com/BandarLabs/Cobalt/blob/main/docs/INSTALL.md
+        - link "Contribute an app" [ref=f2e252] [cursor=pointer]:
+          - /url: https://github.com/BandarLabs/Cobalt/blob/main/docs/CONTRIBUTING_APPS.md
+        - link "Security" [ref=f2e253] [cursor=pointer]:
+          - /url: https://github.com/BandarLabs/Cobalt/blob/main/SECURITY.md
