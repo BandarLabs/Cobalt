@@ -142,6 +142,19 @@ impl Topic {
     }
 }
 
+/// Whether trouble with this request belongs on the Update screen.
+///
+/// The automatic-update switches sit under the update rows, so a runtime
+/// that cannot read or keep those choices reports it where they are shown.
+fn update_screen_owns(request: &DeviceRequest) -> bool {
+    matches!(
+        request,
+        DeviceRequest::Update { .. }
+            | DeviceRequest::ReadAutoUpdate
+            | DeviceRequest::SetAutoUpdate { .. }
+    )
+}
+
 #[derive(Default)]
 struct Settings {
     view: View,
@@ -980,17 +993,19 @@ impl KoboApp for Settings {
                 self.auto_update = Some((cobalt, apps));
             }
             // A failure belongs to whatever was asked for. When the request
-            // is not one of the three rows, there is nowhere honest to show it,
-            // so it is dropped rather than shown under an unrelated heading.
+            // is not one of the three rows or the Update screen, there is
+            // nowhere honest to show it, so it is dropped rather than shown
+            // under an unrelated heading. The automatic-update switches live
+            // on the Update screen, so their trouble is reported there.
             DeviceResult::Failed(error) => {
-                if matches!(request, DeviceRequest::Update { .. }) {
+                if update_screen_owns(&request) {
                     self.update = UpdateFlow::Failed(error.to_string());
                 } else if let Some(topic) = Topic::of(&request) {
                     self.fail(topic, error.to_string());
                 }
             }
             DeviceResult::Denied(reason) => {
-                if matches!(request, DeviceRequest::Update { .. }) {
+                if update_screen_owns(&request) {
                     self.update = UpdateFlow::Failed(reason.to_string());
                 } else if let Some(topic) = Topic::of(&request) {
                     self.fail(topic, reason.to_string());
@@ -1502,6 +1517,24 @@ mod tests {
             Some(super::Topic::Bluetooth)
         );
         assert_eq!(super::Topic::of(&DeviceRequest::ReadFrontlight), None);
+    }
+
+    #[test]
+    fn auto_update_trouble_belongs_to_the_update_screen() {
+        use kobo_sdk::DeviceRequest;
+        assert!(super::update_screen_owns(&DeviceRequest::ReadAutoUpdate));
+        assert!(super::update_screen_owns(&DeviceRequest::SetAutoUpdate {
+            cobalt: true,
+            apps: false,
+        }));
+        assert!(
+            super::Topic::of(&DeviceRequest::ReadAutoUpdate).is_none(),
+            "auto-update trouble may not appear under an unrelated row"
+        );
+        assert!(
+            !super::update_screen_owns(&DeviceRequest::ReadBatteryDetail),
+            "a battery failure is not the update screen's to report"
+        );
     }
 
     fn release_json(version: &str, with_digest: bool) -> String {

@@ -103,7 +103,12 @@ pub fn set_preferences(root: &Path, chosen: Preferences) -> Result<(), DeviceErr
     file.write_all(render(chosen).as_bytes())
         .and_then(|()| file.sync_all())
         .map_err(|_| DeviceError::Backend)?;
-    fs::rename(&next, &path).map_err(|_| DeviceError::Backend)
+    fs::rename(&next, &path).map_err(|_| DeviceError::Backend)?;
+    // The rename is a directory entry, so the directory is synced too, or a
+    // power cut could forget a choice the file itself already kept.
+    fs::File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|_| DeviceError::Backend)
 }
 
 /// Asks the catalog and the release feed what is newer than what is running.
