@@ -73,8 +73,11 @@ See [CONTRIBUTING_APPS.md](CONTRIBUTING_APPS.md) for the contribution format.
    executable load segment.
 4. Uploads exactly one immutable artifact from each app runner.
 5. Downloads those artifacts on a fresh runner that has not executed app code.
-6. Builds and signs the packages and catalog only after that isolation.
-7. Replaces the assets on the fixed `app-catalog` GitHub release.
+6. Compares each app's code, local dependencies and public manifest with the
+   last successfully published catalog, and requires a new app version for any
+   change.
+7. Builds and signs the packages and catalog only after that isolation.
+8. Replaces the assets on the fixed `app-catalog` GitHub release.
 
 The workflow uses the protected `COBALT_APP_SIGNING_SEED` secret. Publishing
 fails if the seed does not derive the public key pinned in released runtimes.
