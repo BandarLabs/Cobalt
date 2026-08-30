@@ -1056,6 +1056,12 @@ pub enum DeviceRequest {
     PollAppLink,
     /// Disconnect every paired browser.
     DisconnectAppLink,
+    /// Report which automatic updates the runtime performs on its own.
+    ReadAutoUpdate,
+    /// Choose which automatic updates the runtime performs on its own. Both
+    /// switches travel together so two writes cannot interleave and leave a
+    /// mixture neither screen chose.
+    SetAutoUpdate { cobalt: bool, apps: bool },
 }
 
 /// Current state of the runtime-owned App Store browser link.
@@ -1231,6 +1237,8 @@ pub enum DeviceResult {
     AppLink(AppLinkState),
     /// Outcome of the latest remote installation request.
     RemoteInstall(RemoteInstallOutcome),
+    /// Which automatic updates the runtime performs on its own.
+    AutoUpdate { cobalt: bool, apps: bool },
     /// The backend exists, but the requested operation failed.
     Failed(DeviceError),
     /// The request was refused, with the exact reason.
@@ -2333,6 +2341,10 @@ fn encode_device_request(
         DeviceRequest::BeginAppLink => output.push(39),
         DeviceRequest::PollAppLink => output.push(40),
         DeviceRequest::DisconnectAppLink => output.push(41),
+        DeviceRequest::ReadAutoUpdate => output.push(42),
+        DeviceRequest::SetAutoUpdate { cobalt, apps } => {
+            output.extend_from_slice(&[43, radio_flags(*cobalt, *apps)]);
+        }
     }
     Ok(())
 }
@@ -2587,6 +2599,14 @@ fn decode_device_request(reader: &mut Reader<'_>) -> Result<DeviceRequest, Proto
         39 => Ok(DeviceRequest::BeginAppLink),
         40 => Ok(DeviceRequest::PollAppLink),
         41 => Ok(DeviceRequest::DisconnectAppLink),
+        42 => Ok(DeviceRequest::ReadAutoUpdate),
+        43 => {
+            let flags = valid_radio_flags(reader.u8()?, "auto-update flags")?;
+            Ok(DeviceRequest::SetAutoUpdate {
+                cobalt: flags_first(flags),
+                apps: flags_second(flags),
+            })
+        }
         _ => Err(ProtocolError::InvalidValue("device request")),
     }
 }
@@ -2766,6 +2786,9 @@ fn encode_device_result(output: &mut Vec<u8>, result: &DeviceResult) -> Result<(
             output.push(15);
             encode_remote_install(output, outcome)?;
         }
+        DeviceResult::AutoUpdate { cobalt, apps } => {
+            output.extend_from_slice(&[16, radio_flags(*cobalt, *apps)]);
+        }
     }
     Ok(())
 }
@@ -2893,18 +2916,7 @@ fn decode_device_result(reader: &mut Reader<'_>) -> Result<DeviceResult, Protoco
         2 => Ok(DeviceResult::Granted {
             seconds: reader.u32()?,
         }),
-        3 => {
-            let percent = reader.u8()?;
-            if percent > 100 {
-                return Err(ProtocolError::InvalidValue("battery percent"));
-            }
-            let charging = match reader.u8()? {
-                0 => false,
-                1 => true,
-                _ => return Err(ProtocolError::InvalidValue("charging flag")),
-            };
-            Ok(DeviceResult::Battery { percent, charging })
-        }
+        3 => decode_battery_result(reader),
         10 => battery_detail(reader).map(DeviceResult::BatteryDetail),
         11 => Ok(DeviceResult::Cover {
             available: read_boolean(reader, "cover sensor available")?,
@@ -2986,8 +2998,30 @@ fn decode_device_result(reader: &mut Reader<'_>) -> Result<DeviceResult, Protoco
         13 => decode_dictionary_result(reader),
         14 => decode_app_link(reader),
         15 => decode_remote_install(reader),
+        16 => decode_auto_update(reader),
         _ => Err(ProtocolError::InvalidValue("device result")),
     }
+}
+
+fn decode_auto_update(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
+    let flags = valid_radio_flags(reader.u8()?, "auto-update flags")?;
+    Ok(DeviceResult::AutoUpdate {
+        cobalt: flags_first(flags),
+        apps: flags_second(flags),
+    })
+}
+
+fn decode_battery_result(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
+    let percent = reader.u8()?;
+    if percent > 100 {
+        return Err(ProtocolError::InvalidValue("battery percent"));
+    }
+    let charging = match reader.u8()? {
+        0 => false,
+        1 => true,
+        _ => return Err(ProtocolError::InvalidValue("charging flag")),
+    };
+    Ok(DeviceResult::Battery { percent, charging })
 }
 
 fn decode_app_link(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
@@ -6265,6 +6299,15 @@ mod tests {
             DeviceRequest::BeginAppLink,
             DeviceRequest::PollAppLink,
             DeviceRequest::DisconnectAppLink,
+            DeviceRequest::ReadAutoUpdate,
+            DeviceRequest::SetAutoUpdate {
+                cobalt: true,
+                apps: false,
+            },
+            DeviceRequest::SetAutoUpdate {
+                cobalt: false,
+                apps: true,
+            },
         ];
         for request in requests {
             let frame = Frame {
@@ -6399,6 +6442,20 @@ mod tests {
             };
             let bytes = encode(&frame).expect("encode");
             assert_eq!(decode(&bytes).expect("decode"), frame);
+        }
+    }
+
+    #[test]
+    fn every_auto_update_result_round_trips() {
+        for cobalt in [false, true] {
+            for apps in [false, true] {
+                let frame = Frame {
+                    request_id: 11,
+                    message: Message::DeviceResult(DeviceResult::AutoUpdate { cobalt, apps }),
+                };
+                let bytes = encode(&frame).expect("encode");
+                assert_eq!(decode(&bytes).expect("decode"), frame);
+            }
         }
     }
 

@@ -178,6 +178,22 @@ const IDLE_LIMIT: Duration = Duration::from_secs(60 * 60);
 /// The longest the loop waits between passes even when nothing is happening,
 /// which bounds how stale the recovery watchdog's heartbeat can get.
 const BEAT_INTERVAL: Duration = Duration::from_secs(10);
+/// How long a session runs before the background update checker first asks
+/// what is newer. Long enough that opening Cobalt to do one thing never
+/// competes with a download for the radio; short enough that a session used
+/// for an evening still gets its updates.
+const AUTO_UPDATE_FIRST_CHECK: Duration = Duration::from_secs(2 * 60);
+/// How long after one check the next one happens. Releases are published on
+/// the scale of weeks, so asking more often than this buys nothing but radio
+/// time.
+const AUTO_UPDATE_RECHECK: Duration = Duration::from_secs(6 * 60 * 60);
+/// How long the panel must have been left alone before found updates are
+/// applied. Applying blocks the loop the way a store install does, so it only
+/// happens when nobody is mid-anything on the screen.
+const AUTO_UPDATE_QUIET: Duration = Duration::from_secs(60);
+/// Below this charge, background updates wait for a charger. A failed write
+/// to the book partition costs more than a late update is worth.
+const AUTO_UPDATE_MIN_BATTERY: u8 = 20;
 /// How long an application that asked for first refusal on Back is given to
 /// answer it with a screen.
 ///
@@ -437,6 +453,12 @@ enum Event {
     /// way so the panel, the touch device, the reader and the freeze watchdog
     /// all go back.
     Stopping(i32),
+    /// The background checker found software newer than what is running.
+    ///
+    /// Carried into the loop rather than applied on the checker's thread,
+    /// because applying replaces binaries and stops applications, and only
+    /// the loop knows whether the panel is quiet enough for that.
+    AutoUpdate(crate::autoupdate::Plan),
 }
 
 /// How long a session may run, and how long it may be ignored.
@@ -1221,6 +1243,7 @@ fn host_applications(
             println!("stop requests will not be caught ({error}); kill needs the watchdog");
         }
     }
+    watch_for_stale_software(&sender);
 
     let result = (|| -> Result<String, String> {
         let front = start_application(&mut apps, &mut next_id, &home, whole_screen, &sender)?;
@@ -1240,6 +1263,10 @@ fn host_applications(
         let mut pressed: Option<(kobo_ui::Rect, kobo_ui::DisplayMetrics)> = None;
         // When and where the finger landed, for telling a tap from a hold.
         let mut landed: Option<(Instant, i32, i32)> = None;
+        // Updates the background checker found, held until the panel has been
+        // quiet long enough to apply them. A newer report replaces an older
+        // one outright: the newer one was computed against newer facts.
+        let mut pending_updates: Option<crate::autoupdate::Plan> = None;
 
         loop {
             let now = Instant::now();
@@ -1294,6 +1321,19 @@ fn host_applications(
                     ),
                 ));
             }
+            // Updates found in the background are applied only to a panel
+            // nobody is using: enough quiet has passed since the last touch,
+            // and the battery can afford the writes. Applying blocks this
+            // loop exactly as a store install does, which is acceptable here
+            // for the same reason it is there: nobody is waiting.
+            if pending_updates.is_some()
+                && now.saturating_duration_since(last_activity) >= AUTO_UPDATE_QUIET
+                && auto_update_battery_permits()
+            {
+                if let Some(plan) = pending_updates.take() {
+                    apply_auto_update(plan, &mut apps, front);
+                }
+            }
             // An application that was offered Back and drew nothing has had
             // its turn. This is what keeps the guarantee: the way out belongs
             // to the reader whatever the application does or fails to do.
@@ -1346,6 +1386,9 @@ fn host_applications(
                 // A heartbeat is a second chance to deliver a result, and a
                 // wake is the first: the drain is the only delivery path.
                 Err(RecvTimeoutError::Timeout) | Ok(Event::TaskReady) => {}
+                Ok(Event::AutoUpdate(plan)) => {
+                    pending_updates = Some(plan);
+                }
                 Err(RecvTimeoutError::Disconnected) => {
                     return Ok(finish(&apps, &visited, "the runtime ran out of work"));
                 }
@@ -2058,6 +2101,29 @@ fn host_applications(
                                             COBALT_ROOT,
                                         )))
                                     }
+                                    kobo_protocol::DeviceRequest::ReadAutoUpdate => {
+                                        auto_update_result(crate::autoupdate::preferences(
+                                            Path::new(COBALT_ROOT),
+                                        ))
+                                    }
+                                    kobo_protocol::DeviceRequest::SetAutoUpdate {
+                                        cobalt,
+                                        apps,
+                                    } => {
+                                        let chosen = crate::autoupdate::Preferences {
+                                            cobalt: *cobalt,
+                                            apps: *apps,
+                                        };
+                                        match crate::autoupdate::set_preferences(
+                                            Path::new(COBALT_ROOT),
+                                            chosen,
+                                        ) {
+                                            Ok(()) => auto_update_result(chosen),
+                                            Err(error) => {
+                                                kobo_protocol::DeviceResult::Failed(error)
+                                            }
+                                        }
+                                    }
                                     _ => services.handle(request.clone()),
                                 }
                             };
@@ -2362,7 +2428,9 @@ fn repaint(
 /// identities even while both travel over the same bounded device channel.
 fn system_request_allowed(app: &str, request: &kobo_protocol::DeviceRequest) -> bool {
     match request {
-        kobo_protocol::DeviceRequest::Update { .. } => app == "settings",
+        kobo_protocol::DeviceRequest::Update { .. }
+        | kobo_protocol::DeviceRequest::ReadAutoUpdate
+        | kobo_protocol::DeviceRequest::SetAutoUpdate { .. } => app == "settings",
         kobo_protocol::DeviceRequest::ListInstalledApps => matches!(app, "launcher" | "store"),
         kobo_protocol::DeviceRequest::ReadAppCatalog
         | kobo_protocol::DeviceRequest::RefreshAppCatalog
@@ -2415,6 +2483,68 @@ fn stop_named_application(apps: &mut [Hosted], name: &str) {
         stop_application(&mut app.child, app.jail.as_deref());
         if let Some(root) = &app.jail {
             let _ignored = fs::remove_dir_all(root);
+        }
+    }
+}
+
+fn auto_update_result(chosen: crate::autoupdate::Preferences) -> kobo_protocol::DeviceResult {
+    kobo_protocol::DeviceResult::AutoUpdate {
+        cobalt: chosen.cobalt,
+        apps: chosen.apps,
+    }
+}
+
+/// Whether the battery can afford background writes right now. A reader whose
+/// gauge cannot be read is allowed, because refusing forever is worse than
+/// trusting hardware that boots.
+fn auto_update_battery_permits() -> bool {
+    kobo_hal::battery::read()
+        .is_none_or(|battery| battery.charging || battery.percent >= AUTO_UPDATE_MIN_BATTERY)
+}
+
+/// Applies what the background checker found, now that the panel is quiet.
+///
+/// The owner's choices are read again rather than trusted from the plan,
+/// because the plan may be hours old and the settings screen may have moved a
+/// switch since. The application currently on the panel is never replaced
+/// under the reader; its turn comes with a later plan. A staged platform
+/// release takes effect the next time Cobalt starts, exactly as one installed
+/// from the settings screen does.
+fn apply_auto_update(plan: crate::autoupdate::Plan, apps: &mut [Hosted], front: u64) {
+    let root = Path::new(COBALT_ROOT);
+    let chosen = crate::autoupdate::preferences(root);
+    let showing = apps
+        .iter()
+        .find(|app| app.id == front)
+        .map(|app| app.name.clone());
+    if chosen.apps {
+        for id in plan.apps {
+            if showing.as_deref() == Some(id.as_str()) {
+                trace(&format!("{id} is on the panel, so its update waits"));
+                continue;
+            }
+            match crate::app_store::install(root, &id) {
+                Ok(()) => {
+                    stop_named_application(apps, &id);
+                    trace(&format!("{id} was updated in the background"));
+                }
+                Err(error) => trace(&format!("{id} background update failed: {error}")),
+            }
+        }
+    }
+    if !chosen.cobalt {
+        return;
+    }
+    if let Some(update) = plan.platform {
+        match crate::update::apply(&update.url, &update.sha256) {
+            Ok(()) => trace(&format!(
+                "Cobalt {} is staged and runs from the next start",
+                update.version
+            )),
+            Err(error) => trace(&format!(
+                "Cobalt {} background update failed: {error}",
+                update.version
+            )),
         }
     }
 }
@@ -3273,6 +3403,38 @@ fn watch_for_stop_requests(sender: &Sender<Event>) {
     });
 }
 
+/// Asks, from its own thread, whether newer software has been published.
+///
+/// Only the asking happens here: what it finds is sent into the loop as
+/// [`Event::AutoUpdate`] and applied when the panel is quiet, because
+/// applying replaces binaries and stops applications and only the loop knows
+/// whether that is safe right now. The owner's choices are read before every
+/// check, so a switch turned off in settings stops the next check without a
+/// restart. The thread ends with the process, which is right after the one
+/// session this process ever runs.
+fn watch_for_stale_software(sender: &Sender<Event>) {
+    let sender = sender.clone();
+    thread::spawn(move || {
+        let mut delay = AUTO_UPDATE_FIRST_CHECK;
+        loop {
+            thread::sleep(delay);
+            delay = AUTO_UPDATE_RECHECK;
+            let root = Path::new(COBALT_ROOT);
+            let chosen = crate::autoupdate::preferences(root);
+            if !chosen.cobalt && !chosen.apps {
+                continue;
+            }
+            let plan = crate::autoupdate::plan(root, chosen, env!("CARGO_PKG_VERSION"));
+            if plan.is_empty() {
+                continue;
+            }
+            if sender.send(Event::AutoUpdate(plan)).is_err() {
+                return;
+            }
+        }
+    });
+}
+
 fn pump_application(
     stream: &std::os::unix::net::UnixStream,
     sender: &Sender<Event>,
@@ -3795,6 +3957,18 @@ mod hosting_tests {
         assert!(super::system_request_allowed("settings", &platform));
         assert!(!super::system_request_allowed("store", &platform));
         assert!(!super::system_request_allowed("todo", &platform));
+
+        for request in [
+            DeviceRequest::ReadAutoUpdate,
+            DeviceRequest::SetAutoUpdate {
+                cobalt: true,
+                apps: false,
+            },
+        ] {
+            assert!(super::system_request_allowed("settings", &request));
+            assert!(!super::system_request_allowed("store", &request));
+            assert!(!super::system_request_allowed("todo", &request));
+        }
 
         let install = DeviceRequest::InstallApp {
             id: "word-count".to_owned(),
