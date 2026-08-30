@@ -46,7 +46,8 @@ const screenshots = {
   sudoku: ["sudoku.png", "A Sudoku game designed for the Kobo touch screen"],
   terminal: ["terminal.png", "A shell and touch keyboard on a Kobo"],
   tictactoe: ["tictactoe.png", "A completed game of tic-tac-toe on a Kobo"],
-  todo: ["todo.png", "A to-do list with completed items on a Kobo"]
+  todo: ["todo.png", "A to-do list with completed items on a Kobo"],
+  "zotero-reader": ["zotero-reader.png", "Reading a paper with structured layout and Zotero metadata on a Kobo"]
 };
 const screenshotFor = app => {
   const screenshot = screenshots[app.id];

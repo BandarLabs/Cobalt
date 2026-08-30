@@ -49,6 +49,7 @@ members = [
     "apps/arxiv",
     "apps/morse",
     "apps/sudoku",
+    "apps/zotero-reader",
     "tools/icon-import",
 ]
 resolver = "2"

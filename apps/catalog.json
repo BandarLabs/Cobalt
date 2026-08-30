@@ -154,6 +154,17 @@
       "minimum_cobalt_version": "0.3.1",
       "glyph": "check",
       "capabilities": []
+    },
+    {
+      "package": "kobo-zotero-reader",
+      "id": "zotero-reader",
+      "display_name": "Zotero Reader",
+      "short_label": "Zotero",
+      "summary": "Browse Zotero collections, read metadata and indexed paper text, and keep papers available offline.",
+      "version": "1.0.0",
+      "minimum_cobalt_version": "0.4.0",
+      "glyph": "book",
+      "capabilities": ["network", "frontlight-control"]
     }
   ]
 }
