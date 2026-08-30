@@ -3430,15 +3430,17 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
         } else if !would_stage {
             if menu::marker_stale(&reader.volume) {
                 format!(
-                    "would write a Cobalt entry to {}, and stage nothing. NickelMenu's\n\
-                     \x20 own files predate the last firmware update, though, and an update\n\
-                     \x20 removes the plugin: pass --menu to stage it again",
+                    "would write only a Cobalt entry to {}. It would not write or reinstall\n\
+                     \x20 any NickelMenu files or stage a KoboRoot.tgz. NickelMenu's own files\n\
+                     \x20 predate the last firmware update, though, and an update removes the\n\
+                     \x20 plugin: pass --menu to stage it again",
                     menu::CONFIG,
                 )
             } else {
                 format!(
-                    "would write a Cobalt entry to {}, and stage nothing, because NickelMenu\n\
-                     \x20 is already installed on this reader",
+                    "would write only a Cobalt entry to {}. It would not write or reinstall\n\
+                     \x20 any NickelMenu files or stage a KoboRoot.tgz, because NickelMenu is\n\
+                     \x20 already installed on this reader",
                     menu::CONFIG,
                 )
             }
@@ -6788,6 +6790,9 @@ mod tests {
             let parsed = parse_setup(&arguments(&["--enable-ssh", "--dry-run"])).expect("parse");
             let plan = dry_run_plan(&parsed, &reader);
             assert!(plan.contains("already installed on this reader"), "{plan}");
+            assert!(plan.contains("would not write or reinstall"), "{plan}");
+            assert!(plan.contains("any NickelMenu files"), "{plan}");
+            assert!(plan.contains("or stage a KoboRoot.tgz"), "{plan}");
             assert!(!plan.contains("stage NickelMenu"), "{plan}");
             assert!(!plan.contains("same .kobo/KoboRoot.tgz"), "{plan}");
             assert!(

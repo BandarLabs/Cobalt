@@ -9,6 +9,11 @@ the Cobalt platform.
 2. Name the Cargo package `kobo-<app-id>`.
 3. Add the package to the workspace members in the root `Cargo.toml`.
 4. Add one entry to `apps/catalog.json`.
+5. Add the package to `STORE_PACKAGES` in `crates/kobo-cli/src/main.rs`.
+
+Store apps are downloaded only when an owner installs them. Do not add a
+contributed app to `INSTALLED_PACKAGES` or `MANAGED_BUILTINS`; those lists put
+the binary in the Cobalt platform package and are reserved for system apps.
 
 Registry fields:
 
@@ -54,12 +59,43 @@ cargo run --manifest-path ../../crates/kobo-cli/Cargo.toml -- dev
 Layout tests should use `CLARA_BW_METRICS` and verify that controls fit, remain
 tappable, and do not move when app state changes.
 
+## Show the app running
+
+Every new app pull request needs two different kinds of visual evidence:
+
+1. Attach a GIF, video, or photos showing the app running on a physical,
+   fully supported Kobo. This is review evidence: it proves the real panel,
+   touch controls, page buttons where applicable, and return to the launcher.
+2. Check in one clean 1072×1448 panel screenshot for the app README and its
+   generated website install page. This is the product image: use a direct
+   panel capture without a bezel, hand, camera perspective, or e-ink residue.
+
+Put the clean image under `apps/<app-id>/screenshots/`, show it from
+`apps/<app-id>/README.md`, then choose a site filename and copy the same bytes
+to `docs/media/site/apps/<site-filename>.png`. Register that exact filename and
+useful alt text in the `screenshots` map in `tools/generate-app-pages.mjs`. A
+photograph attached to the pull request does not replace this clean checked-in
+image.
+
+Add the app's card and `apps/<app-id>/` link to `docs/index.html`, then generate
+and commit the install page and sitemap:
+
+```sh
+node tools/generate-app-pages.mjs
+git diff --check
+```
+
+The publish workflow runs the generator again and refuses stale generated
+files. It does not create or commit missing screenshots, homepage cards,
+install pages, or sitemap entries after merge.
+
 ## Publish or update an app
 
-Open a pull request containing the app source, tests, workspace entry, and
-registry metadata. Increment only the app's `version` when updating that app.
-A Cobalt version change is needed only when the app requires a new platform or
-SDK capability.
+Open a pull request containing the app source, tests, workspace and Store
+entries, registry metadata, README, clean screenshot, generated website files,
+and physical-device evidence. Increment only the app's `version` when updating
+that app. A Cobalt version change is needed only when the app requires a new
+platform or SDK capability.
 
 After merge to `main`, `.github/workflows/apps.yml`:
 

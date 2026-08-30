@@ -126,12 +126,16 @@ the [app request thread](https://github.com/BandarLabs/Cobalt/issues/41).
 
 ## Install
 
-Install Rust, add the ARM target and connect a charged, fully supported reader
-over USB:
+Install [rustup](https://rustup.rs), let it install the stable Rust toolchain,
+then add the ARM target and connect a charged, fully supported reader over USB.
+You do not need a separate operating-system `rust` package; rustup supplies
+`rustc` and `cargo`:
 
 ```sh
+rustup toolchain install stable
 git clone https://github.com/BandarLabs/Cobalt.git
 cd Cobalt
+rustup override set stable
 rustup target add armv7-unknown-linux-musleabihf
 cargo run -p kobo-cli -- setup
 ```
@@ -218,7 +222,11 @@ App contributions are regular pull requests:
 2. Add its release metadata to `apps/catalog.json`.
 3. Add unit tests and layout checks for every affected supported profile.
 4. Run the app in the browser and runtime simulators.
-5. Open a pull request.
+5. Run it on a physical, fully supported Kobo and attach a GIF, video, or
+   photos to the pull request.
+6. Include one clean panel screenshot for the app README and generated website
+   install page.
+7. Open a pull request.
 
 After the PR is reviewed and merged, the `Publish apps` workflow builds every
 registered app for ARM, signs the packages and catalog, and updates the fixed

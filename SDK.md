@@ -119,13 +119,19 @@ refresh planner the panel uses. Its diagnostics panel reports content past the
 fold, clipping, undersized targets and text overflow, which is where most
 first-draft screens fail.
 
-**5. Ship it.** Two registrations, both one line:
+**5. Choose how it ships.** The quickstart above creates a bundled example.
+Register one only when it is a platform-owned system app:
 
 - `INSTALLED_PACKAGES` in `crates/kobo-cli/src/main.rs`, so `package` builds it.
 - `ENTRIES` in `examples/launcher/src/main.rs`, so it gets a tile. The entry
   states what starting it costs the device, because a launcher that starts
   something without saying what it reaches for is asking the owner to find out
   afterwards.
+
+For a contributed app that owners install on demand, put it under `apps/` and
+follow [the Store contribution guide](docs/CONTRIBUTING_APPS.md). Register it in
+`STORE_PACKAGES` and `apps/catalog.json`; do not add it to `INSTALLED_PACKAGES`
+or the launcher's built-in entries.
 
 **6. Put it on the reader.** With SSH already working, no cable and no reboot:
 
