@@ -403,14 +403,14 @@ footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
       <div class="tested-devices">
         <h3>Tested devices</h3>
         <ol>
-          <li>Kobo Clara BW N365</li>
+          <li>Kobo Clara BW N365 / P365</li>
           <li>Kobo Clara Colour N367</li>
           <li>Kobo Elipsa 2E N605</li>
           <li>Kobo Clara HD N249</li>
           <li>Kobo Libra 2 N418</li>
           <li>Kobo Libra Colour N428</li>
         </ol>
-        <p>The 2025 Clara BW P365 refresh is also supported after matching the tested N365 hardware and firmware. More devices are coming. To help test yours, <a href="https://github.com/BandarLabs/Cobalt/issues">join an existing device thread or create a new one</a>.</p>
+        <p>More devices are coming. To help test yours, <a href="https://github.com/BandarLabs/Cobalt/issues">join an existing device thread or create a new one</a>.</p>
       </div>
     </div>
   </div>
@@ -418,7 +418,6 @@ footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
 
 <section id="why-cobalt">
   <div class="wrap">
-    <p class="kicker">Why Cobalt</p>
     <h2 class="measure">More freedom without giving up your reader.</h2>
     <p class="measure quiet">Cobalt adds a place for useful e-ink apps while keeping the reading experience and library already on the device.</p>
     <div class="reasons">
@@ -444,8 +443,8 @@ footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
 
 <section id="field">
   <div class="wrap">
-    <h2 class="measure">Read papers. Answer requests. Stay on the reader.</h2>
-    <p class="measure quiet">Read complete papers with sections, mathematics, tables, and figures. When work needs a simple decision, answer it from the same screen. Every photograph below is from a supported device.</p>
+    <h2 class="measure">Read research papers, manage Claude &amp; Codex.</h2>
+    <p class="measure quiet">Read complete papers with sections, mathematics, tables, and figures. When work needs a simple decision, answer it from the same screen.</p>
     <div class="field-grid">
       <figure>
         <img src="media/site/arxiv-preprint-kobo-clara-bw.jpg" width="1000" height="1333" loading="lazy"
@@ -481,8 +480,8 @@ footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
 <section id="apps">
   <div class="wrap">
     <p class="kicker">Apps</p>
-    <h2 class="measure">The apps.</h2>
-    <p class="measure quiet">Every screenshot below is a capture from a Kobo Clara BW. Open an app to set up Cobalt or install it on a linked reader. Cobalt is installed once over USB; later apps arrive over Wi-Fi.</p>
+    <h2 class="measure">Some of the current apps.</h2>
+    <p class="measure quiet">You can install new apps from the Cobalt App Store over Wi-Fi.</p>
     <div class="apps-grid">
       <div class="app">
         <a class="shot" href="apps/launcher/"><img src="media/site/apps/launcher.png" width="1072" height="1448" loading="lazy" alt="Cobalt launcher app grid on e-ink"></a>
@@ -616,7 +615,7 @@ footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
     <div class="measure">
       <p class="kicker">Create</p>
       <h2>Make the app you wish this screen had.</h2>
-      <p>Start a Rust app, run it in the browser simulator, test it on a supported reader, and submit it to Store. An app can ship without waiting for a Cobalt platform release.</p>
+      <p>Start a Rust app, run it in the Cobalt simulator, test it on a supported reader, and submit it to Store. An app can ship without waiting for a Cobalt platform release.</p>
       <div class="cta" style="margin-top:26px">
         <a class="btn primary" href="developers.html">Build for Cobalt</a>
         <a class="btn" href="sdk.html">SDK reference</a>
@@ -658,7 +657,7 @@ footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
       <text x="110" y="304" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="currentColor" letter-spacing="1">FIG. 1 CLARA BW N365</text>
     </svg>
     <p class="kicker">Install</p>
-    <h2 class="measure">One USB installation.</h2>
+    <h2 class="measure">How to install</h2>
     <ol class="steps">
       <li><strong>Charge a fully supported reader</strong> and connect it over USB. The Clara BW N365, Clara Colour N367, Elipsa 2E N605, Clara HD N249, Libra 2 N418, and Libra Colour N428 are fully tested at the exact versions in the <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/DEVICES.md#device-support-matrix">device support matrix</a>.</li>
       <li><strong>Run the setup:</strong></li>
@@ -671,7 +670,7 @@ cargo run -p kobo-cli -- setup</code></pre>
       <li><strong>Restart the reader</strong> and open <strong>Cobalt</strong> from Kobo's menu.</li>
       <li><strong>Open Store.</strong> Everything from here on arrives over Wi-Fi.</li>
     </ol>
-    <p class="measure quiet" style="margin-top:22px">The 2025 Clara BW P365 (device code 395) hardware refresh is also supported: its measured panel, touch, firmware, and kernel facts match the attended-tested N365 Clara BW. The complete walkthrough, including recovery steps, is in <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/INSTALL.md">docs/INSTALL.md</a>.</p>
+    <p class="measure quiet" style="margin-top:22px">The complete walkthrough, including recovery steps, is in <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/INSTALL.md">docs/INSTALL.md</a>.</p>
   </div>
 </section>
 
@@ -680,7 +679,7 @@ cargo run -p kobo-cli -- setup</code></pre>
     <p class="kicker">Safety</p>
     <h2>Your original reader stays available.</h2>
     <p>Cobalt does not replace Kobo's boot chain. Normal panel-write entry points require an exact hardware and firmware match, and a reboot returns to the stock reader. The first installation does modify files on the user storage partition, and it is provided without warranty.</p>
-    <p>The Clara BW N365, Clara BW P365 refresh, Clara Colour N367, Elipsa 2E N605, Clara HD N249, Libra 2 N418, and Libra Colour N428 profiles are supported at the exact firmware and kernel versions in the <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/DEVICES.md#device-support-matrix">device support matrix</a>. P365 support inherits the attended N365 evidence after its read-only doctor report matched the same panel, touch, firmware, and kernel. Other identity or firmware combinations remain unsupported until separately verified. Cobalt is an independent project, not affiliated with Rakuten Kobo.</p>
+    <p>The Clara BW N365 / P365, Clara Colour N367, Elipsa 2E N605, Clara HD N249, Libra 2 N418, and Libra Colour N428 profiles are supported at the exact firmware and kernel versions in the <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/DEVICES.md#device-support-matrix">device support matrix</a>. Other identity or firmware combinations remain unsupported until separately verified. Cobalt is an independent project, not affiliated with Rakuten Kobo.</p>
   </div>
 </section>
 
