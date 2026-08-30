@@ -250,7 +250,10 @@ fn prepare_remote_install_with(
         entry.manifest().minimum_cobalt_version(),
     ) {
         return Ok(RemoteInstallPlan {
-            outcome: RemoteInstallOutcome::Unavailable { id: id.to_owned() },
+            outcome: RemoteInstallOutcome::RequiresCobalt {
+                id: id.to_owned(),
+                minimum_cobalt_version: entry.manifest().minimum_cobalt_version().to_owned(),
+            },
             install: false,
         });
     }
@@ -511,6 +514,7 @@ fn builtin_info(app: &BuiltinApp) -> AppInfo {
         label: app.label.to_owned(),
         summary: app.summary.to_owned(),
         version: app.version.to_owned(),
+        minimum_cobalt_version: env!("CARGO_PKG_VERSION").to_owned(),
         glyph: app.glyph,
         capabilities: app
             .capabilities
@@ -543,6 +547,7 @@ fn manifest_info(
         label: manifest.short_label().to_owned(),
         summary: manifest.summary().to_owned(),
         version: manifest.version().to_owned(),
+        minimum_cobalt_version: manifest.minimum_cobalt_version().to_owned(),
         glyph: glyph(manifest.glyph()).ok_or(DeviceError::InvalidInput)?,
         capabilities: manifest.capabilities().map(str::to_owned).collect(),
         installed_version: installed_version.map(str::to_owned),
@@ -963,6 +968,15 @@ mod tests {
     }
 
     fn release_for(seed: &[u8; 32], id: &str, version: &str) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+        release_for_minimum(seed, id, version, env!("CARGO_PKG_VERSION"))
+    }
+
+    fn release_for_minimum(
+        seed: &[u8; 32],
+        id: &str,
+        version: &str,
+        minimum_cobalt_version: &str,
+    ) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
         let binary = format!("{id} app binary").into_bytes();
         let manifest = Manifest::new_public(ManifestInput {
             id: id.to_owned(),
@@ -970,7 +984,7 @@ mod tests {
             short_label: id.to_owned(),
             summary: format!("The {id} test application."),
             version: version.to_owned(),
-            minimum_cobalt_version: env!("CARGO_PKG_VERSION").to_owned(),
+            minimum_cobalt_version: minimum_cobalt_version.to_owned(),
             glyph: "note".to_owned(),
             capabilities: Vec::new(),
             binary_sha256: kobo_net::sha256::hex_digest(&binary),
@@ -1220,6 +1234,31 @@ mod tests {
         assert!(!plan.install);
         let installed = installed_with_key(&root, &key).expect("installed app remains");
         assert!(installed.iter().any(|app| app.id == "word-count"));
+        let _ignored = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_remote_app_requiring_newer_cobalt_reports_the_required_version() {
+        let root = root();
+        let seed = [9_u8; 32];
+        let key = derive_public_key(&seed).expect("key");
+        let (json, signature, _) = release_for_minimum(&seed, "word-count", "1.0.0", "999.0.0");
+        let plan = prepare_remote_install_with(&root, "word-count", &key, |url, _| {
+            if url == CATALOG_URL {
+                Ok(json.clone())
+            } else {
+                Ok(signature.clone())
+            }
+        })
+        .expect("compatibility plan");
+        assert_eq!(
+            plan.outcome,
+            RemoteInstallOutcome::RequiresCobalt {
+                id: "word-count".to_owned(),
+                minimum_cobalt_version: "999.0.0".to_owned(),
+            }
+        );
+        assert!(!plan.install);
         let _ignored = fs::remove_dir_all(root);
     }
 

@@ -40,7 +40,9 @@ mint, alter, or replay install commands.
 Install requests wait for up to 72 hours. If the Kobo is offline, open Cobalt
 App Store after reconnecting to process the queue. The result distinguishes a
 new install, an update, an app already at the current version, an app included
-with Cobalt, and an app unavailable from the current catalog.
+with Cobalt, an app unavailable from the current catalog, and an app that
+requires a newer Cobalt release. In the last case the device reports the exact
+minimum release and does not download or run the app.
 
 Use **Disconnect all** on the Kobo to revoke every linked browser. With SSH
 enabled, the host maintenance command can do the same:

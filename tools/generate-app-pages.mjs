@@ -191,7 +191,7 @@ for (const app of catalog.apps) {
     </nav>
   </div>
 </header>
-<main class="wrap" data-app-id="${id}">
+<main class="wrap" data-app-id="${id}" data-minimum-cobalt-version="${escape(app.minimum_cobalt_version)}">
   <div class="app-hero">
     <div class="app-copy">
       <p class="eyebrow">Kobo app</p>

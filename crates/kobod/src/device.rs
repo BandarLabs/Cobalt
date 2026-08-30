@@ -2389,7 +2389,8 @@ fn remote_installed_id(outcome: &kobo_protocol::RemoteInstallOutcome) -> Option<
         kobo_protocol::RemoteInstallOutcome::None
         | kobo_protocol::RemoteInstallOutcome::AlreadyInstalled { .. }
         | kobo_protocol::RemoteInstallOutcome::Included { .. }
-        | kobo_protocol::RemoteInstallOutcome::Unavailable { .. } => None,
+        | kobo_protocol::RemoteInstallOutcome::Unavailable { .. }
+        | kobo_protocol::RemoteInstallOutcome::RequiresCobalt { .. } => None,
     }
 }
 

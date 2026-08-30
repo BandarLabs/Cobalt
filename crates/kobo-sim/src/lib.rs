@@ -1008,6 +1008,7 @@ fn simulated_app(
         label: label.to_owned(),
         summary: summary.to_owned(),
         version: "1.0.0".to_owned(),
+        minimum_cobalt_version: env!("CARGO_PKG_VERSION").to_owned(),
         glyph,
         capabilities: capabilities
             .iter()

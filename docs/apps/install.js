@@ -5,6 +5,7 @@ const STORAGE_KEY = "cobalt.install-link.v1";
 const encoder = new TextEncoder();
 const app = document.querySelector("main");
 const appId = app.dataset.appId;
+const minimumCobaltVersion = app.dataset.minimumCobaltVersion;
 const setupPanel = document.querySelector("#setup-panel");
 const pairPanel = document.querySelector("#pair-panel");
 const installPanel = document.querySelector("#install-panel");
@@ -377,6 +378,12 @@ function resultMessage(state) {
     }
     if (state.failure === "unavailable") {
       return { tone: "warning", text: "This app is not available in the current catalog. Nothing changed." };
+    }
+    if (state.failure === "requires-cobalt") {
+      const required = /^\d+(?:\.\d+)*$/.test(minimumCobaltVersion || "")
+        ? ` ${minimumCobaltVersion}`
+        : " a newer release";
+      return { tone: "warning", text: `This app requires Cobalt${required}. Update Cobalt on your Kobo, then send it again.` };
     }
     return { tone: "error", text: "The install could not be completed. Open App Store on your Kobo and try again." };
   }
