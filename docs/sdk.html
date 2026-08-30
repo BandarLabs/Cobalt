@@ -54,6 +54,8 @@ header.masthead { border-bottom: 1px solid var(--ink); padding: 18px 0; }
 nav.top { display: flex; gap: 24px; font-size: 16px; flex-wrap: wrap; }
 nav.top a { color: var(--ink); }
 nav.top a.active, nav.top a:hover { color: var(--cobalt); }
+.icon-link { display: inline-flex; align-items: center; gap: 6px; }
+.icon-link svg { width: 15px; height: 15px; flex: none; fill: currentColor; }
 h1 { font-size: clamp(36px, 5vw, 52px); line-height: 1.06; }
 .cta { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 30px; }
 .btn {
@@ -203,7 +205,12 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
       <a href="faq.html">FAQ</a>
       <a href="APP_STORE.md">App Store</a>
       <a href="INSTALL.md">Install</a>
-      <a href="https://github.com/BandarLabs/Cobalt">GitHub</a>
+      <a class="icon-link" href="https://github.com/BandarLabs/Cobalt">
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.49c-2.23.49-2.7-1.08-2.7-1.08-.37-.93-.9-1.18-.9-1.18-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.72 1.23 1.88.87 2.34.67.07-.52.28-.87.51-1.07-1.78-.2-3.65-.89-3.65-3.96 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.22 2.2.82A7.66 7.66 0 0 1 8 3.72a7.7 7.7 0 0 1 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.08-1.88 3.75-3.66 3.95.29.25.54.74.54 1.5v2.32c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/>
+        </svg>
+        GitHub
+      </a>
     </nav>
   </div>
 </header>
