@@ -1503,16 +1503,28 @@ fn host_applications(
                     if let Some(current) = screen.as_ref() {
                         match event {
                             TouchEvent::Down { x, y } => {
-                                // A new feedback frame also carries any older
-                                // deferred release, so its fallback is no
-                                // longer needed.
-                                release_due = None;
                                 if let (Ok(x), Ok(y)) = (i32::try_from(x), i32::try_from(y)) {
                                     landed = Some((Instant::now(), x, y));
                                     let layout =
                                         current.layout_with(&metrics_for(current), &chrome);
                                     if let Some(rect) = layout.pressed_control(x, y) {
                                         let metrics = metrics_for(current);
+                                        // An exact-damage feedback frame does
+                                        // not carry pixels outside its own
+                                        // rectangle, so an older deferred
+                                        // release is painted with its damage
+                                        // before its fallback is retired. A
+                                        // press outside every control paints
+                                        // nothing and leaves the deadline
+                                        // armed.
+                                        if let Some((_, damage)) = release_due.take() {
+                                            panel.paint_feedback(
+                                                display,
+                                                whole_screen,
+                                                &surface,
+                                                damage,
+                                            )?;
+                                        }
                                         surface.invert_press(rect, &metrics);
                                         panel.paint_feedback(
                                             display,
