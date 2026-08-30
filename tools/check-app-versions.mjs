@@ -12,6 +12,11 @@ const MANIFEST_FIELDS = [
   "glyph"
 ];
 
+// Store packages are built from the current SDK and therefore speak its exact
+// wire protocol. A new protocol must add its first compatible Cobalt release
+// here before the catalog can be published.
+const PROTOCOL_MINIMUMS = new Map([[10, "0.2.4"]]);
+
 function readJson(path, label) {
   try {
     const value = JSON.parse(readFileSync(path, "utf8"));
@@ -78,6 +83,48 @@ export function checkEntries(registry, published, affectedPackages) {
   if (failures.length > 0) {
     throw new Error(`${failures.join("\n")}\nBump each affected version in the app registry.`);
   }
+}
+
+function versionParts(value) {
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(value);
+  if (!match) throw new Error(`invalid Cobalt version ${value}`);
+  return match.slice(1).map(Number);
+}
+
+function versionIsOlder(value, minimum) {
+  const left = versionParts(value);
+  const right = versionParts(minimum);
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return left[index] < right[index];
+  }
+  return false;
+}
+
+export function checkProtocolMinimums(registry, protocolVersion, baselines = PROTOCOL_MINIMUMS) {
+  if (!Array.isArray(registry.apps)) throw new Error("registry apps must be an array");
+  const minimum = baselines.get(protocolVersion);
+  if (!minimum) {
+    throw new Error(
+      `protocol ${protocolVersion} has no minimum Cobalt release; add it to PROTOCOL_MINIMUMS`
+    );
+  }
+  const failures = registry.apps
+    .filter(app => versionIsOlder(app.minimum_cobalt_version, minimum))
+    .map(
+      app =>
+        `${app.id}: minimum Cobalt ${app.minimum_cobalt_version} is older than protocol ${protocolVersion}, first supported by ${minimum}`
+    );
+  if (failures.length > 0) throw new Error(failures.join("\n"));
+}
+
+function currentProtocolVersion() {
+  const source = readFileSync(
+    resolve(dirname(fileURLToPath(import.meta.url)), "../crates/kobo-protocol/src/lib.rs"),
+    "utf8"
+  );
+  const match = /pub const VERSION: u8 = (\d+);/.exec(source);
+  if (!match) throw new Error("read the current protocol version");
+  return Number(match[1]);
 }
 
 function command(name, arguments_) {
@@ -161,6 +208,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     const registry = readJson(resolve(values.get("--registry")), "app registry");
     const published = readJson(resolve(values.get("--published-catalog")), "published catalog");
     const affected = affectedWorkspacePackages(values.get("--base"));
+    checkProtocolMinimums(registry, currentProtocolVersion());
     checkEntries(registry, published, affected);
     console.log("Every changed app package has a new version.");
   } catch (error) {

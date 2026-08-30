@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { checkEntries } from "./check-app-versions.mjs";
+import { checkEntries, checkProtocolMinimums } from "./check-app-versions.mjs";
 
 function fixture({ currentVersion = "1.0.0", summary = "Summary" } = {}) {
   const app = {
@@ -58,5 +58,22 @@ test("accepts changed content with a new version", () => {
   const values = fixture({ currentVersion: "1.0.1", summary: "New summary" });
   assert.doesNotThrow(() =>
     checkEntries(values.registry, values.published, new Set(["kobo-notes"]))
+  );
+});
+
+test("rejects a minimum Cobalt release older than the package protocol", () => {
+  const values = fixture();
+  values.registry.apps[0].minimum_cobalt_version = "0.2.3";
+  assert.throws(
+    () => checkProtocolMinimums(values.registry, 10, new Map([[10, "0.2.4"]])),
+    /minimum Cobalt 0\.2\.3 is older than protocol 10, first supported by 0\.2\.4/
+  );
+});
+
+test("accepts the first Cobalt release supporting the package protocol", () => {
+  const values = fixture();
+  values.registry.apps[0].minimum_cobalt_version = "0.2.4";
+  assert.doesNotThrow(() =>
+    checkProtocolMinimums(values.registry, 10, new Map([[10, "0.2.4"]]))
   );
 });
