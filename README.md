@@ -15,6 +15,9 @@ Cobalt is an open-source application platform for Kobo. It provides a launcher,
 an App Store, a Rust SDK, a runtime with capability isolation, and a Clara BW
 simulator.
 
+See the [public roadmap](ROADMAP.md) for the product outcomes Cobalt is working
+toward and the principles used to choose them.
+
 After one USB installation, users can install, update, and remove signed apps
 over Wi-Fi. App releases are independent from Cobalt platform releases, so a
 new app can appear in Store without reinstalling or updating Cobalt.
@@ -260,6 +263,7 @@ cargo run -p kobo-cli -- run --sim --app sudoku
 
 Additional guides:
 
+- [Roadmap](ROADMAP.md)
 - [Contributing](CONTRIBUTING.md)
 - [Developing Cobalt](docs/DEVELOPING.md)
 - [Working with devices](docs/DEVICES.md)
