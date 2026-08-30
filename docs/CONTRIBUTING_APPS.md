@@ -71,10 +71,11 @@ Every new app pull request needs two different kinds of visual evidence:
    panel capture without a bezel, hand, camera perspective, or e-ink residue.
 
 Put the clean image under `apps/<app-id>/screenshots/`, show it from
-`apps/<app-id>/README.md`, and copy the same bytes to
-`docs/media/site/apps/<app-id>.png`. Add its filename and useful alt text to
-the `screenshots` map in `tools/generate-app-pages.mjs`. A photograph attached
-to the pull request does not replace this clean checked-in image.
+`apps/<app-id>/README.md`, then choose a site filename and copy the same bytes
+to `docs/media/site/apps/<site-filename>.png`. Register that exact filename and
+useful alt text in the `screenshots` map in `tools/generate-app-pages.mjs`. A
+photograph attached to the pull request does not replace this clean checked-in
+image.
 
 Add the app's card and `apps/<app-id>/` link to `docs/index.html`, then generate
 and commit the install page and sitemap:

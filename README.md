@@ -132,9 +132,10 @@ You do not need a separate operating-system `rust` package; rustup supplies
 `rustc` and `cargo`:
 
 ```sh
-rustup default stable
+rustup toolchain install stable
 git clone https://github.com/BandarLabs/Cobalt.git
 cd Cobalt
+rustup override set stable
 rustup target add armv7-unknown-linux-musleabihf
 cargo run -p kobo-cli -- setup
 ```
