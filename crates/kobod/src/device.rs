@@ -1502,10 +1502,6 @@ fn host_applications(
                     if let Some(current) = screen.as_ref() {
                         match event {
                             TouchEvent::Down { x, y } => {
-                                // A new feedback frame also carries any older
-                                // deferred release, so its fallback is no
-                                // longer needed.
-                                release_due = None;
                                 if let (Ok(x), Ok(y)) = (i32::try_from(x), i32::try_from(y)) {
                                     landed = Some((Instant::now(), x, y));
                                     let layout =
@@ -1514,6 +1510,12 @@ fn host_applications(
                                         let metrics = metrics_for(current);
                                         surface.invert_press(rect, &metrics);
                                         panel.paint(display, whole_screen, &surface)?;
+                                        // This feedback frame also carried any
+                                        // older deferred release, so its
+                                        // fallback is no longer needed. A press
+                                        // outside every control paints nothing
+                                        // and must leave the deadline armed.
+                                        release_due = None;
                                         pressed =
                                             Some((rect, metrics, feedback_kind(&layout, rect)));
                                     }
