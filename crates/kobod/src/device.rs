@@ -44,8 +44,8 @@ use kobo_hal::{Rect, RefreshIntent, RefreshPlan, RegionSnapshot};
 use kobo_policy::{Backends, Capability, Declared, DeviceServices, PowerPolicy, TaskRunner};
 use kobo_protocol::{Frame, Lifecycle, Message, TaskError, TaskOutcome};
 use kobo_ui::{
-    render_all, ActionId, Chrome, FontHandle, FramePlanner, PanelWaveform, PictureCache, Screen,
-    Surface,
+    render_all, ActionId, CellStyle, Chrome, FontHandle, FramePlanner, Layout, LayoutKind,
+    PanelWaveform, PictureCache, Screen, Surface,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -617,7 +617,7 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     // two portrait poses.
     let forward_is_194 = pose.rotation() % 4 == profile.reference_rotation % 4;
 
-    let outcome = host_applications(
+    let application_outcome = host_applications(
         application,
         &display,
         whole_screen,
@@ -626,6 +626,17 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
         forward_is_194,
         &watchdog,
     );
+    // No panel work may outlive Cobalt's ownership of the display. This is an
+    // explicit lifecycle fence rather than a timing assumption: the stock
+    // reader can start drawing as soon as the session gives the descriptor
+    // back.
+    let panel_idle = display
+        .finish_pending()
+        .map_err(|error| format!("finish panel updates before handoff: {error}"));
+    let outcome = match (application_outcome, panel_idle) {
+        (Ok(summary), Ok(_)) => Ok(summary),
+        (Err(error), _) | (_, Err(error)) => Err(error),
+    };
     trace("session finished, handing the panel back");
     println!("session finished, handing the panel back");
 
@@ -1237,7 +1248,12 @@ fn host_applications(
         // The rectangle a finger is resting on, with the metrics its mark was
         // drawn against. Both, because the mark is undone by drawing it again
         // and that is only exact if nothing about it is recomputed.
-        let mut pressed: Option<(kobo_ui::Rect, kobo_ui::DisplayMetrics)> = None;
+        let mut pressed: Option<(kobo_ui::Rect, kobo_ui::DisplayMetrics, FeedbackKind)> = None;
+        // A released control is restored with the application's answer when
+        // that answer arrives promptly. If it does not, this deadline makes
+        // the release visible on its own instead of leaving a key held down
+        // while an application works or fails.
+        let mut release_due: Option<Instant> = None;
         // When and where the finger landed, for telling a tap from a hold.
         let mut landed: Option<(Instant, i32, i32)> = None;
 
@@ -1247,6 +1263,10 @@ fn host_applications(
             // the runtime is still serving the panel rather than merely that
             // the process has not been reaped.
             watchdog.beat();
+            if release_due.is_some_and(|deadline| now >= deadline) {
+                panel.paint(display, whole_screen, &surface)?;
+                release_due = None;
+            }
             // The band is the only thing on the panel that changes without
             // anybody touching it, so the loop has to notice it on its own.
             // Repainting is conditional on the reading having moved, and the
@@ -1330,6 +1350,9 @@ fn host_applications(
                 .min(STATUS_POLL)
                 .min(back_offered.map_or(BEAT_INTERVAL, |(_, offered_at)| {
                     (offered_at + BACK_GRACE).saturating_duration_since(now)
+                }))
+                .min(release_due.map_or(BEAT_INTERVAL, |deadline| {
+                    deadline.saturating_duration_since(now)
                 }));
             match events.recv_timeout(wait) {
                 Ok(Event::Stopping(number)) => {
@@ -1475,30 +1498,36 @@ fn host_applications(
                     // the finished surface, so the planner sees a change of
                     // pure black and white in one small rectangle and picks
                     // the fast waveform for it.
+                    let mut released = None;
                     if let Some(current) = screen.as_ref() {
                         match event {
                             TouchEvent::Down { x, y } => {
+                                // A new feedback frame also carries any older
+                                // deferred release, so its fallback is no
+                                // longer needed.
+                                release_due = None;
                                 if let (Ok(x), Ok(y)) = (i32::try_from(x), i32::try_from(y)) {
                                     landed = Some((Instant::now(), x, y));
-                                    if let Some(rect) = current
-                                        .layout_with(&metrics_for(current), &chrome)
-                                        .pressed_control(x, y)
-                                    {
+                                    let layout =
+                                        current.layout_with(&metrics_for(current), &chrome);
+                                    if let Some(rect) = layout.pressed_control(x, y) {
                                         let metrics = metrics_for(current);
                                         surface.invert_press(rect, &metrics);
                                         panel.paint(display, whole_screen, &surface)?;
-                                        pressed = Some((rect, metrics));
+                                        pressed =
+                                            Some((rect, metrics, feedback_kind(&layout, rect)));
                                     }
                                 }
                             }
                             TouchEvent::Up { .. } => {
-                                // Put back before the action is delivered, so
-                                // that an application which repaints does so
-                                // over a control in its resting state rather
-                                // than over an inverted one.
-                                if let Some((rect, metrics)) = pressed.take() {
+                                // Restore the surface before the application
+                                // draws, but do not submit the release yet.
+                                // The action is delivered first and a prompt
+                                // answer carries both the release and the new
+                                // screen in one update.
+                                if let Some((rect, metrics, class)) = pressed.take() {
                                     surface.invert_press(rect, &metrics);
-                                    panel.paint(display, whole_screen, &surface)?;
+                                    released = Some(class);
                                 }
                             }
                             TouchEvent::Move { x, y } => {
@@ -1521,11 +1550,11 @@ fn host_applications(
                                 let off = match (i32::try_from(x), i32::try_from(y)) {
                                     (Ok(x), Ok(y)) => pressed
                                         .as_ref()
-                                        .is_some_and(|(rect, _)| !rect.contains(x, y)),
+                                        .is_some_and(|(rect, _, _)| !rect.contains(x, y)),
                                     _ => true,
                                 };
                                 if off {
-                                    if let Some((rect, metrics)) = pressed.take() {
+                                    if let Some((rect, metrics, _)) = pressed.take() {
                                         surface.invert_press(rect, &metrics);
                                         panel.paint(display, whole_screen, &surface)?;
                                     }
@@ -1543,13 +1572,14 @@ fn host_applications(
                             .is_some_and(|(at, _, _)| at.elapsed() >= HOLD_TIME),
                         _ => false,
                     };
-                    match deliver_touch(
+                    let disposition = deliver_touch(
                         &mut apps[index].stream,
                         event,
                         screen.as_ref(),
                         &chrome,
                         held,
-                    )? {
+                    )?;
+                    match disposition {
                         Tap::Handled => {}
                         Tap::OfferedBack => back_offered = Some((front, Instant::now())),
                         Tap::Leave => {
@@ -1572,6 +1602,10 @@ fn host_applications(
                                 &mut status,
                             )?;
                         }
+                    }
+                    if let Some(class) = released {
+                        release_due = (disposition != Tap::Leave)
+                            .then(|| Instant::now() + release_grace(class));
                     }
                 }
                 Ok(Event::App(id, frame)) => {
@@ -1609,6 +1643,7 @@ fn host_applications(
                                 // it, or releasing the finger would invert a
                                 // rectangle of the new screen instead.
                                 pressed = None;
+                                release_due = None;
                                 render_all(
                                     &screen,
                                     &metrics_for(&screen),
@@ -2761,6 +2796,39 @@ fn installed_name(path: &Path) -> Result<String, String> {
 /// concludes the panel is ignoring them and lifts off.
 const HOLD_TIME: Duration = Duration::from_millis(500);
 
+/// Briefly holds a release so an application's next screen can carry it.
+///
+/// These are far shorter than a panel transition and therefore add no visible
+/// hold. A keyboard gets a little more room because one key commonly changes
+/// both the key face and a text field at the opposite end of the screen.
+const CONTROL_RELEASE_GRACE: Duration = Duration::from_millis(12);
+const KEYBOARD_RELEASE_GRACE: Duration = Duration::from_millis(30);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FeedbackKind {
+    Control,
+    KeyboardKey,
+}
+
+fn feedback_kind(layout: &Layout, rect: kobo_ui::Rect) -> FeedbackKind {
+    if layout
+        .nodes
+        .iter()
+        .any(|node| node.rect == rect && matches!(node.kind, LayoutKind::Cell(_, CellStyle::Key)))
+    {
+        FeedbackKind::KeyboardKey
+    } else {
+        FeedbackKind::Control
+    }
+}
+
+fn release_grace(class: FeedbackKind) -> Duration {
+    match class {
+        FeedbackKind::Control => CONTROL_RELEASE_GRACE,
+        FeedbackKind::KeyboardKey => KEYBOARD_RELEASE_GRACE,
+    }
+}
+
 /// How far the finger may wander and still be holding, in pixels.
 ///
 /// A finger resting on glass is never still, and this panel reports every
@@ -3135,8 +3203,8 @@ impl Painter {
         let frame = RegionSnapshot::from_grayscale(display.geometry(), region, &region_gray)
             .map_err(|error| format!("prepare the frame: {error}"))?;
         let converted = started.elapsed();
-        display
-            .restore(&frame)
+        let fence = display
+            .restore_timed(&frame)
             .map_err(|error| format!("write the frame: {error}"))?;
         let written = started.elapsed();
         let plan = RefreshPlan::new(
@@ -3148,7 +3216,7 @@ impl Painter {
         )
         .ok_or_else(|| "the refresh region is not inside the screen".to_owned())?;
         let timing = display
-            .refresh_timed(plan)
+            .refresh_deferred(plan)
             .map_err(|error| format!("show the frame: {error}"))?;
         // One line per frame: how long the grayscale conversion, the
         // framebuffer write and the two ioctls each took, and what was
@@ -3159,14 +3227,16 @@ impl Painter {
         // line; start.sh already captures stderr.
         if frame_timing_wanted() {
             eprintln!(
-                "frame {}x{} wf={} convert={}ms write={}ms submit={}us wait={}ms",
+                "frame {}x{} wf={} convert={}ms write={}ms submit={}us fence={}ms completed={} pending={}",
                 region.width,
                 region.height,
                 timing.submitted_waveform,
                 converted.as_millis(),
                 written.saturating_sub(converted).as_millis(),
                 timing.submit.as_micros(),
-                timing.wait.as_millis(),
+                fence.wait.saturating_add(timing.prior.wait).as_millis(),
+                fence.completed.saturating_add(timing.prior.completed),
+                timing.unfinished,
             );
         }
 
@@ -3822,5 +3892,51 @@ mod hosting_tests {
             assert!(!super::system_request_allowed("settings", &request));
             assert!(!super::system_request_allowed("todo", &request));
         }
+    }
+
+    #[test]
+    fn keyboard_release_gets_one_short_app_response_window() {
+        assert_eq!(
+            super::release_grace(super::FeedbackKind::Control),
+            super::CONTROL_RELEASE_GRACE
+        );
+        assert_eq!(
+            super::release_grace(super::FeedbackKind::KeyboardKey),
+            super::KEYBOARD_RELEASE_GRACE
+        );
+        assert!(super::KEYBOARD_RELEASE_GRACE > super::CONTROL_RELEASE_GRACE);
+        assert!(super::KEYBOARD_RELEASE_GRACE < std::time::Duration::from_millis(50));
+    }
+
+    #[test]
+    fn keyboard_cells_use_the_keyboard_feedback_window() {
+        let screen = kobo_ui::Screen::new(
+            1,
+            vec![kobo_ui::Node::Grid {
+                id: kobo_ui::NodeId(1),
+                columns: 2,
+                square: false,
+                cells: vec![
+                    kobo_ui::Cell::new(kobo_ui::ActionId(1), "A"),
+                    kobo_ui::Cell::new(kobo_ui::ActionId(2), "B"),
+                ],
+            }],
+        );
+        let layout = screen.layout();
+        let key = layout
+            .nodes
+            .iter()
+            .find(|node| {
+                matches!(
+                    node.kind,
+                    kobo_ui::LayoutKind::Cell(_, kobo_ui::CellStyle::Key)
+                )
+            })
+            .expect("keyboard key")
+            .rect;
+        assert_eq!(
+            super::feedback_kind(&layout, key),
+            super::FeedbackKind::KeyboardKey
+        );
     }
 }
