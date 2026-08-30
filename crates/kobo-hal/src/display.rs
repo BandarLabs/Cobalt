@@ -528,7 +528,8 @@ impl DisplaySession {
         for refresh in work.matching(selected) {
             let wait_started = Instant::now();
             self.wait_for_marker(refresh.marker)?;
-            debug_assert!(work.remove(refresh.marker));
+            let removed = work.remove(refresh.marker);
+            debug_assert!(removed);
             timing.oldest = timing.oldest.max(refresh.sent_at.elapsed());
             timing.wait += wait_started.elapsed();
             timing.completed += 1;
