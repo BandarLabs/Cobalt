@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Cobalt SDK documentation</title>
+<title>Build apps for Cobalt</title>
 <meta name="description" content="Developer documentation for building Kobo e-reader applications with the Cobalt Rust SDK: UI components, lifecycle, runtime services, capabilities, companion crates, testing and shipping.">
 <link rel="canonical" href="https://bandarlabs.github.io/Cobalt/sdk.html">
 <link rel="icon" href="logo.svg" type="image/svg+xml">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Cobalt SDK documentation">
+<meta property="og:title" content="Build apps for Cobalt">
 <meta property="og:description" content="Build declarative, capability-isolated Rust applications for Kobo e-readers.">
 <meta property="og:url" content="https://bandarlabs.github.io/Cobalt/sdk.html">
 <meta property="og:image" content="https://bandarlabs.github.io/Cobalt/media/site/og-card.jpg">
@@ -198,7 +198,7 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
     <a class="brand" href="index.html"><img src="logo.svg" alt="Cobalt" width="81" height="34"></a>
     <nav class="top">
       <a href="index.html">Home</a>
-      <a class="active" href="sdk.html">SDK</a>
+      <a class="active" href="sdk.html">Developers</a>
       <a href="faq.html">FAQ</a>
       <a href="APP_STORE.md">App Store</a>
       <a href="INSTALL.md">Install</a>
@@ -210,6 +210,7 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
 <main class="wrap docs">
   <nav class="contents" aria-label="SDK documentation sections">
     <h2>On this page</h2>
+    <a href="#path">Start here</a>
     <a href="#quick-start">Quick start</a>
     <a href="#application-model">Application model</a>
     <a href="#ui">UI components</a>
@@ -223,15 +224,28 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
 
   <article>
     <div class="page-intro">
-      <h1>Cobalt SDK</h1>
-      <p class="lede">A declarative Rust API for E Ink UI, asynchronous work, private storage and capability-gated device services.</p>
-      <p class="sub">Applications manage state. The runtime handles layout, refresh planning, hardware access, network credentials and process isolation.</p>
+      <h1>Build apps for Cobalt.</h1>
+      <p class="lede">Create a Rust application, run it in the simulator, and publish it for supported e-readers.</p>
+      <p class="sub">Cobalt provides the interface, device services, application lifecycle, packaging, and Store delivery.</p>
       <div class="cta">
         <a class="btn primary" href="#quick-start">Quick start</a>
-        <a class="btn" href="https://github.com/BandarLabs/Cobalt/blob/main/SDK.md">Detailed guide</a>
-        <a class="btn" href="https://github.com/BandarLabs/Cobalt/tree/main/examples/gallery">Component gallery</a>
+        <a class="btn" href="CONTRIBUTING_APPS.md">Publish an app</a>
       </div>
     </div>
+    <section id="path">
+      <h2>From idea to Store</h2>
+      <div class="cards">
+        <div class="card"><h3>1. Create</h3><p>Start from the application template and describe each screen with the public SDK.</p></div>
+        <div class="card"><h3>2. Test</h3><p>Run the browser and runtime simulators, check failure states, and verify the interface on a supported reader.</p></div>
+        <div class="card"><h3>3. Submit</h3><p>Open a pull request with tests, a clean panel screenshot, and evidence from the physical device.</p></div>
+        <div class="card"><h3>4. Publish</h3><p>After review, the release workflow signs the application and adds it to Store without a platform release.</p></div>
+      </div>
+      <div class="links">
+        <a href="CONTRIBUTING_APPS.md">Application contribution guide</a>
+        <a href="https://github.com/BandarLabs/Cobalt/tree/main/examples">Worked examples</a>
+        <a href="https://github.com/BandarLabs/Cobalt/tree/main/examples/gallery">Component gallery</a>
+      </div>
+    </section>
     <section id="quick-start">
       <h2>Create an application</h2>
       <p>Install the CLI, create an application and start the browser simulator:</p>

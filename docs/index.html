@@ -3,21 +3,21 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Cobalt: apps and an SDK for Kobo e-readers</title>
-<meta name="description" content="Cobalt is an open-source app platform for Kobo e-readers: a launcher, a signed App Store, a Rust SDK, and a capability-isolated runtime. One USB install; every app after that arrives over Wi-Fi.">
+<title>Cobalt: apps for Kobo e-readers</title>
+<meta name="description" content="Install useful apps on a supported Kobo e-reader. Set up Cobalt once over USB, then add, update, and remove apps over Wi-Fi.">
 <link rel="canonical" href="https://bandarlabs.github.io/Cobalt/">
 <link rel="icon" href="logo.svg" type="image/svg+xml">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Cobalt: apps and an SDK for Kobo e-readers">
-<meta property="og:description" content="A launcher, a signed App Store, a Rust SDK, and a capability-isolated runtime for supported Kobo e-readers. Install once over USB; everything after that arrives over Wi-Fi.">
+<meta property="og:title" content="Cobalt: apps for Kobo e-readers">
+<meta property="og:description" content="Install useful apps on a supported Kobo e-reader. Set up Cobalt once over USB, then add, update, and remove apps over Wi-Fi.">
 <meta property="og:url" content="https://bandarlabs.github.io/Cobalt/">
 <meta property="og:image" content="https://bandarlabs.github.io/Cobalt/media/site/og-card.jpg">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:image:alt" content="The Cobalt launcher on a Kobo Clara BW: Settings, App Store, Terminal, AI Chat, Audiobooks, Components, Daily Brief, Feeds and Gutenbird.">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Cobalt: apps and an SDK for Kobo e-readers">
-<meta name="twitter:description" content="A launcher, a signed App Store, a Rust SDK, and a capability-isolated runtime for supported Kobo e-readers.">
+<meta name="twitter:title" content="Cobalt: apps for Kobo e-readers">
+<meta name="twitter:description" content="Install useful apps on a supported Kobo e-reader, then manage them over Wi-Fi.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/og-card.jpg">
 <script type="application/ld+json">
 {
@@ -311,11 +311,10 @@ footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
     </a>
     <nav class="top">
       <a href="#apps">Apps</a>
-      <a href="sdk.html">SDK</a>
+      <a href="sdk.html">Developers</a>
       <a href="faq.html">FAQ</a>
       <a href="#store">Store</a>
       <a href="#install">Install</a>
-      <a href="#contributing">Contributing</a>
       <a class="icon-link" href="https://github.com/BandarLabs/Cobalt">
         <svg viewBox="0 0 16 16" aria-hidden="true">
           <path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.49c-2.23.49-2.7-1.08-2.7-1.08-.37-.93-.9-1.18-.9-1.18-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.72 1.23 1.88.87 2.34.67.07-.52.28-.87.51-1.07-1.78-.2-3.65-.89-3.65-3.96 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.22 2.2.82A7.66 7.66 0 0 1 8 3.72a7.7 7.7 0 0 1 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.08-1.88 3.75-3.66 3.95.29.25.54.74.54 1.5v2.32c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/>
@@ -366,8 +365,8 @@ footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
       <figcaption>Recorded on-device at 3× speed. <a href="cobalt-tour.mp4">Watch as video.</a></figcaption>
     </figure>
     <div class="measure">
-      <h2>Running on a Kobo.</h2>
-      <p>Every app is a static ARM binary running as its own unprivileged process on stock hardware. The App Store installs, updates and removes them over Wi-Fi, with signatures verified before anything launches.</p>
+      <h2>More to do on the reader.</h2>
+      <p>Read books and papers, follow feeds, play a game, listen to audio, or check a task without changing devices. Install only the apps you want, then update or remove them over Wi-Fi.</p>
       <div class="tested-devices">
         <h3>Tested devices</h3>
         <ol>
@@ -386,8 +385,8 @@ footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
 
 <section id="field">
   <div class="wrap">
-    <h2 class="measure">arXiv papers and coding agents, on the panel.</h2>
-    <p class="measure quiet">These are photographs of the device, not simulator captures. The arXiv app reads the HTML rendering arXiv publishes for every paper since December 2023: abstracts, sections, math and result tables, paginated for the panel.</p>
+    <h2 class="measure">Read papers. Answer requests. Stay on the reader.</h2>
+    <p class="measure quiet">Read complete papers with sections, mathematics, tables, and figures. When work needs a simple decision, answer it from the same screen. Every photograph below is from a supported device.</p>
     <div class="field-grid">
       <figure>
         <img src="media/site/arxiv-preprint-kobo-clara-bw.jpg" width="1000" height="1333" loading="lazy"
@@ -535,77 +534,15 @@ footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
   </div>
 </section>
 
-<section id="sdk">
-  <div class="wrap sdk">
-    <div class="measure">
-      <p class="kicker">The SDK</p>
-      <h2>An app is one Rust file.</h2>
-      <p>Implement <code class="inline">KoboApp</code>, describe screens declaratively, and the runtime handles layout, e-ink refresh planning, Back navigation and lifecycle.</p>
-      <p>Apps don't open device resources; they ask. Network, storage, audio, frontlight and Wi-Fi are capability-gated, and a refusal comes back as a value the app can handle.</p>
-      <dl class="sdk-list">
-        <div><dt>E-ink UI</dt><dd>Text, tiles, dialogs, keyboards, pagination, partial refresh planning</dd></div>
-        <div><dt>Simulators</dt><dd>Browser and runtime simulators with layout diagnostics</dd></div>
-        <div><dt>Async work</dt><dd>HTTPS, ranged downloads, cancellable tasks, scheduled wakes</dd></div>
-        <div><dt>State</dt><dd>Atomic per-app keyed storage</dd></div>
-        <div><dt>Shipping</dt><dd>Signed static ARMv7 binaries, published when an app PR merges</dd></div>
-      </dl>
-<pre style="margin-top:26px"><code>kobo new my-app
-<span class="k">cd</span> my-app
-kobo dev</code></pre>
-      <p style="margin-top:18px"><a href="sdk.html">Read the SDK docs</a></p>
-    </div>
-    <div>
-<pre><code><span class="k">use</span> kobo_sdk::{
-    ActionId, Context, KoboApp, ScreenBuilder,
-};
-
-#[derive(Default)]
-<span class="k">struct</span> Hello { taps: u32 }
-
-<span class="k">impl</span> KoboApp <span class="k">for</span> Hello {
-    <span class="k">fn</span> on_start(&amp;<span class="k">mut</span> <span class="k">self</span>, ctx: &amp;<span class="k">mut</span> Context) {
-        <span class="k">self</span>.show(ctx);
-    }
-
-    <span class="k">fn</span> on_action(
-        &amp;<span class="k">mut</span> <span class="k">self</span>, ctx: &amp;<span class="k">mut</span> Context, a: ActionId,
-    ) {
-        <span class="k">if</span> a == kobo_sdk::action_id(<span class="s">"tap"</span>) {
-            <span class="k">self</span>.taps += 1;
-        }
-        <span class="k">self</span>.show(ctx);
-    }
-}
-
-<span class="k">impl</span> Hello {
-    <span class="k">fn</span> show(&amp;<span class="k">self</span>, ctx: &amp;<span class="k">mut</span> Context) {
-        <span class="k">let</span> screen = ScreenBuilder::new(<span class="s">"hello"</span>)
-            .top_bar(<span class="s">"Hello"</span>)
-            .heading(format!(<span class="s">"{} taps"</span>, <span class="k">self</span>.taps))
-            .button(<span class="s">"tap"</span>, <span class="s">"Tap me"</span>)
-            .build();
-        ctx.set_screen(screen);
-    }
-}
-
-<span class="k">fn</span> main() {
-    <span class="k">let</span> app = Hello::default();
-    <span class="k">let</span> _ = kobo_sdk::run(<span class="s">"hello"</span>, app);
-}</code></pre>
-    </div>
-  </div>
-</section>
-
 <section id="store">
   <div class="wrap store">
     <div class="measure">
       <p class="kicker">The Store</p>
-      <h2>Signed packages, verified before launch.</h2>
-      <p>Store reads a signed catalog from a fixed GitHub release. Each package holds one ARM executable and a signed canonical manifest. The runtime verifies the catalog, the package, the installed manifest and the binary before an app runs.</p>
-      <p>App releases are independent of platform releases: merging an app PR builds it for ARM, signs it, and updates the catalog. No Cobalt version bump, no reinstall. The app simply appears in Store.</p>
-      <p>The Cobalt platform itself also updates over Wi-Fi, through Settings, on a channel separate from the app catalog. The USB cable is only ever needed once.</p>
-      <p class="quiet">Install and catalog transactions are recovery-safe; an interrupted update leaves the reader with the version it had.</p>
-      <p style="margin-top:20px"><a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/CONTRIBUTING_APPS.md">Publish your own app →</a></p>
+      <h2>Add an app without reconnecting USB.</h2>
+      <p>Browse available apps on the reader, install one over Wi-Fi, and remove it when you no longer want it. App updates arrive without reinstalling Cobalt.</p>
+      <p>Every package is checked before it opens. An interrupted install or update leaves the working version in place.</p>
+      <p class="quiet">Cobalt updates remain separate from app updates, so the Store cannot replace the platform itself.</p>
+      <p style="margin-top:20px"><a href="sdk.html">Build and publish an app</a></p>
     </div>
     <figure>
       <img src="media/store-demo.gif" width="430" height="580" loading="lazy"
@@ -644,7 +581,7 @@ kobo dev</code></pre>
       <text x="110" y="304" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="currentColor" letter-spacing="1">FIG. 1 CLARA BW N365</text>
     </svg>
     <p class="kicker">Install</p>
-    <h2 class="measure">Installing from source.</h2>
+    <h2 class="measure">One USB installation.</h2>
     <ol class="steps">
       <li><strong>Charge a fully supported reader</strong> and connect it over USB. The Clara BW N365, Clara Colour N367, Elipsa 2E N605, Clara HD N249, Libra 2 N418, and Libra Colour N428 are fully tested at the exact versions in the <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/DEVICES.md#device-support-matrix">device support matrix</a>.</li>
       <li><strong>Run the setup:</strong></li>
@@ -661,26 +598,10 @@ cargo run -p kobo-cli -- setup</code></pre>
   </div>
 </section>
 
-<section id="contributing">
-  <div class="wrap">
-    <p class="kicker">Contributing</p>
-    <h2 class="measure">Contribute an app.</h2>
-    <p class="measure quiet">App contributions are regular pull requests. If it runs on your device and the PR shows it running, it gets merged and published.</p>
-    <ol class="steps" style="margin-top:26px">
-      <li><strong>Build it.</strong> Add the app as a workspace package under <code class="inline">apps/&lt;app-id&gt;/</code> and register it in <code class="inline">apps/catalog.json</code>.</li>
-      <li><strong>Test it.</strong> Add unit and layout tests, and run it in the browser and runtime simulators.</li>
-      <li><strong>Run it on your own device.</strong> A real, fully supported reader, not just the Clara-sized simulator.</li>
-      <li><strong>Open a PR with a GIF, video, or photos of it running.</strong> This is the physical-device review evidence.</li>
-      <li><strong>Include one clean panel screenshot.</strong> The app README and generated website install page use this checked-in image. Once reviewed and merged, the publish workflow signs the app and it appears in Store. No platform release needed.</li>
-    </ol>
-    <p class="measure quiet" style="margin-top:22px">Own a different Kobo? No coding is required to help test it. <a href="https://github.com/BandarLabs/Cobalt/issues">Join an existing thread for your model or create a new one</a>, then follow the <a href="https://github.com/BandarLabs/Cobalt/blob/main/CONTRIBUTING.md#device-testing">device testing guide</a>. App details are in <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/CONTRIBUTING_APPS.md">docs/CONTRIBUTING_APPS.md</a>.</p>
-  </div>
-</section>
-
 <section class="safety">
   <div class="wrap measure">
     <p class="kicker">Safety</p>
-    <h2>Device support and safety.</h2>
+    <h2>Your original reader stays available.</h2>
     <p>Cobalt does not replace Kobo's boot chain. Normal panel-write entry points require an exact hardware and firmware match, and a reboot returns to the stock reader. The first installation does modify files on the user storage partition, and it is provided without warranty.</p>
     <p>The Clara BW N365, Clara BW P365 refresh, Clara Colour N367, Elipsa 2E N605, Clara HD N249, Libra 2 N418, and Libra Colour N428 profiles are supported at the exact firmware and kernel versions in the <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/DEVICES.md#device-support-matrix">device support matrix</a>. P365 support inherits the attended N365 evidence after its read-only doctor report matched the same panel, touch, firmware, and kernel. Other identity or firmware combinations remain unsupported until separately verified. Cobalt is an independent project, not affiliated with Rakuten Kobo.</p>
   </div>
@@ -693,7 +614,7 @@ cargo run -p kobo-cli -- setup</code></pre>
       <p>Cobalt · AGPL-3.0 · <a href="https://github.com/BandarLabs/Cobalt">BandarLabs/Cobalt</a></p>
     </div>
     <nav>
-      <a href="sdk.html">SDK docs</a>
+      <a href="sdk.html">Developers</a>
       <a href="faq.html">FAQ</a>
       <a href="https://www.reddit.com/r/CobaltForKobo/">Community</a>
       <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/INSTALL.md">Install</a>
