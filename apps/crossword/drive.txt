@@ -1,0 +1,8 @@
+expect Crossword
+tap 00
+tap letter
+tap letter
+tap enter
+expect Across
+tap clue
+shot crossword-play
