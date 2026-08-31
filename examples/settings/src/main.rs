@@ -18,6 +18,8 @@ const CHECK: &str = "check";
 const INSTALL: &str = "install";
 const CLOSE: &str = "close";
 const TOGGLE: &str = "toggle";
+const AUTO_COBALT: &str = "auto-cobalt";
+const AUTO_APPS: &str = "auto-apps";
 const RESCAN: &str = "rescan";
 const MORE: &str = "more";
 const PREVIOUS: &str = "previous";
@@ -144,6 +146,19 @@ impl Topic {
     }
 }
 
+/// Whether trouble with this request belongs on the Update screen.
+///
+/// The automatic-update switches sit under the update rows, so a runtime
+/// that cannot read or keep those choices reports it where they are shown.
+fn update_screen_owns(request: &DeviceRequest) -> bool {
+    matches!(
+        request,
+        DeviceRequest::Update { .. }
+            | DeviceRequest::ReadAutoUpdate
+            | DeviceRequest::SetAutoUpdate { .. }
+    )
+}
+
 #[derive(Default)]
 struct Settings {
     view: View,
@@ -167,6 +182,10 @@ struct Settings {
     identity: Option<DeviceIdentity>,
     update: UpdateFlow,
     update_task: Option<TaskId>,
+    /// What the runtime updates on its own, once it has answered. `None`
+    /// until the first reply, so the switches are drawn from a real answer
+    /// rather than a guess that a tap would then contradict.
+    auto_update: Option<(bool, bool)>,
     pending: Option<Pending>,
     delayed: Option<TaskId>,
     trouble: Option<(Topic, String)>,
@@ -338,6 +357,42 @@ impl Settings {
                     .section_with_value("Installed", VERSION)
                     .banner(kobo_sdk::BannerLevel::Attention, reason.clone())
                     .button(CHECK, "Try again");
+            }
+        }
+        // The standing choices, drawn only around the quiet states so an
+        // installation in progress keeps its screen to itself. Absent until
+        // the runtime has answered, because a switch drawn from a guess can
+        // be tapped into recording the opposite of what it showed.
+        if matches!(
+            self.update,
+            UpdateFlow::Idle | UpdateFlow::UpToDate { .. } | UpdateFlow::Failed(_)
+        ) {
+            if let Some((cobalt, apps)) = self.auto_update {
+                screen = screen
+                    .section_with_value(
+                        "Update Cobalt automatically",
+                        if cobalt { "On" } else { "Off" },
+                    )
+                    .button(
+                        AUTO_COBALT,
+                        if cobalt {
+                            "Stop updating Cobalt automatically"
+                        } else {
+                            "Update Cobalt automatically"
+                        },
+                    )
+                    .section_with_value(
+                        "Update apps automatically",
+                        if apps { "On" } else { "Off" },
+                    )
+                    .button(
+                        AUTO_APPS,
+                        if apps {
+                            "Stop updating apps automatically"
+                        } else {
+                            "Update apps automatically"
+                        },
+                    );
             }
         }
         screen.build()
@@ -653,6 +708,7 @@ impl Settings {
         context.device().read_bluetooth();
         context.device().read_wifi();
         context.device().read_battery_detail();
+        context.device().read_auto_update();
     }
 
     /// Asks GitHub what the newest published release is. Nothing is
@@ -669,6 +725,21 @@ impl Settings {
         });
         if self.update_task.is_none() {
             self.update = UpdateFlow::Failed("This build was refused the network.".to_owned());
+        }
+    }
+
+    /// Turns one of the two standing update switches while restating the
+    /// other, so the runtime always hears a complete choice. Nothing happens
+    /// until the runtime has answered the first read: a switch drawn from a
+    /// guess must not be flippable into recording the opposite of what it
+    /// showed.
+    fn flip_auto_update(&self, context: &mut Context, cobalt_switch: bool) {
+        if let Some((cobalt, apps)) = self.auto_update {
+            if cobalt_switch {
+                context.device().set_auto_update(!cobalt, apps);
+            } else {
+                context.device().set_auto_update(cobalt, !apps);
+            }
         }
     }
 
@@ -884,6 +955,10 @@ impl KoboApp for Settings {
             self.show(context);
         } else if action == action_id(INSTALL) {
             self.install_update(context);
+        } else if action == action_id(AUTO_COBALT) {
+            self.flip_auto_update(context, true);
+        } else if action == action_id(AUTO_APPS) {
+            self.flip_auto_update(context, false);
         } else if action == action_id(CLOSE) && matches!(self.update, UpdateFlow::Installed { .. })
         {
             context.exit();
@@ -978,22 +1053,27 @@ impl KoboApp for Settings {
                 self.battery = Some(detail);
                 self.settled(Topic::Battery);
             }
+            DeviceResult::AutoUpdate { cobalt, apps } => {
+                self.auto_update = Some((cobalt, apps));
+            }
             DeviceResult::Identity(identity) => {
                 self.identity = Some(identity);
                 self.settled(Topic::About);
             }
             // A failure belongs to whatever was asked for. When the request
-            // is not one of these rows, there is nowhere honest to show it,
-            // so it is dropped rather than shown under an unrelated heading.
+            // is not one of these rows or the Update screen, there is nowhere
+            // honest to show it, so it is dropped rather than shown under an
+            // unrelated heading. The automatic-update switches live on the
+            // Update screen, so their trouble is reported there.
             DeviceResult::Failed(error) => {
-                if matches!(request, DeviceRequest::Update { .. }) {
+                if update_screen_owns(&request) {
                     self.update = UpdateFlow::Failed(error.to_string());
                 } else if let Some(topic) = Topic::of(&request) {
                     self.fail(topic, error.to_string());
                 }
             }
             DeviceResult::Denied(reason) => {
-                if matches!(request, DeviceRequest::Update { .. }) {
+                if update_screen_owns(&request) {
                     self.update = UpdateFlow::Failed(reason.to_string());
                 } else if let Some(topic) = Topic::of(&request) {
                     self.fail(topic, reason.to_string());
@@ -1226,7 +1306,10 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{RadioState, Settings, DEVICE_ACTIONS, MORE, NETWORK_ACTIONS, PREVIOUS, RESCAN};
+    use super::{
+        RadioState, Settings, View, AUTO_APPS, AUTO_COBALT, DEVICE_ACTIONS, MORE, NETWORK_ACTIONS,
+        PREVIOUS, RESCAN,
+    };
     use kobo_sdk::{
         action_id, BannerLevel, BatteryDetail, BluetoothDevice, BluetoothDeviceKind, Chrome,
         DeviceIdentity, Emphasis, Glyph, Node, WifiNetwork, CLARA_BW_METRICS,
@@ -1240,6 +1323,34 @@ mod tests {
             paired: index % 2 == 0,
             connected: index == 0,
         }
+    }
+
+    #[test]
+    fn the_update_screen_offers_both_automatic_update_switches() {
+        let settings = Settings {
+            view: View::Update,
+            auto_update: Some((true, false)),
+            ..Settings::default()
+        };
+        let screen = settings.update();
+        let issues = screen.validate(&CLARA_BW_METRICS);
+        assert!(issues.is_empty(), "{issues:?}");
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
+        assert!(layout.rect_of_action(action_id(AUTO_COBALT)).is_some());
+        assert!(layout.rect_of_action(action_id(AUTO_APPS)).is_some());
+    }
+
+    #[test]
+    fn the_switches_wait_for_the_runtime_to_answer_before_being_drawn() {
+        let settings = Settings {
+            view: View::Update,
+            ..Settings::default()
+        };
+        let layout = settings
+            .update()
+            .layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
+        assert!(layout.rect_of_action(action_id(AUTO_COBALT)).is_none());
+        assert!(layout.rect_of_action(action_id(AUTO_APPS)).is_none());
     }
 
     #[test]
@@ -1512,6 +1623,24 @@ mod tests {
             Some(super::Topic::Bluetooth)
         );
         assert_eq!(super::Topic::of(&DeviceRequest::ReadFrontlight), None);
+    }
+
+    #[test]
+    fn auto_update_trouble_belongs_to_the_update_screen() {
+        use kobo_sdk::DeviceRequest;
+        assert!(super::update_screen_owns(&DeviceRequest::ReadAutoUpdate));
+        assert!(super::update_screen_owns(&DeviceRequest::SetAutoUpdate {
+            cobalt: true,
+            apps: false,
+        }));
+        assert!(
+            super::Topic::of(&DeviceRequest::ReadAutoUpdate).is_none(),
+            "auto-update trouble may not appear under an unrelated row"
+        );
+        assert!(
+            !super::update_screen_owns(&DeviceRequest::ReadBatteryDetail),
+            "a battery failure is not the update screen's to report"
+        );
     }
 
     fn release_json(version: &str, with_digest: bool) -> String {

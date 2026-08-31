@@ -94,6 +94,15 @@ pub struct DeviceServices {
     audio_duration_ms: u32,
     audio_volume: u8,
     dictionaries: kobo_dict::Index,
+    auto_update: AutoUpdateChoices,
+}
+
+/// The two standing update switches, held together because they are asked
+/// and answered together.
+#[derive(Clone, Copy, Debug)]
+struct AutoUpdateChoices {
+    cobalt: bool,
+    apps: bool,
 }
 
 impl DeviceServices {
@@ -133,6 +142,11 @@ impl DeviceServices {
             audio_duration_ms: 0,
             audio_volume: 70,
             dictionaries: kobo_dict::Index::default(),
+            // Both on, matching a real reader that never opened settings.
+            auto_update: AutoUpdateChoices {
+                cobalt: true,
+                apps: true,
+            },
         }
     }
 
@@ -315,6 +329,22 @@ impl DeviceServices {
             | DeviceRequest::BeginAppLink
             | DeviceRequest::PollAppLink
             | DeviceRequest::DisconnectAppLink => DeviceResult::Denied(DenyReason::Unsupported),
+            DeviceRequest::ReadAutoUpdate => self.auto_update_state(),
+            DeviceRequest::SetAutoUpdate { cobalt, apps } => self.choose_auto_update(cobalt, apps),
+        }
+    }
+
+    fn choose_auto_update(&mut self, cobalt: bool, apps: bool) -> DeviceResult {
+        self.auto_update = AutoUpdateChoices { cobalt, apps };
+        self.auto_update_state()
+    }
+
+    /// The simulator keeps the two switches in memory so a settings screen's
+    /// whole flow can be exercised at a desk.
+    const fn auto_update_state(&self) -> DeviceResult {
+        DeviceResult::AutoUpdate {
+            cobalt: self.auto_update.cobalt,
+            apps: self.auto_update.apps,
         }
     }
 
@@ -619,7 +649,12 @@ pub fn request_capability(request: &DeviceRequest) -> Option<Capability> {
         // Identity is what the About screen shows so a photograph of it can
         // prove a build ran. It touches no radio and costs no power, and the
         // values are already on the session's own banner, so it is free.
-        | DeviceRequest::ReadIdentity => return None,
+        | DeviceRequest::ReadIdentity
+        // Reading and choosing the standing preference touch a settings file,
+        // not a radio or the panel, so no capability governs them; who may
+        // ask is decided by the runtime, exactly as for the store requests.
+        | DeviceRequest::ReadAutoUpdate
+        | DeviceRequest::SetAutoUpdate { .. } => return None,
     })
 }
 
@@ -708,6 +743,35 @@ mod tests {
                 sha256: "a".repeat(64),
             }),
             DeviceResult::Done
+        );
+    }
+
+    #[test]
+    fn simulated_automatic_updates_start_on_and_remember_a_choice() {
+        let mut services = DeviceServices::simulated();
+        assert_eq!(
+            services.handle(DeviceRequest::ReadAutoUpdate),
+            DeviceResult::AutoUpdate {
+                cobalt: true,
+                apps: true,
+            }
+        );
+        assert_eq!(
+            services.handle(DeviceRequest::SetAutoUpdate {
+                cobalt: false,
+                apps: true,
+            }),
+            DeviceResult::AutoUpdate {
+                cobalt: false,
+                apps: true,
+            }
+        );
+        assert_eq!(
+            services.handle(DeviceRequest::ReadAutoUpdate),
+            DeviceResult::AutoUpdate {
+                cobalt: false,
+                apps: true,
+            }
         );
     }
 
