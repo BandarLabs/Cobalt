@@ -82,7 +82,7 @@
     <a class="brand" href="../../"><img src="../../logo.svg" alt="Cobalt" width="81" height="34"></a>
     <nav class="top" aria-label="Main navigation">
       <a class="active" href="../../#apps">Apps</a>
-      <a href="../../sdk.html">SDK</a>
+      <a href="../../developers.html">Developers</a>
       <a href="../../faq.html">FAQ</a>
       <a href="../../#store">Store</a>
       <a href="../../#install">Install</a>
@@ -91,7 +91,7 @@
     </nav>
   </div>
 </header>
-<main class="wrap" data-app-id="zotero-reader">
+<main class="wrap" data-app-id="zotero-reader" data-minimum-cobalt-version="0.3.1">
   <div class="app-hero">
     <div class="app-copy">
       <p class="eyebrow">Kobo app</p>
@@ -103,6 +103,18 @@
       <img src="../../media/site/apps/zotero-reader.png" width="1072" height="1448" alt="Reading a paper with structured layout and Zotero metadata on a Kobo">
     </figure>
   </div>
+  <section class="panel prerequisites" aria-labelledby="prerequisites-title">
+    <p class="eyebrow">App setup</p>
+    <h2 id="prerequisites-title">Before you install</h2>
+    <ol>
+      <li>Create a dedicated Zotero API key with read-only access to your personal library. <a href="https://www.zotero.org/settings/keys">Zotero API key settings</a></li>
+      <li>Copy the numeric user ID shown on the Zotero API key settings page. Zotero Reader asks for it on first launch.</li>
+      <li>Install the API key on your Kobo under the exact secret name zotero.
+        <code class="setup-command">kobo secret set zotero --device &lt;address&gt;</code></li>
+      <li>Launch Zotero Reader, enter the numeric user ID, and select a collection.</li>
+      <li>Direct mode reads indexed text. Structured PDF layout, tables, figures, formulas, and OCR require the optional self-hosted conversion service. <a href="https://andreclerigo.github.io/cobalt-zotero-reader/self-hosting.html">Self-hosting guide</a></li>
+    </ol>
+  </section>
   <section class="panel" id="pair-panel">
     <p class="eyebrow">Install with Cobalt</p>
     <h2>Link your Kobo to install</h2>
