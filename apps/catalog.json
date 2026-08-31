@@ -85,7 +85,7 @@
       "short_label": "Lexicube",
       "summary": "Shake sixteen letter dice, find words for three minutes, then look them up.",
       "version": "1.0.0",
-      "minimum_cobalt_version": "0.2.0",
+      "minimum_cobalt_version": "0.2.4",
       "glyph": "grid",
       "capabilities": []
     },
