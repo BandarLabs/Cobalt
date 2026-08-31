@@ -1,0 +1,6 @@
+expect Nonograms
+tap 02
+expect Free marks
+tap Free
+expect Guided
+shot nonograms-play
