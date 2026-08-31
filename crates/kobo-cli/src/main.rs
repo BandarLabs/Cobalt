@@ -14,6 +14,7 @@ mod authorize;
 mod connect;
 mod devsession;
 mod drive;
+mod harden;
 mod menu;
 mod package;
 // Only the `device-write` build dispatches to this, but its tests decide what
@@ -2719,7 +2720,30 @@ fn run_remote_shell(
     script: &str,
     timeout: Duration,
 ) -> Result<RemoteShellOutput, String> {
+    run_shell_session(remote_shell_command(remote), script, timeout)
+}
+
+/// The same session, over a connection that has to authenticate afresh.
+///
+/// An owner whose own ssh configuration multiplexes connections would
+/// otherwise have every "new" connection ride the first one's master, which
+/// is fine everywhere except the one login whose entire purpose is to prove
+/// that authenticating still works (see [`harden`]).
+fn run_remote_shell_unshared(
+    remote: &str,
+    script: &str,
+    timeout: Duration,
+) -> Result<RemoteShellOutput, String> {
     let mut command = remote_shell_command(remote);
+    command.args(["-o", "ControlMaster=no", "-o", "ControlPath=none"]);
+    run_shell_session(command, script, timeout)
+}
+
+fn run_shell_session(
+    mut command: Command,
+    script: &str,
+    timeout: Duration,
+) -> Result<RemoteShellOutput, String> {
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -3199,7 +3223,11 @@ fn setup_device(arguments: &[String]) -> Result<(), String> {
     );
     if waiting {
         let subnet = subnet.unwrap_or_default();
-        await_reader(&subnet);
+        // Hardening rides the wait because the wait ends in the first
+        // key-authenticated connection. `--no-key` skips it: an owner who
+        // manages keys themselves has not shown this machine's key works, and
+        // closing password login on their behalf could close the only door.
+        await_reader(&subnet, options.authorize_key);
     }
     Ok(())
 }
@@ -3259,7 +3287,13 @@ fn add_menu_entry(volume: &Path, force: bool) -> Result<menu::Menu, String> {
 /// Prints rather than returns, and never fails: everything this command was
 /// asked to do is already on the reader by the time it is called, so a wait
 /// that finds nothing is a wait that found nothing, not a setup that failed.
-fn await_reader(subnet: &str) {
+///
+/// With `harden`, the one reader that appears also has password login for
+/// root closed, because this moment is the first key-authenticated connection
+/// and therefore the first moment it is safe to (see [`harden`]). A wait that
+/// times out or finds several readers hardens nothing: running the setup
+/// again retries it, and recognises a reader already done.
+fn await_reader(subnet: &str, harden: bool) {
     println!(
         "\nWaiting up to {} minutes for the reader to come back on {subnet}.0/24. Ctrl-C to stop.",
         setup::WAIT_LIMIT.as_secs() / 60
@@ -3287,10 +3321,15 @@ fn await_reader(subnet: &str) {
     );
     println!();
     match arrival {
-        setup::Arrival::Found(address) => println!(
-            "The reader is at {address}.\n\n  kobo deploy --device {address}\n\n\
-             That installs over Wi-Fi from here on, with no cable and no restart."
-        ),
+        setup::Arrival::Found(address) => {
+            println!(
+                "The reader is at {address}.\n\n  kobo deploy --device {address}\n\n\
+                 That installs over Wi-Fi from here on, with no cable and no restart."
+            );
+            if harden {
+                harden_root_ssh(&address.to_string());
+            }
+        }
         setup::Arrival::Several(addresses) => {
             let listed = addresses
                 .iter()
@@ -3323,6 +3362,173 @@ fn await_reader(subnet: &str) {
     }
 }
 
+/// Closes password login for root, over the connection that proves keys work.
+///
+/// Prints rather than returns, like the wait it runs inside: the setup itself
+/// succeeded before this began, and every ending here is an ending the reader
+/// survives. The order of the two connections is the safety argument. The
+/// first authenticates with the key and appends the block, gated on `sshd -t`
+/// and armed with a timed revert; the second is a fresh login against the
+/// hardened server, and its success is what commits the change. A second
+/// login that never arrives means the reader restores password login on its
+/// own (see [`harden`]).
+fn harden_root_ssh(host: &str) {
+    let minutes = harden::REVERT_DELAY.as_secs() / 60;
+    println!(
+        "\nThe key works, so password login for root is being switched off \
+         (the firmware\nleaves it on, with the factory credential)."
+    );
+    let remote = format!("root@{host}");
+    let applied = match run_remote_shell(&remote, &harden::apply_script(), SHELL_TIMEOUT) {
+        Ok(output) => output,
+        Err(error) => {
+            println!(
+                "The reader stopped answering before it could be hardened ({error}).\n\
+                 Password login is as the firmware left it; running this setup again\n\
+                 retries."
+            );
+            return;
+        }
+    };
+    if !applied.status.success() {
+        println!(
+            "The reader declined to close password login, and left its configuration\n\
+             as it was: {}\nRunning this setup again retries.",
+            String::from_utf8_lossy(&applied.stderr).trim()
+        );
+        return;
+    }
+    match harden::Outcome::parse(&String::from_utf8_lossy(&applied.stdout)) {
+        Some(harden::Outcome::Already) => {
+            println!("Root's SSH was already key-only; nothing to change.");
+            return;
+        }
+        Some(harden::Outcome::Applied) => {}
+        _ => {
+            println!(
+                "The reader answered something unexpected instead of applying the\n\
+                 change, so nothing further was done: {}",
+                String::from_utf8_lossy(&applied.stdout).trim()
+            );
+            return;
+        }
+    }
+    // A fresh connection, deliberately: proving the still-open session works
+    // would prove nothing about the server as it now stands.
+    let confirmed = run_remote_shell_unshared(&remote, &harden::commit_script(), SHELL_TIMEOUT);
+    match confirmed {
+        Ok(output)
+            if matches!(
+                harden::Outcome::parse(&String::from_utf8_lossy(&output.stdout)),
+                Some(harden::Outcome::Committed | harden::Outcome::Already)
+            ) =>
+        {
+            println!(
+                "Password login for root is off: a fresh key login confirmed the key\n\
+                 still works, which made it permanent. The change is one marked block\n\
+                 in the reader's sshd_config; 'kobo setup --undo' removes it."
+            );
+        }
+        Ok(output)
+            if harden::Outcome::parse(&String::from_utf8_lossy(&output.stdout))
+                == Some(harden::Outcome::Missing) =>
+        {
+            println!(
+                "The reader had already restored password login by the time the\n\
+                 confirming login arrived, so it stands as the firmware left it.\n\
+                 Running this setup again retries."
+            );
+        }
+        _ => {
+            println!(
+                "Password login is off for now, but the confirming key login did not\n\
+                 get through, so the reader will put its configuration back by itself\n\
+                 in {minutes} minutes. Keys keep working throughout; running this setup\n\
+                 again retries."
+            );
+        }
+    }
+}
+
+/// How long `--undo` watches for the reader to rejoin Wi-Fi after ejecting.
+///
+/// Much shorter than a setup's wait, because nothing here involves a restart:
+/// the reader only has to leave USB mode and pick its network back up, which
+/// takes seconds when it is going to happen at all.
+const UNDO_SWEEP_LIMIT: Duration = Duration::from_secs(60);
+
+/// Takes the key-only SSH block back out, if the reader can be found.
+///
+/// Returns one line for the undo's report. USB cannot reach `sshd_config`,
+/// so this looks for the reader over Wi-Fi, and a reader that cannot be
+/// found is reported rather than chased: the same undo has already switched
+/// the SSH server off, so the block it leaves behind configures a server
+/// that no longer runs.
+fn unharden_over_network() -> String {
+    const STAYS: &str = "the key-only SSH block stays in sshd_config, where it is inert \
+                         once the\n    server is off";
+    let Some(subnet) = connect::local_subnet() else {
+        return format!("{STAYS}; this machine has no network to look for the reader on");
+    };
+    let deadline = Instant::now() + UNDO_SWEEP_LIMIT;
+    loop {
+        let mut readers = Vec::new();
+        for address in connect::sweep(&subnet, connect::PROBE_TIMEOUT) {
+            if matches!(identify_device(&address.to_string()), Some(identity) if identity.is_kobo())
+            {
+                readers.push(address);
+            }
+        }
+        match readers[..] {
+            [address] => return unharden_reader(&address.to_string()),
+            [] if Instant::now() < deadline => {
+                thread::sleep(setup::WAIT_INTERVAL);
+            }
+            [] => {
+                return format!(
+                    "{STAYS}. The reader did not rejoin Wi-Fi within a minute; running\n\
+                     \x20   this undo again with it awake and connected removes the block"
+                );
+            }
+            _ => {
+                return format!(
+                    "{STAYS}. More than one reader is on the network, so this will not\n\
+                     \x20   guess; running this undo again with only yours connected \
+                     removes the block"
+                );
+            }
+        }
+    }
+}
+
+/// The removal itself, once exactly one reader has been found.
+fn unharden_reader(host: &str) -> String {
+    let remote = format!("root@{host}");
+    let output = match run_remote_shell(&remote, &harden::remove_script(), SHELL_TIMEOUT) {
+        Ok(output) => output,
+        Err(error) => {
+            return format!(
+                "the key-only SSH block stays: the reader at {host} stopped answering\n\
+                 \x20   ({error})"
+            );
+        }
+    };
+    match harden::Outcome::parse(&String::from_utf8_lossy(&output.stdout)) {
+        Some(harden::Outcome::Removed) => {
+            format!(
+                "password login for root restored: the key-only block was removed from\n\
+                     \x20   the reader's sshd_config at {host}"
+            )
+        }
+        Some(harden::Outcome::Absent) => "there was no key-only SSH block to remove".to_owned(),
+        _ => format!(
+            "the key-only SSH block stays: the reader at {host} declined to remove it\n\
+             \x20   ({})",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ),
+    }
+}
+
 /// What a run would do, without doing any of it.
 ///
 /// A pure function of the options and the reader, so that what `--dry-run`
@@ -3351,6 +3557,9 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
              would clear {}\n\
              would remove {} and ask NickelMenu to uninstall itself, unless another\n\
              \x20 mod still has a configuration file beside it\n\
+             would then look for the reader on Wi-Fi and remove the key-only SSH\n\
+             \x20 block from its sshd_config, which USB cannot reach; one that cannot\n\
+             \x20 be found keeps the block, inert once the server is off\n\
              nothing else on the reader is touched",
             reader.volume.display(),
             setup::INSTALL_FOLDER,
@@ -3408,13 +3617,7 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
             )
         },
         describe_key_plan(options, would_stage),
-        if options.enable_ssh && options.wait {
-            "wait for the restarted reader to appear on the network"
-        } else if !options.enable_ssh {
-            "stop after ejecting, because SSH was not enabled"
-        } else {
-            "stop, because --no-wait was given"
-        },
+        describe_wait_plan(options),
         match (
             would_stage,
             options.enable_ssh && options.authorize_key,
@@ -3425,6 +3628,23 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
             (false, false) => ", nothing extracted as root",
         }
     )
+}
+
+/// The one line of the dry run that covers what happens after the eject.
+fn describe_wait_plan(options: &SetupOptions) -> &'static str {
+    if options.enable_ssh && options.wait && options.authorize_key {
+        "wait for the restarted reader to appear on the network, and close\n\
+         \x20 password login for root over its first key login: a marked block in\n\
+         \x20 sshd_config, gated on sshd -t, which the reader reverts by itself\n\
+         \x20 unless a second, fresh key login confirms keys still work"
+    } else if options.enable_ssh && options.wait {
+        "wait for the restarted reader to appear on the network, leaving\n\
+         \x20 password login as the firmware has it, because --no-key was given"
+    } else if !options.enable_ssh {
+        "stop after ejecting, because SSH was not enabled"
+    } else {
+        "stop, because --no-wait was given"
+    }
 }
 
 /// The one line of the dry run that covers this machine's trust roots.
@@ -3521,6 +3741,19 @@ fn undo_setup(reader: &setup::Mounted, eject: bool) -> Result<(), String> {
             "volume left mounted"
         }
     );
+    // Only a setup that enabled the server can have closed password login, so
+    // an undo that found the server already off has no block to look for, and
+    // an owner who never opted in is not made to watch a network sweep. The
+    // block lives on the root filesystem, which USB cannot reach, so this
+    // goes the way it came: over SSH, once the ejected reader is back on
+    // Wi-Fi.
+    if ssh {
+        println!(
+            "\nIf setting up also closed password login for root, taking that back out\n\
+             needs SSH, so this is watching for the reader to rejoin Wi-Fi:"
+        );
+        println!("  · {}", unharden_over_network());
+    }
     // Said plainly rather than left for somebody to discover. The book
     // partition is all this command can reach over USB, and a key the reader
     // has already extracted lives on the root filesystem, so an undo cannot
@@ -6685,6 +6918,41 @@ mod tests {
             let parsed = parse_setup(&arguments(&["--dry-run", "--enable-ssh", "--no-wait"]))
                 .expect("parse");
             assert!(dry_run_plan(&parsed, &fresh_reader().0).contains("--no-wait was given"));
+        }
+
+        /// The plan has to disclose the hardening before anybody agrees to
+        /// it: enabling SSH with a key ends with password login for root
+        /// closed, and the plan is where that is said first.
+        #[test]
+        fn enabling_ssh_plans_to_close_password_login_for_root() {
+            let parsed = parse_setup(&arguments(&["--enable-ssh", "--dry-run"])).expect("parse");
+            let plan = dry_run_plan(&parsed, &fresh_reader().0);
+            assert!(plan.contains("close"), "{plan}");
+            assert!(plan.contains("password login for root"), "{plan}");
+            assert!(plan.contains("sshd -t"), "{plan}");
+            assert!(plan.contains("fresh key login"), "{plan}");
+        }
+
+        /// Without this machine's key there is no proof a key works, so the
+        /// door has to stay as the firmware left it, and the plan says so.
+        #[test]
+        fn declining_the_key_declines_the_hardening_too() {
+            let parsed =
+                parse_setup(&arguments(&["--enable-ssh", "--no-key", "--dry-run"])).expect("parse");
+            let plan = dry_run_plan(&parsed, &fresh_reader().0);
+            assert!(
+                plan.contains("password login as the firmware has it"),
+                "{plan}"
+            );
+            assert!(!plan.contains("close\n"), "{plan}");
+        }
+
+        #[test]
+        fn an_undo_plans_to_take_the_key_only_block_back_out() {
+            let parsed = parse_setup(&arguments(&["--undo", "--dry-run"])).expect("parse");
+            let plan = dry_run_plan(&parsed, &fresh_reader().0);
+            assert!(plan.contains("key-only SSH"), "{plan}");
+            assert!(plan.contains("sshd_config"), "{plan}");
         }
 
         #[test]
