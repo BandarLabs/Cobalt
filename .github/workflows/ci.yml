@@ -20,7 +20,11 @@ jobs:
       - name: Install the ARM cross-compiler the packaging tests look for
         run: sudo apt-get update && sudo apt-get install --yes gcc-arm-linux-gnueabihf
       - run: cargo fmt --all -- --check
-      - run: node --test tools/check-app-versions.test.mjs
+      - run: node --test tools/*.test.mjs
+      - name: Require current generated app pages
+        run: |
+          node tools/generate-app-pages.mjs
+          git diff --exit-code -- docs/apps docs/sitemap.xml
       - run: cargo test --workspace --all-targets --all-features
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
