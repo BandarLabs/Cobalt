@@ -397,7 +397,7 @@ fn clear_session_files(state: &Path) -> String {
 
 fn print_safety_state() {
     let write_unlocked = env::var_os("KOBO_DEVICE_WRITE_UNLOCK").is_some();
-    println!("kobod 0.1.0");
+    println!("kobod {}", env!("CARGO_PKG_VERSION"));
 
     let profile_id = kobo_hal::probe_device()
         .ok()
