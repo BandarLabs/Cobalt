@@ -15,7 +15,10 @@ const MANIFEST_FIELDS = [
 // Store packages are built from the current SDK and therefore speak its exact
 // wire protocol. A new protocol must add its first compatible Cobalt release
 // here before the catalog can be published.
-const PROTOCOL_MINIMUMS = new Map([[10, "0.2.4"]]);
+const PROTOCOL_MINIMUMS = new Map([
+  [10, "0.2.4"],
+  [11, "0.3.1"]
+]);
 
 function readJson(path, label) {
   try {

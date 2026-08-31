@@ -6598,11 +6598,22 @@ mod tests {
                     registered,
                     STORE_PACKAGES.iter().copied().collect::<BTreeSet<_>>()
                 );
-                let sudoku = apps
-                    .iter()
-                    .find(|app| app.id == "sudoku")
-                    .expect("Sudoku registry entry");
-                assert_eq!(sudoku.version, "1.0.2");
+                // Versions move with every release, so the check is that
+                // each entry carries a version rather than which version it
+                // carries. A pinned number here broke every routine catalog
+                // bump while catching nothing the shape check misses.
+                for app in &apps {
+                    let parts: Vec<&str> = app.version.split('.').collect();
+                    assert!(
+                        parts.len() == 3
+                            && parts.iter().all(|part| {
+                                !part.is_empty() && part.chars().all(|digit| digit.is_ascii_digit())
+                            }),
+                        "{} version {:?} is not three dot-separated numbers",
+                        app.id,
+                        app.version
+                    );
+                }
             }
         }
     }

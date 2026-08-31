@@ -2095,6 +2095,18 @@ fn host_applications(
                                             COBALT_ROOT,
                                         )))
                                     }
+                                    // Answered by probing the hardware again
+                                    // rather than from anything cached, so
+                                    // the screen built from it describes the
+                                    // reader it is drawn on. That screen
+                                    // exists to be photographed as evidence a
+                                    // build ran here, and evidence read fresh
+                                    // is worth more than evidence remembered.
+                                    kobo_protocol::DeviceRequest::ReadIdentity => read_identity()
+                                        .map_or_else(
+                                            || services.handle(request.clone()),
+                                            kobo_protocol::DeviceResult::Identity,
+                                        ),
                                     _ => services.handle(request.clone()),
                                 }
                             };
@@ -2417,6 +2429,43 @@ fn app_link_result(
     result: Result<kobo_protocol::DeviceResult, kobo_protocol::DeviceError>,
 ) -> kobo_protocol::DeviceResult {
     result.unwrap_or_else(kobo_protocol::DeviceResult::Failed)
+}
+
+/// What this build is running on, read from the hardware right now.
+///
+/// `None` when the probe finds no matching profile, which is what happens on
+/// a development host; the policy's simulator answer stands there, and its
+/// profile name says plainly that it is not a reader. Firmware and kernel
+/// come from the same files the startup identification read, so a value that
+/// is missing here was missing there too and is shown as absent rather than
+/// invented.
+fn read_identity() -> Option<kobo_protocol::DeviceIdentity> {
+    let snapshot = kobo_hal::probe_device().ok()?;
+    let profile = kobo_profile::identify_profile(&snapshot)?;
+    Some(kobo_protocol::DeviceIdentity {
+        profile_id: profile.id.to_owned(),
+        model: profile.model.to_owned(),
+        device_code: profile.device_code,
+        firmware: bounded(snapshot.identity.firmware_version.unwrap_or_default()),
+        kernel: bounded(snapshot.identity.kernel_release.unwrap_or_default()),
+        runtime_version: env!("CARGO_PKG_VERSION").to_owned(),
+        panel_width: profile.width,
+        panel_height: profile.height,
+    })
+}
+
+/// Keeps a probed string inside the identity field bound so one overgrown
+/// version file cannot make the whole answer unsendable. Cut once at the
+/// bound, stepping back only as far as the nearest character boundary.
+fn bounded(mut text: String) -> String {
+    if text.len() > kobo_protocol::MAX_IDENTITY_FIELD_LEN {
+        let mut end = kobo_protocol::MAX_IDENTITY_FIELD_LEN;
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        text.truncate(end);
+    }
+    text
 }
 
 fn remote_installed_id(outcome: &kobo_protocol::RemoteInstallOutcome) -> Option<&str> {

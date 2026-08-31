@@ -37,6 +37,9 @@ Link the porting issue and keep `write_ready` false until the attended evidence
 has been reviewed. The pull request should record:
 
 - the exact model, device code, firmware, kernel, and tested commit;
+- a photo or short video of Settings ▸ About drawn on the device. That page
+  shows the matched profile, firmware, kernel, and runtime version read from
+  the hardware itself, so a picture of it is evidence the build actually ran;
 - the doctor report and attended test results;
 - the source used for a new controller ABI and tests for its struct layout,
   ioctl values, and waveform mapping;
@@ -62,5 +65,11 @@ cargo fmt --all --check
 cargo test --workspace --all-targets --all-features
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
+
+For a change that alters how the device behaves — rendering, touch, power,
+radios, or anything else a reader would notice — also attach a photo or short
+video of Settings ▸ About drawn on your device with the change installed. The
+page names the profile, firmware, kernel, and runtime version it was read
+from, so the picture shows the build ran where the claim says it did.
 
 Report security issues privately as described in [SECURITY.md](SECURITY.md).
