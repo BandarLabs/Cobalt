@@ -10,7 +10,7 @@ description = "Real type for the Kobo application platform"
 
 [dependencies]
 fontdue = "0.9"
-kobo-ui = { version = "0.3.0", path = "../kobo-ui" }
+kobo-ui = { version = "0.3.1", path = "../kobo-ui" }
 unicode-linebreak = "0.1.5"
 unicode-segmentation = "1.12"
 
