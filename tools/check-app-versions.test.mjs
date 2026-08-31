@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import {
   checkEntries,
   checkProtocolMinimums,
+  lockfileOnlyAddsPackages,
+  manifestOnlyAddsWorkspaceMembers,
   releaseDependencyIds
 } from "./check-app-versions.mjs";
 
@@ -101,4 +103,32 @@ test("release inputs ignore exclusively dev-only dependency edges", () => {
   });
 
   assert.deepEqual(dependencies, ["normal", "build", "normal-and-dev", "unspecified"]);
+});
+
+test("a new workspace member does not change existing app release inputs", () => {
+  const previous = `[workspace]\nmembers = [\n    "apps/notes",\n]\nresolver = "2"\n`;
+  const current = `[workspace]\nmembers = [\n    "apps/notes",\n    "apps/reader",\n]\nresolver = "2"\n`;
+
+  assert.equal(manifestOnlyAddsWorkspaceMembers(previous, current), true);
+});
+
+test("workspace configuration changes still affect every app", () => {
+  const previous = `[workspace]\nmembers = [\n    "apps/notes",\n]\nresolver = "2"\n`;
+  const current = `[workspace]\nmembers = [\n    "apps/notes",\n    "apps/reader",\n]\nresolver = "3"\n`;
+
+  assert.equal(manifestOnlyAddsWorkspaceMembers(previous, current), false);
+});
+
+test("new lockfile package blocks do not change existing app release inputs", () => {
+  const previous = `version = 4\n\n[[package]]\nname = "notes"\nversion = "1.0.0"\n`;
+  const current = `${previous}\n[[package]]\nname = "reader"\nversion = "1.0.0"\n`;
+
+  assert.equal(lockfileOnlyAddsPackages(previous, current), true);
+});
+
+test("changes to an existing lockfile package remain global release inputs", () => {
+  const previous = `version = 4\n\n[[package]]\nname = "notes"\nversion = "1.0.0"\n`;
+  const current = `version = 4\n\n[[package]]\nname = "notes"\nversion = "1.0.1"\n\n[[package]]\nname = "reader"\nversion = "1.0.0"\n`;
+
+  assert.equal(lockfileOnlyAddsPackages(previous, current), false);
 });
