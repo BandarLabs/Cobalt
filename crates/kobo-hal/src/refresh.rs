@@ -105,6 +105,19 @@ impl Rect {
             height: bottom - self.y,
         })
     }
+
+    /// Whether two non-empty panel regions share at least one pixel.
+    #[must_use]
+    pub fn intersects(self, other: Self) -> bool {
+        self.width > 0
+            && self.height > 0
+            && other.width > 0
+            && other.height > 0
+            && self.x < other.x.saturating_add(other.width)
+            && other.x < self.x.saturating_add(self.width)
+            && self.y < other.y.saturating_add(other.height)
+            && other.y < self.y.saturating_add(self.height)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -341,5 +354,33 @@ mod tests {
         let mut markers = UpdateMarker::new(u32::MAX);
         assert_eq!(markers.take(), u32::MAX);
         assert_eq!(markers.take(), 1);
+    }
+
+    #[test]
+    fn region_intersection_excludes_edges_and_empty_rectangles() {
+        let left = Rect {
+            x: 10,
+            y: 20,
+            width: 30,
+            height: 40,
+        };
+        assert!(left.intersects(Rect {
+            x: 39,
+            y: 59,
+            width: 2,
+            height: 2,
+        }));
+        assert!(!left.intersects(Rect {
+            x: 40,
+            y: 20,
+            width: 1,
+            height: 40,
+        }));
+        assert!(!left.intersects(Rect {
+            x: 10,
+            y: 20,
+            width: 0,
+            height: 40,
+        }));
     }
 }
