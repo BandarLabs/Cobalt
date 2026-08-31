@@ -44,8 +44,9 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// would have been misread from that point on rather than refused. Version 9
 /// adds bounded rich EPUB text and runtime-held publisher-font handles.
 /// Version 10 adds exact text-hold coordinates and typed offline dictionary
-/// requests/results.
-pub const VERSION: u8 = 10;
+/// requests/results. Version 11 adds the identity request and its result,
+/// both tags an older side has no reading for.
+pub const VERSION: u8 = 11;
 pub const HEADER_LEN: usize = 14;
 /// The largest single frame either side will read.
 ///
@@ -1056,6 +1057,12 @@ pub enum DeviceRequest {
     PollAppLink,
     /// Disconnect every paired browser.
     DisconnectAppLink,
+    /// Report what this runtime is and what it is running on.
+    ///
+    /// Asked when somebody opens a screen that shows it, in the same spirit
+    /// as [`DeviceRequest::ReadBatteryDetail`]: the session already proved
+    /// this identity at startup, so answering is a read, not a probe.
+    ReadIdentity,
 }
 
 /// Current state of the runtime-owned App Store browser link.
@@ -1182,6 +1189,60 @@ impl BatteryDetail {
     }
 }
 
+/// The longest text any one identity field may carry.
+///
+/// Firmware versions, kernel releases, profile names and model names are all
+/// short. A field longer than this is not a longer truth, it is a corrupt or
+/// hostile frame, and it is refused on both sides.
+pub const MAX_IDENTITY_FIELD_LEN: usize = 64;
+
+/// What this runtime is and what it is running on.
+///
+/// Everything here was already proved once: the session refuses to start on
+/// hardware whose identity does not match a profile exactly, so these are the
+/// matched values rather than fresh guesses. A screen showing them, on the
+/// panel of the reader they describe, is evidence that this build actually
+/// ran there — which is what a reviewer wants a photograph of.
+///
+/// Empty strings mean the value has no source on this host, as firmware and
+/// kernel do in the simulator. The serial number is deliberately absent: it
+/// identifies the owner's unit, and a screen made to be photographed and
+/// shared must not carry it.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct DeviceIdentity {
+    /// The matched profile's stable name, `CLARA_BW_391` for example.
+    pub profile_id: String,
+    /// The human name of the reader, `Kobo Clara BW` for example.
+    pub model: String,
+    /// The vendor's device code, `391` for example. Zero in the simulator.
+    pub device_code: u16,
+    /// The firmware version the reader is running.
+    pub firmware: String,
+    /// The kernel release the reader is running.
+    pub kernel: String,
+    /// The version this runtime was compiled as.
+    pub runtime_version: String,
+    /// Panel width in pixels, from the matched profile.
+    pub panel_width: u32,
+    /// Panel height in pixels, from the matched profile.
+    pub panel_height: u32,
+}
+
+fn validate_identity(identity: &DeviceIdentity) -> Result<(), ProtocolError> {
+    for text in [
+        &identity.profile_id,
+        &identity.model,
+        &identity.firmware,
+        &identity.kernel,
+        &identity.runtime_version,
+    ] {
+        if text.len() > MAX_IDENTITY_FIELD_LEN {
+            return Err(ProtocolError::InvalidValue("identity field"));
+        }
+    }
+    Ok(())
+}
+
 /// The runtime's answer to a device request.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DeviceResult {
@@ -1245,6 +1306,8 @@ pub enum DeviceResult {
     AppLink(AppLinkState),
     /// Outcome of the latest remote installation request.
     RemoteInstall(RemoteInstallOutcome),
+    /// What this runtime is and what it is running on. See [`DeviceIdentity`].
+    Identity(DeviceIdentity),
     /// The backend exists, but the requested operation failed.
     Failed(DeviceError),
     /// The request was refused, with the exact reason.
@@ -2376,6 +2439,7 @@ fn encode_device_request(
         DeviceRequest::BeginAppLink => output.push(39),
         DeviceRequest::PollAppLink => output.push(40),
         DeviceRequest::DisconnectAppLink => output.push(41),
+        DeviceRequest::ReadIdentity => output.push(42),
     }
     Ok(())
 }
@@ -2459,6 +2523,38 @@ fn battery_detail(reader: &mut Reader<'_>) -> Result<BatteryDetail, ProtocolErro
         charge_full: reader.optional_i32()?,
         charge_full_design: reader.optional_i32()?,
     })
+}
+
+fn push_identity(output: &mut Vec<u8>, identity: &DeviceIdentity) -> Result<(), ProtocolError> {
+    validate_identity(identity)?;
+    for text in [
+        &identity.profile_id,
+        &identity.model,
+        &identity.firmware,
+        &identity.kernel,
+        &identity.runtime_version,
+    ] {
+        push_string(output, text)?;
+    }
+    push_u16(output, identity.device_code);
+    push_u32(output, identity.panel_width);
+    push_u32(output, identity.panel_height);
+    Ok(())
+}
+
+fn identity(reader: &mut Reader<'_>) -> Result<DeviceIdentity, ProtocolError> {
+    let identity = DeviceIdentity {
+        profile_id: reader.string()?,
+        model: reader.string()?,
+        firmware: reader.string()?,
+        kernel: reader.string()?,
+        runtime_version: reader.string()?,
+        device_code: reader.u16()?,
+        panel_width: reader.u32()?,
+        panel_height: reader.u32()?,
+    };
+    validate_identity(&identity)?;
+    Ok(identity)
 }
 
 fn push_radio_string(output: &mut Vec<u8>, value: &str) -> Result<(), ProtocolError> {
@@ -2630,6 +2726,7 @@ fn decode_device_request(reader: &mut Reader<'_>) -> Result<DeviceRequest, Proto
         39 => Ok(DeviceRequest::BeginAppLink),
         40 => Ok(DeviceRequest::PollAppLink),
         41 => Ok(DeviceRequest::DisconnectAppLink),
+        42 => Ok(DeviceRequest::ReadIdentity),
         _ => Err(ProtocolError::InvalidValue("device request")),
     }
 }
@@ -2809,6 +2906,10 @@ fn encode_device_result(output: &mut Vec<u8>, result: &DeviceResult) -> Result<(
             output.push(15);
             encode_remote_install(output, outcome)?;
         }
+        DeviceResult::Identity(identity) => {
+            output.push(16);
+            push_identity(output, identity)?;
+        }
     }
     Ok(())
 }
@@ -2982,38 +3083,7 @@ fn decode_device_result(reader: &mut Reader<'_>) -> Result<DeviceResult, Protoco
             Ok(DeviceResult::Frontlight { percent })
         }
         5 => Ok(DeviceResult::Denied(DenyReason::try_from(reader.u8()?)?)),
-        6 => {
-            let flags = valid_radio_flags(reader.u8()?, "Bluetooth state flags")?;
-            let count = usize::from(reader.u8()?);
-            if count > MAX_RADIO_DEVICES {
-                return Err(ProtocolError::InvalidValue("too many Bluetooth devices"));
-            }
-            let mut devices = Vec::with_capacity(count);
-            for _ in 0..count {
-                let address = radio_string(reader)?;
-                let name = radio_string(reader)?;
-                let kind = BluetoothDeviceKind::try_from(reader.u8()?)?;
-                let device_flags = valid_radio_flags(reader.u8()?, "Bluetooth device flags")?;
-                devices.push(BluetoothDevice {
-                    address,
-                    name,
-                    kind,
-                    paired: flags_first(device_flags),
-                    connected: flags_second(device_flags),
-                });
-            }
-            let restart_on_exit = match reader.u8()? {
-                0 => false,
-                1 => true,
-                _ => return Err(ProtocolError::InvalidValue("Bluetooth restart flag")),
-            };
-            Ok(DeviceResult::Bluetooth {
-                available: flags_first(flags),
-                enabled: flags_second(flags),
-                devices,
-                restart_on_exit,
-            })
-        }
+        6 => decode_bluetooth_result(reader),
         7 => {
             let flags = valid_radio_flags(reader.u8()?, "Wi-Fi state flags")?;
             let connected_ssid = match reader.u8()? {
@@ -3050,8 +3120,42 @@ fn decode_device_result(reader: &mut Reader<'_>) -> Result<DeviceResult, Protoco
         13 => decode_dictionary_result(reader),
         14 => decode_app_link(reader),
         15 => decode_remote_install(reader),
+        16 => identity(reader).map(DeviceResult::Identity),
         _ => Err(ProtocolError::InvalidValue("device result")),
     }
+}
+
+fn decode_bluetooth_result(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
+    let flags = valid_radio_flags(reader.u8()?, "Bluetooth state flags")?;
+    let count = usize::from(reader.u8()?);
+    if count > MAX_RADIO_DEVICES {
+        return Err(ProtocolError::InvalidValue("too many Bluetooth devices"));
+    }
+    let mut devices = Vec::with_capacity(count);
+    for _ in 0..count {
+        let address = radio_string(reader)?;
+        let name = radio_string(reader)?;
+        let kind = BluetoothDeviceKind::try_from(reader.u8()?)?;
+        let device_flags = valid_radio_flags(reader.u8()?, "Bluetooth device flags")?;
+        devices.push(BluetoothDevice {
+            address,
+            name,
+            kind,
+            paired: flags_first(device_flags),
+            connected: flags_second(device_flags),
+        });
+    }
+    let restart_on_exit = match reader.u8()? {
+        0 => false,
+        1 => true,
+        _ => return Err(ProtocolError::InvalidValue("Bluetooth restart flag")),
+    };
+    Ok(DeviceResult::Bluetooth {
+        available: flags_first(flags),
+        enabled: flags_second(flags),
+        devices,
+        restart_on_exit,
+    })
 }
 
 fn decode_app_link(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
@@ -6341,6 +6445,7 @@ mod tests {
             DeviceRequest::BeginAppLink,
             DeviceRequest::PollAppLink,
             DeviceRequest::DisconnectAppLink,
+            DeviceRequest::ReadIdentity,
         ];
         for request in requests {
             let frame = Frame {
@@ -6477,6 +6582,44 @@ mod tests {
             let bytes = encode(&frame).expect("encode");
             assert_eq!(decode(&bytes).expect("decode"), frame);
         }
+    }
+
+    #[test]
+    fn identity_results_round_trip() {
+        let results = [
+            DeviceResult::Identity(DeviceIdentity {
+                profile_id: "CLARA_BW_391".to_owned(),
+                model: "Kobo Clara BW".to_owned(),
+                device_code: 391,
+                firmware: "4.41.23145".to_owned(),
+                kernel: "5.10.117".to_owned(),
+                runtime_version: "0.1.0".to_owned(),
+                panel_width: 1072,
+                panel_height: 1448,
+            }),
+            DeviceResult::Identity(DeviceIdentity::default()),
+        ];
+        for result in results {
+            let frame = Frame {
+                request_id: 11,
+                message: Message::DeviceResult(result),
+            };
+            let bytes = encode(&frame).expect("encode");
+            assert_eq!(decode(&bytes).expect("decode"), frame);
+        }
+    }
+
+    #[test]
+    fn oversized_identity_field_is_refused() {
+        let identity = DeviceIdentity {
+            model: "x".repeat(MAX_IDENTITY_FIELD_LEN + 1),
+            ..DeviceIdentity::default()
+        };
+        let frame = Frame {
+            request_id: 11,
+            message: Message::DeviceResult(DeviceResult::Identity(identity)),
+        };
+        assert!(encode(&frame).is_err());
     }
 
     #[test]

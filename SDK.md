@@ -1065,6 +1065,7 @@ back, instead of sending one per chunk of progress.
 ```rust
 context.device().read_battery();
 context.device().read_battery_detail();
+context.device().read_identity();
 context.device().read_cover();
 context.device().hold_wifi(Duration::from_secs(60));
 context.device().set_frontlight(40);

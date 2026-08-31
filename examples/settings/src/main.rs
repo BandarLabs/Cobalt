@@ -3,15 +3,16 @@
 use kobo_json::Value;
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, ActionId, BatteryDetail, BluetoothDevice, Context, DeviceRequest, DeviceResult,
-    Glyph, Heartbeat, KoboApp, RowLead, Screen, ScreenBuilder, Task, TaskId, TaskOutcome,
-    WifiNetwork,
+    action_id, ActionId, BatteryDetail, BluetoothDevice, Context, DeviceIdentity, DeviceRequest,
+    DeviceResult, Glyph, Heartbeat, KoboApp, RowLead, Screen, ScreenBuilder, Task, TaskId,
+    TaskOutcome, WifiNetwork,
 };
 use std::process::ExitCode;
 
 const BLUETOOTH: &str = "bluetooth";
 const WIFI: &str = "wifi";
 const BATTERY: &str = "battery";
+const ABOUT: &str = "about";
 const UPDATE: &str = "update";
 const CHECK: &str = "check";
 const INSTALL: &str = "install";
@@ -43,6 +44,7 @@ enum View {
     Wifi,
     WifiPassword,
     Battery,
+    About,
     Update,
 }
 
@@ -117,6 +119,7 @@ enum Topic {
     Bluetooth,
     Wifi,
     Battery,
+    About,
 }
 
 impl Topic {
@@ -135,6 +138,7 @@ impl Topic {
             | DeviceRequest::JoinWifi { .. }
             | DeviceRequest::DisconnectWifi => Some(Self::Wifi),
             DeviceRequest::ReadBattery | DeviceRequest::ReadBatteryDetail => Some(Self::Battery),
+            DeviceRequest::ReadIdentity => Some(Self::About),
             _ => None,
         }
     }
@@ -160,6 +164,7 @@ struct Settings {
     selected_ssid: Option<String>,
     password: Keyboard,
     battery: Option<BatteryDetail>,
+    identity: Option<DeviceIdentity>,
     update: UpdateFlow,
     update_task: Option<TaskId>,
     pending: Option<Pending>,
@@ -176,6 +181,7 @@ impl Settings {
             View::Wifi => self.wifi(),
             View::WifiPassword => self.wifi_password(),
             View::Battery => self.battery(),
+            View::About => self.about(),
             View::Update => self.update(),
         };
         context.set_screen(screen);
@@ -249,6 +255,15 @@ impl Settings {
                     "Software update",
                     self.update_summary(),
                     RowLead::from(Glyph::Download),
+                ),
+                (
+                    ABOUT,
+                    "About",
+                    self.identity.as_ref().map_or_else(
+                        || "What this build is running on".to_owned(),
+                        |identity| identity.model.clone(),
+                    ),
+                    RowLead::from(Glyph::Reader),
                 ),
             ])
             // The installed build's own version, baked in at compile time.
@@ -596,6 +611,52 @@ impl Settings {
         screen.button(RESCAN, "Read again").build()
     }
 
+    /// Everything on this page names the reader it is drawn on: the matched
+    /// profile, the firmware and kernel that were read when the session
+    /// started, and the version this runtime was compiled as. A photograph
+    /// of this page on the panel is evidence that this build actually ran on
+    /// this hardware, which is what a pull request reviewer cannot otherwise
+    /// see from across the world.
+    fn about(&self) -> Screen {
+        let mut screen = ScreenBuilder::new("settings-about")
+            .top_bar("About")
+            .owns_back(true);
+        if let Some(trouble) = self.banner_for(Topic::About) {
+            screen = screen.banner(kobo_sdk::BannerLevel::Attention, trouble);
+        }
+        let Some(identity) = &self.identity else {
+            return screen.text("Reading this reader's identity.").build();
+        };
+        let mut facts: Vec<(String, String)> = vec![
+            ("Model".to_owned(), identity.model.clone()),
+            ("Profile".to_owned(), identity.profile_id.clone()),
+        ];
+        if identity.device_code != 0 {
+            facts.push(("Device code".to_owned(), identity.device_code.to_string()));
+        }
+        if !identity.firmware.is_empty() {
+            facts.push(("Firmware".to_owned(), identity.firmware.clone()));
+        }
+        if !identity.kernel.is_empty() {
+            facts.push(("Kernel".to_owned(), identity.kernel.clone()));
+        }
+        facts.push((
+            "Panel".to_owned(),
+            format!("{} × {}", identity.panel_width, identity.panel_height),
+        ));
+        facts.push(("Cobalt".to_owned(), identity.runtime_version.clone()));
+        screen
+            .section("This reader")
+            .facts(facts)
+            .text(
+                "A photograph of this page shows this build running on this \
+                 reader. Attach one to a pull request that changes how the \
+                 device behaves.",
+            )
+            .button(RESCAN, "Read again")
+            .build()
+    }
+
     fn refresh(context: &mut Context) {
         context.device().read_bluetooth();
         context.device().read_wifi();
@@ -718,7 +779,7 @@ impl Settings {
         let (page, pages) = match self.view {
             View::Bluetooth => (&mut self.bluetooth_page, page_count(self.devices.len())),
             View::Wifi => (&mut self.wifi_page, page_count(self.networks.len())),
-            View::Home | View::WifiPassword | View::Battery | View::Update => return,
+            View::Home | View::WifiPassword | View::Battery | View::About | View::Update => return,
         };
         *page = if forward {
             (*page + 1).min(pages - 1)
@@ -760,6 +821,37 @@ impl Settings {
             context.device().join_wifi(network.ssid, "");
         }
     }
+    /// Keystrokes for the Wi-Fi password screen, which owns every action
+    /// while it is up: letters go to the keyboard, and the only ways off the
+    /// screen are submitting a password or going back.
+    fn password_action(&mut self, context: &mut Context, action: ActionId) {
+        if action == ActionId::BACK {
+            self.view = View::Wifi;
+            self.password.clear();
+            self.show(context);
+            return;
+        }
+        if let Some(pressed) = self.password.press(action) {
+            if pressed == Pressed::Submitted {
+                if (8..=63).contains(&self.password.text().len()) {
+                    let password = self.password.take();
+                    if let Some(ssid) = self.selected_ssid.take() {
+                        context.device().join_wifi(ssid, password);
+                    }
+                    self.settled(Topic::Wifi);
+                    self.view = View::Wifi;
+                } else {
+                    self.trouble = Some((
+                        Topic::Wifi,
+                        "A Wi-Fi password must be 8–63 bytes.".to_owned(),
+                    ));
+                }
+            } else {
+                self.settled(Topic::Wifi);
+            }
+            self.show(context);
+        }
+    }
 }
 
 impl KoboApp for Settings {
@@ -770,32 +862,7 @@ impl KoboApp for Settings {
 
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         if self.view == View::WifiPassword {
-            if action == ActionId::BACK {
-                self.view = View::Wifi;
-                self.password.clear();
-                self.show(context);
-                return;
-            }
-            if let Some(pressed) = self.password.press(action) {
-                if pressed == Pressed::Submitted {
-                    if (8..=63).contains(&self.password.text().len()) {
-                        let password = self.password.take();
-                        if let Some(ssid) = self.selected_ssid.take() {
-                            context.device().join_wifi(ssid, password);
-                        }
-                        self.settled(Topic::Wifi);
-                        self.view = View::Wifi;
-                    } else {
-                        self.trouble = Some((
-                            Topic::Wifi,
-                            "A Wi-Fi password must be 8–63 bytes.".to_owned(),
-                        ));
-                    }
-                } else {
-                    self.settled(Topic::Wifi);
-                }
-                self.show(context);
-            }
+            self.password_action(context, action);
             return;
         }
         if action == ActionId::BACK {
@@ -812,6 +879,10 @@ impl KoboApp for Settings {
         } else if action == action_id(BATTERY) {
             self.view = View::Battery;
             context.device().read_battery_detail();
+            self.show(context);
+        } else if action == action_id(ABOUT) {
+            self.view = View::About;
+            context.device().read_identity();
             self.show(context);
         } else if action == action_id(UPDATE) {
             self.view = View::Update;
@@ -830,7 +901,7 @@ impl KoboApp for Settings {
                     .device()
                     .set_bluetooth(!self.bluetooth_state.enabled()),
                 View::Wifi => context.device().set_wifi(!self.wifi_state.enabled()),
-                View::Home | View::WifiPassword | View::Battery | View::Update => {}
+                View::Home | View::WifiPassword | View::Battery | View::About | View::Update => {}
             }
         } else if action == action_id(RESCAN) {
             match self.view {
@@ -845,6 +916,7 @@ impl KoboApp for Settings {
                     self.delay_refresh(context, Pending::WifiRefresh);
                 }
                 View::Battery => context.device().read_battery_detail(),
+                View::About => context.device().read_identity(),
                 View::Home | View::WifiPassword | View::Update => {}
             }
             self.show(context);
@@ -914,8 +986,12 @@ impl KoboApp for Settings {
                 self.battery = Some(detail);
                 self.settled(Topic::Battery);
             }
+            DeviceResult::Identity(identity) => {
+                self.identity = Some(identity);
+                self.settled(Topic::About);
+            }
             // A failure belongs to whatever was asked for. When the request
-            // is not one of the three rows, there is nowhere honest to show it,
+            // is not one of these rows, there is nowhere honest to show it,
             // so it is dropped rather than shown under an unrelated heading.
             DeviceResult::Failed(error) => {
                 if matches!(request, DeviceRequest::Update { .. }) {
@@ -1161,7 +1237,7 @@ mod tests {
     use super::{RadioState, Settings, DEVICE_ACTIONS, MORE, NETWORK_ACTIONS, PREVIOUS, RESCAN};
     use kobo_sdk::{
         action_id, BannerLevel, BatteryDetail, BluetoothDevice, BluetoothDeviceKind, Chrome,
-        Emphasis, Glyph, Node, WifiNetwork, CLARA_BW_METRICS,
+        DeviceIdentity, Emphasis, Glyph, Node, WifiNetwork, CLARA_BW_METRICS,
     };
 
     fn bluetooth_device(index: usize) -> BluetoothDevice {
@@ -1276,6 +1352,41 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join(" ")
+    }
+
+    /// The About page exists to be photographed as evidence a build ran on a
+    /// reader, so everything that names the reader must actually be on it,
+    /// and nothing on it may name the reader's owner.
+    #[test]
+    fn the_about_page_names_the_reader_it_is_drawn_on() {
+        let mut settings = Settings::default();
+        assert!(text_of(&settings.about()).contains("Reading this reader's identity."));
+        settings.identity = Some(DeviceIdentity {
+            profile_id: "CLARA_BW_391".to_owned(),
+            model: "Kobo Clara BW".to_owned(),
+            device_code: 391,
+            firmware: "4.41.23145".to_owned(),
+            kernel: "5.10.117".to_owned(),
+            runtime_version: "0.3.0".to_owned(),
+            panel_width: 1072,
+            panel_height: 1448,
+        });
+        let screen = settings.about();
+        let issues = screen.validate(&CLARA_BW_METRICS);
+        assert!(issues.is_empty(), "{issues:?}");
+        let drawn = format!("{:?}", screen.nodes);
+        for needle in [
+            "Kobo Clara BW",
+            "CLARA_BW_391",
+            "391",
+            "4.41.23145",
+            "5.10.117",
+            "1072 × 1448",
+            "0.3.0",
+            "photograph",
+        ] {
+            assert!(drawn.contains(needle), "the page never draws {needle}");
+        }
     }
 
     #[test]
