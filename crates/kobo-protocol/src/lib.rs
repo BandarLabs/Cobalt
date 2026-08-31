@@ -4646,6 +4646,7 @@ fn encode_node(
             output.push(match role {
                 kobo_ui::QuoteRole::Body => 0,
                 kobo_ui::QuoteRole::Byline => 1,
+                kobo_ui::QuoteRole::Heading => 2,
             });
             // A flag rather than a reserved action id, because zero is a
             // perfectly ordinary action and there is no value to spare.
@@ -5638,11 +5639,13 @@ fn decode_node(
                 // deeper reply, not a malformed frame, and the renderer was
                 // always going to draw it at the cap anyway.
                 depth: depth.min(kobo_ui::MAX_QUOTE_DEPTH),
-                // An unknown role is prose. A frame from a newer application
-                // that has invented a third kind of line should still be
-                // readable, and the thing it certainly is not is a byline.
+                // An unknown role is prose. A frame from a runtime older than
+                // this decoder, carrying a role newer than the ones it knew
+                // about, should still be readable, and the thing it certainly
+                // is not is a byline.
                 role: match role {
                     1 => kobo_ui::QuoteRole::Byline,
+                    2 => kobo_ui::QuoteRole::Heading,
                     _ => kobo_ui::QuoteRole::Body,
                 },
                 fold,
@@ -7299,6 +7302,13 @@ mod node_coverage_tests {
                 role: kobo_ui::QuoteRole::Body,
                 fold: None,
                 text: "A reply".into(),
+            },
+            Node::Quote {
+                id: NodeId(31),
+                depth: 0,
+                role: kobo_ui::QuoteRole::Heading,
+                fold: None,
+                text: "A section title".into(),
             },
             Node::Button {
                 id: NodeId(3),

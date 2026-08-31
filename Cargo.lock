@@ -966,6 +966,7 @@ dependencies = [
 name = "kobo-wiki"
 version = "1.0.0"
 dependencies = [
+ "kobo-html",
  "kobo-json",
  "kobo-sdk",
 ]

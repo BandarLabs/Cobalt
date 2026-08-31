@@ -9,8 +9,8 @@ mod api;
 
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Failure, Glyph, KoboApp, Screen, ScreenBuilder,
-    Task, TaskId, TaskOutcome,
+    action_id, ActionId, BannerLevel, Context, Failure, Glyph, KoboApp, QuoteRole, Screen,
+    ScreenBuilder, Task, TaskId, TaskOutcome,
 };
 use std::process::ExitCode;
 
@@ -59,10 +59,12 @@ struct Wiki {
     list_page: usize,
     /// The open article's title, once one has arrived.
     title: String,
-    /// The open article's body, as plain prose.
-    body: String,
-    /// The article, cut into pages that fit the panel.
-    pages: Vec<Vec<String>>,
+    /// The open article's body, as section titles and paragraphs, in order.
+    blocks: Vec<api::Block>,
+    /// The article, cut into pages that fit the panel. Each paragraph carries
+    /// its role, so a section title still reads larger than the paragraphs
+    /// under it once the article has been split at the panel's edges.
+    pages: Vec<Vec<(u32, u8, QuoteRole, String)>>,
     page: usize,
     /// Whether the last extract arrived at its byte ceiling, so the reading
     /// screen can say the article was cut rather than pretend it is whole.
@@ -115,18 +117,31 @@ impl Wiki {
 
     /// Cuts the open article into pages that fit the panel.
     fn lay_out(&mut self, context: &Context) {
+        let paragraphs = self.article_paragraphs();
+        let borrowed: Vec<_> = paragraphs
+            .iter()
+            .map(|(tag, depth, role, text)| (*tag, *depth, *role, text.as_str()))
+            .collect();
         // No bar: a reading page carries nothing at its foot but the place
         // it is at. Reserving one leaves a hand's width of white above the
         // position and takes lines off every page.
-        self.pages = context.paginate_reading(&self.title_and_body(), false);
+        self.pages = context.paginate_tagged_reading(&borrowed, false);
         self.page = 0;
     }
 
-    fn title_and_body(&self) -> String {
-        let mut text = self.title.clone();
-        text.push_str("\n\n");
-        text.push_str(&self.body);
-        text
+    /// The article as prose, the title and every section title marked apart
+    /// from the paragraphs under them.
+    fn article_paragraphs(&self) -> Vec<(u32, u8, QuoteRole, String)> {
+        let mut paragraphs = vec![(0, 0, QuoteRole::Heading, self.title.clone())];
+        for block in &self.blocks {
+            let role = if block.heading {
+                QuoteRole::Heading
+            } else {
+                QuoteRole::Body
+            };
+            paragraphs.push((0, 0, role, block.text.clone()));
+        }
+        paragraphs
     }
 
     fn show(&mut self, context: &mut Context) {
@@ -259,8 +274,8 @@ impl Wiki {
             );
         }
         let page = self.page.min(self.pages.len() - 1);
-        for paragraph in &self.pages[page] {
-            screen = screen.text(paragraph.clone());
+        for (_, depth, role, text) in &self.pages[page] {
+            screen = screen.quote_as(*depth, *role, text.clone());
         }
         screen
             .page_turns("page-back", "page-next")
@@ -390,7 +405,7 @@ impl KoboApp for Wiki {
                 };
                 self.read_from = View::Results;
                 self.title.clone_from(&hit.title);
-                self.body.clear();
+                self.blocks.clear();
                 self.view = View::Reading;
                 self.ask_extract(context, &hit.title);
                 self.show(context);
@@ -414,7 +429,7 @@ impl KoboApp for Wiki {
                 Awaiting::Random => match api::random_title(&bytes) {
                     Some(title) => {
                         self.title.clone_from(&title);
-                        self.body.clear();
+                        self.blocks.clear();
                         self.view = View::Reading;
                         self.ask_extract(context, &title);
                         self.show(context);
@@ -427,9 +442,9 @@ impl KoboApp for Wiki {
                 Awaiting::Extract => {
                     self.cut_short = bytes.len() >= EXTRACT_BYTES as usize;
                     match api::extract(&bytes) {
-                        Some((title, body)) => {
+                        Some((title, blocks)) => {
                             self.title = title;
-                            self.body = body;
+                            self.blocks = blocks;
                             self.lay_out(context);
                         }
                         None => {

@@ -1,10 +1,11 @@
 //! Wikipedia's own `action=query` API: search, a random article, and one
-//! article's plain-text extract.
+//! article's extract.
 //!
 //! No API key, no rate-limit tier to reason about -- this is the same
-//! anonymous endpoint `en.wikipedia.org` itself calls. `explaintext=1` asks
-//! `MediaWiki` to strip wiki markup server-side, so the panel is handed prose
-//! rather than a wikitext parser's homework.
+//! anonymous endpoint `en.wikipedia.org` itself calls. The extract is asked
+//! for as simplified HTML rather than with `explaintext=1`: plain text throws
+//! away the one thing that tells a section title apart from the paragraph
+//! under it, which `<h2>` and `<h3>` still carry.
 
 use kobo_json::Value;
 
@@ -30,11 +31,11 @@ pub fn random_url() -> String {
     format!("{API}?action=query&list=random&format=json&rnnamespace=0&rnlimit=1")
 }
 
-/// The address that asks for one article's plain-text body.
+/// The address that asks for one article's body, as simplified HTML.
 #[must_use]
 pub fn extract_url(title: &str) -> String {
     format!(
-        "{API}?action=query&format=json&prop=extracts&explaintext=1&exsectionformat=plain&titles={}",
+        "{API}?action=query&format=json&prop=extracts&titles={}",
         encode(title)
     )
 }
@@ -96,7 +97,7 @@ pub fn search_results(bytes: &[u8]) -> Vec<Hit> {
             let snippet = entry
                 .get("snippet")
                 .and_then(Value::as_str)
-                .map(strip_html)
+                .map(|snippet| kobo_html::to_text(snippet).trim().to_owned())
                 .unwrap_or_default();
             Some(Hit {
                 title: title.to_owned(),
@@ -122,9 +123,16 @@ pub fn random_title(bytes: &[u8]) -> Option<String> {
     (!title.is_empty()).then(|| title.to_owned())
 }
 
+/// One block of an article's body: a section title or a paragraph.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Block {
+    pub heading: bool,
+    pub text: String,
+}
+
 /// One article's body, read back from an extract answer.
 #[must_use]
-pub fn extract(bytes: &[u8]) -> Option<(String, String)> {
+pub fn extract(bytes: &[u8]) -> Option<(String, Vec<Block>)> {
     let text = String::from_utf8_lossy(bytes);
     let value = kobo_json::parse(&text).ok()?;
     let pages = value.get("query")?.get("pages")?;
@@ -144,38 +152,69 @@ pub fn extract(bytes: &[u8]) -> Option<(String, String)> {
     if title.is_empty() || body.is_empty() {
         return None;
     }
-    Some((title.to_owned(), body.to_owned()))
+    let blocks = extract_blocks(body);
+    if blocks.is_empty() {
+        return None;
+    }
+    Some((title.to_owned(), blocks))
 }
 
-/// Drops HTML tags and decodes the handful of entities `MediaWiki`'s search
-/// snippets actually carry.
+/// Splits an article's HTML extract into section titles and paragraphs.
 ///
-/// A snippet is `<span class="searchmatch">` around the matched word and
-/// occasionally `&quot;` or `&amp;` from the source text. It is never a full
-/// document, so this is not a general HTML reader: anything that looks like a
-/// tag is dropped outright rather than interpreted.
-fn strip_html(html: &str) -> String {
-    let mut out = String::with_capacity(html.len());
-    let mut in_tag = false;
-    for ch in html.chars() {
-        match ch {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            _ if in_tag => {}
-            _ => out.push(ch),
+/// `MediaWiki`'s plain-text extract (`explaintext=1`) throws the two apart:
+/// a section title comes back as a line of prose indistinguishable from the
+/// paragraph under it. Its HTML extract still carries `<h2>` and `<h3>`
+/// around a title, which is the only signal left to tell them apart, so this
+/// reads that instead and asks [`kobo_html::to_text`] to clean up whatever
+/// inline markup (`<b>`, `<i>`, a stray `<span>`) sits inside each block.
+///
+/// Written as its own small scan rather than a general HTML reader because
+/// the shape is narrow and known: `prop=extracts` never nests a heading
+/// inside a paragraph or one heading inside another, so a block's own close
+/// tag is always the next one of the same name.
+#[must_use]
+pub fn extract_blocks(html: &str) -> Vec<Block> {
+    let mut blocks = Vec::new();
+    let mut rest = html;
+    while let Some(start) = rest.find('<') {
+        let Some(tag_end) = rest[start..].find('>') else {
+            break;
+        };
+        let tag_end = start + tag_end + 1;
+        let name = kobo_html::element_name(&rest[start + 1..tag_end - 1]);
+        match name.as_str() {
+            "h2" | "h3" | "p" => {
+                let body = &rest[tag_end..];
+                let close = format!("</{name}>");
+                let (inner, after) = body.find(&close).map_or((body, ""), |offset| {
+                    (&body[..offset], &body[offset + close.len()..])
+                });
+                let text = kobo_html::to_text(inner).trim().to_owned();
+                if !text.is_empty() {
+                    blocks.push(Block {
+                        heading: name != "p",
+                        text,
+                    });
+                }
+                rest = after;
+            }
+            // Everything else -- a table, an image gallery, a reference list
+            // -- is skipped rather than mangled: none of it reduces to a
+            // paragraph or a title, and running it through the paragraph path
+            // anyway is what the old plain-text extract already tried, which
+            // is the flat, structureless page this function exists to avoid
+            // repeating.
+            _ => rest = &rest[tag_end..],
         }
     }
-    out.replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
+    blocks
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        encode, extract, extract_url, random_title, random_url, search_results, search_url,
+        encode, extract, extract_blocks, extract_url, random_title, random_url, search_results,
+        search_url, Block,
     };
 
     #[test]
@@ -205,7 +244,7 @@ mod tests {
     fn an_extract_is_asked_for_by_exact_title() {
         assert_eq!(
             extract_url("E=mc²"),
-            "https://en.wikipedia.org/w/api.php?action=query&format=json&prop=extracts&explaintext=1&exsectionformat=plain&titles=E%3Dmc%C2%B2"
+            "https://en.wikipedia.org/w/api.php?action=query&format=json&prop=extracts&titles=E%3Dmc%C2%B2"
         );
     }
 
@@ -246,17 +285,96 @@ mod tests {
     }
 
     #[test]
-    fn an_extract_answer_yields_the_canonical_title_and_the_body() {
+    fn an_extract_answer_yields_the_canonical_title_and_its_blocks() {
         let body = br#"{"query":{"pages":{"736":{"pageid":736,"ns":0,"title":"Bicycle",
-            "extract":"A bicycle, also called a pedal cycle, is a human-powered vehicle."}}}}"#;
-        let (title, text) = extract(body).expect("an extract was read");
+            "extract":"<p>A <b>bicycle</b> is a human-powered vehicle.</p><h2>History</h2><p>Invented in the 19th century.</p>"}}}}"#;
+        let (title, blocks) = extract(body).expect("an extract was read");
         assert_eq!(title, "Bicycle");
-        assert!(text.starts_with("A bicycle"));
+        assert_eq!(
+            blocks,
+            vec![
+                Block {
+                    heading: false,
+                    text: "A bicycle is a human-powered vehicle.".to_owned(),
+                },
+                Block {
+                    heading: true,
+                    text: "History".to_owned(),
+                },
+                Block {
+                    heading: false,
+                    text: "Invented in the 19th century.".to_owned(),
+                },
+            ]
+        );
     }
 
     #[test]
     fn a_title_wikipedia_does_not_have_is_read_as_no_extract() {
         let body = br#"{"query":{"pages":{"-1":{"ns":0,"title":"Nonexistentxyz","missing":""}}}}"#;
         assert_eq!(extract(body), None);
+    }
+
+    #[test]
+    fn a_heading_is_told_apart_from_the_paragraph_under_it() {
+        let html = "<h2 data-mw-anchor=\"Uses\">Uses</h2>\n<p>Bicycles are used for transport.</p>\n<h3>Commuting</h3>\n<p>Many people commute by bike.</p>";
+        let blocks = extract_blocks(html);
+        assert_eq!(
+            blocks,
+            vec![
+                Block {
+                    heading: true,
+                    text: "Uses".to_owned(),
+                },
+                Block {
+                    heading: false,
+                    text: "Bicycles are used for transport.".to_owned(),
+                },
+                Block {
+                    heading: true,
+                    text: "Commuting".to_owned(),
+                },
+                Block {
+                    heading: false,
+                    text: "Many people commute by bike.".to_owned(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn an_empty_paragraph_contributes_no_block() {
+        // MediaWiki's own extract carries `<p class="mw-empty-elt">\n\n</p>`
+        // as spacing between the lead and the first heading.
+        let html = "<p class=\"mw-empty-elt\">\n\n</p><p>Real text.</p>";
+        let blocks = extract_blocks(html);
+        assert_eq!(
+            blocks,
+            vec![Block {
+                heading: false,
+                text: "Real text.".to_owned(),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_structural_element_is_skipped_rather_than_mangled_into_a_paragraph() {
+        // A gallery or a table does not reduce to one paragraph, so it is
+        // left out entirely rather than read as one anyway.
+        let html = "<p>Before.</p><ul><li>One</li><li>Two</li></ul><p>After.</p>";
+        let blocks = extract_blocks(html);
+        assert_eq!(
+            blocks,
+            vec![
+                Block {
+                    heading: false,
+                    text: "Before.".to_owned(),
+                },
+                Block {
+                    heading: false,
+                    text: "After.".to_owned(),
+                },
+            ]
+        );
     }
 }

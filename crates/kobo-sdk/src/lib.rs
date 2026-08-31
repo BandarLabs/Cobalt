@@ -2842,6 +2842,26 @@ impl Context {
         kobo_ui::paginate_tagged(paragraphs, &self.metrics, self.paged_area(nav_bar))
     }
 
+    /// The same, in the reading face.
+    ///
+    /// The companion to [`ScreenBuilder::reading`], for the same reason
+    /// [`Self::paginate_reading`] is: a serif sets the same words wider and on
+    /// more generous lines, and headings measured in the interface face on a
+    /// screen drawn in the reading face lose their last lines with nothing on
+    /// the panel to say so.
+    #[must_use]
+    pub fn paginate_tagged_reading(
+        &self,
+        paragraphs: &[(u32, u8, QuoteRole, &str)],
+        nav_bar: bool,
+    ) -> Vec<Vec<(u32, u8, QuoteRole, String)>> {
+        kobo_ui::paginate_tagged(
+            paragraphs,
+            &self.metrics,
+            self.paged_area_in(nav_bar, kobo_ui::Face::Reading),
+        )
+    }
+
     /// `text` cut to the single line a list row can show, ellipsised if it
     /// did not fit.
     ///
