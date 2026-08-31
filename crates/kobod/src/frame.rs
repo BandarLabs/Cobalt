@@ -169,6 +169,15 @@ impl FramePlanner {
             );
         }
         let region = damage.intersection(whole)?;
+        // The waveform still follows the pixels themselves. A two-level
+        // waveform over antialiased grey would crush edges that no later
+        // frame comparison could repair, because committing this update
+        // marks the rectangle current.
+        let waveform = if waveform == PanelWaveform::Du && Self::has_grey(surface, region) {
+            PanelWaveform::Gl16
+        } else {
+            waveform
+        };
         let area = u64::try_from(region.width)
             .ok()?
             .saturating_mul(u64::try_from(region.height).ok()?);
@@ -524,6 +533,31 @@ mod tests {
             .expect("feedback");
         assert!(planner.commit(&frame, &feedback));
         assert_eq!(planner.plan(&frame).expect("remaining").region.x, 28);
+    }
+
+    #[test]
+    fn known_damage_containing_grey_is_not_driven_two_level() {
+        let (planner, mut frame) = started(32, 32);
+        frame.pixels[4 * 32 + 4] = tone::INK;
+        frame.pixels[4 * 32 + 5] = 128;
+        let damage = Rect {
+            x: 2,
+            y: 2,
+            width: 6,
+            height: 6,
+        };
+        let feedback = planner
+            .plan_damage(&frame, damage, PanelWaveform::Du)
+            .expect("feedback");
+        assert_eq!(feedback.regions[0].waveform, PanelWaveform::Gl16);
+        assert_eq!(feedback.waveform, PanelWaveform::Gl16);
+        assert!(!feedback.full);
+
+        frame.pixels[4 * 32 + 5] = tone::PAPER;
+        let pure = planner
+            .plan_damage(&frame, damage, PanelWaveform::Du)
+            .expect("feedback");
+        assert_eq!(pure.regions[0].waveform, PanelWaveform::Du);
     }
 
     #[test]
