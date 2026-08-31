@@ -18,6 +18,7 @@ and touch profile. A matching model name alone is not sufficient.
 | Kobo Elipsa 2E | N605, code 389, firmware 4.38.23697, kernel 4.9.77 | Read-only probe and owner-attended display, touch, exit, suspend/resume, and recovery tests complete | Fully tested |
 | Kobo Libra 2 | N418, code 388, firmware 4.38.23697, kernel 4.1.15-00868-g58a2758be07 | Read-only probe and owner-attended display, touch, page-button, exit, and recovery tests complete | Fully tested |
 | Kobo Libra Colour | N428, code 390, firmware 4.45.23697, kernel 4.9.77 | Read-only probe, measured touch transform, all four bounded display stages, wait timing, guardian restoration, an end-to-end tap, page-button presses (upper 193 pages back, lower 194 forward, the Libra 2's mapping), and a clean stock-reader restart with no watchdog reset all complete on the owner's device. Evidence on [issue #28](https://github.com/BandarLabs/Cobalt/issues/28) and [PR #49](https://github.com/BandarLabs/Cobalt/pull/49). Colour path and suspend/resume not exercised | Fully tested |
+| Kobo Libra Colour | N428, code 390, firmware 4.46.23836, kernel 4.9.77 | Read-only doctor and physical touch match; all four bounded display stages, wait timing, guardian restoration, and a launcher hand-back test complete. Page buttons, colour path, and suspend/resume remain untested; upstream review is pending | Candidate (`write_ready: false`) |
 
 `Read-only doctor match complete` means the profile describes the observed
 identity, framebuffer, and touch ranges. It does not prove the physical touch
