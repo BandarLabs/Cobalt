@@ -1,0 +1,8 @@
+expect Backgammon
+tap roll
+expect White rolled
+tap 23 W2
+expect checker selected
+tap 22 0
+expect Black to roll
+shot backgammon-play
