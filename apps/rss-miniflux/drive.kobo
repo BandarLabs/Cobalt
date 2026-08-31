@@ -1,0 +1,6 @@
+expect RSS Reader
+expect kobo secret set miniflux
+tap Starter directory
+expect Starter directory
+clean
+shot rss-miniflux-directory
