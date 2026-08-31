@@ -259,10 +259,7 @@ impl Settings {
                 (
                     ABOUT,
                     "About",
-                    self.identity.as_ref().map_or_else(
-                        || "What this build is running on".to_owned(),
-                        |identity| identity.model.clone(),
-                    ),
+                    "Device code, firmware, resolution".to_owned(),
                     RowLead::from(Glyph::Reader),
                 ),
             ])
@@ -613,10 +610,10 @@ impl Settings {
 
     /// Everything on this page names the reader it is drawn on: the matched
     /// profile, the firmware and kernel read from the hardware when the page
-    /// asks, and the version this runtime was compiled as. A photograph
-    /// of this page on the panel is evidence that this build actually ran on
-    /// this hardware, which is what a pull request reviewer cannot otherwise
-    /// see from across the world.
+    /// asks, and the version this runtime was compiled as. A photograph of
+    /// this page doubles as evidence that a build ran on real hardware, but
+    /// the page itself stays a plain product page: the reader who opens it
+    /// is a customer looking at their device, not a contributor.
     fn about(&self) -> Screen {
         let mut screen = ScreenBuilder::new("settings-about")
             .top_bar("About")
@@ -648,11 +645,6 @@ impl Settings {
         screen
             .section("This reader")
             .facts(facts)
-            .text(
-                "A photograph of this page shows this build running on this \
-                 reader. Attach one to a pull request that changes how the \
-                 device behaves.",
-            )
             .button(RESCAN, "Read again")
             .build()
     }
@@ -1354,9 +1346,10 @@ mod tests {
             .join(" ")
     }
 
-    /// The About page exists to be photographed as evidence a build ran on a
-    /// reader, so everything that names the reader must actually be on it,
-    /// and nothing on it may name the reader's owner.
+    /// The About page names the reader it is drawn on, so everything that
+    /// identifies the reader must actually be on it, nothing on it may name
+    /// the reader's owner, and none of the contributor's reasons for the
+    /// page may leak into what a customer sees.
     #[test]
     fn the_about_page_names_the_reader_it_is_drawn_on() {
         let mut settings = Settings::default();
@@ -1383,9 +1376,11 @@ mod tests {
             "5.10.117",
             "1072 × 1448",
             "0.3.0",
-            "photograph",
         ] {
             assert!(drawn.contains(needle), "the page never draws {needle}");
+        }
+        for stray in ["photograph", "pull request"] {
+            assert!(!drawn.contains(stray), "the page still talks shop: {stray}");
         }
     }
 
