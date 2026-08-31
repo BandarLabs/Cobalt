@@ -32,6 +32,9 @@ pub struct Ask {
     pub id: u32,
     /// Which agent asked, e.g. `codex` or `claude`.
     pub source: String,
+    /// The project and short session suffix supplied by the hook, if it had
+    /// them. Missing identity must never make a terminal prompt fail.
+    pub session: String,
     /// The tool the agent wants to use, e.g. `shell`.
     pub tool: String,
     /// What it wants to do with it, usually the command line.
@@ -52,6 +55,7 @@ pub struct Ask {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Asking {
     pub source: String,
+    pub session: String,
     pub tool: String,
     pub detail: String,
     pub choices: Vec<Choice>,
@@ -65,6 +69,7 @@ impl Asking {
     pub fn new(source: &str, tool: &str, detail: &str) -> Self {
         Self {
             source: source.to_owned(),
+            session: String::new(),
             tool: tool.to_owned(),
             detail: detail.to_owned(),
             choices: Vec::new(),
@@ -77,6 +82,12 @@ impl Asking {
     #[must_use]
     pub fn offering(mut self, choices: Vec<Choice>) -> Self {
         self.choices = choices;
+        self
+    }
+
+    #[must_use]
+    pub fn in_session(mut self, session: &str) -> Self {
+        self.session = session.to_owned();
         self
     }
 
@@ -112,6 +123,7 @@ struct Open {
 
 struct Inner {
     next_id: u32,
+    version: u64,
     open: Vec<Open>,
 }
 
@@ -129,6 +141,7 @@ impl Board {
         Self {
             inner: Mutex::new(Inner {
                 next_id: random_start(),
+                version: 0,
                 open: Vec::new(),
             }),
             asked: Condvar::new(),
@@ -148,6 +161,7 @@ impl Board {
             ask: Ask {
                 id,
                 source: asking.source,
+                session: asking.session,
                 tool: asking.tool,
                 detail: asking.detail,
                 choices: asking.choices,
@@ -156,6 +170,7 @@ impl Board {
             },
             decision: None,
         });
+        inner.version = inner.version.wrapping_add(1);
         drop(inner);
         self.asked.notify_all();
         let mut inner = self.lock();
@@ -193,6 +208,7 @@ impl Board {
             if let Some(open) = inner.open.iter().find(|open| open.decision.is_none()) {
                 return Some(open.ask.clone());
             }
+
             let now = Instant::now();
             if now >= deadline {
                 return None;
@@ -203,6 +219,23 @@ impl Board {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             inner = guard;
         }
+    }
+
+    /// Every unanswered question and the revision which changed with it.
+    /// Snapshotting under the one board lock ensures a board never mixes
+    /// questions from two moments.
+    #[must_use]
+    pub fn snapshot(&self) -> (u64, Vec<Ask>) {
+        let inner = self.lock();
+        (
+            inner.version,
+            inner
+                .open
+                .iter()
+                .filter(|open| open.decision.is_none())
+                .map(|open| open.ask.clone())
+                .collect(),
+        )
     }
 
     /// Records a decision for one question. False when the question is gone
@@ -218,6 +251,7 @@ impl Board {
             return false;
         };
         open.decision = Some(decision);
+        inner.version = inner.version.wrapping_add(1);
         drop(inner);
         self.answered.notify_all();
         true
@@ -345,6 +379,25 @@ mod tests {
         assert!(board.answer(shown.id, Decision::Allow));
         assert_eq!(hook_one.join().expect("first hook"), Decision::Deny);
         assert_eq!(hook_two.join().expect("second hook"), Decision::Allow);
+    }
+
+    #[test]
+    fn snapshot_keeps_every_pending_question_and_its_session_identity() {
+        let board = Arc::new(Board::new());
+        let submitter = Arc::clone(&board);
+        let waiting = std::thread::spawn(move || {
+            submitter.submit(
+                Asking::new("claude", "Bash", "cargo test").in_session("cobalt · ab12"),
+                Duration::from_secs(2),
+            )
+        });
+        while board.snapshot().1.is_empty() {}
+        let (before, asks) = board.snapshot();
+        assert_eq!(asks.len(), 1);
+        assert_eq!(asks[0].session, "cobalt · ab12");
+        assert!(board.answer(asks[0].id, Decision::Pass));
+        assert!(board.snapshot().0 > before);
+        assert_eq!(waiting.join().expect("hook"), Decision::Pass);
     }
 
     #[test]

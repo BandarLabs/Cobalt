@@ -152,6 +152,7 @@ fn hook_route(board: &Board, request: &Request, stream: &mut (impl Read + Write)
             .to_owned()
     };
     let mut asking = Asking::new(&field("source"), &field("tool"), &field("detail"))
+        .in_session(&field("session"))
         .offering(read_choices(ask.get("choices")));
     // Absent means a permission, which is what almost every ask is.
     if ask.get("permission").and_then(kobo_json::Value::as_bool) == Some(false) {
@@ -213,6 +214,18 @@ fn reader_route(board: &Board, pairing: &str, request: &Request, stream: &mut (i
         ("GET", "/pending") => {
             if request.query("token") != Some(pairing) {
                 respond_json(stream, 403, "Forbidden", "{}");
+                return;
+            }
+            if request.query("all") == Some("true") {
+                let (version, asks) = board.snapshot();
+                let reply = kobo_json::ObjectBuilder::new()
+                    .set("version", version.to_string())
+                    .set(
+                        "asks",
+                        kobo_json::Value::Array(asks.iter().map(ask_json).collect()),
+                    )
+                    .build();
+                respond_json(stream, 200, "OK", &reply.to_json());
                 return;
             }
             let wait = request
@@ -291,6 +304,7 @@ fn ask_json(ask: &Ask) -> kobo_json::Value {
     kobo_json::ObjectBuilder::new()
         .set("id", ask.id)
         .set("source", ask.source.as_str())
+        .set("session", ask.session.as_str())
         .set("tool", ask.tool.as_str())
         .set("detail", ask.detail.as_str())
         .set("choices", kobo_json::Value::Array(choices))
@@ -302,7 +316,7 @@ fn ask_json(ask: &Ask) -> kobo_json::Value {
 #[cfg(test)]
 mod tests {
     use super::{hook_route, reader_route};
-    use crate::board::Board;
+    use crate::board::{Board, Decision};
     use crate::http::Request;
     use std::io::Cursor;
     use std::sync::Arc;
@@ -419,6 +433,31 @@ mod tests {
             &mut wire,
         );
         assert_eq!(body_of(&wire.into_inner()), "{}");
+    }
+
+    #[test]
+    fn all_pending_is_a_versioned_snapshot_with_session_identity() {
+        let board = Arc::new(Board::new());
+        let hook_board = Arc::clone(&board);
+        let hook = std::thread::spawn(move || {
+            let mut wire = Cursor::new(Vec::new());
+            hook_route(
+                &hook_board,
+                &post(
+                    "/ask",
+                    r#"{"source":"claude","session":"cobalt · ab12","tool":"Bash","detail":"cargo test"}"#,
+                ),
+                &mut wire,
+            );
+        });
+        while board.snapshot().1.is_empty() {}
+        let mut wire = Cursor::new(Vec::new());
+        reader_route(&board, "code", &get("/pending?token=code&all=true"), &mut wire);
+        let reply = body_of(&wire.into_inner());
+        assert!(reply.contains("\"asks\"") && reply.contains("cobalt · ab12"), "{reply}");
+        let ask = board.snapshot().1.pop().expect("pending ask");
+        assert!(board.answer(ask.id, Decision::Pass));
+        hook.join().expect("hook");
     }
 
     #[test]
