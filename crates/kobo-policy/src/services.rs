@@ -229,6 +229,7 @@ impl DeviceServices {
         match request {
             DeviceRequest::ReadBattery => self.read_battery(),
             DeviceRequest::ReadBatteryDetail => self.read_battery_detail(),
+            DeviceRequest::ReadIdentity => Self::read_identity(),
             DeviceRequest::ReadCover => self.read_cover(),
             DeviceRequest::HoldWifi { seconds } => self.hold_wifi(seconds),
             DeviceRequest::ReleaseWifi => {
@@ -420,6 +421,23 @@ impl DeviceServices {
             },
             DeviceResult::Denied,
         )
+    }
+
+    /// The simulator is not a reader, and the honest answer says so. The
+    /// profile name makes that unmistakable in a screenshot, so a simulator
+    /// capture can never pass for the hardware evidence the About screen
+    /// exists to provide.
+    fn read_identity() -> DeviceResult {
+        DeviceResult::Identity(kobo_protocol::DeviceIdentity {
+            profile_id: "SIMULATOR".to_owned(),
+            model: "Simulated reader".to_owned(),
+            device_code: 0,
+            firmware: String::new(),
+            kernel: String::new(),
+            runtime_version: env!("CARGO_PKG_VERSION").to_owned(),
+            panel_width: 1072,
+            panel_height: 1448,
+        })
     }
 
     /// The simulator has no bezel to hold a magnet against, so it reports a
@@ -628,6 +646,10 @@ pub fn request_capability(request: &DeviceRequest) -> Option<Capability> {
         | DeviceRequest::BeginAppLink
         | DeviceRequest::PollAppLink
         | DeviceRequest::DisconnectAppLink
+        // Identity is what the About screen shows so a photograph of it can
+        // prove a build ran. It touches no radio and costs no power, and the
+        // values are already on the session's own banner, so it is free.
+        | DeviceRequest::ReadIdentity
         // Reading and choosing the standing preference touch a settings file,
         // not a radio or the panel, so no capability governs them; who may
         // ask is decided by the runtime, exactly as for the store requests.

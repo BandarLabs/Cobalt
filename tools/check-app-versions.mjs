@@ -15,7 +15,10 @@ const MANIFEST_FIELDS = [
 // Store packages are built from the current SDK and therefore speak its exact
 // wire protocol. A new protocol must add its first compatible Cobalt release
 // here before the catalog can be published.
-const PROTOCOL_MINIMUMS = new Map([[10, "0.2.4"]]);
+const PROTOCOL_MINIMUMS = new Map([
+  [10, "0.2.4"],
+  [11, "0.3.1"]
+]);
 
 function readJson(path, label) {
   try {
@@ -139,6 +142,26 @@ function isInside(path, directory) {
   return path === directory || path.startsWith(`${directory}/`);
 }
 
+// Returns the dependency edges capable of changing a release artifact.
+//
+// Cargo includes dev dependencies in the resolved metadata graph even when
+// they are used only to compile tests. Following those edges made an
+// unrelated test fixture change look like an app binary change and forced
+// contributors to bump and republish unaffected apps. Normal and build
+// dependencies still count, including an edge used as both dev and normal.
+export function releaseDependencyIds(node) {
+  return node.deps
+    .filter(dependency => {
+      const kinds = dependency.dep_kinds;
+      return (
+        !Array.isArray(kinds) ||
+        kinds.length === 0 ||
+        kinds.some(dependencyKind => dependencyKind.kind !== "dev")
+      );
+    })
+    .map(dependency => dependency.pkg);
+}
+
 export function affectedWorkspacePackages(baseRevision) {
   const metadata = JSON.parse(command("cargo", ["metadata", "--format-version", "1", "--locked"]));
   const workspaceRoot = resolve(metadata.workspace_root);
@@ -167,7 +190,7 @@ export function affectedWorkspacePackages(baseRevision) {
   }
 
   const dependencies = new Map(
-    metadata.resolve.nodes.map(node => [node.id, node.deps.map(dependency => dependency.pkg)])
+    metadata.resolve.nodes.map(node => [node.id, releaseDependencyIds(node)])
   );
   function dependsOnChanged(id, seen = new Set()) {
     if (changedIds.has(id)) return true;

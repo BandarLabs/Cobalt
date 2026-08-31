@@ -7,8 +7,8 @@
 
 pub use kobo_protocol::{
     is_valid_key, AppInfo, AppLinkState, AudioPlaybackState, AudioSource, BatteryDetail,
-    BluetoothDevice, BluetoothDeviceKind, Credential, DenyReason, DeviceError, DeviceRequest,
-    DeviceResult, DictionaryEntry, Frame, Header, Lifecycle, LogLevel, Message,
+    BluetoothDevice, BluetoothDeviceKind, Credential, DenyReason, DeviceError, DeviceIdentity,
+    DeviceRequest, DeviceResult, DictionaryEntry, Frame, Header, Lifecycle, LogLevel, Message,
     RemoteInstallOutcome, SecretHeader, ShellError, ShellEvent, ShellRequest, StoreError,
     StoreRequest, StoreResult, StreamError, Task, TaskError, TaskId, TaskOutcome, WifiNetwork,
     CACHE_PREFIX, MAX_CACHE_KEYS, MAX_FONT_BYTES, MAX_HEADERS, MAX_HEADER_NAME, MAX_HEADER_VALUE,
@@ -52,11 +52,11 @@ pub mod prelude {
         action_id, ActionId, AppIcon, AppLinkState, AppMetadata, AppRunner, AppShelf, AppShell,
         AppStore, AudioMetadata, AudioPlaybackState, AudioPlayer, AudioSource, BluetoothDevice,
         BluetoothDeviceKind, Capability, Client, ClientEvent, Command, Context, ControlState,
-        DenyReason, Device, DeviceError, DeviceRequest, DeviceResult, DialogAction, Failure, Grant,
-        Grants, Heartbeat, KoboApp, Lifecycle, Navigator, Node, NodeId, PowerPolicy,
-        RemoteInstallOutcome, Screen, ScreenBuilder, ShelfDownload, ShelfProgress, ShelfUpload,
-        ShellError, ShellEvent, ShellRequest, StandardState, StoreError, StoreRequest, StoreResult,
-        WifiNetwork,
+        DenyReason, Device, DeviceError, DeviceIdentity, DeviceRequest, DeviceResult, DialogAction,
+        Failure, Grant, Grants, Heartbeat, KoboApp, Lifecycle, Navigator, Node, NodeId,
+        PowerPolicy, RemoteInstallOutcome, Screen, ScreenBuilder, ShelfDownload, ShelfProgress,
+        ShelfUpload, ShellError, ShellEvent, ShellRequest, StandardState, StoreError, StoreRequest,
+        StoreResult, WifiNetwork,
     };
 }
 
@@ -4035,6 +4035,17 @@ impl Device<'_> {
     /// arrives rather than reserving space for what might.
     pub fn read_battery_detail(&mut self) {
         self.request(DeviceRequest::ReadBatteryDetail);
+    }
+
+    /// Asks what this runtime is and what it is running on.
+    ///
+    /// The answer arrives as [`DeviceResult::Identity`] and carries the
+    /// matched profile, model, firmware, kernel, panel size and runtime
+    /// version. Ask this when a reader opens a screen that shows them, such
+    /// as an about page whose photograph serves as evidence that a build ran
+    /// on real hardware.
+    pub fn read_identity(&mut self) {
+        self.request(DeviceRequest::ReadIdentity);
     }
 
     /// Asks where the magnet is now.

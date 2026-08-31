@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { checkEntries, checkProtocolMinimums } from "./check-app-versions.mjs";
+import {
+  checkEntries,
+  checkProtocolMinimums,
+  releaseDependencyIds
+} from "./check-app-versions.mjs";
 
 function fixture({ currentVersion = "1.0.0", summary = "Summary" } = {}) {
   const app = {
@@ -76,4 +80,25 @@ test("accepts the first Cobalt release supporting the package protocol", () => {
   assert.doesNotThrow(() =>
     checkProtocolMinimums(values.registry, 10, new Map([[10, "0.2.4"]]))
   );
+});
+
+test("release inputs ignore exclusively dev-only dependency edges", () => {
+  const dependencies = releaseDependencyIds({
+    deps: [
+      { pkg: "normal", dep_kinds: [{ kind: null, target: null }] },
+      { pkg: "build", dep_kinds: [{ kind: "build", target: null }] },
+      { pkg: "dev-only", dep_kinds: [{ kind: "dev", target: null }] },
+      {
+        pkg: "normal-and-dev",
+        dep_kinds: [
+          { kind: "dev", target: null },
+          { kind: null, target: "cfg(unix)" }
+        ]
+      },
+      // Fail conservatively if older Cargo metadata omits dependency kinds.
+      { pkg: "unspecified", dep_kinds: [] }
+    ]
+  });
+
+  assert.deepEqual(dependencies, ["normal", "build", "normal-and-dev", "unspecified"]);
 });
