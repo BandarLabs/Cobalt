@@ -159,10 +159,12 @@ pub fn commit_script() -> String {
 /// The script `kobo setup --undo` runs to take the block back out.
 ///
 /// The removal is the bounded sentinel range and nothing else, so an owner's
-/// own edits survive. The restored file is checked with `sshd -t -f` before
-/// it replaces anything, and a check that fails leaves the hardened file in
-/// place and says so: a working key-only server beats a broken permissive
-/// one.
+/// own edits survive. A block that has a beginning but no end, which is what
+/// a hand-applied hardening looks like, is refused rather than guessed at: a
+/// range whose end never matches would run to the end of the file. The
+/// restored file is checked with `sshd -t -f` before it replaces anything,
+/// and a check that fails leaves the hardened file in place and says so: a
+/// working key-only server beats a broken permissive one.
 #[must_use]
 pub fn remove_script() -> String {
     format!(
@@ -172,6 +174,11 @@ pub fn remove_script() -> String {
          if ! grep -q '^{SENTINEL_BEGIN}$' \"$config\"; then\n\
            echo 'hardening=absent'\n\
            exit 0\n\
+         fi\n\
+         if ! grep -q '^{SENTINEL_END}$' \"$config\"; then\n\
+           echo 'the key-only block has no end marker (applied by hand?), so nothing \
+         was removed; delete it from sshd_config yourself' >&2\n\
+           exit 1\n\
          fi\n\
          scratch=/tmp/kobo-unharden.conf\n\
          sed '/^{SENTINEL_BEGIN}$/,/^{SENTINEL_END}$/d' \"$config\" > \"$scratch\"\n\
@@ -326,6 +333,15 @@ mod tests {
     fn the_removal_is_bounded_and_checked_before_it_lands() {
         let script = remove_script();
         assert!(script.contains(&format!("/^{SENTINEL_BEGIN}$/,/^{SENTINEL_END}$/d")));
+        let end_guard = script
+            .find(&format!("grep -q '^{SENTINEL_END}$'"))
+            .expect("refuses a block with no end marker");
+        let ranged = script.find("sed ").expect("the bounded delete");
+        assert!(
+            end_guard < ranged,
+            "a hand-applied block has no end marker, and a range whose end never \
+             matches would delete to the end of the file"
+        );
         let checked = script.find("-t -f \"$scratch\"").expect("checks the file");
         let landed = script
             .find("cat \"$scratch\" > \"$config\"")
