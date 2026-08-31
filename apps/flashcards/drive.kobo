@@ -1,0 +1,11 @@
+wait 500
+expect Flashcards
+clean
+shot decks
+# Drive a real review transition.
+tap Default
+expect Show answer
+clean
+tap Show answer
+expect Good · 3d
+clean
