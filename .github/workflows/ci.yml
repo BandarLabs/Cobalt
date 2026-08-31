@@ -25,6 +25,7 @@ jobs:
         run: |
           node tools/generate-app-pages.mjs
           git diff --exit-code -- docs/apps docs/sitemap.xml
+          test -z "$(git status --porcelain --untracked-files=all -- docs/apps docs/sitemap.xml)"
       - run: cargo test --workspace --all-targets --all-features
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 

@@ -35,7 +35,7 @@ capability. Request only capabilities the app actually uses.
 
 If an app needs an account, API key, named secret, self-hosted service, or
 other preparation outside Cobalt, add a `setup` object to its registry entry.
-The generated install page puts these steps in a **Before installing** panel,
+The generated install page puts these steps in a **Before you install** panel,
 so owners see the requirements before installing rather than discovering them
 on first launch. Each step has plain `text` and may add one HTTPS `link` and
 one shell `command`:
