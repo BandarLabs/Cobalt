@@ -59,6 +59,13 @@ pub struct FrameTransition {
 const DAMAGE_JOIN_GAP: i32 = 8;
 /// Prevents one frame from exhausting either the runtime or controller queue.
 const MAX_FRAME_REGIONS: usize = 8;
+/// Shortest side of one partial panel update.
+///
+/// Update regions a single pixel wide or tall have been observed to upset
+/// e-ink controller drivers, up to soft-locking some of them. Every planned
+/// region keeps both sides at least this long, growing over neighbouring
+/// unchanged pixels when the damage itself is thinner.
+const MIN_REGION_SIDE: i32 = 2;
 
 /// Shared state machine for choosing Kobo panel transitions.
 ///
@@ -168,7 +175,7 @@ impl FramePlanner {
                 false,
             );
         }
-        let region = damage.intersection(whole)?;
+        let region = Self::widen_to_minimum(damage.intersection(whole)?, whole);
         // The waveform still follows the pixels themselves. A two-level
         // waveform over antialiased grey would crush edges that no later
         // frame comparison could repair, because committing this update
@@ -329,8 +336,31 @@ impl FramePlanner {
             }
         }
         Self::limit_regions(&mut regions);
+        let whole = self.whole()?;
+        for region in &mut regions {
+            *region = Self::widen_to_minimum(*region, whole);
+        }
         regions.sort_by_key(|region| (region.y, region.x));
         Some((regions, flipped))
+    }
+
+    /// Grows a thin region to [`MIN_REGION_SIDE`] on each side, staying
+    /// inside `whole`. The extra pixels are unchanged and merely repainted.
+    fn widen_to_minimum(region: Rect, whole: Rect) -> Rect {
+        let mut region = region;
+        if region.width < MIN_REGION_SIDE && whole.width >= MIN_REGION_SIDE {
+            region.width = MIN_REGION_SIDE;
+            region.x = region
+                .x
+                .min(whole.x.saturating_add(whole.width) - MIN_REGION_SIDE);
+        }
+        if region.height < MIN_REGION_SIDE && whole.height >= MIN_REGION_SIDE {
+            region.height = MIN_REGION_SIDE;
+            region.y = region
+                .y
+                .min(whole.y.saturating_add(whole.height) - MIN_REGION_SIDE);
+        }
+        region
     }
 
     fn merge_region(regions: &mut Vec<Rect>, mut incoming: Rect) {
@@ -490,7 +520,7 @@ impl FramePlanner {
 
 #[cfg(test)]
 mod tests {
-    use super::{FramePlanner, PanelWaveform, MAX_FRAME_REGIONS};
+    use super::{FramePlanner, PanelWaveform, MAX_FRAME_REGIONS, MIN_REGION_SIDE};
     use kobo_ui::{tone, Rect, Surface};
 
     fn started(width: usize, height: usize) -> (FramePlanner, Surface) {
@@ -569,5 +599,50 @@ mod tests {
         let update = planner.plan(&frame).expect("separated changes");
         assert!(update.regions.len() <= MAX_FRAME_REGIONS);
         assert_eq!(update.dirty, 16);
+    }
+
+    #[test]
+    fn no_region_is_a_single_pixel_wide_or_tall() {
+        let (planner, mut frame) = started(32, 32);
+        frame.pixels[16 * 32 + 16] = tone::INK;
+        let update = planner.plan(&frame).expect("one pixel");
+        let region = update.regions[0].region;
+        assert!(region.width >= MIN_REGION_SIDE);
+        assert!(region.height >= MIN_REGION_SIDE);
+        assert!(region.x <= 16 && 16 < region.x + region.width);
+        assert!(region.y <= 16 && 16 < region.y + region.height);
+
+        let feedback = planner
+            .plan_damage(
+                &frame,
+                Rect {
+                    x: 8,
+                    y: 8,
+                    width: 1,
+                    height: 1,
+                },
+                PanelWaveform::Du,
+            )
+            .expect("thin damage");
+        let region = feedback.regions[0].region;
+        assert!(region.width >= MIN_REGION_SIDE);
+        assert!(region.height >= MIN_REGION_SIDE);
+    }
+
+    #[test]
+    fn a_widened_region_stays_inside_the_screen() {
+        let (planner, mut frame) = started(32, 32);
+        frame.pixels[32 * 32 - 1] = tone::INK;
+        let update = planner.plan(&frame).expect("corner pixel");
+        let region = update.regions[0].region;
+        assert_eq!(
+            region,
+            Rect {
+                x: 30,
+                y: 30,
+                width: 2,
+                height: 2,
+            }
+        );
     }
 }
