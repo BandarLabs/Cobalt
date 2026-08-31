@@ -5,7 +5,7 @@
 //! exactly as they would around a physical tray. What the app adds is the
 //! shake, the clock, and the part every table wants when the pens go down —
 //! checking whether a word is real. Validity is answered from an embedded
-//! SOWPODS word list, misspellings get near-miss suggestions, and definitions
+//! ENABLE word list, misspellings get near-miss suggestions, and definitions
 //! come from the runtime's offline dictionaries when the owner has installed
 //! any.
 //!
@@ -57,10 +57,10 @@ const MIN_WORD_LETTERS: usize = 3;
 /// it tappable can never disagree with the words it covers.
 const END_EARLY_LABEL: &str = "End the game early";
 
-/// Every word SOWPODS accepts, one per line, embedded so the answer needs no
+/// Every word ENABLE accepts, one per line, embedded so the answer needs no
 /// radio. Parsed once, on the first lookup rather than at launch, so starting
 /// a game never waits on it.
-const WORD_LIST: &str = include_str!("../words/sowpods.txt");
+const WORD_LIST: &str = include_str!("../words/enable1.txt");
 
 fn words() -> &'static HashSet<&'static str> {
     static WORDS: OnceLock<HashSet<&'static str>> = OnceLock::new();
@@ -977,7 +977,7 @@ mod tests {
 
     #[test]
     fn the_word_list_answers_like_the_table_expects() {
-        assert!(verify("qi"), "the two-letter Scrabble staple is in SOWPODS");
+        assert!(verify("aa"), "the two-letter Scrabble staple is in ENABLE");
         assert!(verify("AARDVARK"));
         assert!(verify("aardvark"), "case must not matter");
         assert!(!verify("XQZZY"));

@@ -29,7 +29,7 @@ clock does.
 ## When the pens go down
 
 **Check a word** settles disputes: validity is answered offline from an
-embedded SOWPODS list of 267,750 words, misspellings get near-miss
+embedded ENABLE list of 172,820 words, misspellings get near-miss
 suggestions, and definitions come from Cobalt's offline dictionary service
 when the owner has installed dictionaries. Scoring is a word's letter count
 minus two — one point for a three-letter word, and one more for every letter
@@ -37,7 +37,9 @@ beyond it. A plural is its own word, found and scored beside its singular.
 
 ## Licences
 
-The word list is the SOWPODS compilation as packaged by `pf-sowpods` (MIT).
+The word list is ENABLE (Enhanced North American Benchmark LExicon), the
+public-domain word-game list compiled by Alan Beale and M. Cooper, as
+mirrored at [norvig.com/ngrams/enable1.txt](https://norvig.com/ngrams/enable1.txt).
 The dice letters are set in DejaVu Serif Bold, whose Bitstream Vera licence
 travels beside it in `fonts/LICENSE-DejaVu.txt`. The dice face distribution
 is the modern tabletop set's.
