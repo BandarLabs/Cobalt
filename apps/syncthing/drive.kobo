@@ -1,0 +1,6 @@
+expect Sync
+expect Sync is disabled
+tap Folders
+expect Sync folders
+clean
+shot syncthing-folders

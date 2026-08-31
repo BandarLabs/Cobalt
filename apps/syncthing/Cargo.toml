@@ -1,0 +1,15 @@
+[package]
+name = "kobo-syncthing"
+version = "0.3.1"
+edition = "2021"
+rust-version = "1.85.1"
+license = "AGPL-3.0-only"
+publish = false
+
+[dependencies]
+kobo-sdk = { path = "../../crates/kobo-sdk" }
+
+[dev-dependencies]
+kobo-ui = { path = "../../crates/kobo-ui" }
+
+[workspace]
