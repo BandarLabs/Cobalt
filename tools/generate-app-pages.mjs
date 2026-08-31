@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { setupPanel } from "./app-page-setup.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const catalog = JSON.parse(readFileSync(resolve(root, "apps/catalog.json"), "utf8"));
@@ -149,6 +150,7 @@ for (const app of catalog.apps) {
   const image = `https://bandarlabs.github.io/Cobalt/media/site/apps/${screenshot}`;
   const structuredData = jsonLd(appSchema(app, canonical, screenshot, screenshotAlt));
   const structuredDataHash = scriptHash(structuredData);
+  const prerequisites = setupPanel(app);
   const html = `<!doctype html>
 <html lang="en">
 <head>
@@ -202,7 +204,7 @@ for (const app of catalog.apps) {
     <figure class="app-shot">
       <img src="../../media/site/apps/${screenshot}" width="1072" height="1448" alt="${escape(screenshotAlt)}">
     </figure>
-  </div>
+  </div>${prerequisites}
   <section class="panel" id="pair-panel">
     <p class="eyebrow">Install with Cobalt</p>
     <h2>Link your Kobo to install</h2>
