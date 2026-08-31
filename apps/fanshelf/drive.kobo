@@ -1,0 +1,7 @@
+wait 500
+expect Fanshelf
+clean
+shot shelf
+tap Followed tags
+expect Followed tags
+clean
