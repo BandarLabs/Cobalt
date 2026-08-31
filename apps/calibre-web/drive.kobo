@@ -1,0 +1,7 @@
+wait 500
+expect Libraries
+clean
+shot libraries
+tap Add
+expect HTTPS address
+clean
