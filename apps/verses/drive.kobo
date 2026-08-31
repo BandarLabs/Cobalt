@@ -1,0 +1,7 @@
+expect Hope is the thing
+tap Browse
+expect Browse
+tap The Tyger
+expect burning bright
+clean
+shot today
