@@ -1,0 +1,6 @@
+tap Initiative
+expect Round 1
+tap NEXT
+expect Round 1
+clean
+shot initiative
