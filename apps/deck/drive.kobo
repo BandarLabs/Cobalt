@@ -1,0 +1,3 @@
+# Clean Clara BW capture of Deck's pairing state.
+expect Deck
+shot deck
