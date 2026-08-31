@@ -2940,13 +2940,40 @@ fn resolve(catalogue: &Path, name: &str) -> Result<PathBuf, String> {
     if crate::app_store::manages_builtin(name) {
         return crate::app_store::resolve(Path::new(COBALT_ROOT), name);
     }
-    let path = catalogue.join(format!("kobo-{name}"));
-    if path.is_file() {
-        Ok(path)
-    } else {
+    prefer_installed(catalogue, name, || {
         crate::app_store::resolve(Path::new(COBALT_ROOT), name)
-            .map_err(|_| format!("no application named {name} is installed"))
-    }
+    })
+}
+
+/// Chooses between the copy the store installed and the binary sitting beside
+/// the runtime, for an application the runtime does not carry itself.
+///
+/// The store is asked first and the binary beside the runtime answers only
+/// when the store has none. Both can name the same application: the store
+/// writes its copy by installing or updating one, while the binary beside the
+/// runtime is whatever the last platform package left there. Asking in the
+/// other order pins the application to that leftover for good, because no
+/// update can replace it -- the store installs a newer copy, reports success,
+/// and the reader goes on starting the old binary with nothing to say it is
+/// happening. An application carried by an older package and dropped from a
+/// later one is where this bites, because the file outlives the release that
+/// put it there.
+///
+/// The lookup is a parameter so this decision can be tested: the real one
+/// verifies a signature against the compiled-in release key, which a test
+/// cannot produce.
+fn prefer_installed<F>(catalogue: &Path, name: &str, installed: F) -> Result<PathBuf, String>
+where
+    F: FnOnce() -> Result<PathBuf, String>,
+{
+    installed().or_else(|_| {
+        let path = catalogue.join(format!("kobo-{name}"));
+        if path.is_file() {
+            Ok(path)
+        } else {
+            Err(format!("no application named {name} is installed"))
+        }
+    })
 }
 
 fn valid_application_name(name: &str) -> bool {
@@ -4004,6 +4031,40 @@ mod tests {
     #[test]
     fn a_name_is_bounded_in_length() {
         assert!(resolve(&catalogue(), &"a".repeat(33)).is_err());
+    }
+
+    /// The update an application receives has to be the one that starts.
+    ///
+    /// A reader had arXiv left beside the runtime by a package old enough to
+    /// predate the current wire protocol. The store updated the application,
+    /// said so, and the reader went on starting the leftover, which the
+    /// runtime then refused for speaking a protocol it no longer answers. The
+    /// application was pinned to a binary no update could reach, and the only
+    /// visible symptom was a screen that said Starting and stayed there.
+    #[test]
+    fn the_installed_copy_is_started_even_when_a_binary_sits_beside_the_runtime() {
+        let directory = catalogue();
+        let installed = directory.join("installed-elsewhere/kobo-hello");
+        assert_eq!(
+            super::prefer_installed(&directory, "hello", || Ok(installed.clone()))
+                .expect("the installed copy answers"),
+            installed,
+            "the leftover beside the runtime shadowed the installed copy"
+        );
+    }
+
+    #[test]
+    fn a_binary_beside_the_runtime_answers_only_when_nothing_is_installed() {
+        let directory = catalogue();
+        assert_eq!(
+            super::prefer_installed(&directory, "hello", || Err("nothing installed".to_owned()))
+                .expect("the binary beside the runtime answers"),
+            directory.join("kobo-hello")
+        );
+        assert!(super::prefer_installed(&directory, "nothing-here", || Err(
+            "nothing installed".to_owned()
+        ))
+        .is_err());
     }
 }
 
