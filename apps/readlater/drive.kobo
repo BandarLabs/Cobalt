@@ -1,0 +1,6 @@
+expect Read Later
+expect kobo secret set wallabag
+tap Settings
+expect Read Later settings
+clean
+shot readlater-setup
