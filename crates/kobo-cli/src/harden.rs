@@ -29,10 +29,18 @@
 
 use std::time::Duration;
 
-/// First line of the appended block, and the marker every script looks for.
+/// What every script greps for to decide whether a block is present.
 ///
-/// Exactly the line validated on hardware, kept to the character so a reader
-/// hardened by hand before this existed is recognised as already done.
+/// A prefix rather than the whole line, because a hardening applied by hand
+/// before this existed carries whatever note its author left on the marker
+/// line (the one this was written against reads "Delete through end of file
+/// to undo."), and failing to recognise it would append a second block.
+pub const SENTINEL_FAMILY: &str = "# cobalt-hardening:";
+
+/// First line of the appended block.
+///
+/// Begins with [`SENTINEL_FAMILY`], and the directive part is exactly the
+/// block validated on hardware.
 pub const SENTINEL_BEGIN: &str = "# cobalt-hardening: key-only SSH for root.";
 
 /// Last line of the appended block, so removal is a bounded range, not a
@@ -86,7 +94,7 @@ pub fn apply_script() -> String {
     format!(
         "set -eu\n\
          {CONFIG_CANDIDATES}\
-         if grep -q '^{SENTINEL_BEGIN}$' \"$config\"; then\n\
+         if grep -q '^{SENTINEL_FAMILY}' \"$config\"; then\n\
            rm -f \"$pending\"\n\
            echo 'hardening=already'\n\
            exit 0\n\
@@ -141,7 +149,7 @@ pub fn commit_script() -> String {
     format!(
         "set -eu\n\
          {CONFIG_CANDIDATES}\
-         if ! grep -q '^{SENTINEL_BEGIN}$' \"$config\"; then\n\
+         if ! grep -q '^{SENTINEL_FAMILY}' \"$config\"; then\n\
            rm -f \"$pending\"\n\
            echo 'hardening=missing'\n\
            exit 0\n\
@@ -171,7 +179,7 @@ pub fn remove_script() -> String {
         "set -eu\n\
          {CONFIG_CANDIDATES}\
          rm -f \"$pending\"\n\
-         if ! grep -q '^{SENTINEL_BEGIN}$' \"$config\"; then\n\
+         if ! grep -q '^{SENTINEL_FAMILY}' \"$config\"; then\n\
            echo 'hardening=absent'\n\
            exit 0\n\
          fi\n\
@@ -238,7 +246,7 @@ impl Outcome {
 mod tests {
     use super::{
         apply_script, commit_script, remove_script, Outcome, REVERT_DELAY, SENTINEL_BEGIN,
-        SENTINEL_END,
+        SENTINEL_END, SENTINEL_FAMILY,
     };
 
     /// The block that goes in is the block validated on hardware, between the
@@ -296,13 +304,17 @@ mod tests {
     }
 
     /// A rerun must recognise its own block, from this version or one applied
-    /// by hand, and cancel a revert an interrupted run left pending.
+    /// by hand with a note added to the marker line, and cancel a revert an
+    /// interrupted run left pending. The prefix is what makes the hand
+    /// variant recognisable, so the begin line has to actually carry it.
     #[test]
     fn the_apply_is_idempotent_and_settles_an_interrupted_run() {
+        assert!(SENTINEL_BEGIN.starts_with(SENTINEL_FAMILY));
+        assert!(SENTINEL_END.starts_with(SENTINEL_FAMILY));
         let script = apply_script();
         let recognised = script
-            .find(&format!("grep -q '^{SENTINEL_BEGIN}$'"))
-            .expect("looks for its own block");
+            .find(&format!("grep -q '^{SENTINEL_FAMILY}'"))
+            .expect("looks for the marker family, not just its own line");
         let cancelled = script.find("rm -f \"$pending\"").expect("cancels a revert");
         let done = script.find("hardening=already").expect("says so");
         let copy = script.find("cp \"$config\"").expect("the fresh-run copy");
