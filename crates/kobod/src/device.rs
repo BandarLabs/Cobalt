@@ -2455,10 +2455,15 @@ fn read_identity() -> Option<kobo_protocol::DeviceIdentity> {
 }
 
 /// Keeps a probed string inside the identity field bound so one overgrown
-/// version file cannot make the whole answer unsendable.
+/// version file cannot make the whole answer unsendable. Cut once at the
+/// bound, stepping back only as far as the nearest character boundary.
 fn bounded(mut text: String) -> String {
-    while text.len() > kobo_protocol::MAX_IDENTITY_FIELD_LEN {
-        text.pop();
+    if text.len() > kobo_protocol::MAX_IDENTITY_FIELD_LEN {
+        let mut end = kobo_protocol::MAX_IDENTITY_FIELD_LEN;
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        text.truncate(end);
     }
     text
 }

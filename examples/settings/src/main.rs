@@ -612,8 +612,8 @@ impl Settings {
     }
 
     /// Everything on this page names the reader it is drawn on: the matched
-    /// profile, the firmware and kernel that were read when the session
-    /// started, and the version this runtime was compiled as. A photograph
+    /// profile, the firmware and kernel read from the hardware when the page
+    /// asks, and the version this runtime was compiled as. A photograph
     /// of this page on the panel is evidence that this build actually ran on
     /// this hardware, which is what a pull request reviewer cannot otherwise
     /// see from across the world.
