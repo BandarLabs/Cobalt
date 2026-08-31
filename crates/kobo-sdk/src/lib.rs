@@ -4308,6 +4308,11 @@ impl Device<'_> {
     /// Asks which automatic updates the runtime performs on its own. The
     /// reply is [`DeviceResult::AutoUpdate`] with one switch for the platform
     /// and one for installed applications.
+    ///
+    /// Behind the `runtime-settings` switch, because the runtime answers this
+    /// only for the settings application it ships with. See that feature in
+    /// this crate's manifest for why it is not offered to everyone.
+    #[cfg(feature = "runtime-settings")]
     pub fn read_auto_update(&mut self) {
         self.request(DeviceRequest::ReadAutoUpdate);
     }
@@ -4316,6 +4321,10 @@ impl Device<'_> {
     /// switches are stated together so two screens cannot interleave writes
     /// and leave a mixture neither of them chose. The reply restates what was
     /// recorded, as [`DeviceResult::AutoUpdate`].
+    ///
+    /// Behind the `runtime-settings` switch, for the same reason as
+    /// [`Self::read_auto_update`].
+    #[cfg(feature = "runtime-settings")]
     pub fn set_auto_update(&mut self, cobalt: bool, apps: bool) {
         self.request(DeviceRequest::SetAutoUpdate { cobalt, apps });
     }
