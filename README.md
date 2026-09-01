@@ -189,7 +189,10 @@ cd my-app
 kobo dev
 ```
 
-`kobo dev` runs the app in the Clara BW browser simulator. Start with the
+`kobo dev` runs the app in the Clara BW browser simulator. Set
+`KOBO_SIM_PROFILE=libra-2-388` or `KOBO_SIM_PROFILE=elipsa-2e-389` to exercise
+the larger supported panel geometries with the same renderer and diagnostics.
+Start with the
 [SDK documentation](https://bandarlabs.github.io/Cobalt/sdk.html); the
 repository also keeps the [deep implementation guide](SDK.md).
 
