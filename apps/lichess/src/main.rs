@@ -294,7 +294,10 @@ impl Lichess {
         let Ok(value) = kobo_json::parse(text) else {
             return false;
         };
-        let Some(items) = value.as_array() else {
+        let Some(items) = value
+            .as_array()
+            .or_else(|| value.get("puzzles").and_then(Value::as_array))
+        else {
             return false;
         };
         let puzzles = items.iter().filter_map(Puzzle::read).collect::<Vec<_>>();
@@ -561,5 +564,25 @@ mod tests {
             credential.as_ref().map(|key| key.secret.as_str()),
             Some("lichess")
         );
+    }
+
+    #[test]
+    fn reads_the_current_batch_response_envelope() {
+        let mut app = Lichess::default();
+        let response = br#"{
+            "puzzles": [{
+                "game": {"pgn": "e4 e5 Nf3 Nc6"},
+                "puzzle": {
+                    "id": "abc12",
+                    "solution": ["f3e5"],
+                    "initialPly": 4
+                }
+            }]
+        }"#;
+
+        assert!(app.accept_batch(response));
+        assert_eq!(app.batch.len(), 1);
+        assert_eq!(app.batch[0].id, "abc12");
+        assert_eq!(app.batch[0].solution, ["f3e5"]);
     }
 }
