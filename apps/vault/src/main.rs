@@ -37,8 +37,9 @@ impl Default for Vault {
 }
 impl Vault {
     fn show(&self, cx: &mut Context) {
-        cx.set_screen(self.screen())
+        cx.set_screen(self.screen());
     }
+    #[allow(clippy::too_many_lines)]
     fn screen(&self) -> Screen {
         if self.entry.is_open() {
             return ScreenBuilder::new("vault-search")
@@ -98,7 +99,7 @@ impl Vault {
             }
             View::Tags => ScreenBuilder::new("vault-tags")
                 .top_bar("Tags")
-                .rows(self.notes.iter().flat_map(|n| n.tags()).map(|tag| {
+                .rows(self.notes.iter().flat_map(model::Note::tags).map(|tag| {
                     (
                         format!("tag-{tag}"),
                         format!("#{tag}"),
@@ -147,7 +148,7 @@ impl Vault {
 impl KoboApp for Vault {
     fn on_start(&mut self, cx: &mut Context) {
         cx.store().load(INDEX);
-        self.show(cx)
+        self.show(cx);
     }
     fn on_store(&mut self, cx: &mut Context, result: StoreResult) {
         if let StoreResult::Loaded { key, value } = result {
@@ -166,7 +167,7 @@ impl KoboApp for Vault {
                     })
                     .unwrap_or_default();
                 self.loaded = true;
-                self.show(cx)
+                self.show(cx);
             }
         }
     }
@@ -180,15 +181,15 @@ impl KoboApp for Vault {
             return;
         }
         if a == action_id("browse") {
-            self.view = View::Browse
+            self.view = View::Browse;
         } else if a == action_id("tags") {
-            self.view = View::Tags
+            self.view = View::Tags;
         } else if a == action_id("recent") {
-            self.view = View::Recent
+            self.view = View::Recent;
         } else if a == action_id("search") {
-            self.entry.open()
+            self.entry.open();
         } else if a == action_id("backlinks") {
-            self.view = View::Backlinks
+            self.view = View::Backlinks;
         } else {
             for i in 0..self.notes.len() {
                 if a == action_id(&format!("note-{i}")) {
@@ -197,7 +198,7 @@ impl KoboApp for Vault {
                 }
             }
         }
-        self.show(cx)
+        self.show(cx);
     }
 }
 fn main() -> ExitCode {

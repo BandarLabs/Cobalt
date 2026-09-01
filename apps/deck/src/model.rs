@@ -61,7 +61,7 @@ pub fn decode(text: &str) -> Option<Deck> {
 fn quoted(text: &str) -> Option<&str> {
     let text = text.trim_start_matches([' ', ':']);
     let text = text.strip_prefix('\"')?;
-    Some(text.split('\"').next()?)
+    text.split('\"').next()
 }
 fn value<'a>(text: &'a str, name: &str) -> Option<&'a str> {
     let rest = text.split_once(&format!("\"{name}\":"))?.1;

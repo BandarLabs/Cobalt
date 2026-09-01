@@ -3,9 +3,10 @@ set -eu
 cd "$(dirname "$0")/../.."
 cargo run -q -p kobo-cli -- run --sim --app lichess
 python3 - <<'PY'
+import os
 from pathlib import Path
 import struct, zlib
-raw = Path("target/kobo-sim-last.raw").read_bytes()
+raw = (Path(os.environ["CARGO_TARGET_DIR"]) / "kobo-sim-last.raw").read_bytes()
 w, h = 1072, 1448
 assert len(raw) == w * h
 def chunk(kind, data): return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff)

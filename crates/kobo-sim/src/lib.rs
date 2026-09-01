@@ -1743,14 +1743,14 @@ fn read_app_messages(
     // Kept outside the process so state survives a reload, which is the whole
     // point of a store: a developer restarting the application should see what
     // the owner would see after closing and reopening it.
-    let store = Store::new(std::env::temp_dir().join("cobalt-sim-state"));
+    let store = Store::new(std::env::temp_dir().join("cobalt-sim-state").join(name));
     // The shelf is where an application keeps what will not fit in a message:
     // an audiobook, a downloaded book. Without one here every shelf request
     // came back `Unwritable`, so the one class of application that most needs
     // to be developed off the device -- the ones that take four minutes and a
     // dozen network calls to produce a file -- was the one class that could
     // not be run in the simulator at all.
-    let shelf = Shelf::new(std::env::temp_dir().join("cobalt-sim-data"));
+    let shelf = Shelf::new(std::env::temp_dir().join("cobalt-sim-data").join(name));
     let shells = simulated_shells(writer);
     loop {
         let frame = read_protocol_frame(&mut stream)?;

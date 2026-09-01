@@ -72,7 +72,7 @@ impl Game {
         }
     }
     fn helper(&mut self, s: &str) {
-        self.command(s)
+        self.command(s);
     }
     fn screen(&self) -> Screen {
         let lines = self.transcript.join("\n\n");
@@ -103,7 +103,7 @@ impl Game {
 }
 impl KoboApp for Game {
     fn on_start(&mut self, c: &mut Context) {
-        c.set_screen(self.screen())
+        c.set_screen(self.screen());
     }
     fn on_action(&mut self, c: &mut Context, a: ActionId) {
         let mut changed = false;
@@ -111,7 +111,7 @@ impl KoboApp for Game {
             changed = true;
             if p == Pressed::Submitted {
                 let input = self.keyboard.take();
-                self.command(&input)
+                self.command(&input);
             }
         } else {
             for (n, v) in [
@@ -129,7 +129,7 @@ impl KoboApp for Game {
             }
         }
         if changed {
-            c.set_screen(self.screen())
+            c.set_screen(self.screen());
         }
     }
 }

@@ -1,14 +1,43 @@
 mod supervisor;
-use kobo_sdk::{action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, ScreenBuilder, StoreResult};
+use kobo_sdk::{
+    action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, ScreenBuilder, StoreResult,
+};
 use std::process::ExitCode;
 use supervisor::{Cadence, Config, FOLDERS};
 
 const CONFIG: &str = "sync-config";
-#[derive(Clone, Copy, Debug, Eq, PartialEq)] enum View { Status, Folders, About }
-struct Sync { config: Config, view: View, last: String, peers: u8 }
-impl Default for Sync { fn default() -> Self { Self { config: Config::default(), view: View::Status, last: "Not run".into(), peers: 0 } } }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum View {
+    Status,
+    Folders,
+    About,
+}
+struct Sync {
+    config: Config,
+    view: View,
+    last: String,
+    peers: u8,
+}
+impl Default for Sync {
+    fn default() -> Self {
+        Self {
+            config: Config::default(),
+            view: View::Status,
+            last: "Not run".into(),
+            peers: 0,
+        }
+    }
+}
 impl Sync {
-    fn save(&self, context: &mut Context) { context.store().save(CONFIG, format!("{}\n{}\n{}", self.config.enabled, self.config.cadence as u8, self.config.device_id)); }
+    fn save(&self, context: &mut Context) {
+        context.store().save(
+            CONFIG,
+            format!(
+                "{}\n{}\n{}",
+                self.config.enabled, self.config.cadence as u8, self.config.device_id
+            ),
+        );
+    }
     fn show(&self, context: &mut Context) {
         let screen = match self.view {
             View::Status => {
@@ -29,10 +58,77 @@ impl Sync {
     }
 }
 impl KoboApp for Sync {
-    fn on_start(&mut self, context: &mut Context) { context.store().load(CONFIG); self.show(context); }
-    fn on_store(&mut self, context: &mut Context, result: StoreResult) { if let StoreResult::Loaded { key, value } = result { if key == CONFIG { if let Some(value) = value { let saved = String::from_utf8_lossy(&value); let mut fields = saved.lines(); self.config.enabled = fields.next() == Some("true"); self.config.cadence = match fields.next() { Some("1") => Cadence::Hourly, Some("2") => Cadence::FourHourly, Some("3") => Cadence::Daily, _ => Cadence::Manual }; self.config.device_id = fields.next().unwrap_or("KOBOSYNC-DEVICE-ID").into(); } } self.show(context); } }
-    fn on_action(&mut self, context: &mut Context, action: ActionId) { if action == action_id("toggle") { self.config.enabled = !self.config.enabled; self.last = if self.config.enabled { "Waiting for a sync window".into() } else { "Stopped".into() }; self.save(context); } else if action == action_id("cadence") { self.config.cadence = self.config.cadence.next(); self.save(context); } else if action == action_id("folders") { self.view = View::Folders; } else if action == action_id("about") { self.view = View::About; } else if action == action_id("back") || action == ActionId::BACK { self.view = View::Status; } self.show(context); }
+    fn on_start(&mut self, context: &mut Context) {
+        context.store().load(CONFIG);
+        self.show(context);
+    }
+    fn on_store(&mut self, context: &mut Context, result: StoreResult) {
+        if let StoreResult::Loaded { key, value } = result {
+            if key == CONFIG {
+                if let Some(value) = value {
+                    let saved = String::from_utf8_lossy(&value);
+                    let mut fields = saved.lines();
+                    self.config.enabled = fields.next() == Some("true");
+                    self.config.cadence = match fields.next() {
+                        Some("1") => Cadence::Hourly,
+                        Some("2") => Cadence::FourHourly,
+                        Some("3") => Cadence::Daily,
+                        _ => Cadence::Manual,
+                    };
+                    self.config.device_id = fields.next().unwrap_or("KOBOSYNC-DEVICE-ID").into();
+                }
+            }
+            self.show(context);
+        }
+    }
+    fn on_action(&mut self, context: &mut Context, action: ActionId) {
+        if action == action_id("toggle") {
+            self.config.enabled = !self.config.enabled;
+            self.last = if self.config.enabled {
+                "Waiting for a sync window".into()
+            } else {
+                "Stopped".into()
+            };
+            self.save(context);
+        } else if action == action_id("cadence") {
+            self.config.cadence = self.config.cadence.next();
+            self.save(context);
+        } else if action == action_id("folders") {
+            self.view = View::Folders;
+        } else if action == action_id("about") {
+            self.view = View::About;
+        } else if action == action_id("back") || action == ActionId::BACK {
+            self.view = View::Status;
+        }
+        self.show(context);
+    }
 }
-fn main() -> ExitCode { kobo_sdk::run("syncthing", Sync::default()).map_or_else(|e| { eprintln!("syncthing: {e}"); ExitCode::FAILURE }, |_| ExitCode::SUCCESS) }
+fn main() -> ExitCode {
+    kobo_sdk::run("syncthing", Sync::default()).map_or_else(
+        |e| {
+            eprintln!("syncthing: {e}");
+            ExitCode::FAILURE
+        },
+        |()| ExitCode::SUCCESS,
+    )
+}
 #[cfg(test)]
-mod tests { use super::*; use kobo_ui::{Chrome, CLARA_BW_METRICS}; #[test] fn primary_sync_control_fits_clara_bw() { let app = Sync::default(); let layout = ScreenBuilder::new("sync").top_bar("Sync").empty_state("Sync is disabled.").bottom_action("toggle", "Turn Sync on").build().layout_with(&CLARA_BW_METRICS, &Chrome::default()); let toggle = layout.rect_of_action(action_id("toggle")).expect("sync control"); assert!(toggle.height >= CLARA_BW_METRICS.touch_target_minimum()); assert_eq!(app.config.cadence, Cadence::Manual); } }
+mod tests {
+    use super::*;
+    use kobo_ui::{Chrome, CLARA_BW_METRICS};
+    #[test]
+    fn primary_sync_control_fits_clara_bw() {
+        let app = Sync::default();
+        let layout = ScreenBuilder::new("sync")
+            .top_bar("Sync")
+            .empty_state("Sync is disabled.")
+            .bottom_action("toggle", "Turn Sync on")
+            .build()
+            .layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        let toggle = layout
+            .rect_of_action(action_id("toggle"))
+            .expect("sync control");
+        assert!(toggle.height >= CLARA_BW_METRICS.touch_target_minimum());
+        assert_eq!(app.config.cadence, Cadence::Manual);
+    }
+}

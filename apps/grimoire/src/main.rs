@@ -74,16 +74,16 @@ impl Default for Grimoire {
 impl Grimoire {
     fn title(&self) -> &'static str {
         match self.view {
-            View::Home => "Grimoire",
+            View::Home | View::Detail => "Grimoire",
             View::Spells => "Spells",
             View::Monsters => "Monsters",
             View::Rules => "Rules & conditions",
             View::Dice => "Dice",
             View::Initiative => "Initiative",
             View::Party => "Party",
-            View::Detail => "Grimoire",
         }
     }
+    #[allow(clippy::too_many_lines)]
     fn screen(&self) -> Screen {
         let mut s = ScreenBuilder::new("grimoire").top_bar(self.title());
         if matches!(self.view, View::Spells | View::Monsters | View::Rules) {
@@ -149,7 +149,8 @@ impl Grimoire {
                 ))
                 .section(format!(
                     "Result: {}",
-                    self.roll as i16 + self.modifier as i16
+                    i16::try_from(self.roll).expect("a d20 result fits i16")
+                        + i16::from(self.modifier)
                 ))
                 .primary_button("roll", "Roll d20")
                 .buttons([
@@ -227,7 +228,8 @@ impl Grimoire {
         );
     }
     fn roll(&mut self) {
-        let next = ((self.history.len() as u16 * 7 + 12) % 20) + 1;
+        let rolls = u16::try_from(self.history.len()).expect("roll history is capped at ten");
+        let next = ((rolls * 7 + 12) % 20) + 1;
         self.roll = next;
         self.history.push(next);
         if self.history.len() > 10 {
@@ -327,7 +329,7 @@ fn main() -> ExitCode {
             eprintln!("grimoire: {e}");
             ExitCode::FAILURE
         },
-        |_| ExitCode::SUCCESS,
+        |()| ExitCode::SUCCESS,
     )
 }
 

@@ -3,7 +3,11 @@ use kobo_sdk::{Credential, Task};
 pub const SECRET: &str = "homeassistant";
 
 pub fn endpoint(base: &str, path: &str) -> String {
-    format!("{}/{}", base.trim_end_matches('/'), path.trim_start_matches('/'))
+    format!(
+        "{}/{}",
+        base.trim_end_matches('/'),
+        path.trim_start_matches('/')
+    )
 }
 
 pub fn test_connection(base: &str) -> Task {
@@ -41,10 +45,8 @@ pub fn poll(base: &str, ids: &[String]) -> Task {
 pub fn service(base: &str, entity: &str) -> Task {
     let domain = entity.split('.').next().unwrap_or("homeassistant");
     let action = match domain {
-        "light" | "switch" | "input_boolean" | "fan" => "toggle",
-        "scene" => "turn_on",
+        "scene" | "script" | "automation" => "turn_on",
         "button" => "press",
-        "script" | "automation" => "turn_on",
         _ => "toggle",
     };
     Task::Post {
@@ -58,8 +60,12 @@ pub fn service(base: &str, entity: &str) -> Task {
 }
 
 pub fn state_rows(bytes: &[u8]) -> Vec<(String, String)> {
-    let Ok(text) = std::str::from_utf8(bytes) else { return Vec::new() };
-    let Ok(items) = kobo_json::parse(text) else { return Vec::new() };
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return Vec::new();
+    };
+    let Ok(items) = kobo_json::parse(text) else {
+        return Vec::new();
+    };
     items.as_array().map_or_else(Vec::new, |items| {
         items
             .iter()
@@ -78,9 +84,18 @@ mod tests {
 
     #[test]
     fn template_poll_is_one_credentialed_post_for_all_tiles() {
-        let Task::Post { url, body, credential, .. } =
-            poll("https://ha.example/", &["light.desk".into(), "lock.front".into()])
-        else { panic!("a post") };
+        let Task::Post {
+            url,
+            body,
+            credential,
+            ..
+        } = poll(
+            "https://ha.example/",
+            &["light.desk".into(), "lock.front".into()],
+        )
+        else {
+            panic!("a post")
+        };
         assert_eq!(url, "https://ha.example/api/template");
         assert!(body.contains("light.desk") && body.contains("lock.front"));
         assert_eq!(credential.expect("secret").secret, SECRET);

@@ -12,7 +12,7 @@ kobo secret set habitica --device <address>
 No Habitica artwork or other HabitRPG-designed assets are included. Those assets
 are CC-BY-NC-SA 3.0; this app uses its own typographic interface.
 
-<img width="300" src="screenshots/today.png" alt="Habits on a Clara BW showing a sparse first-run today screen">
+<img width="300" src="screenshots/today.png" alt="Habits on a Clara BW showing daily and weekday tasks">
 
 ## Repaint policy
 

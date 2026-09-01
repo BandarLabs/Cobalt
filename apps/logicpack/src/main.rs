@@ -19,7 +19,7 @@ impl Default for Game {
     fn default() -> Self {
         Self {
             kind: Kind::Home,
-            seed: 20260901,
+            seed: 20_260_901,
             cells: [0; 16],
             notice: "Today’s deterministic set. Choose a puzzle.".into(),
         }
@@ -36,12 +36,13 @@ impl Game {
             Kind::Mines => "Reveal safe cells. First reveal is safe.",
             Kind::Home => "Today’s deterministic set. Choose a puzzle.",
         }
-        .into()
+        .into();
     }
     fn screen(&self) -> Screen {
         match self.kind {
             Kind::Home => ScreenBuilder::new("logicpack")
                 .top_bar("Logic Pack")
+                .section(format!("Daily set {}", self.seed))
                 .secondary(&self.notice)
                 .rows([
                     (
@@ -99,8 +100,7 @@ impl Game {
     }
     fn tap(&mut self, i: usize) {
         match self.kind {
-            Kind::Slither => self.cells[i] = (self.cells[i] + 1) % 3,
-            Kind::Hashi => self.cells[i] = (self.cells[i] + 1) % 3,
+            Kind::Slither | Kind::Hashi => self.cells[i] = (self.cells[i] + 1) % 3,
             Kind::Kakuro => self.cells[i] = (self.cells[i] % 9) + 1,
             Kind::Mines => {
                 self.cells[i] = if self.cells[i] == 0 {
@@ -117,7 +117,7 @@ impl Game {
 }
 impl KoboApp for Game {
     fn on_start(&mut self, c: &mut Context) {
-        c.set_screen(self.screen())
+        c.set_screen(self.screen());
     }
     fn on_action(&mut self, c: &mut Context, a: ActionId) {
         let mut changed = true;
@@ -128,18 +128,18 @@ impl KoboApp for Game {
             a if a == action_id("mines") => self.select(Kind::Mines),
             a if a == action_id("back") => self.select(Kind::Home),
             a if a == action_id("check") => {
-                self.notice = "No contradiction in marked cells.".into()
+                self.notice = "No contradiction in marked cells.".into();
             }
             _ => {
                 if let Some(i) = (0..16).find(|i| a == action_id(&format!("cell-{i}"))) {
-                    self.tap(i)
+                    self.tap(i);
                 } else {
-                    changed = false
+                    changed = false;
                 }
             }
         }
         if changed {
-            c.set_screen(self.screen())
+            c.set_screen(self.screen());
         }
     }
 }
@@ -168,7 +168,7 @@ mod tests {
     }
     #[test]
     fn daily_seed_is_fixed() {
-        assert_eq!(Game::default().seed, 20260901);
+        assert_eq!(Game::default().seed, 20_260_901);
     }
     #[test]
     fn clara_screens_fit() {

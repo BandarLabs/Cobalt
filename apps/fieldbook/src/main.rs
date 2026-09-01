@@ -110,9 +110,7 @@ impl KoboApp for Fieldbook {
     }
     fn on_action(&mut self, c: &mut Context, a: ActionId) {
         self.notice = None;
-        if a == ActionId::BACK || a == action_id("back") {
-            self.view = View::Nearby;
-        } else if a == action_id("nearby") {
+        if a == ActionId::BACK || a == action_id("back") || a == action_id("nearby") {
             self.view = View::Nearby;
         } else if a == action_id("life") {
             self.view = View::Life;
@@ -130,7 +128,7 @@ impl KoboApp for Fieldbook {
         } else if a == action_id("tally") {
             let lifer = !self.sightings.iter().any(|(b, _)| *b == self.selected);
             if let Some((_, n)) = self.sightings.iter_mut().find(|(b, _)| *b == self.selected) {
-                *n += self.count
+                *n += self.count;
             } else {
                 self.sightings.push((self.selected, self.count));
             }
@@ -152,7 +150,7 @@ fn main() -> ExitCode {
             eprintln!("fieldbook: {e}");
             ExitCode::FAILURE
         },
-        |_| ExitCode::SUCCESS,
+        |()| ExitCode::SUCCESS,
     )
 }
 #[cfg(test)]

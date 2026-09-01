@@ -41,7 +41,9 @@ impl Stand {
             STATE,
             format!(
                 "{}|{}|{}",
-                self.page, self.top_half as u8, self.marked as u8
+                self.page,
+                u8::from(self.top_half),
+                u8::from(self.marked)
             )
             .into_bytes(),
         );
@@ -140,7 +142,7 @@ fn main() -> ExitCode {
             eprintln!("musicstand: {error}");
             ExitCode::FAILURE
         },
-        |_| ExitCode::SUCCESS,
+        |()| ExitCode::SUCCESS,
     )
 }
 #[cfg(test)]

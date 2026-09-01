@@ -7,7 +7,7 @@ use kobo_sdk::{
 use std::process::ExitCode;
 
 const STATE: &str = "pubquiz-state";
-const PACK_CAP: usize = 10;
+const PACK_CAP: u8 = 10;
 const API: &str = "https://opentdb.com/api.php?amount=50&type=multiple";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -125,6 +125,7 @@ impl Quiz {
 fn choice(index: usize) -> String {
     format!("answer-{index}")
 }
+#[allow(clippy::too_many_lines)]
 fn screen(quiz: &Quiz) -> Screen {
     let question = QUESTIONS[quiz.question % QUESTIONS.len()];
     match quiz.view {
@@ -177,7 +178,11 @@ fn screen(quiz: &Quiz) -> Screen {
                 question.answers.iter().enumerate().map(|(i, answer)| {
                     (
                         choice(i),
-                        format!("{} · {}", char::from(b'A' + i as u8), answer),
+                        format!(
+                            "{} · {}",
+                            char::from(b'A' + u8::try_from(i).expect("four answers fit u8")),
+                            answer
+                        ),
                     )
                 }),
             )
@@ -257,7 +262,7 @@ impl KoboApp for Quiz {
         self.syncing = false;
         match outcome {
             TaskOutcome::Completed(_) => {
-                self.packs = (self.packs + 1).min(PACK_CAP as u8);
+                self.packs = (self.packs + 1).min(PACK_CAP);
                 self.note = Some(format!(
                     "Pack {} saved. Oldest packs are pruned after {PACK_CAP}.",
                     self.packs
@@ -265,13 +270,13 @@ impl KoboApp for Quiz {
                 self.save(context);
             }
             TaskOutcome::Failed(kobo_sdk::TaskError::Offline) => {
-                self.note = Some("Off the air. Existing packs still play offline.".into())
+                self.note = Some("Off the air. Existing packs still play offline.".into());
             }
             TaskOutcome::Failed(_) | TaskOutcome::Cancelled => {
                 self.note =
-                    Some("Open Trivia DB did not answer. Join Wi-Fi and try sync again.".into())
+                    Some("Open Trivia DB did not answer. Join Wi-Fi and try sync again.".into());
             }
-        };
+        }
         self.show(context);
     }
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
@@ -314,7 +319,7 @@ fn main() -> ExitCode {
             eprintln!("pubquiz: {error}");
             ExitCode::FAILURE
         },
-        |_| ExitCode::SUCCESS,
+        |()| ExitCode::SUCCESS,
     )
 }
 #[cfg(test)]
@@ -333,7 +338,7 @@ mod tests {
     }
     #[test]
     fn pack_cap_prunes_fifo_boundary() {
-        assert_eq!((PACK_CAP as u8 + 1).min(PACK_CAP as u8), PACK_CAP as u8);
+        assert_eq!((PACK_CAP + 1).min(PACK_CAP), PACK_CAP);
     }
     #[test]
     fn question_controls_fit_clara() {

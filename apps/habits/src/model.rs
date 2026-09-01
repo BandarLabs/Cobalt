@@ -27,7 +27,8 @@ impl Habit {
     pub fn due(&self, day: u32) -> bool {
         match self.schedule {
             Schedule::Daily => true,
-            Schedule::Weekdays => day % 7 < 5,
+            // Unix day zero was a Thursday; shift to Monday = 0.
+            Schedule::Weekdays => (day + 3) % 7 < 5,
             Schedule::Every(n) => day % u32::from(n.max(1)) == 0,
         }
     }
@@ -96,25 +97,27 @@ impl Habit {
 }
 
 pub fn encode(habits: &[Habit]) -> Vec<u8> {
-    habits
-        .iter()
-        .map(|habit| {
-            let schedule = match habit.schedule {
-                Schedule::Daily => "d".to_owned(),
-                Schedule::Weekdays => "w".to_owned(),
-                Schedule::Every(n) => format!("e{n}"),
-            };
-            format!(
-                "{}\t{}\t{}\t{}\t{}\n",
-                habit.archived as u8,
-                schedule,
-                habit.name.replace(['\t', '\n'], " "),
-                days(&habit.done),
-                days(&habit.skipped)
-            )
-        })
-        .collect::<String>()
-        .into_bytes()
+    use std::fmt::Write as _;
+
+    let mut encoded = String::new();
+    for habit in habits {
+        let schedule = match habit.schedule {
+            Schedule::Daily => "d".to_owned(),
+            Schedule::Weekdays => "w".to_owned(),
+            Schedule::Every(n) => format!("e{n}"),
+        };
+        writeln!(
+            encoded,
+            "{}\t{}\t{}\t{}\t{}",
+            u8::from(habit.archived),
+            schedule,
+            habit.name.replace(['\t', '\n'], " "),
+            days(&habit.done),
+            days(&habit.skipped)
+        )
+        .expect("writing to a string cannot fail");
+    }
+    encoded.into_bytes()
 }
 fn days(days: &[u32]) -> String {
     days.iter()

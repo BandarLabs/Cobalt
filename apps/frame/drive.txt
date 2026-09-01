@@ -1,4 +1,4 @@
 expect Sample photograph
 tap Show photograph
-expect Frame settings
+clean
 shot frame

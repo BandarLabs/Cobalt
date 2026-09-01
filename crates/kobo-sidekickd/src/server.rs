@@ -452,9 +452,17 @@ mod tests {
         });
         while board.snapshot().1.is_empty() {}
         let mut wire = Cursor::new(Vec::new());
-        reader_route(&board, "code", &get("/pending?token=code&all=true"), &mut wire);
+        reader_route(
+            &board,
+            "code",
+            &get("/pending?token=code&all=true"),
+            &mut wire,
+        );
         let reply = body_of(&wire.into_inner());
-        assert!(reply.contains("\"asks\"") && reply.contains("cobalt · ab12"), "{reply}");
+        assert!(
+            reply.contains("\"asks\"") && reply.contains("cobalt · ab12"),
+            "{reply}"
+        );
         let ask = board.snapshot().1.pop().expect("pending ask");
         assert!(board.answer(ask.id, Decision::Pass));
         hook.join().expect("hook");

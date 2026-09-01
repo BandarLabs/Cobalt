@@ -1,9 +1,9 @@
 [package]
 name = "kobo-lichess"
 version = "0.1.0"
-edition = "2021"
-rust-version = "1.85.1"
-license = "AGPL-3.0-only"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
 publish = false
 
 [dependencies]
@@ -14,7 +14,5 @@ shakmaty = "=0.27.3"
 [dev-dependencies]
 kobo-ui = { path = "../../crates/kobo-ui" }
 
-[lints.rust]
-unsafe_code = "forbid"
-
-[workspace]
+[lints]
+workspace = true

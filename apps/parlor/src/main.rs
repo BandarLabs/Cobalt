@@ -98,6 +98,7 @@ fn flips(board: &[i8; CELLS], turn: i8, at: usize) -> Vec<usize> {
         return Vec::new();
     }
     let (row, col) = (at / SIDE, at % SIDE);
+    let side = isize::try_from(SIDE).expect("the board side fits isize");
     let mut all = Vec::new();
     for (dr, dc) in [
         (-1isize, -1isize),
@@ -110,11 +111,17 @@ fn flips(board: &[i8; CELLS], turn: i8, at: usize) -> Vec<usize> {
         (1, 1),
     ] {
         let mut run = Vec::new();
-        let (mut r, mut c) = (row as isize + dr, col as isize + dc);
-        while (0..SIDE as isize).contains(&r) && (0..SIDE as isize).contains(&c) {
-            let value = board[r as usize * SIDE + c as usize];
+        let (mut r, mut c) = (
+            isize::try_from(row).expect("the board row fits isize") + dr,
+            isize::try_from(col).expect("the board column fits isize") + dc,
+        );
+        while (0..side).contains(&r) && (0..side).contains(&c) {
+            let row_index = usize::try_from(r).expect("the checked row is non-negative");
+            let column_index = usize::try_from(c).expect("the checked column is non-negative");
+            let square = row_index * SIDE + column_index;
+            let value = board[square];
             if value == -turn {
-                run.push(r as usize * SIDE + c as usize);
+                run.push(square);
             } else {
                 if value == turn {
                     all.extend(run);
@@ -172,7 +179,7 @@ impl Parlor {
     fn play(&mut self, at: usize) {
         let captured = flips(&self.board, self.turn, at);
         if captured.is_empty() {
-            self.notice = "That square captures nothing. Tap a marked destination.".to_owned();
+            "That square captures nothing. Tap a marked destination.".clone_into(&mut self.notice);
             return;
         }
         self.board[at] = self.turn;
@@ -181,7 +188,7 @@ impl Parlor {
         }
         self.turn = -self.turn;
         self.selected = None;
-        if !(0..CELLS).any(|square| legal(&self.board, self.turn, square)) {
+        if (0..CELLS).all(|square| !legal(&self.board, self.turn, square)) {
             self.turn = -self.turn;
             self.notice = format!("{} has no move; turn passes.", player_name(-self.turn));
         } else {
@@ -235,7 +242,7 @@ fn main() -> ExitCode {
             eprintln!("parlor: {error}");
             ExitCode::FAILURE
         },
-        |_| ExitCode::SUCCESS,
+        |()| ExitCode::SUCCESS,
     )
 }
 

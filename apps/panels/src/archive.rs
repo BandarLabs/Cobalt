@@ -2,6 +2,7 @@
 
 use kobo_doc::zip::Archive;
 use kobo_image::{decode, ImageError};
+use std::path::Path;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Comic {
@@ -30,19 +31,32 @@ pub fn inspect(bytes: &[u8]) -> Result<Comic, ComicError> {
     let mut pages = archive
         .names()
         .filter(|name| {
-            let lower = name.to_ascii_lowercase();
-            lower.ends_with(".png") || lower.ends_with(".jpg") || lower.ends_with(".jpeg")
+            Path::new(name)
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| {
+                    matches!(
+                        extension.to_ascii_lowercase().as_str(),
+                        "png" | "jpg" | "jpeg"
+                    )
+                })
         })
         .map(str::to_owned)
         .collect::<Vec<_>>();
     pages.sort_unstable();
-    if pages.is_empty() { Err(ComicError::Empty) } else { Ok(Comic { pages }) }
+    if pages.is_empty() {
+        Err(ComicError::Empty)
+    } else {
+        Ok(Comic { pages })
+    }
 }
 
 pub fn page(bytes: &[u8], comic: &Comic, index: usize) -> Result<kobo_image::Picture, ComicError> {
     let archive = Archive::open(bytes).map_err(|error| ComicError::Archive(error.to_string()))?;
     let name = comic.pages.get(index).ok_or(ComicError::Empty)?;
-    let encoded = archive.read(name).map_err(|error| ComicError::Archive(error.to_string()))?;
+    let encoded = archive
+        .read(name)
+        .map_err(|error| ComicError::Archive(error.to_string()))?;
     decode(&encoded).map_err(|error: ImageError| ComicError::Image(error.to_string()))
 }
 
@@ -56,7 +70,8 @@ mod tests {
             ("10.jpg".to_owned(), vec![1]),
             ("02.png".to_owned(), vec![2]),
             ("notes.txt".to_owned(), vec![3]),
-        ]).expect("zip");
+        ])
+        .expect("zip");
         assert_eq!(inspect(&cbz).expect("comic").pages, ["02.png", "10.jpg"]);
     }
 }

@@ -83,18 +83,63 @@ fn daily_index(year: u16, month: u8, day: u8) -> usize {
 impl Verses {
     fn screen(&self) -> Screen {
         match self.view {
-  View::Today|View::Reading=>{let p=CORPUS[self.poem];let mut text=format!("{}\n\n{}",p.author,p.lines.join("\n"));if self.view==View::Today{text=format!("Today\n\n{text}")};ScreenBuilder::new("verses-poem").top_bar(p.title).reading(true).text(text).buttons([("favorite",if self.favorite==Some(self.poem){"Remove favorite"}else{"Save favorite"}),("browse","Browse")]).build()}
-  View::Browse=>ScreenBuilder::new("verses-browse").top_bar("Browse").secondary("Public-domain poems from the shelf.").rows(CORPUS.iter().enumerate().map(|(i,p)|(format!("poem-{i}"),p.title,format!("{} · {}",p.author,p.tags),Glyph::Note))).button("today","Today’s poem").build(),
-  View::Settings=>ScreenBuilder::new("verses-settings").top_bar("Sleep screen").text(if self.sleep{"Tonight’s sleep screen is tomorrow’s poem. It repaints once at sleep transition."}else{"The sleep screen is off. Turn it on to prepare tomorrow’s poem."}).button("sleep",if self.sleep{"Turn off"}else{"Turn on"}).build(),
- }
+            View::Today | View::Reading => {
+                let poem = CORPUS[self.poem];
+                let mut text = format!("{}\n\n{}", poem.author, poem.lines.join("\n"));
+                if self.view == View::Today {
+                    text = format!("Today\n\n{text}");
+                }
+                ScreenBuilder::new("verses-poem")
+                    .top_bar(poem.title)
+                    .secondary(format!("{} · {}", poem.year, poem.source))
+                    .reading(true)
+                    .text(text)
+                    .buttons([
+                        (
+                            "favorite",
+                            if self.favorite == Some(self.poem) {
+                                "Remove favorite"
+                            } else {
+                                "Save favorite"
+                            },
+                        ),
+                        ("browse", "Browse"),
+                    ])
+                    .build()
+            }
+            View::Browse => ScreenBuilder::new("verses-browse")
+                .top_bar("Browse")
+                .secondary("Public-domain poems from the shelf.")
+                .rows(CORPUS.iter().enumerate().map(|(i, poem)| {
+                    (
+                        format!("poem-{i}"),
+                        poem.title,
+                        format!("{} · {}", poem.author, poem.tags),
+                        Glyph::Note,
+                    )
+                }))
+                .button("today", "Today’s poem")
+                .build(),
+            View::Settings => ScreenBuilder::new("verses-settings")
+                .top_bar("Sleep screen")
+                .text(if self.sleep {
+                    "Tonight’s sleep screen is tomorrow’s poem. It repaints once at sleep transition."
+                } else {
+                    "The sleep screen is off. Turn it on to prepare tomorrow’s poem."
+                })
+                .button("sleep", if self.sleep { "Turn off" } else { "Turn on" })
+                .build(),
+        }
     }
     fn save(&self, c: &mut Context) {
         c.store().save(
             "settings",
             format!(
                 "{}:{}",
-                self.favorite.map_or(-1, |x| x as i32),
-                self.sleep as u8
+                self.favorite.map_or(-1, |index| {
+                    i32::try_from(index).expect("the poem corpus fits i32")
+                }),
+                u8::from(self.sleep)
             )
             .into_bytes(),
         );
@@ -152,7 +197,7 @@ fn main() -> ExitCode {
             eprintln!("verses: {e}");
             ExitCode::FAILURE
         },
-        |_| ExitCode::SUCCESS,
+        |()| ExitCode::SUCCESS,
     )
 }
 #[cfg(test)]

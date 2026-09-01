@@ -7,7 +7,7 @@ use kobo_sdk::{
 use std::{process::ExitCode, time::Duration};
 
 const STATE: &str = "tonight";
-const MEALIE_RECIPES: &str = "http://mealie.local/api/recipes?perPage=20";
+const MEALIE_RECIPES: &str = "https://mealie.local/api/recipes?perPage=20";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum View {
@@ -313,10 +313,10 @@ impl KoboApp for Kitchen {
         match outcome {
             TaskOutcome::Completed(_) => {
                 self.note =
-                    Some("Mealie list updated. Pick a recipe to replace tonight's card.".into())
+                    Some("Mealie list updated. Pick a recipe to replace tonight's card.".into());
             }
             TaskOutcome::Failed(kobo_sdk::TaskError::NoCredential) => {
-                self.note = Some("Install the Mealie token with kobo secret set mealie.".into())
+                self.note = Some("Install the Mealie token with kobo secret set mealie.".into());
             }
             TaskOutcome::Failed(kobo_sdk::TaskError::Offline) => {
                 self.offline = true;
@@ -324,9 +324,9 @@ impl KoboApp for Kitchen {
             }
             TaskOutcome::Failed(_) | TaskOutcome::Cancelled => {
                 self.note =
-                    Some("Mealie did not answer. Check its LAN address, then sync again.".into())
+                    Some("Mealie did not answer. Check its LAN address, then sync again.".into());
             }
-        };
+        }
         self.show(context);
     }
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
@@ -373,7 +373,7 @@ fn main() -> ExitCode {
             eprintln!("kitchencard: {error}");
             ExitCode::FAILURE
         },
-        |_| ExitCode::SUCCESS,
+        |()| ExitCode::SUCCESS,
     )
 }
 

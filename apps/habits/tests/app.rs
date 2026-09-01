@@ -28,6 +28,17 @@ fn schedules_have_human_readable_labels() {
     habit.schedule = Schedule::Weekdays;
     assert_eq!(habit.schedule_label(), "weekdays");
 }
+
+#[test]
+fn weekday_schedule_uses_the_unix_epoch_weekday() {
+    let mut habit = Habit::new("Walk".into());
+    habit.schedule = Schedule::Weekdays;
+    assert!(habit.due(0), "1970-01-01 was Thursday");
+    assert!(habit.due(1), "Friday is due");
+    assert!(!habit.due(2), "Saturday is not due");
+    assert!(!habit.due(3), "Sunday is not due");
+    assert!(habit.due(4), "Monday is due");
+}
 #[test]
 fn clara_bw_today_controls_fit() {
     let screen = ScreenBuilder::new("hb-today")

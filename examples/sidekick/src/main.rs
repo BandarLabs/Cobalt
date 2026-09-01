@@ -638,8 +638,12 @@ fn read_ask(bytes: &[u8]) -> Option<Ask> {
 /// The new board envelope, while accepting the old single-question response
 /// during daemon upgrades.
 fn read_asks(bytes: &[u8]) -> Vec<Ask> {
-    let Ok(text) = std::str::from_utf8(bytes) else { return Vec::new() };
-    let Ok(body) = kobo_json::parse(text) else { return Vec::new() };
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return Vec::new();
+    };
+    let Ok(body) = kobo_json::parse(text) else {
+        return Vec::new();
+    };
     let items = body
         .get("asks")
         .and_then(kobo_json::Value::as_array)
@@ -737,8 +741,8 @@ impl KoboApp for Sidekick {
             return;
         }
         if self.view == View::Board {
-            if let Some(index) = (0..self.board.len())
-                .find(|index| action == action_id(&board_action(*index)))
+            if let Some(index) =
+                (0..self.board.len()).find(|index| action == action_id(&board_action(*index)))
             {
                 let ask = self.board[index].clone();
                 self.ticked = vec![false; ask.choices.len()];
@@ -1130,7 +1134,10 @@ mod tests {
         );
         let commands = context.take_commands();
         let (_, url) = fetched(&commands).expect("watching starts a poll");
-        assert_eq!(url, "https://192.168.1.5:9331/pending?token=abc123&all=true&wait=25");
+        assert_eq!(
+            url,
+            "https://192.168.1.5:9331/pending?token=abc123&all=true&wait=25"
+        );
         assert_eq!(app.view, View::Watching);
     }
 
@@ -1149,7 +1156,10 @@ mod tests {
         );
         let commands = context.take_commands();
         let (_, url) = fetched(&commands).expect("watching starts a poll");
-        assert_eq!(url, "https://192.168.1.5:9331/pending?token=abc123&all=true&wait=25");
+        assert_eq!(
+            url,
+            "https://192.168.1.5:9331/pending?token=abc123&all=true&wait=25"
+        );
     }
 
     #[test]

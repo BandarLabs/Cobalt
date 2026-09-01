@@ -36,41 +36,45 @@ impl Page {
     }
 }
 struct Habits {
-    habits: Vec<Habit>,
+    items: Vec<Habit>,
     loaded: bool,
     page: Page,
     entry: TextEntry,
     notice: Option<String>,
     syncing: Option<TaskId>,
-    habitica: bool,
+    habitica_mode: bool,
 }
 impl Default for Habits {
     fn default() -> Self {
         Self {
-            habits: vec![],
+            items: vec![],
             loaded: false,
             page: Page::Today,
             entry: TextEntry::new().opened_by("add"),
             notice: None,
             syncing: None,
-            habitica: false,
+            habitica_mode: false,
         }
     }
 }
 impl Habits {
     fn day() -> u32 {
-        (std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-            / 86_400) as u32
+        u32::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+                / 86_400,
+        )
+        .unwrap_or(u32::MAX)
     }
     fn save(&self, cx: &mut Context) {
-        cx.store().save(HABITS, encode(&self.habits));
+        cx.store().save(HABITS, encode(&self.items));
     }
     fn show(&self, cx: &mut Context) {
         cx.set_screen(self.screen());
     }
+    #[allow(clippy::too_many_lines)]
     fn screen(&self) -> Screen {
         if self.entry.is_open() {
             return ScreenBuilder::new("hb-add")
@@ -97,7 +101,7 @@ impl Habits {
             Page::Today => {
                 let day = Self::day();
                 let due: Vec<_> = self
-                    .habits
+                    .items
                     .iter()
                     .enumerate()
                     .filter(|(_, h)| !h.archived && h.due(day))
@@ -132,10 +136,10 @@ impl Habits {
                 }
             }
             Page::Streaks => {
-                if self.habits.is_empty() {
+                if self.items.is_empty() {
                     s = s.empty_state("Streaks appear after you add a habit.");
                 } else {
-                    s = s.rows(self.habits.iter().filter(|h| !h.archived).map(|h| {
+                    s = s.rows(self.items.iter().filter(|h| !h.archived).map(|h| {
                         (
                             "none",
                             h.name.clone(),
@@ -151,7 +155,7 @@ impl Habits {
             }
             Page::Manage => {
                 s = s
-                    .rows(self.habits.iter().enumerate().map(|(i, h)| {
+                    .rows(self.items.iter().enumerate().map(|(i, h)| {
                         (
                             format!("cycle-{i}"),
                             h.name.clone(),
@@ -166,11 +170,11 @@ impl Habits {
                     .button("add", "Add habit");
             }
             Page::Stats => {
-                let completed: usize = self.habits.iter().map(|h| h.done.len()).sum();
+                let completed: usize = self.items.iter().map(|h| h.done.len()).sum();
                 s = s
                     .heading(format!("{completed} completions"))
                     .text("Best streaks are measured across scheduled days.");
-                if self.habitica {
+                if self.habitica_mode {
                     s = s
                         .text("Habitica sync uses the secret named habitica.")
                         .button("sync", "Sync now");
@@ -180,12 +184,12 @@ impl Habits {
                 s = s
                     .rows([(
                         "mode",
-                        if self.habitica {
+                        if self.habitica_mode {
                             "Habitica account"
                         } else {
                             "Standalone"
                         },
-                        if self.habitica {
+                        if self.habitica_mode {
                             "Scores queue while off the air."
                         } else {
                             "Works without network access."
@@ -193,7 +197,7 @@ impl Habits {
                         Glyph::Settings,
                     )])
                     .button("mode", "Change mode");
-                if self.habitica {
+                if self.habitica_mode {
                     s = s.text(
                         "Set user ID in the account setup, then run kobo secret set habitica.",
                     );
@@ -219,14 +223,14 @@ impl Habits {
 impl KoboApp for Habits {
     fn on_start(&mut self, cx: &mut Context) {
         cx.store().load(HABITS);
-        self.show(cx)
+        self.show(cx);
     }
     fn on_store(&mut self, cx: &mut Context, result: StoreResult) {
         if let StoreResult::Loaded { key, value } = result {
             if key == HABITS {
-                self.habits = value.map(|v| decode(&v)).unwrap_or_default();
+                self.items = value.map(|v| decode(&v)).unwrap_or_default();
                 self.loaded = true;
-                self.show(cx)
+                self.show(cx);
             }
         }
     }
@@ -240,15 +244,15 @@ impl KoboApp for Habits {
                 }
                 TaskOutcome::Cancelled => "Habitica sync cancelled.".into(),
             });
-            self.show(cx)
+            self.show(cx);
         }
     }
     fn on_action(&mut self, cx: &mut Context, a: ActionId) {
         if let Some(event) = self.entry.handle(a) {
             if let Typing::Submitted(name) = event {
                 if !name.trim().is_empty() {
-                    self.habits.push(Habit::new(name));
-                    self.save(cx)
+                    self.items.push(Habit::new(name));
+                    self.save(cx);
                 }
             }
             self.show(cx);
@@ -276,7 +280,7 @@ impl KoboApp for Habits {
             return;
         }
         if a == action_id("mode") {
-            self.habitica = !self.habitica;
+            self.habitica_mode = !self.habitica_mode;
             self.show(cx);
             return;
         }
@@ -286,7 +290,7 @@ impl KoboApp for Habits {
             return;
         }
         let mut changed = false;
-        for (i, h) in self.habits.iter_mut().enumerate() {
+        for (i, h) in self.items.iter_mut().enumerate() {
             if a == action_id(&format!("done-{i}")) {
                 changed |= h.complete(Self::day());
             }
@@ -305,7 +309,7 @@ impl KoboApp for Habits {
         if changed {
             self.save(cx);
         }
-        self.show(cx)
+        self.show(cx);
     }
 }
 fn main() -> ExitCode {

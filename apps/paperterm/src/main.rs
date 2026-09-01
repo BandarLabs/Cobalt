@@ -160,7 +160,7 @@ fn main() -> ExitCode {
             eprintln!("paperterm: {error}");
             ExitCode::FAILURE
         },
-        |_| ExitCode::SUCCESS,
+        |()| ExitCode::SUCCESS,
     )
 }
 
@@ -186,8 +186,10 @@ mod tests {
 
     #[test]
     fn pairing_requires_a_six_character_code() {
-        let mut app = Paperterm::default();
-        app.address = TextEntry::new().opened_by(PAIR);
+        let app = Paperterm {
+            address: TextEntry::new().opened_by(PAIR),
+            ..Paperterm::default()
+        };
         assert_eq!(demo_rows().len(), 7);
         assert!(app.saved.is_none());
     }

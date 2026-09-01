@@ -121,6 +121,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "btoi"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9dd6407f73a9b8b6162d8a2ef999fe6afd7cc15902ebf42c5cd296addf17e0ad"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -585,6 +594,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-backgammon"
+version = "0.1.0"
+dependencies = [
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
 name = "kobo-bookview"
 version = "0.3.1"
 dependencies = [
@@ -601,6 +618,14 @@ version = "0.3.1"
 dependencies = [
  "kobo-json",
  "kobo-sdk",
+]
+
+[[package]]
+name = "kobo-calibre-web"
+version = "0.1.0"
+dependencies = [
+ "kobo-sdk",
+ "kobo-ui",
 ]
 
 [[package]]
@@ -621,6 +646,23 @@ dependencies = [
  "kobo-json",
  "kobo-net",
  "kobo-sim",
+]
+
+[[package]]
+name = "kobo-crossword"
+version = "0.1.0"
+dependencies = [
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
+name = "kobo-deck"
+version = "0.1.0"
+dependencies = [
+ "kobo-image",
+ "kobo-sdk",
+ "kobo-ui",
 ]
 
 [[package]]
@@ -648,10 +690,50 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-fanshelf"
+version = "0.1.0"
+dependencies = [
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
+name = "kobo-fieldbook"
+version = "0.1.0"
+dependencies = [
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
+name = "kobo-flashcards"
+version = "0.1.0"
+dependencies = [
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
+name = "kobo-frame"
+version = "0.1.0"
+dependencies = [
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
 name = "kobo-gallery"
 version = "0.3.1"
 dependencies = [
  "kobo-sdk",
+]
+
+[[package]]
+name = "kobo-grimoire"
+version = "0.1.0"
+dependencies = [
+ "kobo-sdk",
+ "kobo-ui",
 ]
 
 [[package]]
@@ -671,6 +753,15 @@ dependencies = [
  "kobo-image",
  "kobo-opds",
  "kobo-read",
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
+name = "kobo-habits"
+version = "0.1.0"
+dependencies = [
+ "kobo-image",
  "kobo-sdk",
  "kobo-ui",
 ]
@@ -711,6 +802,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-homepanel"
+version = "0.1.0"
+dependencies = [
+ "kobo-json",
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
 name = "kobo-html"
 version = "0.3.1"
 dependencies = [
@@ -728,12 +828,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-inkling"
+version = "0.1.0"
+dependencies = [
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
 name = "kobo-json"
 version = "0.3.1"
 
 [[package]]
+name = "kobo-kitchencard"
+version = "0.1.0"
+dependencies = [
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
 name = "kobo-launcher"
 version = "0.3.1"
+dependencies = [
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
+name = "kobo-lichess"
+version = "0.1.0"
+dependencies = [
+ "kobo-json",
+ "kobo-sdk",
+ "kobo-ui",
+ "shakmaty",
+]
+
+[[package]]
+name = "kobo-logicpack"
+version = "0.1.0"
 dependencies = [
  "kobo-sdk",
  "kobo-ui",
@@ -756,6 +890,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-musicstand"
+version = "0.1.0"
+dependencies = [
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
+name = "kobo-needles"
+version = "0.1.0"
+dependencies = [
+ "kobo-json",
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
 name = "kobo-net"
 version = "0.3.1"
 dependencies = [
@@ -768,11 +919,54 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-nonograms"
+version = "0.1.0"
+dependencies = [
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
 name = "kobo-opds"
 version = "0.3.1"
 dependencies = [
  "kobo-json",
  "kobo-xml",
+]
+
+[[package]]
+name = "kobo-panels"
+version = "0.1.0"
+dependencies = [
+ "kobo-doc",
+ "kobo-image",
+ "kobo-json",
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
+name = "kobo-paperterm"
+version = "0.1.0"
+dependencies = [
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
+name = "kobo-parlor"
+version = "0.1.0"
+dependencies = [
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
+name = "kobo-parser"
+version = "0.1.0"
+dependencies = [
+ "kobo-sdk",
+ "kobo-ui",
 ]
 
 [[package]]
@@ -786,6 +980,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-post"
+version = "0.1.0"
+dependencies = [
+ "kobo-json",
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
 name = "kobo-profile"
 version = "0.3.1"
 
@@ -793,6 +996,14 @@ version = "0.3.1"
 name = "kobo-protocol"
 version = "0.3.1"
 dependencies = [
+ "kobo-ui",
+]
+
+[[package]]
+name = "kobo-pubquiz"
+version = "0.1.0"
+dependencies = [
+ "kobo-sdk",
  "kobo-ui",
 ]
 
@@ -810,6 +1021,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-readlater"
+version = "0.1.0"
+dependencies = [
+ "kobo-html",
+ "kobo-json",
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
 name = "kobo-rss"
 version = "0.3.1"
 dependencies = [
@@ -818,6 +1039,16 @@ dependencies = [
  "kobo-sdk",
  "kobo-ui",
  "kobo-xml",
+]
+
+[[package]]
+name = "kobo-rss-miniflux"
+version = "0.1.0"
+dependencies = [
+ "kobo-html",
+ "kobo-json",
+ "kobo-sdk",
+ "kobo-ui",
 ]
 
 [[package]]
@@ -902,6 +1133,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-syncthing"
+version = "0.1.0"
+dependencies = [
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
 name = "kobo-tap"
 version = "0.3.1"
 dependencies = [
@@ -960,6 +1199,25 @@ name = "kobo-ui"
 version = "0.3.1"
 dependencies = [
  "unicode-segmentation",
+]
+
+[[package]]
+name = "kobo-vault"
+version = "0.1.0"
+dependencies = [
+ "kobo-html",
+ "kobo-image",
+ "kobo-sdk",
+ "kobo-ui",
+ "pulldown-cmark",
+]
+
+[[package]]
+name = "kobo-verses"
+version = "0.1.0"
+dependencies = [
+ "kobo-sdk",
+ "kobo-ui",
 ]
 
 [[package]]
@@ -1094,6 +1352,12 @@ dependencies = [
  "num-traits",
  "pxfm",
 ]
+
+[[package]]
+name = "nohash-hasher"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bf50223579dc7cdcfb3bfcacf7069ff68243f8c363f62ffa99cf000a6b9c451"
 
 [[package]]
 name = "num-traits"
@@ -1250,8 +1514,15 @@ checksum = "e9f068eba8e7071c5f9511831b44f32c740d5adf574e990f946ddb53db2f314e"
 dependencies = [
  "bitflags 2.13.1",
  "memchr",
+ "pulldown-cmark-escape",
  "unicase",
 ]
+
+[[package]]
+name = "pulldown-cmark-escape"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "007d8adb5ddab6f8e3f491ac63566a7d5002cc7ed73901f72057943fa71ae1ae"
 
 [[package]]
 name = "pxfm"
@@ -1631,6 +1902,19 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.3.0",
  "digest 0.11.3",
+]
+
+[[package]]
+name = "shakmaty"
+version = "0.27.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f414cadc4e727893d1a3b0dca62aaef4c1c821dcbd969f0b10a92e12d684d53a"
+dependencies = [
+ "arrayvec",
+ "bitflags 2.13.1",
+ "btoi",
+ "nohash-hasher",
+ "serde",
 ]
 
 [[package]]

@@ -19,7 +19,10 @@ fn djb2(s: &str) -> u64 {
     })
 }
 fn answer_for(date: &str) -> &'static str {
-    ANSWERS[(djb2(&format!("{date}{SALT}")) as usize) % ANSWERS.len()]
+    let answer_count = u64::try_from(ANSWERS.len()).expect("the answer list fits u64");
+    let index = usize::try_from(djb2(&format!("{date}{SALT}")) % answer_count)
+        .expect("the reduced answer index fits usize");
+    ANSWERS[index]
 }
 fn marks(answer: &str, guess: &str) -> [Mark; 5] {
     let mut out = [Mark::Absent; 5];
@@ -143,7 +146,7 @@ impl Game {
 }
 impl KoboApp for Game {
     fn on_start(&mut self, c: &mut Context) {
-        c.set_screen(self.screen())
+        c.set_screen(self.screen());
     }
     fn on_action(&mut self, c: &mut Context, a: ActionId) {
         let mut changed = false;
@@ -152,15 +155,15 @@ impl KoboApp for Game {
                 changed = true;
                 if p == Pressed::Submitted && !self.done {
                     self.submit();
-                    self.typing = false
+                    self.typing = false;
                 }
             } else if a == action_id("cancel") {
                 self.typing = false;
-                changed = true
+                changed = true;
             }
         } else if a == action_id("enter") {
             self.typing = true;
-            changed = true
+            changed = true;
         } else if a == action_id("hard") {
             self.hard = !self.hard;
             self.notice = if self.hard {
@@ -169,17 +172,17 @@ impl KoboApp for Game {
                 "Hard mode off."
             }
             .into();
-            changed = true
+            changed = true;
         } else if a == action_id("stats") {
             self.notice = format!(
                 "Played {}. Wins {}.",
                 usize::from(self.done),
                 usize::from(self.done && self.guesses.last().is_some_and(|g| g == self.answer))
             );
-            changed = true
+            changed = true;
         }
         if changed {
-            c.set_screen(self.screen())
+            c.set_screen(self.screen());
         }
     }
 }

@@ -47,7 +47,7 @@ impl Needles {
         match self.route {
             Route::Project => self.project(),
             Route::Library => self.library(),
-            Route::Pattern => self.pattern(),
+            Route::Pattern => Self::pattern(),
         }
     }
 
@@ -66,7 +66,10 @@ impl Needles {
                 ("Row", self.counter.row.to_string()),
                 (
                     "Repeat",
-                    format!("row {} of {}", self.counter.repeat, self.counter.repeat_total),
+                    format!(
+                        "row {} of {}",
+                        self.counter.repeat, self.counter.repeat_total
+                    ),
                 ),
                 ("Power", "Stand mode: ~7 days".to_owned()),
             ])
@@ -89,16 +92,21 @@ impl Needles {
                 "Your Ravelry library appears here after a sync. Install a key with kobo secret set ravelry.",
             );
         } else {
-            screen = screen.section("Patterns").rows(
-                self.library.iter().enumerate().map(|(index, title)| {
-                    (format!("pattern-{index}"), title.clone(), "Tap to follow", Glyph::Bookmark)
-                }),
-            );
+            screen = screen
+                .section("Patterns")
+                .rows(self.library.iter().enumerate().map(|(index, title)| {
+                    (
+                        format!("pattern-{index}"),
+                        title.clone(),
+                        "Tap to follow",
+                        Glyph::Bookmark,
+                    )
+                }));
         }
         screen.primary_button("sync", "Sync library").build()
     }
 
-    fn pattern(&self) -> Screen {
+    fn pattern() -> Screen {
         ScreenBuilder::new("needles-pattern")
             .top_bar("Pattern")
             .heading("Pattern ready offline")
@@ -112,7 +120,10 @@ impl Needles {
             STATE,
             format!(
                 "{}\n{}\n{}\n{}",
-                self.counter.section, self.counter.row, self.counter.repeat, self.counter.repeat_total
+                self.counter.section,
+                self.counter.row,
+                self.counter.repeat,
+                self.counter.repeat_total
             ),
         );
     }
@@ -146,8 +157,12 @@ impl Needles {
     }
 
     fn read_library(&mut self, bytes: &[u8]) -> bool {
-        let Ok(text) = std::str::from_utf8(bytes) else { return false };
-        let Ok(value) = kobo_json::parse(text) else { return false };
+        let Ok(text) = std::str::from_utf8(bytes) else {
+            return false;
+        };
+        let Ok(value) = kobo_json::parse(text) else {
+            return false;
+        };
         let Some(patterns) = value.get("patterns").and_then(Value::as_array) else {
             return false;
         };
@@ -162,12 +177,22 @@ impl Needles {
     }
 
     fn restore(&mut self, bytes: &[u8]) {
-        let Ok(text) = std::str::from_utf8(bytes) else { return };
+        let Ok(text) = std::str::from_utf8(bytes) else {
+            return;
+        };
         let mut fields = text.lines();
         let (Some(section), Some(row), Some(repeat), Some(total)) =
-            (fields.next(), fields.next(), fields.next(), fields.next()) else { return };
+            (fields.next(), fields.next(), fields.next(), fields.next())
+        else {
+            return;
+        };
         if let (Ok(row), Ok(repeat), Ok(total)) = (row.parse(), repeat.parse(), total.parse()) {
-            self.counter = Counter { section: section.to_owned(), row, repeat, repeat_total: total };
+            self.counter = Counter {
+                section: section.to_owned(),
+                row,
+                repeat,
+                repeat_total: total,
+            };
         }
     }
 }
@@ -181,7 +206,9 @@ impl KoboApp for Needles {
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
         if let StoreResult::Loaded { key, value } = result {
             if key == STATE {
-                if let Some(value) = value { self.restore(&value); }
+                if let Some(value) = value {
+                    self.restore(&value);
+                }
                 self.show(context);
             }
         }
@@ -195,7 +222,12 @@ impl KoboApp for Needles {
         } else if action == action_id("minus") {
             self.increment(context, -1);
         } else if action == action_id("section") {
-            self.counter.section = if self.counter.section == "Body" { "Sleeve" } else { "Body" }.to_owned();
+            let section = if self.counter.section == "Body" {
+                "Sleeve"
+            } else {
+                "Body"
+            };
+            section.clone_into(&mut self.counter.section);
             self.counter.repeat = 1;
             self.counter.repeat_total = 12;
             self.save(context);
@@ -205,24 +237,31 @@ impl KoboApp for Needles {
             self.sync(context);
         } else if action == action_id("follow") {
             self.route = Route::Project;
-            self.counter.section = "Body".to_owned();
+            "Body".clone_into(&mut self.counter.section);
             self.counter.repeat = 1;
             self.counter.repeat_total = 12;
             self.save(context);
-        } else if (0..self.library.len()).any(|index| action == action_id(&format!("pattern-{index}"))) {
+        } else if (0..self.library.len())
+            .any(|index| action == action_id(&format!("pattern-{index}")))
+        {
             self.route = Route::Pattern;
         }
         self.show(context);
     }
 
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
-        if self.task != Some(task) { return; }
+        if self.task != Some(task) {
+            return;
+        }
         self.task = None;
         self.notice = match outcome {
             TaskOutcome::Completed(bytes) if self.read_library(&bytes) => None,
-            TaskOutcome::Completed(_) => Some("Ravelry returned a library this version cannot read.".to_owned()),
-            TaskOutcome::Failed(kobo_sdk::TaskError::NoCredential) =>
-                Some("Install your Ravelry Basic key with kobo secret set ravelry.".to_owned()),
+            TaskOutcome::Completed(_) => {
+                Some("Ravelry returned a library this version cannot read.".to_owned())
+            }
+            TaskOutcome::Failed(kobo_sdk::TaskError::NoCredential) => {
+                Some("Install your Ravelry Basic key with kobo secret set ravelry.".to_owned())
+            }
             TaskOutcome::Failed(error) => Some(Failure::of(error).naming("ravelry")),
             TaskOutcome::Cancelled => Some("The library sync was cancelled.".to_owned()),
         };
@@ -233,7 +272,10 @@ impl KoboApp for Needles {
 fn main() -> ExitCode {
     match kobo_sdk::run("needles", Needles::default()) {
         Ok(()) => ExitCode::SUCCESS,
-        Err(error) => { eprintln!("needles: {error}"); ExitCode::FAILURE }
+        Err(error) => {
+            eprintln!("needles: {error}");
+            ExitCode::FAILURE
+        }
     }
 }
 
@@ -245,7 +287,15 @@ mod tests {
 
     #[test]
     fn counter_repeats_and_never_underflows() {
-        let mut app = Needles { counter: Counter { section: "Body".to_owned(), row: 11, repeat: 11, repeat_total: 12 }, ..Needles::default() };
+        let mut app = Needles {
+            counter: Counter {
+                section: "Body".to_owned(),
+                row: 11,
+                repeat: 11,
+                repeat_total: 12,
+            },
+            ..Needles::default()
+        };
         let mut context = Context::default();
         app.increment(&mut context, 1);
         assert_eq!((app.counter.row, app.counter.repeat), (12, 12));
@@ -258,8 +308,12 @@ mod tests {
     #[test]
     fn counter_target_is_large_on_clara() {
         let app = Needles::default();
-        let layout = app.project().layout_with(&CLARA_BW_METRICS, &Chrome::default());
-        let plus = layout.rect_of_action(action_id("plus")).expect("counter target");
+        let layout = app
+            .project()
+            .layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        let plus = layout
+            .rect_of_action(action_id("plus"))
+            .expect("counter target");
         assert!(plus.height >= CLARA_BW_METRICS.touch_target_minimum());
         let mut app = app;
         let mut context = Context::default();

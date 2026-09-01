@@ -37,7 +37,7 @@ impl Default for Calibre {
 }
 impl Calibre {
     fn fetch(&mut self, c: &mut Context) {
-        let credential = self.credential.as_ref().map(|n| Credential::basic(n));
+        let credential = self.credential.as_ref().map(Credential::basic);
         self.task = c.spawn(Task::Fetch {
             url: format!("{}/opds", self.url.trim_end_matches('/')),
             offset: 0,
@@ -159,19 +159,17 @@ impl KoboApp for Calibre {
     }
     fn on_action(&mut self, c: &mut Context, a: ActionId) {
         match self.view {
-            View::Url => match self.keyboard.press(a) {
-                Some(Pressed::Submitted) => {
+            View::Url => {
+                if let Some(Pressed::Submitted) = self.keyboard.press(a) {
                     let url = self.keyboard.take();
                     if url.starts_with("https://") {
                         self.url = url;
                         self.view = View::Credential;
                     }
                 }
-                Some(_) => {}
-                None => {}
-            },
-            View::Credential => match self.keyboard.press(a) {
-                Some(Pressed::Submitted) => {
+            }
+            View::Credential => {
+                if let Some(Pressed::Submitted) = self.keyboard.press(a) {
                     let n = self.keyboard.take();
                     self.credential = (!n.trim().is_empty()).then_some(n);
                     c.store().save(
@@ -185,12 +183,11 @@ impl KoboApp for Calibre {
                     self.view = View::Library;
                     self.fetch(c);
                 }
-                Some(_) => {}
-                None => {}
-            },
+            }
             _ => {
                 if a == action_id("add") {
                     self.view = View::Url;
+                    self.keyboard = Keyboard::with_text("https://");
                 } else if a == action_id("library") {
                     self.view = View::Library;
                     self.fetch(c);

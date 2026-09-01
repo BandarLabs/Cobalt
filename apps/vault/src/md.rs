@@ -1,6 +1,6 @@
 use pulldown_cmark::{html, Options, Parser};
-/// The sole markdown boundary. Normalised CommonMark becomes HTML, then the
-/// platform's HTML text renderer, so a parser replacement stays in this file.
+/// The sole Markdown boundary. Normalised `CommonMark` becomes `HTML`, then the
+/// platform's `HTML` text renderer, so a parser replacement stays in this file.
 pub fn render(markdown: &str) -> String {
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_FOOTNOTES

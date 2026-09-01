@@ -1,5 +1,5 @@
-# Starts after a local simulator has loaded the binary.
-expect Connect a Hermes gateway
-type https://hermes.example.net
-tap Save gateway
-shot setup.png
+# Run after configuring a trusted local Hermes gateway and its named secret.
+wait-for Release notes
+expect Morning letter
+clean
+shot inbox

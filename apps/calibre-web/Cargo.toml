@@ -1,9 +1,9 @@
 [package]
 name = "kobo-calibre-web"
-version = "0.3.1"
-edition = "2021"
-rust-version = "1.85.1"
-license = "AGPL-3.0-only"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
 publish = false
 
 [dependencies]
@@ -12,4 +12,5 @@ kobo-sdk = { path = "../../crates/kobo-sdk" }
 [dev-dependencies]
 kobo-ui = { path = "../../crates/kobo-ui" }
 
-[workspace]
+[lints]
+workspace = true

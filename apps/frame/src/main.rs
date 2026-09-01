@@ -47,16 +47,18 @@ fn sample_photo() -> Vec<u8> {
             let horizon = H * 47 / 100;
             let grey = if y < horizon {
                 // Light sky, a sun, and a little intentional grain.
-                let sun = (x as i32 - 390).pow(2) + (y as i32 - 135).pow(2) < 42_i32.pow(2);
+                let sun = (i64::from(x) - 390).pow(2) + (i64::from(y) - 135).pow(2) < 42_i64.pow(2);
                 if sun {
                     248
                 } else {
-                    205_u32.saturating_sub(y / 5) as u8
+                    u8::try_from(205_u32.saturating_sub(y / 5))
+                        .expect("the generated sky value fits u8")
                 }
             } else if y < horizon + 20 {
                 80
             } else {
-                let wave = ((x / 19 + y / 13) % 5) as u8;
+                let wave =
+                    u8::try_from((x / 19 + y / 13) % 5).expect("the wave value is below five");
                 102 + wave * 13
             };
             pixels.push(grey);
@@ -164,7 +166,7 @@ fn main() -> ExitCode {
             eprintln!("frame: {error}");
             ExitCode::FAILURE
         },
-        |_| ExitCode::SUCCESS,
+        |()| ExitCode::SUCCESS,
     )
 }
 

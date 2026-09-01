@@ -1,3 +1,14 @@
-# Clean Clara BW first-run capture.
 expect Habits
+tap Manage
+tap Add habit
+type Read
+tap Add
+tap Add habit
+type Walk
+tap Add
+tap Walk
+tap Today
+expect Read
+expect weekdays
+clean
 shot today

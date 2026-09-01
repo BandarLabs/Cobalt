@@ -8,7 +8,7 @@ value into an HTTP Basic header, so the app never receives a password.
 Install a Basic secret from the computer:
 
 ```sh
-kobo secret set calibre --kind basic --device <ip>
+kobo secret set calibre --device <ip>
 ```
 
 Use a reverse proxy with a real certificate, or install a self-signed

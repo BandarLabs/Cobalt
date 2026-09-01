@@ -7,7 +7,7 @@ use kobo_sdk::{
 use std::process::ExitCode;
 const SHELF: &str = "works";
 const LIMIT: u32 = 256 * 1024;
-const UA: &str = "kobo-fanshelf/0.3.1 (+https://github.com/BandarLabs/Cobalt)";
+const UA: &str = "kobo-fanshelf/0.1.0 (+https://github.com/BandarLabs/Cobalt)";
 #[derive(Clone, Copy, PartialEq)]
 enum View {
     Shelf,
@@ -72,13 +72,98 @@ fn title_from(body: &str) -> String {
 }
 impl Fanshelf {
     fn screen(&self) -> Screen {
-        match self.view { View::Shelf=>{let mut s=ScreenBuilder::new("fs-shelf").top_bar("Fanshelf").top_bar_action("add","Add");if let Some(message)=&self.message{s=s.secondary(message);}if !self.loaded{s=s.secondary("Loading shelf…");}else if self.work.is_empty(){s=s.empty_state("Downloaded works appear here after you add and download one.");}else{s=s.rows_with_trailing([("open",&self.title,format!("{} · chapters {}",self.author,self.chapter),kobo_sdk::Glyph::Book,"Read")]);}s.action_bar([("follow","Followed tags"),("updates","Check updates")]).build()}, View::Add=>ScreenBuilder::new("fs-add").top_bar("Add work").heading("Paste a work URL or ID").secondary("A direct work page is fetched only after you submit it.").keyboard(&self.keyboard,"Open").owns_back(true).build(), View::Work=>{let mut s=ScreenBuilder::new("fs-work").top_bar("Work").heading(if self.title.is_empty(){"Looking up work"}else{&self.title}).secondary(if self.author.is_empty(){"working…"}else{&self.author}).text("Rating and archive warnings are shown here before download.");if self.task.is_some(){s=s.secondary("working…");}else if let Some(message)=&self.message{s=s.secondary(message);}else{s=s.buttons([("download","Download EPUB"),("read","Read"),("check","Check for updates")]);}s.owns_back(true).build()}, View::Read=>ScreenBuilder::new("fs-read").top_bar(&self.title).reading(true).text("The EPUB reader opens downloaded work content here. Reading stays available off the air.").bottom_action("work","Work").owns_back(true).build(), View::Follow=>ScreenBuilder::new("fs-follow").top_bar("Followed tags").empty_state("Followed tags appear here after you add one. Feeds are fetched only when you open them.").bottom_action("shelf","Shelf").build(), View::Updates=>ScreenBuilder::new("fs-updates").top_bar("Updates").empty_state("Check all asks the archive once per downloaded work. There is no background polling.").buttons([("check-all","Check all")]).bottom_action("shelf","Shelf").build()}
+        match self.view {
+            View::Shelf => {
+                let mut screen = ScreenBuilder::new("fs-shelf")
+                    .top_bar("Fanshelf")
+                    .top_bar_action("add", "Add");
+                if !self.loaded {
+                    screen = screen.secondary("Loading shelf…");
+                } else if self.work.is_empty() {
+                    screen = screen.empty_state(
+                        "Downloaded works appear here after you add and download one.",
+                    );
+                } else {
+                    screen = screen.rows_with_trailing([(
+                        "open",
+                        &self.title,
+                        format!("{} · chapters {}", self.author, self.chapter),
+                        kobo_sdk::Glyph::Book,
+                        "Read",
+                    )]);
+                }
+                if let Some(message) = &self.message {
+                    screen = screen.secondary(message);
+                }
+                screen
+                    .action_bar([("follow", "Followed tags"), ("updates", "Check updates")])
+                    .build()
+            }
+            View::Add => ScreenBuilder::new("fs-add")
+                .top_bar("Add work")
+                .heading("Paste a work URL or ID")
+                .secondary("A direct work page is fetched only after you submit it.")
+                .keyboard(&self.keyboard, "Open")
+                .owns_back(true)
+                .build(),
+            View::Work => {
+                let mut screen = ScreenBuilder::new("fs-work")
+                    .top_bar("Work")
+                    .heading(if self.title.is_empty() {
+                        "Looking up work"
+                    } else {
+                        &self.title
+                    })
+                    .secondary(if self.author.is_empty() {
+                        "working…"
+                    } else {
+                        &self.author
+                    })
+                    .text("Rating and archive warnings are shown here before download.");
+                if self.task.is_some() {
+                    screen = screen.secondary("working…");
+                } else if let Some(message) = &self.message {
+                    screen = screen.secondary(message);
+                } else {
+                    screen = screen.buttons([
+                        ("download", "Download EPUB"),
+                        ("read", "Read"),
+                        ("check", "Check for updates"),
+                    ]);
+                }
+                screen.owns_back(true).build()
+            }
+            View::Read => ScreenBuilder::new("fs-read")
+                .top_bar(&self.title)
+                .reading(true)
+                .text(
+                    "The EPUB reader opens downloaded work content here. Reading stays available off the air.",
+                )
+                .bottom_action("work", "Work")
+                .owns_back(true)
+                .build(),
+            View::Follow => ScreenBuilder::new("fs-follow")
+                .top_bar("Followed tags")
+                .empty_state(
+                    "Followed tags appear here after you add one. Feeds are fetched only when you open them.",
+                )
+                .bottom_action("shelf", "Shelf")
+                .build(),
+            View::Updates => ScreenBuilder::new("fs-updates")
+                .top_bar("Updates")
+                .empty_state(
+                    "Check all asks the archive once per downloaded work. There is no background polling.",
+                )
+                .buttons([("check-all", "Check all")])
+                .bottom_action("shelf", "Shelf")
+                .build(),
+        }
     }
-    fn lookup(&mut self, c: &mut Context, id: String) {
-        self.work = id.clone();
+    fn lookup(&mut self, c: &mut Context, id: &str) {
+        id.clone_into(&mut self.work);
         self.view = View::Work;
         self.message = None;
-        self.task = c.spawn(request(&id));
+        self.task = c.spawn(request(id));
         if self.task.is_none() {
             self.message = Some("Too much already in flight.".into());
         }
@@ -110,17 +195,13 @@ impl KoboApp for Fanshelf {
     }
     fn on_action(&mut self, c: &mut Context, a: ActionId) {
         if self.view == View::Add {
-            match self.keyboard.press(a) {
-                Some(Pressed::Submitted) => {
-                    if let Some(id) = work_id(&self.keyboard.take()) {
-                        self.lookup(c, id)
-                    } else {
-                        self.message =
-                            Some("Enter an Archive of Our Own work URL or numeric ID.".into());
-                    }
+            if let Some(Pressed::Submitted) = self.keyboard.press(a) {
+                if let Some(id) = work_id(&self.keyboard.take()) {
+                    self.lookup(c, &id);
+                } else {
+                    self.message =
+                        Some("Enter an Archive of Our Own work URL or numeric ID.".into());
                 }
-                Some(_) => {}
-                None => {}
             }
             c.set_screen(self.screen());
             return;
@@ -139,7 +220,8 @@ impl KoboApp for Fanshelf {
             self.view = View::Shelf;
         } else if a == action_id("check") || a == action_id("check-all") {
             if !self.work.is_empty() {
-                self.lookup(c, self.work.clone());
+                let work = self.work.clone();
+                self.lookup(c, &work);
             }
         } else if a == action_id("download") {
             self.message =
@@ -165,13 +247,13 @@ impl KoboApp for Fanshelf {
             }
             TaskOutcome::Failed(TaskError::Unauthorized) => {
                 self.message =
-                    Some("This work requires an AO3 login, which this app doesn't do yet".into())
+                    Some("This work requires an AO3 login, which this app doesn't do yet".into());
             }
             TaskOutcome::Failed(TaskError::NotFound) => {
-                self.message = Some("This work was removed from the archive.".into())
+                self.message = Some("This work was removed from the archive.".into());
             }
             TaskOutcome::Failed(_) => {
-                self.message = Some("The archive asked us to slow down — try in a minute".into())
+                self.message = Some("The archive asked us to slow down — try in a minute".into());
             }
             TaskOutcome::Cancelled => {}
         }

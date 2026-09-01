@@ -31,7 +31,7 @@ impl Note {
         self.body
             .match_indices("](")
             .filter_map(|(start, _)| self.body[start + 2..].split(')').next())
-            .filter(|link| link.ends_with(".md"))
+            .filter(|link| link.to_ascii_lowercase().ends_with(".md"))
             .map(str::to_owned)
             .collect()
     }
@@ -55,8 +55,8 @@ pub fn backlinks(notes: &[Note], path: &str) -> Vec<(usize, String)> {
         .iter()
         .enumerate()
         .filter_map(|(index, note)| {
-            note.links().iter().any(|link| link == path).then(|| {
-                (
+            if note.links().iter().any(|link| link == path) {
+                Some((
                     index,
                     note.body
                         .lines()
@@ -64,8 +64,10 @@ pub fn backlinks(notes: &[Note], path: &str) -> Vec<(usize, String)> {
                         .unwrap_or("")
                         .trim()
                         .to_owned(),
-                )
-            })
+                ))
+            } else {
+                None
+            }
         })
         .collect()
 }

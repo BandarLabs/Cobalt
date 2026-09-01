@@ -62,18 +62,47 @@ const INSTALLED_PACKAGES: &[(&str, Option<&str>)] = &[
 const STORE_PACKAGES: &[&str] = &[
     "kobo-arxiv",
     "kobo-audiobook",
+    "kobo-backgammon",
     "kobo-brief",
+    "kobo-calibre-web",
     "kobo-chat",
+    "kobo-crossword",
+    "kobo-deck",
+    "kobo-fanshelf",
+    "kobo-fieldbook",
+    "kobo-flashcards",
+    "kobo-frame",
     "kobo-gallery",
+    "kobo-grimoire",
     "kobo-gutenbird",
+    "kobo-habits",
     "kobo-hn",
+    "kobo-homepanel",
+    "kobo-inkling",
+    "kobo-kitchencard",
+    "kobo-lichess",
+    "kobo-logicpack",
     "kobo-magnet",
     "kobo-morse",
+    "kobo-musicstand",
+    "kobo-needles",
+    "kobo-nonograms",
+    "kobo-panels",
+    "kobo-paperterm",
+    "kobo-parlor",
+    "kobo-parser",
+    "kobo-post",
+    "kobo-pubquiz",
+    "kobo-readlater",
     "kobo-rss",
+    "kobo-rss-miniflux",
     "kobo-sidekick",
     "kobo-sudoku",
+    "kobo-syncthing",
     "kobo-tictactoe",
     "kobo-todo",
+    "kobo-vault",
+    "kobo-verses",
 ];
 /// Proof that the daemon in the package can actually take the panel. The
 /// phrase only exists inside `present_on_panel`, which is behind
@@ -868,10 +897,9 @@ fn parse_release_app(value: &kobo_json::Value) -> Result<ReleaseApp, String> {
         "glyph",
         "capabilities",
     ];
-    // `setup` is an accepted website-only registry field. The page generator
-    // validates its nested schema; the CLI ignores it and release manifests
-    // deliberately contain none of it.
-    let fields = strict_registry_object(value, "app", &FIELDS, &["setup"])?;
+    // These are website-only registry fields. The page generator validates
+    // them; the CLI ignores them and release manifests contain neither.
+    let fields = strict_registry_object(value, "app", &FIELDS, &["page_description", "setup"])?;
     let string = |name| {
         registry_field(fields, name)?
             .as_str()
@@ -3874,6 +3902,7 @@ fn pipe_through(command: &mut Command, input: &[u8]) -> Result<Vec<u8>, String> 
 
 fn run_simulation(arguments: &[String]) -> Result<(), String> {
     let package = simulated_package(arguments)?;
+    let target = cargo_target_directory();
     let mut build = Command::new("cargo");
     build.args(["build", "-p", "kobod", "-p", package]);
     run_status(&mut build, "build host simulation")?;
@@ -3898,7 +3927,7 @@ fn run_simulation(arguments: &[String]) -> Result<(), String> {
         ));
     }
 
-    let app_status = Command::new(format!("target/debug/{package}"))
+    let app_status = Command::new(target.join("debug").join(package))
         .env("KOBO_SOCKET", &simulation.socket)
         .env("KOBO_SIM_ONESHOT", "1")
         .status()
@@ -3918,13 +3947,18 @@ fn run_simulation(arguments: &[String]) -> Result<(), String> {
             "rendered frame is {actual} bytes; expected {expected}"
         ));
     }
-    let output = Path::new("target/kobo-sim-last.raw");
-    fs::copy(&simulation.frame, output).map_err(|error| format!("save rendered frame: {error}"))?;
+    let output = target.join("kobo-sim-last.raw");
+    fs::copy(&simulation.frame, &output)
+        .map_err(|error| format!("save rendered frame: {error}"))?;
     println!(
         "host runtime completed for {package}; frame: {}",
         output.display()
     );
     Ok(())
+}
+
+fn cargo_target_directory() -> PathBuf {
+    std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| PathBuf::from("target"), PathBuf::from)
 }
 
 /// The package `--app` named, checked against built-in and Store applications.
@@ -4011,7 +4045,7 @@ impl SimulationGuard {
     }
 
     fn spawn_daemon(&mut self) -> Result<(), String> {
-        let daemon = Command::new("target/debug/kobod")
+        let daemon = Command::new(cargo_target_directory().join("debug").join("kobod"))
             .args(["--sim-socket"])
             .arg(&self.socket)
             .arg("--frame")

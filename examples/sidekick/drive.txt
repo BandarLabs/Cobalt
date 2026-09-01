@@ -1,3 +1,6 @@
-# Starts after a local simulator has loaded the binary.
-expect Pair with your computer
-shot pairing.png
+# Run with two pending daemon questions after pairing.
+wait-for Waiting questions
+expect Claude Code
+expect Codex
+clean
+shot board

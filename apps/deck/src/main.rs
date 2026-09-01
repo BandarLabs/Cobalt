@@ -45,7 +45,7 @@ impl Default for App {
 }
 impl App {
     fn show(&self, cx: &mut Context) {
-        cx.set_screen(self.screen())
+        cx.set_screen(self.screen());
     }
     fn screen(&self) -> Screen {
         match self.view{View::Opening=>ScreenBuilder::new("deck-opening").top_bar("Deck").activity("Opening",None).build(),View::Address=>ScreenBuilder::new("deck-address").top_bar("Deck").heading("Pair with your computer").text("Run kobo-sidekickd init, then type its address. Deck uses the existing Sidekick pairing.").text_entry(&self.entry,"Address","Next").build(),View::Code=>ScreenBuilder::new("deck-code").top_bar("Deck").heading("Now the pairing code").text("Type the six characters printed by kobo-sidekickd init.").text_entry(&self.entry,"Pairing code","Pair").build(),View::Grid=>self.grid()}
@@ -123,8 +123,8 @@ impl App {
             });
         }
     }
-    fn press(&mut self, cx: &mut Context, id: String, confirmed: bool) {
-        self.pressed = Some(id.clone());
+    fn press(&mut self, cx: &mut Context, id: &str, confirmed: bool) {
+        self.pressed = Some(id.to_owned());
         self.task = cx.spawn(Task::Post {
             url: format!("https://{}/deck/press?token={}", self.address, self.code),
             body: format!("{{\"key\":\"{id}\",\"confirmed\":{confirmed}}}"),
@@ -139,7 +139,7 @@ impl KoboApp for App {
     fn on_start(&mut self, cx: &mut Context) {
         cx.store().load(PAIRED);
         cx.store().load_cached(CACHE);
-        self.show(cx)
+        self.show(cx);
     }
     fn on_store(&mut self, cx: &mut Context, result: StoreResult) {
         if let StoreResult::Loaded { key, value } = result {
@@ -165,7 +165,7 @@ impl KoboApp for App {
                     }
                 }
             }
-            self.show(cx)
+            self.show(cx);
         }
     }
     fn on_task(&mut self, cx: &mut Context, task: TaskId, outcome: TaskOutcome) {
@@ -192,11 +192,11 @@ impl KoboApp for App {
                 }
             }
             TaskOutcome::Failed(_) => {
-                self.notice = Some("off the air — is kobo-sidekickd running?".into())
+                self.notice = Some("off the air — is kobo-sidekickd running?".into());
             }
             TaskOutcome::Cancelled => {}
         }
-        self.show(cx)
+        self.show(cx);
     }
     fn on_action(&mut self, cx: &mut Context, a: ActionId) {
         if matches!(self.view, View::Address | View::Code) {
@@ -220,7 +220,7 @@ impl KoboApp for App {
         }
         if a == action_id("confirm-run") {
             if let Some(id) = self.confirming.take() {
-                self.press(cx, id, true);
+                self.press(cx, &id, true);
             }
             self.show(cx);
             return;
@@ -241,7 +241,8 @@ impl KoboApp for App {
                     if key.confirm {
                         self.confirming = Some(key.id.clone());
                     } else {
-                        self.press(cx, key.id.clone(), false);
+                        let id = key.id.clone();
+                        self.press(cx, &id, false);
                     }
                     self.show(cx);
                     return;

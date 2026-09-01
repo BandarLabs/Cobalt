@@ -64,8 +64,14 @@ fn decide_permission(agent: &str, event: &kobo_json::Value) {
         })
         .collect();
     let session = session_identity(event);
-    let Some((decision, labels)) = ask_daemon(agent, &session, &tool, &detail, choices, Wants::permission())
-    else {
+    let Some((decision, labels)) = ask_daemon(
+        agent,
+        &session,
+        &tool,
+        &detail,
+        choices,
+        Wants::permission(),
+    ) else {
         return;
     };
     if decision == "chose" {
@@ -125,9 +131,14 @@ fn answer_questions(agent: &str, event: &kobo_json::Value) {
             .and_then(kobo_json::Value::as_bool)
             == Some(true);
         let session = session_identity(event);
-        let Some((decision, labels)) =
-            ask_daemon(agent, &session, &tool, &text, choices, Wants::question(multi))
-        else {
+        let Some((decision, labels)) = ask_daemon(
+            agent,
+            &session,
+            &tool,
+            &text,
+            choices,
+            Wants::question(multi),
+        ) else {
             return;
         };
         if decision != "chose" || labels.is_empty() {
@@ -193,7 +204,14 @@ fn session_identity(event: &kobo_json::Value) -> String {
     let cwd = string(event, "cwd");
     let session = string(event, "session_id");
     let project = cwd.rsplit('/').find(|part| !part.is_empty()).unwrap_or("");
-    let suffix: String = session.chars().rev().take(4).collect::<String>().chars().rev().collect();
+    let suffix: String = session
+        .chars()
+        .rev()
+        .take(4)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
     match (project.is_empty(), suffix.is_empty()) {
         (true, true) => String::new(),
         (false, true) => project.to_owned(),

@@ -81,6 +81,8 @@ The daemon's `GET /pending?all=true` snapshot carries every waiting question
 and a revision number; the ordinary long poll remains compatible with older
 readers.
 
+![Sidekick board with separate Claude Code and Codex terminal sessions](screenshots/board.png)
+
 | Agent | Status |
 | --- | --- |
 | Claude Code | Wired: permission requests and `AskUserQuestion` |

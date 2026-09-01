@@ -19,7 +19,10 @@ pub fn legal(fen: &str, uci: &str) -> bool {
 
 pub fn play(fen: &str, uci: &str) -> Option<(String, String)> {
     let position = position(fen)?;
-    let movement = UciMove::from_ascii(uci.as_bytes()).ok()?.to_move(&position).ok()?;
+    let movement = UciMove::from_ascii(uci.as_bytes())
+        .ok()?
+        .to_move(&position)
+        .ok()?;
     let san = San::from_move(&position, &movement).to_string();
     let next = position.play(&movement).ok()?;
     Some((
@@ -37,7 +40,9 @@ pub fn puzzle_position(pgn: &str, initial_ply: usize) -> Option<String> {
             || token.ends_with(']')
             || token.contains('"')
             || token.ends_with('.')
-            || token.chars().all(|character| character.is_ascii_digit() || character == '.')
+            || token
+                .chars()
+                .all(|character| character.is_ascii_digit() || character == '.')
             || matches!(token, "1-0" | "0-1" | "1/2-1/2" | "*")
         {
             continue;
@@ -45,8 +50,12 @@ pub fn puzzle_position(pgn: &str, initial_ply: usize) -> Option<String> {
         if played == initial_ply {
             break;
         }
-        let san = SanPlus::from_ascii(token.trim_matches(|c: char| c == '!' || c == '?').as_bytes())
-            .ok()?;
+        let san = SanPlus::from_ascii(
+            token
+                .trim_matches(|c: char| c == '!' || c == '?')
+                .as_bytes(),
+        )
+        .ok()?;
         let movement = san.san.to_move(&position).ok()?;
         position = position.play(&movement).ok()?;
         played += 1;
@@ -63,7 +72,10 @@ fn position(fen: &str) -> Option<Chess> {
 
 fn move_for(fen: &str, uci: &str) -> Option<shakmaty::Move> {
     let position = position(fen)?;
-    UciMove::from_ascii(uci.as_bytes()).ok()?.to_move(&position).ok()
+    UciMove::from_ascii(uci.as_bytes())
+        .ok()?
+        .to_move(&position)
+        .ok()
 }
 
 #[cfg(test)]

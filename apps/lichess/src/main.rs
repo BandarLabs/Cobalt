@@ -60,7 +60,7 @@ impl Lichess {
             Route::Solve => self.solve(),
             Route::Result => self.result(),
             Route::Games => self.games(),
-            Route::Game => self.game(),
+            Route::Game => Self::game(),
             Route::Challenge => ScreenBuilder::new("lichess-challenge")
                 .top_bar("New challenge")
                 .heading("Correspondence challenge")
@@ -74,11 +74,24 @@ impl Lichess {
         ScreenBuilder::new("lichess-home")
             .top_bar("Lichess")
             .tiles([
-                ("puzzles", format!("Puzzles\n{} ready", self.remaining()), Glyph::Grid),
-                ("play", format!("Play\n{} your move", self.your_moves()), Glyph::Play),
+                (
+                    "puzzles",
+                    format!("Puzzles\n{} ready", self.remaining()),
+                    Glyph::Grid,
+                ),
+                (
+                    "play",
+                    format!("Play\n{} your move", self.your_moves()),
+                    Glyph::Play,
+                ),
             ])
             .section("Today")
-            .rows([("daily", "Daily puzzle", "Download when you open it", Glyph::Grid)])
+            .rows([(
+                "daily",
+                "Daily puzzle",
+                "Download when you open it",
+                Glyph::Grid,
+            )])
             .section("Settings")
             .rows([("settings", "Puzzle difficulty", "Normal", Glyph::Settings)])
             .build()
@@ -138,17 +151,21 @@ impl Lichess {
     fn result(&self) -> Screen {
         ScreenBuilder::new("lichess-result")
             .top_bar("Puzzle result")
-            .heading(if self.wrong > 1 { "Not solved" } else { "Solved" })
+            .heading(if self.wrong > 1 {
+                "Not solved"
+            } else {
+                "Solved"
+            })
             .text(if self.wrong > 1 {
                 self.batch
                     .get(self.current)
                     .and_then(|puzzle| puzzle.solution.first())
-                    .map_or_else(|| "The solution could not be read.".to_owned(), |move_| {
-                        format!("The first move was {move_}.")
-                    })
+                    .map_or_else(
+                        || "The solution could not be read.".to_owned(),
+                        |move_| format!("The first move was {move_}."),
+                    )
             } else {
-                "Counted in this device's local puzzle record."
-                    .to_owned()
+                "Counted in this device's local puzzle record.".to_owned()
             })
             .primary_button("next", "Next puzzle")
             .build()
@@ -162,16 +179,22 @@ impl Lichess {
         if self.games.is_empty() {
             screen = screen.empty_state("Games appear here after Lichess returns your board.");
         } else {
-            screen = screen.section("Ongoing games").rows(self.games.iter().enumerate().map(
-                |(index, (_, opponent, mine, last))| {
-                    (
-                        format!("game-{index}"),
-                        opponent.clone(),
-                        format!("{} · {last}", if *mine { "your move" } else { "their move" }),
-                        Glyph::Grid,
-                    )
-                },
-            ));
+            screen =
+                screen
+                    .section("Ongoing games")
+                    .rows(self.games.iter().enumerate().map(
+                        |(index, (_, opponent, mine, last))| {
+                            (
+                                format!("game-{index}"),
+                                opponent.clone(),
+                                format!(
+                                    "{} · {last}",
+                                    if *mine { "your move" } else { "their move" }
+                                ),
+                                Glyph::Grid,
+                            )
+                        },
+                    ));
         }
         screen
             .button("refresh-games", "Refresh games")
@@ -179,7 +202,7 @@ impl Lichess {
             .build()
     }
 
-    fn game(&self) -> Screen {
+    fn game() -> Screen {
         ScreenBuilder::new("lichess-game")
             .top_bar("Game")
             .empty_state("Open a game from Play after it has been fetched.")
@@ -243,7 +266,10 @@ impl Lichess {
             self.notice = Some(if self.wrong == 1 {
                 "Not it — try again".to_owned()
             } else {
-                format!("Not solved. The move was {}.", expected.cloned().unwrap_or_default())
+                format!(
+                    "Not solved. The move was {}.",
+                    expected.cloned().unwrap_or_default()
+                )
             });
             if self.wrong > 1 {
                 self.route = Route::Result;
@@ -295,7 +321,7 @@ impl Puzzle {
             .map(str::to_owned)
             .collect::<Vec<_>>();
         let game = value.get("game")?;
-        let initial_ply = puzzle.get("initialPly")?.as_i64()? as usize;
+        let initial_ply = usize::try_from(puzzle.get("initialPly")?.as_i64()?).ok()?;
         let fen = game
             .get("fen")
             .and_then(Value::as_str)
@@ -317,7 +343,7 @@ fn board_cells(fen: &str, selected: Option<&str>) -> Vec<(String, String, Option
         let mut file = 0u8;
         for character in rank.chars() {
             if let Some(empty) = character.to_digit(10) {
-                file = file.saturating_add(empty as u8);
+                file = file.saturating_add(u8::try_from(empty).expect("FEN digit fits u8"));
             } else if file < 8 {
                 let square = format!("{}{}", char::from(b'a' + file), 8 - rank_index);
                 pieces.insert(square, piece_label(character).to_owned());
@@ -344,8 +370,18 @@ fn board_cells(fen: &str, selected: Option<&str>) -> Vec<(String, String, Option
 
 fn piece_label(piece: char) -> &'static str {
     match piece {
-        'K' => "wK", 'Q' => "wQ", 'R' => "wR", 'B' => "wB", 'N' => "wN", 'P' => "wP",
-        'k' => "bK", 'q' => "bQ", 'r' => "bR", 'b' => "bB", 'n' => "bN", 'p' => "bP",
+        'K' => "wK",
+        'Q' => "wQ",
+        'R' => "wR",
+        'B' => "wB",
+        'N' => "wN",
+        'P' => "wP",
+        'k' => "bK",
+        'q' => "bQ",
+        'r' => "bR",
+        'b' => "bB",
+        'n' => "bN",
+        'p' => "bP",
         _ => " ",
     }
 }
@@ -400,8 +436,12 @@ impl KoboApp for Lichess {
     }
 
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
-        let Some((waiting, purpose)) = self.task.take() else { return };
-        if task != waiting { return; }
+        let Some((waiting, purpose)) = self.task.take() else {
+            return;
+        };
+        if task != waiting {
+            return;
+        }
         match (purpose, outcome) {
             ("batch", TaskOutcome::Completed(bytes)) if self.accept_batch(&bytes) => {
                 context.store().save(BATCH, bytes);
@@ -412,10 +452,15 @@ impl KoboApp for Lichess {
                 self.fetch_batch(context, None);
             }
             (_, TaskOutcome::Failed(TaskError::NoCredential)) => {
-                self.notice = Some("Install a Lichess key with kobo secret set lichess.".to_owned());
+                self.notice =
+                    Some("Install a Lichess key with kobo secret set lichess.".to_owned());
             }
-            (_, TaskOutcome::Failed(error)) => self.notice = Some(Failure::of(error).naming("lichess")),
-            (_, TaskOutcome::Cancelled) => self.notice = Some("The request was cancelled.".to_owned()),
+            (_, TaskOutcome::Failed(error)) => {
+                self.notice = Some(Failure::of(error).naming("lichess"));
+            }
+            (_, TaskOutcome::Cancelled) => {
+                self.notice = Some("The request was cancelled.".to_owned());
+            }
             _ => self.notice = Some("Lichess returned data this version cannot read.".to_owned()),
         }
         self.show(context);
@@ -461,9 +506,13 @@ mod tests {
             }],
             ..Lichess::default()
         };
-        let layout = app.solve().layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        let layout = app
+            .solve()
+            .layout_with(&CLARA_BW_METRICS, &Chrome::default());
         for square in ["a1", "e4", "h8"] {
-            assert!(layout.rect_of_action(action_id(&format!("square-{square}"))).is_some());
+            assert!(layout
+                .rect_of_action(action_id(&format!("square-{square}")))
+                .is_some());
         }
         assert_eq!(board_cells(super::chess::START, None).len(), 64);
         assert_eq!(piece_label('Q'), "wQ");
@@ -473,8 +522,10 @@ mod tests {
     fn an_wrong_first_move_stays_local_and_a_second_ends_the_puzzle() {
         let mut app = Lichess {
             batch: vec![Puzzle {
-                id: "test".to_owned(), fen: super::chess::START.to_owned(),
-                solution: vec!["e2e4".to_owned()], cursor: 0,
+                id: "test".to_owned(),
+                fen: super::chess::START.to_owned(),
+                solution: vec!["e2e4".to_owned()],
+                cursor: 0,
             }],
             route: Route::Solve,
             ..Lichess::default()
@@ -495,11 +546,20 @@ mod tests {
         let mut app = Lichess::default();
         let mut context = Context::default();
         app.on_action(&mut context, action_id("new-session"));
-        let work = context.commands().iter().find_map(|command| match command {
-            Command::Spawn { work, .. } => Some(work),
-            _ => None,
-        }).expect("puzzle request");
-        let Task::Fetch { credential, .. } = work else { panic!("puzzles are fetched") };
-        assert_eq!(credential.as_ref().map(|key| key.secret.as_str()), Some("lichess"));
+        let work = context
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                Command::Spawn { work, .. } => Some(work),
+                _ => None,
+            })
+            .expect("puzzle request");
+        let Task::Fetch { credential, .. } = work else {
+            panic!("puzzles are fetched")
+        };
+        assert_eq!(
+            credential.as_ref().map(|key| key.secret.as_str()),
+            Some("lichess")
+        );
     }
 }

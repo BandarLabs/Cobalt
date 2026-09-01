@@ -51,11 +51,15 @@ impl Panels {
             screen = screen.banner(BannerLevel::Attention, note);
         }
         if let Some(comic) = &self.comic {
-            screen = screen
-                .section("On this reader")
-                .rows([("open", "Sideloaded volume", format!("{} pages", comic.pages.len()), Glyph::Reader)]);
+            screen = screen.section("On this reader").rows([(
+                "open",
+                "Sideloaded volume",
+                format!("{} pages", comic.pages.len()),
+                Glyph::Reader,
+            )]);
         } else {
-            screen = screen.empty_state("A sideloaded CBZ appears here after it is copied as volume.cbz.");
+            screen = screen
+                .empty_state("A sideloaded CBZ appears here after it is copied as volume.cbz.");
         }
         screen
             .primary_button("load-sideload", "Open sideloaded CBZ")
@@ -79,25 +83,60 @@ impl Panels {
             screen = screen.activity("Decoding page", None);
         }
         screen
-            .buttons([("previous", if self.rtl { "Next page" } else { "Previous page" }),
-                      ("next", if self.rtl { "Previous page" } else { "Next page" })])
-            .button("rtl", if self.rtl { "Reading order: right to left" } else { "Reading order: left to right" })
+            .buttons([
+                (
+                    "previous",
+                    if self.rtl {
+                        "Next page"
+                    } else {
+                        "Previous page"
+                    },
+                ),
+                (
+                    "next",
+                    if self.rtl {
+                        "Previous page"
+                    } else {
+                        "Next page"
+                    },
+                ),
+            ])
+            .button(
+                "rtl",
+                if self.rtl {
+                    "Reading order: right to left"
+                } else {
+                    "Reading order: left to right"
+                },
+            )
             .build()
     }
 
     fn load_sideload(&mut self, context: &mut Context) {
-        if let Some(task) = context.spawn(Task::ReadFile { path: SIDELOAD.to_owned() }) {
+        if let Some(task) = context.spawn(Task::ReadFile {
+            path: SIDELOAD.to_owned(),
+        }) {
             self.task = Some(task);
             self.notice = Some("Reading sideloaded CBZ.".to_owned());
         }
     }
 
     fn display_page(&mut self, context: &mut Context) {
-        let (Some(bytes), Some(comic)) = (&self.bytes, &self.comic) else { return };
+        let (Some(bytes), Some(comic)) = (&self.bytes, &self.comic) else {
+            return;
+        };
         match archive::page(bytes, comic, self.page) {
             Ok(picture) => {
-                self.picture = context.put_picture(PAGE, picture.width(), picture.height(), picture.grey().to_vec());
-                self.notice = self.picture.is_none().then_some("This page is too large for the panel cache.".to_owned());
+                self.picture = context.put_picture(
+                    PAGE,
+                    picture.width(),
+                    picture.height(),
+                    picture.grey().to_vec(),
+                );
+                self.notice = self
+                    .picture
+                    .is_none()
+                    .then_some("This page is too large for the panel cache.".to_owned());
             }
             Err(error) => self.notice = Some(format!("{error}. Skip to the next page.")),
         }
@@ -120,7 +159,9 @@ impl Panels {
 }
 
 impl KoboApp for Panels {
-    fn on_start(&mut self, context: &mut Context) { self.show(context); }
+    fn on_start(&mut self, context: &mut Context) {
+        self.show(context);
+    }
 
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         if action == ActionId::BACK {
@@ -138,8 +179,11 @@ impl KoboApp for Panels {
             self.rtl = !self.rtl;
         } else if action == action_id("browse-komga") {
             if let Some(task) = context.spawn_retrying(Task::Fetch {
-                url: KOMGA_OPDS.to_owned(), offset: 0, max_bytes: MAX_CBZ,
-                credential: Some(Credential::basic("komga")), headers: Vec::new(),
+                url: KOMGA_OPDS.to_owned(),
+                offset: 0,
+                max_bytes: MAX_CBZ,
+                credential: Some(Credential::basic("komga")),
+                headers: Vec::new(),
             }) {
                 self.task = Some(task);
                 self.notice = Some("Reading Komga catalog.".to_owned());
@@ -149,20 +193,29 @@ impl KoboApp for Panels {
     }
 
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
-        if self.task != Some(task) { return; }
+        if self.task != Some(task) {
+            return;
+        }
         self.task = None;
         match outcome {
-            TaskOutcome::Completed(bytes) => match archive::inspect(&bytes) {
-                Ok(comic) => {
-                    self.bytes = Some(bytes);
-                    self.comic = Some(comic);
-                    self.page = 0;
-                    self.notice = None;
+            TaskOutcome::Completed(bytes) => {
+                match archive::inspect(&bytes) {
+                    Ok(comic) => {
+                        self.bytes = Some(bytes);
+                        self.comic = Some(comic);
+                        self.page = 0;
+                        self.notice = None;
+                    }
+                    Err(_) => self.notice = Some(
+                        "Komga catalog was fetched. OPDS browsing is not yet decoded by this MVP."
+                            .to_owned(),
+                    ),
                 }
-                Err(_) => self.notice = Some("Komga catalog was fetched. OPDS browsing is not yet decoded by this MVP.".to_owned()),
-            },
-            TaskOutcome::Failed(kobo_sdk::TaskError::NoCredential) =>
-                self.notice = Some("Install a Komga Basic key with kobo secret set komga.".to_owned()),
+            }
+            TaskOutcome::Failed(kobo_sdk::TaskError::NoCredential) => {
+                self.notice =
+                    Some("Install a Komga Basic key with kobo secret set komga.".to_owned());
+            }
             TaskOutcome::Failed(error) => self.notice = Some(Failure::of(error).naming("komga")),
             TaskOutcome::Cancelled => self.notice = Some("The transfer was cancelled.".to_owned()),
         }
@@ -173,7 +226,10 @@ impl KoboApp for Panels {
 fn main() -> ExitCode {
     match kobo_sdk::run("panels", Panels::default()) {
         Ok(()) => ExitCode::SUCCESS,
-        Err(error) => { eprintln!("panels: {error}"); ExitCode::FAILURE }
+        Err(error) => {
+            eprintln!("panels: {error}");
+            ExitCode::FAILURE
+        }
     }
 }
 
@@ -186,9 +242,15 @@ mod tests {
     #[test]
     fn library_primary_control_fits_the_actual_panel() {
         let app = Panels::default();
-        let layout = app.library().layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        let layout = app
+            .library()
+            .layout_with(&CLARA_BW_METRICS, &Chrome::default());
         assert!(layout.rect_of_action(action_id("load-sideload")).is_some());
-        assert!(app.library().diagnostics(&CLARA_BW_METRICS, &Chrome::default()).issues.is_empty());
+        assert!(app
+            .library()
+            .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
+            .issues
+            .is_empty());
     }
 
     #[test]

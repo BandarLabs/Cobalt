@@ -217,16 +217,20 @@ mod tests {
     use kobo_ui::{Chrome, CLARA_BW_METRICS};
     #[test]
     fn answer_advances_and_counts_again() {
-        let mut a = Flashcards::default();
-        a.view = View::Review;
+        let mut a = Flashcards {
+            view: View::Review,
+            ..Flashcards::default()
+        };
         a.answer(true);
         assert_eq!((a.card, a.reviews, a.again), (1, 1, 1));
     }
     #[test]
     fn review_controls_fit() {
-        let mut a = Flashcards::default();
-        a.view = View::Review;
-        a.revealed = true;
+        let a = Flashcards {
+            view: View::Review,
+            revealed: true,
+            ..Flashcards::default()
+        };
         let l = a
             .screen()
             .layout_with(&CLARA_BW_METRICS, &Chrome::default());
