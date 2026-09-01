@@ -154,6 +154,17 @@
       "minimum_cobalt_version": "0.3.1",
       "glyph": "check",
       "capabilities": []
+    },
+    {
+      "package": "kobo-wiki",
+      "id": "wiki",
+      "display_name": "Wikipedia",
+      "short_label": "Wikipedia",
+      "summary": "Search Wikipedia or read a random article, without a browser.",
+      "version": "1.0.0",
+      "minimum_cobalt_version": "0.3.1",
+      "glyph": "globe",
+      "capabilities": ["network"]
     }
   ]
 }

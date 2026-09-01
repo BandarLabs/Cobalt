@@ -197,6 +197,12 @@ pub enum QuoteRole {
     Body,
     /// Who said it, and when. Smaller, and in the muted tone.
     Byline,
+    /// A section title inside the flow: bold enough to lead the paragraphs
+    /// under it without competing with the screen's own title above it. The
+    /// same size [`Node::Heading`] uses below its first level, and for the
+    /// same reason: a document's own headings are not the screen's heading,
+    /// and drawing them as large would leave a page several titles deep.
+    Heading,
 }
 
 impl QuoteRole {
@@ -209,6 +215,7 @@ impl QuoteRole {
         match self {
             Self::Body => FontSize::Body,
             Self::Byline => FontSize::Caption,
+            Self::Heading => FontSize::Title,
         }
     }
 
@@ -216,7 +223,7 @@ impl QuoteRole {
     #[must_use]
     pub const fn tone(self) -> u8 {
         match self {
-            Self::Body => tone::INK,
+            Self::Body | Self::Heading => tone::INK,
             Self::Byline => tone::MUTED,
         }
     }
@@ -5365,7 +5372,7 @@ fn layout_node(
             // control it does not have would ragged the whole comment.
             let fold = match role {
                 QuoteRole::Byline => *fold,
-                QuoteRole::Body => None,
+                QuoteRole::Body | QuoteRole::Heading => None,
             };
             let mark = fold.map_or(0, |_| fold_mark_width(metrics));
             let text_width = max(1, full_width - mark);
@@ -5376,7 +5383,7 @@ fn layout_node(
             // from the comment.
             let measured = lines.len() as i32 * size.line_height_in(prose);
             let height = match role {
-                QuoteRole::Body => max(MIN_TEXT_HEIGHT, measured),
+                QuoteRole::Body | QuoteRole::Heading => max(MIN_TEXT_HEIGHT, measured),
                 QuoteRole::Byline => byline_height(measured, metrics),
             };
             layout.nodes.push(LayoutNode {
@@ -7847,7 +7854,7 @@ pub fn paginate_tagged(
                 let measured = lines.len() as i32 * line_height;
                 used += spacing
                     + match role {
-                        QuoteRole::Body => max_i32(MIN_TEXT_HEIGHT, measured),
+                        QuoteRole::Body | QuoteRole::Heading => max_i32(MIN_TEXT_HEIGHT, measured),
                         QuoteRole::Byline => byline_height(measured, metrics),
                     };
                 page.push((tag, depth, role, lines.join(" ")));
@@ -15383,6 +15390,14 @@ mod prose_tests {
         assert!(
             QuoteRole::Byline.size().tenth_mm() < QuoteRole::Body.size().tenth_mm(),
             "the byline was not smaller than the comment it introduces"
+        );
+        // A section heading inside the flow leads its own paragraphs without
+        // competing with the screen's own title: bigger than the body under
+        // it, ink rather than muted, and never mistaken for a byline.
+        assert_eq!(QuoteRole::Heading.tone(), tone::INK);
+        assert!(
+            QuoteRole::Heading.size().tenth_mm() > QuoteRole::Body.size().tenth_mm(),
+            "a heading in the flow was not larger than the body under it"
         );
         let measure = |screen: &Screen| {
             screen
