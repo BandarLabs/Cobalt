@@ -3938,7 +3938,8 @@ fn run_simulation(arguments: &[String]) -> Result<(), String> {
             "simulation failed: app={app_status}, daemon={daemon_status}"
         ));
     }
-    let expected = 1072_usize * 1448;
+    let profile = kobo_sim::selected_profile();
+    let expected = profile.width as usize * profile.height as usize;
     let actual = fs::metadata(&simulation.frame)
         .map_err(|error| format!("inspect rendered frame: {error}"))?
         .len();

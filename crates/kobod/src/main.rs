@@ -36,10 +36,18 @@ fn metrics_for_profile(
 /// Returns immutable hardware metrics after a verified device session starts,
 /// or the explicit host-simulation metrics before then.
 pub fn device_metrics() -> kobo_ui::DisplayMetrics {
-    VERIFIED_DEVICE_METRICS
-        .get()
-        .copied()
-        .unwrap_or_else(display_metrics_from_env)
+    VERIFIED_DEVICE_METRICS.get().copied().unwrap_or_else(|| {
+        let metrics = display_metrics_from_env();
+        let Ok(requested) = env::var("KOBO_SIM_PROFILE") else {
+            return metrics;
+        };
+        kobo_profile::SUPPORTED_PROFILES
+            .iter()
+            .copied()
+            .find(|profile| profile.id == requested)
+            .and_then(|profile| metrics_for_profile(profile, metrics).ok())
+            .unwrap_or(metrics)
+    })
 }
 
 #[cfg(feature = "device-write")]
