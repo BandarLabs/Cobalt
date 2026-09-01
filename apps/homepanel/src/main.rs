@@ -3,7 +3,7 @@ mod ha;
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, Failure, Glyph, KoboApp, Screen, ScreenBuilder,
-    Space, StoreResult, TaskId, TaskOutcome,
+    Space, StoreResult, TaskError, TaskId, TaskOutcome,
 };
 use std::process::ExitCode;
 
@@ -284,11 +284,14 @@ impl KoboApp for HomePanel {
                 self.show(context);
                 self.fetch(context);
             }
+            (_, TaskOutcome::Failed(TaskError::NoCredential)) => {
+                self.banner = Some(
+                    "Install the Home Assistant token with kobo secret set homeassistant.".into(),
+                );
+                self.show(context);
+            }
             (_, TaskOutcome::Failed(error)) => {
-                self.banner = Some(format!(
-                    "Off the air — {}. Check Wi-Fi or kobo secret set homeassistant.",
-                    Failure::of(error).advice
-                ));
+                self.banner = Some(format!("Off the air — {}.", Failure::of(error).advice));
                 self.show(context);
             }
             _ => {}
