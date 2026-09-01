@@ -1,5 +1,5 @@
 expect Crossword
-tap 00
+tap-at 111,227
 tap letter
 tap letter
 tap enter

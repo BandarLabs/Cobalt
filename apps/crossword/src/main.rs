@@ -114,11 +114,9 @@ impl Game {
 fn screen(game: &Game) -> Screen {
     let cells = (0..GRID.len()).map(|cell| {
         let label = if GRID[cell] == b'#' {
-            format!("{cell:02} ■")
-        } else if Some(cell) == game.selected {
-            format!("{cell:02} [{}]", game.letters[cell])
+            "■".to_owned()
         } else {
-            format!("{cell:02} {}", game.letters[cell])
+            game.letters[cell].to_string()
         };
         (cell_name(cell), label, None)
     });
@@ -222,5 +220,35 @@ mod tests {
         let diagnostics =
             screen(&Game::default()).diagnostics(&CLARA_BW_METRICS, &Chrome::default());
         assert!(diagnostics.issues.is_empty(), "{:?}", diagnostics.issues);
+    }
+
+    #[test]
+    fn board_cells_do_not_mix_clue_numbers_with_letters() {
+        let mut game = Game::default();
+        game.select(0);
+        game.enter('C');
+        let screen = screen(&game);
+        let labels = screen
+            .nodes
+            .iter()
+            .find_map(|node| match node {
+                kobo_ui::Node::Grid {
+                    square: true,
+                    cells,
+                    ..
+                } => Some(
+                    cells
+                        .iter()
+                        .map(|cell| cell.label.as_str())
+                        .collect::<Vec<_>>(),
+                ),
+                _ => None,
+            })
+            .expect("crossword board");
+
+        assert_eq!(labels[0], "C");
+        assert_eq!(labels[10], "■");
+        assert!(labels.iter().all(|label| !label.contains('[')));
+        assert!(labels.iter().all(|label| !label.contains("00")));
     }
 }
