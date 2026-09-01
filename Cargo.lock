@@ -967,6 +967,17 @@ name = "kobo-xml"
 version = "0.3.1"
 
 [[package]]
+name = "kobo-zotero-reader"
+version = "0.3.1"
+dependencies = [
+ "kobo-bookview",
+ "kobo-doc",
+ "kobo-json",
+ "kobo-read",
+ "kobo-sdk",
+]
+
+[[package]]
 name = "kobod"
 version = "0.3.1"
 dependencies = [

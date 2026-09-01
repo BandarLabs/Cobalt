@@ -162,6 +162,68 @@ export function releaseDependencyIds(node) {
     .map(dependency => dependency.pkg);
 }
 
+function workspaceMembers(source) {
+  const match = /(^members\s*=\s*\[)([\s\S]*?)(^\])/m.exec(source);
+  if (!match) return null;
+  return {
+    entries: [...match[2].matchAll(/"([^"]+)"/g)].map(entry => entry[1]),
+    remainder:
+      `${source.slice(0, match.index)}${match[1]}\n${match[3]}` +
+      source.slice(match.index + match[0].length).trimEnd()
+  };
+}
+
+// Adding a workspace member does not alter an existing app's release binary.
+// Keep every other root-manifest change conservative because workspace
+// dependencies, profiles, and resolver settings can affect all packages.
+export function manifestOnlyAddsWorkspaceMembers(previousSource, currentSource) {
+  const previous = workspaceMembers(previousSource);
+  const current = workspaceMembers(currentSource);
+  if (!previous || !current || previous.remainder !== current.remainder) return false;
+
+  const previousMembers = new Set(previous.entries);
+  const currentMembers = new Set(current.entries);
+  return (
+    currentMembers.size > previousMembers.size &&
+    [...previousMembers].every(member => currentMembers.has(member))
+  );
+}
+
+function lockfileParts(source) {
+  const marker = "[[package]]";
+  const firstPackage = source.indexOf(marker);
+  if (firstPackage < 0) return null;
+  return {
+    preamble: source.slice(0, firstPackage),
+    packages: source
+      .slice(firstPackage)
+      .split(/(?=^\[\[package\]\]$)/m)
+      .filter(Boolean)
+      .map(packageBlock => packageBlock.trimEnd())
+  };
+}
+
+// A new workspace package, and any dependencies used only by it, add complete
+// Cargo.lock package blocks. Existing binaries are unaffected as long as every
+// previous block remains byte-for-byte intact.
+export function lockfileOnlyAddsPackages(previousSource, currentSource) {
+  const previous = lockfileParts(previousSource);
+  const current = lockfileParts(currentSource);
+  if (!previous || !current || previous.preamble !== current.preamble) return false;
+  if (current.packages.length <= previous.packages.length) return false;
+
+  const available = new Map();
+  for (const packageBlock of current.packages) {
+    available.set(packageBlock, (available.get(packageBlock) || 0) + 1);
+  }
+  for (const packageBlock of previous.packages) {
+    const count = available.get(packageBlock) || 0;
+    if (count === 0) return false;
+    available.set(packageBlock, count - 1);
+  }
+  return true;
+}
+
 export function affectedWorkspacePackages(baseRevision) {
   const metadata = JSON.parse(command("cargo", ["metadata", "--format-version", "1", "--locked"]));
   const workspaceRoot = resolve(metadata.workspace_root);
@@ -175,8 +237,20 @@ export function affectedWorkspacePackages(baseRevision) {
     .filter(Boolean)
     .map(path => path.split(sep).join("/"));
 
-  const globalInputs = new Set(["Cargo.toml", "Cargo.lock", "rust-toolchain", "rust-toolchain.toml"]);
-  if (changedPaths.some(path => globalInputs.has(path) || path.startsWith(".cargo/"))) {
+  const unconditionalGlobalInputs = new Set(["rust-toolchain", "rust-toolchain.toml"]);
+  const changesGlobalInputs =
+    changedPaths.some(path => unconditionalGlobalInputs.has(path) || path.startsWith(".cargo/")) ||
+    (changedPaths.includes("Cargo.toml") &&
+      !manifestOnlyAddsWorkspaceMembers(
+        command("git", ["show", `${baseRevision}:Cargo.toml`]),
+        readFileSync(resolve(workspaceRoot, "Cargo.toml"), "utf8")
+      )) ||
+    (changedPaths.includes("Cargo.lock") &&
+      !lockfileOnlyAddsPackages(
+        command("git", ["show", `${baseRevision}:Cargo.lock`]),
+        readFileSync(resolve(workspaceRoot, "Cargo.lock"), "utf8")
+      ));
+  if (changesGlobalInputs) {
     return new Set(metadata.packages.map(package_ => package_.name));
   }
 

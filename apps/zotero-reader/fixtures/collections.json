@@ -1,0 +1,12 @@
+[
+  {
+    "key": "COLL1234",
+    "version": 3,
+    "data": {
+      "key": "COLL1234",
+      "version": 3,
+      "name": "Reading Queue",
+      "parentCollection": false
+    }
+  }
+]
