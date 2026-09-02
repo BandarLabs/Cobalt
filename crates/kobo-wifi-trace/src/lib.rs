@@ -1941,6 +1941,7 @@ pub fn summarize(bytes: &[u8]) -> TraceSummary {
     let mut summary = TraceSummary::default();
     let mut previous: Option<SummarySnapshot> = None;
     let mut gate_pending = false;
+    let mut pre_gate: Option<SummarySnapshot> = None;
     let mut gate: Option<SummarySnapshot> = None;
     for (index, line) in text.lines().enumerate() {
         if line.trim().is_empty() {
@@ -1968,6 +1969,10 @@ pub fn summarize(bytes: &[u8]) -> TraceSummary {
                     .get("mono_ms")
                     .and_then(Value::as_i64)
                     .and_then(|value| u64::try_from(value).ok());
+                // Preserve the last complete observation before the gate.
+                // The first post-gate snapshot may be internally healthy while
+                // already belonging to a different owner generation.
+                pre_gate.clone_from(&previous);
                 gate_pending = true;
             }
             Some("trace_end") => {
@@ -1999,6 +2004,20 @@ pub fn summarize(bytes: &[u8]) -> TraceSummary {
                             snapshot.mono_ms
                         ));
                     } else {
+                        if let Some(reason) = pre_gate
+                            .as_ref()
+                            .and_then(|before| immediate_comparative_divergence(before, &snapshot))
+                        {
+                            summary.first_divergence = Some(format!(
+                                "{}ms immediate comparative gate change: {reason}",
+                                snapshot.mono_ms
+                            ));
+                        }
+                        // A healthy snapshot is the explicit post-gate
+                        // reference even when comparison found a transition:
+                        // the transition remains the first divergence, while
+                        // later samples are compared with the state the gate
+                        // actually handed onward.
                         gate = Some(snapshot.clone());
                     }
                     gate_pending = false;
@@ -2051,6 +2070,44 @@ fn summary_snapshot(value: &Value) -> Option<SummarySnapshot> {
         route_up: boolean("route_up")?,
         route_gateway: boolean("route_gateway")?,
     })
+}
+
+fn immediate_comparative_divergence(
+    before: &SummarySnapshot,
+    after: &SummarySnapshot,
+) -> Option<&'static str> {
+    if before.driver != after.driver || before.module != after.module {
+        return Some("wlan0 driver/module changed across gate acceptance");
+    }
+    if before.wpa_socket != after.wpa_socket {
+        return Some("wpa control-socket inode changed across gate acceptance");
+    }
+    if before.dbus_owner != after.dbus_owner {
+        return Some("dhcpcd D-Bus owner changed across gate acceptance");
+    }
+    for (prefix, description) in [
+        (
+            'N',
+            "Nickel process generation changed across gate acceptance",
+        ),
+        (
+            'S',
+            "supplicant process generation changed across gate acceptance",
+        ),
+        (
+            'D',
+            "DHCP process generation changed across gate acceptance",
+        ),
+        (
+            'B',
+            "dhcpcd D-Bus process generation changed across gate acceptance",
+        ),
+    ] {
+        if generation_part(&before.tuple, prefix) != generation_part(&after.tuple, prefix) {
+            return Some(description);
+        }
+    }
+    None
 }
 
 fn unhealthy_gate(snapshot: &SummarySnapshot) -> Option<&'static str> {
@@ -2358,6 +2415,40 @@ mod tests {
         text.into_bytes()
     }
 
+    fn trace_with_pre_gate(pre_gate: &Snapshot, post_gate: &[Snapshot]) -> Vec<u8> {
+        let mut text = snapshot_value(5, 5, Duration::ZERO, "pre_gate", pre_gate).to_json();
+        text.push('\n');
+        text.push_str(
+            &ObjectBuilder::new()
+                .set("version", TRACE_VERSION)
+                .set("mono_ms", 10_u32)
+                .set("kind", "lifecycle")
+                .set("event", "current_94_gate_accepted")
+                .build()
+                .to_json(),
+        );
+        text.push('\n');
+        for (index, snapshot) in post_gate.iter().enumerate() {
+            let at = 20 + u64::try_from(index).unwrap_or(0) * 10;
+            text.push_str(
+                &snapshot_value(
+                    at,
+                    at,
+                    Duration::ZERO,
+                    if index == 0 {
+                        "gate_reference"
+                    } else {
+                        "sample"
+                    },
+                    snapshot,
+                )
+                .to_json(),
+            );
+            text.push('\n');
+        }
+        text.into_bytes()
+    }
+
     #[test]
     fn pid_reuse_is_a_new_generation_and_duplicates_are_visible() {
         let mut generations = Generations::default();
@@ -2488,6 +2579,71 @@ mod tests {
             .first_divergence
             .is_some_and(|value| value.contains("immediate gate failure")
                 && value.contains("default route was already absent")));
+    }
+
+    #[test]
+    fn reviewer_fixture_reports_persistent_immediate_driver_change() {
+        let before = healthy("N1;S1;D1;B1;B=owner:one;C=inode:1");
+        let mut changed = before.clone();
+        changed.driver = "replacement_driver".to_owned();
+        changed.module = "replacement_module".to_owned();
+        let summary = summarize(&trace_with_pre_gate(&before, &[changed.clone(), changed]));
+        assert!(summary
+            .first_divergence
+            .as_deref()
+            .is_some_and(|value| value.contains("immediate comparative gate change")
+                && value.contains("driver/module changed")));
+        assert!(
+            !summary.render().contains("no later divergence recorded"),
+            "reviewer fixture was incorrectly reported healthy: {summary:?}"
+        );
+    }
+
+    #[test]
+    fn persistent_immediate_owner_identity_changes_are_not_adopted_silently() {
+        let before = healthy("N1;S1;D1;B1;B=owner:one;C=inode:1");
+        let cases = [
+            ("control-socket inode", {
+                let mut state = before.clone();
+                state.wpa_socket = "inode:2".to_owned();
+                state
+            }),
+            ("D-Bus owner", {
+                let mut state = before.clone();
+                state.dbus_owner = "owner:two".to_owned();
+                state
+            }),
+            ("Nickel process generation", {
+                let mut state = before.clone();
+                state.tuple = "N2;S1;D1;B1;B=owner:one;C=inode:1".to_owned();
+                state
+            }),
+            ("supplicant process generation", {
+                let mut state = before.clone();
+                state.tuple = "N1;S2;D1;B1;B=owner:one;C=inode:1".to_owned();
+                state
+            }),
+            ("DHCP process generation", {
+                let mut state = before.clone();
+                state.tuple = "N1;S1;D2;B1;B=owner:one;C=inode:1".to_owned();
+                state
+            }),
+            ("D-Bus process generation", {
+                let mut state = before.clone();
+                state.tuple = "N1;S1;D1;B2;B=owner:one;C=inode:1".to_owned();
+                state
+            }),
+        ];
+        for (expected, changed) in cases {
+            let summary = summarize(&trace_with_pre_gate(&before, &[changed.clone(), changed]));
+            assert!(
+                summary
+                    .first_divergence
+                    .as_deref()
+                    .is_some_and(|value| value.contains(expected)),
+                "{expected} was adopted silently: {summary:?}"
+            );
+        }
     }
 
     #[test]
