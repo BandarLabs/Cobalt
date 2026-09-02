@@ -7493,12 +7493,18 @@ fn layout_node(
             // is exactly right and anything taller wastes the panel.
             // A row whose every cell carries a picture is a row of actions,
             // not a keyboard, and it is drawn as the pictures alone.
+            let key_height =
+                if !legacy_typography() && metrics.width > metrics.height && columns >= 7 {
+                    metrics.touch_target_minimum()
+                } else {
+                    metrics.touch_target_default()
+                };
             let (cell_height, style) = if *square {
                 (cell_width, CellStyle::Board)
             } else if cells.iter().all(|cell| cell.glyph.is_some()) {
                 (metrics.touch_target_default(), CellStyle::Plain)
             } else {
-                (metrics.touch_target_default(), CellStyle::Key)
+                (key_height, CellStyle::Key)
             };
             let index = layout.nodes.len();
             layout.nodes.push(LayoutNode {

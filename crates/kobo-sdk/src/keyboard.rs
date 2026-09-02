@@ -319,13 +319,13 @@ impl TextEntry {
 
 const CANCEL: &str = "kb.cancel";
 
-const SHIFT: &str = "kb.shift";
-const LAYER: &str = "kb.layer";
-const SPACE: &str = "kb.space";
-const BACKSPACE: &str = "kb.backspace";
-const ENTER: &str = "kb.enter";
+pub(crate) const SHIFT: &str = "kb.shift";
+pub(crate) const LAYER: &str = "kb.layer";
+pub(crate) const SPACE: &str = "kb.space";
+pub(crate) const BACKSPACE: &str = "kb.backspace";
+pub(crate) const ENTER: &str = "kb.enter";
 
-fn key_name(row: usize, column: usize) -> String {
+pub(crate) fn key_name(row: usize, column: usize) -> String {
     format!("kb.r{row}c{column}")
 }
 

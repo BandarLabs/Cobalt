@@ -10,7 +10,7 @@
 //! format, the layout engine or the renderer. It is rows of tappable cells and
 //! a small state machine deciding what each one means right now.
 
-use crate::keyboard::Keyboard;
+use crate::keyboard::{key_name, Keyboard, Layer, BACKSPACE, ENTER, LAYER, SHIFT, SPACE};
 use crate::ScreenBuilder;
 use kobo_ui::ActionId;
 
@@ -132,31 +132,77 @@ const SPECIALS: [(&str, &[u8]); 9] = [
 ];
 
 impl ScreenBuilder {
-    /// Draws the keys of a terminal: the specials, then the usual letters.
+    /// Draws a terminal keyboard with its fixed keys beside the usual letters.
     ///
-    /// The specials are on their own row above the letters because they are
-    /// the ones a reader hunts for. `Ctrl` shows its state in its label, since
-    /// on a panel with no hover and no colour there is nowhere else to put it.
+    /// Keeping the function keys in the four familiar keyboard rows leaves the
+    /// majority of a landscape panel to the terminal instead of spending a
+    /// fifth row on a separate strip. `Ctrl` shows its state in its label,
+    /// since on a panel with no hover and no colour there is nowhere else to
+    /// put it.
     #[must_use]
     pub fn terminal_keys(self, keys: &TerminalKeys) -> Self {
         let control = if keys.is_control() { "CTRL" } else { "ctrl" };
-        // Before the specials, so the two grids travel to the foot of the
-        // panel as one block rather than the letters leaving without them.
+        let keyboard = keys.keyboard();
+        let shifted = keyboard.is_shifted();
+        let row = |row, characters: &str| {
+            characters
+                .chars()
+                .enumerate()
+                .map(|(column, character)| {
+                    (
+                        key_name(row, column),
+                        if shifted {
+                            character.to_ascii_uppercase().to_string()
+                        } else {
+                            character.to_string()
+                        },
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let [top, home, bottom] = keyboard.rows();
+        let top = row(0, top);
+        let mut home = row(1, home);
+        let bottom = row(2, bottom);
+        home.push((CONTROL.to_string(), control.to_string()));
+
+        let mut lower = Vec::with_capacity(bottom.len() + 3);
+        lower.push((
+            SHIFT.to_string(),
+            if keys.keyboard().is_shifted() {
+                "SHIFT".to_string()
+            } else {
+                "shift".to_string()
+            },
+        ));
+        lower.extend(bottom);
+        lower.push((BACKSPACE.to_string(), "back".to_string()));
+        lower.push(("term.esc".to_string(), "esc".to_string()));
+
         self.fill()
+            .grid(u8::try_from(top.len()).unwrap_or(u8::MAX), false, top)
+            .grid(u8::try_from(home.len()).unwrap_or(u8::MAX), false, home)
+            .grid(u8::try_from(lower.len()).unwrap_or(u8::MAX), false, lower)
             .grid(
-                7,
+                8,
                 false,
                 [
-                    ("term.esc".to_string(), "esc".to_string()),
                     ("term.tab".to_string(), "tab".to_string()),
-                    (CONTROL.to_string(), control.to_string()),
+                    (
+                        LAYER.to_string(),
+                        match keys.keyboard().layer() {
+                            Layer::Letters => "?123".to_string(),
+                            Layer::Symbols => "abc".to_string(),
+                        },
+                    ),
+                    (SPACE.to_string(), "space".to_string()),
+                    (ENTER.to_string(), "enter".to_string()),
                     ("term.up".to_string(), "up".to_string()),
                     ("term.down".to_string(), "down".to_string()),
                     ("term.left".to_string(), "left".to_string()),
                     ("term.right".to_string(), "right".to_string()),
                 ],
             )
-            .keyboard(keys.keyboard(), "enter")
     }
 }
 
@@ -636,6 +682,97 @@ mod tests {
                     height: portrait.width,
                     ..portrait
                 },
+            );
+        }
+    }
+
+    fn assert_dense_terminal_keyboard(name: &str, metrics: DisplayMetrics, landscape: bool) {
+        let keys = TerminalKeys::new();
+        let compose = |rows: Vec<String>| {
+            crate::ScreenBuilder::new("terminal")
+                .top_bar("Terminal")
+                .terminal(rows, None)
+                .terminal_keys(&keys)
+                .build()
+        };
+        let negotiated = kobo_ui::terminal_grid_for(&compose(Vec::new()), &metrics);
+        let screen = compose(vec![
+            "Claude Code responsive terminal".into();
+            usize::from(negotiated.1)
+        ]);
+        let layout = screen.layout_with(&metrics, &Chrome::measuring(true));
+        let terminal = layout
+            .nodes
+            .iter()
+            .find(|node| node.kind == LayoutKind::TerminalGrid)
+            .expect("terminal");
+        let keys = layout
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, LayoutKind::Cell(..)))
+            .collect::<Vec<_>>();
+        let mut row_tops = keys.iter().map(|key| key.rect.y).collect::<Vec<_>>();
+        row_tops.sort_unstable();
+        row_tops.dedup();
+        assert_eq!(row_tops.len(), 4, "{name}: keyboard rows");
+        let expected_height = if landscape {
+            metrics.touch_target_minimum()
+        } else {
+            metrics.touch_target_default()
+        };
+        for (index, key) in keys.iter().enumerate() {
+            assert_eq!(key.rect.height, expected_height, "{name}: key density");
+            assert!(key.rect.x >= layout.content.x && key.rect.y >= layout.content.y);
+            assert!(
+                key.rect.x + key.rect.width <= layout.content.x + layout.content.width,
+                "{name}: key left the content width"
+            );
+            assert!(
+                key.rect.y + key.rect.height <= layout.content.y + layout.content.height,
+                "{name}: key left the content height"
+            );
+            assert!(key.rect.width >= metrics.touch_target_minimum(), "{name}");
+            assert_eq!(
+                layout.hit_test(
+                    key.rect.x + key.rect.width / 2,
+                    key.rect.y + key.rect.height / 2
+                ),
+                key.kind.acts_on(),
+                "{name}: key centre is not reachable"
+            );
+            assert!(terminal.rect.intersection(key.rect).is_none(), "{name}");
+            for other in &keys[index + 1..] {
+                assert!(key.rect.intersection(other.rect).is_none(), "{name}");
+            }
+        }
+        if landscape {
+            assert!(
+                terminal.rect.height * 2 > layout.content.height,
+                "{name}: terminal kept only {} of {} content pixels",
+                terminal.rect.height,
+                layout.content.height
+            );
+        }
+    }
+
+    #[test]
+    fn terminal_keyboard_density_is_profile_and_orientation_driven() {
+        for profile in kobo_profile::SUPPORTED_PROFILES {
+            let portrait = DisplayMetrics {
+                width: i32::try_from(profile.width).expect("profile width fits layout"),
+                height: i32::try_from(profile.height).expect("profile height fits layout"),
+                pixels_per_inch: i32::from(profile.pixels_per_inch),
+                text_scale: TextScale::Default,
+            };
+            assert_dense_terminal_keyboard(&format!("{} portrait", profile.id), portrait, false);
+            assert_dense_terminal_keyboard(
+                &format!("{} landscape", profile.id),
+                DisplayMetrics {
+                    width: portrait.height,
+                    height: portrait.width,
+                    ..portrait
+                },
+                true,
             );
         }
     }
