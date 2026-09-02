@@ -1486,7 +1486,9 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("clock")
             .as_nanos();
-        let path = PathBuf::from("target")
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("target")
             .join("flashcards-import-tests")
             .join(format!("{name}-{}-{tick}", std::process::id()));
         fs::create_dir_all(path.parent().expect("target parent")).expect("test directory");

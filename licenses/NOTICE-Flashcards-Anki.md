@@ -20,11 +20,11 @@ artifacts. Anki's root `LICENSE` also says that its logo is copyright Alex
 Fraser; no logo is used here. AnkiDroid's root `COPYING` is GPL version 3 and
 its source headers identify GPL-3.0-or-later.
 
-No upstream source file is copied or vendored in Cobalt. The importer is
-independently implemented and retains this notice because its package
-interoperability, validation cases, and documented boundaries were researched
-against those pinned projects. Cobalt remains licensed under AGPL-3.0-only.
-This engineering record is not legal advice.
+No upstream repository is vendored in Cobalt. The host-only
+`kobo-flashcards-import` crate links Anki rslib and `anki_i18n` directly from
+the pinned Git revision for template rendering. Retain the corresponding Anki
+source and AGPL notice with host-tool distribution. Cobalt remains licensed
+under AGPL-3.0-only. This engineering record is not legal advice.
 
 ## Distribution
 

@@ -38,7 +38,9 @@ restart begins at zero safely; a partial collection cannot be opened.
 
 ## Rendered data
 
-The host retains original notetype/model, deck, deck-configuration, and
+The host invokes the pinned Anki rslib renderer for both card sides; it does
+not apply a separate template, conditional, filter, furigana, or cloze
+renderer. The host retains original notetype/model, deck, deck-configuration, and
 template JSON alongside card ordinal, tags, hierarchy (`::`), scheduling
 queue/type/due/interval/ease/repetition/lapse/learning fields, and complete
 legacy revlog records. The Kobo renderer renders plain text only. It supports
