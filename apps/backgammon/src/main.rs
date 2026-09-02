@@ -578,7 +578,7 @@ impl Game {
 
     fn drop_cube(&mut self, offered: Player) {
         self.score[offered.index()] = self.score[offered.index()].saturating_add(self.cube);
-        self.after_score(offered, "drops the cube");
+        self.after_score(offered, "wins by drop");
     }
 
     fn finish_game(&mut self, winner: Player) {
@@ -1378,7 +1378,6 @@ fn playing_screen(game: &Game, picture: Option<TilePicture>) -> Screen {
         .chips([
             ("mode", game.mode.label().to_owned(), false),
             ("match", format!("To {}", game.match_to), false),
-            ("computer", "Computer move".to_owned(), false),
         ])
         .action_bar([("roll", "Roll"), ("double", "Double"), ("undo", "Undo")])
         .build()
@@ -1522,7 +1521,6 @@ fn game_action(game: &mut Game, action: ActionId) -> Option<()> {
             };
             game.set_match_to(match_to);
         }
-        Phase::Playing if action == action_id("computer") => game.computer_move(),
         Phase::Playing if action == action_id("points-prev") => {
             game.point_page = game.point_page.saturating_sub(1);
         }
@@ -1811,10 +1809,24 @@ mod tests {
         let mut game = Game::default();
         assert_eq!(
             game.apply_action(action_id("computer")),
-            Some(false),
-            "Computer move is recognized but cannot act on White's turn"
+            None,
+            "Computer move is not available on White's turn"
         );
         assert_eq!(game.initial_load, InitialLoad::Pending);
+    }
+
+    #[test]
+    fn dropping_a_cube_names_the_winner() {
+        let mut game = Game {
+            opening: false,
+            cube: 2,
+            cube_owner: Some(Player::Black),
+            ..Game::default()
+        };
+        game.drop_cube(Player::White);
+        assert_eq!(game.score, [2, 0]);
+        assert_eq!(game.message, "White wins by drop.");
+        assert_eq!(game.phase, Phase::GameOver(Player::White));
     }
 
     #[test]
@@ -2215,7 +2227,7 @@ mod tests {
         game.roll();
         let layout = test_screen(&game).layout_with(&CLARA_BW_METRICS, &Chrome::default());
         assert!(layout.rect_of_action(action_id("point-23")).is_some());
-        assert!(layout.rect_of_action(action_id("computer")).is_some());
+        assert!(layout.rect_of_action(action_id("computer")).is_none());
         let diagnostics = test_screen(&game).diagnostics(&CLARA_BW_METRICS, &Chrome::default());
         assert!(diagnostics.issues.is_empty(), "{:?}", diagnostics.issues);
     }
