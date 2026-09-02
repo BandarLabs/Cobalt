@@ -235,7 +235,24 @@ impl Reader {
             [only] => *only,
             several => return Err(ReaderError::Ambiguous(several.to_vec())),
         };
+        Self::capture_pid_in(proc_root, executable, pid, identity)
+    }
 
+    fn capture_pid_in(
+        proc_root: &Path,
+        executable: &str,
+        pid: i32,
+        identity: Identity,
+    ) -> Result<Self, ReaderError> {
+        let identified = match identity {
+            Identity::ZerothArgument => read_argv(proc_root, pid)
+                .is_some_and(|argv| argv.first().is_some_and(|first| first == executable)),
+            Identity::Executable => fs::read_link(proc_root.join(pid.to_string()).join("exe"))
+                .is_ok_and(|target| target == Path::new(executable)),
+        };
+        if !identified {
+            return Err(ReaderError::IdentityChanged(pid));
+        }
         let argv = read_argv(proc_root, pid).ok_or(ReaderError::IdentityChanged(pid))?;
         let arguments = argv
             .into_iter()
@@ -343,14 +360,42 @@ impl Reader {
     /// Returns an error when the reader cannot be spawned or never appears in
     /// the process table.
     pub fn start(&self, appear_within: Duration) -> Result<i32, ReaderError> {
-        let status = self.start_command().status()?;
-        if !status.success() {
+        self.start_captured(appear_within).map(|reader| reader.pid)
+    }
+
+    /// Starts an identical process and returns its newly captured identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the process cannot be spawned or never appears
+    /// with the same identity mode that originally found it.
+    pub fn start_captured(&self, appear_within: Duration) -> Result<Self, ReaderError> {
+        let mut command = Command::new("/bin/sh");
+        command
+            .arg("-c")
+            .arg(r#"nohup "$0" "$@" >/dev/null 2>&1 & printf '%s\n' "$!""#)
+            .arg(&self.executable)
+            .args(&self.arguments)
+            .current_dir(&self.working_directory)
+            .env_clear()
+            .envs(&self.environment)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        let output = command.output()?;
+        if !output.status.success() {
             return Err(ReaderError::DidNotStart);
         }
+        let pid = String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .parse::<i32>()
+            .map_err(|_| ReaderError::DidNotStart)?;
         let deadline = Instant::now() + appear_within;
         loop {
-            if let Ok(reader) = Self::find_executable_in(Path::new("/proc"), &self.executable) {
-                return Ok(reader.pid);
+            if let Ok(reader) =
+                Self::capture_pid_in(Path::new("/proc"), &self.executable, pid, self.identity)
+            {
+                return Ok(reader);
             }
             if Instant::now() >= deadline {
                 return Err(ReaderError::DidNotStart);

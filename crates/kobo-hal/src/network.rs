@@ -73,8 +73,50 @@ pub enum Restored {
 pub struct Connection {
     /// In start order: the association has to exist before a lease can.
     daemons: Vec<Reader>,
+    /// Executables whose presence could not be established safely.
+    uncertain: Vec<String>,
     /// Whether there was a connection to lose in the first place.
     was_online: bool,
+}
+
+/// Network daemons Cobalt started for the duration of one panel session.
+#[derive(Debug)]
+pub struct SessionConnection {
+    outcome: Restored,
+    started: Vec<Reader>,
+    start_errors: Vec<ReaderError>,
+}
+
+impl SessionConnection {
+    #[must_use]
+    pub fn outcome(&self) -> Restored {
+        self.outcome
+    }
+
+    #[must_use]
+    pub fn start_errors(&self) -> &[ReaderError] {
+        &self.start_errors
+    }
+
+    /// Stops every daemon this session started, even if one stop fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns all stop failures so the caller can choose a clean reboot
+    /// rather than starting Nickel on top of an owner that may still exist.
+    pub fn release(self, within: Duration) -> Result<(), Vec<ReaderError>> {
+        let mut errors = Vec::new();
+        for daemon in self.started.into_iter().rev() {
+            if let Err(error) = daemon.stop(within) {
+                errors.push(error);
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
 }
 
 impl Connection {
@@ -85,12 +127,18 @@ impl Connection {
     /// already offline when the session began.
     #[must_use]
     pub fn capture() -> Self {
-        let daemons = [SUPPLICANT_EXECUTABLE, DHCP_EXECUTABLE]
-            .into_iter()
-            .filter_map(|executable| Reader::find_running(executable).ok())
-            .collect();
+        let mut daemons = Vec::new();
+        let mut uncertain = Vec::new();
+        for executable in [SUPPLICANT_EXECUTABLE, DHCP_EXECUTABLE] {
+            match Reader::find_running(executable) {
+                Ok(daemon) => daemons.push(daemon),
+                Err(ReaderError::NotRunning) => {}
+                Err(_) => uncertain.push(executable.to_owned()),
+            }
+        }
         Self {
             daemons,
+            uncertain,
             was_online: is_online(WIRELESS_LINK),
         }
     }
@@ -99,6 +147,39 @@ impl Connection {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.daemons.is_empty()
+    }
+
+    /// Returns whether the reader had a usable route when it was captured.
+    #[must_use]
+    pub fn was_online(&self) -> bool {
+        self.was_online
+    }
+
+    /// Stops one daemon captured before the reader handoff, if it still runs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the exact captured process cannot be stopped or
+    /// its original presence could not be established.
+    pub fn release_captured(&self, executable: &str, within: Duration) -> Result<(), ReaderError> {
+        let uncertain = self
+            .uncertain
+            .iter()
+            .any(|uncertain| uncertain == executable);
+        let captured = self
+            .daemons
+            .iter()
+            .find(|daemon| daemon.executable() == executable);
+        match Reader::find_running(executable) {
+            Err(ReaderError::NotRunning) => Ok(()),
+            Ok(observed)
+                if !uncertain && captured.is_some_and(|daemon| observed.pid() == daemon.pid()) =>
+            {
+                observed.stop(within)
+            }
+            Ok(observed) => Err(ReaderError::IdentityChanged(observed.pid())),
+            Err(error) => Err(error),
+        }
     }
 
     /// Puts the connection back if it has gone, waiting up to `within`.
@@ -118,9 +199,6 @@ impl Connection {
             return Ok(Restored::Unaffected);
         }
         for daemon in &self.daemons {
-            // Starting a second copy of a daemon that is already running would
-            // leave two of them fighting over one interface, which is worse
-            // than the problem being fixed.
             if Reader::find_running(daemon.executable()).is_ok() {
                 continue;
             }
@@ -131,6 +209,74 @@ impl Connection {
         } else {
             Restored::StillDown
         })
+    }
+
+    /// Restores a dropped connection and records only daemons Cobalt starts.
+    #[must_use]
+    pub fn restore_for_session(&self, within: Duration) -> SessionConnection {
+        let mut start_errors = self
+            .uncertain
+            .iter()
+            .map(|_| ReaderError::DidNotStart)
+            .collect::<Vec<_>>();
+        // A device that was already offline has nothing to put back, and
+        // starting a supplicant it was not running would be inventing state.
+        if !self.was_online {
+            return SessionConnection {
+                outcome: Restored::Unaffected,
+                started: Vec::new(),
+                start_errors,
+            };
+        }
+        if !went_offline(WIRELESS_LINK, SETTLE) {
+            return SessionConnection {
+                outcome: Restored::Unaffected,
+                started: Vec::new(),
+                start_errors,
+            };
+        }
+        let mut started = Vec::new();
+        for daemon in &self.daemons {
+            // Starting a second copy of a daemon that is already running would
+            // leave two of them fighting over one interface, which is worse
+            // than the problem being fixed.
+            match Reader::find_running(daemon.executable()) {
+                Ok(observed) if observed.pid() == daemon.pid() => continue,
+                Ok(observed) => {
+                    start_errors.push(ReaderError::IdentityChanged(observed.pid()));
+                    continue;
+                }
+                Err(ReaderError::NotRunning) => {}
+                Err(error) => {
+                    start_errors.push(error);
+                    continue;
+                }
+            }
+            match daemon.start_captured(within) {
+                Ok(running) => {
+                    let launched_pid = running.pid();
+                    started.push(running);
+                    match Reader::find_running(daemon.executable()) {
+                        Ok(observed) if observed.pid() == launched_pid => {}
+                        Ok(_) | Err(ReaderError::Ambiguous(_)) => {
+                            start_errors.push(ReaderError::Ambiguous(vec![launched_pid]));
+                        }
+                        Err(error) => start_errors.push(error),
+                    }
+                }
+                Err(error) => start_errors.push(error),
+            }
+        }
+        let outcome = if wait_until_online(WIRELESS_LINK, within) {
+            Restored::Restarted
+        } else {
+            Restored::StillDown
+        };
+        SessionConnection {
+            outcome,
+            started,
+            start_errors,
+        }
     }
 }
 
@@ -330,10 +476,12 @@ wlan0\tDestination\tGateway\n";
 
     #[test]
     fn capturing_on_a_host_without_those_daemons_records_nothing() {
+        let connection = Connection::capture();
         assert!(
-            Connection::capture().is_empty(),
+            connection.is_empty(),
             "capture must never fail when the daemons are absent"
         );
+        assert!(!connection.was_online());
     }
 }
 
