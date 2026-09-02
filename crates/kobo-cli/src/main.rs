@@ -656,14 +656,15 @@ fn app_release(arguments: &[String]) -> Result<(), String> {
         .map_err(|error| format!("invalid {} metadata: {error}", app.id))?;
         let bundle = kobo_app_store::build_bundle(&manifest, &binary, &seed)
             .map_err(|error| format!("bundle {}: {error}", app.id))?;
-        let package_path = output.join(format!("{}.cobalt-app", app.id));
+        let (package_name, package_sha256) = release_package_name(&app.id, &bundle);
+        let package_path = output.join(&package_name);
         fs::write(&package_path, &bundle)
             .map_err(|error| format!("write {}: {error}", package_path.display()))?;
         entries.push(
             kobo_app_store::CatalogEntry::new(kobo_app_store::CatalogEntryInput {
                 manifest,
-                package_url: format!("{base_url}/{}.cobalt-app", app.id),
-                package_sha256: kobo_net::sha256::hex_digest(&bundle),
+                package_url: format!("{base_url}/{package_name}"),
+                package_sha256,
                 package_bytes: u64::try_from(bundle.len())
                     .map_err(|_| format!("{} package is too large", app.id))?,
             })
@@ -1019,6 +1020,11 @@ fn ensure_only_flags(arguments: &[String], flags: &[&str], usage: &str) -> Resul
         index += width;
     }
     Ok(())
+}
+
+fn release_package_name(id: &str, bundle: &[u8]) -> (String, String) {
+    let digest = kobo_net::sha256::hex_digest(bundle);
+    (format!("{id}-{digest}.cobalt-app"), digest)
 }
 
 fn read_signing_seed(path: &Path) -> Result<[u8; 32], String> {

@@ -53,7 +53,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           published_sha="$(gh api \
-            "repos/${GITHUB_REPOSITORY}/actions/workflows/apps.yml/runs?status=success&per_page=1" \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/apps.yml/runs?branch=main&status=success&per_page=1" \
             --jq '.workflow_runs[0].head_sha')"
           test -n "$published_sha"
           curl --fail --location --retry 3 \
