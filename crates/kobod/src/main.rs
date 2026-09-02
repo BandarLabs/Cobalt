@@ -320,7 +320,7 @@ fn restart_reader(state: &Path) -> Result<(), Box<dyn Error>> {
         let saved = match Reader::load(state) {
             Ok(saved) => saved,
             Err(error) => {
-                return request_reboot_until_accepted(&format!(
+                return wait_for_manual_reboot(&format!(
                     "the paused-reader recovery description is unreadable ({error})"
                 ));
             }
@@ -335,7 +335,7 @@ fn restart_reader(state: &Path) -> Result<(), Box<dyn Error>> {
         let recovery = match Reader::recover_paused(state, std::time::Duration::from_secs(10)) {
             Ok(recovery) => recovery,
             Err(error) => {
-                return request_reboot_until_accepted(&format!(
+                return wait_for_manual_reboot(&format!(
                     "the exact paused reader could not be recovered ({error})"
                 ));
             }
@@ -369,9 +369,9 @@ fn restart_reader(state: &Path) -> Result<(), Box<dyn Error>> {
                 Ok(())
             }
             Ok(true) => {
-                request_reboot_until_accepted("a stopped reader had no complete exact-pause marker")
+                wait_for_manual_reboot("a stopped reader had no complete exact-pause marker")
             }
-            Err(error) => request_reboot_until_accepted(&format!(
+            Err(error) => wait_for_manual_reboot(&format!(
                 "the existing reader state could not be verified ({error})"
             )),
         };
@@ -407,18 +407,12 @@ fn restart_reader(state: &Path) -> Result<(), Box<dyn Error>> {
 }
 
 #[cfg(feature = "device-write")]
-fn request_reboot_until_accepted(reason: &str) -> Result<(), Box<dyn Error>> {
+fn wait_for_manual_reboot(reason: &str) -> Result<(), Box<dyn Error>> {
+    println!(
+        "{reason}; exact recovery state is retained. A manual reboot is required; no scripted reboot will be attempted"
+    );
     loop {
-        println!("{reason}; requesting a clean reboot");
-        match device::request_clean_reboot() {
-            Ok(()) => return Ok(()),
-            Err(error) => {
-                println!(
-                    "clean reboot request failed ({error}); exact pause state is retained and recovery will retry in five minutes"
-                );
-                std::thread::sleep(std::time::Duration::from_secs(5 * 60));
-            }
-        }
+        std::thread::sleep(std::time::Duration::from_secs(60 * 60));
     }
 }
 

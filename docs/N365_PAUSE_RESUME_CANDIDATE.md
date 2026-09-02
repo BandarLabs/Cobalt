@@ -74,8 +74,11 @@ With the unlock below, Cobalt:
 
 The detached recovery watchdog uses the saved PID/starttime. It sends
 `SIGCONT` only to the exact paused process. Missing, reused, uninterruptible or
-otherwise ambiguous state requests a synced clean reboot instead of starting
-another Nickel. Other profiles continue using the existing recovery path.
+otherwise ambiguous state is retained for inspection and requires a manual
+reboot instead of starting another Nickel. Neither the ordinary timed reboot
+guard nor a remote forced reboot has been physically proven reliable on this
+reader, so the pause/resume path never treats a scripted reboot as recovery.
+Other profiles continue using the existing recovery path.
 
 ## Build
 
@@ -90,9 +93,10 @@ cargo run -p kobo-cli --features device-write -- \
 Do not perform this procedure until review is complete.
 
 1. Keep the rollback package on the host.
-2. Reboot the reader cleanly. Do not start Cobalt if more than one WMT launcher,
-   supplicant, DHCP client or Nickel process remains.
-3. Install the candidate package through USB; installation reboots the reader.
+2. Manually reboot the reader. Do not start Cobalt if more than one WMT
+   launcher, supplicant, DHCP client or Nickel process remains.
+3. Install the candidate package through USB. If the normal installation flow
+   does not restart the reader, perform another manual reboot.
 4. Confirm stock Nickel has working Wi-Fi and allow it to become idle.
 5. Open an interactive shell:
 
@@ -131,5 +135,6 @@ successful probes; `nickel_resumed`; sustained watchdog feeding; and a clean
 trace deadline. Any extra WMT/supplicant, identity change, reboot, missing end
 marker, failed probe, route loss or recovery fallback rejects the candidate.
 
-To roll back, install the separately built unmodified `origin/beta` rollback
-archive through USB. Do not use an in-session rollback.
+To roll back, first manually reboot, then install the separately built
+unmodified `origin/beta` rollback archive through USB. Do not use an in-session
+or remotely forced rollback.

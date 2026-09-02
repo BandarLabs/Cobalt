@@ -674,12 +674,10 @@ pub fn present(
                 ));
             }
             slack.leave_slack();
-            return request_clean_reboot().map(|()| {
-                format!(
-                    "the final pause/resume ownership preflight found unsafe Nickel state ({}), so a clean reboot was requested",
-                    problems.join("; ")
-                )
-            });
+            return Err(format!(
+                "the final pause/resume ownership preflight found unsafe Nickel state ({}); exact recovery remains armed and a manual reboot is required",
+                problems.join("; ")
+            ));
         }
         trace("pausing the exact existing reader");
         wifi_trace.checkpoint(WifiTraceEvent::NickelPauseRequested);
@@ -708,11 +706,9 @@ pub fn present(
                     ));
                 }
                 slack.leave_slack();
-                return request_clean_reboot().map(|()| {
-                    format!(
-                        "the exact reader could not be paused ({error}), so a clean reboot was requested"
-                    )
-                });
+                return Err(format!(
+                    "the exact reader could not be paused ({error}); exact recovery remains armed and a manual reboot is required"
+                ));
             }
         };
         wifi_trace.checkpoint(WifiTraceEvent::NickelPaused);
@@ -906,35 +902,23 @@ pub fn present(
         let summary = outcome.unwrap_or_else(|error| format!("application ended: {error}"));
         if let Some(paused) = paused_reader.take() {
             drop(teardown);
-            return match request_clean_reboot() {
-                Ok(()) => {
-                    paused.disarm_for_reboot();
+            wifi_trace.checkpoint(WifiTraceEvent::NickelResumeRequested);
+            return match paused.resume(START_GRACE) {
+                Ok(pid) => {
+                    wifi_trace.checkpoint(WifiTraceEvent::NickelResumed);
+                    let resumed = suspended.resume_once_fed(WATCHDOG_HANDBACK);
+                    let rearmed = slack.rearm();
                     watchdog.disarm();
                     let _ignored = fs::remove_dir_all(&state);
-                    Ok(format!(
-                        "{summary}; typeface {typeface}; {detail}, so a clean reboot was requested before returning to the stock reader"
+                    Err(format!(
+                        "{summary}; typeface {typeface}; {detail}; the exact reader was resumed as pid {pid}; freeze watchdog: {resumed:?}; hardware watchdog: {rearmed:?}; a manual reboot is required"
                     ))
                 }
-                Err(reboot_error) => {
-                    wifi_trace.checkpoint(WifiTraceEvent::NickelResumeRequested);
-                    let resume = paused.resume(START_GRACE);
-                    if resume.is_ok() {
-                        wifi_trace.checkpoint(WifiTraceEvent::NickelResumed);
-                    }
-                    if resume.is_ok() {
-                        let resumed = suspended.resume_once_fed(WATCHDOG_HANDBACK);
-                        let rearmed = slack.rearm();
-                        watchdog.disarm();
-                        let _ignored = fs::remove_dir_all(&state);
-                        Err(format!(
-                            "{reboot_error}; fallback resume: {resume:?}; freeze watchdog: {resumed:?}; hardware watchdog: {rearmed:?}"
-                        ))
-                    } else {
-                        slack.leave_slack();
-                        Err(format!(
-                            "{reboot_error}; fallback resume failed ({resume:?}); exact pause recovery remains armed"
-                        ))
-                    }
+                Err(error) => {
+                    slack.leave_slack();
+                    Err(format!(
+                        "{summary}; typeface {typeface}; {detail}; exact resume failed ({error}), recovery remains armed, and a manual reboot is required"
+                    ))
                 }
             };
         }
@@ -968,16 +952,14 @@ pub fn present(
             }
             Err(error) => {
                 trace(&format!(
-                    "the exact reader did not resume ({error}); requesting a clean reboot"
+                    "the exact reader did not resume ({error}); manual reboot required"
                 ));
                 drop(teardown);
                 slack.leave_slack();
                 let summary = outcome.unwrap_or_else(|error| format!("application ended: {error}"));
-                return request_clean_reboot().map(|()| {
-                    format!(
-                        "{summary}; typeface {typeface}; the exact reader did not resume ({error}), so a clean reboot was requested"
-                    )
-                });
+                return Err(format!(
+                    "{summary}; typeface {typeface}; the exact reader did not resume ({error}); recovery remains armed and a manual reboot is required"
+                ));
             }
         }
     } else {
@@ -1135,7 +1117,7 @@ fn restore_reader_wifi(was_online: bool, within: Duration, wifi_trace: &mut Trac
 }
 
 /// Syncs user storage and requests the firmware's ordinary reboot path.
-pub(crate) fn request_clean_reboot() -> Result<(), String> {
+fn request_clean_reboot() -> Result<(), String> {
     let sync = Command::new("sync")
         .status()
         .map_err(|error| format!("start sync before Bluetooth reboot: {error}"))?;

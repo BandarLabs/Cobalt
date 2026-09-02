@@ -744,12 +744,6 @@ impl PausedReader {
         remove_pause_identity(&self.recovery_state);
         Ok(())
     }
-
-    /// Prevents the drop fallback when a successful clean reboot has already
-    /// taken ownership of recovery.
-    pub fn disarm_for_reboot(mut self) {
-        self.resumed = true;
-    }
 }
 
 impl Drop for PausedReader {
