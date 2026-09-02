@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { compatibilityPolicy } from "./app-registry.mjs";
 
 const MANIFEST_FIELDS = [
   "id",
@@ -20,10 +21,12 @@ const COMPATIBLE_PLATFORM_PATHS = new Set([
 // Store packages are built from the current SDK and therefore speak its exact
 // wire protocol. A new protocol must add its first compatible Cobalt release
 // here before the catalog can be published.
-const PROTOCOL_MINIMUMS = new Map([
-  [10, "0.2.4"],
-  [11, "0.3.1"]
-]);
+const PROTOCOL_MINIMUMS = new Map(
+  Object.entries(compatibilityPolicy().protocols).map(([protocol, version]) => [
+    Number(protocol),
+    version
+  ])
+);
 
 function readJson(path, label) {
   try {
@@ -236,6 +239,10 @@ function optionalCommand(name, arguments_) {
 
 function isInside(path, directory) {
   return path === directory || path.startsWith(`${directory}/`);
+}
+
+export function isContributionManifest(path, directory) {
+  return path === `${directory}/cobalt-app.json`;
 }
 
 // Returns the dependency edges capable of changing a release artifact.
@@ -582,7 +589,10 @@ export function affectedWorkspacePackages(baseRevision, registry) {
     const directory = dirname(package_.manifest_path);
     const relativeDirectory = relative(workspaceRoot, directory).split(sep).join("/");
     const packageChanges = changedPaths.filter(
-      path => isInside(path, relativeDirectory) && !compatiblePaths.has(path)
+      path =>
+        isInside(path, relativeDirectory) &&
+        !isContributionManifest(path, relativeDirectory) &&
+        !compatiblePaths.has(path)
     );
     if (packageChanges.length === 0) continue;
     const relativeManifest = relative(workspaceRoot, package_.manifest_path).split(sep).join("/");

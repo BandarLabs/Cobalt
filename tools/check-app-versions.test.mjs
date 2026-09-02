@@ -8,6 +8,7 @@ import {
   checkEntries,
   checkProtocolMinimums,
   compatibleChangePaths,
+  isContributionManifest,
   lockfileOnlyAddsPackages,
   manifestOnlyChangesPathDependencyVersions,
   manifestOnlyChangesWorkspaceMembershipOrVersion,
@@ -207,6 +208,11 @@ test("release input discovery includes deleted paths", () => {
     "--diff-filter=ACDMRT",
     "published...HEAD"
   ]);
+});
+
+test("standalone app metadata is compared as a manifest, not a binary input", () => {
+  assert.equal(isContributionManifest("apps/notes/cobalt-app.json", "apps/notes"), true);
+  assert.equal(isContributionManifest("apps/notes/src/main.rs", "apps/notes"), false);
 });
 
 test("workspace version and member additions do not change existing app release inputs", () => {

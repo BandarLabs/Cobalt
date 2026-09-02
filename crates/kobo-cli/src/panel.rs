@@ -176,6 +176,11 @@ fn presentable() -> impl Iterator<Item = &'static str> {
         .iter()
         .map(|(name, _)| *name)
         .chain(STORE_PACKAGES.iter().copied())
+        .chain(
+            crate::contributed_store_packages()
+                .iter()
+                .map(String::as_str),
+        )
         .filter(|name| *name != "kobod")
 }
 

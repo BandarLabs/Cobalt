@@ -1,0 +1,9 @@
+{
+  "id": "example",
+  "display_name": "Example",
+  "short_label": "Example",
+  "summary": "Describe what the app lets a Kobo owner do.",
+  "version": "1.0.0",
+  "glyph": "app",
+  "capabilities": []
+}

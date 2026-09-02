@@ -2,17 +2,6 @@
   "format_version": 1,
   "apps": [
     {
-      "package": "kobo-arxiv",
-      "id": "arxiv",
-      "display_name": "arXiv",
-      "short_label": "arXiv",
-      "summary": "Browse and search arXiv, keep preprints, and read their HTML versions on your Kobo.",
-      "version": "1.3.4",
-      "minimum_cobalt_version": "0.3.1",
-      "glyph": "note",
-      "capabilities": ["network"]
-    },
-    {
       "package": "kobo-audiobook",
       "id": "audiobook",
       "display_name": "Audiobook Studio",
@@ -90,17 +79,6 @@
       "capabilities": ["cover-sensor"]
     },
     {
-      "package": "kobo-morse",
-      "id": "morse",
-      "display_name": "Morse",
-      "short_label": "Morse",
-      "summary": "Type a message and send it in Morse code with the front light.",
-      "version": "1.0.6",
-      "minimum_cobalt_version": "0.3.1",
-      "glyph": "light",
-      "capabilities": ["frontlight-control", "keep-awake"]
-    },
-    {
       "package": "kobo-rss",
       "id": "rss",
       "display_name": "Feeds",
@@ -123,17 +101,6 @@
       "capabilities": ["network"]
     },
     {
-      "package": "kobo-sudoku",
-      "id": "sudoku",
-      "display_name": "Sudoku",
-      "short_label": "Sudoku",
-      "summary": "Play touch-first Sudoku designed for an e-ink screen.",
-      "version": "1.0.5",
-      "minimum_cobalt_version": "0.3.1",
-      "glyph": "grid",
-      "capabilities": []
-    },
-    {
       "package": "kobo-tictactoe",
       "id": "tictactoe",
       "display_name": "Tic-tac-toe",
@@ -154,45 +121,6 @@
       "minimum_cobalt_version": "0.3.1",
       "glyph": "check",
       "capabilities": []
-    },
-    {
-      "package": "kobo-zotero-reader",
-      "id": "zotero-reader",
-      "display_name": "Zotero Reader",
-      "short_label": "Zotero",
-      "summary": "Browse Zotero collections, read metadata and indexed paper text, and keep papers available offline.",
-      "version": "1.0.0",
-      "minimum_cobalt_version": "0.3.1",
-      "glyph": "book",
-      "capabilities": ["network", "frontlight-control"],
-      "setup": {
-        "steps": [
-          {
-            "text": "Create a dedicated Zotero API key with read-only access to your personal library.",
-            "link": {
-              "label": "Zotero API key settings",
-              "url": "https://www.zotero.org/settings/keys"
-            }
-          },
-          {
-            "text": "Copy the numeric user ID shown on the Zotero API key settings page. Zotero Reader asks for it on first launch."
-          },
-          {
-            "text": "Install the API key on your Kobo under the exact secret name zotero.",
-            "command": "kobo secret set zotero --device <address>"
-          },
-          {
-            "text": "Launch Zotero Reader, enter the numeric user ID, and select a collection."
-          },
-          {
-            "text": "Direct mode reads indexed text. Structured PDF layout, tables, figures, formulas, and OCR require the optional self-hosted conversion service.",
-            "link": {
-              "label": "Self-hosting guide",
-              "url": "https://andreclerigo.github.io/cobalt-zotero-reader/self-hosting.html"
-            }
-          }
-        ]
-      }
     }
   ]
 }

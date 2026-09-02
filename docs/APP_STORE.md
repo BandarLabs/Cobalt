@@ -3,7 +3,8 @@
 Cobalt platform releases and Store app releases are separate:
 
 - Tagged `v*` releases publish the USB-installable Cobalt platform package.
-- Every accepted merge to `main` runs the app publishing workflow.
+- Every accepted merge to `beta` runs the app publishing workflow; Stable is
+  promoted from tested Beta bytes.
 - App-only changes do not require a Cobalt version bump or platform update.
 - Every changed app package requires a new app version, including changes from
   a shared SDK or protocol dependency.
@@ -62,14 +63,15 @@ kobo app-link unpair --device <reader-address>
 
 ## Registry
 
-Store apps are workspace packages declared in `apps/catalog.json`. The
-registry supplies public metadata; binary size and SHA-256 are calculated from
-the exact ARM release binary during publishing.
+Third-party Store apps provide one `apps/<id>/cobalt-app.json`. Cobalt-owned
+base entries remain in `apps/catalog.json`; `tools/collect-app-registry.mjs`
+combines both into the effective registry. Package name and minimum compatible
+Cobalt release are derived. Binary size and SHA-256 come from the exact ARM
+release binary during publishing.
 
-`minimum_cobalt_version` must cover both the SDK wire protocol and the runtime
-services used by the app. Protocol 11 SDK builds require Cobalt 0.3.1 or newer.
-The publishing check rejects a lower value, and a future protocol version
-cannot publish until its first compatible Cobalt release is recorded.
+`tools/protocol-minimums.json` maps SDK protocols and newer capabilities to
+their first compatible Cobalt release. A future protocol cannot publish until
+that Cobalt-owned policy is updated.
 
 The initial Cobalt applications are registered too. Their `0.2.0` copies are
 bundled for a useful first boot, appear as installed in Store, and can later be
@@ -81,10 +83,9 @@ See [CONTRIBUTING_APPS.md](CONTRIBUTING_APPS.md) for the contribution format.
 
 ## Publishing workflow
 
-`.github/workflows/apps.yml` runs on every push to `main` and `beta`. Main
-publishes the Stable `app-catalog` release; beta publishes the isolated
-`app-catalog-beta` release with separate concurrency, URLs and same-branch
-version baselines. It:
+`.github/workflows/apps.yml` runs on pushes to `beta` and publishes only the
+isolated `app-catalog-beta` release. Stable is changed solely by the protected
+exact-byte promotion workflow. Beta publication:
 
 1. Validates the registry and creates a matrix only for new or affected
    packages by comparing with the previous successful run on the same branch.
@@ -113,8 +114,9 @@ fails if the seed does not derive the public key pinned in released runtimes.
 For local release validation:
 
 ```sh
+node tools/collect-app-registry.mjs --out generated-app-registry.json
 kobo app-release \
-  --registry apps/catalog.json \
+  --registry generated-app-registry.json \
   --seed /secure/cobalt-app-signing-seed \
   --out dist/apps \
   --base-url https://github.com/BandarLabs/Cobalt/releases/download/app-catalog
