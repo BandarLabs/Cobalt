@@ -1,12 +1,12 @@
 //! Offline Flashcards review for bundles prepared by `flashcards-import`.
 //!
-//! Flashcards is unofficial Anki-package compatibility software and is not
-//! affiliated with Ankitects or `AnkiDroid`. Imported HTML is converted to text;
-//! no card can execute script, access a file, or open a network socket.
+//! The app consumes only host-prepared, Cobalt-owned neutral bundles. Imported
+//! HTML is already converted to text; no card can execute script, access a
+//! file, or open a network socket.
 
 use kobo_flashcards_format::{
-    decode, digest_hex, validate_review_log, verify_card_images, AttachmentKind, ParsedBundle,
-    DISTRIBUTION_DOCUMENTS, MAX_BUNDLE_BYTES, MAX_REVIEW_LOG_BYTES,
+    decode, digest_hex, validate_review_log, verify_card_images, AttachmentKind, FormatError,
+    ParsedBundle, DEVICE_DISTRIBUTION_DOCUMENTS, MAX_BUNDLE_BYTES, MAX_REVIEW_LOG_BYTES,
 };
 use kobo_sdk::{
     action_id, ActionId, Context, KoboApp, LogLevel, PictureHandle, Screen, ScreenBuilder,
@@ -17,7 +17,7 @@ use std::process::ExitCode;
 const BUNDLE_NAME: &str = "collection.cobfc";
 const REVIEW_LOG_NAME: &str = "cobalt-review-log.ndjson";
 const NOTICE_PAGE_BYTES: usize = 700;
-const NOTICE: &str = "Flashcards is unofficial Anki-package compatibility software, is not affiliated with Ankitects or AnkiDroid, uses no upstream logos, and renders packages offline with pinned Anki rslib. Notices, source pins, and licence texts are available from the review screen.";
+const NOTICE: &str = "Flashcards reviews host-prepared Cobalt bundles offline. The device contains no linked study-engine code, requests no remote-network capability, and uses only Cobalt's required local runtime IPC. Applicable device licences are in the Notices screen.";
 
 #[derive(Default)]
 struct Flashcards {
@@ -182,7 +182,7 @@ impl Flashcards {
                 context.set_screen(self.review());
             }
             Err(error) => {
-                self.message = format!("The transferred collection was rejected: {error}");
+                self.message = bundle_rejection_message(&error);
                 context.set_screen(
                     ScreenBuilder::new("flashcards-invalid")
                         .top_bar("Flashcards")
@@ -230,8 +230,8 @@ impl Flashcards {
         let Some(card) = self.current_card() else {
             return;
         };
-        // The imported Anki queue, ease and due values remain untouched. This
-        // is explicitly a Cobalt-local event for later host reconciliation.
+        // Imported queue, ease and due values remain untouched. This is a
+        // Cobalt-local event for later host reconciliation.
         let record = format!(
             "{{\"format\":2,\"bundle_sha256\":\"{}\",\"card_id\":{},\"grade\":\"{}\",\"imported_due\":{},\"imported_reps\":{}}}",
             self.bundle_digest, card.id, grade, card.due, card.repetitions
@@ -407,6 +407,15 @@ impl KoboApp for Flashcards {
     }
 }
 
+fn bundle_rejection_message(error: &FormatError) -> String {
+    if *error == FormatError::UnsupportedVersion(3) {
+        "This collection uses the retired pre-neutral bundle format. Recreate it with the current host converter; the separate local review log will be preserved."
+            .to_owned()
+    } else {
+        format!("The transferred collection was rejected: {error}")
+    }
+}
+
 fn non_playing_attachments(card: &kobo_flashcards_format::Card) -> String {
     let audio = card
         .attachments
@@ -455,7 +464,7 @@ fn image_for_side(
 }
 
 fn notice_page_count() -> usize {
-    DISTRIBUTION_DOCUMENTS
+    DEVICE_DISTRIBUTION_DOCUMENTS
         .iter()
         .map(|(_, text)| document_page_count(text))
         .sum::<usize>()
@@ -463,7 +472,7 @@ fn notice_page_count() -> usize {
 }
 
 fn notice_page(mut page: usize) -> (&'static str, String) {
-    for (title, text) in DISTRIBUTION_DOCUMENTS {
+    for (title, text) in DEVICE_DISTRIBUTION_DOCUMENTS {
         let pages = document_page_count(text);
         if page < pages {
             let mut start = 0;
@@ -527,21 +536,21 @@ mod tests {
 
     #[test]
     fn compatibility_notice_is_unambiguous() {
-        assert!(NOTICE.contains("unofficial"));
-        assert!(NOTICE.contains("not affiliated"));
-        assert!(NOTICE.contains("source pins"));
+        assert!(NOTICE.contains("Cobalt bundles"));
+        assert!(NOTICE.contains("no linked study-engine code"));
+        assert!(NOTICE.contains("no remote-network capability"));
+        assert!(NOTICE.contains("local runtime IPC"));
     }
 
     #[test]
     fn shipped_notice_pages_include_every_required_document() {
-        assert!(notice_page_count() > DISTRIBUTION_DOCUMENTS.len());
+        assert!(notice_page_count() > DEVICE_DISTRIBUTION_DOCUMENTS.len());
         let all = (0..notice_page_count())
             .map(|page| notice_page(page).1)
             .collect::<String>();
-        assert!(all.contains("9e32ad8849068510a82273889c21b22e1acf0949"));
-        assert!(all.contains("20107044ee1934ffa7479ef969e453eb51f436f0"));
         assert!(all.contains("Apache License"));
-        assert!(all.contains("GNU GENERAL PUBLIC LICENSE"));
+        assert!(all.contains("Flashcards device application dependency notices"));
+        assert!(!all.contains("AGPL-3.0-or-later"));
     }
 
     #[test]
@@ -608,5 +617,12 @@ mod tests {
             image_for_side(&card, true).map(|attachment| attachment.name.as_str()),
             Some("answer.png")
         );
+    }
+
+    #[test]
+    fn legacy_bundle_rejection_explains_the_reimport_path() {
+        let message = bundle_rejection_message(&FormatError::UnsupportedVersion(3));
+        assert!(message.contains("Recreate"));
+        assert!(message.contains("review log will be preserved"));
     }
 }

@@ -1,0 +1,132 @@
+#!/bin/sh
+set -eu
+
+if [ "$#" -ne 1 ]; then
+  echo "usage: scripts/build-flashcards-validation-artifacts.sh TARGET_ROOT" >&2
+  exit 2
+fi
+
+repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+if [ -n "$(git -C "$repo" status --porcelain --untracked-files=normal)" ]; then
+  echo "artifact builds require a clean committed source tree" >&2
+  exit 1
+fi
+source_commit=$(git -C "$repo" rev-parse HEAD)
+
+case $1 in
+  /*) target_root=$1 ;;
+  *) target_root=$(pwd)/$1 ;;
+esac
+mkdir -p "$target_root"
+target_root=$(CDPATH= cd -- "$target_root" && pwd)
+artifacts="$target_root/artifacts"
+device="$target_root/armv7-unknown-linux-musleabihf/release/kobo-flashcards"
+audit_device="$target_root/audit-unstripped/armv7-unknown-linux-musleabihf/release/kobo-flashcards"
+host="$target_root/host-target/release/flashcards-import"
+cli="$target_root/host-tools/release/kobo"
+
+mkdir -p "$artifacts/catalog" "$target_root/build-tmp"
+export TMPDIR="$target_root/build-tmp"
+export CC_armv7_unknown_linux_musleabihf="${CC_armv7_unknown_linux_musleabihf:-armv7-unknown-linux-musleabihf-gcc}"
+export AR_armv7_unknown_linux_musleabihf="${AR_armv7_unknown_linux_musleabihf:-armv7-unknown-linux-musleabihf-ar}"
+
+(
+  cd "$repo"
+  CARGO_TARGET_DIR="$target_root" \
+    cargo build --locked --release \
+    --target armv7-unknown-linux-musleabihf -p kobo-flashcards
+  CARGO_TARGET_DIR="$target_root/audit-unstripped" \
+  CARGO_PROFILE_RELEASE_STRIP=none \
+    cargo build --locked --release \
+    --target armv7-unknown-linux-musleabihf -p kobo-flashcards
+  COBALT_SOURCE_COMMIT="$source_commit" \
+  CARGO_TARGET_DIR="$target_root/host-target" \
+    cargo build --locked --release -p kobo-flashcards-import
+  CARGO_TARGET_DIR="$target_root/host-tools" \
+    cargo build --locked --release -p kobo-cli
+)
+
+if [ -n "$(git -C "$repo" status --porcelain --untracked-files=normal)" ] ||
+  [ "$source_commit" != "$(git -C "$repo" rev-parse HEAD)" ]; then
+  echo "source tree changed during artifact build" >&2
+  exit 1
+fi
+
+python3 - "$repo/apps/catalog.json" "$device" "$artifacts/flashcards.manifest.json" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+catalog = json.loads(Path(sys.argv[1]).read_text())
+app = next(app for app in catalog["apps"] if app["id"] == "flashcards")
+binary = Path(sys.argv[2]).read_bytes()
+manifest = {
+    "format_version": 1,
+    "id": app["id"],
+    "display_name": app["display_name"],
+    "short_label": app["short_label"],
+    "summary": app["summary"],
+    "version": app["version"],
+    "minimum_cobalt_version": app["minimum_cobalt_version"],
+    "glyph": app["glyph"],
+    "capabilities": app["capabilities"],
+    "binary_sha256": hashlib.sha256(binary).hexdigest(),
+    "binary_bytes": len(binary),
+}
+order = [
+    "format_version",
+    "id",
+    "display_name",
+    "short_label",
+    "summary",
+    "version",
+    "minimum_cobalt_version",
+    "glyph",
+    "capabilities",
+    "binary_sha256",
+    "binary_bytes",
+]
+text = "{" + ",".join(
+    json.dumps(key, separators=(",", ":"))
+    + ":"
+    + json.dumps(manifest[key], ensure_ascii=False, separators=(",", ":"))
+    for key in order
+) + "}"
+Path(sys.argv[3]).write_text(text)
+PY
+
+# Public, fixed validation material only. Production runtimes do not trust it.
+seed="$artifacts/.validation-seed.hex"
+trap 'rm -f "$seed" "$artifacts/.flashcards-validation-second.cobalt-app"' EXIT
+printf '%064d\n' 0 | tr '0' '4' > "$seed"
+chmod 600 "$seed"
+
+"$cli" app-bundle \
+  --manifest "$artifacts/flashcards.manifest.json" \
+  --binary "$device" \
+  --seed "$seed" \
+  --out "$artifacts/flashcards-validation.cobalt-app"
+"$cli" app-bundle \
+  --manifest "$artifacts/flashcards.manifest.json" \
+  --binary "$device" \
+  --seed "$seed" \
+  --out "$artifacts/.flashcards-validation-second.cobalt-app"
+cmp "$artifacts/flashcards-validation.cobalt-app" \
+  "$artifacts/.flashcards-validation-second.cobalt-app"
+"$cli" app-key --seed "$seed" > "$artifacts/validation-public-key.txt"
+"$cli" app-catalog \
+  --seed "$seed" \
+  --out "$artifacts/catalog/catalog.json" \
+  --signature "$artifacts/catalog/catalog.sig" \
+  --entry "$artifacts/flashcards-validation.cobalt-app" \
+  "https://example.invalid/flashcards-validation.cobalt-app"
+
+"$host" --notice > "$artifacts/flashcards-import.notice.txt"
+"$host" --licenses > "$artifacts/flashcards-import.licenses.txt"
+printf '%s\n' "$source_commit" > "$artifacts/flashcards-import.source-commit.txt"
+
+rm -f "$seed" "$artifacts/.flashcards-validation-second.cobalt-app"
+trap - EXIT
+
+echo "built validation-only Flashcards artifacts under $target_root"

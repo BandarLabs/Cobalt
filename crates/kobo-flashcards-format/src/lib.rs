@@ -2,10 +2,10 @@
 
 //! The bounded, offline bundle consumed by the Flashcards application.
 //!
-//! This is deliberately not an Anki collection format. Host-side import
-//! validates an Anki package and writes this pathless container; the device
-//! only accepts a digest-checked manifest plus media addressed by validated
-//! names. No HTML, script, path, or URL becomes executable on the reader.
+//! This is a Cobalt-owned neutral format, not a study-engine collection
+//! database. A host converter writes this pathless container; the device only
+//! accepts a digest-checked manifest plus media addressed by validated names.
+//! No HTML, script, path, or URL becomes executable on the reader.
 
 use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
 use serde::{Deserialize, Serialize};
@@ -19,7 +19,8 @@ mod svg;
 pub use svg::{rasterize_svg, validate_svg_source};
 
 pub const MAGIC: [u8; 8] = *b"CBFLASH\0";
-pub const VERSION: u16 = 3;
+pub const VERSION: u16 = 4;
+pub const CONVERTER_REVISION: &str = "cobalt-flashcards-converter-v1";
 pub const HEADER_BYTES: usize = MAGIC.len() + 2 + 4 + 8 + 4 + 8 + 32;
 pub const MAX_BUNDLE_BYTES: u64 = 32 * 1024 * 1024;
 pub const MAX_MANIFEST_BYTES: usize = 16 * 1024 * 1024;
@@ -33,22 +34,16 @@ pub const MAX_REVLOG_ENTRIES: usize = 500_000;
 pub const MAX_REVIEW_LOG_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_REVIEW_LOG_LINE_BYTES: usize = 512;
 
-pub const COMPATIBILITY_NOTICE: &str = include_str!("../../../licenses/NOTICE-Flashcards-Anki.md");
-pub const ANKI_LICENSE: &str = include_str!("../../../licenses/LICENSE-Anki.txt");
-pub const ANKIDROID_LICENSE: &str = include_str!("../../../licenses/LICENSE-AnkiDroid.txt");
+pub const DEVICE_NOTICE: &str = include_str!("../../../licenses/NOTICE-Flashcards-device.md");
 pub const RESVG_LICENSE: &str = include_str!("../../../licenses/LICENSE-resvg.txt");
 pub const DEVICE_DEPENDENCY_LICENSES: &str =
     include_str!("../../../licenses/LICENSE-Flashcards-device-dependencies.txt");
-pub const HOST_DEPENDENCY_LICENSES: &str =
-    include_str!("../../../licenses/LICENSE-Flashcards-host-dependencies.txt");
 pub const ATKINSON_LICENSE: &str =
     include_str!("../../kobo-text/fonts/LICENSE-AtkinsonHyperlegible.txt");
 pub const DEJAVU_LICENSE: &str = include_str!("../../kobo-text/fonts/LICENSE-DejaVu.txt");
 
-pub const DISTRIBUTION_DOCUMENTS: [(&str, &str); 7] = [
-    ("Compatibility notice and source pins", COMPATIBILITY_NOTICE),
-    ("Anki licence", ANKI_LICENSE),
-    ("AnkiDroid licence", ANKIDROID_LICENSE),
+pub const DEVICE_DISTRIBUTION_DOCUMENTS: [(&str, &str); 5] = [
+    ("Flashcards device notice", DEVICE_NOTICE),
     ("resvg licence", RESVG_LICENSE),
     (
         "Flashcards device dependency licences",
@@ -123,7 +118,7 @@ pub struct Source {
     pub last_sync: i64,
     pub note_count: usize,
     pub card_count: usize,
-    pub upstream_anki_revision: String,
+    pub converter_revision: String,
     pub original_config_json: String,
     pub original_models_json: String,
     pub original_decks_json: String,
@@ -679,7 +674,7 @@ fn decompress(bytes: &[u8], expected: usize, label: &str) -> Result<Vec<u8>, For
     Ok(output)
 }
 
-/// NFC-normalizes an Anki media name and rejects every path-like spelling.
+/// NFC-normalizes a source media name and rejects every path-like spelling.
 ///
 /// # Errors
 ///
@@ -902,7 +897,7 @@ fn validate_manifest_shape(manifest: &BundleManifest) -> Result<(), FormatError>
         || manifest.revlog.iter().any(|review| review.id <= 0)
     {
         return Err(FormatError::InvalidManifest(
-            "collection identifiers or scheduling fields are outside Anki's normalized bounds"
+            "collection identifiers or scheduling fields are outside normalized converter bounds"
                 .to_owned(),
         ));
     }
@@ -911,7 +906,7 @@ fn validate_manifest_shape(manifest: &BundleManifest) -> Result<(), FormatError>
 
 fn validate_sources(sources: &[Source]) -> Result<(), FormatError> {
     for source in sources {
-        if source.upstream_anki_revision.is_empty()
+        if source.converter_revision != CONVERTER_REVISION
             || source.note_count > MAX_NOTES
             || source.card_count > MAX_CARDS
         {
@@ -1208,7 +1203,7 @@ mod tests {
             last_sync: 0,
             note_count: 0,
             card_count: 0,
-            upstream_anki_revision: "pinned".to_owned(),
+            converter_revision: CONVERTER_REVISION.to_owned(),
             original_config_json: "{}".to_owned(),
             original_models_json: "{}".to_owned(),
             original_decks_json: "{}".to_owned(),
@@ -1437,5 +1432,15 @@ mod tests {
         .expect("structurally valid bundle");
         let bundle = decode(&encoded).expect("bundle decode");
         assert!(verify_card_images(&bundle, &[1]).is_err());
+    }
+
+    #[test]
+    fn neutral_bundles_require_the_cobalt_converter_identifier() {
+        let mut manifest = single_card_manifest();
+        manifest.sources[0].converter_revision = "foreign-converter-revision".to_owned();
+        assert!(matches!(
+            encode(manifest, BTreeMap::new()),
+            Err(FormatError::InvalidManifest(_))
+        ));
     }
 }

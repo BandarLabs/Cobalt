@@ -1,10 +1,61 @@
 # Flashcards package compatibility
 
-Flashcards is unofficial, offline Anki-package compatibility software. It is
-not affiliated with, endorsed by, or sponsored by Ankitects, Anki, AnkiDroid,
-or AnkiWeb. It includes no upstream logo or artwork. Exact source pins, full
-licence texts, dependency notices, and distribution requirements are in
+`flashcards-import` is an unofficial host-only converter for the explicitly
+listed legacy Anki package subset. It is not affiliated with, endorsed by, or
+sponsored by Ankitects, Anki, or AnkiWeb and includes no upstream logo or
+artwork. It does not claim complete package or application compatibility.
+Exact host source pins, full licence texts, dependency notices, and
+distribution requirements are in
 [`licenses/NOTICE-Flashcards-Anki.md`](../licenses/NOTICE-Flashcards-Anki.md).
+
+## Artifact boundary
+
+Pinned Anki rslib, `anki_i18n`, and supporting Anki Rust packages are linked
+only into the host converter. The converter outputs a documented,
+Cobalt-owned `CBFLASH` version 4 bundle containing normalized metadata,
+rendered text, scheduling state, and bounded media. That bundle is not an Anki
+database or executable format. Original collection/notetype/template JSON is
+preserved as inert reconciliation metadata; the device does not execute,
+interpret, or resolve it.
+
+The Kobo `.cobalt-app` parses only `CBFLASH`. It contains no linked Anki code,
+does no collection migration or card-template execution, and requests no
+remote-network capability. It necessarily uses Cobalt's local Unix-domain IPC
+transport to communicate with the device runtime; that is not internet access.
+Anki AGPL/source notices therefore ship with the host helper only. The device
+Notices screen contains only resvg, font, Cobalt, and resolved
+device-dependency terms for code/assets present in that binary.
+
+Pre-neutral `CBFLASH` version 3 is intentionally rejected rather than accepted
+with its host source pin still embedded. Re-import the original APKG/COLPKG
+with the current host converter and stage the resulting version-4 bundle. The
+separate owner-local review log is preserved by that replacement.
+
+Build the complete validation artifact set with the repository's configured
+`rust-lld` device linker, then audit it:
+
+```sh
+target_root=/path/to/flashcards-target-root
+scripts/build-flashcards-validation-artifacts.sh "$target_root"
+scripts/audit-flashcards-artifacts.sh "$target_root"
+```
+
+The build script varies only symbol stripping between production and audit
+device builds; both use `.cargo/config.toml`'s `rust-lld`. The fixed validation
+signing material is public, removed immediately, and is not trusted by
+production runtimes. The script requires a clean committed checkout so the
+host helper and `flashcards-import.source-commit.txt` can carry the exact
+Cobalt source revision.
+
+The audit checks the device Cargo dependency closure, a required unstripped
+static ARM ELF's symbols, production package strings, empty Store capability
+list, and absence of known high-level remote-network implementation symbols.
+It does not claim generic socket primitives are absent: those primitives are
+required by Cobalt's Unix-domain runtime transport and cannot identify an
+address family by symbol name alone. The empty signed capability list is the
+enforced remote-network boundary. The audit separately proves the host helper
+contains pinned Anki rslib/i18n plus the complete AGPL notice, source revision,
+and corresponding-source instructions.
 
 ## Exact supported package boundary
 

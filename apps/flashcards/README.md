@@ -1,10 +1,14 @@
 # Flashcards
 
-Flashcards reviews an offline `collection.cobfc` bundle in its private Kobo
-shelf. It is unofficial Anki-package compatibility software and is not
-affiliated with Ankitects or AnkiDroid, and it uses no upstream logo. See
-[`licenses/NOTICE-Flashcards-Anki.md`](../../licenses/NOTICE-Flashcards-Anki.md)
-for exact source pins, licences, dependency notices, and distribution terms.
+Flashcards reviews a Cobalt-owned neutral `collection.cobfc` bundle in its
+private Kobo shelf. The device application contains no linked study-engine
+code, collection migration logic, upstream logo, or remote-network capability.
+It uses only Cobalt's required local Unix-domain runtime IPC.
+
+The separate host converter accepts only the legacy package subset documented
+in [`docs/FLASHCARDS_COMPATIBILITY.md`](../../docs/FLASHCARDS_COMPATIBILITY.md)
+and uses pinned Anki rslib there. Its exact source and AGPL obligations are
+host-artifact notices, not device-package notices.
 
 Prepare and stage a collection on the host, with the Kobo USB volume mounted
 at `MOUNT` and Flashcards closed:
@@ -21,6 +25,9 @@ The staging command copies only to the fixed private shelf entry
 chunks with a digest-checked resume record and atomically replaces the final
 entry only after fully validating the bundle. The application reads that one
 validated name and refuses corrupt, unbounded, or path-addressable content.
+Pre-neutral version-3 bundles are intentionally rejected: rerun the current
+host import and stage commands to create version 4. The separately stored local
+review log is not replaced.
 
 The host derives the due queue, deck order/limits, cloze ordinals, both rendered
 sides, and side-specific media references from pinned Anki rslib. The device
@@ -40,6 +47,7 @@ after reveal. A card side with more than one rendered image is rejected on the
 host rather than silently dropping or reordering images for the app's single
 image slot.
 
-Choose **Notices** on the question screen to read the non-affiliation notice,
-exact source pins, full Anki/AnkiDroid/resvg terms, font terms, and resolved
-device dependency notices embedded in every `.cobalt-app` executable.
+Choose **Notices** on the question screen to read the device notice,
+resvg/font terms, and resolved device dependency notices embedded in every
+`.cobalt-app` executable. Anki source and licence notices are intentionally
+absent because the device binary does not link Anki code.

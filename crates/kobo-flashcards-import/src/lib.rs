@@ -18,8 +18,8 @@ use kobo_flashcards_format::{
     validate_review_log, validate_svg_source, verify_card_images, Attachment, AttachmentKind,
     BundleManifest, Card, CollectionConfig, CollectionTag, Deck, DeckConfiguration, DeckQueue,
     Diagnostic, FormatError, Grave, Note as BundleNote, NoteType, ReviewLog, ReviewQueue, Source,
-    MAX_BUNDLE_BYTES, MAX_CARDS, MAX_MEDIA_BYTES, MAX_MEDIA_ENTRIES, MAX_PAYLOAD_BYTES,
-    MAX_REVIEW_QUEUE_CARDS,
+    CONVERTER_REVISION, MAX_BUNDLE_BYTES, MAX_CARDS, MAX_MEDIA_BYTES, MAX_MEDIA_ENTRIES,
+    MAX_PAYLOAD_BYTES, MAX_REVIEW_QUEUE_CARDS,
 };
 use rusqlite::Connection;
 use serde::de::{MapAccess, Visitor};
@@ -898,7 +898,7 @@ fn read_original_source(
                     last_sync: row.get(7)?,
                     note_count: 0,
                     card_count: 0,
-                    upstream_anki_revision: UPSTREAM_ANKI_REVISION.to_owned(),
+                    converter_revision: CONVERTER_REVISION.to_owned(),
                     original_config_json: row.get(8)?,
                     original_models_json: row.get(9)?,
                     original_decks_json: row.get(10)?,
@@ -2383,7 +2383,7 @@ mod tests {
             last_sync: 0,
             note_count: 0,
             card_count: 0,
-            upstream_anki_revision: UPSTREAM_ANKI_REVISION.to_owned(),
+            converter_revision: CONVERTER_REVISION.to_owned(),
             original_config_json: "{}".to_owned(),
             original_models_json: "{}".to_owned(),
             original_decks_json: "{}".to_owned(),

@@ -1,13 +1,35 @@
 #![forbid(unsafe_code)]
 
-use kobo_flashcards_format::{DISTRIBUTION_DOCUMENTS, HOST_DEPENDENCY_LICENSES};
+use kobo_flashcards_format::{ATKINSON_LICENSE, DEJAVU_LICENSE, RESVG_LICENSE};
 use kobo_flashcards_import::{
     export_local_review_log, import, stage_for_kobo, verify_bundle, ImportMode, ImportOptions,
 };
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-const NOTICE: &str = "Flashcards is unofficial Anki-package compatibility software and is not affiliated with Ankitects or AnkiDroid. It contains no upstream logos. Anki is AGPL-3.0-or-later; AnkiDroid is GPL-3.0-or-later. See licenses/NOTICE-Flashcards-Anki.md.";
+const NOTICE: &str = "flashcards-import is an unofficial host-only converter for the documented legacy Anki package subset. It links pinned Anki rslib under AGPL-3.0-or-later, is not affiliated with Ankitects, and contains no upstream logos. Its Cobalt bundle output is neutral and the Kobo app links no Anki code.";
+const ANKI_NOTICE: &str = include_str!("../../../licenses/NOTICE-Flashcards-Anki.md");
+const ANKI_LICENSE: &str = include_str!("../../../licenses/LICENSE-Anki.txt");
+const ANKI_SOURCE: &str = include_str!("../../../licenses/SOURCE-Flashcards-Anki.md");
+const HOST_DEPENDENCY_LICENSES: &str =
+    include_str!("../../../licenses/LICENSE-Flashcards-host-dependencies.txt");
+const COBALT_SOURCE_COMMIT: &str = match option_env!("COBALT_SOURCE_COMMIT") {
+    Some(commit) => commit,
+    None => "unrecorded-development-build",
+};
+const HOST_DISTRIBUTION_DOCUMENTS: [(&str, &str); 8] = [
+    ("Host converter notice", ANKI_NOTICE),
+    ("Anki licence", ANKI_LICENSE),
+    ("Anki corresponding source", ANKI_SOURCE),
+    ("Cobalt source commit", COBALT_SOURCE_COMMIT),
+    ("resvg licence", RESVG_LICENSE),
+    ("Atkinson Hyperlegible licence", ATKINSON_LICENSE),
+    ("DejaVu licence", DEJAVU_LICENSE),
+    (
+        "Flashcards host helper dependency licences",
+        HOST_DEPENDENCY_LICENSES,
+    ),
+];
 
 fn main() -> ExitCode {
     match run(&std::env::args().skip(1).collect::<Vec<_>>()) {
@@ -25,16 +47,13 @@ fn run(arguments: &[String]) -> Result<(), String> {
         return Ok(());
     }
     if arguments == ["--licenses"] {
-        for (title, text) in DISTRIBUTION_DOCUMENTS {
+        for (title, text) in HOST_DISTRIBUTION_DOCUMENTS {
             println!(
                 "==============================================================================="
             );
             println!("{title}");
             println!("===============================================================================\n{text}");
         }
-        println!("===============================================================================");
-        println!("Flashcards host helper dependency licences");
-        println!("===============================================================================\n{HOST_DEPENDENCY_LICENSES}");
         return Ok(());
     }
     if matches!(arguments, [operation, _] if operation == "verify") {
@@ -159,14 +178,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn notice_is_explicit_about_affiliation_and_licenses() {
+    fn host_notice_is_complete_and_artifact_scoped() {
         assert!(NOTICE.contains("unofficial"));
         assert!(NOTICE.contains("not affiliated"));
         assert!(NOTICE.contains("AGPL-3.0-or-later"));
-        assert!(NOTICE.contains("GPL-3.0-or-later"));
-        assert!(DISTRIBUTION_DOCUMENTS
+        assert!(NOTICE.contains("Kobo app links no Anki code"));
+        assert!(HOST_DISTRIBUTION_DOCUMENTS
             .iter()
             .all(|(_, document)| !document.is_empty()));
-        assert!(!HOST_DEPENDENCY_LICENSES.is_empty());
+        assert!(ANKI_SOURCE.contains("9e32ad8849068510a82273889c21b22e1acf0949"));
     }
 }

@@ -68,23 +68,26 @@ Both permit embedding and redistribution. The OFL forbids selling the font on
 its own and requires the reserved name to be kept, which embedding does not
 touch.
 
-## Flashcards compatibility research
+## Flashcards host conversion
 
-Flashcards is unofficial, offline compatibility software. It is not affiliated
-with Ankitects, Anki, AnkiDroid, or AnkiWeb and uses no upstream logo or
-artwork. The host helper links Anki rslib at its exact pinned revision;
-AnkiDroid was used for compatibility research only. Their AGPL/GPL terms,
-resvg source pin, exact revisions, and distribution requirements are in
+The host-only converter is unofficial and is not affiliated with Ankitects,
+Anki, or AnkiWeb. It uses no upstream logo or artwork. It links Anki rslib and
+its i18n/proto support at one exact pinned revision. The Anki AGPL terms, resvg
+source pin, exact revision, and host distribution requirements are in
 [`licenses/NOTICE-Flashcards-Anki.md`](licenses/NOTICE-Flashcards-Anki.md).
-Full Anki and AnkiDroid terms are in `licenses/LICENSE-Anki.txt` and
-`licenses/LICENSE-AnkiDroid.txt`. Exact resolved dependency notices for the
-host helper and device app are in
+Full Anki terms and corresponding-source instructions are in
+`licenses/LICENSE-Anki.txt` and `licenses/SOURCE-Flashcards-Anki.md`.
+
+The Kobo app consumes a Cobalt-owned neutral bundle and links no Anki code.
+Consequently its package intentionally omits the Anki source/licence notice.
+Exact resolved dependency notices for the host helper and device app are in
 `licenses/LICENSE-Flashcards-host-dependencies.txt` and
 `licenses/LICENSE-Flashcards-device-dependencies.txt`. These texts are embedded
-in the corresponding executable artifacts; the app exposes them as paged
-notices and the host helper prints them with `--licenses`. Regenerate both
-deterministically with `scripts/generate-flashcards-licenses.py`; its accepted
-SPDX policy is scoped in `licenses/flashcards-about.toml`.
+only in the corresponding artifacts; the app exposes its device notices as
+paged text and the host helper prints its host notices with `--licenses`.
+Regenerate both deterministically with
+`scripts/generate-flashcards-licenses.py`; its accepted SPDX policy is scoped
+in `licenses/flashcards-about.toml`.
 
 ## Flashcards SVG rendering
 
