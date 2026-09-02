@@ -2501,23 +2501,36 @@ fn workspace_manifest() -> PathBuf {
 ///
 /// Pinning it to this manifest means an uploaded artifact always comes from the
 /// reviewed source tree rather than whatever workspace the caller stood in.
-/// Honouring `CARGO_TARGET_DIR` keeps cross-build output off constrained disks.
+/// Cargo resolves a relative `CARGO_TARGET_DIR` from its invoking current
+/// directory, not from the manifest's workspace.
 fn workspace_device_binary(name: &str) -> PathBuf {
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let target = env::var_os("CARGO_TARGET_DIR").map_or_else(
+    let invocation = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    configured_target_directory(
+        &workspace,
+        &invocation,
+        env::var_os("CARGO_TARGET_DIR").as_deref(),
+    )
+    .join("armv7-unknown-linux-musleabihf/release")
+    .join(name)
+}
+
+fn configured_target_directory(
+    workspace: &Path,
+    invocation: &Path,
+    configured: Option<&OsStr>,
+) -> PathBuf {
+    configured.map_or_else(
         || workspace.join("target"),
         |target| {
-            let target = PathBuf::from(target);
+            let target = Path::new(target);
             if target.is_absolute() {
-                target
+                target.to_path_buf()
             } else {
-                workspace.join(target)
+                invocation.join(target)
             }
         },
-    );
-    target
-        .join("armv7-unknown-linux-musleabihf/release")
-        .join(name)
+    )
 }
 
 fn workspace_doctor_binary() -> PathBuf {
@@ -5677,12 +5690,12 @@ mod tests {
 
     use super::package;
     use super::{
-        build_executables, canonical, is_device_flag, manifest_uses_sdk, normalise_secret_value,
-        parse_deploy, parse_devices, parse_logs, parse_touch_probe, unreachable_device,
-        valid_device_host, valid_slug, verify_arm_elf, wait_for_remote_child,
-        workspace_doctor_binary, DevSessionGuard, RemoteArtifact, SimulationGuard, ALIASES,
-        DEFAULT_TRACE_LINES, DEPLOY_TIMEOUT, DEVICE_PACKAGES, TOUCH_PROBE_DEFAULT_SECONDS,
-        TOUCH_PROBE_MAXIMUM_SECONDS,
+        build_executables, canonical, configured_target_directory, is_device_flag,
+        manifest_uses_sdk, normalise_secret_value, parse_deploy, parse_devices, parse_logs,
+        parse_touch_probe, unreachable_device, valid_device_host, valid_slug, verify_arm_elf,
+        wait_for_remote_child, workspace_doctor_binary, DevSessionGuard, RemoteArtifact,
+        SimulationGuard, ALIASES, DEFAULT_TRACE_LINES, DEPLOY_TIMEOUT, DEVICE_PACKAGES,
+        TOUCH_PROBE_DEFAULT_SECONDS, TOUCH_PROBE_MAXIMUM_SECONDS,
     };
     #[cfg(feature = "device-write")]
     use super::{
@@ -6243,6 +6256,34 @@ mod tests {
         #[cfg(feature = "device-write")]
         assert!(
             workspace_smoke_binary().ends_with("armv7-unknown-linux-musleabihf/release/kobo-smoke")
+        );
+    }
+
+    #[test]
+    fn relative_cargo_target_dir_resolves_from_the_build_invocation() {
+        let workspace = PathBuf::from("/source/cobalt");
+        let invocation = PathBuf::from("/runner/jobs/package");
+        let relative = std::ffi::OsStr::new("../../cobalt-targets");
+        let resolved = configured_target_directory(&workspace, &invocation, Some(relative));
+        assert_eq!(resolved, invocation.join(relative));
+        assert_ne!(resolved, workspace.join(relative));
+        assert_eq!(
+            resolved.join("armv7-unknown-linux-musleabihf/release/kobod"),
+            invocation
+                .join(relative)
+                .join("armv7-unknown-linux-musleabihf/release/kobod")
+        );
+        assert_eq!(
+            configured_target_directory(&workspace, &invocation, None),
+            workspace.join("target")
+        );
+        assert_eq!(
+            configured_target_directory(
+                &workspace,
+                &invocation,
+                Some(std::ffi::OsStr::new("/external/cobalt-targets"))
+            ),
+            PathBuf::from("/external/cobalt-targets")
         );
     }
 
