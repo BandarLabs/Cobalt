@@ -5,7 +5,7 @@ use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
     action_id, ActionId, BatteryDetail, BluetoothDevice, Context, DeviceIdentity, DeviceRequest,
     DeviceResult, Glyph, Heartbeat, KoboApp, RowLead, Screen, ScreenBuilder, Task, TaskId,
-    TaskOutcome, WifiNetwork,
+    TaskOutcome, UpdateChannel, WifiNetwork,
 };
 use std::process::ExitCode;
 
@@ -20,6 +20,7 @@ const CLOSE: &str = "close";
 const TOGGLE: &str = "toggle";
 const AUTO_COBALT: &str = "auto-cobalt";
 const AUTO_APPS: &str = "auto-apps";
+const BETA_UPDATES: &str = "beta-updates";
 const RESCAN: &str = "rescan";
 const MORE: &str = "more";
 const PREVIOUS: &str = "previous";
@@ -37,6 +38,7 @@ const NETWORK_ACTIONS: [&str; 10] = [
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Where releases are published.
 const RELEASES: &str = "https://api.github.com/repos/BandarLabs/Cobalt/releases/latest";
+const BETA_RELEASES: &str = "https://api.github.com/repos/BandarLabs/Cobalt/releases?per_page=100";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum View {
@@ -86,8 +88,13 @@ enum Pending {
 enum UpdateFlow {
     #[default]
     Idle,
-    Checking,
+    Checking {
+        channel: UpdateChannel,
+    },
     UpToDate {
+        latest: String,
+    },
+    Ahead {
         latest: String,
     },
     /// The release is newer; its digest file is being fetched so the
@@ -156,6 +163,8 @@ fn update_screen_owns(request: &DeviceRequest) -> bool {
         DeviceRequest::Update { .. }
             | DeviceRequest::ReadAutoUpdate
             | DeviceRequest::SetAutoUpdate { .. }
+            | DeviceRequest::ReadUpdateChannel
+            | DeviceRequest::SetUpdateChannel { .. }
     )
 }
 
@@ -186,6 +195,7 @@ struct Settings {
     /// until the first reply, so the switches are drawn from a real answer
     /// rather than a guess that a tap would then contradict.
     auto_update: Option<(bool, bool)>,
+    update_channel: Option<UpdateChannel>,
     pending: Option<Pending>,
     delayed: Option<TaskId>,
     trouble: Option<(Topic, String)>,
@@ -294,8 +304,9 @@ impl Settings {
     fn update_summary(&self) -> String {
         match &self.update {
             UpdateFlow::Idle => format!("Cobalt {VERSION}"),
-            UpdateFlow::Checking | UpdateFlow::Digest { .. } => "Checking".to_owned(),
+            UpdateFlow::Checking { .. } | UpdateFlow::Digest { .. } => "Checking".to_owned(),
             UpdateFlow::UpToDate { .. } => "Up to date".to_owned(),
+            UpdateFlow::Ahead { .. } => "Newer than this channel".to_owned(),
             UpdateFlow::Ready { version, .. } => format!("{version} available"),
             UpdateFlow::Installing { .. } => "Installing".to_owned(),
             UpdateFlow::Installed { version } => format!("Updated to {version}"),
@@ -314,7 +325,7 @@ impl Settings {
                     .text("Checking asks GitHub for the newest published release. Nothing is downloaded until you choose to install it.")
                     .button(CHECK, "Check for updates");
             }
-            UpdateFlow::Checking | UpdateFlow::Digest { .. } => {
+            UpdateFlow::Checking { .. } | UpdateFlow::Digest { .. } => {
                 screen = screen
                     .section_with_value("Installed", VERSION)
                     .text("Checking for the newest release.");
@@ -323,6 +334,12 @@ impl Settings {
                 screen = screen
                     .section_with_value("Installed", VERSION)
                     .text(format!("{latest} is the newest published release, and it is what this reader is running."))
+                    .button(CHECK, "Check again");
+            }
+            UpdateFlow::Ahead { latest } => {
+                screen = screen
+                    .section_with_value("Installed", VERSION)
+                    .text(format!("{latest} is the newest release on this channel. This reader is already running a newer version, so nothing is downgraded."))
                     .button(CHECK, "Check again");
             }
             UpdateFlow::Ready { version, .. } => {
@@ -365,37 +382,63 @@ impl Settings {
         // be tapped into recording the opposite of what it showed.
         if matches!(
             self.update,
-            UpdateFlow::Idle | UpdateFlow::UpToDate { .. } | UpdateFlow::Failed(_)
+            UpdateFlow::Idle
+                | UpdateFlow::UpToDate { .. }
+                | UpdateFlow::Ahead { .. }
+                | UpdateFlow::Failed(_)
         ) {
-            if let Some((cobalt, apps)) = self.auto_update {
-                screen = screen
-                    .section_with_value(
-                        "Update Cobalt automatically",
-                        if cobalt { "On" } else { "Off" },
-                    )
-                    .button(
-                        AUTO_COBALT,
-                        if cobalt {
-                            "Stop updating Cobalt automatically"
-                        } else {
-                            "Update Cobalt automatically"
-                        },
-                    )
-                    .section_with_value(
-                        "Update apps automatically",
-                        if apps { "On" } else { "Off" },
-                    )
-                    .button(
-                        AUTO_APPS,
-                        if apps {
-                            "Stop updating apps automatically"
-                        } else {
-                            "Update apps automatically"
-                        },
-                    );
-            }
+            screen = self.auto_update_controls(screen);
         }
         screen.build()
+    }
+
+    fn auto_update_controls(&self, mut screen: ScreenBuilder) -> ScreenBuilder {
+        let (Some((cobalt, apps)), Some(channel)) = (self.auto_update, self.update_channel) else {
+            return screen;
+        };
+        screen = screen
+            .section_with_value(
+                "Beta updates",
+                if channel == UpdateChannel::Beta {
+                    "On"
+                } else {
+                    "Off"
+                },
+            )
+            .text("Gets prerelease Cobalt and Store app updates. Turning it off uses stable for future checks; installed apps stay and nothing is downgraded.")
+            .button(
+                BETA_UPDATES,
+                if channel == UpdateChannel::Beta {
+                    "Use stable updates"
+                } else {
+                    "Get beta updates"
+                },
+            )
+            .section_with_value(
+                "Update Cobalt automatically",
+                if cobalt { "On" } else { "Off" },
+            )
+            .button(
+                AUTO_COBALT,
+                if cobalt {
+                    "Stop updating Cobalt automatically"
+                } else {
+                    "Update Cobalt automatically"
+                },
+            )
+            .section_with_value(
+                "Update apps automatically",
+                if apps { "On" } else { "Off" },
+            )
+            .button(
+                AUTO_APPS,
+                if apps {
+                    "Stop updating apps automatically"
+                } else {
+                    "Update apps automatically"
+                },
+            );
+        screen
     }
 
     fn bluetooth(&self) -> Screen {
@@ -709,17 +752,30 @@ impl Settings {
         context.device().read_wifi();
         context.device().read_battery_detail();
         context.device().read_auto_update();
+        context.device().read_update_channel();
     }
 
     /// Asks GitHub what the newest published release is. Nothing is
     /// downloaded beyond the release description until the reader chooses to
     /// install.
     fn check_for_update(&mut self, context: &mut Context) {
-        self.update = UpdateFlow::Checking;
+        let Some(channel) = self.update_channel else {
+            self.update =
+                UpdateFlow::Failed("Update preferences are still loading. Try again.".to_owned());
+            return;
+        };
+        self.update = UpdateFlow::Checking { channel };
         self.update_task = context.spawn(Task::Fetch {
-            url: RELEASES.to_owned(),
+            url: match channel {
+                UpdateChannel::Stable => RELEASES,
+                UpdateChannel::Beta => BETA_RELEASES,
+            }
+            .to_owned(),
             offset: 0,
-            max_bytes: 256 * 1024,
+            max_bytes: match channel {
+                UpdateChannel::Stable => 256 * 1024,
+                UpdateChannel::Beta => 1024 * 1024,
+            },
             credential: None,
             headers: Vec::new(),
         });
@@ -733,12 +789,20 @@ impl Settings {
     /// until the runtime has answered the first read: a switch drawn from a
     /// guess must not be flippable into recording the opposite of what it
     /// showed.
-    fn flip_auto_update(&self, context: &mut Context, cobalt_switch: bool) {
+    fn flip_auto_update(&self, context: &mut Context, choice: &str) {
         if let Some((cobalt, apps)) = self.auto_update {
-            if cobalt_switch {
-                context.device().set_auto_update(!cobalt, apps);
-            } else {
-                context.device().set_auto_update(cobalt, !apps);
+            match choice {
+                AUTO_COBALT => context.device().set_auto_update(!cobalt, apps),
+                AUTO_APPS => context.device().set_auto_update(cobalt, !apps),
+                BETA_UPDATES => {
+                    if let Some(channel) = self.update_channel {
+                        context.device().set_update_channel(match channel {
+                            UpdateChannel::Stable => UpdateChannel::Beta,
+                            UpdateChannel::Beta => UpdateChannel::Stable,
+                        });
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -771,7 +835,7 @@ impl Settings {
     fn took_update_reply(&mut self, context: &mut Context, bytes: &[u8]) {
         let body = String::from_utf8_lossy(bytes);
         match self.update.clone() {
-            UpdateFlow::Checking => match latest_release(&body) {
+            UpdateFlow::Checking { channel } => match latest_release(&body, channel) {
                 Err(reason) => self.update = UpdateFlow::Failed(reason),
                 Ok(release) if release.newer_than(VERSION) => {
                     self.update_task = context.spawn(Task::Fetch {
@@ -788,6 +852,11 @@ impl Settings {
                             version: release.version,
                             url: release.archive,
                         }
+                    };
+                }
+                Ok(release) if release.older_than(VERSION) => {
+                    self.update = UpdateFlow::Ahead {
+                        latest: release.version,
                     };
                 }
                 Ok(release) => {
@@ -915,6 +984,14 @@ impl Settings {
             self.show(context);
         }
     }
+
+    fn took_update_channel(&mut self, request: &DeviceRequest, channel: UpdateChannel) {
+        self.update_channel = Some(channel);
+        if matches!(request, DeviceRequest::SetUpdateChannel { .. }) {
+            self.update = UpdateFlow::Idle;
+            self.update_task = None;
+        }
+    }
 }
 
 impl KoboApp for Settings {
@@ -956,9 +1033,11 @@ impl KoboApp for Settings {
         } else if action == action_id(INSTALL) {
             self.install_update(context);
         } else if action == action_id(AUTO_COBALT) {
-            self.flip_auto_update(context, true);
+            self.flip_auto_update(context, AUTO_COBALT);
         } else if action == action_id(AUTO_APPS) {
-            self.flip_auto_update(context, false);
+            self.flip_auto_update(context, AUTO_APPS);
+        } else if action == action_id(BETA_UPDATES) {
+            self.flip_auto_update(context, BETA_UPDATES);
         } else if action == action_id(CLOSE) && matches!(self.update, UpdateFlow::Installed { .. })
         {
             context.exit();
@@ -1055,6 +1134,9 @@ impl KoboApp for Settings {
             }
             DeviceResult::AutoUpdate { cobalt, apps } => {
                 self.auto_update = Some((cobalt, apps));
+            }
+            DeviceResult::UpdateChannel(channel) => {
+                self.took_update_channel(&request, channel);
             }
             DeviceResult::Identity(identity) => {
                 self.identity = Some(identity);
@@ -1195,6 +1277,13 @@ impl Release {
             _ => false,
         }
     }
+
+    fn older_than(&self, installed: &str) -> bool {
+        match (numbers(&self.version), numbers(installed)) {
+            (Some(latest), Some(installed)) => latest < installed,
+            _ => false,
+        }
+    }
 }
 
 fn numbers(version: &str) -> Option<(u64, u64, u64)> {
@@ -1209,17 +1298,35 @@ fn archive_name(version: &str) -> String {
     format!("cobalt-{version}-KoboRoot.tgz")
 }
 
-/// Reads the GitHub "latest release" reply down to the two URLs this device
-/// needs. The failure strings face the reader, so they say what is missing
-/// rather than where in the JSON it was not.
-fn latest_release(body: &str) -> Result<Release, String> {
+/// Reads the selected GitHub release feed down to the two URLs this device
+/// needs. Beta selection is by numeric version rather than response order.
+fn latest_release(body: &str, channel: UpdateChannel) -> Result<Release, String> {
     let value = kobo_json::parse(body)
         .map_err(|_| "GitHub sent something that is not a release.".to_owned())?;
+    match channel {
+        UpdateChannel::Stable => stable_release(&value),
+        UpdateChannel::Beta => value
+            .as_array()
+            .and_then(|releases| {
+                releases
+                    .iter()
+                    .filter_map(|release| release_value(release, "beta-v", true))
+                    .max_by_key(|release| numbers(&release.version))
+            })
+            .ok_or_else(|| "GitHub has no valid beta release for this reader.".to_owned()),
+    }
+}
+
+fn stable_release(value: &Value) -> Result<Release, String> {
     let tag = value
         .get("tag_name")
         .and_then(Value::as_str)
         .ok_or_else(|| "The newest release does not name a version.".to_owned())?;
-    let version = tag.trim_start_matches('v').to_owned();
+    let version = tag
+        .strip_prefix('v')
+        .filter(|version| numbers(version).is_some())
+        .ok_or_else(|| "The newest release does not name a valid version.".to_owned())?
+        .to_owned();
     let empty = [];
     let assets = value
         .get("assets")
@@ -1231,6 +1338,7 @@ fn latest_release(body: &str) -> Result<Release, String> {
             .find(|asset| asset.get("name").and_then(Value::as_str) == Some(name))
             .and_then(|asset| asset.get("browser_download_url"))
             .and_then(Value::as_str)
+            .filter(|url| valid_release_url(url))
             .map(str::to_owned)
     };
     let archive = url_of(&archive_name(&version))
@@ -1242,6 +1350,43 @@ fn latest_release(body: &str) -> Result<Release, String> {
         archive,
         digest,
     })
+}
+
+fn release_value(value: &Value, tag_prefix: &str, prerelease: bool) -> Option<Release> {
+    if value.get("draft").and_then(Value::as_bool).unwrap_or(false)
+        || value
+            .get("prerelease")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+            != prerelease
+    {
+        return None;
+    }
+    let version = value
+        .get("tag_name")
+        .and_then(Value::as_str)?
+        .strip_prefix(tag_prefix)?
+        .to_owned();
+    numbers(&version)?;
+    let assets = value.get("assets").and_then(Value::as_array)?;
+    let url_of = |name: &str| {
+        assets
+            .iter()
+            .find(|asset| asset.get("name").and_then(Value::as_str) == Some(name))
+            .and_then(|asset| asset.get("browser_download_url"))
+            .and_then(Value::as_str)
+            .filter(|url| valid_release_url(url))
+            .map(str::to_owned)
+    };
+    Some(Release {
+        archive: url_of(&archive_name(&version))?,
+        digest: url_of(&format!("cobalt-{version}.sha256"))?,
+        version,
+    })
+}
+
+fn valid_release_url(url: &str) -> bool {
+    url.starts_with("https://") && url.len() <= kobo_sdk::MAX_URL_LEN
 }
 
 /// Finds the digest vouching for `asset` in a `sha256sum` style listing:
@@ -1307,12 +1452,13 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        RadioState, Settings, View, AUTO_APPS, AUTO_COBALT, DEVICE_ACTIONS, MORE, NETWORK_ACTIONS,
-        PREVIOUS, RESCAN,
+        RadioState, Settings, View, AUTO_APPS, AUTO_COBALT, BETA_UPDATES, DEVICE_ACTIONS, MORE,
+        NETWORK_ACTIONS, PREVIOUS, RESCAN,
     };
     use kobo_sdk::{
         action_id, BannerLevel, BatteryDetail, BluetoothDevice, BluetoothDeviceKind, Chrome,
-        DeviceIdentity, Emphasis, Glyph, Node, WifiNetwork, CLARA_BW_METRICS,
+        DeviceIdentity, DeviceRequest, Emphasis, Glyph, Node, UpdateChannel, WifiNetwork,
+        CLARA_BW_METRICS,
     };
 
     fn bluetooth_device(index: usize) -> BluetoothDevice {
@@ -1330,6 +1476,7 @@ mod tests {
         let settings = Settings {
             view: View::Update,
             auto_update: Some((true, false)),
+            update_channel: Some(UpdateChannel::Beta),
             ..Settings::default()
         };
         let screen = settings.update();
@@ -1338,6 +1485,10 @@ mod tests {
         let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
         assert!(layout.rect_of_action(action_id(AUTO_COBALT)).is_some());
         assert!(layout.rect_of_action(action_id(AUTO_APPS)).is_some());
+        assert!(layout.rect_of_action(action_id(BETA_UPDATES)).is_some());
+        let text = text_of(&screen);
+        assert!(text.contains("prerelease Cobalt and Store app updates"));
+        assert!(text.contains("nothing is downgraded"));
     }
 
     #[test]
@@ -1351,6 +1502,43 @@ mod tests {
             .layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
         assert!(layout.rect_of_action(action_id(AUTO_COBALT)).is_none());
         assert!(layout.rect_of_action(action_id(AUTO_APPS)).is_none());
+        assert!(layout.rect_of_action(action_id(BETA_UPDATES)).is_none());
+    }
+
+    #[test]
+    fn an_installed_beta_ahead_of_stable_is_not_reported_as_the_stable_version() {
+        let settings = Settings {
+            view: View::Update,
+            update: super::UpdateFlow::Ahead {
+                latest: "0.3.1".to_owned(),
+            },
+            ..Settings::default()
+        };
+        let text = text_of(&settings.update());
+        assert!(text.contains("already running a newer version"));
+        assert!(text.contains("nothing is downgraded"));
+        assert!(!text.contains("it is what this reader is running"));
+    }
+
+    #[test]
+    fn changing_channels_clears_only_status_from_the_previous_channel() {
+        let mut settings = Settings {
+            update: super::UpdateFlow::Ahead {
+                latest: "0.3.1".to_owned(),
+            },
+            ..Settings::default()
+        };
+        settings.took_update_channel(&DeviceRequest::ReadUpdateChannel, UpdateChannel::Stable);
+        assert!(matches!(settings.update, super::UpdateFlow::Ahead { .. }));
+
+        settings.took_update_channel(
+            &DeviceRequest::SetUpdateChannel {
+                channel: UpdateChannel::Beta,
+            },
+            UpdateChannel::Beta,
+        );
+        assert_eq!(settings.update_channel, Some(UpdateChannel::Beta));
+        assert_eq!(settings.update, super::UpdateFlow::Idle);
     }
 
     #[test]
@@ -1633,6 +1821,12 @@ mod tests {
             cobalt: true,
             apps: false,
         }));
+        assert!(super::update_screen_owns(&DeviceRequest::ReadUpdateChannel));
+        assert!(super::update_screen_owns(
+            &DeviceRequest::SetUpdateChannel {
+                channel: UpdateChannel::Beta,
+            }
+        ));
         assert!(
             super::Topic::of(&DeviceRequest::ReadAutoUpdate).is_none(),
             "auto-update trouble may not appear under an unrelated row"
@@ -1659,7 +1853,8 @@ mod tests {
 
     #[test]
     fn a_release_is_read_down_to_the_two_urls_this_reader_needs() {
-        let release = super::latest_release(&release_json("9.9.9", true)).expect("a full release");
+        let release = super::latest_release(&release_json("9.9.9", true), UpdateChannel::Stable)
+            .expect("a full release");
         assert_eq!(release.version, "9.9.9");
         assert_eq!(release.archive, "https://example.test/9.9.9/KoboRoot.tgz");
         assert_eq!(release.digest, "https://example.test/9.9.9/checksums");
@@ -1673,14 +1868,38 @@ mod tests {
 
     #[test]
     fn a_release_without_a_digest_to_verify_against_is_not_offered() {
-        assert!(super::latest_release(&release_json("9.9.9", false))
-            .expect_err("no digest, no offer")
-            .contains("digest"));
+        assert!(
+            super::latest_release(&release_json("9.9.9", false), UpdateChannel::Stable)
+                .expect_err("no digest, no offer")
+                .contains("digest")
+        );
+    }
+
+    #[test]
+    fn beta_release_selection_orders_versions_and_excludes_other_releases() {
+        let body = r#"[
+          {"tag_name":"beta-v9.8.0","draft":false,"prerelease":true,"assets":[
+            {"name":"cobalt-9.8.0-KoboRoot.tgz","browser_download_url":"https://example.test/9.8.0.tgz"},
+            {"name":"cobalt-9.8.0.sha256","browser_download_url":"https://example.test/9.8.0.sha256"}]},
+          {"tag_name":"beta-v9.9.0","draft":true,"prerelease":true,"assets":[
+            {"name":"cobalt-9.9.0-KoboRoot.tgz","browser_download_url":"https://example.test/draft.tgz"},
+            {"name":"cobalt-9.9.0.sha256","browser_download_url":"https://example.test/draft.sha256"}]},
+          {"tag_name":"v10.0.0","draft":false,"prerelease":false,"assets":[]},
+          {"tag_name":"beta-v9.7.0","draft":false,"prerelease":true,"assets":[
+            {"name":"wrong.tgz","browser_download_url":"https://example.test/wrong.tgz"},
+            {"name":"cobalt-9.7.0.sha256","browser_download_url":"https://example.test/9.7.0.sha256"}]}
+        ]"#;
+        let release = super::latest_release(body, UpdateChannel::Beta).expect("highest valid beta");
+        assert_eq!(release.version, "9.8.0");
+        assert_eq!(release.archive, "https://example.test/9.8.0.tgz");
+        assert!(super::latest_release("[]", UpdateChannel::Beta).is_err());
     }
 
     #[test]
     fn the_installed_release_and_an_unreadable_tag_are_both_not_newer() {
-        let same = super::latest_release(&release_json(super::VERSION, true)).expect("release");
+        let same =
+            super::latest_release(&release_json(super::VERSION, true), UpdateChannel::Stable)
+                .expect("release");
         assert!(!same.newer_than(super::VERSION));
         let strange = super::Release {
             version: "nightly".to_owned(),
@@ -1691,6 +1910,12 @@ mod tests {
             !strange.newer_than(super::VERSION),
             "a version that cannot be compared must not be offered as an upgrade"
         );
+        let older = super::Release {
+            version: "0.1.0".to_owned(),
+            archive: String::new(),
+            digest: String::new(),
+        };
+        assert!(older.older_than(super::VERSION));
     }
 
     #[test]
@@ -1719,8 +1944,13 @@ mod tests {
     fn every_stop_on_the_update_journey_fits_the_panel() {
         let flows = [
             super::UpdateFlow::Idle,
-            super::UpdateFlow::Checking,
+            super::UpdateFlow::Checking {
+                channel: UpdateChannel::Stable,
+            },
             super::UpdateFlow::UpToDate {
+                latest: "0.1.0".to_owned(),
+            },
+            super::UpdateFlow::Ahead {
                 latest: "0.1.0".to_owned(),
             },
             super::UpdateFlow::Ready {
@@ -1765,7 +1995,9 @@ mod tests {
 
         let checking = Settings {
             view: super::View::Update,
-            update: super::UpdateFlow::Checking,
+            update: super::UpdateFlow::Checking {
+                channel: UpdateChannel::Stable,
+            },
             ..Settings::default()
         };
         let layout = checking
