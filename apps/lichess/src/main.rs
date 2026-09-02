@@ -2139,6 +2139,9 @@ impl Lichess {
                     }
                 } else {
                     self.playing_ready = false;
+                    if self.accepted_challenge.is_some() || self.reconcile_accepted_challenge {
+                        self.clear_accepted_challenge_wait();
+                    }
                     self.notice =
                         Some("Lichess returned a game list this client cannot read.".to_owned());
                 }
@@ -2392,6 +2395,9 @@ impl Lichess {
                 self.notice = Some(Failure::of(error).advice.to_owned());
             }
             Pending::Playing => {
+                if self.accepted_challenge.is_some() || self.reconcile_accepted_challenge {
+                    self.clear_accepted_challenge_wait();
+                }
                 self.notice = Some(Failure::of(error).naming(api::SECRET));
             }
             Pending::EventRetry
@@ -3644,6 +3650,45 @@ mod tests {
         assert!(app.accepted_challenge.is_some());
         assert!(app.reconcile_accepted_challenge);
         assert!(app.has_pending(|pending| matches!(pending, Pending::Playing)));
+    }
+
+    #[test]
+    fn failed_challenge_reconciliation_always_unblocks_navigation() {
+        let challenge = || Challenge {
+            id: "chall123".to_owned(),
+            challenger: "ReaderTwo".to_owned(),
+            direction: ChallengeDirection::Incoming,
+            status: "created".to_owned(),
+            rated: false,
+            variant: "standard".to_owned(),
+            speed: "rapid".to_owned(),
+            time_control: ChallengeTime::Clock {
+                initial_seconds: Some(600),
+                increment_seconds: Some(0),
+            },
+        };
+        for malformed in [false, true] {
+            let mut app = Lichess {
+                route: Route::Challenge,
+                challenge: Some(challenge()),
+                accepted_challenge: Some(challenge()),
+                reconcile_accepted_challenge: true,
+                ..Lichess::default()
+            };
+            let mut context = Context::default();
+            if malformed {
+                app.handle_completed(&mut context, Pending::Playing, b"{broken");
+            } else {
+                app.handle_failed(
+                    &mut context,
+                    Pending::Playing,
+                    kobo_sdk::TaskError::Unreachable,
+                );
+            }
+            assert!(app.accepted_challenge.is_none());
+            assert!(!app.reconcile_accepted_challenge);
+            assert_eq!(app.route, Route::Play);
+        }
     }
 
     #[test]
