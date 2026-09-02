@@ -7,7 +7,7 @@
       "display_name": "arXiv",
       "short_label": "arXiv",
       "summary": "Browse and search arXiv, keep preprints, and read their HTML versions on your Kobo.",
-      "version": "1.3.4",
+      "version": "1.3.5",
       "minimum_cobalt_version": "0.3.1",
       "glyph": "note",
       "capabilities": ["network"]
@@ -62,7 +62,7 @@
       "display_name": "Gutenbird",
       "short_label": "Gutenbird",
       "summary": "Browse OPDS libraries and read their books on your Kobo.",
-      "version": "1.0.4",
+      "version": "1.0.5",
       "minimum_cobalt_version": "0.3.1",
       "glyph": "book",
       "capabilities": ["network", "frontlight-control"]
@@ -193,7 +193,7 @@
       "display_name": "Zotero Reader",
       "short_label": "Zotero",
       "summary": "Browse Zotero collections, read metadata and indexed paper text, and keep papers available offline.",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "minimum_cobalt_version": "0.3.1",
       "glyph": "book",
       "capabilities": ["network", "frontlight-control"],

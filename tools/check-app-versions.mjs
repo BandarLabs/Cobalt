@@ -16,6 +16,10 @@ const COMPATIBLE_PLATFORM_PATHS = new Set([
   "crates/kobo-protocol/src/lib.rs",
   "crates/kobo-sdk/src/lib.rs"
 ]);
+const ARTIFACT_EQUIVALENCE_ROOTS = new Set([
+  "crates/kobo-net",
+  "crates/kobo-policy"
+]);
 
 // Store packages are built from the current SDK and therefore speak its exact
 // wire protocol. A new protocol must add its first compatible Cobalt release
@@ -368,6 +372,84 @@ export function compatibleChangePaths(
   return compatible;
 }
 
+// Some runtime crates are re-exported by the SDK even though their transport
+// implementation never enters most app binaries. For one exact reviewed
+// source state, an ARM artifact comparison can prove which registered apps
+// remain byte-for-byte unchanged. This exception is intentionally stricter
+// than compatibleChangePaths: every changed path under each named crate root
+// must be listed, added files use an explicit null base, and any extra edit
+// disables the equivalence instead of broadening it.
+export function artifactEquivalentChanges(
+  manifest,
+  protocolVersion,
+  changedPaths,
+  baseBlobOf,
+  currentBlobOf
+) {
+  const entries = manifest?.artifact_equivalence;
+  if (entries === undefined) {
+    return { paths: new Set(), unchangedPackages: new Set() };
+  }
+  if (!Array.isArray(entries)) {
+    throw new Error("invalid app artifact-equivalence manifest");
+  }
+  const changed = new Set(changedPaths);
+  const paths = new Set();
+  const unchangedPackages = new Set();
+  for (const entry of entries) {
+    if (
+      !Number.isInteger(entry?.protocol_version) ||
+      typeof entry?.reason !== "string" ||
+      entry.reason.length === 0 ||
+      !Array.isArray(entry?.files) ||
+      entry.files.length === 0 ||
+      !Array.isArray(entry?.unchanged_packages) ||
+      entry.unchanged_packages.length === 0 ||
+      entry.unchanged_packages.some(
+        package_ => typeof package_ !== "string" || !/^kobo-[a-z0-9-]+$/.test(package_)
+      )
+    ) {
+      throw new Error("invalid app artifact-equivalence entry");
+    }
+    if (entry.protocol_version !== protocolVersion) continue;
+    const entryPaths = new Set();
+    const roots = new Set();
+    let exact = true;
+    for (const file of entry.files) {
+      const root = file?.path?.split("/").slice(0, 2).join("/");
+      if (
+        typeof file?.path !== "string" ||
+        !ARTIFACT_EQUIVALENCE_ROOTS.has(root) ||
+        !(file.base_blob === null || /^[0-9a-f]{40}$/.test(file.base_blob)) ||
+        !/^[0-9a-f]{40}$/.test(file?.compatible_blob) ||
+        entryPaths.has(file.path)
+      ) {
+        throw new Error("invalid app artifact-equivalence file");
+      }
+      entryPaths.add(file.path);
+      roots.add(root);
+      if (
+        !changed.has(file.path) ||
+        baseBlobOf(file.path) !== file.base_blob ||
+        currentBlobOf(file.path) !== file.compatible_blob
+      ) {
+        exact = false;
+      }
+    }
+    if (
+      [...changed].some(
+        path => [...roots].some(root => isInside(path, root)) && !entryPaths.has(path)
+      )
+    ) {
+      exact = false;
+    }
+    if (!exact) continue;
+    for (const path of entryPaths) paths.add(path);
+    for (const package_ of entry.unchanged_packages) unchangedPackages.add(package_);
+  }
+  return { paths, unchangedPackages };
+}
+
 function lockfileParts(source) {
   const marker = "[[package]]";
   const firstPackage = source.indexOf(marker);
@@ -546,6 +628,13 @@ export function affectedWorkspacePackages(baseRevision, registry) {
     path => optionalCommand("git", ["rev-parse", `${baseRevision}:${path}`]),
     path => command("git", ["hash-object", path])
   );
+  const artifactEquivalence = artifactEquivalentChanges(
+    compatibleManifest,
+    currentProtocolVersion(),
+    changedPaths,
+    path => optionalCommand("git", ["rev-parse", `${baseRevision}:${path}`]),
+    path => command("git", ["hash-object", path])
+  );
 
   const registeredPackages = registry.apps.map(app => app.package);
   const unconditionalGlobalInputs = new Set(["rust-toolchain", "rust-toolchain.toml"]);
@@ -563,6 +652,7 @@ export function affectedWorkspacePackages(baseRevision, registry) {
   const workspaceMembers = new Set(metadata.workspace_members);
   const workspacePackages = metadata.packages.filter(package_ => workspaceMembers.has(package_.id));
   const changedIdentities = new Set();
+  const equivalentIdentities = new Set();
   const previousRegistry = JSON.parse(
     command("git", ["show", `${baseRevision}:apps/catalog.json`])
   );
@@ -600,13 +690,16 @@ export function affectedWorkspacePackages(baseRevision, registry) {
     ) {
       continue;
     }
-    changedIdentities.add(
-      packageIdentity(
-        package_.name,
-        package_.source ? package_.version : "<workspace-version>",
-        package_.source || ""
-      )
+    const identity = packageIdentity(
+      package_.name,
+      package_.source ? package_.version : "<workspace-version>",
+      package_.source || ""
     );
+    if (packageChanges.every(path => artifactEquivalence.paths.has(path))) {
+      equivalentIdentities.add(identity);
+    } else {
+      changedIdentities.add(identity);
+    }
   }
 
   if (changedPaths.includes("Cargo.lock")) {
@@ -617,7 +710,16 @@ export function affectedWorkspacePackages(baseRevision, registry) {
     for (const identity of lockChanges) changedIdentities.add(identity);
   }
 
-  return registeredConsumers(metadata, registeredPackages, changedIdentities);
+  const affected = registeredConsumers(metadata, registeredPackages, changedIdentities);
+  const equivalentConsumers = registeredConsumers(
+    metadata,
+    registeredPackages,
+    equivalentIdentities
+  );
+  for (const package_ of equivalentConsumers) {
+    if (!artifactEquivalence.unchangedPackages.has(package_)) affected.add(package_);
+  }
+  return affected;
 }
 
 function argumentsFrom(argv) {

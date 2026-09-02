@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import {
+  artifactEquivalentChanges,
   changedLockPackageIdentities,
   changedRegistryPackages,
   checkEntries,
@@ -310,6 +311,64 @@ test("only exact reviewed compatible blobs are excluded from app release inputs"
   );
 });
 
+test("artifact equivalence is exact, supports additions, and fails closed on extra edits", () => {
+  const oldPath = "crates/kobo-policy/src/tasks.rs";
+  const newPath = "crates/kobo-net/src/lines.rs";
+  const manifest = {
+    format_version: 1,
+    changes: [],
+    artifact_equivalence: [
+      {
+        protocol_version: 11,
+        reason: "verified ARM artifacts",
+        files: [
+          {
+            path: oldPath,
+            base_blob: "a".repeat(40),
+            compatible_blob: "b".repeat(40)
+          },
+          {
+            path: newPath,
+            base_blob: null,
+            compatible_blob: "c".repeat(40)
+          }
+        ],
+        unchanged_packages: ["kobo-notes"]
+      }
+    ]
+  };
+  const base = path => path === oldPath ? "a".repeat(40) : null;
+  const current = path => path === oldPath ? "b".repeat(40) : "c".repeat(40);
+  const exact = artifactEquivalentChanges(
+    manifest,
+    11,
+    [oldPath, newPath],
+    base,
+    current
+  );
+  assert.deepEqual(exact.paths, new Set([oldPath, newPath]));
+  assert.deepEqual(exact.unchangedPackages, new Set(["kobo-notes"]));
+
+  const extra = artifactEquivalentChanges(
+    manifest,
+    11,
+    [oldPath, newPath, "crates/kobo-net/src/unreviewed.rs"],
+    base,
+    current
+  );
+  assert.deepEqual(extra.paths, new Set());
+  assert.deepEqual(extra.unchangedPackages, new Set());
+
+  const wrong = artifactEquivalentChanges(
+    manifest,
+    11,
+    [oldPath, newPath],
+    base,
+    () => "d".repeat(40)
+  );
+  assert.deepEqual(wrong.paths, new Set());
+});
+
 test("reviewed compatible-change entries name the exact current files", () => {
   const manifest = JSON.parse(
     readFileSync("tools/app-release-compatible-changes.json", "utf8")
@@ -320,6 +379,15 @@ test("reviewed compatible-change entries name the exact current files", () => {
         execFileSync("git", ["hash-object", file.path], { encoding: "utf8" }).trim(),
         file.compatible_blob,
         `${file.path} changed without reviewing its Store release impact`
+      );
+    }
+  }
+  for (const change of manifest.artifact_equivalence || []) {
+    for (const file of change.files) {
+      assert.equal(
+        execFileSync("git", ["hash-object", file.path], { encoding: "utf8" }).trim(),
+        file.compatible_blob,
+        `${file.path} changed without re-running Store artifact equivalence`
       );
     }
   }

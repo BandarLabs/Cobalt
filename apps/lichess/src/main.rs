@@ -1471,7 +1471,7 @@ impl Lichess {
                         None
                     }
                     GameAction::AcceptChallenge(_) if self.route == Route::Game => None,
-                    other if self.game.as_ref().is_some_and(|game| !game.active()) => None,
+                    _other if self.game.as_ref().is_some_and(|game| !game.active()) => None,
                     other => Some(other),
                 };
                 self.notice = Some(
