@@ -438,6 +438,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "app-bundle" => app_bundle(&arguments[1..]),
         "app-catalog" => app_catalog(&arguments[1..]),
         "app-list" => app_list(&arguments[1..]),
+        "stream" => stream_command(&arguments[1..]),
         "app-check" => app_check(&arguments[1..]),
         "app-release" => app_release(&arguments[1..]),
         "setup" => setup_device(&arguments[1..]),
@@ -462,6 +463,67 @@ fn run(arguments: &[String]) -> Result<(), String> {
         }
         unknown => Err(format!("unknown command '{unknown}'")),
     }
+}
+
+/// Runs the host half of a Paperterm session.
+fn stream_command(arguments: &[String]) -> Result<(), String> {
+    const USAGE: &str = "usage: kobo stream init [--host ADDRESS ...]\n\
+                         \x20      kobo stream [--grid COLSxROWS] [--controls | --interactive] \
+                         [--read-only] [--port PORT] -- COMMAND [ARG ...]";
+    if arguments.first().is_some_and(|argument| argument == "init") {
+        return kobo_stream::init(&arguments[1..]);
+    }
+    let separator = arguments
+        .iter()
+        .position(|argument| argument == "--")
+        .ok_or(USAGE)?;
+    let mut grid = kobo_stream::Grid::fallback();
+    let mut controls = false;
+    let mut interactive = false;
+    let mut port = kobo_stream::DEFAULT_PORT;
+    let mut index = 0;
+    while index < separator {
+        match arguments[index].as_str() {
+            "--grid" => {
+                grid = kobo_stream::Grid::parse(arguments.get(index + 1).ok_or(USAGE)?)?;
+                index += 2;
+            }
+            "--controls" => {
+                controls = true;
+                index += 1;
+            }
+            "--interactive" => {
+                interactive = true;
+                controls = true;
+                index += 1;
+            }
+            "--read-only" => {
+                controls = false;
+                interactive = false;
+                index += 1;
+            }
+            "--port" => {
+                port = arguments
+                    .get(index + 1)
+                    .ok_or(USAGE)?
+                    .parse::<u16>()
+                    .map_err(|_| "--port must be 1 through 65535")?;
+                if port == 0 {
+                    return Err("--port must be 1 through 65535".to_owned());
+                }
+                index += 2;
+            }
+            _ => return Err(USAGE.to_owned()),
+        }
+    }
+    kobo_stream::run(kobo_stream::Options {
+        grid,
+        controls,
+        interactive,
+        port,
+        command: arguments[separator + 1..].to_vec(),
+    })
+    .map(|_| ())
 }
 
 fn app_key(arguments: &[String]) -> Result<(), String> {
@@ -5346,6 +5408,9 @@ fn print_help() {
                                    Build and sign the public app catalog\n\
            app-list --registry PATH\n\
                                    List validated Store app packages as JSON\n\
+           stream init [--host ADDRESS ...]  Create or rotate Paperterm TLS identity\n\
+           stream [--grid COLSxROWS] [--controls | --interactive | --read-only] [--port PORT] -- COMMAND [ARG ...]\n\
+                                   Mirror a host terminal to paired Paperterm readers\n\
            app-check --registry PATH [--package PACKAGE] [--out PATH]\n\
                                    Build and verify every registered Store app\n\
            app-release --registry PATH --seed PATH --out PATH --base-url HTTPS_URL [--prebuilt-dir PATH | --artifact-dir PATH]\n\

@@ -16,6 +16,7 @@ kobo-sim = { path = "../kobo-sim" }
 kobo-image = { path = "../kobo-image" }
 kobo-json = { path = "../kobo-json" }
 kobo-net = { path = "../kobo-net" }
+kobo-stream = { path = "../kobo-stream" }
 
 [features]
 default = []

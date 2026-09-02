@@ -646,6 +646,7 @@ dependencies = [
  "kobo-json",
  "kobo-net",
  "kobo-sim",
+ "kobo-stream",
 ]
 
 [[package]]
@@ -949,6 +950,7 @@ dependencies = [
 name = "kobo-paperterm"
 version = "0.1.0"
 dependencies = [
+ "kobo-json",
  "kobo-sdk",
  "kobo-ui",
 ]
@@ -1122,6 +1124,16 @@ dependencies = [
  "kobo-sdk",
  "kobo-ui",
  "qrcodegen",
+]
+
+[[package]]
+name = "kobo-stream"
+version = "0.3.1"
+dependencies = [
+ "kobo-abi",
+ "kobo-json",
+ "kobo-net",
+ "vt100",
 ]
 
 [[package]]
