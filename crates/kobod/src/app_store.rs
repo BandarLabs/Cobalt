@@ -168,6 +168,12 @@ const SYSTEM_APPS: &[BuiltinApp] = &[
     },
 ];
 
+/// Downloads, verifies, and atomically caches one channel's catalog.
+///
+/// # Errors
+///
+/// Returns a bounded device error when fetching, verification, parsing, or
+/// cache activation fails.
 pub fn refresh(root: &Path, channel: UpdateChannel) -> Result<Vec<AppInfo>, DeviceError> {
     let key = public_key()?;
     refresh_channel_with(root, channel, &key, |url, maximum| {
@@ -175,6 +181,12 @@ pub fn refresh(root: &Path, channel: UpdateChannel) -> Result<Vec<AppInfo>, Devi
     })
 }
 
+/// Reads the last verified catalog for one channel.
+///
+/// # Errors
+///
+/// Returns a bounded device error when the cache or an installed package is
+/// absent, malformed, or cannot be read.
 pub fn catalog(root: &Path, channel: UpdateChannel) -> Result<Vec<AppInfo>, DeviceError> {
     let key = public_key()?;
     match read_channel_catalog(root, channel, &key) {
@@ -184,9 +196,28 @@ pub fn catalog(root: &Path, channel: UpdateChannel) -> Result<Vec<AppInfo>, Devi
     }
 }
 
+/// Lists every verified installed Store application.
+///
+/// # Errors
+///
+/// Returns a bounded device error when installed metadata or package bytes
+/// cannot be verified.
 pub fn installed(root: &Path) -> Result<Vec<AppInfo>, DeviceError> {
     let key = public_key()?;
     installed_with_key(root, &key)
+}
+
+/// Lists installed applications using an explicitly supplied trust key.
+///
+/// This is intended for isolated host fixtures. Device code should use
+/// [`installed`], which always selects Cobalt's built-in release key.
+///
+/// # Errors
+///
+/// Returns a bounded device error when installed metadata or package bytes
+/// cannot be verified.
+pub fn installed_using(root: &Path, key: &Ed25519PublicKey) -> Result<Vec<AppInfo>, DeviceError> {
+    installed_with_key(root, key)
 }
 
 fn installed_with_key(root: &Path, key: &Ed25519PublicKey) -> Result<Vec<AppInfo>, DeviceError> {
@@ -207,6 +238,12 @@ fn installed_with_key(root: &Path, key: &Ed25519PublicKey) -> Result<Vec<AppInfo
     Ok(entries)
 }
 
+/// Installs or updates one application from a verified channel cache.
+///
+/// # Errors
+///
+/// Returns a bounded device error when the identity, catalog, package,
+/// signature, digest, or atomic transaction is invalid.
 pub fn install(root: &Path, id: &str, channel: UpdateChannel) -> Result<(), DeviceError> {
     install_channel_with(root, id, channel, &public_key()?, |url, maximum| {
         kobo_net::fetch(url, maximum).map_err(network_error)
@@ -219,6 +256,12 @@ pub struct RemoteInstallPlan {
     pub install: bool,
 }
 
+/// Plans a browser-requested install after refreshing its signed catalog.
+///
+/// # Errors
+///
+/// Returns a bounded device error when the catalog cannot be fetched,
+/// verified, parsed, or cached.
 pub fn prepare_remote_install(
     root: &Path,
     id: &str,
@@ -317,22 +360,58 @@ fn prepare_remote_install_channel_with(
     })
 }
 
+/// Plans the same signed-catalog install used by browser links, with an
+/// explicit transport and trust key for an isolated acceptance fixture.
+///
+/// # Errors
+///
+/// Returns a bounded device error when the fixture transport, catalog
+/// verification, parsing, or cache activation fails.
+pub fn prepare_remote_install_using(
+    root: &Path,
+    id: &str,
+    channel: UpdateChannel,
+    key: &Ed25519PublicKey,
+    fetch: impl FnMut(&str, u32) -> Result<Vec<u8>, DeviceError>,
+) -> Result<RemoteInstallPlan, DeviceError> {
+    prepare_remote_install_channel_with(root, id, channel, key, fetch)
+}
+
 #[must_use]
 pub fn manages_builtin(id: &str) -> bool {
     managed_builtin(id).is_some()
 }
 
+#[must_use]
 pub fn builtin_declared(id: &str) -> Option<kobo_policy::Declared> {
     let app = managed_builtin(id)?;
     kobo_policy::Declared::parse(app.capabilities.iter().copied()).ok()
 }
 
+/// Atomically removes one installed package while preserving application data.
+///
+/// # Errors
+///
+/// Returns a bounded device error for an invalid identity, missing package,
+/// unsafe filesystem object, or failed transaction.
 pub fn uninstall(root: &Path, id: &str) -> Result<(), DeviceError> {
+    uninstall_using(root, id, &public_key()?)
+}
+
+/// Removes an application using an explicitly supplied trust key.
+///
+/// Application state is intentionally outside the installed package
+/// directory and is not removed.
+///
+/// # Errors
+///
+/// Returns a bounded device error for an invalid identity, missing package,
+/// failed verification, unsafe filesystem object, or failed transaction.
+pub fn uninstall_using(root: &Path, id: &str, key: &Ed25519PublicKey) -> Result<(), DeviceError> {
     if !kobo_protocol::valid_app_id(id) || kobo_app_store::is_public_reserved_app_id(id) {
         return Err(DeviceError::InvalidInput);
     }
-    let key = public_key()?;
-    recover_interrupted_transaction(root, id, &key)?;
+    recover_interrupted_transaction(root, id, key)?;
     let apps = apps_root(root);
     let current = apps.join(id);
     let has_current = safe_directory(&current)?;
@@ -366,12 +445,68 @@ pub fn uninstall(root: &Path, id: &str) -> Result<(), DeviceError> {
     Ok(())
 }
 
+/// Resolves an application binary after verifying its installed package.
+///
+/// # Errors
+///
+/// Returns a description when the identity is invalid, package is absent, or
+/// installed metadata, signature, or binary bytes fail verification.
 pub fn resolve(root: &Path, id: &str) -> Result<PathBuf, String> {
-    if !kobo_protocol::valid_app_id(id) {
+    let key = public_key().map_err(|error| format!("read app signing key: {error:?}"))?;
+    resolve_using(root, id, &key)
+}
+
+/// Resolves a launchable application, preferring a verified Store package and
+/// otherwise selecting a platform-owned built-in.
+///
+/// A committed uninstall tombstone always wins over the built-in fallback.
+///
+/// # Errors
+///
+/// Returns a description when the identity is invalid, a Store package fails
+/// verification, the application was removed, or no executable exists.
+pub fn resolve_launch(root: &Path, id: &str) -> Result<PathBuf, String> {
+    if !kobo_protocol::valid_app_id(id) || id == "kobod" {
         return Err(format!("{id:?} is not a valid application identity"));
     }
     let key = public_key().map_err(|error| format!("read app signing key: {error:?}"))?;
-    recover_interrupted_transaction(root, id, &key)
+    if !kobo_app_store::is_public_reserved_app_id(id) {
+        recover_interrupted_transaction(root, id, &key)
+            .map_err(|error| format!("recover application {id}: {error:?}"))?;
+        if is_uninstalled(root, id)
+            .map_err(|error| format!("read application {id} state: {error:?}"))?
+        {
+            return Err(format!("no application named {id} is installed"));
+        }
+        let directory = apps_root(root).join(id);
+        if safe_directory(&directory)
+            .map_err(|error| format!("read application {id}: {error:?}"))?
+        {
+            let manifest = read_installed_manifest(&directory, id, &key)
+                .map_err(|error| format!("installed application {id} is invalid: {error:?}"))?;
+            return Ok(app_binary(root, manifest.id()));
+        }
+    }
+    let builtin = builtin_binary(root, id);
+    if safe_regular_file(&builtin)
+        .map_err(|error| format!("read built-in application {id}: {error:?}"))?
+    {
+        return Ok(builtin);
+    }
+    Err(format!("no application named {id} is installed"))
+}
+
+/// Resolves and re-verifies an installed application with an explicit key.
+///
+/// # Errors
+///
+/// Returns a description when the identity is invalid, package is absent, or
+/// installed metadata, signature, or binary bytes fail verification.
+pub fn resolve_using(root: &Path, id: &str, key: &Ed25519PublicKey) -> Result<PathBuf, String> {
+    if !kobo_protocol::valid_app_id(id) {
+        return Err(format!("{id:?} is not a valid application identity"));
+    }
+    recover_interrupted_transaction(root, id, key)
         .map_err(|error| format!("recover application {id}: {error:?}"))?;
     if is_uninstalled(root, id)
         .map_err(|error| format!("read application {id} state: {error:?}"))?
@@ -380,7 +515,7 @@ pub fn resolve(root: &Path, id: &str) -> Result<PathBuf, String> {
     }
     let directory = apps_root(root).join(id);
     if safe_directory(&directory).map_err(|error| format!("read application {id}: {error:?}"))? {
-        let manifest = read_installed_manifest(&directory, id, &key)
+        let manifest = read_installed_manifest(&directory, id, key)
             .map_err(|error| format!("installed application {id} is invalid: {error:?}"))?;
         return Ok(app_binary(root, manifest.id()));
     }
@@ -391,6 +526,7 @@ pub fn resolve(root: &Path, id: &str) -> Result<PathBuf, String> {
     Err(format!("no application named {id} is installed"))
 }
 
+#[must_use]
 pub fn declared(root: &Path, id: &str) -> Option<kobo_policy::Declared> {
     let key = public_key().ok()?;
     installed_manifest(root, id, &key)
@@ -419,6 +555,23 @@ fn refresh_channel_with(
     let catalog = verify_catalog(&json, &signature, key)?;
     write_channel_catalog_cache(root, channel, &json, &signature)?;
     catalog_info(root, &catalog, key)
+}
+
+/// Fetches and atomically caches a signed catalog through an explicit
+/// transport and trust key. This is the runtime path used by mock acceptance
+/// runs; it does not weaken or replace device trust.
+///
+/// # Errors
+///
+/// Returns a bounded device error when fetching, verification, parsing, or
+/// cache activation fails.
+pub fn refresh_using(
+    root: &Path,
+    channel: UpdateChannel,
+    key: &Ed25519PublicKey,
+    fetch: impl FnMut(&str, u32) -> Result<Vec<u8>, DeviceError>,
+) -> Result<Vec<AppInfo>, DeviceError> {
+    refresh_channel_with(root, channel, key, fetch)
 }
 
 #[cfg(test)]
@@ -477,6 +630,23 @@ fn install_channel_with(
         return Err(DeviceError::Integrity);
     }
     stage_and_swap(root, bundle.manifest(), bundle.signature(), bundle.binary())
+}
+
+/// Installs through the runtime's verified package transaction using an
+/// explicit fixture transport and trust key.
+///
+/// # Errors
+///
+/// Returns a bounded device error when the identity, catalog, package,
+/// signature, digest, or atomic transaction is invalid.
+pub fn install_using(
+    root: &Path,
+    id: &str,
+    channel: UpdateChannel,
+    key: &Ed25519PublicKey,
+    fetch: impl FnMut(&str, u32) -> Result<Vec<u8>, DeviceError>,
+) -> Result<(), DeviceError> {
+    install_channel_with(root, id, channel, key, fetch)
 }
 
 fn verify_catalog(
@@ -1131,10 +1301,15 @@ mod tests {
             resolve(&root, "todo").expect("resolve built-in"),
             builtin_binary(&root, "todo")
         );
+        assert_eq!(
+            resolve_launch(&root, "todo").expect("launch built-in"),
+            builtin_binary(&root, "todo")
+        );
 
         uninstall(&root, "todo").expect("uninstall built-in");
         assert!(installed(&root).expect("removed apps").is_empty());
         assert!(resolve(&root, "todo").is_err());
+        assert!(resolve_launch(&root, "todo").is_err());
 
         let seed = [9_u8; 32];
         let key = derive_public_key(&seed).expect("key");

@@ -256,7 +256,7 @@ pub(crate) fn is_unreachable(message: &str) -> bool {
 /// script, the device does the waiting locally and the network is only needed
 /// at the start and the end.
 fn start_script(options: &Present) -> String {
-    let binary = format!("{INSTALL_ROOT}/bin/{}", options.app);
+    let id = options.app.trim_start_matches("kobo-");
     let daemon = format!("{INSTALL_ROOT}/bin/kobod");
     let log = session_log(&options.app);
     let refuse = if options.keep_running {
@@ -266,7 +266,10 @@ fn start_script(options: &Present) -> String {
         ""
     };
     format!(
-        "test -x '{binary}' || {{ echo 'not installed: {binary}' >&2; exit 1; }}\n\
+        "resolved=$('{daemon}' --resolve-app '{id}')\n\
+         binary=${{resolved#path=}}\n\
+         [ \"$resolved\" != \"$binary\" ] || {{ echo 'runtime did not resolve the application' >&2; exit 1; }}\n\
+         test -x \"$binary\" || {{ echo 'resolved application is not executable' >&2; exit 1; }}\n\
          if pidof kobod > /dev/null 2>&1; then\n\
          {refuse}\
            for pid in $(pidof kobod); do kill \"$pid\" 2>/dev/null || true; done\n\
@@ -279,11 +282,15 @@ fn start_script(options: &Present) -> String {
          {settle}\
          fi\n\
          nohup setsid env {UNLOCK_NAME}={PRESENT_UNLOCK} {BLACKBOX_NAME}=1 timeout {seconds} '{daemon}' \
-           --present '{binary}' > '{log}' 2>&1 < /dev/null &\n\
+           --present \"$binary\" > '{log}' 2>&1 < /dev/null &\n\
          sleep 2\n\
          pidof kobod > /dev/null 2>&1 || {{ echo 'the session did not start' >&2; \
            tail -5 '{log}' >&2; exit 1; }}\n\
-         echo started\n",
+         session_pid=$(pidof kobod | awk '{{ print $1 }}')\n\
+         session_start=$(awk '{{ print $22 }}' \"/proc/$session_pid/stat\")\n\
+         echo started\n\
+         echo \"session_pid=$session_pid\"\n\
+         echo \"session_start=$session_start\"\n",
         seconds = options.seconds,
         settle = format_args!("  sleep {SETTLE_SECONDS}\n"),
         UNLOCK_NAME = "KOBO_PRESENT_UNLOCK",
@@ -294,6 +301,104 @@ fn start_script(options: &Present) -> String {
         // after something hung and took the reader with it.
         BLACKBOX_NAME = "KOBO_BLACKBOX",
     )
+}
+
+pub(crate) struct StorePanelSession {
+    host: String,
+    pid: u32,
+    start: u64,
+}
+
+/// Starts any valid Store application through the same bounded panel handoff
+/// used by `kobo present`.
+pub(crate) fn present_store_app(
+    id: &str,
+    host: &str,
+    seconds: u64,
+) -> Result<StorePanelSession, String> {
+    if !kobo_protocol::valid_app_id(id)
+        || !crate::valid_device_host(host)
+        || seconds == 0
+        || seconds > MAXIMUM_SECONDS
+    {
+        return Err("invalid bounded Store application presentation".to_owned());
+    }
+    let options = Present {
+        app: format!("kobo-{id}"),
+        host: host.to_owned(),
+        seconds,
+        // An acceptance run must never terminate a session it did not start.
+        // The host checks first, and this closes the race between that check
+        // and the launch.
+        keep_running: true,
+    };
+    let remote = format!("root@{host}");
+    let output = run_remote_shell_waking(&remote, &start_script(&options), START_TIMEOUT)?;
+    if !output.status.success() {
+        return Err(format!(
+            "start {} on {host}: {}",
+            options.app,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let pid = reported(&stdout, "session_pid")
+        .and_then(|value| value.parse::<u32>().ok())
+        .ok_or("the panel session did not report its process ID")?;
+    let start = reported(&stdout, "session_start")
+        .and_then(|value| value.parse::<u64>().ok())
+        .ok_or("the panel session did not report its process start time")?;
+    Ok(StorePanelSession {
+        host: host.to_owned(),
+        pid,
+        start,
+    })
+}
+
+/// Returns the panel to Nickel after an acceptance launch.
+pub(crate) fn stop_store_app(session: &StorePanelSession) -> Result<(), String> {
+    let remote = format!("root@{}", session.host);
+    let script = format!(
+        "pid={pid}\n\
+         expected_start={start}\n\
+         if [ ! -r \"/proc/$pid/stat\" ]; then exit 0; fi\n\
+         actual_start=$(awk '{{ print $22 }}' \"/proc/$pid/stat\")\n\
+         if [ \"$actual_start\" != \"$expected_start\" ]; then exit 0; fi\n\
+         command=$(tr '\\000' ' ' < \"/proc/$pid/cmdline\")\n\
+         case \"$command\" in\n\
+           *'{INSTALL_ROOT}/bin/kobod --present'*) ;;\n\
+           *) echo 'the recorded process is not the acceptance panel session' >&2; exit 1 ;;\n\
+         esac\n\
+         kill \"$pid\"\n\
+         waited=0\n\
+         while [ \"$waited\" -lt {SHUTDOWN_SECONDS} ]; do\n\
+           if [ ! -r \"/proc/$pid/stat\" ]; then exit 0; fi\n\
+           actual_start=$(awk '{{ print $22 }}' \"/proc/$pid/stat\")\n\
+           [ \"$actual_start\" = \"$expected_start\" ] || exit 0\n\
+           sleep 1\n\
+           waited=$((waited + 1))\n\
+         done\n\
+         echo 'the acceptance panel session is still running' >&2\n\
+         exit 1\n",
+        pid = session.pid,
+        start = session.start,
+    );
+    let output = run_remote_shell_waking(&remote, &script, STOP_TIMEOUT)?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "end the acceptance panel session on {remote}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
+}
+
+fn reported<'a>(output: &'a str, key: &str) -> Option<&'a str> {
+    output.lines().find_map(|line| {
+        let (found, value) = line.split_once('=')?;
+        (found == key).then_some(value.trim())
+    })
 }
 
 /// Starts one application on the panel and returns while it is still running.
@@ -414,7 +519,9 @@ fn stop_session(remote: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_present, resolve_app, DEFAULT_SECONDS, MAXIMUM_SECONDS};
+    use super::{
+        parse_present, resolve_app, start_script, Present, DEFAULT_SECONDS, MAXIMUM_SECONDS,
+    };
 
     fn arguments(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_owned()).collect()
@@ -437,6 +544,19 @@ mod tests {
         assert_eq!(super::resolve_app("kobo-sudoku").unwrap(), "kobo-sudoku");
         let listed = super::installed_list();
         assert!(listed.contains("arxiv"), "{listed}");
+    }
+
+    #[test]
+    fn store_launches_prefer_installed_bytes_and_report_session_ownership() {
+        let script = start_script(&Present {
+            app: "kobo-arxiv".to_owned(),
+            host: "192.0.2.2".to_owned(),
+            seconds: 45,
+            keep_running: false,
+        });
+        assert!(script.contains("--resolve-app 'arxiv'"));
+        assert!(script.contains("session_pid="));
+        assert!(script.contains("session_start="));
     }
 
     #[test]

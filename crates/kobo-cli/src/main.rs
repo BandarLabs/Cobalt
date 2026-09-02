@@ -11,6 +11,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod authorize;
+mod beta_store_smoke;
 mod connect;
 mod devsession;
 mod drive;
@@ -417,6 +418,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "app-list" => app_list(&arguments[1..]),
         "app-check" => app_check(&arguments[1..]),
         "app-release" => app_release(&arguments[1..]),
+        "beta-store-smoke" => beta_store_smoke::command(&arguments[1..]),
         "host-release-sign" => host_release_sign(&arguments[1..]),
         "host-release-verify" => host_release_verify(&arguments[1..]),
         "update" => update_host(&arguments[1..]),
@@ -5806,6 +5808,8 @@ fn print_help() {
                                    Build and verify every registered Store app\n\
            app-release --registry PATH --seed PATH --out PATH --base-url HTTPS_URL [--prebuilt-dir PATH | --artifact-dir PATH]\n\
                                    Build and sign every registered Store app\n\
+           beta-store-smoke --app ID (--fixture DIR | --beta-catalog URL --device IP) --out DIR\n\
+                                   Verify the isolated Beta Store lifecycle and retain evidence\n\
            host-release-sign --manifest PATH --seed PATH --signature PATH --ssh-signature PATH\n\
                                    Sign host release metadata for publishing\n\
            host-release-verify --manifest PATH --signature PATH\n\
