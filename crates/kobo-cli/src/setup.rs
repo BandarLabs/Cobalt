@@ -52,6 +52,11 @@ pub const INSTALL_FOLDER: &str = ".adds/cobalt";
 const STAGING_FOLDER: &str = ".adds/cobalt.next";
 const PREVIOUS_FOLDER: &str = ".adds/cobalt.prev";
 const OWNER_HOLD_FOLDER: &str = ".adds/cobalt.owner";
+const RECOVERY_PREFIX: &str = ".adds/cobalt.recovery.";
+const OTA_JOURNALS: [&str; 2] = [
+    ".adds/.cobalt-update-transaction",
+    ".adds/.cobalt-update-transaction.new",
+];
 const TRANSACTION_MARKER: &str = ".managed-complete";
 const OWNER_FOLDERS: &[&str] = &["secrets", "trust", "state", "data", "apps", "store"];
 
@@ -581,11 +586,12 @@ pub fn write_payload(members: &[crate::package::Member], volume: &Path) -> Resul
     recover_payload_transaction(volume)?;
     let adds = volume.join(".adds");
     fs::create_dir_all(&adds).map_err(|error| format!("{}: {error}", adds.display()))?;
+    crate::bootstrap::install(volume)?;
     let stage = volume.join(STAGING_FOLDER);
     if stage.exists() {
         fs::remove_dir_all(&stage).map_err(|error| format!("{}: {error}", stage.display()))?;
     }
-    crate::package::write_folder(members, &stage)?;
+    crate::package::write_install_tree(members, &stage)?;
     verify_payload_at(members, &stage)?;
     fs::write(stage.join(TRANSACTION_MARKER), b"complete\n")
         .map_err(|error| format!("write transaction marker: {error}"))?;
@@ -603,11 +609,17 @@ pub fn write_payload(members: &[crate::package::Member], volume: &Path) -> Resul
             )
         })?;
     }
-    Ok(members.len())
+    Ok(members
+        .iter()
+        .filter(|member| !crate::package::is_launch_bootstrap(member))
+        .count())
 }
 
 fn refuse_managed_owner_folders(members: &[crate::package::Member]) -> Result<(), String> {
     for member in members {
+        if crate::package::is_launch_bootstrap(member) {
+            continue;
+        }
         let relative = member_relative(member)?;
         let first = relative.split('/').next().unwrap_or_default();
         if OWNER_FOLDERS.contains(&first) {
@@ -928,6 +940,9 @@ pub fn verify_payload(members: &[crate::package::Member], volume: &Path) -> Resu
 
 fn verify_payload_at(members: &[crate::package::Member], destination: &Path) -> Result<(), String> {
     for member in members {
+        if crate::package::is_launch_bootstrap(member) {
+            continue;
+        }
         let relative = member_relative(member)?;
         let path = destination.join(relative);
         let written =
@@ -957,27 +972,149 @@ fn member_relative(member: &crate::package::Member) -> Result<&str, String> {
         .ok_or_else(|| format!("{:?} is outside the install root", member.path))
 }
 
-/// Removes an installed Cobalt from a mounted reader.
+/// What setup undo removed and what recoverable owner data it retained.
+#[derive(Debug, Default, Eq, PartialEq)]
+pub struct Removal {
+    pub removed: bool,
+    pub recoveries: Vec<String>,
+    pub quarantines: Vec<String>,
+}
+
+/// Removes an installed Cobalt from a mounted reader while moving every owner
+/// folder into a bounded sibling recovery directory first.
 ///
 /// # Errors
 ///
 /// When the folder exists but cannot be removed.
-pub fn remove_payload(volume: &Path) -> Result<bool, String> {
+pub fn remove_payload(volume: &Path) -> Result<Removal, String> {
+    let adds = volume.join(".adds");
     let folders = [
         volume.join(INSTALL_FOLDER),
         volume.join(STAGING_FOLDER),
         volume.join(PREVIOUS_FOLDER),
         volume.join(OWNER_HOLD_FOLDER),
     ];
-    let mut removed = false;
+    let mut outcome = Removal::default();
     for installed in folders {
-        if installed.exists() {
-            fs::remove_dir_all(&installed)
-                .map_err(|error| format!("remove {}: {error}", installed.display()))?;
-            removed = true;
+        if preserve_owner_folders(&installed, &adds, &mut outcome.recoveries)? {
+            outcome.removed = true;
         }
     }
-    Ok(removed)
+    for journal in OTA_JOURNALS {
+        let path = volume.join(journal);
+        match fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.file_type().is_file() || metadata.file_type().is_symlink() => {
+                fs::remove_file(&path)
+                    .map_err(|error| format!("remove {}: {error}", path.display()))?;
+                outcome.removed = true;
+            }
+            Ok(_) => {
+                return Err(format!(
+                    "refusing non-file update journal {}",
+                    path.display()
+                ))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("inspect {}: {error}", path.display())),
+        }
+    }
+    if adds.exists() {
+        sync_directory(&adds)?;
+    }
+    outcome.removed |= crate::bootstrap::remove(volume)?;
+    for relative in std::iter::once(".adds/cobalt.unusable".to_owned())
+        .chain((0..8).map(|index| format!(".adds/cobalt.unusable.{index}")))
+        .chain((0..32).map(|index| format!("{RECOVERY_PREFIX}{index}")))
+    {
+        let path = volume.join(&relative);
+        if fs::symlink_metadata(&path).is_ok() {
+            if relative.starts_with(RECOVERY_PREFIX) {
+                if !outcome.recoveries.contains(&relative) {
+                    outcome.recoveries.push(relative);
+                }
+            } else {
+                outcome.quarantines.push(relative);
+            }
+        }
+    }
+    Ok(outcome)
+}
+
+fn preserve_owner_folders(
+    installed: &Path,
+    adds: &Path,
+    recoveries: &mut Vec<String>,
+) -> Result<bool, String> {
+    match fs::symlink_metadata(installed) {
+        Ok(metadata) if metadata.file_type().is_dir() => {}
+        Ok(_) => {
+            return Err(format!(
+                "refusing non-directory payload {}",
+                installed.display()
+            ))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(format!("inspect {}: {error}", installed.display())),
+    }
+    let mut owners = Vec::new();
+    for folder in OWNER_FOLDERS {
+        let path = installed.join(folder);
+        match fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.file_type().is_dir() => owners.push((folder, path)),
+            Ok(_) => return Err(format!("refusing unsafe owner folder {}", path.display())),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("inspect {}: {error}", path.display())),
+        }
+    }
+    if !owners.is_empty() {
+        let volume = adds
+            .parent()
+            .ok_or_else(|| format!("{} has no volume parent", adds.display()))?;
+        let (relative, recovery) = (0..32)
+            .find_map(|index| {
+                let relative = format!("{RECOVERY_PREFIX}{index}");
+                let path = volume.join(&relative);
+                match fs::symlink_metadata(&path) {
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        Some((relative, path))
+                    }
+                    _ => None,
+                }
+            })
+            .ok_or("all bounded Cobalt owner-data recovery slots are occupied")?;
+        fs::create_dir(&recovery)
+            .map_err(|error| format!("create {}: {error}", recovery.display()))?;
+        sync_directory(adds)?;
+        for (folder, source) in owners {
+            let destination = recovery.join(folder);
+            fs::rename(&source, &destination).map_err(|error| {
+                format!(
+                    "preserve {} as {}: {error}",
+                    source.display(),
+                    destination.display()
+                )
+            })?;
+            sync_directory(installed)?;
+            sync_directory(&recovery)?;
+        }
+        recoveries.push(relative);
+    }
+    fs::remove_dir_all(installed)
+        .map_err(|error| format!("remove {}: {error}", installed.display()))?;
+    sync_directory(adds)?;
+    Ok(true)
+}
+
+#[cfg(unix)]
+fn sync_directory(path: &Path) -> Result<(), String> {
+    fs::File::open(path)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| format!("sync {}: {error}", path.display()))
+}
+
+#[cfg(not(unix))]
+fn sync_directory(_path: &Path) -> Result<(), String> {
+    Ok(())
 }
 
 /// Flushes the volume and ejects it, so the reader remounts its own storage.
@@ -1071,6 +1208,11 @@ impl Report {
             text,
             "  · {} files installed into {INSTALL_FOLDER}",
             self.installed
+        );
+        let _ = writeln!(
+            text,
+            "  · stable launcher installed at {}",
+            crate::bootstrap::RELATIVE_PATH
         );
         if let Some(ssh) = self.ssh {
             let _ = writeln!(text, "  · {}", ssh.describe());
@@ -1260,8 +1402,7 @@ impl Staged {
 /// What was written, when the only thing written was the book partition.
 const UNTOUCHED_SCOPE: &str = "
 Nothing was written outside the book partition, and nothing was extracted as
-root. To undo all of it: 'kobo setup --undo', or delete .adds/cobalt and rename
-.kobo/ssh-enabled back to ssh-disabled.
+root. To undo all of it safely: 'kobo setup --undo'.
 ";
 
 /// What was written, when the plugin was staged and no key was asked for.
@@ -1331,8 +1472,8 @@ Next, on the reader:
 const NEXT_STEPS_TAIL: &str = "
 
 Cobalt itself is started from the Cobalt entry in the reader's own menu, or
-from .adds/cobalt/start.sh. Starting it stops the reader and takes the screen;
-a restart always returns to the stock reader.
+from .adds/cobalt-launch.sh. Starting it stops the reader and takes the
+screen; a restart always returns to the stock reader.
 
 After a restart, leave the home screen alone for one minute before opening the
 menu. NickelMenu uses that window as a boot-loop failsafe and disables itself
@@ -1342,6 +1483,11 @@ The reader is also set to stay awake for ninety minutes rather than a few, so
 that it is still reachable when you come back to it. That costs battery. The
 reader's own Energy saving screen changes it back at any time, as does
 'kobo setup --undo'.
+
+That undo removes the managed Cobalt trees, .adds/cobalt-launch.sh, and the
+exact Cobalt NickelMenu entry. It moves owner folders to
+.adds/cobalt.recovery.N first and leaves .adds/cobalt.unusable[.N] quarantines
+for inspection, so recoverable data is never silently deleted.
 ";
 
 /// How long a restarted reader is given to come back on the network.
@@ -2002,6 +2148,10 @@ mod tests {
         assert!(text.contains("ForceWifiOn"));
         assert!(text.contains("trust roots carried over: sidekick"));
         assert!(text.contains("--undo"));
+        assert!(text.contains(".adds/cobalt-launch.sh"));
+        assert!(text.contains(".adds/cobalt.recovery.N"));
+        assert!(text.contains(".adds/cobalt.unusable[.N]"));
+        assert!(text.contains("exact Cobalt NickelMenu entry"));
         assert!(text.contains("nothing was extracted as\nroot"), "{text}");
     }
 
@@ -2150,6 +2300,84 @@ mod tests {
         assert!(error.contains("written short"), "{error}");
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn undo_preserves_owner_data_and_reports_quarantines() {
+        let root = std::env::current_dir()
+            .expect("working directory")
+            .join("target")
+            .join(format!("kobo-safe-undo-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join(".adds/cobalt/secrets")).expect("current owner data");
+        std::fs::write(root.join(".adds/cobalt/secrets/token"), "secret").expect("secret");
+        std::fs::create_dir_all(root.join(".adds/cobalt.prev/trust")).expect("previous owner data");
+        std::fs::write(root.join(".adds/cobalt.prev/trust/root.pem"), "trust").expect("trust");
+        std::fs::create_dir_all(root.join(".adds/cobalt.owner/state")).expect("held owner data");
+        std::fs::write(root.join(".adds/cobalt.owner/state/session"), "state").expect("state");
+        std::fs::create_dir_all(root.join(".adds/cobalt.next")).expect("staging");
+        std::fs::create_dir_all(root.join(".adds/cobalt.unusable.0/data")).expect("quarantine");
+        std::fs::write(
+            root.join(".adds/cobalt.unusable.0/data/kept"),
+            "quarantined",
+        )
+        .expect("quarantined data");
+        std::fs::create_dir_all(root.join(".adds/nm")).expect("NickelMenu");
+        std::fs::write(
+            root.join(".adds/nm/menu"),
+            "before\nmenu_item :main :Cobalt :cmd_spawn :quiet:/mnt/onboard/.adds/cobalt-launch.sh\nafter\n",
+        )
+        .expect("menu");
+        crate::bootstrap::install(&root).expect("bootstrap");
+
+        let removal = super::remove_payload(&root).expect("safe undo");
+        let menu = crate::menu::remove(&root).expect("remove exact menu entry");
+
+        assert!(removal.removed);
+        assert_eq!(
+            removal.recoveries,
+            vec![
+                ".adds/cobalt.recovery.0",
+                ".adds/cobalt.recovery.1",
+                ".adds/cobalt.recovery.2"
+            ]
+        );
+        assert_eq!(removal.quarantines, vec![".adds/cobalt.unusable.0"]);
+        assert!(menu.entry);
+        assert_eq!(
+            std::fs::read_to_string(root.join(".adds/cobalt.recovery.0/secrets/token"))
+                .expect("preserved secret"),
+            "secret"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join(".adds/cobalt.recovery.1/trust/root.pem"))
+                .expect("preserved trust"),
+            "trust"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join(".adds/cobalt.recovery.2/state/session"))
+                .expect("preserved state"),
+            "state"
+        );
+        for tree in [
+            ".adds/cobalt",
+            ".adds/cobalt.next",
+            ".adds/cobalt.prev",
+            ".adds/cobalt.owner",
+        ] {
+            assert!(!root.join(tree).exists(), "{tree} survived");
+        }
+        assert!(!root.join(crate::bootstrap::RELATIVE_PATH).exists());
+        assert_eq!(
+            std::fs::read_to_string(root.join(".adds/nm/menu")).expect("menu"),
+            "before\nafter\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join(".adds/cobalt.unusable.0/data/kept"))
+                .expect("quarantine"),
+            "quarantined"
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 
     fn transaction_fixture(name: &str) -> PathBuf {

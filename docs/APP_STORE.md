@@ -27,15 +27,26 @@ app refresh moves a Stable reader to Beta. Switching Beta back to Stable also
 does not force a downgrade: future Stable checks resume, and Stable takes over
 only when its GA release equals or exceeds the installed beta. OTA delivery is
 over Wi-Fi and needs no USB connection. Before activation the archive digest is
-verified, unpacked into a staged sibling, and synced. The updater moves
+verified, unpacked into a staged sibling, and synced. The staged tree must
+contain `start.sh` plus executable `bin/kobod` and `bin/kobo-launcher` before a
+journal is written or owner data moves. The updater then moves
 `secrets`, `trust`, `state`, `data`, `apps`, and `store` into a temporary
 owner-data holder before changing the active version. A synced direction
 journal is advanced by atomic renames; normal daemon startup completes an
 interrupted forward activation or rollback before launching an app. An
 in-process preservation failure reverses the transaction and restores every
 owner folder to the prior installation rather than claiming success. The
-previous managed installation remains beside the active one, and Nickel
-handoff remains the normal exit path throughout.
+previous managed installation remains beside the active one. NickelMenu enters
+through `.adds/cobalt-launch.sh`, a synced book-partition bootstrap outside
+those renamed trees. It launches only a complete tree containing `start.sh`
+and executable `kobod` and `kobo-launcher` binaries, and can promote a complete
+rollback or staged tree after a crash. Before quarantining an unusable active
+tree it durably moves all owner folders to `cobalt.owner`, restores them into
+the selected complete release, and uses bounded `cobalt.unusable.N` diagnostic
+slots; occupied older quarantines never block launch. Releases from before this bootstrap
+cannot safely perform that first migration themselves: they reject the new
+standalone archive member before any swap. Rerun current USB setup once on
+such a reader; subsequent platform updates can use Wi-Fi.
 
 ## Install links
 

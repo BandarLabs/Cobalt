@@ -78,6 +78,7 @@ fn install(archive: &[u8], sha256: &str, adds: &Path) -> Result<(), DeviceError>
     // an input problem, not a transport or a disk problem.
     let tar =
         kobo_net::gzip::expand(archive, EXPANDED_LIMIT).map_err(|_| DeviceError::InvalidInput)?;
+    ensure_launch_bootstrap(adds)?;
     recover_interrupted_update(adds)?;
     let staging = adds.join("cobalt.next");
     if staging.exists() {
@@ -90,17 +91,61 @@ fn install(archive: &[u8], sha256: &str, adds: &Path) -> Result<(), DeviceError>
         let _ignored = fs::remove_dir_all(&staging);
     }
     unpacked?;
+    if !complete_launch_chain(&staging) {
+        let _ignored = fs::remove_dir_all(&staging);
+        return Err(DeviceError::InvalidInput);
+    }
     if has_owner_folders(&staging) {
         let _ignored = fs::remove_dir_all(&staging);
         return Err(DeviceError::Backend);
     }
+
     swap(adds, &staging)
+}
+
+fn complete_launch_chain(release: &Path) -> bool {
+    regular_file(&release.join("start.sh"), false)
+        && regular_file(&release.join("bin/kobod"), true)
+        && regular_file(&release.join("bin/kobo-launcher"), true)
+}
+
+fn regular_file(path: &Path, executable: bool) -> bool {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return false;
+    };
+    if !metadata.file_type().is_file() {
+        return false;
+    }
+    !executable || is_executable(&metadata)
+}
+
+#[cfg(unix)]
+fn is_executable(metadata: &fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    metadata.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn is_executable(_metadata: &fs::Metadata) -> bool {
+    true
 }
 
 /// Writes every member of `tar` under `staging`, refusing anything that is
 /// not a plain file or folder inside the installation prefix.
 fn unpack(tar: &[u8], staging: &Path) -> Result<(), DeviceError> {
+    unpack_with_bootstrap(tar, staging, true)
+}
+
+/// `allow_bootstrap = false` is the exact path policy used by f49b32c: every
+/// regular file had to be below `cobalt/`. Tests use it to prove that release
+/// fails closed before the old updater reaches its swap.
+fn unpack_with_bootstrap(
+    tar: &[u8],
+    staging: &Path,
+    allow_bootstrap: bool,
+) -> Result<(), DeviceError> {
     let mut members = 0usize;
+    let mut launch_bootstrap = false;
     let mut offset = 0usize;
     while offset + BLOCK <= tar.len() {
         let block = &tar[offset..offset + BLOCK];
@@ -112,8 +157,10 @@ fn unpack(tar: &[u8], staging: &Path) -> Result<(), DeviceError> {
         let size = read_octal(&block[124..136])?;
         let size = usize::try_from(size).map_err(|_| DeviceError::InvalidInput)?;
         let kind = block[156];
+        let standalone_bootstrap = path == LAUNCH_BOOTSTRAP_ARCHIVE_PATH;
         let relative = match installed_path(&path) {
             Some(relative) => relative,
+            None if allow_bootstrap && standalone_bootstrap && kind == b'0' => Path::new(""),
             // A general-purpose packager describes the folders above the
             // install root too. They already exist on a reader and nothing
             // is written for them, but they are not grounds to refuse the
@@ -139,6 +186,16 @@ fn unpack(tar: &[u8], staging: &Path) -> Result<(), DeviceError> {
         if end > tar.len() {
             return Err(DeviceError::InvalidInput);
         }
+        if standalone_bootstrap {
+            if launch_bootstrap || &tar[offset + BLOCK..end] != LAUNCH_BOOTSTRAP_CONTENT.as_bytes()
+            {
+                return Err(DeviceError::InvalidInput);
+            }
+            launch_bootstrap = true;
+            members += 1;
+            offset = end.div_ceil(BLOCK) * BLOCK;
+            continue;
+        }
         let destination = staging.join(relative);
         if kind == b'5' {
             fs::create_dir_all(&destination).map_err(|_| DeviceError::Backend)?;
@@ -152,7 +209,7 @@ fn unpack(tar: &[u8], staging: &Path) -> Result<(), DeviceError> {
         members += 1;
         offset = end.div_ceil(BLOCK) * BLOCK;
     }
-    if members == 0 {
+    if members == 0 || (allow_bootstrap && !launch_bootstrap) {
         return Err(DeviceError::InvalidInput);
     }
     sync_tree(staging)?;
@@ -200,6 +257,13 @@ enum Direction {
 const OWNER_HOLDER: &str = "cobalt.owner";
 const JOURNAL: &str = ".cobalt-update-transaction";
 const JOURNAL_TEMPORARY: &str = ".cobalt-update-transaction.new";
+const LAUNCH_BOOTSTRAP: &str = "cobalt-launch.sh";
+const LAUNCH_BOOTSTRAP_TEMPORARY: &str = "cobalt-launch.sh.new";
+const LAUNCH_BOOTSTRAP_CONTENT: &str = include_str!("../../../assets/cobalt-launch.sh");
+const LAUNCH_BOOTSTRAP_ARCHIVE_PATH: &str = "mnt/onboard/.adds/cobalt-launch.sh";
+const NICKELMENU_CONFIGS: [&str; 2] = ["nm/cobalt", "nm/menu"];
+const OLD_LAUNCH_PATH: &str = "/mnt/onboard/.adds/cobalt/start.sh";
+const STABLE_LAUNCH_PATH: &str = "/mnt/onboard/.adds/cobalt-launch.sh";
 
 /// The complete update transaction with a power-loss boundary injected by
 /// tests. An interruption deliberately skips in-process rollback: the next
@@ -470,6 +534,125 @@ fn remove_durable(path: &Path) -> Result<(), TransactionFailure> {
         .map_err(|_| TransactionFailure::Backend)
 }
 
+/// Installs the launch path before any versioned directory can move.
+///
+/// The bootstrap is on the book partition beside `cobalt`, so it survives
+/// every current/next/previous rename and performs no root-filesystem writes.
+/// The CLI-owned NickelMenu entry is migrated only after the bootstrap is
+/// durable, leaving either the old runnable path or the new stable one after
+/// an interruption.
+fn ensure_launch_bootstrap(adds: &Path) -> Result<(), DeviceError> {
+    fs::create_dir_all(adds).map_err(|_| DeviceError::Backend)?;
+    atomic_file(
+        adds,
+        LAUNCH_BOOTSTRAP,
+        LAUNCH_BOOTSTRAP_TEMPORARY,
+        LAUNCH_BOOTSTRAP_CONTENT.as_bytes(),
+        0o755,
+    )?;
+
+    let nickelmenu = adds.join("nm");
+    match fs::symlink_metadata(&nickelmenu) {
+        Ok(metadata) if metadata.file_type().is_dir() => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Ok(_) | Err(_) => return Err(DeviceError::Backend),
+    }
+    for relative in NICKELMENU_CONFIGS {
+        migrate_nickelmenu_file(adds, relative)?;
+    }
+    Ok(())
+}
+
+fn migrate_nickelmenu_file(adds: &Path, relative: &str) -> Result<(), DeviceError> {
+    let config = adds.join(relative);
+    let metadata = match fs::symlink_metadata(&config) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => return Err(DeviceError::Backend),
+    };
+    if !metadata.file_type().is_file() {
+        return Err(DeviceError::Backend);
+    }
+    let original = fs::read_to_string(&config).map_err(|_| DeviceError::Backend)?;
+    let replacement = migrate_nickelmenu_lines(&original);
+    if replacement == original {
+        return Ok(());
+    }
+    let parent = config.parent().ok_or(DeviceError::Backend)?;
+    let name = config
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .ok_or(DeviceError::Backend)?;
+    let temporary = format!("{name}.new");
+    atomic_file(parent, name, &temporary, replacement.as_bytes(), 0o644)
+}
+
+fn migrate_nickelmenu_lines(original: &str) -> String {
+    let mut migrated = String::with_capacity(original.len());
+    for line in original.split_inclusive('\n') {
+        let without_newline = line.strip_suffix('\n').unwrap_or(line);
+        let body = without_newline
+            .strip_suffix('\r')
+            .unwrap_or(without_newline);
+        if body.split_whitespace().eq([
+            "menu_item",
+            ":main",
+            ":Cobalt",
+            ":cmd_spawn",
+            ":quiet:/mnt/onboard/.adds/cobalt/start.sh",
+        ]) {
+            migrated.push_str(&line.replacen(OLD_LAUNCH_PATH, STABLE_LAUNCH_PATH, 1));
+        } else {
+            migrated.push_str(line);
+        }
+    }
+    migrated
+}
+
+fn atomic_file(
+    parent: &Path,
+    name: &str,
+    temporary_name: &str,
+    bytes: &[u8],
+    mode: u32,
+) -> Result<(), DeviceError> {
+    let temporary = parent.join(temporary_name);
+    let destination = parent.join(name);
+    match fs::symlink_metadata(&temporary) {
+        Ok(metadata) if metadata.file_type().is_file() || metadata.file_type().is_symlink() => {
+            fs::remove_file(&temporary).map_err(|_| DeviceError::Backend)?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Ok(_) | Err(_) => return Err(DeviceError::Backend),
+    }
+    let result = (|| {
+        let mut file = fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary)?;
+        file.write_all(bytes)?;
+        set_file_mode(&temporary, mode)?;
+        file.sync_all()?;
+        fs::rename(&temporary, &destination)?;
+        fs::File::open(parent)?.sync_all()
+    })();
+    if result.is_err() {
+        let _ignored = fs::remove_file(&temporary);
+    }
+    result.map_err(|_| DeviceError::Backend)
+}
+
+#[cfg(unix)]
+fn set_file_mode(path: &Path, mode: u32) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(mode))
+}
+
+#[cfg(not(unix))]
+fn set_file_mode(_path: &Path, _mode: u32) -> std::io::Result<()> {
+    Ok(())
+}
+
 fn write_direction(
     adds: &Path,
     direction: Direction,
@@ -639,17 +822,19 @@ fn read_octal(field: &[u8]) -> Result<u64, DeviceError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        install, recover_interrupted_update, swap_with_fault, TransactionFailure, TransactionStep,
-        JOURNAL, OWNER_FOLDERS, PREFIX,
+        ensure_launch_bootstrap, install, recover_interrupted_update, swap_with_fault,
+        TransactionFailure, TransactionStep, JOURNAL, OWNER_FOLDERS, PREFIX,
     };
     use kobo_protocol::DeviceError;
     use std::fs;
+    use std::process::Command;
 
     /// A tar member for the archives these tests publish.
     struct Member<'a> {
         path: String,
         kind: u8,
         payload: &'a [u8],
+        mode: u32,
     }
 
     fn folder(path: &str) -> Member<'static> {
@@ -657,6 +842,7 @@ mod tests {
             path: format!("{PREFIX}/{path}"),
             kind: b'5',
             payload: &[],
+            mode: 0o755,
         }
     }
 
@@ -665,6 +851,25 @@ mod tests {
             path: format!("{PREFIX}/{path}"),
             kind: b'0',
             payload,
+            mode: 0o755,
+        }
+    }
+
+    fn file_mode<'a>(path: &str, payload: &'a [u8], mode: u32) -> Member<'a> {
+        Member {
+            path: format!("{PREFIX}/{path}"),
+            kind: b'0',
+            payload,
+            mode,
+        }
+    }
+
+    fn launch_bootstrap() -> Member<'static> {
+        Member {
+            path: super::LAUNCH_BOOTSTRAP_ARCHIVE_PATH.to_owned(),
+            kind: b'0',
+            payload: super::LAUNCH_BOOTSTRAP_CONTENT.as_bytes(),
+            mode: 0o755,
         }
     }
 
@@ -673,7 +878,8 @@ mod tests {
         for member in members {
             let mut block = [0u8; 512];
             block[..member.path.len()].copy_from_slice(member.path.as_bytes());
-            block[100..107].copy_from_slice(b"0000755");
+            let mode = format!("{:07o}", member.mode);
+            block[100..107].copy_from_slice(mode.as_bytes());
             let size = format!("{:011o}", member.payload.len());
             block[124..135].copy_from_slice(size.as_bytes());
             block[156] = member.kind;
@@ -709,14 +915,33 @@ mod tests {
     }
 
     fn published(members: &[Member<'_>]) -> (Vec<u8>, String) {
-        let archive = gzip(&tar(members));
+        let mut complete = Vec::with_capacity(members.len() + 1);
+        complete.push(launch_bootstrap());
+        complete.extend(members.iter().map(|member| Member {
+            path: member.path.clone(),
+            kind: member.kind,
+            payload: member.payload,
+            mode: member.mode,
+        }));
+        let archive = gzip(&tar(&complete));
         let digest = kobo_net::sha256::hex_digest(&archive);
         (archive, digest)
     }
 
+    fn launch_files(start: &[u8]) -> Vec<Member<'_>> {
+        vec![
+            folder("bin"),
+            file("start.sh", start),
+            file("bin/kobod", b"daemon"),
+            file("bin/kobo-launcher", b"launcher"),
+        ]
+    }
+
     fn scratch(name: &str) -> std::path::PathBuf {
-        let folder =
-            std::env::temp_dir().join(format!("kobod-update-{name}-{}", std::process::id()));
+        let folder = std::env::current_dir()
+            .expect("working directory")
+            .join("target")
+            .join(format!("kobod-update-{name}-{}", std::process::id()));
         let _ignored = fs::remove_dir_all(&folder);
         fs::create_dir_all(&folder).expect("scratch folder");
         folder
@@ -725,18 +950,91 @@ mod tests {
     #[test]
     fn a_verified_archive_is_unpacked_and_swapped_in() {
         let adds = scratch("swap");
-        let (archive, digest) = published(&[
-            folder(""),
-            folder("bin"),
-            file("bin/kobod", b"new daemon"),
-            file("start.sh", b"#!/bin/sh\n"),
-        ]);
+        let mut members = launch_files(b"#!/bin/sh\n");
+        members.push(folder(""));
+        let (archive, digest) = published(&members);
         install(&archive, &digest, &adds).expect("install succeeds");
         let read = |path: &str| fs::read(adds.join("cobalt").join(path)).expect("installed file");
-        assert_eq!(read("bin/kobod"), b"new daemon");
+        assert_eq!(read("bin/kobod"), b"daemon");
         assert_eq!(read("start.sh"), b"#!/bin/sh\n");
         assert!(!adds.join("cobalt.next").exists());
         let _ignored = fs::remove_dir_all(&adds);
+    }
+
+    #[test]
+    fn incomplete_launch_chain_is_rejected_before_owner_transaction() {
+        let cases = [
+            vec![
+                file("bin/kobod", b"daemon"),
+                file("bin/kobo-launcher", b"launcher"),
+            ],
+            vec![
+                file("start.sh", b"start"),
+                file("bin/kobo-launcher", b"launcher"),
+            ],
+            vec![file("start.sh", b"start"), file("bin/kobod", b"daemon")],
+            vec![
+                file("start.sh", b"start"),
+                file_mode("bin/kobod", b"daemon", 0o644),
+                file("bin/kobo-launcher", b"launcher"),
+            ],
+            vec![
+                file("start.sh", b"start"),
+                file("bin/kobod", b"daemon"),
+                file_mode("bin/kobo-launcher", b"launcher", 0o644),
+            ],
+        ];
+        for (index, members) in cases.iter().enumerate() {
+            let adds = scratch(&format!("incomplete-launch-{index}"));
+            complete_release(&adds.join("cobalt"), "old").expect("current release");
+            fs::create_dir_all(adds.join("cobalt/secrets")).expect("owner folder");
+            fs::write(adds.join("cobalt/secrets/token"), "kept").expect("owner data");
+            let (archive, digest) = published(members);
+
+            assert_eq!(
+                install(&archive, &digest, &adds),
+                Err(DeviceError::InvalidInput)
+            );
+            assert_eq!(
+                fs::read_to_string(adds.join("cobalt/secrets/token")).expect("owner data"),
+                "kept"
+            );
+            assert!(!adds.join("cobalt.prev").exists());
+            assert!(!adds.join("cobalt.next").exists());
+            assert!(!adds.join("cobalt.owner").exists());
+            assert!(!adds.join(JOURNAL).exists());
+            let _ignored = fs::remove_dir_all(adds);
+        }
+    }
+
+    #[test]
+    fn f49b32c_updater_rejects_bootstrap_release_before_swap() {
+        let adds = scratch("pre-bootstrap-gate");
+        let current = adds.join("cobalt");
+        complete_release(&current, "old").expect("old release");
+        let members = [folder("bin"), file("bin/new", b"new")];
+        let (archive, _) = published(&members);
+        let tar = kobo_net::gzip::expand(&archive, super::EXPANDED_LIMIT).expect("published gzip");
+        let staging = adds.join("cobalt.next");
+
+        // This is the f49b32c order: fully unpack and validate, remove failed
+        // staging, and only then (on success) call swap. It cannot recognize
+        // the new standalone member, so the existing release remains active.
+        let result = super::unpack_with_bootstrap(&tar, &staging, false);
+        if result.is_err() {
+            let _ = fs::remove_dir_all(&staging);
+        }
+
+        assert_eq!(result, Err(DeviceError::InvalidInput));
+        assert_eq!(
+            fs::read_to_string(current.join("release")).expect("active marker"),
+            "old"
+        );
+        assert!(!staging.exists());
+        assert!(!adds.join("cobalt.prev").exists());
+        assert!(!adds.join(super::JOURNAL).exists());
+        assert!(!adds.join("cobalt-launch.sh").exists());
+        fs::remove_dir_all(adds).expect("cleanup");
     }
 
     #[test]
@@ -744,7 +1042,8 @@ mod tests {
         let adds = scratch("previous");
         fs::create_dir_all(adds.join("cobalt")).expect("current installation");
         fs::write(adds.join("cobalt/start.sh"), b"old").expect("current file");
-        let (archive, digest) = published(&[file("start.sh", b"new")]);
+        let members = launch_files(b"new");
+        let (archive, digest) = published(&members);
         install(&archive, &digest, &adds).expect("install succeeds");
         assert_eq!(
             fs::read(adds.join("cobalt/start.sh")).expect("new file"),
@@ -765,7 +1064,8 @@ mod tests {
         fs::create_dir_all(adds.join("cobalt/secrets")).expect("current secrets");
         fs::write(adds.join("cobalt/secrets/hn"), b"token").expect("secret");
         fs::write(adds.join("cobalt/start.sh"), b"old").expect("current file");
-        let (archive, digest) = published(&[file("start.sh", b"new")]);
+        let members = launch_files(b"new");
+        let (archive, digest) = published(&members);
         install(&archive, &digest, &adds).expect("install succeeds");
         // The release replaced its own files and carried the owner's.
         assert_eq!(
@@ -785,27 +1085,256 @@ mod tests {
         let _ignored = fs::remove_dir_all(&adds);
     }
 
+    #[test]
+    fn ota_installs_the_stable_bootstrap_before_migrating_nickelmenu() {
+        let adds = scratch("launch-bootstrap");
+        fs::create_dir_all(adds.join("nm")).expect("NickelMenu folder");
+        fs::write(
+            adds.join("nm/cobalt"),
+            "menu_item :main :Cobalt :cmd_spawn :quiet:/mnt/onboard/.adds/cobalt/start.sh\n",
+        )
+        .expect("legacy Cobalt entry");
+        fs::write(
+            adds.join("nm/menu"),
+            "unrelated /mnt/onboard/.adds/cobalt/start.sh\nmenu_item :main :Cobalt :cmd_spawn :quiet:/mnt/onboard/.adds/cobalt/start.sh\r\n",
+        )
+        .expect("legacy shared menu");
+
+        ensure_launch_bootstrap(&adds).expect("install stable bootstrap");
+
+        assert_eq!(
+            fs::read_to_string(adds.join("cobalt-launch.sh")).expect("bootstrap"),
+            super::LAUNCH_BOOTSTRAP_CONTENT
+        );
+        let config = fs::read_to_string(adds.join("nm/cobalt")).expect("migrated entry");
+        assert!(config.contains(super::STABLE_LAUNCH_PATH), "{config}");
+        assert!(!config.contains(super::OLD_LAUNCH_PATH), "{config}");
+        assert_eq!(
+            fs::read_to_string(adds.join("nm/menu")).expect("migrated shared menu"),
+            "unrelated /mnt/onboard/.adds/cobalt/start.sh\nmenu_item :main :Cobalt :cmd_spawn :quiet:/mnt/onboard/.adds/cobalt-launch.sh\r\n"
+        );
+        let _ignored = fs::remove_dir_all(adds);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ota_refuses_symlinked_nickelmenu_config() {
+        use std::os::unix::fs::symlink;
+
+        let adds = scratch("nickelmenu-symlink");
+        fs::create_dir_all(adds.join("nm")).expect("NickelMenu folder");
+        fs::write(adds.join("victim"), "unchanged").expect("victim");
+        symlink(adds.join("victim"), adds.join("nm/menu")).expect("config symlink");
+
+        assert_eq!(ensure_launch_bootstrap(&adds), Err(DeviceError::Backend));
+        assert_eq!(
+            fs::read_to_string(adds.join("victim")).expect("victim"),
+            "unchanged"
+        );
+        let _ignored = fs::remove_dir_all(adds);
+    }
+
     fn transaction_fixture(name: &str) -> std::path::PathBuf {
         let adds = scratch(name);
         let current = adds.join("cobalt");
         let staging = adds.join("cobalt.next");
-        fs::create_dir_all(&current).expect("current");
-        fs::write(current.join("start.sh"), b"old").expect("old release");
-        fs::create_dir_all(&staging).expect("staging");
-        fs::write(staging.join("start.sh"), b"new").expect("new release");
-        fs::create_dir_all(adds.join("cobalt.prev")).expect("stale previous");
-        fs::write(adds.join("cobalt.prev/start.sh"), b"older").expect("older release");
+        complete_release(&current, "old").expect("old release");
+        complete_release(&staging, "new").expect("new release");
+        complete_release(&adds.join("cobalt.prev"), "older").expect("older release");
         for folder in OWNER_FOLDERS {
             fs::create_dir_all(current.join(folder)).expect("owner folder");
             fs::write(current.join(folder).join("kept"), folder).expect("owner data");
         }
+        ensure_launch_bootstrap(&adds).expect("stable launch bootstrap");
         adds
     }
 
-    fn assert_owner_data(adds: &std::path::Path, release: &[u8]) {
+    fn start_script(release: &str) -> String {
+        format!(
+            "#!/bin/sh\n# release {release}\nbase=${{0%/start.sh}}\nexec \"$base/bin/kobod\" --present \"$base/bin/kobo-launcher\"\n"
+        )
+    }
+
+    fn complete_release(path: &std::path::Path, release: &str) -> std::io::Result<()> {
+        fs::create_dir_all(path.join("bin"))?;
+        fs::write(path.join("release"), release)?;
+        fs::write(path.join("start.sh"), start_script(release))?;
+        fs::write(
+            path.join("bin/kobod"),
+            b"#!/bin/sh\n[ \"$1\" = --present ] || exit 70\n[ \"$2\" = \"${0%/kobod}/kobo-launcher\" ] || exit 71\n[ -x \"$2\" ] || exit 72\nexec \"$2\"\n",
+        )?;
+        fs::write(
+            path.join("bin/kobo-launcher"),
+            format!("#!/bin/sh\nprintf '%s' '{release}' > \"$COBALT_TEST_LAUNCHED\"\n"),
+        )?;
+        set_test_executable(&path.join("bin/kobod"))?;
+        set_test_executable(&path.join("bin/kobo-launcher"))
+    }
+
+    #[cfg(unix)]
+    fn set_test_executable(path: &std::path::Path) -> std::io::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+    }
+
+    #[cfg(not(unix))]
+    fn set_test_executable(_path: &std::path::Path) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    fn assert_launchable(adds: &std::path::Path) {
+        let launched = adds.join("launched-release");
+        let status = Command::new("/bin/sh")
+            .arg(adds.join("cobalt-launch.sh"))
+            .env("COBALT_ADDS", adds)
+            .env("COBALT_TEST_LAUNCHED", &launched)
+            .status()
+            .expect("run stable bootstrap");
+        assert!(status.success(), "stable bootstrap could not start Cobalt");
+        assert!(
+            matches!(
+                fs::read_to_string(&launched).as_deref(),
+                Ok("old" | "new" | "older")
+            ),
+            "the complete start.sh -> kobod -> kobo-launcher chain did not run"
+        );
+        fs::remove_file(launched).expect("remove launch marker");
+    }
+
+    #[test]
+    fn bootstrap_quarantines_unusable_current_and_promotes_exact_candidate() {
+        let adds = scratch("quarantine-current");
+        fs::create_dir_all(adds.join("cobalt/broken")).expect("unusable current");
+        fs::write(adds.join("cobalt/broken/kept"), "broken").expect("unusable payload");
+        complete_release(&adds.join("cobalt.prev"), "old").expect("complete previous");
+        ensure_launch_bootstrap(&adds).expect("bootstrap");
+
+        assert_launchable(&adds);
+
         assert_eq!(
-            fs::read(adds.join("cobalt/start.sh")).expect("active release"),
-            release
+            fs::read_to_string(adds.join("cobalt/release")).expect("promoted release"),
+            "old"
+        );
+        assert_eq!(
+            fs::read_to_string(adds.join("cobalt.unusable.0/broken/kept"))
+                .expect("quarantined payload"),
+            "broken"
+        );
+        assert!(!adds.join("cobalt.prev").exists());
+        assert!(!adds.join("cobalt/cobalt.prev").exists());
+        let _ignored = fs::remove_dir_all(adds);
+    }
+
+    #[test]
+    fn bootstrap_finishes_promotion_after_crash_following_quarantine() {
+        let adds = scratch("quarantine-interruption");
+        fs::create_dir_all(adds.join("cobalt.unusable.0")).expect("prior quarantine rename");
+        fs::write(adds.join("cobalt.unusable.0/kept"), "broken").expect("quarantine payload");
+        complete_release(&adds.join("cobalt.next"), "new").expect("complete staging");
+        ensure_launch_bootstrap(&adds).expect("bootstrap");
+
+        assert_launchable(&adds);
+
+        assert_eq!(
+            fs::read_to_string(adds.join("cobalt/release")).expect("promoted release"),
+            "new"
+        );
+        assert_eq!(
+            fs::read_to_string(adds.join("cobalt.unusable.0/kept")).expect("quarantine payload"),
+            "broken"
+        );
+        assert!(!adds.join("cobalt.next").exists());
+        let _ignored = fs::remove_dir_all(adds);
+    }
+
+    #[test]
+    fn bootstrap_ignores_incomplete_candidate_and_selects_complete_one() {
+        let adds = scratch("incomplete-candidate");
+        fs::create_dir_all(adds.join("cobalt.prev/bin")).expect("incomplete previous");
+        fs::write(adds.join("cobalt.prev/start.sh"), "#!/bin/sh\n").expect("partial start");
+        complete_release(&adds.join("cobalt.next"), "new").expect("complete staging");
+        ensure_launch_bootstrap(&adds).expect("bootstrap");
+
+        assert_launchable(&adds);
+
+        assert_eq!(
+            fs::read_to_string(adds.join("cobalt/release")).expect("promoted release"),
+            "new"
+        );
+        assert!(adds.join("cobalt.prev").exists());
+        let _ignored = fs::remove_dir_all(adds);
+    }
+
+    #[test]
+    fn bootstrap_fails_closed_without_a_complete_candidate() {
+        let adds = scratch("no-candidate");
+        fs::create_dir_all(adds.join("cobalt")).expect("unusable current");
+        fs::write(adds.join("cobalt/kept"), "current").expect("current payload");
+        ensure_launch_bootstrap(&adds).expect("bootstrap");
+
+        let status = Command::new("/bin/sh")
+            .arg(adds.join("cobalt-launch.sh"))
+            .env("COBALT_ADDS", &adds)
+            .env("COBALT_TEST_LAUNCHED", adds.join("launched-release"))
+            .status()
+            .expect("run stable bootstrap");
+
+        assert!(!status.success());
+        assert_eq!(
+            fs::read_to_string(adds.join("cobalt/kept")).expect("current payload"),
+            "current"
+        );
+        assert!(!adds.join("launched-release").exists());
+        let _ignored = fs::remove_dir_all(adds);
+    }
+
+    #[test]
+    fn old_quarantines_never_block_candidate_and_current_owner_data_is_restored() {
+        let adds = scratch("bounded-quarantine");
+        for folder in OWNER_FOLDERS {
+            fs::create_dir_all(adds.join("cobalt").join(folder)).expect("owner folder");
+            fs::write(adds.join("cobalt").join(folder).join("kept"), folder).expect("owner data");
+        }
+        fs::write(adds.join("cobalt/broken"), "managed").expect("broken current");
+        complete_release(&adds.join("cobalt.prev"), "old").expect("candidate");
+        fs::create_dir_all(adds.join("cobalt.unusable")).expect("legacy quarantine");
+        fs::write(adds.join("cobalt.unusable/kept"), "legacy").expect("legacy payload");
+        for suffix in 0..8 {
+            let quarantine = adds.join(format!("cobalt.unusable.{suffix}"));
+            fs::create_dir_all(&quarantine).expect("old quarantine");
+            fs::write(quarantine.join("kept"), format!("old-{suffix}")).expect("old payload");
+        }
+        ensure_launch_bootstrap(&adds).expect("bootstrap");
+
+        assert_launchable(&adds);
+
+        for folder in OWNER_FOLDERS {
+            assert_eq!(
+                fs::read_to_string(adds.join("cobalt").join(folder).join("kept"))
+                    .expect("restored owner data"),
+                folder
+            );
+        }
+        assert!(!adds.join("cobalt.owner").exists());
+        for suffix in 0..8 {
+            assert_eq!(
+                fs::read_to_string(adds.join(format!("cobalt.unusable.{suffix}/kept")))
+                    .expect("old quarantine"),
+                format!("old-{suffix}")
+            );
+        }
+        assert_eq!(
+            fs::read_to_string(adds.join("cobalt.unusable/kept")).expect("legacy quarantine"),
+            "legacy"
+        );
+        let _ignored = fs::remove_dir_all(adds);
+    }
+
+    fn assert_owner_data(adds: &std::path::Path, release: &str) {
+        let start = fs::read_to_string(adds.join("cobalt/start.sh")).expect("active release");
+        assert!(
+            start.contains(&format!("# release {release}")),
+            "expected {release}, found {start:?}"
         );
         for folder in OWNER_FOLDERS {
             assert_eq!(
@@ -825,7 +1354,7 @@ mod tests {
     }
 
     #[test]
-    fn startup_recovers_every_forward_rename_and_phase_boundary() {
+    fn stable_bootstrap_launches_and_startup_recovers_every_forward_boundary() {
         let trace_root = transaction_fixture("forward-trace");
         let mut boundaries = Vec::new();
         swap_with_fault(&trace_root, &trace_root.join("cobalt.next"), &mut |step| {
@@ -833,7 +1362,7 @@ mod tests {
             Ok(())
         })
         .expect("trace transaction");
-        assert_owner_data(&trace_root, b"new");
+        assert_owner_data(&trace_root, "new");
         let _ignored = fs::remove_dir_all(trace_root);
 
         for (failure, boundary) in boundaries.iter().copied().enumerate() {
@@ -856,18 +1385,19 @@ mod tests {
                 Err(DeviceError::Backend),
                 "boundary {boundary:?} did not interrupt"
             );
+            assert_launchable(&adds);
             recover_interrupted_update(&adds).expect("normal startup recovery");
             if boundary == TransactionStep::SetForward {
-                assert_owner_data(&adds, b"old");
+                assert_owner_data(&adds, "old");
             } else {
-                assert_owner_data(&adds, b"new");
+                assert_owner_data(&adds, "new");
             }
             let _ignored = fs::remove_dir_all(adds);
         }
     }
 
     #[test]
-    fn startup_recovers_every_atomic_rollback_boundary() {
+    fn stable_bootstrap_launches_and_startup_recovers_every_rollback_boundary() {
         let trace_root = transaction_fixture("rollback-trace");
         let mut rollback = false;
         let mut rollback_boundaries = Vec::new();
@@ -886,7 +1416,7 @@ mod tests {
             }),
             Err(DeviceError::Backend)
         );
-        assert_owner_data(&trace_root, b"old");
+        assert_owner_data(&trace_root, "old");
         let _ignored = fs::remove_dir_all(trace_root);
 
         for (failure, boundary) in rollback_boundaries.iter().copied().enumerate() {
@@ -913,11 +1443,12 @@ mod tests {
                 Err(DeviceError::Backend),
                 "rollback boundary {boundary:?} did not interrupt"
             );
+            assert_launchable(&adds);
             recover_interrupted_update(&adds).expect("normal startup rollback recovery");
             if boundary == TransactionStep::SetRollback {
-                assert_owner_data(&adds, b"new");
+                assert_owner_data(&adds, "new");
             } else {
-                assert_owner_data(&adds, b"old");
+                assert_owner_data(&adds, "old");
             }
             let _ignored = fs::remove_dir_all(adds);
         }
@@ -1023,7 +1554,9 @@ mod tests {
         fs::create_dir_all(adds.join("cobalt/secrets")).expect("current secrets");
         fs::write(adds.join("cobalt/secrets/token"), b"kept").expect("secret");
         fs::write(adds.join("cobalt/start.sh"), b"old").expect("current release");
-        let (archive, digest) = published(&[file("start.sh", b"new"), folder("secrets")]);
+        let mut members = launch_files(b"new");
+        members.push(folder("secrets"));
+        let (archive, digest) = published(&members);
         assert_eq!(install(&archive, &digest, &adds), Err(DeviceError::Backend));
         assert_eq!(
             fs::read(adds.join("cobalt/secrets/token")).expect("current secret"),
@@ -1060,14 +1593,16 @@ mod tests {
             path: path.to_owned(),
             kind: b'5',
             payload: &[],
+            mode: 0o755,
         };
-        let (archive, digest) = published(&[
+        let mut members = vec![
             above("mnt/"),
             above("mnt/onboard/"),
             above("mnt/onboard/.adds/"),
             folder(""),
-            file("start.sh", b"#!/bin/sh\n"),
-        ]);
+        ];
+        members.extend(launch_files(b"#!/bin/sh\n"));
+        let (archive, digest) = published(&members);
         install(&archive, &digest, &adds).expect("install succeeds");
         assert_eq!(
             fs::read(adds.join("cobalt/start.sh")).expect("installed file"),
@@ -1087,6 +1622,7 @@ mod tests {
             path: "mnt/onboard/.adds/".to_owned(),
             kind: b'0',
             payload: b"tampered",
+            mode: 0o755,
         };
         let (archive, digest) = published(&[file("start.sh", b"fine"), stray]);
         assert_eq!(
@@ -1098,12 +1634,45 @@ mod tests {
     }
 
     #[test]
+    fn ota_requires_the_exact_regular_standalone_bootstrap_member() {
+        for members in [
+            vec![file("start.sh", b"release")],
+            vec![
+                Member {
+                    path: super::LAUNCH_BOOTSTRAP_ARCHIVE_PATH.to_owned(),
+                    kind: b'0',
+                    payload: b"tampered",
+                    mode: 0o755,
+                },
+                file("start.sh", b"release"),
+            ],
+            vec![
+                Member {
+                    path: super::LAUNCH_BOOTSTRAP_ARCHIVE_PATH.to_owned(),
+                    kind: b'2',
+                    payload: &[],
+                    mode: 0o755,
+                },
+                file("start.sh", b"release"),
+            ],
+        ] {
+            let adds = scratch("bootstrap-member");
+            assert_eq!(
+                super::unpack(&tar(&members), &adds.join("cobalt.next")),
+                Err(DeviceError::InvalidInput)
+            );
+            let _ignored = fs::remove_dir_all(adds);
+        }
+    }
+
+    #[test]
     fn a_member_outside_the_installation_prefix_is_refused() {
         let adds = scratch("outside");
         let stray = Member {
             path: "mnt/onboard/.kobo/Kobo/Kobo eReader.conf".to_owned(),
             kind: b'0',
             payload: b"tampered",
+            mode: 0o755,
         };
         let (archive, digest) = published(&[file("start.sh", b"fine"), stray]);
         assert_eq!(
@@ -1122,6 +1691,7 @@ mod tests {
             path: format!("{PREFIX}/../escape"),
             kind: b'0',
             payload: b"tampered",
+            mode: 0o755,
         };
         let (archive, digest) = published(&[climbing]);
         assert_eq!(
@@ -1138,6 +1708,7 @@ mod tests {
             path: format!("{PREFIX}/link"),
             kind: b'2',
             payload: &[],
+            mode: 0o755,
         };
         let (archive, digest) = published(&[link]);
         assert_eq!(
@@ -1154,6 +1725,7 @@ mod tests {
             path: format!("{PREFIX}-else/file"),
             kind: b'0',
             payload: b"tampered",
+            mode: 0o755,
         };
         let (archive, digest) = published(&[sibling]);
         assert_eq!(
