@@ -11,7 +11,7 @@ const MANIFEST_FIELDS = [
   "minimum_cobalt_version",
   "glyph"
 ];
-const COMPATIBLE_PLATFORM_PATHS = new Set([
+const COMPATIBLE_RELEASE_PATHS = new Set([
   "Cargo.lock",
   "crates/kobo-abi/src/lib.rs",
   "crates/kobo-policy/src/credentials.rs",
@@ -25,7 +25,9 @@ const COMPATIBLE_PLATFORM_PATHS = new Set([
   "crates/kobo-sdk/src/terminal.rs",
   "crates/kobo-text/src/lib.rs",
   "crates/kobo-ui/Cargo.toml",
-  "crates/kobo-ui/src/lib.rs"
+  "crates/kobo-ui/src/lib.rs",
+  "examples/gutenbird/Cargo.toml",
+  "examples/gutenbird/src/main.rs"
 ]);
 
 // Store packages are built from the current SDK and therefore speak its exact
@@ -368,7 +370,7 @@ export function compatibleChangePaths(
     for (const file of change.files) {
       if (
         typeof file?.path !== "string" ||
-        !COMPATIBLE_PLATFORM_PATHS.has(file.path) ||
+        !COMPATIBLE_RELEASE_PATHS.has(file.path) ||
         (file?.base_blob !== null && !/^[0-9a-f]{40}$/.test(file?.base_blob)) ||
         !/^[0-9a-f]{40}$/.test(file?.compatible_blob)
       ) {

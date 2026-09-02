@@ -432,6 +432,41 @@ test("responsive SDK release isolation covers only exact reviewed inputs", () =>
   }
 });
 
+test("Gutenbird test-only changes are isolated by exact reviewed blobs", () => {
+  const manifest = JSON.parse(
+    readFileSync("tools/app-release-compatible-changes.json", "utf8")
+  );
+  const paths = [
+    "examples/gutenbird/Cargo.toml",
+    "examples/gutenbird/src/main.rs"
+  ];
+  const files = new Map(
+    manifest.changes
+      .find(change => change.protocol_version === 12)
+      .files.map(file => [file.path, file])
+  );
+  assert.deepEqual(
+    compatibleChangePaths(
+      manifest,
+      12,
+      paths,
+      path => files.get(path)?.base_blob,
+      path => files.get(path)?.compatible_blob
+    ),
+    new Set(paths)
+  );
+  assert.equal(
+    compatibleChangePaths(
+      manifest,
+      12,
+      ["examples/gutenbird/src/main.rs"],
+      path => files.get(path)?.base_blob,
+      () => "f".repeat(40)
+    ).size,
+    0
+  );
+});
+
 test("new lockfile package blocks do not change existing app release inputs", () => {
   const previous = `version = 4\n\n[[package]]\nname = "notes"\nversion = "1.0.0"\n`;
   const current = `${previous}\n[[package]]\nname = "reader"\nversion = "1.0.0"\n`;

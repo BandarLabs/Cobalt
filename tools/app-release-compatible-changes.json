@@ -3,12 +3,12 @@
   "changes": [
     {
       "protocol_version": 12,
-      "reason": "The 0.3.5 runtime retains protocol-11 rendering, responses, and Atkinson metrics for unchanged Store binaries. Responsive renderer work and SDK-only profile tests do not alter those already-published bytes. Protocol 12 adds Folio nodes and a write-only app-scoped credential request that protocol-11 apps cannot emit; only catalog apps changed to use the new SDK surface are rebuilt.",
+      "reason": "The 0.3.5 runtime retains protocol-11 rendering, responses, and Atkinson metrics for unchanged Store binaries. Responsive renderer work, SDK profile tests, and Gutenbird test-only pagination coverage do not alter already-published app bytes. Protocol 12 adds Folio nodes and a write-only app-scoped credential request that protocol-11 apps cannot emit; only catalog apps changed to use the new SDK surface are rebuilt.",
       "files": [
         {
           "path": "Cargo.lock",
           "base_blob": "98e86504890e59da1755181ad38d7ffaa86c635a",
-          "compatible_blob": "25f192ec0d3110d9d3e566d1dd4b242429b1ee94"
+          "compatible_blob": "55654f711018b66105d74aa4b07d7e863c6f21e6"
         },
         {
           "path": "crates/kobo-abi/src/lib.rs",
@@ -73,7 +73,17 @@
         {
           "path": "crates/kobo-ui/src/lib.rs",
           "base_blob": "b423c372440c61e785db9dd0128eac22343cb9f8",
-          "compatible_blob": "916df7ea71b9df9cab622ae4d8e3fd1e2f122267"
+          "compatible_blob": "cdd465f740ffeb35ba3d535f02383b66051bb823"
+        },
+        {
+          "path": "examples/gutenbird/Cargo.toml",
+          "base_blob": "e0357de3f847e95cc5ecdc9bfd4f99fddf453374",
+          "compatible_blob": "abeddb5f99c0d7d8fa5f8f89cf2d56909f38a860"
+        },
+        {
+          "path": "examples/gutenbird/src/main.rs",
+          "base_blob": "d6acdfb27453085121ccfbb5efa65a38ad0cc196",
+          "compatible_blob": "7af71d574667ed54ad37b70e97a28eaba11084c3"
         }
       ]
     }
