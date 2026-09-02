@@ -25,6 +25,7 @@ host="$target_root/host-target/release/flashcards-import"
 cli="$target_root/host-tools/release/kobo"
 source_commit_file="$target_root/artifacts/flashcards-import.source-commit.txt"
 readelf=${READELF:-armv7-unknown-linux-musleabihf-readelf}
+expected_validation_key=d759793bbc13a2819a827c76adb6fba8a49aee007f49f2d0992d99b825ad2c48
 
 for path in "$device" "$audit_device" "$package" "$manifest" "$public_key" "$host" "$cli" "$source_commit_file"; do
   if [ ! -f "$path" ]; then
@@ -36,6 +37,10 @@ done
 source_commit=$(tr -d '\n' < "$source_commit_file")
 if [ "$source_commit" != "$(git -C "$repo" rev-parse HEAD)" ]; then
   echo "artifact source commit does not match this checkout" >&2
+  exit 1
+fi
+if [ "$(tr -d '\n' < "$public_key")" != "$expected_validation_key" ]; then
+  echo "validation package public key is not the fixed audit key" >&2
   exit 1
 fi
 

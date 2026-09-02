@@ -115,6 +115,11 @@ chmod 600 "$seed"
 cmp "$artifacts/flashcards-validation.cobalt-app" \
   "$artifacts/.flashcards-validation-second.cobalt-app"
 "$cli" app-key --seed "$seed" > "$artifacts/validation-public-key.txt"
+if [ "$(tr -d '\n' < "$artifacts/validation-public-key.txt")" != \
+  "d759793bbc13a2819a827c76adb6fba8a49aee007f49f2d0992d99b825ad2c48" ]; then
+  echo "validation seed derived an unexpected public key" >&2
+  exit 1
+fi
 "$cli" app-catalog \
   --seed "$seed" \
   --out "$artifacts/catalog/catalog.json" \

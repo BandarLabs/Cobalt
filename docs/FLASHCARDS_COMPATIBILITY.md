@@ -42,10 +42,12 @@ scripts/audit-flashcards-artifacts.sh "$target_root"
 
 The build script varies only symbol stripping between production and audit
 device builds; both use `.cargo/config.toml`'s `rust-lld`. The fixed validation
-signing material is public, removed immediately, and is not trusted by
-production runtimes. The script requires a clean committed checkout so the
-host helper and `flashcards-import.source-commit.txt` can carry the exact
-Cobalt source revision.
+signing material is public, removed immediately, and derives the fixed audit
+public key
+`d759793bbc13a2819a827c76adb6fba8a49aee007f49f2d0992d99b825ad2c48`.
+It is not trusted by production runtimes. The script requires a clean committed
+checkout so the host helper and `flashcards-import.source-commit.txt` can carry
+the exact Cobalt source revision.
 
 The audit checks the device Cargo dependency closure, a required unstripped
 static ARM ELF's symbols, production package strings, empty Store capability
