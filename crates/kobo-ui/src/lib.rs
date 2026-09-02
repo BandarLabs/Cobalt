@@ -449,6 +449,202 @@ mod folio_tests {
             .find(|node| matches!(node.kind, LayoutKind::TileGlyph(_)))
             .expect("legacy glyph");
         assert!(legacy_glyph.rect.width > modern_glyph.rect.width);
+
+        let long_label =
+            "A deliberately long legacy action whose wrapping must keep the old pixel inset";
+        let legacy_long = Screen::new(
+            2,
+            vec![Node::Button {
+                id: NodeId(3),
+                action: ActionId(3),
+                label: long_label.into(),
+                state: ControlState::Enabled,
+                emphasis: Emphasis::Normal,
+            }],
+        )
+        .with_legacy_typography(true)
+        .layout();
+        let legacy_long_button = legacy_long
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::Button(..)))
+            .expect("long legacy button");
+        assert_eq!(
+            legacy_long_button.text_lines,
+            wrap_text(
+                long_label,
+                legacy_long_button.rect.width - 32,
+                FontSize::Body
+            )
+        );
+
+        let legacy_splash = Screen::new(
+            3,
+            vec![Node::Splash {
+                id: NodeId(4),
+                glyph: Some(Glyph::App),
+                title: "Existing app".into(),
+                summary: String::new(),
+            }],
+        )
+        .with_legacy_typography(true)
+        .layout();
+        let legacy_splash_glyph = legacy_splash
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::SplashGlyph(_)))
+            .expect("legacy splash glyph");
+        assert_eq!(
+            legacy_splash_glyph.rect.width,
+            CLARA_BW_METRICS.tenth_mm(140)
+        );
+    }
+
+    #[test]
+    fn legacy_section_values_keep_the_full_pre_folio_measure() {
+        let value =
+            "A deliberately long section value that needs more than half the available measure";
+        let layout = Screen::new(
+            1,
+            vec![Node::Section {
+                id: NodeId(1),
+                title: "Status".into(),
+                value: Some(value.into()),
+                link: None,
+            }],
+        )
+        .with_legacy_typography(true)
+        .layout();
+        let section = layout
+            .nodes
+            .iter()
+            .find(|node| node.kind == LayoutKind::Section)
+            .expect("legacy section");
+        let expected = with_legacy_typography(true, || {
+            one_line(value, section.rect.width, FontSize::Caption)
+        });
+        let half_width = with_legacy_typography(true, || {
+            one_line(value, section.rect.width / 2, FontSize::Caption)
+        });
+        assert_ne!(
+            expected, half_width,
+            "fixture must distinguish the measures"
+        );
+        assert_eq!(section.text_lines.get(1), Some(&expected));
+    }
+
+    #[test]
+    fn legacy_two_line_tile_labels_render_with_caption_metrics() {
+        let width = usize::try_from(CLARA_BW_METRICS.width).expect("positive width");
+        let height = usize::try_from(CLARA_BW_METRICS.height).expect("positive height");
+        let clip = Rect {
+            x: 0,
+            y: 0,
+            width: CLARA_BW_METRICS.width,
+            height: CLARA_BW_METRICS.height,
+        };
+        for shape in [TileShape::Square, TileShape::Portrait] {
+            let screen = Screen::new(
+                1,
+                vec![Node::TileGrid {
+                    id: NodeId(1),
+                    shape,
+                    tiles: vec![Tile::new(
+                        ActionId(1),
+                        "A deliberately long existing destination label",
+                        Glyph::App,
+                    )],
+                }],
+            )
+            .with_legacy_typography(true);
+            let layout = screen.layout();
+            let label = layout
+                .nodes
+                .iter()
+                .find(|node| node.kind == LayoutKind::TileLabel)
+                .expect("legacy tile label");
+            assert_eq!(label.text_lines.len(), 2);
+
+            let mut rendered = Surface::new(width, height);
+            render_with(
+                &screen,
+                &CLARA_BW_METRICS,
+                &Chrome::default(),
+                &mut rendered,
+                None,
+            );
+            let mut expected = Surface::new(width, height);
+            with_legacy_typography(true, || {
+                draw_centered(
+                    &mut expected,
+                    &label.text_lines,
+                    label.rect,
+                    FontSize::Caption,
+                    tone::INK,
+                    clip,
+                );
+            });
+
+            for y in label.rect.y..label.rect.y + label.rect.height {
+                for x in label.rect.x..label.rect.x + label.rect.width {
+                    let index = usize::try_from(y * CLARA_BW_METRICS.width + x).expect("inside");
+                    assert_eq!(
+                        rendered.pixels[index], expected.pixels[index],
+                        "{shape:?} legacy tile label differs at ({x}, {y})"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn legacy_nav_glyph_is_half_a_touch_target() {
+        let rect = Rect {
+            x: 20,
+            y: 10,
+            width: 120,
+            height: 100,
+        };
+        let clip = Rect {
+            x: 0,
+            y: 0,
+            width: 160,
+            height: 120,
+        };
+        let mut rendered = Surface::new(160, 120);
+        let mut expected = Surface::new(160, 120);
+        with_legacy_typography(true, || {
+            draw_nav_label(
+                &mut rendered,
+                &[],
+                rect,
+                &CLARA_BW_METRICS,
+                false,
+                Some(Glyph::App),
+                clip,
+            );
+            let line = FontSize::Caption.line_height();
+            let gap = CLARA_BW_METRICS.space(Space::Tight);
+            let side = min(
+                CLARA_BW_METRICS.touch_target_minimum() / 2,
+                max(0, rect.height - line - gap * 2),
+            );
+            let block = side + gap + line;
+            let top = rect.y + max(0, rect.height - block) / 2;
+            draw_vector(
+                &mut expected,
+                &vector::shapes(Glyph::App),
+                Rect {
+                    x: rect.x + (rect.width - side) / 2,
+                    y: top,
+                    width: side,
+                    height: side,
+                },
+                clip,
+                tone::INK,
+            );
+        });
+        assert_eq!(rendered, expected);
     }
 }
 
@@ -5746,9 +5942,17 @@ fn layout_node(
                 .as_ref()
                 .map(|link| one_line(&link.label, width / 2, FontSize::Caption))
                 .or_else(|| {
-                    value
-                        .as_ref()
-                        .map(|value| one_line(value, width / 2, FontSize::Caption))
+                    value.as_ref().map(|value| {
+                        one_line(
+                            value,
+                            if legacy_typography() {
+                                width
+                            } else {
+                                width / 2
+                            },
+                            FontSize::Caption,
+                        )
+                    })
                 });
             let trailing_width = trailing
                 .as_ref()
@@ -5888,7 +6092,12 @@ fn layout_node(
                 metrics.touch_target_minimum(),
                 metrics.touch_target_default(),
             );
-            let padding = metrics.tenth_mm(BUTTON_HORIZONTAL_PADDING_TENTH_MM);
+            let legacy = legacy_typography();
+            let padding = if legacy {
+                16
+            } else {
+                metrics.tenth_mm(BUTTON_HORIZONTAL_PADDING_TENTH_MM)
+            };
             let desired = measure_text(label, FontSize::Body)
                 .0
                 .saturating_add(padding.saturating_mul(2))
@@ -5896,14 +6105,12 @@ fn layout_node(
             // A primary control is deliberately dominant. Ordinary controls
             // stay content-width unless their label would leave too little
             // surrounding paper to read as a deliberate target.
-            let button_width = if legacy_typography()
-                || *emphasis == Emphasis::Primary
-                || desired >= width * 4 / 5
-            {
-                width
-            } else {
-                desired.min(width)
-            };
+            let button_width =
+                if legacy || *emphasis == Emphasis::Primary || desired >= width * 4 / 5 {
+                    width
+                } else {
+                    desired.min(width)
+                };
             let button_x = if button_width == width {
                 x
             } else {
@@ -5920,7 +6127,11 @@ fn layout_node(
                 kind: LayoutKind::Button(*action, *state, *emphasis),
                 text_lines: wrap_text(
                     label,
-                    button_width.saturating_sub(padding.saturating_mul(2)),
+                    if legacy {
+                        button_width - 32
+                    } else {
+                        button_width.saturating_sub(padding.saturating_mul(2))
+                    },
                     FontSize::Body,
                 ),
             });
@@ -7324,7 +7535,7 @@ fn layout_node(
         } => {
             let gap = metrics.space(Space::Medium);
             let mark = if glyph.is_some() {
-                metrics.tenth_mm(80)
+                metrics.tenth_mm(if legacy_typography() { 140 } else { 80 })
             } else {
                 0
             };
@@ -11695,7 +11906,7 @@ fn render_all_with_selected_font(
                 surface,
                 &node.text_lines,
                 node.rect,
-                if node.rect.height > FontSize::Caption.line_height() {
+                if !legacy_typography() && node.rect.height > FontSize::Caption.line_height() {
                     FontSize::Body
                 } else {
                     FontSize::Caption
@@ -12124,7 +12335,11 @@ fn draw_nav_label(
         let line = FontSize::Caption.line_height();
         let gap = metrics.space(Space::Tight);
         let side = min(
-            metrics.touch_target_minimum() * 2 / 5,
+            if legacy_typography() {
+                metrics.touch_target_minimum() / 2
+            } else {
+                metrics.touch_target_minimum() * 2 / 5
+            },
             max(0, rect.height - line - gap * 2),
         );
         if side > 0 {
