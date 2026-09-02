@@ -10,6 +10,7 @@ const APP_FIELDS = new Set([
   "short_label",
   "summary",
   "version",
+  "release_notes",
   "glyph",
   "capabilities",
   "setup"
@@ -112,6 +113,14 @@ export function normalizeContribution(value, directoryName) {
     throw new Error(`${app.id}: id must contain only lowercase letters, digits, and hyphens`);
   }
   versionParts(app.version, `${app.id} version`);
+  if (
+    app.release_notes !== undefined &&
+    (typeof app.release_notes !== "string" ||
+      app.release_notes.trim().length < 12 ||
+      app.release_notes.length > 240)
+  ) {
+    throw new Error(`${app.id} release_notes must be 12 to 240 meaningful characters`);
+  }
   validatedSetup(app);
   const minimum_cobalt_version = deriveMinimumCobalt(app.capabilities);
   return {
@@ -121,6 +130,7 @@ export function normalizeContribution(value, directoryName) {
     short_label: app.short_label,
     summary: app.summary,
     version: app.version,
+    ...(app.release_notes === undefined ? {} : { release_notes: app.release_notes }),
     minimum_cobalt_version,
     glyph: app.glyph,
     capabilities: app.capabilities,
@@ -130,24 +140,26 @@ export function normalizeContribution(value, directoryName) {
 
 export function collectRegistry({
   basePath = join(root, "apps/catalog.json"),
-  appsPath = join(root, "apps")
+  sourcePaths = [join(root, "apps"), join(root, "examples")]
 } = {}) {
   const base = object(JSON.parse(readFileSync(basePath, "utf8")), "base app registry");
   if (base.format_version !== 1 || !Array.isArray(base.apps)) {
     throw new Error("base app registry must contain format_version 1 and an apps array");
   }
   const apps = [...base.apps];
-  for (const entry of readdirSync(appsPath, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const manifestPath = join(appsPath, entry.name, "cobalt-app.json");
-    let source;
-    try {
-      source = readFileSync(manifestPath, "utf8");
-    } catch (error) {
-      if (error.code === "ENOENT") continue;
-      throw error;
+  for (const sourcePath of sourcePaths) {
+    for (const entry of readdirSync(sourcePath, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const manifestPath = join(sourcePath, entry.name, "cobalt-app.json");
+      let source;
+      try {
+        source = readFileSync(manifestPath, "utf8");
+      } catch (error) {
+        if (error.code === "ENOENT") continue;
+        throw error;
+      }
+      apps.push(normalizeContribution(JSON.parse(source), entry.name));
     }
-    apps.push(normalizeContribution(JSON.parse(source), entry.name));
   }
   const ids = new Set();
   const packages = new Set();

@@ -475,6 +475,7 @@ jobs:
       - name: Sign the app packages and catalog
         env:
           COBALT_APP_SIGNING_SEED: ${{ secrets.COBALT_APP_SIGNING_SEED }}
+          CHANGED_PACKAGES: ${{ needs.trusted-tool.outputs.packages }}
         run: |
           set -eu
           test -n "$COBALT_APP_SIGNING_SEED" || {
@@ -501,6 +502,8 @@ jobs:
           # shellcheck disable=SC2016
           node -e '
             const fs = require("fs");
+            const changed = new Set(JSON.parse(process.env.CHANGED_PACKAGES));
+            const registry = JSON.parse(fs.readFileSync(process.argv[7], "utf8"));
             const value = {
               format_version: 1,
               channel: process.argv[2],
@@ -508,11 +511,19 @@ jobs:
               workflow_run_id: Number(process.argv[4]),
               workflow_run_attempt: Number(process.argv[5]),
               catalog_sha256: process.argv[6],
+              releases: registry.apps
+                .filter(app => changed.has(app.package))
+                .map(app => ({
+                  id: app.id,
+                  version: app.version,
+                  release_notes: app.release_notes,
+                })),
             };
             fs.writeFileSync(process.argv[1], `${JSON.stringify(value)}\n`);
           ' \
             dist/apps/cobalt-app-catalog-provenance.json \
-            "$release_tag" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$catalog_sha256"
+            "$release_tag" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$catalog_sha256" \
+            generated-app-registry.json
           cp \
             dist/apps/cobalt-app-catalog-provenance.json \
             "dist/apps/cobalt-app-catalog-provenance-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"

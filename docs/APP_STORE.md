@@ -63,11 +63,12 @@ kobo app-link unpair --device <reader-address>
 
 ## Registry
 
-Third-party Store apps provide one `apps/<id>/cobalt-app.json`. Cobalt-owned
-base entries remain in `apps/catalog.json`; `tools/collect-app-registry.mjs`
-combines both into the effective registry. Package name and minimum compatible
-Cobalt release are derived. Binary size and SHA-256 come from the exact ARM
-release binary during publishing.
+Every Store app provides one source-adjacent `cobalt-app.json`.
+`tools/collect-app-registry.mjs` combines manifests under `apps/` and
+`examples/` into the effective registry; `apps/catalog.json` is an empty
+compatibility container, not an author-edited catalog. Package name and
+minimum compatible Cobalt release are derived. Binary size and SHA-256 come
+from the exact ARM release binary during publishing.
 
 `tools/protocol-minimums.json` maps SDK protocols and newer capabilities to
 their first compatible Cobalt release. A future protocol cannot publish until

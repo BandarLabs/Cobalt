@@ -71,6 +71,20 @@ export function manifestForBinary(app, binary) {
   };
 }
 
+export function validatePublishedBaseline(catalogBytes, provenance) {
+  if (
+    provenance?.format_version !== 1 ||
+    provenance.channel !== "app-catalog-beta" ||
+    !/^[0-9a-f]{40}$/.test(provenance.source_sha) ||
+    !/^[0-9a-f]{64}$/.test(provenance.catalog_sha256) ||
+    provenance.catalog_sha256 !== sha256(catalogBytes)
+  ) {
+    throw new Error(
+      "the published Beta catalog and provenance do not form one verified baseline; retry after publication finishes"
+    );
+  }
+}
+
 function main(args) {
   const manifestIndex = args.indexOf("--manifest");
   const dryRun = args.includes("--dry-run");
@@ -105,8 +119,49 @@ function main(args) {
   const previewDirectory = join(output, "preview");
   mkdirSync(binaryDirectory, { recursive: true });
   mkdirSync(previewDirectory, { recursive: true });
+  const publishedDirectory = join(output, "published");
+  mkdirSync(publishedDirectory, { recursive: true });
   const registryPath = join(output, "registry.json");
   writeFileSync(registryPath, `${JSON.stringify(plan.registry, null, 2)}\n`);
+  const betaUrl =
+    "https://github.com/BandarLabs/Cobalt/releases/download/app-catalog-beta";
+  const publishedCatalog = join(publishedDirectory, "cobalt-app-catalog.json");
+  const publishedProvenance = join(
+    publishedDirectory,
+    "cobalt-app-catalog-provenance.json"
+  );
+  run(
+    "curl",
+    ["--fail", "--silent", "--show-error", "--location", "--retry", "3", "--retry-all-errors",
+      "--output", publishedCatalog,
+      `${betaUrl}/cobalt-app-catalog.json`],
+    "Could not read the current Beta baseline; check connectivity and retry."
+  );
+  run(
+    "curl",
+    ["--fail", "--silent", "--show-error", "--location", "--retry", "3", "--retry-all-errors",
+      "--output", publishedProvenance,
+      `${betaUrl}/cobalt-app-catalog-provenance.json`],
+    "Could not read Beta provenance; retry after the current Beta publication finishes."
+  );
+  const provenance = JSON.parse(readFileSync(publishedProvenance, "utf8"));
+  const publishedCatalogBytes = readFileSync(publishedCatalog);
+  validatePublishedBaseline(publishedCatalogBytes, provenance);
+  run(
+    "node",
+    [
+      "tools/check-app-versions.mjs",
+      "--registry",
+      registryPath,
+      "--published-catalog",
+      publishedCatalog,
+      "--base",
+      provenance.source_sha,
+      "--package",
+      plan.app.package
+    ],
+    "Bump only the affected app version and add meaningful release_notes, then retry."
+  );
 
   run(
     "node",

@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { collectRegistry, deriveMinimumCobalt, normalizeContribution } from "./app-registry.mjs";
-import { contributionPlan, manifestForBinary } from "./app-contribute.mjs";
+import {
+  contributionPlan,
+  manifestForBinary,
+  validatePublishedBaseline
+} from "./app-contribute.mjs";
 
 function manifest(overrides = {}) {
   return {
@@ -61,6 +65,21 @@ test("local release manifest binds the derived metadata and exact binary", () =>
   assert.equal(release.minimum_cobalt_version, "0.3.1");
   assert.equal(release.binary_bytes, 10);
   assert.match(release.binary_sha256, /^[0-9a-f]{64}$/);
+});
+
+test("the contributor baseline binds provenance to the exact catalog bytes", () => {
+  const catalog = Buffer.from('{"format_version":1,"entries":[]}');
+  const provenance = {
+    format_version: 1,
+    channel: "app-catalog-beta",
+    source_sha: "1".repeat(40),
+    catalog_sha256: "a262b0b9f57b924819fe73d16926f6e0895b50c66792a235d67870b8669f0bf7"
+  };
+  assert.doesNotThrow(() => validatePublishedBaseline(catalog, provenance));
+  assert.throws(
+    () => validatePublishedBaseline(Buffer.from("{}"), provenance),
+    /do not form one verified baseline/
+  );
 });
 
 test("the effective repository registry includes standalone contributions", () => {

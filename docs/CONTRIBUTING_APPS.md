@@ -21,6 +21,7 @@ The only Store metadata file is `apps/<app-id>/cobalt-app.json`:
   "short_label": "Example",
   "summary": "Describe what the app lets a Kobo owner do.",
   "version": "1.0.0",
+  "release_notes": "Initial release with the app's primary reader workflow.",
   "glyph": "app",
   "capabilities": []
 }
@@ -37,7 +38,22 @@ credentials. Setup text is website-only and never enters the signed package.
 
 New directories under `apps/` are workspace members automatically. The
 effective registry is assembled from Cobalt's built-in base entries and every
-`apps/*/cobalt-app.json`; duplicate IDs or packages fail closed.
+source-adjacent `apps/*/cobalt-app.json` and
+`examples/*/cobalt-app.json`; duplicate IDs or packages fail closed.
+
+## Update an existing app
+
+Edit its source and the same `cobalt-app.json`; there is no update form or
+second manifest.
+
+- If release inputs or signed public metadata changed, set a strictly newer
+  numeric version and add `release_notes` describing the user-visible result.
+- If only tests, comments, setup instructions, or other non-release inputs
+  changed, leave the version alone and omit release notes.
+
+CI derives this decision from the last published Beta transaction. Placeholder
+notes such as “Update” or “Bug fixes” are rejected with the changed fields
+listed. Unaffected apps neither bump versions nor rebuild.
 
 ## Run the one contributor check
 
@@ -53,12 +69,14 @@ That one command:
 
 1. validates the directory, Cargo package, manifest, capabilities, and
    generated registry;
-2. derives the protocol and minimum compatible Cobalt release;
-3. runs workspace formatting plus the app's tests and strict clippy;
-4. cross-builds and verifies the static ARMv7 hard-float executable;
-5. builds a deterministic pathless `.cobalt-app` and signed Beta-shaped
+2. downloads the current Beta provenance and determines whether this app
+   actually needs a version/release-note change;
+3. derives the protocol and minimum compatible Cobalt release;
+4. runs workspace formatting plus the app's tests and strict clippy;
+5. cross-builds and verifies the static ARMv7 hard-float executable;
+6. builds a deterministic pathless `.cobalt-app` and signed Beta-shaped
    catalog using the public test-only fixture key; and
-6. generates the install page/sitemap and writes hashes and derived values
+7. generates the install page/sitemap and writes hashes and derived values
    under `target/app-contribute/<app-id>/`.
 
 Commit generated `docs/apps/<app-id>/` and `docs/sitemap.xml` changes produced
@@ -93,7 +111,7 @@ Pull-request CI has read-only repository permissions and runs:
 
 - formatting, Node policy tests, full Rust tests, and strict clippy;
 - generated registry/page freshness;
-- ARM cross-checks and static executable verification; and
+- targeted ARM build/static verification only for affected apps; and
 - published-version/protocol compatibility gates.
 
 After merge to `beta`, `Publish apps`:

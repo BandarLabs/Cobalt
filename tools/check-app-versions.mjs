@@ -154,7 +154,14 @@ export function checkEntries(registry, published, affectedPackages) {
       throw new Error("registry app has no valid identity or package name");
     }
     const previous = previousById.get(app.id);
-    if (!previous) continue;
+    if (!previous) {
+      if (!meaningfulReleaseNotes(app.release_notes)) {
+        failures.push(
+          `${app.id}: a new Store app needs release_notes describing the initial user-visible value`
+        );
+      }
+      continue;
+    }
     if (typeof app.version !== "string" || typeof previous.version !== "string") {
       throw new Error(`${app.id} has no valid version`);
     }
@@ -167,15 +174,28 @@ export function checkEntries(registry, published, affectedPackages) {
           `${app.id}: package inputs changed (${changed.join(", ")}) but version ` +
             `${app.version} is not newer than ${previous.version}`
         );
+      } else if (!meaningfulReleaseNotes(app.release_notes)) {
+        failures.push(
+          `${app.id}: version ${app.version} needs meaningful release_notes because ${changed.join(", ")} changed`
+        );
       }
     }
   }
 
   if (failures.length > 0) {
     throw new Error(
-      `${failures.join("\n")}\nSet each affected app to a strictly newer numeric version.`
+      `${failures.join("\n")}\nUpdate only the affected app's version and release_notes, then rerun the contributor check.`
     );
   }
+}
+
+export function meaningfulReleaseNotes(value) {
+  if (typeof value !== "string") return false;
+  const note = value.trim();
+  if (note.length < 12 || note.length > 240) return false;
+  return !new Set(["update", "updated", "changes", "bug fixes", "misc fixes"]).has(
+    note.toLowerCase().replace(/[.!]$/, "")
+  );
 }
 
 function versionParts(value) {
@@ -304,7 +324,18 @@ export function manifestOnlyChangesWorkspaceMembershipOrVersion(
 
   const previousMembers = new Set(previous.entries);
   const currentMembers = new Set(current.entries);
-  if (![...previousMembers].every(member => currentMembers.has(member))) return false;
+  const currentGlobs = [...currentMembers]
+    .filter(member => member.endsWith("/*"))
+    .map(member => member.slice(0, -1));
+  if (
+    ![...previousMembers].every(
+      member =>
+        currentMembers.has(member) ||
+        currentGlobs.some(prefix => member.startsWith(prefix))
+    )
+  ) {
+    return false;
+  }
 
   const previousRemainder = normalizeWorkspaceVersion(previous.remainder);
   const currentRemainder = normalizeWorkspaceVersion(current.remainder);
@@ -450,7 +481,12 @@ export function changedLockPackageIdentities(previousSource, currentSource) {
   );
 }
 
-export function registeredConsumers(metadata, registeredPackages, changedPackageIdentities) {
+export function registeredConsumers(
+  metadata,
+  registeredPackages,
+  changedPackageIdentities,
+  strictUnknown = true
+) {
   const packagesByIdentity = new Map();
   const packageIdsByName = new Map();
   for (const package_ of metadata.packages) {
@@ -474,6 +510,7 @@ export function registeredConsumers(metadata, registeredPackages, changedPackage
       const [name] = JSON.parse(identity);
       const possibleReplacements = packageIdsByName.get(name);
       if (!possibleReplacements) {
+        if (!strictUnknown) continue;
         throw new Error(
           `Cargo.lock changed package ${name}, but current cargo metadata cannot identify its consumers`
         );
@@ -532,7 +569,7 @@ export function lockfileOnlyAddsPackages(previousSource, currentSource) {
   return true;
 }
 
-export function affectedWorkspacePackages(baseRevision, registry) {
+export function affectedWorkspacePackages(baseRevision, registry, strictUnknown = true) {
   const metadata = JSON.parse(command("cargo", ["metadata", "--format-version", "1", "--locked"]));
   const workspaceRoot = resolve(metadata.workspace_root);
   const changedPaths = command("git", releaseDiffArguments(baseRevision))
@@ -627,13 +664,14 @@ export function affectedWorkspacePackages(baseRevision, registry) {
     for (const identity of lockChanges) changedIdentities.add(identity);
   }
 
-  return registeredConsumers(metadata, registeredPackages, changedIdentities);
+  return registeredConsumers(metadata, registeredPackages, changedIdentities, strictUnknown);
 }
 
 function argumentsFrom(argv) {
   const mode = argv[0] === "--list-packages" || argv[0] === "--publish-needed" ? argv[0] : null;
   if (mode) argv = argv.slice(1);
-  const allowed = ["--registry", "--published-catalog", "--base"];
+  const required = ["--registry", "--published-catalog", "--base"];
+  const allowed = [...required, "--package"];
   const values = new Map();
   for (let index = 0; index < argv.length; index += 2) {
     const flag = argv[index];
@@ -645,7 +683,7 @@ function argumentsFrom(argv) {
     }
     values.set(flag, value);
   }
-  if (values.size !== allowed.length) {
+  if (!required.every(flag => values.has(flag))) {
     throw new Error(
       "usage: node tools/check-app-versions.mjs --registry PATH --published-catalog PATH --base GIT_REVISION"
     );
@@ -657,8 +695,19 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   try {
     const { values, mode } = argumentsFrom(process.argv.slice(2));
     const registry = readJson(resolve(values.get("--registry")), "app registry");
+    const selectedPackage = values.get("--package");
+    if (selectedPackage !== undefined) {
+      registry.apps = registry.apps.filter(app => app.package === selectedPackage);
+      if (registry.apps.length !== 1) {
+        throw new Error(`package ${selectedPackage} does not name exactly one registered app`);
+      }
+    }
     const published = readJson(resolve(values.get("--published-catalog")), "published catalog");
-    const affected = affectedWorkspacePackages(values.get("--base"), registry);
+    const affected = affectedWorkspacePackages(
+      values.get("--base"),
+      registry,
+      selectedPackage === undefined
+    );
     checkProtocolMinimums(registry, currentProtocolVersion());
     if (mode === "--list-packages") {
       console.log(JSON.stringify(packagesToBuild(registry, published, affected)));

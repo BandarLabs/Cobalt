@@ -6,7 +6,8 @@
 
 ## Author check
 
-- [ ] I hand-authored only app source plus `apps/<id>/cobalt-app.json`; generated page/sitemap changes came from the check command.
+- [ ] I hand-authored only app source plus its source-adjacent `cobalt-app.json`; generated page/sitemap changes came from the check command.
+- [ ] If release inputs changed, I added a meaningful `release_notes` entry and used the version requested by the check.
 - [ ] `node tools/app-contribute.mjs --manifest apps/<id>/cobalt-app.json --dry-run` passes.
 - [ ] Requested capabilities are necessary and the app has no embedded credentials.
 - [ ] Screenshots and marketing routes contain no owner data or network identifiers.

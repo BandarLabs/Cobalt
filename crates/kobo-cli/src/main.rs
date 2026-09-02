@@ -1072,7 +1072,7 @@ fn parse_release_app(value: &kobo_json::Value) -> Result<ReleaseApp, String> {
     // `setup` is an accepted website-only registry field. The page generator
     // validates its nested schema; the CLI ignores it and release manifests
     // deliberately contain none of it.
-    let fields = strict_registry_object(value, "app", &FIELDS, &["setup"])?;
+    let fields = strict_registry_object(value, "app", &FIELDS, &["setup", "release_notes"])?;
     let string = |name| {
         registry_field(fields, name)?
             .as_str()

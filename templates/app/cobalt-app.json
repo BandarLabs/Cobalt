@@ -4,6 +4,7 @@
   "short_label": "Example",
   "summary": "Describe what the app lets a Kobo owner do.",
   "version": "1.0.0",
+  "release_notes": "Initial release with the app's primary reader workflow.",
   "glyph": "app",
   "capabilities": []
 }

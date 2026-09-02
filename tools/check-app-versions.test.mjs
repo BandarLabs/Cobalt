@@ -9,6 +9,7 @@ import {
   checkProtocolMinimums,
   compatibleChangePaths,
   isContributionManifest,
+  meaningfulReleaseNotes,
   lockfileOnlyAddsPackages,
   manifestOnlyChangesPathDependencyVersions,
   manifestOnlyChangesWorkspaceMembershipOrVersion,
@@ -19,7 +20,11 @@ import {
   releaseDependencyIds
 } from "./check-app-versions.mjs";
 
-function fixture({ currentVersion = "1.0.0", summary = "Summary" } = {}) {
+function fixture({
+  currentVersion = "1.0.0",
+  summary = "Summary",
+  releaseNotes
+} = {}) {
   const app = {
     package: "kobo-notes",
     id: "notes",
@@ -31,6 +36,7 @@ function fixture({ currentVersion = "1.0.0", summary = "Summary" } = {}) {
     glyph: "note",
     capabilities: ["network"]
   };
+  if (releaseNotes !== undefined) app.release_notes = releaseNotes;
   const previous = {
     format_version: 1,
     id: "notes",
@@ -71,8 +77,12 @@ test("requires a version bump when public metadata changes", () => {
   );
 });
 
-test("accepts changed content with a new version", () => {
-  const values = fixture({ currentVersion: "1.0.1", summary: "New summary" });
+test("accepts changed content with a new version and meaningful notes", () => {
+  const values = fixture({
+    currentVersion: "1.0.1",
+    summary: "New summary",
+    releaseNotes: "Explain the new summary and improved reader workflow."
+  });
   assert.doesNotThrow(() =>
     checkEntries(values.registry, values.published, new Set(["kobo-notes"]))
   );
@@ -92,8 +102,43 @@ test("rejects downgraded and nonnumeric release versions", () => {
   );
 });
 
+test("requires release notes only for a new or changed release", () => {
+  const unchanged = fixture();
+  assert.doesNotThrow(() => checkEntries(unchanged.registry, unchanged.published, new Set()));
+
+  const changed = fixture({ currentVersion: "1.0.1", summary: "New summary" });
+  assert.throws(
+    () => checkEntries(changed.registry, changed.published, new Set()),
+    /needs meaningful release_notes/
+  );
+  changed.registry.apps[0].release_notes = "Bug fixes";
+  assert.throws(
+    () => checkEntries(changed.registry, changed.published, new Set()),
+    /needs meaningful release_notes/
+  );
+  changed.registry.apps[0].release_notes =
+    "Improves the summary and makes the main task easier to understand.";
+  assert.doesNotThrow(() => checkEntries(changed.registry, changed.published, new Set()));
+
+  const added = fixture();
+  added.published.entries = [];
+  assert.throws(() => checkEntries(added.registry, added.published, new Set()), /new Store app/);
+});
+
+test("release note quality rejects placeholders", () => {
+  assert.equal(meaningfulReleaseNotes("Bug fixes"), false);
+  assert.equal(
+    meaningfulReleaseNotes("Fixes duplicate rows when refreshing a long feed."),
+    true
+  );
+});
+
 test("matches runtime numeric version ordering", () => {
-  const values = fixture({ currentVersion: "1.0.0.1", summary: "New summary" });
+  const values = fixture({
+    currentVersion: "1.0.0.1",
+    summary: "New summary",
+    releaseNotes: "Improves the visible summary for readers."
+  });
   assert.doesNotThrow(() => checkEntries(values.registry, values.published, new Set()));
 
   values.registry.apps[0].version = "1.0.0.0";
@@ -219,6 +264,12 @@ test("workspace version and member additions do not change existing app release 
   const previous = `[workspace]\nmembers = [\n    "apps/notes",\n]\nresolver = "2"\n\n[workspace.package]\nversion = "0.3.1"\nedition = "2021"\n`;
   const current = `[workspace]\nmembers = [\n    "apps/notes",\n    "apps/reader",\n]\nresolver = "2"\n\n[workspace.package]\nversion = "0.3.2"\nedition = "2021"\n`;
 
+  assert.equal(manifestOnlyChangesWorkspaceMembershipOrVersion(previous, current), true);
+});
+
+test("replacing explicit app members with the equivalent app glob is not a release input", () => {
+  const previous = `[workspace]\nmembers = [\n    "apps/notes",\n    "apps/reader",\n]\nresolver = "2"\n\n[workspace.package]\nversion = "0.3.1"\n`;
+  const current = `[workspace]\nmembers = [\n    "apps/*",\n]\nresolver = "2"\n\n[workspace.package]\nversion = "0.3.1"\n`;
   assert.equal(manifestOnlyChangesWorkspaceMembershipOrVersion(previous, current), true);
 });
 
@@ -459,6 +510,15 @@ test("a lock change with no identifiable current package fails closed", () => {
         new Set([registryIdentity("removed-dependency")])
       ),
     /cannot identify its consumers/
+  );
+  assert.deepEqual(
+    registeredConsumers(
+      metadata(),
+      ["notes"],
+      new Set([registryIdentity("removed-dependency")]),
+      false
+    ),
+    new Set()
   );
 });
 
