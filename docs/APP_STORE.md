@@ -139,6 +139,10 @@ reviewed assets signed by the production app key.
 Use `app-catalog-beta` for beta testing instead; it cannot overwrite the
 Stable catalog.
 
+For repeatable release acceptance, including signed artifact evidence,
+transaction failures, state-preservation proof, and the bounded attended
+device command, see [Beta Store acceptance](BETA-STORE-ACCEPTANCE.md).
+
 ## Runtime verification
 
 The catalog signature covers canonical catalog JSON. Each entry fixes the

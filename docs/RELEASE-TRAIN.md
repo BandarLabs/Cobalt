@@ -10,7 +10,10 @@ artifacts are promoted from beta rather than rebuilt.
    catalog; it does not modify the stable catalog.
 3. Install or update the application from the beta Store on a physical Kobo.
    Record the beta catalog source commit, catalog SHA-256, package SHA-256, and
-   acceptance evidence.
+   acceptance evidence. Follow
+   [Beta Store acceptance](BETA-STORE-ACCEPTANCE.md): run the complete local
+   fixture matrix first, then the bounded owner-attended command against the
+   exact published beta catalog.
 4. Merge `beta` into `main` without squashing away the tested beta commit.
 5. Run **Promote tested beta apps** from `main` with the recorded commit and
    catalog digest. The workflow verifies provenance and copies the exact tested
