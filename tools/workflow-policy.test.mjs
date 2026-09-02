@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 
 const apps = readFileSync(".github/workflows/apps.yml", "utf8");
 const promotion = readFileSync(".github/workflows/promote-beta-apps.yml", "utf8");
+const betaRelease = readFileSync(".github/workflows/beta-release.yml", "utf8");
 const ci = readFileSync(".github/workflows/ci.yml", "utf8");
 
 test("pull request and build automation use generated contributor manifests", () => {
@@ -21,6 +22,19 @@ test("only the final Beta publication job can write repository contents", () => 
   );
   const buildJob = apps.slice(apps.indexOf("  build-apps:"), apps.indexOf("  publish:"));
   assert.doesNotMatch(buildJob, /contents: write/);
+});
+
+test("only the final Beta platform job can write repository contents", () => {
+  assert.match(betaRelease, /permissions:\n  contents: read\n  actions: read/);
+  assert.match(
+    betaRelease,
+    /  publish:[\s\S]*?permissions:\n      contents: write\n      actions: read/
+  );
+  const buildJobs = betaRelease.slice(
+    betaRelease.indexOf("  prepare:"),
+    betaRelease.indexOf("  publish:")
+  );
+  assert.doesNotMatch(buildJobs, /contents: write/);
 });
 
 test("Stable promotion is environment-approved without manual crypto inputs", () => {
