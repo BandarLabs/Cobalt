@@ -819,11 +819,18 @@ impl Lichess {
         self.account = AccountState::Checking;
         self.playing_ready = false;
         self.notice = None;
-        let _ = self.spawn(context, Pending::Account, api::account(), true);
+        if self
+            .spawn(context, Pending::Account, api::account(), true)
+            .is_none()
+        {
+            self.account = AccountState::Unknown;
+            self.notice =
+                Some("Finishing previous requests. Refresh account again in a moment.".to_owned());
+        }
     }
 
     fn refresh_playing(&mut self, context: &mut Context) {
-        if self.has_pending(|pending| matches!(pending, Pending::Playing)) {
+        if self.suspended || self.has_pending(|pending| matches!(pending, Pending::Playing)) {
             return;
         }
         let _ = self.spawn(context, Pending::Playing, api::playing(), true);
@@ -1943,7 +1950,7 @@ impl Lichess {
     }
 
     fn reconcile_accepted_challenge_from_playing(&mut self, context: &mut Context) -> bool {
-        if !self.reconcile_accepted_challenge {
+        if self.suspended || !self.reconcile_accepted_challenge {
             return false;
         }
         self.reconcile_accepted_challenge = false;
@@ -1991,7 +1998,9 @@ impl Lichess {
     fn recover_accepted_challenge(&mut self, context: &mut Context) {
         if self.accepted_challenge.is_some() {
             self.reconcile_accepted_challenge = true;
-            self.refresh_playing(context);
+            if !self.suspended {
+                self.refresh_playing(context);
+            }
         }
     }
 
@@ -2358,8 +2367,11 @@ impl Lichess {
                     return;
                 }
                 let current = self.action_scope_is_current(&scope);
+                let accepting = matches!(action, GameAction::AcceptChallenge(_));
                 self.clear_pending_action();
-                if matches!(scope, ActionScope::Challenge(_)) {
+                if accepting {
+                    self.recover_accepted_challenge(context);
+                } else if matches!(scope, ActionScope::Challenge(_)) {
                     self.accepted_challenge = None;
                 }
                 self.notice = Some(format!(
@@ -2420,8 +2432,11 @@ impl Lichess {
                 generation,
             } if self.pending_action_is(action, scope, *generation) => {
                 let current = self.action_scope_is_current(scope);
+                let accepting = matches!(action, GameAction::AcceptChallenge(_));
                 self.clear_pending_action();
-                if matches!(scope, ActionScope::Challenge(_)) {
+                if accepting {
+                    self.recover_accepted_challenge(context);
+                } else if matches!(scope, ActionScope::Challenge(_)) {
                     self.accepted_challenge = None;
                 }
                 if !matches!(action, GameAction::Move(_)) || !current {
@@ -2481,7 +2496,10 @@ impl Lichess {
         for (task, pending) in self.tasks.clone() {
             if matches!(
                 pending,
-                Pending::EventOpen
+                Pending::Account
+                    | Pending::Playing
+                    | Pending::Puzzle
+                    | Pending::EventOpen
                     | Pending::EventNext
                     | Pending::EventRetry
                     | Pending::EventRateWait { .. }
@@ -3587,6 +3605,48 @@ mod tests {
     }
 
     #[test]
+    fn ambiguous_accept_challenge_failure_reconciles_playing_games() {
+        let challenge = Challenge {
+            id: "chall123".to_owned(),
+            challenger: "ReaderTwo".to_owned(),
+            direction: ChallengeDirection::Incoming,
+            status: "created".to_owned(),
+            rated: false,
+            variant: "standard".to_owned(),
+            speed: "rapid".to_owned(),
+            time_control: ChallengeTime::Clock {
+                initial_seconds: Some(600),
+                increment_seconds: Some(0),
+            },
+        };
+        let mut app = Lichess {
+            account: AccountState::Ready(super::Account {
+                id: "owner123".to_owned(),
+                username: "Owner".to_owned(),
+            }),
+            challenge: Some(challenge.clone()),
+            accepted_challenge: Some(challenge),
+            pending_action: Some(GameAction::AcceptChallenge("chall123".to_owned())),
+            pending_scope: Some(ActionScope::Challenge("chall123".to_owned())),
+            pending_action_generation: Some(1),
+            ..Lichess::default()
+        };
+        let mut context = Context::default();
+        app.handle_failed(
+            &mut context,
+            Pending::Action {
+                action: GameAction::AcceptChallenge("chall123".to_owned()),
+                scope: ActionScope::Challenge("chall123".to_owned()),
+                generation: 1,
+            },
+            kobo_sdk::TaskError::Unreachable,
+        );
+        assert!(app.accepted_challenge.is_some());
+        assert!(app.reconcile_accepted_challenge);
+        assert!(app.has_pending(|pending| matches!(pending, Pending::Playing)));
+    }
+
+    #[test]
     fn event_stream_rate_limit_reopens_after_persisted_retry_after() {
         let mut app = Lichess {
             account: AccountState::Ready(super::Account {
@@ -3819,6 +3879,43 @@ mod tests {
         app.on_task(&mut context, board_task, TaskOutcome::Cancelled);
         assert!(app.event_open);
         assert_eq!(app.board_open.as_deref(), Some("abcdEF12"));
+    }
+
+    #[test]
+    fn suspended_playing_result_cannot_consume_accepted_challenge_recovery() {
+        let challenge = Challenge {
+            id: "chall123".to_owned(),
+            challenger: "ReaderTwo".to_owned(),
+            direction: ChallengeDirection::Incoming,
+            status: "created".to_owned(),
+            rated: false,
+            variant: "standard".to_owned(),
+            speed: "rapid".to_owned(),
+            time_control: ChallengeTime::Clock {
+                initial_seconds: Some(600),
+                increment_seconds: Some(0),
+            },
+        };
+        let mut app = Lichess {
+            accepted_challenge: Some(challenge),
+            reconcile_accepted_challenge: true,
+            ..Lichess::default()
+        };
+        let playing = kobo_sdk::TaskId(43);
+        app.tasks.insert(playing, Pending::Playing);
+        let mut context = Context::default();
+        app.on_suspend(&mut context);
+        assert!(!app.tasks.contains_key(&playing));
+        app.on_task(
+            &mut context,
+            playing,
+            TaskOutcome::Completed(
+                br#"{"nowPlaying":[{"gameId":"match123","color":"white","rated":false,"source":"friend","speed":"rapid","variant":{"key":"standard"},"secondsLeft":600,"isMyTurn":true,"lastMove":"","opponent":{"username":"ReaderTwo"}}]}"#
+                    .to_vec(),
+            ),
+        );
+        assert!(app.accepted_challenge.is_some());
+        assert!(app.reconcile_accepted_challenge);
     }
 
     #[test]
