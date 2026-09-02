@@ -3,6 +3,7 @@ set -eu
 
 ROOT=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
 WORK=$ROOT/target/installer-tests
+WORKSPACE_VERSION=$(sed -n 's/^version = "\([0-9][0-9.]*\)"$/\1/p' "$ROOT/Cargo.toml")
 rm -rf "$WORK"
 mkdir -p "$WORK"
 trap 'rm -rf "$WORK"' EXIT HUP INT TERM
@@ -44,7 +45,7 @@ EOF
     printf 'source 0123456789abcdef0123456789abcdef01234567\n' > "$directory/package/SOURCE.txt"
     device="cobalt-$version-KoboRoot.tgz"
     printf 'device package %s\n' "$marker" > "$directory/$device"
-    printf 'bootstrap\n' > "$directory/install.sh"
+    cp "$INSTALLER" "$directory/install.sh"
     for platform in macos-x86_64 macos-arm64 linux-x86_64 linux-arm64; do
         asset="kobo-$version-$platform.tar.gz"
         tar -czf "$directory/$asset" -C "$directory/package" .
@@ -99,7 +100,68 @@ expect_failure() {
 stable=$WORK/stable
 beta=$WORK/beta
 make_release "$stable" 0.3.3 stable stable-one
-make_release "$beta" 0.3.4 beta beta-one
+make_release "$beta" "$WORKSPACE_VERSION" beta beta-one
+grep -F \
+    "https://github.com/BandarLabs/Cobalt/releases/download/beta-v${WORKSPACE_VERSION}/install.sh" \
+    "$ROOT/README.md" >/dev/null
+grep -F "sh -s -- --beta --version ${WORKSPACE_VERSION}" "$ROOT/README.md" >/dev/null
+
+# The first beta does not depend on a stable installer asset. An explicit beta
+# version resolves every download against its immutable beta-vX.Y.Z release.
+printf '%s\n' "$SIGNER" > "$WORK/high-assurance-signers"
+ssh-keygen -Y verify -q -f "$WORK/high-assurance-signers" \
+    -I cobalt-release -n cobalt-host-release \
+    -s "$beta/cobalt-host-manifest.txt.sshsig" \
+    < "$beta/cobalt-host-manifest.txt"
+bootstrap_line=$(awk \
+    '$1 == "bootstrap" && $2 == "install.sh" && NF == 4 {print $3 " " $4}' \
+    "$beta/cobalt-host-manifest.txt")
+IFS=' ' read -r bootstrap_bytes bootstrap_sha <<EOF
+$bootstrap_line
+EOF
+[ "$(size_file "$INSTALLER")" = "$bootstrap_bytes" ]
+[ "$(sha256_file "$INSTALLER")" = "$bootstrap_sha" ]
+
+mock_bin=$WORK/mock-bin
+mkdir "$mock_bin"
+cat > "$mock_bin/curl" <<'EOF'
+#!/bin/sh
+set -eu
+output=
+url=
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -o)
+            output=$2
+            shift
+            ;;
+        https://*) url=$1 ;;
+    esac
+    shift
+done
+printf '%s\n' "$url" >> "$KOBO_TEST_URL_LOG"
+prefix=https://github.com/BandarLabs/Cobalt/releases/download/beta-v$KOBO_TEST_VERSION/
+case "$url" in
+    "$prefix"*) cp "$KOBO_TEST_RELEASE/${url#"$prefix"}" "$output" ;;
+    *) exit 22 ;;
+esac
+EOF
+chmod 755 "$mock_bin/curl"
+first_beta_home=$WORK/home-first-beta
+HOME=$first_beta_home XDG_DATA_HOME=$first_beta_home/data \
+XDG_CACHE_HOME=$first_beta_home/cache \
+PATH="$mock_bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+KOBO_INSTALLER_TESTING=1 KOBO_TEST_RELEASE=$beta \
+KOBO_TEST_VERSION=$WORKSPACE_VERSION \
+KOBO_TEST_URL_LOG=$WORK/first-beta-urls \
+sh "$INSTALLER" --yes --no-setup --no-path --platform linux-x86_64 \
+    --beta --version "$WORKSPACE_VERSION" >/dev/null
+if grep -F '/releases/latest/download/' "$WORK/first-beta-urls" >/dev/null; then
+    printf 'first beta unexpectedly depended on a stable latest asset\n' >&2
+    exit 1
+fi
+grep -F "/releases/download/beta-v${WORKSPACE_VERSION}/cobalt-host-manifest.txt" \
+    "$WORK/first-beta-urls" >/dev/null
 
 # Clean install, update, and idempotent rerun.
 home=$WORK/home-clean
@@ -130,13 +192,30 @@ KOBO_INSTALLER_BASE_URL="file://$stable" \
 sh "$INSTALLER" --yes --no-setup --platform linux-x86_64 >/dev/null
 [ "$(grep -Fc '# >>> Cobalt kobo installer >>>' "$path_home/.profile")" -eq 1 ]
 
-# A live lock refuses; a stale lock is cleaned up.
+# A live or stale-looking lock fails closed. Concurrent attempts cannot delete
+# and replace one another's lock; reclamation is an explicit manual action.
 lock_home=$WORK/home-lock
 mkdir -p "$lock_home/data/kobo/install.lock"
 printf '%s\n' "$$" > "$lock_home/data/kobo/install.lock/pid"
 expect_failure "active install lock" \
     run_install "$lock_home" "$stable" --platform linux-x86_64
 printf '%s\n' 999999 > "$lock_home/data/kobo/install.lock/pid"
+set +e
+run_install "$lock_home" "$stable" --platform linux-x86_64 \
+    >"$WORK/lock-one.out" 2>&1 &
+lock_one=$!
+run_install "$lock_home" "$stable" --platform linux-x86_64 \
+    >"$WORK/lock-two.out" 2>&1 &
+lock_two=$!
+wait "$lock_one"
+lock_one_status=$?
+wait "$lock_two"
+lock_two_status=$?
+set -e
+[ "$lock_one_status" -ne 0 ]
+[ "$lock_two_status" -ne 0 ]
+[ "$(cat "$lock_home/data/kobo/install.lock/pid")" = 999999 ]
+rm -rf "$lock_home/data/kobo/install.lock"
 run_install "$lock_home" "$stable" --platform linux-x86_64 >/dev/null
 
 # Stable/beta and explicit version enforcement.

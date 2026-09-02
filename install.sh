@@ -153,11 +153,9 @@ chmod 700 "$ROOT" "$CACHE_HOME/kobo" 2>/dev/null || true
 LOCK=$ROOT/install.lock
 if ! mkdir "$LOCK" 2>/dev/null; then
     lock_pid=$(cat "$LOCK/pid" 2>/dev/null || true)
-    if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
-        fail "another installer is running (pid $lock_pid)"
-    fi
-    rm -rf "$LOCK"
-    mkdir "$LOCK" || fail "cannot replace stale installation lock"
+    fail "installation lock already exists${lock_pid:+ (recorded pid $lock_pid)}. \
+Do not remove $LOCK while an installer may be running; if no installer is active, \
+remove that exact directory manually and rerun"
 fi
 LOCK_HELD=true
 printf '%s\n' "$$" > "$LOCK/pid"
@@ -284,18 +282,41 @@ host_line=$(awk -v platform="$PLATFORM" \
     '$1 == "host" && $2 == platform && NF == 5 {print $3 " " $4 " " $5}' \
     "$MANIFEST")
 device_line=$(awk '$1 == "device" && NF == 4 {print $2 " " $3 " " $4}' "$MANIFEST")
+bootstrap_line=$(awk \
+    '$1 == "bootstrap" && $2 == "install.sh" && NF == 4 {print $2 " " $3 " " $4}' \
+    "$MANIFEST")
 [ "$(printf '%s\n' "$host_line" | wc -l | tr -d ' ')" -eq 1 ] && [ -n "$host_line" ] ||
     fail "signed manifest does not contain exactly one $PLATFORM host package"
 [ "$(printf '%s\n' "$device_line" | wc -l | tr -d ' ')" -eq 1 ] && [ -n "$device_line" ] ||
     fail "signed manifest does not contain exactly one device package"
+[ "$(printf '%s\n' "$bootstrap_line" | wc -l | tr -d ' ')" -eq 1 ] &&
+    [ -n "$bootstrap_line" ] ||
+    fail "signed manifest does not contain exactly one install.sh bootstrap"
 IFS=' ' read -r HOST_ASSET HOST_BYTES HOST_SHA <<EOF
 $host_line
 EOF
 IFS=' ' read -r DEVICE_ASSET DEVICE_BYTES DEVICE_SHA <<EOF
 $device_line
 EOF
+IFS=' ' read -r BOOTSTRAP_ASSET BOOTSTRAP_BYTES BOOTSTRAP_SHA <<EOF
+$bootstrap_line
+EOF
+[ "$BOOTSTRAP_ASSET" = install.sh ] || fail "signed bootstrap asset has an invalid name"
 case "$HOST_ASSET:$DEVICE_ASSET" in
     *[!A-Za-z0-9._:-]*) fail "signed manifest contains an unsafe asset name" ;;
+esac
+
+case "$0" in
+    sh|-sh|bash|-bash|dash|-dash|*/sh|*/bash|*/dash)
+        say "Bootstrap note: piped shell input is trusted through HTTPS; downloaded artifacts remain signature-verified."
+        ;;
+    *)
+        [ -f "$0" ] || fail "cannot inspect bootstrap path $0"
+        [ "$(file_size "$0")" = "$BOOTSTRAP_BYTES" ] ||
+            fail "this install.sh does not match the signed bootstrap length"
+        [ "$(sha256_file "$0")" = "$BOOTSTRAP_SHA" ] ||
+            fail "this install.sh does not match the signed bootstrap checksum"
+        ;;
 esac
 
 HOST_ARCHIVE=$STAGE/$HOST_ASSET

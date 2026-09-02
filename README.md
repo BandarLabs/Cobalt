@@ -135,16 +135,22 @@ On macOS or Linux, install the stable release:
 curl -fsSL https://github.com/BandarLabs/Cobalt/releases/latest/download/install.sh | sh
 ```
 
-The installer verifies the signed release manifest and SHA-256 checksums,
-installs the `kobo` command without sudo, then guides the USB setup. It supports
-macOS Intel and Apple Silicon, and Linux x86_64 and arm64.
+This convenience command trusts GitHub HTTPS for the bootstrap script itself.
+After it starts, every downloaded executable and device package is covered by
+the signed release manifest and SHA-256 checks. For pre-execution verification
+of `install.sh`, use the recommended
+[signed-bootstrap procedure](docs/INSTALL.md#high-assurance-signed-bootstrap).
 
-Beta is explicit:
+The first beta installer is available from its exact beta release; it does not
+depend on a stable release already containing `install.sh`:
 
 ```sh
-curl -fsSL https://github.com/BandarLabs/Cobalt/releases/latest/download/install.sh |
-  sh -s -- --beta
+curl -fsSL https://github.com/BandarLabs/Cobalt/releases/download/beta-v0.3.4/install.sh |
+  sh -s -- --beta --version 0.3.4
 ```
+
+The installer supports macOS Intel and Apple Silicon, and Linux x86_64 and
+arm64. Stable remains the default; beta is explicit.
 
 Rerun the same command to update. Restart the reader, wait one minute for
 NickelMenu's failsafe, then open **Cobalt** from Kobo's menu. Future

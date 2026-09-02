@@ -42,22 +42,67 @@ Stable is the default:
 curl -fsSL https://github.com/BandarLabs/Cobalt/releases/latest/download/install.sh | sh
 ```
 
-The script selects macOS Intel/Apple Silicon or Linux x86_64/arm64, verifies an
-OpenSSH Ed25519 signature over the versioned release manifest, verifies the
-host and device package sizes and SHA-256 digests, and installs `kobo` under
-`~/.local/bin` without sudo. It prompts through `/dev/tty`, so piping the
-script does not consume its answers.
+This one-line convenience route trusts GitHub HTTPS for `install.sh`, because a
+script cannot verify itself before the shell executes it. Once running, it
+verifies an OpenSSH Ed25519 signature over the versioned release manifest and
+checks every subsequently executed/downloaded host and device artifact by
+length and SHA-256. It installs `kobo` under `~/.local/bin` without sudo.
 
-For the current beta candidate:
+For the first beta candidate, use its exact beta release URL; no stable
+installer asset is required:
 
 ```sh
-curl -fsSL https://github.com/BandarLabs/Cobalt/releases/latest/download/install.sh |
-  sh -s -- --beta
+curl -fsSL https://github.com/BandarLabs/Cobalt/releases/download/beta-v0.3.4/install.sh |
+  sh -s -- --beta --version 0.3.4
 ```
 
 To install an exact immutable release, add `--version X.Y.Z`. For CI, use
 `--non-interactive --yes`; add `--no-setup` when no physical reader is
 attached. Beta is never selected implicitly.
+
+### High-assurance signed bootstrap
+
+The recommended route when GitHub HTTPS alone is not sufficient verifies
+`install.sh` before execution. Choose an exact immutable release, download the
+manifest, SSHSIG, and script as data, verify the manifest with the pinned
+release key below, then verify the script against the signed `bootstrap`
+entry. Obtain this signer line from a separately trusted copy of this guide or
+repository; its SHA-256 fingerprint is
+`SHA256:ufJnWeLeZxeWlrY7KXb1MadhxMHYZdHSmk21Nmovgbo`.
+
+```sh
+version=0.3.4
+tag=beta-v$version                 # use v$version after stable promotion
+base=https://github.com/BandarLabs/Cobalt/releases/download/$tag
+dir=cobalt-installer-$version
+(umask 077 && mkdir "$dir") || exit
+cd "$dir"
+curl -fsSLO "$base/cobalt-host-manifest.txt"
+curl -fsSLO "$base/cobalt-host-manifest.txt.sshsig"
+curl -fsSLO "$base/install.sh"
+printf '%s\n' \
+  'cobalt-release ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIL7XUR3p+tvPgftO/kRbigc8gagzP2RBDG3tWIu/1KXe' \
+  > allowed_signers
+ssh-keygen -Y verify -q -f allowed_signers -I cobalt-release \
+  -n cobalt-host-release -s cobalt-host-manifest.txt.sshsig \
+  < cobalt-host-manifest.txt
+set -- $(awk '$1 == "bootstrap" && $2 == "install.sh" && NF == 4 {
+  print $3, $4
+}' cobalt-host-manifest.txt)
+test "$#" -eq 2
+test "$(wc -c < install.sh | tr -d ' ')" = "$1"
+if command -v sha256sum >/dev/null 2>&1; then
+  actual=$(sha256sum install.sh | awk '{print $1}')
+else
+  actual=$(shasum -a 256 install.sh | awk '{print $1}')
+fi
+test "$actual" = "$2"
+sh ./install.sh --beta --version "$version"
+```
+
+For stable, use `tag=v$version` and omit `--beta`. Keep the pinned signer line
+from this repository or another out-of-band trusted copy, not from the release
+being checked.
 
 ## 2. Connect and confirm the reader
 
@@ -79,12 +124,14 @@ It does not print the full serial. The write requires an explicit default-no
 confirmation. Unsupported or changed devices, unsupported firmware, and
 multiple mounted readers are refused.
 
-Setup copies the verified prebuilt package directly into `.adds/cobalt`, reads
-every file back byte for byte, preserves installed apps, app state, secrets,
-owner files, and unrelated NickelMenu entries, then ejects where supported.
-Under WSL it tells you to eject from Windows and does not claim WSL ejected it.
-The firmware's root SSH server remains disabled unless `--enable-ssh` is
-explicitly supplied.
+Setup writes the complete verified managed payload into `.adds/cobalt.next`
+and reads every file back byte for byte before activation. It temporarily
+holds the known mutable owner folders, retires the complete old payload as
+`.adds/cobalt.prev`, activates the complete new directory, and restores owner
+data. A failed swap rolls back; an interrupted rollback is recovered on the
+next run without mixing managed versions. Installed apps, app state, secrets,
+owner data, and unrelated NickelMenu entries are preserved. Under WSL setup
+instructs Windows eject and does not claim WSL ejected the reader.
 
 The binaries are statically linked, so nothing has to be installed on the
 reader to support them.
@@ -183,6 +230,11 @@ under [Connecting a device](DEVICES.md#connecting-a-device).
 Rerun the same stable or beta installer command to update. The host binary and
 verified release directory are replaced atomically; an interrupted download is
 never activated. Running it again at the same version is safe.
+
+The installer lock fails closed. If an interrupted process leaves
+`~/.local/share/kobo/install.lock`, first verify that no installer is still
+running, then remove that exact directory manually and rerun. The script never
+guesses that a lock is stale or races another process to reclaim it.
 
 Developers can keep the original source-build path:
 

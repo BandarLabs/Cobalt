@@ -28,10 +28,17 @@ built-in `store` application. Full Cobalt replacement is a distinct
 Settings-only operation. The public signing seed is release infrastructure:
 only its public key belongs in the repository.
 
-The host bootstrap uses the same Ed25519 trust root through OpenSSH's SSHSIG
-format. It verifies the signed versioned manifest before parsing it, then
-checks the selected host archive and device package against the manifest's
-exact byte lengths and SHA-256 digests. `kobo setup` independently verifies the
-raw detached manifest signature with its pinned public key before accepting a
-prebuilt device package. Downloads are staged under the user's cache; the host
-binary and release directory are activated by same-filesystem renames.
+The one-line `curl | sh` route trusts GitHub HTTPS for the bootstrap script
+itself; it is not protected retroactively by the manifest it later downloads.
+The installation guide therefore provides a recommended high-assurance route
+that downloads `install.sh` as data and verifies its signed-manifest entry
+before execution using an out-of-band pinned OpenSSH Ed25519 key.
+
+After either bootstrap starts, it verifies the signed versioned manifest before
+parsing it, then checks the selected host archive and device package against
+the manifest's exact byte lengths and SHA-256 digests. `kobo setup`
+independently verifies the raw detached manifest signature with its pinned
+public key before accepting a prebuilt device package. USB activation stages
+and verifies a complete managed directory, swaps whole directories with a
+previous-copy rollback, and recovers interrupted swaps before a rerun. Mutable
+owner folders are carried separately and never accepted from a release.
