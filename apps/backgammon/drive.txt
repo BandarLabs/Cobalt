@@ -1,0 +1,4 @@
+expect Backgammon
+tap Roll
+expect White opened
+shot backgammon-opening
