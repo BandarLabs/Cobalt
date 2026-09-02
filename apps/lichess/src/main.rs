@@ -204,6 +204,7 @@ struct Lichess {
     seek_task: Option<TaskId>,
     seek_waiting: bool,
     seek_baseline: BTreeSet<String>,
+    seek_candidate: Option<GameSummary>,
     pending_action: Option<GameAction>,
     pending_move: Option<PendingMove>,
     selected: Option<String>,
@@ -240,6 +241,7 @@ impl Default for Lichess {
             seek_task: None,
             seek_waiting: false,
             seek_baseline: BTreeSet::new(),
+            seek_candidate: None,
             pending_action: None,
             pending_move: None,
             selected: None,
@@ -516,6 +518,18 @@ impl Lichess {
     }
 
     fn pairing_screen(&self) -> Screen {
+        if let Some(candidate) = &self.seek_candidate {
+            return ScreenBuilder::new("lichess-pairing-candidate")
+                .top_bar("Game started")
+                .heading(format!("vs {}", candidate.opponent))
+                .text("The account event stream is global. Confirm this new rated 10+0 game before Cobalt ends the pairing wait and opens its board.")
+                .primary_button("open-seek-candidate", "Open this game")
+                .buttons([
+                    ("keep-seeking", "Keep waiting"),
+                    ("cancel-seek", "Cancel pairing"),
+                ])
+                .build();
+        }
         let mut screen = ScreenBuilder::new("lichess-pairing")
             .top_bar("Quick pairing")
             .heading("Rated 10+0 Rapid")
@@ -900,6 +914,7 @@ impl Lichess {
             .chain(self.game.iter().map(|game| game.id.clone()))
             .collect();
         self.seek_waiting = true;
+        self.seek_candidate = None;
         if let Some(task) = self.spawn(context, Pending::Seek, api::seek(), false) {
             self.seek_task = Some(task);
             self.route = Route::Pairing;
@@ -915,6 +930,7 @@ impl Lichess {
     fn cancel_seek(&mut self, context: &mut Context) {
         self.seek_waiting = false;
         self.seek_baseline.clear();
+        self.seek_candidate = None;
         if let Some(task) = self.seek_task {
             context.cancel(task);
             self.notice = Some("Cancelling the pending seek.".to_owned());
@@ -923,6 +939,25 @@ impl Lichess {
             self.route = Route::Play;
             self.notice = Some("Pairing cancelled. No duplicate seek was created.".to_owned());
         }
+    }
+
+    fn open_seek_candidate(&mut self, context: &mut Context) {
+        let Some(candidate) = self.seek_candidate.take() else {
+            return;
+        };
+        self.seek_waiting = false;
+        self.seek_baseline.clear();
+        if let Some(task) = self.seek_task.take() {
+            context.cancel(task);
+        }
+        for (task, pending) in self.tasks.clone() {
+            if matches!(pending, Pending::SeekGrace) {
+                context.cancel(task);
+                self.tasks.remove(&task);
+            }
+        }
+        self.notice = Some("Opening the confirmed game without replaying the seek.".to_owned());
+        self.open_board(context, candidate.session());
     }
 
     fn await_seek_event(&mut self, context: &mut Context, message: String) {
@@ -1190,7 +1225,7 @@ impl Lichess {
                     _ => false,
                 };
                 self.upsert_summary(summary.clone());
-                if seek_match || accepted_challenge {
+                if accepted_challenge {
                     if let Some(task) = self.seek_task {
                         context.cancel(task);
                     }
@@ -1199,12 +1234,16 @@ impl Lichess {
                     self.seek_baseline.clear();
                     self.pending_action = None;
                     self.challenge = None;
-                    self.notice = Some(if seek_match {
-                        "Quick pairing matched. Opening the board.".to_owned()
-                    } else {
-                        "Challenge accepted. Opening the board.".to_owned()
-                    });
+                    self.notice = Some("Challenge accepted. Opening the board.".to_owned());
                     self.open_board(context, summary.session());
+                } else if seek_match {
+                    if self.seek_candidate.is_none() {
+                        self.seek_candidate = Some(summary);
+                    }
+                    self.notice = Some(
+                        "A matching 10+0 game started. Confirm it before closing the global seek."
+                            .to_owned(),
+                    );
                 } else if self.route == Route::Play {
                     self.notice =
                         Some("A Lichess game started. Open it from Ongoing games.".to_owned());
@@ -1404,6 +1443,7 @@ impl Lichess {
                     self.seek_task = None;
                     self.seek_waiting = false;
                     self.seek_baseline.clear();
+                    self.seek_candidate = None;
                     self.clock.stop(context);
                     self.route = Route::Play;
                 }
@@ -1501,6 +1541,7 @@ impl Lichess {
                 if self.seek_waiting {
                     self.seek_waiting = false;
                     self.seek_baseline.clear();
+                    self.seek_candidate = None;
                     self.clock.stop(context);
                     self.route = Route::Play;
                     self.notice = Some(
@@ -1648,6 +1689,7 @@ impl Lichess {
                 self.seek_task = None;
                 self.seek_waiting = false;
                 self.seek_baseline.clear();
+                self.seek_candidate = None;
                 if self.route == Route::Pairing {
                     self.clock.stop(context);
                     self.route = Route::Play;
@@ -1717,6 +1759,7 @@ impl Lichess {
         self.seek_task = None;
         self.seek_waiting = false;
         self.seek_baseline.clear();
+        self.seek_candidate = None;
         self.event_open = false;
         self.board_open = None;
         self.clock.stop(context);
@@ -1783,6 +1826,30 @@ impl Lichess {
                 });
                 self.event_open = true;
                 self.seek_task = Some(TaskId(999));
+                self.seek_waiting = true;
+                self.route = Route::Pairing;
+            }
+            "candidate" => {
+                self.account = AccountState::Ready(Account {
+                    id: "demo-owner".to_owned(),
+                    username: "DemoOwner".to_owned(),
+                });
+                self.event_open = true;
+                self.playing_ready = true;
+                self.seek_task = Some(TaskId(999));
+                self.seek_waiting = true;
+                self.seek_candidate = Some(GameSummary {
+                    id: "demoCD34".to_owned(),
+                    color: Color::White,
+                    opponent: "KnightReader".to_owned(),
+                    rated: true,
+                    is_my_turn: true,
+                    last_move: None,
+                    source: Some("lobby".to_owned()),
+                    speed: Some("rapid".to_owned()),
+                    variant: Some("standard".to_owned()),
+                    seconds_left: Some(600),
+                });
                 self.route = Route::Pairing;
             }
             "challenge" => {
@@ -1897,6 +1964,11 @@ impl KoboApp for Lichess {
             self.start_seek(context);
         } else if action == action_id("cancel-seek") {
             self.cancel_seek(context);
+        } else if action == action_id("open-seek-candidate") {
+            self.open_seek_candidate(context);
+        } else if action == action_id("keep-seeking") {
+            self.seek_candidate = None;
+            self.notice = Some("Continuing to wait on the existing seek.".to_owned());
         } else if action == action_id("open-challenge") {
             self.route = Route::Challenge;
         } else if action == action_id("accept-challenge") {
@@ -2517,6 +2589,10 @@ mod tests {
         )
         .expect("matched game");
         app.handle_event(&mut context, started);
+        assert!(app.seek_waiting);
+        assert!(app.seek_candidate.is_some());
+        assert_eq!(app.route, Route::Pairing);
+        app.on_action(&mut context, action_id("open-seek-candidate"));
         assert!(!app.seek_waiting);
         assert_eq!(app.route, Route::Game);
         assert_eq!(
@@ -2618,6 +2694,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one fixture follows the complete seek, game, reconnect, move, and draw lifecycle"
+    )]
     fn deterministic_mock_e2e_pairs_moves_reconnects_and_finishes_by_draw() {
         let mut app = Lichess {
             route: Route::Play,
@@ -2639,6 +2719,9 @@ mod tests {
         )
         .expect("gameStart");
         app.handle_event(&mut pairing, started);
+        assert_eq!(app.route, Route::Pairing);
+        assert!(app.seek_candidate.is_some());
+        app.on_action(&mut pairing, action_id("open-seek-candidate"));
         assert_eq!(app.route, Route::Game);
         assert_eq!(
             app.session.as_ref().map(|session| session.game_id.as_str()),

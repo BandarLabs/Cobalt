@@ -9,6 +9,9 @@ conservative abort, and opponent-gone victory claims.
 | --- | --- | --- |
 | ![A black-oriented live Lichess board with two clocks, last move, and draw control](screenshots/game.png) | ![The rated 10+0 pairing screen explaining that the event stream opened before the seek](screenshots/pairing.png) | ![The Play screen showing a missing named-secret message without displaying a token](screenshots/credential.png) |
 
+Account-global starts are confirmed explicitly before opening:
+![A confirmation screen for a new rated 10+0 game received on the global account stream](screenshots/candidate.png)
+
 ## Requirements
 
 - Cobalt **0.3.4 or newer**, speaking protocol **11**. Cobalt 0.3.3 also
@@ -35,7 +38,8 @@ broadening credential authority.
 ## Supported
 
 - Account validation and clear missing/invalid/expired-token guidance
-- Event stream opened before a single cancellable 10+0 seek
+- Event stream opened before a single cancellable 10+0 seek; account-global
+  game starts require on-device confirmation before that seek is closed
 - `gameStart`, `gameFinish`, and incoming challenge events
 - Board stream reconstruction from server-acknowledged UCI moves
 - White/black orientation, castling, en passant, and four promotion choices
