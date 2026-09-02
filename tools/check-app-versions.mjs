@@ -227,6 +227,29 @@ export function checkProtocolMinimums(
   if (failures.length > 0) throw new Error(failures.join("\n"));
 }
 
+export function checkBuildPackages(
+  registry,
+  published,
+  packages,
+  protocolVersion,
+  baselines = PROTOCOL_MINIMUMS
+) {
+  if (!Array.isArray(registry.apps)) throw new Error("registry apps must be an array");
+  if (!Array.isArray(packages) || packages.some(package_ => typeof package_ !== "string")) {
+    throw new Error("build packages must be an array of strings");
+  }
+  const selected = new Set(packages);
+  if (selected.size !== packages.length) {
+    throw new Error("build packages must not contain duplicates");
+  }
+  const registered = new Set(registry.apps.map(app => app?.package));
+  for (const package_ of selected) {
+    if (!registered.has(package_)) throw new Error(`unknown build package ${package_}`);
+  }
+  checkProtocolMinimums(registry, protocolVersion, baselines, selected);
+  checkEntries(registry, published, selected);
+}
+
 function currentProtocolVersion() {
   const source = readFileSync(
     resolve(dirname(fileURLToPath(import.meta.url)), "../crates/kobo-protocol/src/lib.rs"),
@@ -656,24 +679,28 @@ export function affectedWorkspacePackages(baseRevision, registry) {
 }
 
 function argumentsFrom(argv) {
-  const mode = argv[0] === "--list-packages" || argv[0] === "--publish-needed" ? argv[0] : null;
+  const modes = new Set(["--list-packages", "--publish-needed", "--validate-packages"]);
+  const mode = modes.has(argv[0]) ? argv[0] : null;
   if (mode) argv = argv.slice(1);
-  const allowed = ["--registry", "--published-catalog", "--base"];
+  const allowed =
+    mode === "--validate-packages"
+      ? ["--registry", "--published-catalog", "--packages"]
+      : ["--registry", "--published-catalog", "--base"];
+  const usage =
+    mode === "--validate-packages"
+      ? "usage: node tools/check-app-versions.mjs --validate-packages --registry PATH --published-catalog PATH --packages JSON"
+      : "usage: node tools/check-app-versions.mjs --registry PATH --published-catalog PATH --base GIT_REVISION";
   const values = new Map();
   for (let index = 0; index < argv.length; index += 2) {
     const flag = argv[index];
     const value = argv[index + 1];
     if (!allowed.includes(flag) || !value) {
-      throw new Error(
-        "usage: node tools/check-app-versions.mjs --registry PATH --published-catalog PATH --base GIT_REVISION"
-      );
+      throw new Error(usage);
     }
     values.set(flag, value);
   }
   if (values.size !== allowed.length) {
-    throw new Error(
-      "usage: node tools/check-app-versions.mjs --registry PATH --published-catalog PATH --base GIT_REVISION"
-    );
+    throw new Error(usage);
   }
   return { values, mode };
 }
@@ -683,6 +710,23 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     const { values, mode } = argumentsFrom(process.argv.slice(2));
     const registry = readJson(resolve(values.get("--registry")), "app registry");
     const published = readJson(resolve(values.get("--published-catalog")), "published catalog");
+    if (mode === "--validate-packages") {
+      let packages;
+      try {
+        packages = JSON.parse(values.get("--packages"));
+      } catch (error) {
+        throw new Error(`read build packages: ${error.message}`);
+      }
+      checkBuildPackages(
+        registry,
+        published,
+        packages,
+        currentProtocolVersion(),
+        PROTOCOL_MINIMUMS
+      );
+      console.log("Every build package has a new version and compatible minimum Cobalt release.");
+      process.exit(0);
+    }
     const affected = affectedWorkspacePackages(values.get("--base"), registry);
     const packages = packagesToBuild(registry, published, affected);
     checkProtocolMinimums(
