@@ -19,11 +19,12 @@ target_root=$(CDPATH= cd -- "$target_root" && pwd)
 device="$target_root/armv7-unknown-linux-musleabihf/release/kobo-flashcards"
 audit_device="$target_root/audit-unstripped/armv7-unknown-linux-musleabihf/release/kobo-flashcards"
 package="$target_root/artifacts/flashcards-validation.cobalt-app"
+manifest="$target_root/artifacts/flashcards.manifest.json"
 host="$target_root/host-target/release/flashcards-import"
 source_commit_file="$target_root/artifacts/flashcards-import.source-commit.txt"
 readelf=${READELF:-armv7-unknown-linux-musleabihf-readelf}
 
-for path in "$device" "$audit_device" "$package" "$host" "$source_commit_file"; do
+for path in "$device" "$audit_device" "$package" "$manifest" "$host" "$source_commit_file"; do
   if [ ! -f "$path" ]; then
     echo "missing artifact: $path" >&2
     exit 1
@@ -58,30 +59,74 @@ for package_name in anki anki_i18n; do
   fi
 done
 
-if "$readelf" -lW "$device" | grep -E 'INTERP|DYNAMIC' >/dev/null; then
+if ! device_headers=$("$readelf" -lW "$device"); then
+  echo "production device artifact is not a readable ELF" >&2
+  exit 1
+fi
+if ! audit_headers=$("$readelf" -lW "$audit_device"); then
+  echo "unstripped device artifact is not a readable ELF" >&2
+  exit 1
+fi
+if ! audit_symbols=$("$readelf" -Ws "$audit_device"); then
+  echo "unstripped device symbol table could not be read" >&2
+  exit 1
+fi
+
+if printf '%s\n' "$device_headers" | grep -E 'INTERP|DYNAMIC' >/dev/null; then
   echo "device binary is not static" >&2
   exit 1
 fi
-if "$readelf" -lW "$audit_device" | grep -E 'INTERP|DYNAMIC' >/dev/null; then
+if printf '%s\n' "$audit_headers" | grep -E 'INTERP|DYNAMIC' >/dev/null; then
   echo "unstripped audit binary is not static" >&2
   exit 1
 fi
-if ! "$readelf" -Ws "$audit_device" | grep -E 'FUNC|OBJECT' >/dev/null; then
+if ! printf '%s\n' "$audit_symbols" | grep -E 'FUNC|OBJECT' >/dev/null; then
   echo "unstripped audit binary has no inspectable symbol table" >&2
   exit 1
 fi
-if "$readelf" -Ws "$audit_device" |
+if printf '%s\n' "$audit_symbols" |
   grep -E 'FUNC|OBJECT' |
   grep -E '(^|[^[:alnum:]_])anki(_|::|$)|[0-9]anki|ankitects|rslib|anki_i18n' >/dev/null; then
   echo "device binary exposes Anki-linked symbols" >&2
   exit 1
 fi
-if "$readelf" -Ws "$audit_device" |
+if printf '%s\n' "$audit_symbols" |
   grep -E 'FUNC|OBJECT' |
   grep -Ei 'kobo_net|reqwest|rustls|TcpStream|UdpSocket|getaddrinfo|gethostbyname|getnameinfo|freeaddrinfo|inet_(addr|aton|ntoa|ntop|pton)|res_query' >/dev/null; then
   echo "device binary exposes remote-network implementation symbols" >&2
   exit 1
 fi
+
+python3 - "$package" "$device" "$manifest" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+package = Path(sys.argv[1]).read_bytes()
+device = Path(sys.argv[2]).read_bytes()
+external_manifest = Path(sys.argv[3]).read_bytes()
+header = 8 + 2 + 4 + 64
+if len(package) < header or package[:8] != b"COBALTAP":
+    raise SystemExit("package has an invalid header")
+if int.from_bytes(package[8:10], "big") != 1:
+    raise SystemExit("package has an unsupported version")
+manifest_length = int.from_bytes(package[10:14], "big")
+manifest_end = header + manifest_length
+if manifest_end > len(package):
+    raise SystemExit("package manifest is truncated")
+embedded_manifest = package[header:manifest_end]
+packaged_binary = package[manifest_end:]
+if embedded_manifest != external_manifest:
+    raise SystemExit("external and packaged manifests differ")
+manifest = json.loads(embedded_manifest)
+if manifest["binary_bytes"] != len(device):
+    raise SystemExit("manifest binary length differs from device ELF")
+if manifest["binary_sha256"] != hashlib.sha256(device).hexdigest():
+    raise SystemExit("manifest binary digest differs from device ELF")
+if packaged_binary != device:
+    raise SystemExit("packaged binary differs from standalone device ELF")
+PY
 
 for path in "$device" "$package"; do
   if strings "$path" |
@@ -133,6 +178,7 @@ echo "device ELF/package strings and unstripped symbols: no Anki or AnkiDroid im
 echo "device production/audit ELFs: static, with no declared remote-network capability"
 echo "device symbols: no known high-level remote-network implementation"
 echo "device local transport: generic socket primitives remain for required Cobalt Unix-domain IPC"
+echo "device package: embedded manifest and binary exactly match the standalone ELF"
 echo "host helper: pinned Anki rslib/i18n, AGPL notice, source pin, and source instructions present"
 (
   cd "$target_root"
