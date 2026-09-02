@@ -3349,15 +3349,21 @@ fn load_release_package_from_manifest(
                 env!("CARGO_PKG_VERSION")
             ));
     }
-    let asset = manifest.device();
+    let asset = manifest
+        .device()
+        .ok_or("signed release manifest has no device package")?;
     let channel = fs::read_to_string(directory.join("channel"))
         .map_err(|error| format!("read release channel: {error}"))?
         .trim()
         .to_owned();
-    if !manifest.allows_channel(&channel) {
-        return Err(format!(
-            "signed release manifest does not allow channel {channel:?}"
-        ));
+    if channel != "stable" {
+        return Err(
+            "kobo setup installs stable releases only; enable Beta updates later in Cobalt Settings"
+                .to_owned(),
+        );
+    }
+    if !manifest.allows_channel("stable") {
+        return Err("signed release manifest does not allow stable installation".to_owned());
     }
     let package_path = directory.join(&asset.name);
     let compressed = fs::read(&package_path)
@@ -7171,7 +7177,7 @@ mod tests {
         #[test]
         fn a_verified_prebuilt_device_package_becomes_direct_writer_members() {
             let release = TempVolume::new("prebuilt");
-            std::fs::write(release.path.join("channel"), "beta\n").expect("channel");
+            std::fs::write(release.path.join("channel"), "stable\n").expect("channel");
             let members = vec![
                 crate::package::Member {
                     path: format!("{}/bin/kobod", crate::package::INSTALL_ROOT),
@@ -7210,11 +7216,29 @@ mod tests {
                 load_release_package_from_manifest(&release.path, manifest).expect("prebuilt");
             match payload {
                 SetupPayload::Prebuilt { built, channel, .. } => {
-                    assert_eq!(channel, "beta");
+                    assert_eq!(channel, "stable");
                     assert_eq!(built.members, members);
                 }
                 SetupPayload::Source => panic!("prebuilt became source build"),
             }
+
+            std::fs::write(release.path.join("channel"), "beta\n").expect("channel");
+            let manifest = crate::host_release::Manifest {
+                version: env!("CARGO_PKG_VERSION").to_owned(),
+                channels: vec!["stable".to_owned(), "beta".to_owned()],
+                source: "0123456789abcdef0123456789abcdef01234567".to_owned(),
+                assets: vec![crate::host_release::Asset {
+                    kind: "device".to_owned(),
+                    platform: None,
+                    name: format!("cobalt-{}-KoboRoot.tgz", env!("CARGO_PKG_VERSION")),
+                    bytes: compressed.len() as u64,
+                    sha256: crate::sha256::hex_digest(&compressed),
+                }],
+            };
+            let Err(error) = load_release_package_from_manifest(&release.path, manifest) else {
+                panic!("beta USB package was accepted");
+            };
+            assert!(error.contains("stable releases only"), "{error}");
         }
 
         #[test]

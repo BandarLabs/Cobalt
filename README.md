@@ -145,7 +145,10 @@ of `install.sh`, use the recommended
 
 The installer supports macOS Intel and Apple Silicon, and Linux x86_64 and
 arm64. It installs stable Cobalt only. Beta participation is enabled later in
-Cobalt Settings, or through the developer/source workflow.
+Cobalt Settings, or through the developer/source workflow. Settings shows the
+installed version and current channel, confirms channel changes explicitly,
+and verifies signed Beta platform metadata. Returning to Stable needs no USB
+connection and preserves installed apps, state, and secrets.
 
 Rerun the same command to update. Restart the reader, wait one minute for
 NickelMenu's failsafe, then open **Cobalt** from Kobo's menu. Future

@@ -37,6 +37,13 @@ The installation guide therefore provides a recommended high-assurance route
 that downloads `install.sh` as data and verifies its signed-manifest entry
 before execution using an out-of-band pinned OpenSSH Ed25519 key.
 
+Cobalt Settings shows the installed version and persisted update channel before
+offering a change. Channel changes require a separate confirmation screen.
+Stable and Beta platform checks both require the raw Ed25519 signature over the
+release manifest before accepting the device archive digest; background
+updates use the same signed metadata. Returning to Stable changes only the
+persisted preference and never removes or downgrades apps or owner data.
+
 After either bootstrap starts, it verifies the signed versioned manifest before
 parsing it, then checks the selected host archive and device package against
 the manifest's exact byte lengths and SHA-256 digests. `kobo setup`

@@ -836,6 +836,7 @@ dependencies = [
 name = "kobo-settings"
 version = "0.3.4"
 dependencies = [
+ "kobo-app-store",
  "kobo-json",
  "kobo-sdk",
 ]

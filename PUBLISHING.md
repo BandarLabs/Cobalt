@@ -44,7 +44,9 @@ The long-lived `beta` branch is the only source for beta publishing:
   the repository's existing Ed25519 release key: raw detached form for
   in-process verification and standard OpenSSH SSHSIG form for the POSIX
   bootstrap. Pull-request tests use disposable fixture keys and never require
-  the protected seed.
+  the protected seed. Cobalt Settings and background platform updates verify
+  the raw signature for both Stable and Beta before accepting the device
+  archive digest.
 - `.github/workflows/apps.yml` publishes beta branch apps only to
   `app-catalog-beta`; main continues to publish only to `app-catalog`.
 - `.github/workflows/promote-beta.yml` is a manual, guarded promotion. Supply

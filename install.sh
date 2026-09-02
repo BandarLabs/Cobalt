@@ -49,7 +49,6 @@ EOF
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --stable) ;;
         --beta)
             fail "the host bootstrap installs stable only; enable Beta updates in Cobalt Settings after installation"
             ;;

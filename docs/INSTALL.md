@@ -55,7 +55,10 @@ To install an exact immutable release, add `--version X.Y.Z`. For CI, use
 `--non-interactive --yes`; add `--no-setup` when no physical reader is
 attached. The public bootstrap installs stable only. Enable **Beta updates** in
 Cobalt Settings after a normal stable installation, or use the source workflow
-for development.
+for development. Settings shows the installed version and channel, requires a
+separate confirmation before changing it, persists the choice, and verifies
+the signed platform manifest. Returning to Stable changes future platform and
+Store checks without USB, downgrading, or deleting apps, state, or secrets.
 
 ### High-assurance signed bootstrap
 
@@ -223,9 +226,10 @@ under [Connecting a device](DEVICES.md#connecting-a-device).
 
 ## Updating or building from source
 
-Rerun the same stable or beta installer command to update. The host binary and
-verified release directory are replaced atomically; an interrupted download is
-never activated. Running it again at the same version is safe.
+Rerun the stable installer command to update. The host binary and verified
+release directory are replaced atomically; an interrupted download is never
+activated. Running it again at the same version is safe. Beta platform updates
+remain inside Cobalt Settings and do not require USB.
 
 The installer lock fails closed. If an interrupted process leaves
 `~/.local/share/kobo/install.lock`, first verify that no installer is still

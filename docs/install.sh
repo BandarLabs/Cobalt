@@ -32,7 +32,6 @@ for argument in "$@"; do
         continue
     fi
     case "$argument" in
-        --stable) ;;
         --beta)
             fail "the public bootstrap installs stable only; enable Beta updates in Cobalt Settings after installation"
             ;;
