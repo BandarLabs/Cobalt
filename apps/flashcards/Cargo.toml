@@ -10,7 +10,6 @@ publish = false
 kobo-flashcards-format = { path = "../../crates/kobo-flashcards-format" }
 kobo-image = { path = "../../crates/kobo-image" }
 kobo-sdk = { path = "../../crates/kobo-sdk" }
-resvg = { version = "0.45.1", default-features = false }
 
 [dev-dependencies]
 kobo-ui = { path = "../../crates/kobo-ui" }

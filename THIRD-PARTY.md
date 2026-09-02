@@ -70,20 +70,29 @@ touch.
 
 ## Flashcards compatibility research
 
-Flashcards compatibility is an independently implemented, offline format
-bridge. It is not affiliated with Ankitects, Anki, AnkiDroid, or AnkiWeb, and
-uses no upstream logo or trademark. Anki is AGPL-3.0-or-later and AnkiDroid is
-GPL-3.0-or-later; the exact pinned source revisions, upstream notices, and
-distribution requirements are in
+Flashcards is unofficial, offline compatibility software. It is not affiliated
+with Ankitects, Anki, AnkiDroid, or AnkiWeb and uses no upstream logo or
+artwork. The host helper links Anki rslib at its exact pinned revision;
+AnkiDroid was used for compatibility research only. Their AGPL/GPL terms,
+resvg source pin, exact revisions, and distribution requirements are in
 [`licenses/NOTICE-Flashcards-Anki.md`](licenses/NOTICE-Flashcards-Anki.md).
-Keep that notice with Flashcards source, host tooling, documentation, and
-device packages.
+Full Anki and AnkiDroid terms are in `licenses/LICENSE-Anki.txt` and
+`licenses/LICENSE-AnkiDroid.txt`. Exact resolved dependency notices for the
+host helper and device app are in
+`licenses/LICENSE-Flashcards-host-dependencies.txt` and
+`licenses/LICENSE-Flashcards-device-dependencies.txt`. These texts are embedded
+in the corresponding executable artifacts; the app exposes them as paged
+notices and the host helper prints them with `--licenses`. Regenerate both
+deterministically with `scripts/generate-flashcards-licenses.py`; its accepted
+SPDX policy is scoped in `licenses/flashcards-about.toml`.
 
 ## Flashcards SVG rendering
 
-The device Flashcards application links `resvg` 0.45.1 to rasterize retained,
-safe SVG image media through the existing bounded image path. It is
-dual-licensed Apache-2.0 or MIT; both selected terms travel in
+The host Flashcards importer links `resvg`/`usvg` 0.45.1 to rasterize accepted
+SVG image media before publication. The device application links the same
+bounded path to verify due-card source/raster equality at admission, then
+displays only the digest-addressed PNG. resvg is dual-licensed Apache-2.0 or
+MIT; both selected terms travel in
 [`licenses/LICENSE-resvg.txt`](licenses/LICENSE-resvg.txt).
 
 ## Services

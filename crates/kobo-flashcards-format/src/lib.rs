@@ -15,26 +15,77 @@ use std::fmt;
 use std::io::{Read, Write};
 use unicode_normalization::UnicodeNormalization;
 
+mod svg;
+pub use svg::{rasterize_svg, validate_svg_source};
+
 pub const MAGIC: [u8; 8] = *b"CBFLASH\0";
-pub const VERSION: u16 = 2;
+pub const VERSION: u16 = 3;
 pub const HEADER_BYTES: usize = MAGIC.len() + 2 + 4 + 8 + 4 + 8 + 32;
 pub const MAX_BUNDLE_BYTES: u64 = 32 * 1024 * 1024;
-pub const MAX_MANIFEST_BYTES: usize = 64 * 1024 * 1024;
-pub const MAX_PAYLOAD_BYTES: usize = 64 * 1024 * 1024;
+pub const MAX_MANIFEST_BYTES: usize = 16 * 1024 * 1024;
+pub const MAX_PAYLOAD_BYTES: usize = 48 * 1024 * 1024;
 pub const MAX_MEDIA_BYTES: u64 = 4 * 1024 * 1024;
-pub const MAX_MEDIA_ENTRIES: usize = 4_096;
+pub const MAX_MEDIA_ENTRIES: usize = 8_192;
+pub const MAX_NOTES: usize = 100_000;
+pub const MAX_CARDS: usize = 100_000;
+pub const MAX_REVIEW_QUEUE_CARDS: usize = 512;
+pub const MAX_REVLOG_ENTRIES: usize = 500_000;
+pub const MAX_REVIEW_LOG_BYTES: usize = 16 * 1024 * 1024;
+pub const MAX_REVIEW_LOG_LINE_BYTES: usize = 512;
+
+pub const COMPATIBILITY_NOTICE: &str = include_str!("../../../licenses/NOTICE-Flashcards-Anki.md");
+pub const ANKI_LICENSE: &str = include_str!("../../../licenses/LICENSE-Anki.txt");
+pub const ANKIDROID_LICENSE: &str = include_str!("../../../licenses/LICENSE-AnkiDroid.txt");
+pub const RESVG_LICENSE: &str = include_str!("../../../licenses/LICENSE-resvg.txt");
+pub const DEVICE_DEPENDENCY_LICENSES: &str =
+    include_str!("../../../licenses/LICENSE-Flashcards-device-dependencies.txt");
+pub const HOST_DEPENDENCY_LICENSES: &str =
+    include_str!("../../../licenses/LICENSE-Flashcards-host-dependencies.txt");
+pub const ATKINSON_LICENSE: &str =
+    include_str!("../../kobo-text/fonts/LICENSE-AtkinsonHyperlegible.txt");
+pub const DEJAVU_LICENSE: &str = include_str!("../../kobo-text/fonts/LICENSE-DejaVu.txt");
+
+pub const DISTRIBUTION_DOCUMENTS: [(&str, &str); 7] = [
+    ("Compatibility notice and source pins", COMPATIBILITY_NOTICE),
+    ("Anki licence", ANKI_LICENSE),
+    ("AnkiDroid licence", ANKIDROID_LICENSE),
+    ("resvg licence", RESVG_LICENSE),
+    (
+        "Flashcards device dependency licences",
+        DEVICE_DEPENDENCY_LICENSES,
+    ),
+    ("Atkinson Hyperlegible licence", ATKINSON_LICENSE),
+    ("DejaVu licence", DEJAVU_LICENSE),
+];
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct BundleManifest {
     pub format_version: u16,
-    pub source: Source,
+    pub sources: Vec<Source>,
+    pub notes: Vec<Note>,
     pub notetypes: Vec<NoteType>,
     pub decks: Vec<Deck>,
     pub deck_configurations: Vec<DeckConfiguration>,
     pub cards: Vec<Card>,
+    pub review_queue: ReviewQueue,
     pub revlog: Vec<ReviewLog>,
+    pub graves: Vec<Grave>,
     pub media: Vec<Media>,
     pub diagnostics: Vec<Diagnostic>,
+}
+
+fn validate_single_side_image(names: &[String]) -> Result<(), FormatError> {
+    if names
+        .iter()
+        .filter(|name| media_type(name).starts_with("image/"))
+        .count()
+        > 1
+    {
+        return Err(FormatError::InvalidManifest(
+            "a card side contains more than one image".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 impl BundleManifest {
@@ -42,12 +93,15 @@ impl BundleManifest {
     pub fn empty(source: Source) -> Self {
         Self {
             format_version: VERSION,
-            source,
+            sources: vec![source],
+            notes: Vec::new(),
             notetypes: Vec::new(),
             decks: Vec::new(),
             deck_configurations: Vec::new(),
             cards: Vec::new(),
+            review_queue: ReviewQueue::default(),
             revlog: Vec::new(),
+            graves: Vec::new(),
             media: Vec::new(),
             diagnostics: Vec::new(),
         }
@@ -57,10 +111,55 @@ impl BundleManifest {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Source {
     pub package_kind: String,
+    pub collection_member: String,
     pub collection_schema: i64,
+    pub normalized_schema: i64,
+    pub collection_id: i64,
+    pub collection_created: i64,
     pub collection_modified: i64,
+    pub schema_modified: i64,
+    pub dirty: i64,
+    pub user_sequence: i64,
+    pub last_sync: i64,
     pub note_count: usize,
+    pub card_count: usize,
     pub upstream_anki_revision: String,
+    pub original_config_json: String,
+    pub original_models_json: String,
+    pub original_decks_json: String,
+    pub original_deck_configurations_json: String,
+    pub original_tags_json: String,
+    pub normalized_config: Vec<CollectionConfig>,
+    pub normalized_tags: Vec<CollectionTag>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CollectionConfig {
+    pub key: String,
+    pub user_sequence: i64,
+    pub modified: i64,
+    pub value_hex: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CollectionTag {
+    pub name: String,
+    pub user_sequence: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct Note {
+    pub id: i64,
+    pub guid: String,
+    pub notetype_id: i64,
+    pub modified: i64,
+    pub user_sequence: i64,
+    pub tags: Vec<String>,
+    pub fields: Vec<String>,
+    pub sort_field: String,
+    pub checksum: i64,
+    pub flags: i64,
+    pub data: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -93,6 +192,7 @@ pub struct Card {
     pub note_id: i64,
     pub deck_id: i64,
     pub ordinal: i32,
+    pub user_sequence: i32,
     pub queue: i32,
     pub card_type: i32,
     pub due: i64,
@@ -101,6 +201,10 @@ pub struct Card {
     pub repetitions: i32,
     pub lapses: i32,
     pub remaining_steps: i32,
+    pub original_due: i64,
+    pub original_deck_id: i64,
+    pub flags: i32,
+    pub data: String,
     pub modified: i64,
     pub template_name: String,
     pub front: String,
@@ -111,6 +215,25 @@ pub struct Card {
     pub media_names: Vec<String>,
     pub attachments: Vec<Attachment>,
     pub diagnostics: Vec<Diagnostic>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ReviewQueue {
+    pub card_ids: Vec<i64>,
+    pub new_count: usize,
+    pub learning_count: usize,
+    pub review_count: usize,
+    pub decks: Vec<DeckQueue>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DeckQueue {
+    pub source_index: usize,
+    pub root_deck_id: i64,
+    pub card_ids: Vec<i64>,
+    pub new_count: usize,
+    pub learning_count: usize,
+    pub review_count: usize,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -146,6 +269,13 @@ pub struct ReviewLog {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct Grave {
+    pub object_id: i64,
+    pub object_kind: i32,
+    pub user_sequence: i32,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Media {
     pub name: String,
     pub mime: String,
@@ -158,6 +288,17 @@ pub struct Media {
 pub struct Diagnostic {
     pub code: String,
     pub message: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OwnerReviewRecord {
+    format: u8,
+    bundle_sha256: String,
+    card_id: i64,
+    grade: String,
+    imported_due: i64,
+    imported_reps: i64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -186,6 +327,50 @@ impl ParsedBundle {
     }
 }
 
+/// Re-rasterizes SVG attachments used by `card_ids` and requires the exact
+/// digest-addressed PNG bytes stored in the bundle.
+///
+/// # Errors
+///
+/// Returns an error if a card/media reference is missing, an SVG is unsafe, or
+/// its deterministic PNG differs from the bundled image.
+pub fn verify_svg_bindings(bundle: &ParsedBundle, card_ids: &[i64]) -> Result<(), FormatError> {
+    let mut verified = BTreeSet::new();
+    for card_id in card_ids {
+        let index = bundle
+            .manifest
+            .cards
+            .binary_search_by_key(card_id, |card| card.id)
+            .map_err(|_| {
+                FormatError::InvalidManifest("SVG verification card is missing".to_owned())
+            })?;
+        for attachment in bundle.manifest.cards[index]
+            .attachments
+            .iter()
+            .filter(|attachment| attachment.mime == "image/svg+xml")
+        {
+            if !verified.insert(attachment.name.clone()) {
+                continue;
+            }
+            let source = bundle.media(&attachment.name).ok_or_else(|| {
+                FormatError::InvalidManifest("retained SVG source is missing".to_owned())
+            })?;
+            let rendered_name = attachment.rendered_name.as_deref().ok_or_else(|| {
+                FormatError::InvalidManifest("SVG rendered media is missing".to_owned())
+            })?;
+            let rendered = bundle.media(rendered_name).ok_or_else(|| {
+                FormatError::InvalidManifest("SVG rendered bytes are missing".to_owned())
+            })?;
+            if rasterize_svg(source)? != rendered {
+                return Err(FormatError::InvalidManifest(
+                    "SVG rendered image does not match its retained source".to_owned(),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FormatError {
     TooShort,
@@ -203,6 +388,9 @@ pub enum FormatError {
     MediaOutOfBounds(String),
     MediaDigestMismatch(String),
     NonDeterministicOrder,
+    InvalidManifest(String),
+    InvalidReviewLog(String),
+    InvalidSvg(String),
 }
 
 impl fmt::Display for FormatError {
@@ -237,6 +425,13 @@ impl fmt::Display for FormatError {
             Self::NonDeterministicOrder => {
                 write!(formatter, "media entries are not in canonical order")
             }
+            Self::InvalidManifest(message) => {
+                write!(formatter, "invalid bundle manifest: {message}")
+            }
+            Self::InvalidReviewLog(message) => {
+                write!(formatter, "invalid Cobalt review log: {message}")
+            }
+            Self::InvalidSvg(message) => write!(formatter, "invalid SVG media: {message}"),
         }
     }
 }
@@ -284,6 +479,7 @@ pub fn encode(
     }
     manifest.format_version = VERSION;
     manifest.media = records;
+    validate_manifest(&manifest, &payload)?;
     let manifest_bytes =
         serde_json::to_vec(&manifest).map_err(|error| FormatError::Json(error.to_string()))?;
     if manifest_bytes.len() > MAX_MANIFEST_BYTES {
@@ -408,6 +604,7 @@ pub fn decode(bytes: &[u8]) -> Result<ParsedBundle, FormatError> {
         return Err(FormatError::UnsupportedVersion(manifest.format_version));
     }
     validate_media(&manifest.media, &payload)?;
+    validate_manifest(&manifest, &payload)?;
     Ok(ParsedBundle { manifest, payload })
 }
 
@@ -496,10 +693,16 @@ fn validate_media(media: &[Media], payload: &[u8]) -> Result<(), FormatError> {
     }
     let mut names = BTreeSet::new();
     let mut previous = None;
+    let mut expected_offset = 0_u64;
     for record in media {
         let name = canonical_media_name(&record.name)?;
         if name != record.name {
             return Err(FormatError::InvalidMediaName(record.name.clone()));
+        }
+        if record.mime != media_type(&name) {
+            return Err(FormatError::InvalidManifest(format!(
+                "media {name:?} has a mismatched MIME type"
+            )));
         }
         if !names.insert(name.clone()) {
             return Err(FormatError::DuplicateMediaName(name));
@@ -513,6 +716,9 @@ fn validate_media(media: &[Media], payload: &[u8]) -> Result<(), FormatError> {
         previous = Some(name.clone());
         if record.length > MAX_MEDIA_BYTES {
             return Err(FormatError::MediaLimit);
+        }
+        if record.offset != expected_offset {
+            return Err(FormatError::NonDeterministicOrder);
         }
         let start = usize::try_from(record.offset)
             .map_err(|_| FormatError::MediaOutOfBounds(name.clone()))?;
@@ -528,8 +734,416 @@ fn validate_media(media: &[Media], payload: &[u8]) -> Result<(), FormatError> {
         if digest_hex(content) != record.sha256 {
             return Err(FormatError::MediaDigestMismatch(name));
         }
+        expected_offset = record
+            .offset
+            .checked_add(record.length)
+            .ok_or(FormatError::MediaLimit)?;
+    }
+    if expected_offset != payload.len() as u64 {
+        return Err(FormatError::LengthMismatch);
     }
     Ok(())
+}
+
+fn attachment_kind(mime: &str) -> AttachmentKind {
+    if mime.starts_with("image/") {
+        AttachmentKind::Image
+    } else if mime.starts_with("audio/") {
+        AttachmentKind::Audio
+    } else if mime.starts_with("video/") {
+        AttachmentKind::Video
+    } else {
+        AttachmentKind::Other
+    }
+}
+
+fn validate_manifest(manifest: &BundleManifest, payload: &[u8]) -> Result<(), FormatError> {
+    validate_manifest_shape(manifest)?;
+    validate_sources(&manifest.sources)?;
+    let note_ids = manifest
+        .notes
+        .iter()
+        .map(|note| note.id)
+        .collect::<BTreeSet<_>>();
+    let notetype_ids = manifest
+        .notetypes
+        .iter()
+        .map(|notetype| notetype.id)
+        .collect::<BTreeSet<_>>();
+    let deck_ids = manifest
+        .decks
+        .iter()
+        .map(|deck| deck.id)
+        .collect::<BTreeSet<_>>();
+    let deck_configuration_ids = manifest
+        .deck_configurations
+        .iter()
+        .map(|configuration| configuration.id)
+        .collect::<BTreeSet<_>>();
+    let card_ids = manifest
+        .cards
+        .iter()
+        .map(|card| card.id)
+        .collect::<BTreeSet<_>>();
+    let media_by_name = manifest
+        .media
+        .iter()
+        .map(|media| (media.name.as_str(), media))
+        .collect::<BTreeMap<_, _>>();
+
+    validate_note_and_deck_references(manifest, &notetype_ids, &deck_configuration_ids)?;
+    validate_card_references(manifest, &note_ids, &deck_ids, &media_by_name)?;
+    validate_revlog_references(&manifest.revlog, &card_ids)?;
+    validate_review_queue(
+        &manifest.review_queue,
+        &card_ids,
+        &deck_ids,
+        manifest.sources.len(),
+    )?;
+    if payload.len() > MAX_PAYLOAD_BYTES {
+        return Err(FormatError::MediaLimit);
+    }
+    Ok(())
+}
+
+fn validate_manifest_shape(manifest: &BundleManifest) -> Result<(), FormatError> {
+    if manifest.sources.is_empty() {
+        return Err(FormatError::InvalidManifest(
+            "at least one source collection is required".to_owned(),
+        ));
+    }
+    if manifest.notes.len() > MAX_NOTES
+        || manifest.cards.len() > MAX_CARDS
+        || manifest.revlog.len() > MAX_REVLOG_ENTRIES
+    {
+        return Err(FormatError::InvalidManifest(
+            "collection record count exceeds the device limit".to_owned(),
+        ));
+    }
+    sorted_unique_by(&manifest.notes, |note| note.id, "notes")?;
+    sorted_unique_by(&manifest.notetypes, |notetype| notetype.id, "notetypes")?;
+    sorted_unique_by(&manifest.decks, |deck| deck.id, "decks")?;
+    sorted_unique_by(
+        &manifest.deck_configurations,
+        |configuration| configuration.id,
+        "deck configurations",
+    )?;
+    sorted_unique_by(&manifest.cards, |card| card.id, "cards")?;
+    sorted_unique_by(&manifest.revlog, |review| review.id, "revlog")?;
+    sorted_unique_by(
+        &manifest.graves,
+        |grave| (grave.object_id, grave.object_kind),
+        "graves",
+    )?;
+    if manifest.notes.iter().any(|note| note.id <= 0)
+        || manifest.notetypes.iter().any(|notetype| notetype.id <= 0)
+        || manifest.decks.iter().any(|deck| deck.id <= 0)
+        || manifest
+            .deck_configurations
+            .iter()
+            .any(|configuration| configuration.id <= 0)
+        || manifest.cards.iter().any(|card| {
+            card.id <= 0
+                || card.ordinal < 0
+                || i32::try_from(card.due).is_err()
+                || i32::try_from(card.original_due).is_err()
+                || card.original_deck_id < 0
+                || card.interval < 0
+                || card.ease_factor < 0
+                || card.repetitions < 0
+                || card.lapses < 0
+                || card.remaining_steps < 0
+                || !(0..=3).contains(&card.card_type)
+                || !(-3..=4).contains(&card.queue)
+        })
+        || manifest.revlog.iter().any(|review| review.id <= 0)
+    {
+        return Err(FormatError::InvalidManifest(
+            "collection identifiers or scheduling fields are outside Anki's normalized bounds"
+                .to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_sources(sources: &[Source]) -> Result<(), FormatError> {
+    for source in sources {
+        if source.upstream_anki_revision.is_empty()
+            || source.note_count > MAX_NOTES
+            || source.card_count > MAX_CARDS
+        {
+            return Err(FormatError::InvalidManifest(
+                "source metadata is incomplete or unbounded".to_owned(),
+            ));
+        }
+        sorted_unique_by(
+            &source.normalized_config,
+            |entry| entry.key.clone(),
+            "collection configuration",
+        )?;
+        sorted_unique_by(
+            &source.normalized_tags,
+            |entry| entry.name.clone(),
+            "collection tags",
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_note_and_deck_references(
+    manifest: &BundleManifest,
+    notetype_ids: &BTreeSet<i64>,
+    deck_configuration_ids: &BTreeSet<i64>,
+) -> Result<(), FormatError> {
+    for note in &manifest.notes {
+        if !notetype_ids.contains(&note.notetype_id) {
+            return Err(FormatError::InvalidManifest(format!(
+                "note {} references missing notetype {}",
+                note.id, note.notetype_id
+            )));
+        }
+    }
+    for deck in &manifest.decks {
+        if deck
+            .configuration_id
+            .is_some_and(|id| !deck_configuration_ids.contains(&id))
+        {
+            return Err(FormatError::InvalidManifest(format!(
+                "deck {} references a missing configuration",
+                deck.id
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_card_references(
+    manifest: &BundleManifest,
+    note_ids: &BTreeSet<i64>,
+    deck_ids: &BTreeSet<i64>,
+    media_by_name: &BTreeMap<&str, &Media>,
+) -> Result<(), FormatError> {
+    for card in &manifest.cards {
+        if !note_ids.contains(&card.note_id) || !deck_ids.contains(&card.deck_id) {
+            return Err(FormatError::InvalidManifest(format!(
+                "card {} has a missing note or deck",
+                card.id
+            )));
+        }
+        validate_sorted_media_names(&card.question_media_names)?;
+        validate_sorted_media_names(&card.answer_media_names)?;
+        validate_sorted_media_names(&card.media_names)?;
+        validate_single_side_image(&card.question_media_names)?;
+        validate_single_side_image(&card.answer_media_names)?;
+        let expected = card
+            .question_media_names
+            .iter()
+            .chain(&card.answer_media_names)
+            .cloned()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        if expected != card.media_names {
+            return Err(FormatError::InvalidManifest(format!(
+                "card {} has a non-canonical media union",
+                card.id
+            )));
+        }
+        let mut attachment_names = BTreeSet::new();
+        for attachment in &card.attachments {
+            let name = canonical_media_name(&attachment.name)?;
+            if name != attachment.name
+                || !attachment_names.insert(name.clone())
+                || !card.media_names.contains(&name)
+                || !media_by_name.contains_key(name.as_str())
+                || attachment.mime != media_type(&name)
+                || attachment.kind != attachment_kind(&attachment.mime)
+                || attachment.kind == AttachmentKind::Other
+            {
+                return Err(FormatError::InvalidManifest(format!(
+                    "card {} has an invalid attachment index",
+                    card.id
+                )));
+            }
+            if let Some(rendered) = &attachment.rendered_name {
+                let rendered = canonical_media_name(rendered)?;
+                let source = media_by_name
+                    .get(name.as_str())
+                    .expect("attachment source was checked");
+                let expected = format!("cobalt-svg-{}.png", source.sha256);
+                if attachment.mime != "image/svg+xml"
+                    || attachment.kind != AttachmentKind::Image
+                    || rendered != expected
+                    || media_type(&rendered) != "image/png"
+                    || !media_by_name.contains_key(rendered.as_str())
+                {
+                    return Err(FormatError::InvalidManifest(format!(
+                        "card {} has an invalid rendered-media redirect",
+                        card.id
+                    )));
+                }
+            } else if attachment.mime == "image/svg+xml" {
+                return Err(FormatError::InvalidManifest(format!(
+                    "card {} has an SVG without a host-rendered bundle image",
+                    card.id
+                )));
+            }
+        }
+        if attachment_names != card.media_names.iter().cloned().collect::<BTreeSet<_>>() {
+            return Err(FormatError::InvalidManifest(format!(
+                "card {} has referenced media without attachments",
+                card.id
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_revlog_references(
+    revlog: &[ReviewLog],
+    card_ids: &BTreeSet<i64>,
+) -> Result<(), FormatError> {
+    for review in revlog {
+        if !card_ids.contains(&review.card_id) {
+            return Err(FormatError::InvalidManifest(format!(
+                "revlog {} references missing card {}",
+                review.id, review.card_id
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn sorted_unique_by<T, K: Ord>(
+    values: &[T],
+    key: impl Fn(&T) -> K,
+    label: &str,
+) -> Result<(), FormatError> {
+    let mut previous = None;
+    for value in values {
+        let current = key(value);
+        if previous
+            .as_ref()
+            .is_some_and(|previous| previous >= &current)
+        {
+            return Err(FormatError::InvalidManifest(format!(
+                "{label} are not sorted and unique"
+            )));
+        }
+        previous = Some(current);
+    }
+    Ok(())
+}
+
+fn validate_sorted_media_names(names: &[String]) -> Result<(), FormatError> {
+    let mut previous = None;
+    for raw_name in names {
+        let name = canonical_media_name(raw_name)?;
+        if &name != raw_name || previous.as_ref().is_some_and(|prior| prior >= &name) {
+            return Err(FormatError::InvalidManifest(
+                "card media names are not canonical, sorted, and unique".to_owned(),
+            ));
+        }
+        previous = Some(name);
+    }
+    Ok(())
+}
+
+fn validate_review_queue(
+    queue: &ReviewQueue,
+    card_ids: &BTreeSet<i64>,
+    deck_ids: &BTreeSet<i64>,
+    source_count: usize,
+) -> Result<(), FormatError> {
+    if queue.card_ids.len() > MAX_REVIEW_QUEUE_CARDS
+        || queue.new_count + queue.learning_count + queue.review_count != queue.card_ids.len()
+    {
+        return Err(FormatError::InvalidManifest(
+            "review queue counts do not match its cards".to_owned(),
+        ));
+    }
+    let unique = queue.card_ids.iter().copied().collect::<BTreeSet<_>>();
+    if unique.len() != queue.card_ids.len() || !unique.is_subset(card_ids) {
+        return Err(FormatError::InvalidManifest(
+            "review queue contains duplicate or missing cards".to_owned(),
+        ));
+    }
+    let mut flattened = Vec::new();
+    let mut new_count = 0_usize;
+    let mut learning_count = 0_usize;
+    let mut review_count = 0_usize;
+    for deck in &queue.decks {
+        if deck.source_index >= source_count
+            || !deck_ids.contains(&deck.root_deck_id)
+            || deck.new_count + deck.learning_count + deck.review_count != deck.card_ids.len()
+        {
+            return Err(FormatError::InvalidManifest(
+                "deck review queue metadata is invalid".to_owned(),
+            ));
+        }
+        flattened.extend_from_slice(&deck.card_ids);
+        new_count = new_count.saturating_add(deck.new_count);
+        learning_count = learning_count.saturating_add(deck.learning_count);
+        review_count = review_count.saturating_add(deck.review_count);
+    }
+    if flattened != queue.card_ids
+        || new_count != queue.new_count
+        || learning_count != queue.learning_count
+        || review_count != queue.review_count
+    {
+        return Err(FormatError::InvalidManifest(
+            "aggregate and per-deck review queues differ".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+/// Validates the append-only owner-local review log without changing its bytes.
+///
+/// # Errors
+///
+/// Returns an error for truncation, unknown fields, unsupported versions or
+/// grades, invalid bundle digests, or records beyond the fixed bounds.
+pub fn validate_review_log(bytes: &[u8]) -> Result<usize, FormatError> {
+    if bytes.len() > MAX_REVIEW_LOG_BYTES {
+        return Err(FormatError::InvalidReviewLog(
+            "file exceeds the device export bound".to_owned(),
+        ));
+    }
+    if !bytes.is_empty() && !bytes.ends_with(b"\n") {
+        return Err(FormatError::InvalidReviewLog(
+            "last record is not newline-terminated".to_owned(),
+        ));
+    }
+    let text = std::str::from_utf8(bytes)
+        .map_err(|_| FormatError::InvalidReviewLog("file is not UTF-8".to_owned()))?;
+    let mut records = 0_usize;
+    for line in text.lines() {
+        if line.is_empty() || line.len() > MAX_REVIEW_LOG_LINE_BYTES {
+            return Err(FormatError::InvalidReviewLog(
+                "record is empty or too large".to_owned(),
+            ));
+        }
+        let record: OwnerReviewRecord = serde_json::from_str(line)
+            .map_err(|error| FormatError::InvalidReviewLog(error.to_string()))?;
+        if record.format != 2
+            || record.card_id <= 0
+            || i32::try_from(record.imported_due).is_err()
+            || i32::try_from(record.imported_reps).is_err()
+            || !matches!(record.grade.as_str(), "again" | "hard" | "good")
+            || record.bundle_sha256.len() != 64
+            || !record
+                .bundle_sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(FormatError::InvalidReviewLog(
+                "record has an unsupported shape".to_owned(),
+            ));
+        }
+        records = records.saturating_add(1);
+    }
+    Ok(records)
 }
 
 #[cfg(test)]
@@ -539,11 +1153,106 @@ mod tests {
     fn source() -> Source {
         Source {
             package_kind: "apkg".to_owned(),
+            collection_member: "collection.anki2".to_owned(),
             collection_schema: 11,
+            normalized_schema: 18,
+            collection_id: 1,
+            collection_created: 0,
             collection_modified: 1,
+            schema_modified: 1,
+            dirty: 0,
+            user_sequence: 0,
+            last_sync: 0,
             note_count: 0,
+            card_count: 0,
             upstream_anki_revision: "pinned".to_owned(),
+            original_config_json: "{}".to_owned(),
+            original_models_json: "{}".to_owned(),
+            original_decks_json: "{}".to_owned(),
+            original_deck_configurations_json: "{}".to_owned(),
+            original_tags_json: "{}".to_owned(),
+            normalized_config: Vec::new(),
+            normalized_tags: Vec::new(),
         }
+    }
+
+    fn single_card_manifest() -> BundleManifest {
+        let mut manifest = BundleManifest::empty(source());
+        manifest.sources[0].note_count = 1;
+        manifest.sources[0].card_count = 1;
+        manifest.notes.push(Note {
+            id: 1,
+            guid: "guid".to_owned(),
+            notetype_id: 1,
+            modified: 1,
+            user_sequence: 0,
+            tags: Vec::new(),
+            fields: vec!["front".to_owned()],
+            sort_field: "front".to_owned(),
+            checksum: 1,
+            flags: 0,
+            data: String::new(),
+        });
+        manifest.notetypes.push(NoteType {
+            id: 1,
+            name: "Basic".to_owned(),
+            original_json: "{}".to_owned(),
+        });
+        manifest.deck_configurations.push(DeckConfiguration {
+            id: 1,
+            name: "Default".to_owned(),
+            original_json: "{}".to_owned(),
+        });
+        manifest.decks.push(Deck {
+            id: 1,
+            name: "Default".to_owned(),
+            configuration_id: Some(1),
+            original_json: "{}".to_owned(),
+        });
+        manifest.cards.push(Card {
+            id: 1,
+            note_id: 1,
+            deck_id: 1,
+            ordinal: 0,
+            user_sequence: 0,
+            queue: 0,
+            card_type: 0,
+            due: 1,
+            interval: 0,
+            ease_factor: 0,
+            repetitions: 0,
+            lapses: 0,
+            remaining_steps: 0,
+            original_due: 0,
+            original_deck_id: 0,
+            flags: 0,
+            data: String::new(),
+            modified: 1,
+            template_name: "Card".to_owned(),
+            front: "front".to_owned(),
+            back: "back".to_owned(),
+            tags: Vec::new(),
+            question_media_names: Vec::new(),
+            answer_media_names: Vec::new(),
+            media_names: Vec::new(),
+            attachments: Vec::new(),
+            diagnostics: Vec::new(),
+        });
+        manifest.review_queue = ReviewQueue {
+            card_ids: vec![1],
+            new_count: 1,
+            learning_count: 0,
+            review_count: 0,
+            decks: vec![DeckQueue {
+                source_index: 0,
+                root_deck_id: 1,
+                card_ids: vec![1],
+                new_count: 1,
+                learning_count: 0,
+                review_count: 0,
+            }],
+        };
+        manifest
     }
 
     #[test]
@@ -586,5 +1295,83 @@ mod tests {
         let mut tampered = encoded;
         tampered[34] ^= 1;
         assert_eq!(decode(&tampered), Err(FormatError::DigestMismatch));
+    }
+
+    #[test]
+    fn owner_review_log_is_versioned_bounded_and_bundle_bound() {
+        let valid = b"{\"format\":2,\"bundle_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"card_id\":7,\"grade\":\"good\",\"imported_due\":3,\"imported_reps\":2}\n";
+        assert_eq!(validate_review_log(valid), Ok(1));
+        assert!(validate_review_log(&valid[..valid.len() - 1]).is_err());
+        assert!(validate_review_log(
+            b"{\"format\":2,\"bundle_sha256\":\"bad\",\"card_id\":7,\"grade\":\"easy\",\"imported_due\":3,\"imported_reps\":2}\n"
+        )
+        .is_err());
+        assert!(validate_review_log(
+            b"{\"format\":2,\"format\":2,\"bundle_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"card_id\":7,\"grade\":\"good\",\"imported_due\":3,\"imported_reps\":2}\n"
+        )
+        .is_err());
+        assert!(validate_review_log(
+            b"{\"format\":2,\"bundle_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"card_id\":7,\"grade\":\"good\",\"imported_due\":3,\"imported_reps\":2147483648}\n"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn bundle_validation_matches_review_log_scheduling_bounds() {
+        let mut manifest = single_card_manifest();
+        manifest.cards[0].due = i64::MAX;
+        assert!(matches!(
+            encode(manifest, BTreeMap::new()),
+            Err(FormatError::InvalidManifest(_))
+        ));
+    }
+
+    #[test]
+    fn non_svg_attachments_cannot_redirect_displayed_bytes() {
+        let mut manifest = single_card_manifest();
+        manifest.cards[0].question_media_names = vec!["front.png".to_owned()];
+        manifest.cards[0].answer_media_names = vec!["front.png".to_owned()];
+        manifest.cards[0].media_names = vec!["front.png".to_owned()];
+        manifest.cards[0].attachments = vec![Attachment {
+            name: "front.png".to_owned(),
+            rendered_name: Some("other.png".to_owned()),
+            mime: "image/png".to_owned(),
+            kind: AttachmentKind::Image,
+        }];
+        let media = BTreeMap::from([
+            ("front.png".to_owned(), b"front".to_vec()),
+            ("other.png".to_owned(), b"other".to_vec()),
+        ]);
+        assert!(matches!(
+            encode(manifest, media),
+            Err(FormatError::InvalidManifest(_))
+        ));
+    }
+
+    #[test]
+    fn prebuilt_bundles_cannot_bypass_single_image_sides() {
+        let mut manifest = single_card_manifest();
+        manifest.cards[0].question_media_names =
+            vec!["first.png".to_owned(), "second.png".to_owned()];
+        manifest.cards[0].answer_media_names =
+            vec!["first.png".to_owned(), "second.png".to_owned()];
+        manifest.cards[0].media_names = vec!["first.png".to_owned(), "second.png".to_owned()];
+        manifest.cards[0].attachments = ["first.png", "second.png"]
+            .into_iter()
+            .map(|name| Attachment {
+                name: name.to_owned(),
+                rendered_name: None,
+                mime: "image/png".to_owned(),
+                kind: AttachmentKind::Image,
+            })
+            .collect();
+        let media = BTreeMap::from([
+            ("first.png".to_owned(), b"first".to_vec()),
+            ("second.png".to_owned(), b"second".to_vec()),
+        ]);
+        assert!(matches!(
+            encode(manifest, media),
+            Err(FormatError::InvalidManifest(_))
+        ));
     }
 }

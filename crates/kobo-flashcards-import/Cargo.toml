@@ -12,12 +12,12 @@ path = "src/main.rs"
 
 [dependencies]
 anki = { git = "https://github.com/ankitects/anki.git", rev = "9e32ad8849068510a82273889c21b22e1acf0949" }
-anki_i18n = { git = "https://github.com/ankitects/anki.git", rev = "9e32ad8849068510a82273889c21b22e1acf0949" }
+anki_proto = { git = "https://github.com/ankitects/anki.git", rev = "9e32ad8849068510a82273889c21b22e1acf0949" }
 kobo-flashcards-format = { path = "../kobo-flashcards-format" }
 kobo-html = { path = "../kobo-html" }
 kobo-image = { path = "../kobo-image" }
-resvg = { version = "0.45.1", default-features = false }
-rusqlite = { version = "0.36.0", features = ["bundled"] }
+rusqlite = { version = "0.36.0", features = ["bundled", "collation"] }
+serde = "1.0"
 serde_json = "1.0.140"
 tokio = { version = "1.45", features = ["io-util"] }
 unicase = "=2.6.0"
