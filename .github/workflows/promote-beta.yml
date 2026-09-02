@@ -151,6 +151,8 @@ jobs:
             "$beta_ref"
           test "$(resolve_ref_commit "$beta_ref")" = "$TESTED_COMMIT"
           git cat-file -e "${TESTED_COMMIT}^{commit}"
+          git cat-file -e "${TESTED_COMMIT}:install.sh"
+          git cat-file -e "${TESTED_COMMIT}:docs/install.sh"
           git merge-base --is-ancestor "$TESTED_COMMIT" HEAD
           stable_tag="v${VERSION}"
           require_absent "$stable_tag tag" \
@@ -170,6 +172,7 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
           EXPECTED_ARCHIVE_SHA256: ${{ inputs.expected_archive_sha256 }}
+          TESTED_COMMIT: ${{ inputs.tested_commit }}
         run: |
           cd dist
           asset="cobalt-${VERSION}-KoboRoot.tgz"
@@ -180,7 +183,13 @@ jobs:
           test -f "$digest"
           test -f "cobalt-${VERSION}-ClaraBW.sha256"
           test -f THIRD-PARTY.md
-          test "$(find . -maxdepth 1 -type f | wc -l)" -eq 5
+          test -f cobalt-host-manifest.txt
+          test -f cobalt-host-manifest.txt.sig
+          test -f cobalt-host-manifest.txt.sshsig
+          for platform in macos-x86_64 macos-arm64 linux-x86_64 linux-arm64; do
+            test -f "kobo-${VERSION}-${platform}.tar.gz"
+          done
+          test "$(find . -maxdepth 1 -type f | wc -l)" -eq 12
           grep -Eq "^[0-9a-f]{64}  ${asset}$" "$digest"
           grep -Eq "^[0-9a-f]{64}  ${legacy_asset}$" "$digest"
           cmp "$digest" "cobalt-${VERSION}-ClaraBW.sha256"
@@ -189,6 +198,55 @@ jobs:
           test "$primary_digest" = "$EXPECTED_ARCHIVE_SHA256"
           sha256sum --check "$digest"
           sha256sum --check "cobalt-${VERSION}-ClaraBW.sha256"
+          test "$(sed -n '1p' cobalt-host-manifest.txt)" = "cobalt-host-release 1"
+          grep -Fx "version ${VERSION}" cobalt-host-manifest.txt
+          grep -Fx "channels stable,beta" cobalt-host-manifest.txt
+          grep -Fx "source ${TESTED_COMMIT}" cobalt-host-manifest.txt
+          printf '%s\n' \
+            'cobalt-release ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIL7XUR3p+tvPgftO/kRbigc8gagzP2RBDG3tWIu/1KXe' \
+            > allowed_signers
+          ssh-keygen -Y verify -q \
+            -f allowed_signers \
+            -I cobalt-release \
+            -n cobalt-host-release \
+            -s cobalt-host-manifest.txt.sshsig \
+            < cobalt-host-manifest.txt
+          rm allowed_signers
+          git show "${TESTED_COMMIT}:install.sh" > install.sh
+          while read -r kind first second third fourth; do
+            case "$kind" in
+              device)
+                name=$first
+                bytes=$second
+                checksum=$third
+                test -z "${fourth:-}"
+                ;;
+              bootstrap)
+                name=$first
+                bytes=$second
+                checksum=$third
+                test -z "${fourth:-}"
+                ;;
+              host)
+                name=$second
+                bytes=$third
+                checksum=$fourth
+                ;;
+              *) continue ;;
+            esac
+            test -f "$name"
+            test "$(wc -c < "$name" | tr -d ' ')" = "$bytes"
+            test "$(sha256sum "$name" | cut -d' ' -f1)" = "$checksum"
+          done < cobalt-host-manifest.txt
+          test "$(find . -maxdepth 1 -type f | wc -l)" -eq 13
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.85.1
+      - name: Verify the in-process release signature
+        run: |
+          cargo run --locked -p kobo-cli -- host-release-verify \
+            --manifest dist/cobalt-host-manifest.txt \
+            --signature dist/cobalt-host-manifest.txt.sig
       - name: Publish the exact verified bytes as stable
         env:
           GH_TOKEN: ${{ github.token }}
@@ -251,5 +309,5 @@ jobs:
           test "$created_sha" = "$TESTED_COMMIT"
           gh release create "$tag" dist/* \
             --title "Cobalt ${VERSION}" \
-            --notes "Promoted unchanged from tested beta-v${VERSION}." \
+            --notes "Promoted verified artifacts from tested beta-v${VERSION}." \
             --latest

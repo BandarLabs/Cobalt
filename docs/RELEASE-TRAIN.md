@@ -22,13 +22,18 @@ artifacts are promoted from beta rather than rebuilt.
 
 1. Merge platform pull requests into `beta`.
 2. Bump the workspace version once when cutting a beta candidate. The first
-   push of that version publishes immutable `beta-vX.Y.Z` assets. Later
-   app-only pushes at the same version leave that platform release unchanged.
+   push of that version publishes immutable `beta-vX.Y.Z` device and host
+   assets, their signed manifest, and the bootstrap installer. Later app-only
+   pushes at the same version leave that platform release unchanged.
 3. Install the beta release through Software Update and record the tested
    commit and archive SHA-256.
 4. Merge `beta` into `main` without squashing away the tested commit.
 5. Run **Promote tested beta** from `main`. The workflow tags the tested commit
-   and publishes the already-tested archive bytes as `vX.Y.Z`.
+   and publishes the already-tested device package, four host packages,
+   installer, manifest, and signatures as `vX.Y.Z` without rebuilding.
+   The `docs/install.sh` merged to main is then available from the canonical
+   GitHub Pages stable discovery URL. Beta itself never changes the live Pages
+   source or publishes a public host bootstrap.
 
 Direct stable publication from `main` is intentionally disabled for Store
 applications. A successful build is necessary but does not replace physical
