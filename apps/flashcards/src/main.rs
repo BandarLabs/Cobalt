@@ -132,11 +132,14 @@ impl Flashcards {
         let Some(card) = bundle.manifest().cards.get(self.card) else {
             return;
         };
-        let Some(image) = card
-            .attachments
-            .iter()
-            .find(|attachment| attachment.kind == AttachmentKind::Image)
-        else {
+        let Some(image) = card.attachments.iter().find(|attachment| {
+            attachment.kind == AttachmentKind::Image
+                && if self.answer {
+                    card.answer_media_names.contains(&attachment.name)
+                } else {
+                    card.question_media_names.contains(&attachment.name)
+                }
+        }) else {
             return;
         };
         let image_name = image.rendered_name.as_deref().unwrap_or(&image.name);

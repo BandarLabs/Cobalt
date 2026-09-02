@@ -106,6 +106,8 @@ pub struct Card {
     pub front: String,
     pub back: String,
     pub tags: Vec<String>,
+    pub question_media_names: Vec<String>,
+    pub answer_media_names: Vec<String>,
     pub media_names: Vec<String>,
     pub attachments: Vec<Attachment>,
     pub diagnostics: Vec<Diagnostic>,

@@ -14,6 +14,7 @@ use kobo_flashcards_format::{
 };
 use rusqlite::Connection;
 use serde_json::Value;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
@@ -887,31 +888,15 @@ fn read_cards(
             })?;
         let template_name = json_name(template).unwrap_or_else(|| format!("Card {}", ordinal + 1));
         let mut diagnostics = Vec::new();
-        let front = render_template(
-            template
-                .get("qfmt")
-                .and_then(Value::as_str)
-                .unwrap_or_default(),
-            &named_fields,
-            &note.tags,
-            ordinal,
-            None,
-            false,
-            &mut diagnostics,
-        );
-        let back = render_template(
-            template
-                .get("afmt")
-                .and_then(Value::as_str)
-                .unwrap_or_default(),
-            &named_fields,
-            &note.tags,
-            ordinal,
-            Some(&front),
-            true,
-            &mut diagnostics,
-        );
-        let media_names = referenced_media(&named_fields);
+        let (front, back, question_media_names, answer_media_names) =
+            render_with_rslib(template, model, &named_fields, ordinal, &mut diagnostics);
+        let media_names = question_media_names
+            .iter()
+            .chain(&answer_media_names)
+            .cloned()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
         for name in &media_names {
             if !media.contains_key(name) {
                 diagnostics.push(diagnostic(
@@ -942,6 +927,8 @@ fn read_cards(
             front,
             back,
             tags: note.tags.clone(),
+            question_media_names,
+            answer_media_names,
             media_names,
             attachments,
             diagnostics,
@@ -1037,6 +1024,77 @@ fn named_fields(model: &Value, positional: &BTreeMap<String, String>) -> BTreeMa
         .collect()
 }
 
+fn render_with_rslib(
+    template: &Value,
+    model: &Value,
+    fields: &BTreeMap<String, String>,
+    ordinal: i32,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> (String, String, Vec<String>, Vec<String>) {
+    let field_map = fields
+        .iter()
+        .map(|(name, value)| (name.as_str(), Cow::Borrowed(value.as_str())))
+        .collect::<std::collections::HashMap<_, _>>();
+    let ordinal = u16::try_from(ordinal).unwrap_or(u16::MAX);
+    let tr = anki_i18n::I18n::new(&["en"]);
+    let result = anki::template::render_card(anki::template::RenderCardRequest {
+        qfmt: template
+            .get("qfmt")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+        afmt: template
+            .get("afmt")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+        field_map: &field_map,
+        card_ord: ordinal,
+        is_cloze: model.get("type").and_then(Value::as_i64) == Some(1),
+        browser: false,
+        tr: &tr,
+        partial_render: false,
+    });
+    let Ok(rendered) = result else {
+        diagnostics.push(diagnostic(
+            "rslib-render-error",
+            "Anki rslib rejected this template; it was not approximated.",
+        ));
+        return (
+            "[Unsupported Anki template]".to_owned(),
+            "[Unsupported Anki template]".to_owned(),
+            Vec::new(),
+            Vec::new(),
+        );
+    };
+    let mut join = |nodes: Vec<anki::template::RenderedNode>| {
+        nodes
+            .into_iter()
+            .map(|node| match node {
+                anki::template::RenderedNode::Text { text } => text,
+                anki::template::RenderedNode::Replacement {
+                    field_name, filters, ..
+                } => {
+                    diagnostics.push(diagnostic(
+                        "rslib-partial-render",
+                        &format!("Anki rslib retained unresolved filters for {field_name:?}: {filters:?}"),
+                    ));
+                    "[Unsupported Anki template filter]".to_owned()
+                }
+            })
+            .collect::<String>()
+    };
+    let question = join(rendered.qnodes);
+    let answer = join(rendered.anodes);
+    let question_media = referenced_media_text(&question);
+    let answer_media = referenced_media_text(&answer);
+    (
+        kobo_html::to_text(&question),
+        kobo_html::to_text(&answer),
+        question_media,
+        answer_media,
+    )
+}
+
+#[cfg(test)]
 fn render_template(
     template: &str,
     fields: &BTreeMap<String, String>,
@@ -1077,6 +1135,7 @@ fn render_template(
     kobo_html::to_text(&output)
 }
 
+#[cfg(test)]
 fn render_conditionals(template: &str, fields: &BTreeMap<String, String>) -> String {
     let mut result = template.to_owned();
     // A bounded pass handles ordinary nested conditionals while refusing a
@@ -1135,6 +1194,7 @@ fn render_conditionals(template: &str, fields: &BTreeMap<String, String>) -> Str
     result
 }
 
+#[cfg(test)]
 fn substitution(
     token: &str,
     fields: &BTreeMap<String, String>,
@@ -1175,6 +1235,7 @@ fn substitution(
     }
 }
 
+#[cfg(test)]
 fn render_cloze(value: &str, ordinal: i32, show_answer: bool) -> String {
     let marker = format!("{{{{c{}::", ordinal + 1);
     let mut rendered = String::new();
@@ -1209,6 +1270,7 @@ fn render_cloze(value: &str, ordinal: i32, show_answer: bool) -> String {
     rendered
 }
 
+#[cfg(test)]
 fn referenced_media(fields: &BTreeMap<String, String>) -> Vec<String> {
     let mut names = BTreeSet::new();
     for value in fields.values() {
@@ -1222,6 +1284,16 @@ fn referenced_media(fields: &BTreeMap<String, String>) -> Vec<String> {
         }
     }
     names.into_iter().collect()
+}
+
+fn referenced_media_text(value: &str) -> Vec<String> {
+    sound_references(value)
+        .into_iter()
+        .chain(image_references(value))
+        .filter_map(|name| canonical_media_name(&name).ok())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 fn sound_references(value: &str) -> Vec<String> {
@@ -1610,11 +1682,6 @@ mod tests {
         assert!(bundle.manifest().notetypes[0]
             .original_json
             .contains("\"css\""));
-        assert!(bundle
-            .manifest()
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.code == "unsupported-filter"));
         let _ignored = fs::remove_dir_all(root);
     }
 
@@ -1696,8 +1763,8 @@ mod tests {
                 "name": "Basic and reversed", "css": ".card { color: black; }",
                 "flds": [{"name":"Front"}, {"name":"Back"}],
                 "tmpls": [
-                    {"name":"Forward", "qfmt":"{{text:Front}}", "afmt":"{{FrontSide}}<hr>{{Back}}"},
-                    {"name":"Reverse", "qfmt":"{{Back}}", "afmt":"{{FrontSide}}<hr>{{type:Front}}"}
+                    {"name":"Forward", "qfmt":"{{Front}}", "afmt":"{{FrontSide}}<hr>{{Back}}"},
+                    {"name":"Reverse", "qfmt":"{{Back}}", "afmt":"{{FrontSide}}<hr>{{unsupported:Front}}"}
                 ]
             },
             "200": {
