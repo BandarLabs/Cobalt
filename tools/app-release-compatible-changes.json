@@ -3,8 +3,13 @@
   "changes": [
     {
       "protocol_version": 12,
-      "reason": "The 0.3.5 runtime retains protocol-11 rendering, responses, and Atkinson metrics for unchanged Store binaries. Protocol 12 adds Folio nodes and a write-only app-scoped credential request that protocol-11 apps cannot emit; only catalog apps changed to use the new SDK surface are rebuilt.",
+      "reason": "The 0.3.5 runtime retains protocol-11 rendering, responses, and Atkinson metrics for unchanged Store binaries. Responsive renderer work and SDK-only profile tests do not alter those already-published bytes. Protocol 12 adds Folio nodes and a write-only app-scoped credential request that protocol-11 apps cannot emit; only catalog apps changed to use the new SDK surface are rebuilt.",
       "files": [
+        {
+          "path": "Cargo.lock",
+          "base_blob": "98e86504890e59da1755181ad38d7ffaa86c635a",
+          "compatible_blob": "25f192ec0d3110d9d3e566d1dd4b242429b1ee94"
+        },
         {
           "path": "crates/kobo-abi/src/lib.rs",
           "base_blob": "2e3e88db5ba1fd08feed46fd65b0f502dd7f8dfb",
@@ -31,6 +36,11 @@
           "compatible_blob": "373a715383526e8217ccacdf21fccc01b9fd9382"
         },
         {
+          "path": "crates/kobo-sdk/Cargo.toml",
+          "base_blob": "950cc4ba03f0c5743b458820f411c39f5e19cad5",
+          "compatible_blob": "1e430f2f1912c1c327b17ec7a388b934c33c6d42"
+        },
+        {
           "path": "crates/kobo-sdk/src/lib.rs",
           "base_blob": "9a645f3f3d9c8746dda47d858bb3fcd744621df8",
           "compatible_blob": "0ac8561a00f10350dfac28501ae49362e37b1ed6"
@@ -43,7 +53,12 @@
         {
           "path": "crates/kobo-sdk/src/keyboard.rs",
           "base_blob": "6a2ced13d30bbbed83e54fa949f8362563c944e4",
-          "compatible_blob": "01e3771e764d433bc05ead1d47bca9f8c23a263f"
+          "compatible_blob": "3ee32641ffc26a83b739463e366e72ddec4a6ee4"
+        },
+        {
+          "path": "crates/kobo-sdk/src/terminal.rs",
+          "base_blob": "016d5792d4f0c3e1d173a0509b17d2fc3b6d0dc5",
+          "compatible_blob": "211816b2b69a1152abd7ff9c84f6ddbc5bd2aa34"
         },
         {
           "path": "crates/kobo-text/src/lib.rs",
@@ -51,9 +66,14 @@
           "compatible_blob": "c645479d92d9bdcc7e07a38f2e8fca591fc9cf57"
         },
         {
+          "path": "crates/kobo-ui/Cargo.toml",
+          "base_blob": "5ffc679b17b75bcdd7008e33569800c4bce5d979",
+          "compatible_blob": "94a904d6db2500ac354997940d20a918828523af"
+        },
+        {
           "path": "crates/kobo-ui/src/lib.rs",
           "base_blob": "b423c372440c61e785db9dd0128eac22343cb9f8",
-          "compatible_blob": "c2a20f13301f80af742d2cc455b2085259636368"
+          "compatible_blob": "916df7ea71b9df9cab622ae4d8e3fd1e2f122267"
         }
       ]
     }

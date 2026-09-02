@@ -12,15 +12,19 @@ const MANIFEST_FIELDS = [
   "glyph"
 ];
 const COMPATIBLE_PLATFORM_PATHS = new Set([
+  "Cargo.lock",
   "crates/kobo-abi/src/lib.rs",
   "crates/kobo-policy/src/credentials.rs",
   "crates/kobo-policy/src/services.rs",
   "crates/kobo-policy/src/tasks.rs",
   "crates/kobo-protocol/src/lib.rs",
+  "crates/kobo-sdk/Cargo.toml",
   "crates/kobo-sdk/src/credentials.rs",
   "crates/kobo-sdk/src/keyboard.rs",
   "crates/kobo-sdk/src/lib.rs",
+  "crates/kobo-sdk/src/terminal.rs",
   "crates/kobo-text/src/lib.rs",
+  "crates/kobo-ui/Cargo.toml",
   "crates/kobo-ui/src/lib.rs"
 ]);
 
@@ -457,6 +461,20 @@ export function changedLockPackageIdentities(previousSource, currentSource) {
   );
 }
 
+export function releaseLockPackageIdentities(
+  previousSource,
+  currentSource,
+  compatiblePaths
+) {
+  if (!(compatiblePaths instanceof Set)) {
+    throw new Error("compatible release paths must be a set");
+  }
+  // compatibleChangePaths adds Cargo.lock only after both complete blobs match.
+  return compatiblePaths.has("Cargo.lock")
+    ? new Set()
+    : changedLockPackageIdentities(previousSource, currentSource);
+}
+
 export function registeredConsumers(metadata, registeredPackages, changedPackageIdentities) {
   const packagesByIdentity = new Map();
   const packageIdsByName = new Map();
@@ -624,9 +642,10 @@ export function affectedWorkspacePackages(baseRevision, registry) {
   }
 
   if (changedPaths.includes("Cargo.lock")) {
-    const lockChanges = changedLockPackageIdentities(
+    const lockChanges = releaseLockPackageIdentities(
       command("git", ["show", `${baseRevision}:Cargo.lock`]),
-      readFileSync(resolve(workspaceRoot, "Cargo.lock"), "utf8")
+      readFileSync(resolve(workspaceRoot, "Cargo.lock"), "utf8"),
+      compatiblePaths
     );
     for (const identity of lockChanges) changedIdentities.add(identity);
   }
