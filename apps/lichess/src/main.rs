@@ -1992,6 +1992,17 @@ impl Lichess {
             match pending {
                 Pending::Account => {
                     self.account = AccountState::Failed(self.notice.clone().unwrap());
+                    self.clear_pending_action();
+                    self.accepted_challenge = None;
+                    self.reconcile_accepted_challenge = false;
+                    self.pending_move = None;
+                    self.selected = None;
+                    self.promotion = None;
+                    self.confirmation = None;
+                    if matches!(self.route, Route::Pairing | Route::Challenge | Route::Game) {
+                        self.route = Route::Play;
+                    }
+                    self.close_live_reads(context);
                 }
                 Pending::EventOpen | Pending::EventNext => {
                     self.event_open = false;
@@ -2086,7 +2097,14 @@ impl Lichess {
             Pending::Puzzle => {
                 if self.accept_puzzles(bytes) {
                     context.store().save(PUZZLE_KEY, self.encode_puzzles());
-                    self.route = Route::Puzzles;
+                    if matches!(
+                        self.route,
+                        Route::Puzzles | Route::Solve | Route::PuzzleResult
+                    ) {
+                        self.route = Route::Puzzles;
+                    } else {
+                        self.notice = Some("A 32-puzzle session is ready offline.".to_owned());
+                    }
                 } else {
                     self.notice =
                         Some("Lichess returned a puzzle batch this client cannot read.".to_owned());
@@ -3213,6 +3231,24 @@ mod tests {
     }
 
     #[test]
+    fn background_puzzle_download_does_not_interrupt_a_live_game() {
+        let mut app = app_with_game(&[], Color::White);
+        let mut context = Context::default();
+        let response = format!(
+            r#"{{"puzzles":[{{"game":{{"fen":"{}"}},"puzzle":{{"id":"puzzle1","solution":["e2e4"],"initialPly":0}}}}]}}"#,
+            super::chess::START
+        );
+        app.handle_completed(&mut context, Pending::Puzzle, response.as_bytes());
+        assert_eq!(app.route, Route::Game);
+        assert!(app
+            .notice
+            .as_deref()
+            .unwrap_or_default()
+            .contains("ready offline"));
+        assert_eq!(app.puzzles.len(), 1);
+    }
+
+    #[test]
     fn seek_is_spawned_once_and_never_as_retrying_work() {
         let mut app = Lichess {
             route: Route::Play,
@@ -3506,6 +3542,39 @@ mod tests {
         resumed.open_event_stream(&mut Context::default());
         assert!(resumed.has_pending(|pending| { matches!(pending, Pending::EventRateWait { .. }) }));
         assert!(!resumed.has_pending(|pending| matches!(pending, Pending::EventOpen)));
+    }
+
+    #[test]
+    fn account_rate_limit_clears_recovery_gates_instead_of_locking_ui() {
+        let mut app = app_with_game(&[], Color::White);
+        app.route = Route::Challenge;
+        app.accepted_challenge = Some(Challenge {
+            id: "chall123".to_owned(),
+            challenger: "ReaderTwo".to_owned(),
+            direction: ChallengeDirection::Incoming,
+            status: "created".to_owned(),
+            rated: false,
+            variant: "standard".to_owned(),
+            speed: "rapid".to_owned(),
+            time_control: ChallengeTime::Clock {
+                initial_seconds: Some(600),
+                increment_seconds: Some(0),
+            },
+        });
+        app.pending_move = Some(super::PendingMove {
+            game_id: "abcdEF12".to_owned(),
+            movement: "e2e4".to_owned(),
+            at_ply: 0,
+        });
+        app.handle_completed(
+            &mut Context::default(),
+            Pending::Account,
+            b"COBALT-HTTP/1 429\nRetry-After: 15\n\n",
+        );
+        assert!(app.accepted_challenge.is_none());
+        assert!(app.pending_move.is_none());
+        assert_eq!(app.route, Route::Play);
+        assert!(matches!(app.account, AccountState::Failed(_)));
     }
 
     #[test]
