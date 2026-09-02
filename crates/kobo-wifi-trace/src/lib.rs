@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 use kobo_json::{ObjectBuilder, Value};
-use ring::digest::{digest, SHA256};
+use ring::hmac;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::env;
 use std::ffi::OsStr;
@@ -11,6 +11,7 @@ use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
@@ -20,19 +21,20 @@ pub const ENABLE_PHRASE: &str = "OWNER_ATTENDED_N365_WIFI_HANDOFF_TRACE";
 pub const ACTIVE_PROBES_ENV: &str = "KOBO_WIFI_HANDOFF_ACTIVE_PROBES";
 pub const ACTIVE_PROBES_PHRASE: &str = "OWNER_ATTENDED_BOUNDED_WIFI_PROBES";
 pub const DIAGNOSTICS_DIR: &str = "/mnt/onboard/.adds/cobalt/diagnostics";
-// Leaves room for the final bounded tool batch so wall-clock lifetime still
-// remains below the documented 15-minute ceiling.
+// Slow tools run independently, so this is the exact boot-time deadline.
 pub const MAXIMUM_RUNTIME: Duration = Duration::from_secs(14 * 60 + 30);
 pub const SOAK_AFTER_NICKEL: Duration = Duration::from_secs(10 * 60);
 pub const RAPID_INTERVAL: Duration = Duration::from_millis(200);
 pub const SOAK_INTERVAL: Duration = Duration::from_secs(5);
 const INITIAL_RAPID_WINDOW: Duration = Duration::from_secs(90);
 const CHECKPOINT_RAPID_WINDOW: Duration = Duration::from_secs(30);
-const EXTERNAL_RAPID_INTERVAL: Duration = Duration::from_secs(1);
+const SLOW_OBSERVATION_INTERVAL: Duration = Duration::from_secs(1);
 const KERNEL_INTERVAL: Duration = Duration::from_secs(5);
 const ACTIVE_PROBE_INTERVAL: Duration = Duration::from_secs(30);
+const TRACE_LOOP_POLL: Duration = Duration::from_millis(50);
 const SYNC_INTERVAL: Duration = Duration::from_secs(2);
 const MAX_TRACE_BYTES: u64 = 4 * 1024 * 1024;
+const TRACE_END_RESERVE: u64 = 512;
 const MAX_RETAINED_TRACES: usize = 4;
 const HTTP_PROBE_URL: &str =
     "https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog.json.sig";
@@ -100,14 +102,15 @@ impl TraceClient {
     /// Returns an error in attended mode when the diagnostics directory,
     /// event journal, helper process, or durable baseline cannot be created.
     pub fn start_if_enabled() -> io::Result<Self> {
-        if !trace_unlocked(env::var(ENABLE_ENV).ok().as_deref()) {
+        let Some(active) = trace_mode(
+            env::var(ENABLE_ENV).ok().as_deref(),
+            env::var(ACTIVE_PROBES_ENV).ok().as_deref(),
+        ) else {
             return Ok(Self {
                 events: None,
                 trace_path: None,
             });
-        }
-
-        let active = env::var(ACTIVE_PROBES_ENV).ok().as_deref() == Some(ACTIVE_PROBES_PHRASE);
+        };
         let session = format!("{}-{}", monotonic_millis(), std::process::id());
         let event_path = PathBuf::from(format!("/tmp/cobalt-wifi-handoff-{session}.events"));
         let trace_path =
@@ -159,7 +162,7 @@ impl TraceClient {
         let ready_by = Instant::now() + Duration::from_secs(20);
         while Instant::now() < ready_by {
             if fs::read_to_string(&trace_path)
-                .is_ok_and(|trace| trace.contains("\"reason\":\"baseline\""))
+                .is_ok_and(|trace| trace.contains("\"reason\":\"baseline_complete\""))
             {
                 return Ok(Self {
                     events: Some(events),
@@ -202,8 +205,8 @@ impl TraceClient {
     }
 }
 
-fn trace_unlocked(value: Option<&str>) -> bool {
-    value == Some(ENABLE_PHRASE)
+fn trace_mode(unlock: Option<&str>, active_probes: Option<&str>) -> Option<bool> {
+    (unlock == Some(ENABLE_PHRASE)).then(|| active_probes == Some(ACTIVE_PROBES_PHRASE))
 }
 
 impl Drop for TraceClient {
@@ -224,18 +227,44 @@ struct ProcessRecord {
     identity: ProcessIdentity,
     ppid: i32,
     executable: String,
-    cmdline_sha256: String,
+    cmdline_identity: String,
     generation: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct FileRecord {
-    path_sha256: String,
+    path_identity: String,
     kind: &'static str,
     inode: u64,
     size: u64,
     mtime: i64,
-    content_sha256: Option<String>,
+    mtime_nsec: i64,
+    content_identity: Option<String>,
+}
+
+#[derive(Clone)]
+struct PrivacyKey([u8; 32]);
+
+impl PrivacyKey {
+    fn generate() -> io::Result<Self> {
+        let mut bytes = [0_u8; 32];
+        File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+        Ok(Self(bytes))
+    }
+
+    #[cfg(test)]
+    const fn test(byte: u8) -> Self {
+        Self([byte; 32])
+    }
+
+    fn identity(&self, domain: &[u8], value: &[u8]) -> String {
+        let key = hmac::Key::new(hmac::HMAC_SHA256, &self.0);
+        let mut context = hmac::Context::with_key(&key);
+        context.update(domain);
+        context.update(&[0]);
+        context.update(value);
+        format!("hmac:{}", hex(context.sign().as_ref()))
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -303,6 +332,8 @@ struct Snapshot {
     wpa_state: String,
     associated: bool,
     ipv4: String,
+    slow_observed_start: Option<Duration>,
+    slow_observed_end: Option<Duration>,
     route: RouteState,
     resolver: String,
     resolver_count: usize,
@@ -338,28 +369,25 @@ impl Generations {
     }
 }
 
-struct ExternalCache {
-    refreshed: Option<Instant>,
-    kernel_refreshed: Option<Instant>,
-    probes_refreshed: Option<Instant>,
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SlowState {
     wpa_state: String,
     ipv4: String,
     dbus_owner: String,
     probes: ProbeState,
-    seen_kernel: BTreeSet<String>,
+    observed_start: Option<Duration>,
+    observed_end: Option<Duration>,
 }
 
-impl Default for ExternalCache {
+impl Default for SlowState {
     fn default() -> Self {
         Self {
-            refreshed: None,
-            kernel_refreshed: None,
-            probes_refreshed: None,
             wpa_state: "tool_missing".to_owned(),
             ipv4: "tool_missing".to_owned(),
             dbus_owner: "tool_missing".to_owned(),
             probes: ProbeState::disabled(),
-            seen_kernel: BTreeSet::new(),
+            observed_start: None,
+            observed_end: None,
         }
     }
 }
@@ -367,34 +395,30 @@ impl Default for ExternalCache {
 struct Sampler {
     root: PathBuf,
     generations: Generations,
-    external: ExternalCache,
-    active_probes: bool,
+    slow: SlowState,
+    privacy: PrivacyKey,
+    file_content_identities: HashMap<(PathBuf, u64, u64, i64, i64), String>,
 }
 
 impl Sampler {
-    fn device(active_probes: bool) -> Self {
-        // The baseline is passive and must exist before Nickel is stopped.
-        // Active reachability begins on the first 30-second probe interval,
-        // after the process/sysfs/route baseline is already durable.
-        let external = ExternalCache {
-            probes_refreshed: active_probes.then(Instant::now),
-            ..ExternalCache::default()
-        };
+    fn device(privacy: PrivacyKey) -> Self {
         Self {
             root: PathBuf::from("/"),
             generations: Generations::default(),
-            external,
-            active_probes,
+            slow: SlowState::default(),
+            privacy,
+            file_content_identities: HashMap::new(),
         }
     }
 
     #[cfg(test)]
-    fn at(root: PathBuf) -> Self {
+    fn at(root: PathBuf, privacy: PrivacyKey) -> Self {
         Self {
             root,
             generations: Generations::default(),
-            external: ExternalCache::default(),
-            active_probes: false,
+            slow: SlowState::default(),
+            privacy,
+            file_content_identities: HashMap::new(),
         }
     }
 
@@ -406,48 +430,21 @@ impl Sampler {
         }
     }
 
+    fn apply_slow(&mut self, update: &SlowUpdate) {
+        self.slow.wpa_state.clone_from(&update.wpa_state);
+        self.slow.ipv4.clone_from(&update.ipv4);
+        self.slow.dbus_owner.clone_from(&update.dbus_owner);
+        if let Some(probes) = &update.probes {
+            self.slow.probes.clone_from(probes);
+        }
+        self.slow.observed_start = Some(update.observed_start);
+        self.slow.observed_end = Some(update.observed_end);
+    }
+
     #[allow(clippy::too_many_lines)]
-    fn sample(&mut self, now: Instant, rapid: bool) -> (Snapshot, Vec<KernelEvent>) {
-        let external_interval = if rapid {
-            EXTERNAL_RAPID_INTERVAL
-        } else {
-            SOAK_INTERVAL
-        };
-        if self
-            .external
-            .refreshed
-            .is_none_or(|taken| now.duration_since(taken) >= external_interval)
-        {
-            self.external.refreshed = Some(now);
-            if self.root == Path::new("/") {
-                self.external.wpa_state = read_wpa_state();
-                self.external.ipv4 = read_ipv4_category();
-                self.external.dbus_owner = read_dbus_owner();
-            }
-        }
-        let (route, gateway_probe_target) =
+    fn sample_core(&mut self) -> Snapshot {
+        let (route, _) =
             parse_routes(&fs::read_to_string(self.path("/proc/net/route")).unwrap_or_default());
-        if self.active_probes
-            && self.root == Path::new("/")
-            && self
-                .external
-                .probes_refreshed
-                .is_none_or(|taken| now.duration_since(taken) >= ACTIVE_PROBE_INTERVAL)
-        {
-            self.external.probes_refreshed = Some(now);
-            self.external.probes = run_active_probes(gateway_probe_target.as_deref());
-        }
-        let kernel = if self.root == Path::new("/")
-            && self
-                .external
-                .kernel_refreshed
-                .is_none_or(|taken| now.duration_since(taken) >= KERNEL_INTERVAL)
-        {
-            self.external.kernel_refreshed = Some(now);
-            collect_kernel_events(&mut self.external.seen_kernel)
-        } else {
-            Vec::new()
-        };
 
         let processes = self.processes();
         let nickel_count = count_role(&processes, "nickel");
@@ -455,7 +452,7 @@ impl Sampler {
         let dhcp_count = count_role(&processes, "dhcp");
         let dbus_process_count = count_role(&processes, "dhcpcd_dbus");
         let wpa_socket = socket_identity(&self.path("/var/run/wpa_supplicant/wlan0"));
-        let tuple = generation_tuple(&processes, &self.external.dbus_owner, &wpa_socket);
+        let tuple = generation_tuple(&processes, &self.slow.dbus_owner, &wpa_socket);
         let wlan = self.path("/sys/class/net/wlan0");
         let flags = read_hex(&wlan.join("flags")).unwrap_or(0);
         let resolver_text = fs::read_to_string(self.path("/etc/resolv.conf")).unwrap_or_default();
@@ -479,7 +476,7 @@ impl Sampler {
         let wakeup_count = bounded_number(&self.path("/sys/power/wakeup_count"));
         let suspend_success = bounded_number(&self.path("/sys/kernel/debug/suspend_stats/success"));
         let suspend_fail = bounded_number(&self.path("/sys/kernel/debug/suspend_stats/fail"));
-        let reboot_reason = first_digest(&[
+        let reboot_reason = first_reason_category(&[
             self.path("/proc/bootreason"),
             self.path("/proc/sys/kernel/boot_reason"),
             self.path("/sys/devices/platform/mtk-kpd/reboot_reason"),
@@ -499,45 +496,44 @@ impl Sampler {
             &fs::read_to_string(wlan.join("carrier")).unwrap_or_default(),
             &["0", "1"],
         );
-        let wpa_state = self.external.wpa_state.clone();
+        let wpa_state = self.slow.wpa_state.clone();
         let associated = wpa_state == "completed";
-        (
-            Snapshot {
-                processes,
-                nickel_count,
-                supplicant_count,
-                dhcp_count,
-                dbus_process_count,
-                tuple,
-                wpa_socket,
-                dbus_owner: self.external.dbus_owner.clone(),
-                wlan_present: wlan.exists(),
-                operstate,
-                carrier,
-                flag_up: flags & 0x1 != 0,
-                flag_running: flags & 0x40 != 0,
-                driver,
-                module,
-                wpa_state,
-                associated,
-                ipv4: self.external.ipv4.clone(),
-                route,
-                resolver,
-                resolver_count,
-                resolver_search,
-                dhcp_files: self.dhcp_files(),
-                probes: self.external.probes.clone(),
-                watchdog,
-                power_state,
-                wakeup_count,
-                suspend_success,
-                suspend_fail,
-                reboot_reason,
-                pstore,
-                last_kmsg,
-            },
-            kernel,
-        )
+        Snapshot {
+            processes,
+            nickel_count,
+            supplicant_count,
+            dhcp_count,
+            dbus_process_count,
+            tuple,
+            wpa_socket,
+            dbus_owner: self.slow.dbus_owner.clone(),
+            wlan_present: wlan.exists(),
+            operstate,
+            carrier,
+            flag_up: flags & 0x1 != 0,
+            flag_running: flags & 0x40 != 0,
+            driver,
+            module,
+            wpa_state,
+            associated,
+            ipv4: self.slow.ipv4.clone(),
+            slow_observed_start: self.slow.observed_start,
+            slow_observed_end: self.slow.observed_end,
+            route,
+            resolver,
+            resolver_count,
+            resolver_search,
+            dhcp_files: self.dhcp_files(),
+            probes: self.slow.probes.clone(),
+            watchdog,
+            power_state,
+            wakeup_count,
+            suspend_success,
+            suspend_fail,
+            reboot_reason,
+            pstore,
+            last_kmsg,
+        }
     }
 
     fn processes(&mut self) -> Vec<ProcessRecord> {
@@ -555,8 +551,17 @@ impl Sampler {
                 continue;
             };
             let directory = entry.path();
-            let cmdline = read_bounded(&directory.join("cmdline"), 64 * 1024).unwrap_or_default();
             let executable_path = fs::read_link(directory.join("exe")).ok();
+            let executable_name = executable_path
+                .as_deref()
+                .and_then(Path::file_name)
+                .and_then(OsStr::to_str);
+            if let Some(name) = executable_name {
+                if process_role_name(name).is_none() && !is_script_interpreter(name) {
+                    continue;
+                }
+            }
+            let cmdline = read_bounded(&directory.join("cmdline"), 64 * 1024).unwrap_or_default();
             let Some(role) = process_role(executable_path.as_deref(), &cmdline) else {
                 continue;
             };
@@ -571,7 +576,7 @@ impl Sampler {
                 identity,
                 ppid: parent_pid,
                 executable: safe_executable(executable_path.as_deref()),
-                cmdline_sha256: sha256_hex(&cmdline),
+                cmdline_identity: self.privacy.identity(b"process-cmdline", &cmdline),
                 generation,
             });
         }
@@ -579,7 +584,7 @@ impl Sampler {
         records
     }
 
-    fn dhcp_files(&self) -> Vec<FileRecord> {
+    fn dhcp_files(&mut self) -> Vec<FileRecord> {
         let mut paths = Vec::new();
         for exact in [
             "/var/run/dhcpcd.pid",
@@ -614,7 +619,7 @@ impl Sampler {
         paths.dedup();
         paths
             .into_iter()
-            .filter_map(|path| file_record(&path))
+            .filter_map(|path| file_record(&path, &self.privacy, &mut self.file_content_identities))
             .collect()
     }
 }
@@ -623,17 +628,146 @@ impl Sampler {
 struct KernelEvent {
     category: &'static str,
     tags: String,
-    digest: String,
+}
+
+#[derive(Clone, Debug)]
+struct SlowUpdate {
+    observed_start: Duration,
+    observed_end: Duration,
+    wpa_state: String,
+    ipv4: String,
+    dbus_owner: String,
+    probes: Option<ProbeState>,
+    kernel: Vec<KernelEvent>,
+}
+
+trait TraceClock {
+    fn now(&self) -> Duration;
+}
+
+struct CoreSchedule {
+    next: Duration,
+}
+
+impl CoreSchedule {
+    fn new(now: Duration) -> Self {
+        Self {
+            next: now + RAPID_INTERVAL,
+        }
+    }
+
+    fn due(&self, now: Duration) -> bool {
+        now >= self.next
+    }
+
+    fn completed(&mut self, now: Duration, rapid: bool) {
+        self.next = now + if rapid { RAPID_INTERVAL } else { SOAK_INTERVAL };
+    }
+}
+
+struct BootClock {
+    fallback_started: Instant,
+    fallback_origin: Duration,
+}
+
+impl BootClock {
+    fn new() -> Self {
+        Self {
+            fallback_started: Instant::now(),
+            fallback_origin: read_boot_time().unwrap_or(Duration::ZERO),
+        }
+    }
+}
+
+impl TraceClock for BootClock {
+    fn now(&self) -> Duration {
+        boot_time_or_fallback(
+            read_boot_time(),
+            self.fallback_origin + self.fallback_started.elapsed(),
+        )
+    }
+}
+
+fn boot_time_or_fallback(boot_time: Option<Duration>, fallback: Duration) -> Duration {
+    boot_time.unwrap_or(fallback)
+}
+
+fn read_boot_time() -> Option<Duration> {
+    let text = fs::read_to_string("/proc/uptime").ok()?;
+    let seconds = text.split_whitespace().next()?.parse::<f64>().ok()?;
+    if seconds.is_sign_negative() || !seconds.is_finite() {
+        return None;
+    }
+    Some(Duration::from_secs_f64(seconds))
+}
+
+fn spawn_slow_worker(active_probes: bool, privacy: PrivacyKey) -> io::Result<Receiver<SlowUpdate>> {
+    let (sender, receiver) = mpsc::channel();
+    thread::Builder::new()
+        .name("kobo-wifi-slow-observe".to_owned())
+        .spawn(move || {
+            let clock = BootClock::new();
+            let mut kernel_due = Duration::ZERO;
+            let mut probes_due = clock.now() + ACTIVE_PROBE_INTERVAL;
+            let mut seen_kernel = BTreeSet::new();
+            loop {
+                let observed_start = clock.now();
+                let wpa_state = read_wpa_state();
+                let ipv4 = read_ipv4_category();
+                let dbus_owner = read_dbus_owner(&privacy);
+                let now = clock.now();
+                let kernel = if now >= kernel_due {
+                    kernel_due = now + KERNEL_INTERVAL;
+                    collect_kernel_events(&mut seen_kernel)
+                } else {
+                    Vec::new()
+                };
+                let probes = if active_probes && now >= probes_due {
+                    probes_due = now + ACTIVE_PROBE_INTERVAL;
+                    let (_, gateway) =
+                        parse_routes(&fs::read_to_string("/proc/net/route").unwrap_or_default());
+                    Some(run_active_probes(gateway.as_deref()))
+                } else {
+                    None
+                };
+                let update = SlowUpdate {
+                    observed_start,
+                    observed_end: clock.now(),
+                    wpa_state,
+                    ipv4,
+                    dbus_owner,
+                    probes,
+                    kernel,
+                };
+                if sender.send(update).is_err() {
+                    return;
+                }
+                thread::sleep(SLOW_OBSERVATION_INTERVAL);
+            }
+        })?;
+    Ok(receiver)
 }
 
 struct TraceWriter {
     file: File,
     bytes: u64,
+    limit: u64,
+    size_limit_reached: bool,
     last_sync: Instant,
 }
 
 impl TraceWriter {
     fn open(path: &Path, active_probes: bool) -> io::Result<Self> {
+        Self::open_with_limit(path, active_probes, MAX_TRACE_BYTES)
+    }
+
+    fn open_with_limit(path: &Path, active_probes: bool, limit: u64) -> io::Result<Self> {
+        if limit <= TRACE_END_RESERVE {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "trace limit is smaller than its end-marker reserve",
+            ));
+        }
         let existed = path.exists();
         if existed
             && !fs::symlink_metadata(path)
@@ -645,8 +779,17 @@ impl TraceWriter {
             ));
         }
         let file = OpenOptions::new().create(true).append(true).open(path)?;
+        let bytes = file.metadata()?.len();
+        if bytes > limit.saturating_sub(TRACE_END_RESERVE) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "existing trace consumed its end-marker reserve",
+            ));
+        }
         let mut writer = Self {
-            bytes: file.metadata()?.len(),
+            bytes,
+            limit,
+            size_limit_reached: false,
             file,
             last_sync: Instant::now(),
         };
@@ -672,11 +815,20 @@ impl TraceWriter {
     }
 
     fn line(&mut self, value: &Value, critical: bool) -> io::Result<()> {
-        if self.bytes >= MAX_TRACE_BYTES {
+        if self.size_limit_reached {
             return Ok(());
         }
         let mut line = value.to_json();
         line.push('\n');
+        let length = u64::try_from(line.len()).unwrap_or(u64::MAX);
+        if self.bytes.saturating_add(length) > self.limit.saturating_sub(TRACE_END_RESERVE) {
+            self.size_limit_reached = true;
+            return Ok(());
+        }
+        self.write_raw(&line, critical)
+    }
+
+    fn write_raw(&mut self, line: &str, critical: bool) -> io::Result<()> {
         self.file.write_all(line.as_bytes())?;
         self.file.flush()?;
         self.bytes = self
@@ -689,8 +841,41 @@ impl TraceWriter {
         Ok(())
     }
 
-    fn snapshot(&mut self, mono_ms: u64, reason: &str, snapshot: &Snapshot) -> io::Result<()> {
-        self.line(&snapshot_value(mono_ms, reason, snapshot), false)
+    fn finish(&mut self, mono_ms: u64, reason: &str) -> io::Result<()> {
+        let mut line = ObjectBuilder::new()
+            .set("version", TRACE_VERSION)
+            .set("mono_ms", json_u64(mono_ms))
+            .set("kind", "trace_end")
+            .set("reason", reason)
+            .build()
+            .to_json();
+        line.push('\n');
+        if self
+            .bytes
+            .saturating_add(u64::try_from(line.len()).unwrap_or(u64::MAX))
+            > self.limit
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::WriteZero,
+                "reserved trace end marker did not fit",
+            ));
+        }
+        self.write_raw(&line, true)
+    }
+
+    fn snapshot(
+        &mut self,
+        observed_start_ms: u64,
+        mono_ms: u64,
+        trace_started: Duration,
+        reason: &str,
+        snapshot: &Snapshot,
+        critical: bool,
+    ) -> io::Result<()> {
+        self.line(
+            &snapshot_value(observed_start_ms, mono_ms, trace_started, reason, snapshot),
+            critical,
+        )
     }
 
     fn lifecycle(&mut self, mono_ms: u64, event: Lifecycle) -> io::Result<()> {
@@ -705,15 +890,20 @@ impl TraceWriter {
         )
     }
 
-    fn kernel(&mut self, mono_ms: u64, event: &KernelEvent) -> io::Result<()> {
+    fn kernel(
+        &mut self,
+        observed_start_ms: u64,
+        mono_ms: u64,
+        event: &KernelEvent,
+    ) -> io::Result<()> {
         self.line(
             &ObjectBuilder::new()
                 .set("version", TRACE_VERSION)
+                .set("observed_start_ms", json_u64(observed_start_ms))
                 .set("mono_ms", json_u64(mono_ms))
                 .set("kind", "kernel")
                 .set("category", event.category)
                 .set("tags", event.tags.clone())
-                .set("line_sha256", event.digest.clone())
                 .build(),
             false,
         )
@@ -727,6 +917,16 @@ impl TraceWriter {
 /// Returns an error when fixed trace paths are invalid or when the event
 /// journal or append-only trace cannot be read, written, flushed, or synced.
 pub fn run_device_trace(event_path: &Path, trace_path: &Path, active: bool) -> io::Result<()> {
+    run_device_trace_with_clock(event_path, trace_path, active, &BootClock::new())
+}
+
+#[allow(clippy::too_many_lines)]
+fn run_device_trace_with_clock<C: TraceClock>(
+    event_path: &Path,
+    trace_path: &Path,
+    active: bool,
+    clock: &C,
+) -> io::Result<()> {
     if trace_path
         .parent()
         .is_none_or(|parent| parent != Path::new(DIAGNOSTICS_DIR))
@@ -736,29 +936,49 @@ pub fn run_device_trace(event_path: &Path, trace_path: &Path, active: bool) -> i
             "trace must stay in the diagnostics directory",
         ));
     }
+    let privacy = PrivacyKey::generate()?;
     cleanup_stale_traces(Path::new(DIAGNOSTICS_DIR), Some(trace_path))?;
     let mut writer = TraceWriter::open(trace_path, active)?;
-    let started = Instant::now();
+    let started = clock.now();
     let hard_deadline = started + MAXIMUM_RUNTIME;
     let mut rapid_until = started + INITIAL_RAPID_WINDOW;
     let mut finish_at = hard_deadline;
     let mut events = OpenOptions::new().read(true).open(event_path)?;
     let mut event_offset = 0_u64;
-    let mut sampler = Sampler::device(active);
-    let (baseline, kernel) = sampler.sample(Instant::now(), true);
-    writer.line(&snapshot_value(0, "baseline", &baseline), true)?;
-    for event in kernel {
-        writer.kernel(0, &event)?;
-    }
+    let slow_updates = spawn_slow_worker(active, privacy.clone())?;
+    let mut sampler = Sampler::device(privacy);
+    let (baseline, baseline_start, baseline_end) = capture_core(&mut sampler, clock, started);
+    writer.snapshot(
+        baseline_start,
+        baseline_end,
+        started,
+        "baseline",
+        &baseline,
+        true,
+    )?;
     let mut previous = Some(baseline);
-    let mut last_snapshot = Instant::now();
+    let mut baseline_complete = false;
+    let mut core_schedule = CoreSchedule::new(clock.now());
+    let mut last_snapshot = clock.now();
     loop {
-        let now = Instant::now();
-        if now >= finish_at || now >= hard_deadline || writer.bytes >= MAX_TRACE_BYTES {
+        let now = clock.now();
+        if deadline_reached(now, finish_at, hard_deadline) || writer.size_limit_reached {
             break;
         }
+        let mut slow_changed = false;
+        while let Ok(update) = slow_updates.try_recv() {
+            sampler.apply_slow(&update);
+            let observed_start_ms = relative_millis(started, update.observed_start);
+            let observed_end_ms = relative_millis(started, update.observed_end);
+            for event in &update.kernel {
+                writer.kernel(observed_start_ms, observed_end_ms, event)?;
+            }
+            slow_changed = true;
+        }
+        let mut gate_reference_requested = false;
         for event in read_lifecycle_events(&mut events, &mut event_offset)? {
-            let mono_ms = elapsed_millis(started, now);
+            let event_time = clock.now();
+            let mono_ms = relative_millis(started, event_time);
             writer.lifecycle(mono_ms, event)?;
             if matches!(
                 event,
@@ -769,51 +989,85 @@ pub fn run_device_trace(event_path: &Path, trace_path: &Path, active: bool) -> i
                     | Lifecycle::NickelPidObserved
                     | Lifecycle::NickelRecoveryBegin
             ) {
-                rapid_until = (now + CHECKPOINT_RAPID_WINDOW).min(hard_deadline);
+                rapid_until = (event_time + CHECKPOINT_RAPID_WINDOW).min(hard_deadline);
             }
             if matches!(event, Lifecycle::NickelPidObserved | Lifecycle::KobodExit) {
-                finish_at = (now + SOAK_AFTER_NICKEL).min(hard_deadline);
+                finish_at = (event_time + SOAK_AFTER_NICKEL).min(hard_deadline);
+            }
+            if event == Lifecycle::Current94GateAccepted {
+                gate_reference_requested = true;
             }
         }
-        let rapid = now < rapid_until;
-        let (snapshot, kernel) = sampler.sample(now, rapid);
-        let changed = previous.as_ref() != Some(&snapshot);
-        if changed || !rapid || last_snapshot.elapsed() >= Duration::from_secs(2) {
-            if changed {
-                writer.line(
-                    &snapshot_value(elapsed_millis(started, now), "change", &snapshot),
-                    true,
+        let now = clock.now();
+        let sample_reason = if !baseline_complete && slow_changed {
+            baseline_complete = true;
+            Some(("baseline_complete", true))
+        } else if gate_reference_requested {
+            Some(("gate_reference", true))
+        } else if slow_changed || core_schedule.due(now) {
+            Some(("sample", false))
+        } else {
+            None
+        };
+        if let Some((requested_reason, force_sync)) = sample_reason {
+            let (snapshot, observed_start_ms, observed_end_ms) =
+                capture_core(&mut sampler, clock, started);
+            let changed = previous.as_ref() != Some(&snapshot);
+            let rapid = clock.now() < rapid_until;
+            let should_write = force_sync
+                || changed
+                || !rapid
+                || clock.now().saturating_sub(last_snapshot) >= Duration::from_secs(2);
+            if should_write {
+                let reason = if requested_reason == "sample" && changed {
+                    "change"
+                } else {
+                    requested_reason
+                };
+                writer.snapshot(
+                    observed_start_ms,
+                    observed_end_ms,
+                    started,
+                    reason,
+                    &snapshot,
+                    force_sync || changed,
                 )?;
-            } else {
-                writer.snapshot(elapsed_millis(started, now), "sample", &snapshot)?;
+                last_snapshot = clock.now();
             }
             previous = Some(snapshot);
-            last_snapshot = now;
+            core_schedule.completed(clock.now(), rapid);
         }
-        for event in kernel {
-            writer.kernel(elapsed_millis(started, now), &event)?;
-        }
-        let interval = if rapid { RAPID_INTERVAL } else { SOAK_INTERVAL };
-        thread::sleep(interval.min(finish_at.saturating_duration_since(Instant::now())));
+        thread::sleep(
+            TRACE_LOOP_POLL.min(finish_at.min(hard_deadline).saturating_sub(clock.now())),
+        );
     }
-    writer.line(
-        &ObjectBuilder::new()
-            .set("version", TRACE_VERSION)
-            .set("mono_ms", json_u64(elapsed_millis(started, Instant::now())))
-            .set("kind", "trace_end")
-            .set(
-                "reason",
-                if writer.bytes >= MAX_TRACE_BYTES {
-                    "size_limit"
-                } else {
-                    "deadline"
-                },
-            )
-            .build(),
-        true,
-    )?;
+    let reason = if writer.size_limit_reached {
+        "size_limit"
+    } else {
+        "deadline"
+    };
+    writer.finish(relative_millis(started, clock.now()), reason)?;
     let _ignored = fs::remove_file(event_path);
     Ok(())
+}
+
+fn capture_core<C: TraceClock>(
+    sampler: &mut Sampler,
+    clock: &C,
+    trace_started: Duration,
+) -> (Snapshot, u64, u64) {
+    let observed_start = clock.now();
+    let snapshot = sampler.sample_core();
+    let observed_end = clock.now();
+    (
+        snapshot,
+        relative_millis(trace_started, observed_start),
+        relative_millis(trace_started, observed_end),
+    )
+}
+
+fn deadline_reached(now: Duration, finish_at: Duration, hard_deadline: Duration) -> bool {
+    now >= finish_at || now >= hard_deadline
 }
 
 fn read_lifecycle_events(file: &mut File, offset: &mut u64) -> io::Result<Vec<Lifecycle>> {
@@ -840,7 +1094,13 @@ fn read_lifecycle_events(file: &mut File, offset: &mut u64) -> io::Result<Vec<Li
     Ok(events)
 }
 
-fn snapshot_value(mono_ms: u64, reason: &str, snapshot: &Snapshot) -> Value {
+fn snapshot_value(
+    observed_start_ms: u64,
+    mono_ms: u64,
+    trace_started: Duration,
+    reason: &str,
+    snapshot: &Snapshot,
+) -> Value {
     let processes = snapshot
         .processes
         .iter()
@@ -852,7 +1112,7 @@ fn snapshot_value(mono_ms: u64, reason: &str, snapshot: &Snapshot) -> Value {
                 .set("starttime", json_u64(process.identity.starttime))
                 .set("generation", process.generation)
                 .set("exe", process.executable.clone())
-                .set("cmdline_sha256", process.cmdline_sha256.clone())
+                .set("cmdline_identity", process.cmdline_identity.clone())
                 .build()
         })
         .collect::<Vec<_>>();
@@ -861,20 +1121,24 @@ fn snapshot_value(mono_ms: u64, reason: &str, snapshot: &Snapshot) -> Value {
         .iter()
         .map(|file| {
             ObjectBuilder::new()
-                .set("path_sha256", file.path_sha256.clone())
+                .set("path_identity", file.path_identity.clone())
                 .set("kind", file.kind)
                 .set("inode", json_u64(file.inode))
                 .set("size", json_u64(file.size))
                 .set("mtime", json_i64(file.mtime))
+                .set("mtime_nsec", json_i64(file.mtime_nsec))
                 .set(
-                    "content_sha256",
-                    file.content_sha256.clone().map_or(Value::Null, Value::from),
+                    "content_identity",
+                    file.content_identity
+                        .clone()
+                        .map_or(Value::Null, Value::from),
                 )
                 .build()
         })
         .collect::<Vec<_>>();
     ObjectBuilder::new()
         .set("version", TRACE_VERSION)
+        .set("observed_start_ms", json_u64(observed_start_ms))
         .set("mono_ms", json_u64(mono_ms))
         .set("kind", "snapshot")
         .set("reason", reason)
@@ -899,6 +1163,14 @@ fn snapshot_value(mono_ms: u64, reason: &str, snapshot: &Snapshot) -> Value {
         .set("wpa_state", snapshot.wpa_state.clone())
         .set("associated", snapshot.associated)
         .set("ipv4", snapshot.ipv4.clone())
+        .set(
+            "slow_observed_start_ms",
+            optional_relative_time(trace_started, snapshot.slow_observed_start),
+        )
+        .set(
+            "slow_observed_end_ms",
+            optional_relative_time(trace_started, snapshot.slow_observed_end),
+        )
         .set("default_route", snapshot.route.default_present)
         .set(
             "default_route_count",
@@ -940,15 +1212,28 @@ fn process_role(executable: Option<&Path>, cmdline: &[u8]) -> Option<&'static st
         .and_then(|value| Path::new(value).file_name())
         .and_then(OsStr::to_str);
     for name in [exe, argv0].into_iter().flatten() {
-        match name {
-            "nickel" => return Some("nickel"),
-            "wpa_supplicant" => return Some("supplicant"),
-            "dhcpcd" => return Some("dhcp"),
-            "dhcpcd-dbus" | "dhcpcd_dbus" => return Some("dhcpcd_dbus"),
-            _ => {}
+        if let Some(role) = process_role_name(name) {
+            return Some(role);
         }
     }
     None
+}
+
+fn process_role_name(name: &str) -> Option<&'static str> {
+    match name {
+        "nickel" => Some("nickel"),
+        "wpa_supplicant" => Some("supplicant"),
+        "dhcpcd" => Some("dhcp"),
+        "dhcpcd-dbus" | "dhcpcd_dbus" => Some("dhcpcd_dbus"),
+        _ => None,
+    }
+}
+
+fn is_script_interpreter(name: &str) -> bool {
+    matches!(
+        name,
+        "sh" | "ash" | "busybox" | "python" | "python2" | "python3"
+    )
 }
 
 fn parse_process_stat(stat: &str) -> Option<(i32, u64)> {
@@ -967,13 +1252,25 @@ fn safe_executable(path: Option<&Path>) -> String {
         return "unreadable".to_owned();
     };
     let text = path.to_string_lossy();
-    if ["/bin/", "/sbin/", "/usr/", "/lib/", "/opt/"]
-        .iter()
-        .any(|prefix| text.starts_with(prefix))
-    {
+    if matches!(
+        text.as_ref(),
+        "/usr/local/Kobo/nickel"
+            | "/bin/wpa_supplicant"
+            | "/sbin/wpa_supplicant"
+            | "/usr/bin/wpa_supplicant"
+            | "/usr/sbin/wpa_supplicant"
+            | "/bin/dhcpcd"
+            | "/sbin/dhcpcd"
+            | "/usr/bin/dhcpcd"
+            | "/usr/sbin/dhcpcd"
+            | "/bin/dhcpcd-dbus"
+            | "/sbin/dhcpcd-dbus"
+            | "/usr/bin/dhcpcd-dbus"
+            | "/usr/sbin/dhcpcd-dbus"
+    ) {
         text.into_owned()
     } else {
-        format!("other:{}", sha256_hex(text.as_bytes()))
+        "other".to_owned()
     }
 }
 
@@ -1097,7 +1394,11 @@ fn resolver_category(text: &str) -> (String, usize, bool) {
     (category, count, search)
 }
 
-fn file_record(path: &Path) -> Option<FileRecord> {
+fn file_record(
+    path: &Path,
+    privacy: &PrivacyKey,
+    content_identities: &mut HashMap<(PathBuf, u64, u64, i64, i64), String>,
+) -> Option<FileRecord> {
     let metadata = fs::symlink_metadata(path).ok()?;
     let kind = if metadata.file_type().is_socket() {
         "socket"
@@ -1106,18 +1407,32 @@ fn file_record(path: &Path) -> Option<FileRecord> {
     } else {
         return None;
     };
-    let content_sha256 = if metadata.is_file() && metadata.len() <= 1024 * 1024 {
-        read_bounded(path, 1024 * 1024).map(|content| sha256_hex(&content))
+    let content_identity = if metadata.is_file() && metadata.len() <= 1024 * 1024 {
+        let key = (
+            path.to_path_buf(),
+            metadata.ino(),
+            metadata.len(),
+            metadata.mtime(),
+            metadata.mtime_nsec(),
+        );
+        content_identities.get(&key).cloned().or_else(|| {
+            let identity = read_bounded(path, 1024 * 1024)
+                .map(|content| privacy.identity(b"dhcp-file-content", &content))?;
+            content_identities.retain(|(known_path, ..), _| known_path != path);
+            content_identities.insert(key, identity.clone());
+            Some(identity)
+        })
     } else {
         None
     };
     Some(FileRecord {
-        path_sha256: sha256_hex(path.as_os_str().as_encoded_bytes()),
+        path_identity: privacy.identity(b"dhcp-file-path", path.as_os_str().as_encoded_bytes()),
         kind,
         inode: metadata.ino(),
         size: metadata.len(),
         mtime: metadata.mtime(),
-        content_sha256,
+        mtime_nsec: metadata.mtime_nsec(),
+        content_identity,
     })
 }
 
@@ -1134,7 +1449,7 @@ fn link_name(path: &Path) -> String {
     {
         name.to_owned()
     } else {
-        format!("other:{}", sha256_hex(name.as_bytes()))
+        "other".to_owned()
     }
 }
 
@@ -1184,13 +1499,27 @@ fn evidence_state(path: &Path) -> String {
     }
 }
 
-fn first_digest(paths: &[PathBuf]) -> String {
+fn first_reason_category(paths: &[PathBuf]) -> String {
     paths
         .iter()
         .find_map(|path| read_bounded(path, 4096))
         .map_or_else(
             || "missing".to_owned(),
-            |content| format!("present:{}", sha256_hex(&content)),
+            |content| {
+                let lower = String::from_utf8_lossy(&content).to_ascii_lowercase();
+                if lower.contains("watchdog") || lower.contains("wdt") {
+                    "watchdog"
+                } else if lower.contains("panic") {
+                    "panic"
+                } else if lower.contains("power") || lower.contains("brownout") {
+                    "power"
+                } else if lower.contains("software") || lower.contains("reboot") {
+                    "software"
+                } else {
+                    "present_unknown"
+                }
+                .to_owned()
+            },
         )
 }
 
@@ -1351,7 +1680,7 @@ fn read_ipv4_category() -> String {
         return "tool_missing".to_owned();
     };
     if !output.status.success() {
-        return "none".to_owned();
+        return "unavailable".to_owned();
     }
     let text = String::from_utf8_lossy(&output.stdout);
     let cidr = text
@@ -1391,7 +1720,7 @@ fn classify_cidr(cidr: &str) -> String {
     format!("{scope}_{prefix}")
 }
 
-fn read_dbus_owner() -> String {
+fn read_dbus_owner(privacy: &PrivacyKey) -> String {
     let Some(output) = spec_named("dbus_owner", None).and_then(|spec| run_spec(&spec)) else {
         return "tool_missing".to_owned();
     };
@@ -1402,7 +1731,7 @@ fn read_dbus_owner() -> String {
     let owner = text.split_whitespace().find(|token| token.starts_with(':'));
     owner.map_or_else(
         || "absent".to_owned(),
-        |value| format!("owner:{}", sha256_hex(value.as_bytes())),
+        |value| privacy.identity(b"dbus-owner", value.as_bytes()),
     )
 }
 
@@ -1462,7 +1791,7 @@ fn collect_kernel_text(content: &[u8], seen: &mut BTreeSet<String>, events: &mut
     events.extend(
         text.lines()
             .filter_map(classify_kernel_line)
-            .filter(|event| seen.insert(event.digest.clone())),
+            .filter(|event| seen.insert(format!("{}:{}", event.category, event.tags))),
     );
 }
 
@@ -1503,11 +1832,7 @@ fn classify_kernel_line(line: &str) -> Option<KernelEvent> {
     .filter(|tag| lower.contains(tag))
     .collect::<Vec<_>>()
     .join(",");
-    Some(KernelEvent {
-        category,
-        tags,
-        digest: sha256_hex(line.as_bytes()),
-    })
+    Some(KernelEvent { category, tags })
 }
 
 fn cleanup_stale_traces(directory: &Path, current: Option<&Path>) -> io::Result<()> {
@@ -1555,6 +1880,7 @@ struct SummarySnapshot {
     flag_running: bool,
     driver: String,
     module: String,
+    wpa_state: String,
     associated: bool,
     ipv4: String,
     default_route: bool,
@@ -1571,6 +1897,7 @@ pub struct TraceSummary {
     pub first_divergence: Option<String>,
     pub gate_mono_ms: Option<u64>,
     pub ended: bool,
+    pub end_reason: Option<String>,
 }
 
 impl TraceSummary {
@@ -1596,7 +1923,10 @@ impl TraceSummary {
             _ => "the #94 gate-accepted checkpoint was not recorded".to_owned(),
         });
         lines.push(if self.ended {
-            "trace ended at its bounded deadline".to_owned()
+            format!(
+                "trace ended cleanly: {}",
+                self.end_reason.as_deref().unwrap_or("unknown")
+            )
         } else {
             "trace has no clean end marker (running, interrupted, or rebooted)".to_owned()
         });
@@ -1640,7 +1970,13 @@ pub fn summarize(bytes: &[u8]) -> TraceSummary {
                     .and_then(|value| u64::try_from(value).ok());
                 gate_pending = true;
             }
-            Some("trace_end") => summary.ended = true,
+            Some("trace_end") => {
+                summary.ended = true;
+                summary.end_reason = value
+                    .get("reason")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+            }
             Some("snapshot") => {
                 let Some(snapshot) = summary_snapshot(&value) else {
                     summary.ignored_lines += 1;
@@ -1657,7 +1993,14 @@ pub fn summarize(bytes: &[u8]) -> TraceSummary {
                     ));
                 }
                 if gate_pending {
-                    gate = Some(snapshot.clone());
+                    if let Some(reason) = unhealthy_gate(&snapshot) {
+                        summary.first_divergence = Some(format!(
+                            "{}ms immediate gate failure: {reason}",
+                            snapshot.mono_ms
+                        ));
+                    } else {
+                        gate = Some(snapshot.clone());
+                    }
                     gate_pending = false;
                 } else if summary.first_divergence.is_none() {
                     if let Some(reference) = gate.as_ref() {
@@ -1700,6 +2043,7 @@ fn summary_snapshot(value: &Value) -> Option<SummarySnapshot> {
         flag_running: boolean("flag_running")?,
         driver: text("driver")?,
         module: text("module")?,
+        wpa_state: text("wpa_state")?,
         associated: boolean("associated")?,
         ipv4: text("ipv4")?,
         default_route: boolean("default_route")?,
@@ -1707,6 +2051,55 @@ fn summary_snapshot(value: &Value) -> Option<SummarySnapshot> {
         route_up: boolean("route_up")?,
         route_gateway: boolean("route_gateway")?,
     })
+}
+
+fn unhealthy_gate(snapshot: &SummarySnapshot) -> Option<&'static str> {
+    if !snapshot.wlan_present {
+        return Some("wlan0 was missing");
+    }
+    if snapshot.nickel_count != 1 {
+        return Some("Nickel did not have exactly one process");
+    }
+    if snapshot.supplicant_count != 1 {
+        return Some("supplicant did not have exactly one process");
+    }
+    if snapshot.dhcp_count != 1 {
+        return Some("DHCP did not have exactly one process");
+    }
+    if !snapshot.flag_up {
+        return Some("wlan0 was already missing IFF_UP");
+    }
+    if snapshot.carrier == "0" {
+        return Some("wlan0 carrier was already down");
+    }
+    if matches!(snapshot.operstate.as_str(), "down" | "lowerlayerdown") {
+        return Some("wlan0 operstate was already down");
+    }
+    if !snapshot.default_route {
+        return Some("default route was already absent");
+    }
+    if snapshot.default_route_count != 1 {
+        return Some("default route count was already not one");
+    }
+    if !snapshot.route_up || !snapshot.route_gateway {
+        return Some("default route was already missing UP/GATEWAY");
+    }
+    if snapshot.wpa_state_known() && !snapshot.associated {
+        return Some("association was already incomplete");
+    }
+    if snapshot.ipv4 == "none" {
+        return Some("IPv4 address was already absent");
+    }
+    None
+}
+
+impl SummarySnapshot {
+    fn wpa_state_known(&self) -> bool {
+        // `associated` is false for unavailable tooling too. The gate itself
+        // supplies the association evidence in that case, so absence of a
+        // read-only tool must not be recast as a network failure.
+        !matches!(self.wpa_state.as_str(), "tool_missing" | "unavailable")
+    }
 }
 
 fn divergence(reference: &SummarySnapshot, current: &SummarySnapshot) -> Option<&'static str> {
@@ -1791,9 +2184,8 @@ fn generation_part(tuple: &str, prefix: char) -> Option<&str> {
     })
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
-    digest(&SHA256, bytes)
-        .as_ref()
+fn hex(bytes: &[u8]) -> String {
+    bytes
         .iter()
         .fold(String::with_capacity(64), |mut output, byte| {
             let _ignored = write!(output, "{byte:02x}");
@@ -1828,8 +2220,12 @@ fn monotonic_millis() -> u64 {
         })
 }
 
-fn elapsed_millis(started: Instant, now: Instant) -> u64 {
-    u64::try_from(now.duration_since(started).as_millis()).unwrap_or(u64::MAX)
+fn relative_millis(started: Duration, observed: Duration) -> u64 {
+    u64::try_from(observed.saturating_sub(started).as_millis()).unwrap_or(u64::MAX)
+}
+
+fn optional_relative_time(started: Duration, observed: Option<Duration>) -> Value {
+    observed.map_or(Value::Null, |time| json_u64(relative_millis(started, time)))
 }
 
 #[allow(clippy::cast_precision_loss)]
@@ -1874,7 +2270,7 @@ mod tests {
             identity: ProcessIdentity { pid, starttime },
             ppid: 1,
             executable: format!("/sbin/{role}"),
-            cmdline_sha256: sha256_hex(role.as_bytes()),
+            cmdline_identity: PrivacyKey::test(1).identity(b"process-cmdline", role.as_bytes()),
             generation,
         }
     }
@@ -1904,6 +2300,8 @@ mod tests {
             wpa_state: "completed".to_owned(),
             associated: true,
             ipv4: "private_24".to_owned(),
+            slow_observed_start: Some(Duration::from_millis(1)),
+            slow_observed_end: Some(Duration::from_millis(2)),
             route: RouteState {
                 default_present: true,
                 default_count: 1,
@@ -1940,10 +2338,17 @@ mod tests {
             .to_json();
         text.push('\n');
         for (index, snapshot) in snapshots.iter().enumerate() {
+            let reason = if index == 0 {
+                "gate_reference"
+            } else {
+                "sample"
+            };
             text.push_str(
                 &snapshot_value(
                     20 + u64::try_from(index).unwrap_or(0) * 10,
-                    "sample",
+                    20 + u64::try_from(index).unwrap_or(0) * 10,
+                    Duration::ZERO,
+                    reason,
                     snapshot,
                 )
                 .to_json(),
@@ -2070,6 +2475,22 @@ mod tests {
     }
 
     #[test]
+    fn an_immediate_persistent_gate_failure_is_not_adopted_as_healthy() {
+        let mut failed = healthy("N1;S1;D1;B1;B=owner:one;C=inode:1");
+        failed.route.default_present = false;
+        failed.route.default_count = 0;
+        failed.route.up = false;
+        failed.route.up_count = 0;
+        failed.route.gateway = false;
+        failed.route.gateway_count = 0;
+        let summary = summarize(&trace(&[failed.clone(), failed]));
+        assert!(summary
+            .first_divergence
+            .is_some_and(|value| value.contains("immediate gate failure")
+                && value.contains("default route was already absent")));
+    }
+
+    #[test]
     fn process_stat_distinguishes_starttime() {
         let stat = "42 (wpa_supplicant) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 98765 20";
         assert_eq!(parse_process_stat(stat), Some((1, 98765)));
@@ -2095,7 +2516,7 @@ mod tests {
             "Iface Destination Gateway Flags RefCnt Use Metric Mask\n",
         )
         .expect("route");
-        let (snapshot, _) = Sampler::at(root.clone()).sample(Instant::now(), true);
+        let snapshot = Sampler::at(root.clone(), PrivacyKey::test(1)).sample_core();
         assert!(!snapshot.wlan_present);
         assert_eq!(snapshot.dbus_owner, "tool_missing");
         assert_eq!(snapshot.pstore, "missing");
@@ -2110,6 +2531,90 @@ mod tests {
         assert_eq!(SOAK_AFTER_NICKEL, Duration::from_secs(600));
         assert!(MAXIMUM_RUNTIME <= Duration::from_secs(15 * 60));
         assert!(INITIAL_RAPID_WINDOW < MAXIMUM_RUNTIME);
+        let started = Duration::from_secs(100);
+        assert!(!deadline_reached(
+            (started + MAXIMUM_RUNTIME)
+                .checked_sub(Duration::from_millis(1))
+                .expect("positive deadline"),
+            started + MAXIMUM_RUNTIME,
+            started + MAXIMUM_RUNTIME
+        ));
+        assert!(deadline_reached(
+            started + MAXIMUM_RUNTIME + Duration::from_secs(60),
+            started + MAXIMUM_RUNTIME,
+            started + MAXIMUM_RUNTIME
+        ));
+        assert_eq!(
+            boot_time_or_fallback(None, Duration::from_secs(42)),
+            Duration::from_secs(42)
+        );
+    }
+
+    #[test]
+    fn core_schedule_is_independent_of_a_stalled_slow_observer() {
+        let started = Duration::from_secs(10);
+        let mut schedule = CoreSchedule::new(started);
+        assert!(!schedule.due(
+            (started + RAPID_INTERVAL)
+                .checked_sub(Duration::from_millis(1))
+                .expect("positive schedule")
+        ));
+        assert!(schedule.due(started + RAPID_INTERVAL));
+        schedule.completed(started + RAPID_INTERVAL, true);
+        assert!(schedule.due(started + RAPID_INTERVAL * 2));
+        schedule.completed(started + RAPID_INTERVAL * 2, false);
+        assert!(schedule.due(started + RAPID_INTERVAL * 2 + SOAK_INTERVAL));
+    }
+
+    #[test]
+    fn core_timestamp_ends_after_collection() {
+        use std::cell::RefCell;
+
+        struct SequenceClock(RefCell<Vec<Duration>>);
+        impl TraceClock for SequenceClock {
+            fn now(&self) -> Duration {
+                self.0.borrow_mut().remove(0)
+            }
+        }
+
+        let root = test_root("ordered-time");
+        fs::create_dir_all(root.join("proc/net")).expect("proc");
+        fs::write(
+            root.join("proc/net/route"),
+            "Iface Destination Gateway Flags RefCnt Use Metric Mask\n",
+        )
+        .expect("route");
+        let clock = SequenceClock(RefCell::new(vec![
+            Duration::from_secs(1),
+            Duration::from_millis(1_025),
+        ]));
+        let mut sampler = Sampler::at(root.clone(), PrivacyKey::test(1));
+        sampler.apply_slow(&SlowUpdate {
+            observed_start: Duration::from_millis(900),
+            observed_end: Duration::from_millis(950),
+            wpa_state: "completed".to_owned(),
+            ipv4: "private_24".to_owned(),
+            dbus_owner: "owner".to_owned(),
+            probes: None,
+            kernel: Vec::new(),
+        });
+        let (snapshot, observed_start, observed_end) =
+            capture_core(&mut sampler, &clock, Duration::from_millis(900));
+        assert_eq!(observed_start, 100);
+        assert_eq!(observed_end, 125);
+        let value = snapshot_value(
+            observed_start,
+            observed_end,
+            Duration::from_millis(900),
+            "sample",
+            &snapshot,
+        );
+        assert_eq!(
+            value.get("slow_observed_end_ms").and_then(Value::as_i64),
+            Some(50)
+        );
+        assert_eq!(value.get("mono_ms").and_then(Value::as_i64), Some(125));
+        fs::remove_dir_all(root).expect("cleanup");
     }
 
     #[test]
@@ -2132,6 +2637,7 @@ mod tests {
             .expect("trace");
             thread::sleep(Duration::from_millis(2));
         }
+
         cleanup_stale_traces(&root, None).expect("cleanup traces");
         let count = fs::read_dir(&root).expect("read").count();
         assert_eq!(count, MAX_RETAINED_TRACES - 1);
@@ -2141,6 +2647,56 @@ mod tests {
         let text = fs::read_to_string(path).expect("read trace");
         assert!(text.contains("\"kind\":\"trace_start\""));
         assert!(text.contains("\"kind\":\"tracer_restart\""));
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn size_limit_reserves_a_clean_end_marker_without_exceeding_the_cap() {
+        let root = test_root("size-limit");
+        let path = root.join("wifi-handoff-v1-size.jsonl");
+        let limit = TRACE_END_RESERVE + 768;
+        let mut writer =
+            TraceWriter::open_with_limit(&path, false, limit).expect("open bounded writer");
+        let payload = "x".repeat(300);
+        for index in 0..20_u32 {
+            writer
+                .line(
+                    &ObjectBuilder::new()
+                        .set("version", TRACE_VERSION)
+                        .set("mono_ms", index)
+                        .set("kind", "sample")
+                        .set("payload", payload.clone())
+                        .build(),
+                    false,
+                )
+                .expect("bounded line");
+        }
+        assert!(writer.size_limit_reached);
+        writer.finish(100, "size_limit").expect("write end marker");
+        drop(writer);
+        let bytes = fs::read(&path).expect("read trace");
+        assert!(u64::try_from(bytes.len()).unwrap_or(u64::MAX) <= limit);
+        let summary = summarize(&bytes);
+        assert!(summary.ended);
+        assert_eq!(summary.end_reason.as_deref(), Some("size_limit"));
+
+        let interrupted = root.join("wifi-handoff-v1-interrupted.jsonl");
+        let mut writer =
+            TraceWriter::open_with_limit(&interrupted, false, limit).expect("open interrupted");
+        writer
+            .line(
+                &ObjectBuilder::new()
+                    .set("version", TRACE_VERSION)
+                    .set("mono_ms", 1_u32)
+                    .set("kind", "sample")
+                    .build(),
+                true,
+            )
+            .expect("line");
+        drop(writer);
+        let summary = summarize(&fs::read(interrupted).expect("read interrupted"));
+        assert!(!summary.ended);
+        assert!(summary.end_reason.is_none());
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -2156,11 +2712,38 @@ mod tests {
             "123456789012345",
             "My Bluetooth Headphones",
         ];
-        let snapshot = healthy("N1;S1;D1;B1;B=owner:one;C=inode:1");
-        let exported = snapshot_value(1, "sample", &snapshot).to_json();
+        let raw = sensitive.join("|");
+        let first_key = PrivacyKey::test(7);
+        let second_key = PrivacyKey::test(8);
+        let identity = first_key.identity(b"process-cmdline", raw.as_bytes());
+        assert_eq!(
+            identity,
+            first_key.identity(b"process-cmdline", raw.as_bytes())
+        );
+        assert_ne!(
+            identity,
+            second_key.identity(b"process-cmdline", raw.as_bytes())
+        );
+        let legacy_sha = hex(ring::digest::digest(&ring::digest::SHA256, raw.as_bytes()).as_ref());
+        let mut snapshot = healthy("N1;S1;D1;B1;B=private;C=inode:1");
+        snapshot.processes[0].cmdline_identity = identity;
+        snapshot.dbus_owner = first_key.identity(b"dbus-owner", raw.as_bytes());
+        snapshot.dhcp_files.push(FileRecord {
+            path_identity: first_key.identity(b"dhcp-file-path", raw.as_bytes()),
+            kind: "file",
+            inode: 1,
+            size: u64::try_from(raw.len()).unwrap_or(u64::MAX),
+            mtime: 1,
+            mtime_nsec: 0,
+            content_identity: Some(first_key.identity(b"dhcp-file-content", raw.as_bytes())),
+        });
+        let exported = snapshot_value(1, 1, Duration::ZERO, "sample", &snapshot).to_json();
         for value in sensitive {
             assert!(!exported.contains(value), "{value:?} leaked");
         }
+        assert!(!exported.contains(&raw));
+        assert!(!exported.contains(&legacy_sha));
+        assert!(exported.contains("hmac:"));
         assert_eq!(classify_cidr("192.168.1.23/24"), "private_24");
         assert!(
             !readable_kernel_event("wlan_drv_gen4m aa:bb:cc:dd:ee:ff 192.168.1.23")
@@ -2170,7 +2753,7 @@ mod tests {
 
     fn readable_kernel_event(line: &str) -> String {
         let event = classify_kernel_line(line).expect("kernel event");
-        format!("{} {} {}", event.category, event.tags, event.digest)
+        format!("{} {}", event.category, event.tags)
     }
 
     #[test]
@@ -2217,9 +2800,13 @@ mod tests {
         assert!(!client.enabled());
         assert!(client.trace_path().is_none());
         client.checkpoint(Lifecycle::PreStop);
-        assert!(!trace_unlocked(None));
-        assert!(!trace_unlocked(Some("1")));
-        assert!(trace_unlocked(Some(ENABLE_PHRASE)));
+        assert_eq!(trace_mode(None, None), None);
+        assert_eq!(trace_mode(Some("1"), Some(ACTIVE_PROBES_PHRASE)), None);
+        assert_eq!(trace_mode(Some(ENABLE_PHRASE), None), Some(false));
+        assert_eq!(
+            trace_mode(Some(ENABLE_PHRASE), Some(ACTIVE_PROBES_PHRASE)),
+            Some(true)
+        );
     }
 
     #[test]
