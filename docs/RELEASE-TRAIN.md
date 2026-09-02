@@ -15,9 +15,11 @@ artifacts are promoted from beta rather than rebuilt.
    fixture matrix first, then the bounded owner-attended command against the
    exact published beta catalog.
 4. Merge `beta` into `main` without squashing away the tested beta commit.
-5. Run **Promote tested beta apps** from `main` with the recorded commit and
-   catalog digest. The workflow verifies provenance and copies the exact tested
-   `.cobalt-app` bytes before replacing the signed stable catalog. Readers
+5. Run **Promote tested beta apps** from `main` with the recorded commit. The
+   protected `app-store-stable` environment supplies release approval; the
+   workflow derives and verifies the catalog digest from archived provenance
+   and copies exact tested `.cobalt-app` bytes before replacing the signed
+   stable catalog. Readers
    reject a transient catalog/signature mismatch and retain their last verified
    catalog until the next check.
 

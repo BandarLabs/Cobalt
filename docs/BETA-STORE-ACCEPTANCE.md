@@ -165,5 +165,6 @@ job to a workflow.
 
 After acceptance, merge `beta` into `main` without rebuilding or squashing
 away the tested commit. Run **Promote tested beta apps** with the recorded full
-beta commit and catalog digest. That workflow verifies provenance and copies
-the exact tested package bytes before switching Stable.
+beta commit. The protected Stable environment supplies approval; the workflow
+finds the archived catalog digest from provenance and copies the exact tested
+package bytes before switching Stable.
