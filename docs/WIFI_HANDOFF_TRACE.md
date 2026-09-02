@@ -50,9 +50,9 @@ The second unlock enables bounded gateway, DNS, and direct HTTPS reachability
 checks. Omit it for a wholly passive trace; all ownership and state sampling
 still runs.
 
-Exit Cobalt within two minutes so the 15-minute hard runtime can include the
-full ten-minute post-Nickel soak. After Nickel reappears, leave the device
-alone for at least ten minutes.
+Exit Cobalt within two minutes so the 14 minute 30 second hard runtime can
+include the full ten-minute post-Nickel soak. After Nickel reappears, leave the
+device alone for at least ten minutes.
 
 **Do not toggle Wi-Fi during that ten-minute passive soak.** Do not open
 Nickel's Wi-Fi screen, suspend the device deliberately, run another Cobalt
@@ -91,20 +91,28 @@ interrupted line, which the parser deliberately ignores.
 The helper starts before Nickel is stopped, writes a durable baseline, samples
 at 200 ms through transition windows, then every five seconds during the soak.
 It exits ten minutes after the later of observing the restarted Nickel PID or
-`kobod` exiting, bounded by 15 minutes total and a 4 MiB file ceiling. At most
-four traces are retained.
+`kobod` exiting, with an exact 14 minute 30 second Linux boot-time ceiling and
+a 4 MiB file ceiling. Linux boot time includes suspended time, so a trace whose
+deadline passes during suspend writes its end marker immediately after resume.
+At most four traces are retained.
 
-Records carry trace version 1 and monotonic milliseconds. They contain process
-PID, PPID, executable identity, command-line SHA-256, and `/proc` starttime;
+Records carry trace version 1 plus the beginning and end of each observation
+in monotonic boot-time milliseconds. Slow, timeout-bound firmware commands run
+on a separate observer thread and cannot delay or reorder lifecycle and core
+`/proc`/sysfs snapshots. Records contain process PID, PPID, executable identity,
+per-trace command-line identity, and `/proc` starttime;
 supplicant/DHCP/D-Bus generations; socket/file inode metadata; association,
 address, route, resolver, driver, watchdog, power, and sanitized kernel
 evidence. Writes are flushed immediately and synced at bounded intervals and
-at lifecycle checkpoints.
+at lifecycle checkpoints. Space is reserved for a clean `trace_end` record, so
+reaching the size ceiling is distinguishable from a crash or reboot.
 
 SSID, BSSID, MAC addresses, serial numbers, credentials, private addresses and
 gateways, DNS names from the device, lease contents, Bluetooth names, and
-owner-supplied domains are never written. DHCP path and content identity is
-represented by checksums rather than contents.
+owner-supplied domains are never written. Equality-only command-line, D-Bus,
+DHCP path, and DHCP content identities use a random per-trace HMAC key which is
+never serialized. Kernel and reboot evidence is reduced to semantic categories
+instead of exporting raw lines or deterministic hashes.
 
 The harness cannot prove the cause until it is run on physical hardware. A
 trace without a clean end marker means it was still running, was interrupted,
