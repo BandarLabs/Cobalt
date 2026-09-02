@@ -20,68 +20,68 @@
           "base_blob": "52bd17b242beee85f691ebefdd0083fdabbd4550",
           "compatible_blob": "9a645f3f3d9c8746dda47d858bb3fcd744621df8"
         }
-      ],
-      "artifact_equivalence": [
+      ]
+    }
+  ],
+  "artifact_equivalence": [
+    {
+      "protocol_version": 11,
+      "reason": "Protocol-11 runtime streaming and Lichess credential policy; ARM release comparison against origin/beta proved the listed Store packages byte-for-byte unchanged",
+      "files": [
         {
-          "protocol_version": 11,
-          "reason": "Protocol-11 runtime streaming and Lichess credential policy; ARM release comparison against origin/beta proved the listed Store packages byte-for-byte unchanged",
-          "files": [
-            {
-              "path": "crates/kobo-net/src/lib.rs",
-              "base_blob": "ce2a45ae69445d06f0de5111aef775751ef8146e",
-              "compatible_blob": "2b03104b2d225e5976e5304237040136dc243a89"
-            },
-            {
-              "path": "crates/kobo-net/src/lines.rs",
-              "base_blob": null,
-              "compatible_blob": "4f68c9cba4639c8ef6bdce9db9a6ba43dc62fac2"
-            },
-            {
-              "path": "crates/kobo-net/tests/lichess_stream_mock.rs",
-              "base_blob": null,
-              "compatible_blob": "3e2b895779e2d8d5e26fa1fdc4a3ca3393dea231"
-            },
-            {
-              "path": "crates/kobo-net/tests/fixtures/localhost-ca.der",
-              "base_blob": null,
-              "compatible_blob": "c94b448a7103cd723c34349c8ce25352783d41f7"
-            },
-            {
-              "path": "crates/kobo-net/tests/fixtures/localhost-cert.der",
-              "base_blob": null,
-              "compatible_blob": "34a3ae946020aed21622549fe3bd497c34bd708e"
-            },
-            {
-              "path": "crates/kobo-net/tests/fixtures/localhost-key.der",
-              "base_blob": null,
-              "compatible_blob": "05c93b80f8cfb9b032f9c10a44723ac68f54e0fb"
-            },
-            {
-              "path": "crates/kobo-policy/src/credentials.rs",
-              "base_blob": "229061a856c96fcfbecbd264f65107f0b9d5293c",
-              "compatible_blob": "2fb49ca1faf89f57fd1bfad825466f76835d56b9"
-            },
-            {
-              "path": "crates/kobo-policy/src/tasks.rs",
-              "base_blob": "7e4448442a00d0315f9bf91d50be3eb41b707d5d",
-              "compatible_blob": "46bdb88ff97fbd18e1f20dd8f85e4d64f8790cc8"
-            }
-          ],
-          "unchanged_packages": [
-            "kobo-audiobook",
-            "kobo-brief",
-            "kobo-chat",
-            "kobo-gallery",
-            "kobo-hn",
-            "kobo-magnet",
-            "kobo-morse",
-            "kobo-rss",
-            "kobo-sidekick",
-            "kobo-sudoku",
-            "kobo-tictactoe",
-            "kobo-todo"
-          ]
+          "path": "crates/kobo-net/src/lib.rs",
+          "base_blob": "ce2a45ae69445d06f0de5111aef775751ef8146e",
+          "compatible_blob": "2b03104b2d225e5976e5304237040136dc243a89"
+        },
+        {
+          "path": "crates/kobo-net/src/lines.rs",
+          "base_blob": null,
+          "compatible_blob": "4f68c9cba4639c8ef6bdce9db9a6ba43dc62fac2"
+        },
+        {
+          "path": "crates/kobo-net/tests/lichess_stream_mock.rs",
+          "base_blob": null,
+          "compatible_blob": "3e2b895779e2d8d5e26fa1fdc4a3ca3393dea231"
+        },
+        {
+          "path": "crates/kobo-net/tests/fixtures/localhost-ca.der",
+          "base_blob": null,
+          "compatible_blob": "c94b448a7103cd723c34349c8ce25352783d41f7"
+        },
+        {
+          "path": "crates/kobo-net/tests/fixtures/localhost-cert.der",
+          "base_blob": null,
+          "compatible_blob": "34a3ae946020aed21622549fe3bd497c34bd708e"
+        },
+        {
+          "path": "crates/kobo-net/tests/fixtures/localhost-key.der",
+          "base_blob": null,
+          "compatible_blob": "05c93b80f8cfb9b032f9c10a44723ac68f54e0fb"
+        },
+        {
+          "path": "crates/kobo-policy/src/credentials.rs",
+          "base_blob": "229061a856c96fcfbecbd264f65107f0b9d5293c",
+          "compatible_blob": "2fb49ca1faf89f57fd1bfad825466f76835d56b9"
+        },
+        {
+          "path": "crates/kobo-policy/src/tasks.rs",
+          "base_blob": "7e4448442a00d0315f9bf91d50be3eb41b707d5d",
+          "compatible_blob": "46bdb88ff97fbd18e1f20dd8f85e4d64f8790cc8"
         }
+      ],
+      "unchanged_packages": [
+        "kobo-audiobook",
+        "kobo-brief",
+        "kobo-chat",
+        "kobo-gallery",
+        "kobo-hn",
+        "kobo-magnet",
+        "kobo-morse",
+        "kobo-rss",
+        "kobo-sidekick",
+        "kobo-sudoku",
+        "kobo-tictactoe",
+        "kobo-todo"
       ]
     }
   ]
