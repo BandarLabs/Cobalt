@@ -141,7 +141,8 @@ Stable catalog.
 
 For repeatable release acceptance, including signed artifact evidence,
 transaction failures, state-preservation proof, and the bounded attended
-device command, see [Beta Store acceptance](BETA-STORE-ACCEPTANCE.md).
+device command with mandatory public-route marketing capture, see
+[Beta Store acceptance](BETA-STORE-ACCEPTANCE.md).
 
 ## Runtime verification
 

@@ -394,6 +394,28 @@ pub(crate) fn stop_store_app(session: &StorePanelSession) -> Result<(), String> 
     }
 }
 
+/// Proves the exact acceptance-owned panel process is still running.
+pub(crate) fn ensure_store_session_running(session: &StorePanelSession) -> Result<(), String> {
+    let remote = format!("root@{}", session.host);
+    let script = format!(
+        "pid={pid}\n\
+         expected_start={start}\n\
+         test -r \"/proc/$pid/stat\"\n\
+         test \"$(awk '{{ print $22 }}' \"/proc/$pid/stat\")\" = \"$expected_start\"\n\
+         command=$(tr '\\000' ' ' < \"/proc/$pid/cmdline\")\n\
+         case \"$command\" in *'{INSTALL_ROOT}/bin/kobod --present'*) exit 0;; esac\n\
+         exit 1\n",
+        pid = session.pid,
+        start = session.start,
+    );
+    let output = run_remote_shell_waking(&remote, &script, STOP_TIMEOUT)?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err("the acceptance-owned panel session exited before capture completed".to_owned())
+    }
+}
+
 fn reported<'a>(output: &'a str, key: &str) -> Option<&'a str> {
     output.lines().find_map(|line| {
         let (found, value) = line.split_once('=')?;

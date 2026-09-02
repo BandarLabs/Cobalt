@@ -11,15 +11,18 @@ use std::fmt::Write as _;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::Duration;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 const USAGE: &str = "usage:\n  \
-  kobo beta-store-smoke --app ID --fixture DIR --out DIR [--dry-run]\n  \
-  kobo beta-store-smoke --app ID --beta-catalog URL --device IP --out DIR \\\n+    --expected-profile PROFILE --expected-cobalt VERSION --expected-firmware VERSION \\\n+    --confirm PROFILE/Cobalt-VERSION/FIRMWARE";
+  kobo beta-store-smoke --app ID --fixture DIR --out DIR [--marketing-route PATH] [--dry-run]\n  \
+  kobo beta-store-smoke --app ID --beta-catalog URL --device IP --out DIR \\\n+    --expected-profile PROFILE --expected-cobalt VERSION --expected-firmware VERSION \\\n+    --marketing-route PATH --confirm PROFILE/Cobalt-VERSION/FIRMWARE";
 const FIXTURE_SEED: &str = "fixture-seed.hex";
+const FIXTURE_MARKETING_ROUTE: &str = "marketing-route.txt";
 const DEVICE_UNLOCK: &str = "OWNER_ATTENDED_BETA_STORE_ACCEPTANCE";
 const PHYSICAL_LAUNCH_SECONDS: u64 = 45;
+const MARKETING_FPS: u32 = 4;
+const MARKETING_MAX_BYTES: u64 = 16 * 1024 * 1024;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Options {
@@ -32,6 +35,7 @@ struct Options {
     expected_cobalt: Option<String>,
     expected_firmware: Option<String>,
     confirmation: Option<String>,
+    marketing_route: Option<PathBuf>,
     dry_run: bool,
 }
 
@@ -79,7 +83,43 @@ struct Evidence {
     after: AppSnapshot,
     preservation_before: Preservation,
     preservation_after: Preservation,
+    marketing: MarketingEvidence,
     events: Vec<Event>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct MarketingRoute {
+    title: String,
+    interaction: String,
+    result: String,
+    x: u32,
+    y: u32,
+    title_ms: u64,
+    result_ms: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct MarketingArtifact {
+    kind: String,
+    path: String,
+    sha256: String,
+    bytes: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct MarketingEvidence {
+    complete: bool,
+    reason: Option<String>,
+    title: String,
+    interaction: String,
+    result: String,
+    width: u32,
+    height: u32,
+    frame_count: usize,
+    duration_ms: u64,
+    fps: u32,
+    reproducible_command: String,
+    artifacts: Vec<MarketingArtifact>,
 }
 
 struct RunLock {
@@ -129,6 +169,10 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the fail-closed mode and attended confirmation grammar are parsed together"
+)]
 fn parse(arguments: &[String]) -> Result<Options, String> {
     let mut app = None;
     let mut out = None;
@@ -139,6 +183,7 @@ fn parse(arguments: &[String]) -> Result<Options, String> {
     let mut expected_cobalt = None;
     let mut expected_firmware = None;
     let mut confirmation = None;
+    let mut marketing_route = None;
     let mut dry_run = false;
     let mut index = 0;
     while index < arguments.len() {
@@ -152,6 +197,7 @@ fn parse(arguments: &[String]) -> Result<Options, String> {
             "--expected-cobalt" => &mut expected_cobalt,
             "--expected-firmware" => &mut expected_firmware,
             "--confirm" => &mut confirmation,
+            "--marketing-route" => &mut marketing_route,
             "--dry-run" => {
                 dry_run = true;
                 index += 1;
@@ -198,6 +244,9 @@ fn parse(arguments: &[String]) -> Result<Options, String> {
                     "--dry-run is fixture-only; attended mode performs real checks".to_owned(),
                 );
             }
+            if marketing_route.is_none() {
+                return Err("attended mode requires --marketing-route PATH".to_owned());
+            }
             let expected = match (
                 expected_profile.as_deref(),
                 expected_cobalt.as_deref(),
@@ -224,6 +273,7 @@ fn parse(arguments: &[String]) -> Result<Options, String> {
         expected_cobalt,
         expected_firmware,
         confirmation,
+        marketing_route: marketing_route.map(PathBuf::from),
         dry_run,
     })
 }
@@ -234,6 +284,11 @@ fn parse(arguments: &[String]) -> Result<Options, String> {
 )]
 fn run_mock(options: &Options, fixture: &Path) -> Result<(), String> {
     let seed = read_seed(&fixture.join(FIXTURE_SEED))?;
+    let route_path = options
+        .marketing_route
+        .clone()
+        .unwrap_or_else(|| fixture.join(FIXTURE_MARKETING_ROUTE));
+    let marketing_route = read_marketing_route(&route_path)?;
     let key = derive_public_key(&seed).map_err(|error| format!("derive fixture key: {error}"))?;
     let baseline = release(&options.app, "1.0.0", true, &seed)?;
     let target = release(&options.app, "1.1.0", true, &seed)?;
@@ -279,6 +334,7 @@ fn run_mock(options: &Options, fixture: &Path) -> Result<(), String> {
         after: empty,
         preservation_before: empty_preservation.clone(),
         preservation_after: empty_preservation,
+        marketing: MarketingEvidence::pending(&marketing_route),
         events: vec![Event {
             name: "fixture-verification".to_owned(),
             result: "passed".to_owned(),
@@ -287,12 +343,31 @@ fn run_mock(options: &Options, fixture: &Path) -> Result<(), String> {
         }],
     };
     if options.dry_run {
+        evidence.marketing =
+            create_mock_marketing(&options.out, &marketing_route, discover_encoder_tools())?;
+        evidence.events.push(Event {
+            name: "marketing-capture".to_owned(),
+            result: if evidence.marketing.complete {
+                "passed"
+            } else {
+                "incomplete"
+            }
+            .to_owned(),
+            detail: evidence
+                .marketing
+                .reason
+                .clone()
+                .unwrap_or_else(|| "validated mock marketing artifacts were produced".to_owned()),
+        });
         evidence.events.push(Event {
             name: "dry-run".to_owned(),
             result: "passed".to_owned(),
             detail: "no simulated device state was created or changed".to_owned(),
         });
         write_report(&options.out, &evidence)?;
+        if !evidence.marketing.complete {
+            return Err("marketing capture is incomplete; see report.json".to_owned());
+        }
         println!("beta Store dry-run evidence: {}", options.out.display());
         return Ok(());
     }
@@ -509,12 +584,33 @@ fn run_mock(options: &Options, fixture: &Path) -> Result<(), String> {
         "owner-data-preservation",
         "all protected digests match exactly; target state survived remove/reinstall",
     );
+    evidence.marketing =
+        create_mock_marketing(&options.out, &marketing_route, discover_encoder_tools())?;
+    let marketing_complete = evidence.marketing.complete;
+    evidence.events.push(Event {
+        name: "marketing-capture".to_owned(),
+        result: if marketing_complete {
+            "passed"
+        } else {
+            "incomplete"
+        }
+        .to_owned(),
+        detail: if marketing_complete {
+            "scripted title, interaction, and result route produced validated MP4, WebM, GIF, and source frames"
+        } else {
+            "source frames and an exact ffmpeg command were retained, but encoded marketing artifacts are incomplete"
+        }
+        .to_owned(),
+    });
     fs::write(
         options.out.join("logs.txt"),
         "mock: catalog verified\nmock: package activated\nmock: launch recovered\n",
     )
     .map_err(|error| format!("write redacted mock logs: {error}"))?;
     write_report(&options.out, &evidence)?;
+    if !evidence.marketing.complete {
+        return Err("marketing capture is incomplete; see report.json".to_owned());
+    }
     println!(
         "beta Store mock acceptance passed; evidence: {}",
         options.out.display()
@@ -898,6 +994,605 @@ fn mock_shot(path: &Path, grey: u8) -> Result<(), String> {
     fs::write(path, png).map_err(|error| format!("write mock screenshot: {error}"))
 }
 
+impl MarketingEvidence {
+    fn pending(route: &MarketingRoute) -> Self {
+        Self {
+            complete: false,
+            reason: Some("marketing capture has not run".to_owned()),
+            title: route.title.clone(),
+            interaction: route.interaction.clone(),
+            result: route.result.clone(),
+            width: 0,
+            height: 0,
+            frame_count: 0,
+            duration_ms: 0,
+            fps: MARKETING_FPS,
+            reproducible_command: "marketing/ffmpeg-command.sh".to_owned(),
+            artifacts: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct EncoderTools {
+    ffmpeg: PathBuf,
+    ffprobe: PathBuf,
+}
+
+fn discover_encoder_tools() -> Result<EncoderTools, String> {
+    let ffmpeg = command_available("ffmpeg")
+        .then(|| PathBuf::from("ffmpeg"))
+        .ok_or("ffmpeg is not available on PATH")?;
+    let ffprobe = command_available("ffprobe")
+        .then(|| PathBuf::from("ffprobe"))
+        .ok_or("ffprobe is not available on PATH")?;
+    Ok(EncoderTools { ffmpeg, ffprobe })
+}
+
+fn command_available(name: &str) -> bool {
+    Command::new(name)
+        .arg("-version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+fn read_marketing_route(path: &Path) -> Result<MarketingRoute, String> {
+    let text = fs::read_to_string(path)
+        .map_err(|error| format!("read marketing route {}: {error}", path.display()))?;
+    let lines = text.lines().collect::<Vec<_>>();
+    if lines.len() != 6
+        || lines[0] != "cobalt-beta-marketing-route 1"
+        || lines[1] != "privacy public-demo-no-owner-data"
+    {
+        return Err(format!(
+            "{} is not a canonical Beta marketing route",
+            path.display()
+        ));
+    }
+    let title = route_field(lines[2], "title")?;
+    let interaction = route_field(lines[3], "interaction")?;
+    let result = route_field(lines[4], "result")?;
+    let timing = route_field(lines[5], "timing")?;
+    let interaction_parts = interaction.split('|').collect::<Vec<_>>();
+    if interaction_parts.len() != 3 {
+        return Err("interaction must be LABEL|X|Y".to_owned());
+    }
+    let interaction_label = public_route_label(interaction_parts[0], "interaction")?;
+    let x = route_number(interaction_parts[1], "interaction X", 0, 4095)?;
+    let y = route_number(interaction_parts[2], "interaction Y", 0, 4095)?;
+    let timing_parts = timing.split('|').collect::<Vec<_>>();
+    if timing_parts.len() != 2 {
+        return Err("timing must be TITLE_MS|RESULT_MS".to_owned());
+    }
+    let title_ms = u64::from(route_number(timing_parts[0], "title timing", 500, 5_000)?);
+    let result_ms = u64::from(route_number(timing_parts[1], "result timing", 500, 5_000)?);
+    if title_ms + result_ms > 8_000 {
+        return Err("marketing route is longer than the eight-second ceiling".to_owned());
+    }
+    Ok(MarketingRoute {
+        title: public_route_label(&title, "title")?,
+        interaction: interaction_label,
+        result: public_route_label(&result, "result")?,
+        x,
+        y,
+        title_ms,
+        result_ms,
+    })
+}
+
+fn route_field(line: &str, name: &str) -> Result<String, String> {
+    line.strip_prefix(&format!("{name} "))
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| format!("marketing route has no {name}"))
+}
+
+fn public_route_label(value: &str, field: &str) -> Result<String, String> {
+    let trimmed = value.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    let sensitive = [
+        "password",
+        "secret",
+        "token",
+        "credential",
+        "ssid",
+        "wi-fi",
+        "wifi",
+        "email",
+        "account",
+        "notification",
+        "private",
+    ];
+    if trimmed.is_empty()
+        || trimmed.len() > 64
+        || !trimmed.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric()
+                || matches!(byte, b' ' | b'-' | b'_' | b'.' | b':' | b'/' | b'(' | b')')
+        })
+        || sensitive.iter().any(|word| lower.contains(word))
+        || looks_like_ipv4(trimmed)
+        || looks_like_mac(trimmed)
+    {
+        return Err(format!("{field} is not a public-safe marketing label"));
+    }
+    Ok(trimmed.to_owned())
+}
+
+fn route_number(value: &str, field: &str, minimum: u32, maximum: u32) -> Result<u32, String> {
+    let number = value
+        .parse::<u32>()
+        .map_err(|_| format!("{field} must be a whole number"))?;
+    if (minimum..=maximum).contains(&number) {
+        Ok(number)
+    } else {
+        Err(format!("{field} must be between {minimum} and {maximum}"))
+    }
+}
+
+fn create_mock_marketing(
+    evidence_root: &Path,
+    route: &MarketingRoute,
+    tools: Result<EncoderTools, String>,
+) -> Result<MarketingEvidence, String> {
+    const WIDTH: u32 = 320;
+    const HEIGHT: u32 = 240;
+    let directory = evidence_root.join("marketing");
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("create mock marketing directory: {error}"))?;
+    write_marketing_route(&directory, route)?;
+    let stages = [
+        (0_u64, 238_u8),
+        (route.title_ms, 164_u8),
+        (route.title_ms + route.result_ms, 76_u8),
+    ];
+    let mut timings = String::new();
+    for (index, (millis, grey)) in stages.iter().enumerate() {
+        let mut frame = vec![*grey; (WIDTH * HEIGHT) as usize];
+        let band_start = (index + 1) * frame.len() / 5;
+        let band_end = (band_start + frame.len() / 12).min(frame.len());
+        frame[band_start..band_end].fill(255_u8.saturating_sub(*grey));
+        let png = kobo_image::encode_png_grey(WIDTH, HEIGHT, &frame)
+            .map_err(|error| format!("encode marketing frame: {error}"))?;
+        let name = format!("frame-{index:04}.png");
+        fs::write(directory.join(&name), png)
+            .map_err(|error| format!("write marketing frame: {error}"))?;
+        let _ = writeln!(timings, "{name} {millis}");
+    }
+    fs::write(directory.join("timings.txt"), timings)
+        .map_err(|error| format!("write marketing timings: {error}"))?;
+    finalize_marketing(
+        evidence_root,
+        route,
+        WIDTH,
+        HEIGHT,
+        route.title_ms + route.result_ms + 1_000,
+        tools,
+    )
+}
+
+fn finalize_marketing(
+    evidence_root: &Path,
+    route: &MarketingRoute,
+    expected_width: u32,
+    expected_height: u32,
+    capture_duration_ms: u64,
+    tools: Result<EncoderTools, String>,
+) -> Result<MarketingEvidence, String> {
+    let directory = evidence_root.join("marketing");
+    remove_encoded_marketing(&directory);
+    let timings = validate_marketing_frames(&directory, expected_width, expected_height)?;
+    validate_marketing_milestones(&timings, route)?;
+    let route_duration = route.title_ms + route.result_ms;
+    if capture_duration_ms < route_duration
+        || capture_duration_ms > route_duration.saturating_add(5_000)
+        || !(1_000..=13_500).contains(&capture_duration_ms)
+        || timings
+            .last()
+            .is_some_and(|(_, millis)| *millis >= capture_duration_ms)
+    {
+        return Err("marketing capture duration does not cover the scripted route".to_owned());
+    }
+    let concat = write_marketing_concat(&directory, &timings, capture_duration_ms)?;
+    let command = marketing_command_text();
+    let command_path = directory.join("ffmpeg-command.sh");
+    fs::write(&command_path, &command)
+        .map_err(|error| format!("write reproducible ffmpeg command: {error}"))?;
+
+    let mut evidence = MarketingEvidence {
+        complete: false,
+        reason: None,
+        title: route.title.clone(),
+        interaction: route.interaction.clone(),
+        result: route.result.clone(),
+        width: expected_width,
+        height: expected_height,
+        frame_count: timings.len(),
+        duration_ms: capture_duration_ms,
+        fps: MARKETING_FPS,
+        reproducible_command: relative_path(evidence_root, &command_path)?,
+        artifacts: Vec::new(),
+    };
+    let tools = match tools {
+        Ok(tools) => tools,
+        Err(reason) => {
+            evidence.reason = Some(reason);
+            evidence.artifacts = collect_marketing_artifacts(evidence_root, &directory)?;
+            return Ok(evidence);
+        }
+    };
+    if let Err(error) = encode_marketing(&directory, &concat, &tools) {
+        remove_encoded_marketing(&directory);
+        evidence.reason = Some(error);
+        evidence.artifacts = collect_marketing_artifacts(evidence_root, &directory)?;
+        return Ok(evidence);
+    }
+    for name in ["marketing.mp4", "marketing.webm", "marketing.gif"] {
+        if let Err(error) = validate_encoded_marketing(
+            &directory.join(name),
+            expected_width,
+            expected_height,
+            capture_duration_ms,
+            &tools.ffprobe,
+        ) {
+            remove_encoded_marketing(&directory);
+            evidence.reason = Some(error);
+            evidence.artifacts = collect_marketing_artifacts(evidence_root, &directory)?;
+            return Ok(evidence);
+        }
+    }
+    evidence.complete = true;
+    evidence.artifacts = collect_marketing_artifacts(evidence_root, &directory)?;
+    Ok(evidence)
+}
+
+fn validate_marketing_milestones(
+    timings: &[(String, u64)],
+    route: &MarketingRoute,
+) -> Result<(), String> {
+    let interaction_floor = route.title_ms.saturating_sub(250);
+    let interaction = timings
+        .iter()
+        .position(|(_, millis)| *millis >= interaction_floor)
+        .ok_or("marketing frames never reached the scripted interaction")?;
+    if interaction == 0 {
+        return Err("marketing capture has no distinct title frame".to_owned());
+    }
+    let interaction_millis = timings[interaction].1;
+    let result_floor = interaction_millis.saturating_add(100);
+    if !timings
+        .iter()
+        .skip(interaction + 1)
+        .any(|(_, millis)| *millis >= result_floor)
+    {
+        return Err("marketing frames never reached a distinct result state".to_owned());
+    }
+    Ok(())
+}
+
+fn validate_marketing_frames(
+    directory: &Path,
+    expected_width: u32,
+    expected_height: u32,
+) -> Result<Vec<(String, u64)>, String> {
+    if expected_width == 0
+        || expected_height == 0
+        || expected_width % 2 != 0
+        || expected_height % 2 != 0
+    {
+        return Err("marketing dimensions must be non-zero and even".to_owned());
+    }
+    let text = fs::read_to_string(directory.join("timings.txt"))
+        .map_err(|error| format!("read marketing timings: {error}"))?;
+    let mut timings = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        let (name, millis) = line
+            .split_once(' ')
+            .ok_or("malformed marketing timing line")?;
+        let expected = format!("frame-{index:04}.png");
+        if name != expected {
+            return Err(format!(
+                "marketing frame continuity broke at {name:?}; expected {expected:?}"
+            ));
+        }
+        let millis = millis
+            .parse::<u64>()
+            .map_err(|_| "marketing timestamp is not a whole number".to_owned())?;
+        if timings
+            .last()
+            .is_some_and(|(_, previous)| millis <= *previous)
+        {
+            return Err("marketing frame timestamps are not strictly increasing".to_owned());
+        }
+        let bytes = fs::read(directory.join(name))
+            .map_err(|error| format!("read marketing frame {name}: {error}"))?;
+        let picture = kobo_image::decode(&bytes)
+            .map_err(|error| format!("decode marketing frame {name}: {error}"))?;
+        if picture.width() != expected_width || picture.height() != expected_height {
+            return Err(format!(
+                "marketing frame {name} is {}x{}, expected {expected_width}x{expected_height}",
+                picture.width(),
+                picture.height()
+            ));
+        }
+        timings.push((name.to_owned(), millis));
+    }
+    if timings.len() < 3 {
+        return Err("marketing capture needs title, interaction, and result frames".to_owned());
+    }
+    if timings[0].1 > 1_000 || timings.last().is_some_and(|(_, millis)| *millis > 12_000) {
+        return Err("marketing capture duration is outside its concise bound".to_owned());
+    }
+    Ok(timings)
+}
+
+fn write_marketing_concat(
+    directory: &Path,
+    timings: &[(String, u64)],
+    capture_duration_ms: u64,
+) -> Result<PathBuf, String> {
+    let mut text = String::from("ffconcat version 1.0\n");
+    for (index, (name, millis)) in timings.iter().enumerate() {
+        let next = timings
+            .get(index + 1)
+            .map_or(capture_duration_ms, |(_, next)| *next);
+        let duration = next.saturating_sub(*millis).max(100);
+        let seconds = duration / 1_000;
+        let milliseconds = duration % 1_000;
+        let _ = writeln!(text, "file '{name}'\nduration {seconds}.{milliseconds:03}");
+    }
+
+    if let Some((name, _)) = timings.last() {
+        let _ = writeln!(text, "file '{name}'");
+    }
+    let path = directory.join("frames.ffconcat");
+    fs::write(&path, text).map_err(|error| format!("write marketing concat list: {error}"))?;
+    Ok(path)
+}
+
+fn remove_encoded_marketing(directory: &Path) {
+    for name in [
+        "recording.mp4",
+        "marketing.mp4",
+        "marketing.webm",
+        "marketing.gif",
+    ] {
+        let _ignored = fs::remove_file(directory.join(name));
+    }
+}
+
+fn marketing_command_text() -> String {
+    format!(
+        "#!/bin/sh\nset -eu\ncd \"$(dirname \"$0\")\"\n\
+         ffmpeg -y -f concat -safe 0 -i frames.ffconcat -vf 'fps={MARKETING_FPS}' \
+           -c:v libx264 -preset slow -crf 28 -pix_fmt yuv420p -movflags +faststart marketing.mp4\n\
+         ffmpeg -y -f concat -safe 0 -i frames.ffconcat -vf 'fps={MARKETING_FPS}' \
+           -c:v libvpx-vp9 -crf 36 -b:v 0 -pix_fmt yuv420p marketing.webm\n\
+         ffmpeg -y -f concat -safe 0 -i frames.ffconcat \
+           -filter_complex '[0:v]fps={MARKETING_FPS},split[a][b];[a]palettegen=max_colors=48:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=3:diff_mode=rectangle' \
+           marketing.gif\n",
+    )
+}
+
+fn write_marketing_route(directory: &Path, route: &MarketingRoute) -> Result<(), String> {
+    let text = format!(
+        "cobalt-beta-marketing-route 1\n\
+         privacy public-demo-no-owner-data\n\
+         title {}\n\
+         interaction {}|{}|{}\n\
+         result {}\n\
+         timing {}|{}\n",
+        route.title,
+        route.interaction,
+        route.x,
+        route.y,
+        route.result,
+        route.title_ms,
+        route.result_ms
+    );
+    fs::write(directory.join("route.txt"), text)
+        .map_err(|error| format!("write marketing route evidence: {error}"))
+}
+
+fn encode_marketing(directory: &Path, concat: &Path, tools: &EncoderTools) -> Result<(), String> {
+    let commands: [(&str, &[&str]); 3] = [
+        (
+            "marketing.mp4",
+            &[
+                "-vf",
+                "fps=4",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "slow",
+                "-crf",
+                "28",
+                "-pix_fmt",
+                "yuv420p",
+                "-movflags",
+                "+faststart",
+            ],
+        ),
+        (
+            "marketing.webm",
+            &[
+                "-vf",
+                "fps=4",
+                "-c:v",
+                "libvpx-vp9",
+                "-crf",
+                "36",
+                "-b:v",
+                "0",
+                "-pix_fmt",
+                "yuv420p",
+            ],
+        ),
+        (
+            "marketing.gif",
+            &[
+                "-filter_complex",
+                "[0:v]fps=4,split[a][b];[a]palettegen=max_colors=48:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=3:diff_mode=rectangle",
+            ],
+        ),
+    ];
+    for (output, extra) in commands {
+        let status = Command::new(&tools.ffmpeg)
+            .current_dir(directory)
+            .args(["-y", "-f", "concat", "-safe", "0", "-i"])
+            .arg(
+                concat
+                    .file_name()
+                    .ok_or("marketing concat path has no file name")?,
+            )
+            .args(extra)
+            .arg(output)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|error| format!("run ffmpeg for {output}: {error}"))?;
+        if !status.success() {
+            return Err(format!("ffmpeg could not produce {output}"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_encoded_marketing(
+    path: &Path,
+    expected_width: u32,
+    expected_height: u32,
+    expected_duration_ms: u64,
+    ffprobe: &Path,
+) -> Result<(), String> {
+    let metadata =
+        fs::metadata(path).map_err(|error| format!("read {} metadata: {error}", path.display()))?;
+    if metadata.len() == 0 || metadata.len() > MARKETING_MAX_BYTES {
+        return Err(format!(
+            "{} has invalid marketing size {}",
+            path.display(),
+            metadata.len()
+        ));
+    }
+    let output = Command::new(ffprobe)
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1",
+        ])
+        .arg(path)
+        .output()
+        .map_err(|error| format!("run ffprobe on {}: {error}", path.display()))?;
+    if !output.status.success() {
+        return Err(format!("ffprobe rejected {}", path.display()));
+    }
+    let values = fields(&String::from_utf8_lossy(&output.stdout));
+    let width = values
+        .get("width")
+        .and_then(|value| value.parse::<u32>().ok());
+    let height = values
+        .get("height")
+        .and_then(|value| value.parse::<u32>().ok());
+    let duration_ms = values
+        .get("duration")
+        .and_then(|value| parse_seconds_millis(value));
+    if width != Some(expected_width) || height != Some(expected_height) {
+        return Err(format!(
+            "{} dimensions do not match source frames",
+            path.display()
+        ));
+    }
+    let duration_ms = duration_ms.ok_or_else(|| format!("{} has no duration", path.display()))?;
+    if duration_ms.abs_diff(expected_duration_ms) > 1_500
+        || !(1_000..=13_500).contains(&duration_ms)
+    {
+        return Err(format!(
+            "{} duration is outside the accepted bound",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+fn parse_seconds_millis(value: &str) -> Option<u64> {
+    let (seconds, fraction) = value.split_once('.').unwrap_or((value, ""));
+    let seconds = seconds.parse::<u64>().ok()?;
+    let mut milliseconds = 0_u64;
+    for (index, byte) in fraction.bytes().take(3).enumerate() {
+        if !byte.is_ascii_digit() {
+            return None;
+        }
+        let digit = u64::from(byte - b'0');
+        milliseconds += digit
+            * match index {
+                0 => 100,
+                1 => 10,
+                _ => 1,
+            };
+    }
+    Some(seconds.saturating_mul(1_000).saturating_add(milliseconds))
+}
+
+fn collect_marketing_artifacts(
+    evidence_root: &Path,
+    directory: &Path,
+) -> Result<Vec<MarketingArtifact>, String> {
+    let mut paths = fs::read_dir(directory)
+        .map_err(|error| format!("read marketing artifacts: {error}"))?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("read marketing artifact entry: {error}"))?;
+    paths.sort();
+    let mut artifacts = Vec::new();
+    for path in paths {
+        if !path.is_file() {
+            continue;
+        }
+        let bytes = fs::read(&path).map_err(|error| format!("read {}: {error}", path.display()))?;
+        let extension = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let kind = if extension == "png" {
+            "frame"
+        } else if extension == "mp4" {
+            "mp4"
+        } else if extension == "webm" {
+            "webm"
+        } else if extension == "gif" {
+            "gif"
+        } else if extension == "sh" {
+            "reproducible-command"
+        } else {
+            "metadata"
+        };
+        artifacts.push(MarketingArtifact {
+            kind: kind.to_owned(),
+            path: relative_path(evidence_root, &path)?,
+            sha256: crate::sha256::hex_digest(&bytes),
+            bytes: bytes.len() as u64,
+        });
+    }
+    Ok(artifacts)
+}
+
+fn relative_path(root: &Path, path: &Path) -> Result<String, String> {
+    path.strip_prefix(root)
+        .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+        .map_err(|_| format!("{} escaped the evidence directory", path.display()))
+}
+
 fn event(evidence: &mut Evidence, name: &str, detail: &str) {
     evidence.events.push(Event {
         name: name.to_owned(),
@@ -966,12 +1661,13 @@ fn write_report(out: &Path, evidence: &Evidence) -> Result<(), String> {
     push_json(&mut json, &evidence.package_sha256);
     let _ = write!(
         json,
-        ",\n  \"package_bytes\":{},\n  \"before\":{},\n  \"after\":{},\n  \"preservation_before\":{},\n  \"preservation_after\":{},\n  \"events\":[",
+        ",\n  \"package_bytes\":{},\n  \"before\":{},\n  \"after\":{},\n  \"preservation_before\":{},\n  \"preservation_after\":{},\n  \"marketing\":{},\n  \"events\":[",
         evidence.package_bytes,
         snapshot_json(&evidence.before),
         snapshot_json(&evidence.after),
         preservation_json(&evidence.preservation_before),
         preservation_json(&evidence.preservation_after),
+        marketing_json(&evidence.marketing),
     );
     for (index, item) in evidence.events.iter().enumerate() {
         if index > 0 {
@@ -988,6 +1684,42 @@ fn write_report(out: &Path, evidence: &Evidence) -> Result<(), String> {
     json.push_str("\n  ]\n}\n");
     fs::write(out.join("report.json"), json)
         .map_err(|error| format!("write acceptance report: {error}"))
+}
+
+fn marketing_json(value: &MarketingEvidence) -> String {
+    let mut out = String::from("{\"complete\":");
+    out.push_str(if value.complete { "true" } else { "false" });
+    out.push_str(",\"reason\":");
+    push_optional_json(&mut out, value.reason.as_deref());
+    out.push_str(",\"title\":");
+    push_json(&mut out, &value.title);
+    out.push_str(",\"interaction\":");
+    push_json(&mut out, &value.interaction);
+    out.push_str(",\"result\":");
+    push_json(&mut out, &value.result);
+    let _ = write!(
+        out,
+        ",\"width\":{},\"height\":{},\"frame_count\":{},\"duration_ms\":{},\"fps\":{}",
+        value.width, value.height, value.frame_count, value.duration_ms, value.fps
+    );
+    out.push_str(",\"reproducible_command\":");
+    push_json(&mut out, &value.reproducible_command);
+    out.push_str(",\"artifacts\":[");
+    for (index, artifact) in value.artifacts.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        out.push_str("{\"kind\":");
+        push_json(&mut out, &artifact.kind);
+        out.push_str(",\"path\":");
+        push_json(&mut out, &artifact.path);
+        out.push_str(",\"sha256\":");
+        push_json(&mut out, &artifact.sha256);
+        let _ = write!(out, ",\"bytes\":{}", artifact.bytes);
+        out.push('}');
+    }
+    out.push_str("]}");
+    out
 }
 
 fn snapshot_json(snapshot: &AppSnapshot) -> String {
@@ -1057,6 +1789,23 @@ fn run_physical_inner(
 ) -> Result<(), String> {
     let identity = remote_beta(device, &["identity"], false)?;
     let identity_fields = fields(&identity);
+    let marketing_route_path = options
+        .marketing_route
+        .as_deref()
+        .ok_or("attended mode has no marketing route")?;
+    let marketing_route = read_marketing_route(marketing_route_path)?;
+    let panel_width = identity_fields
+        .get("panel_width")
+        .and_then(|value| value.parse::<u32>().ok())
+        .ok_or("device did not report its panel width")?;
+    let panel_height = identity_fields
+        .get("panel_height")
+        .and_then(|value| value.parse::<u32>().ok())
+        .ok_or("device did not report its panel height")?;
+    ensure(
+        marketing_route.x < panel_width && marketing_route.y < panel_height,
+        "marketing interaction is outside the confirmed device panel",
+    )?;
     let expected_protocol = kobo_protocol::VERSION.to_string();
     for (name, expected) in [
         ("profile", options.expected_profile.as_deref()),
@@ -1232,6 +1981,15 @@ fn run_physical_inner(
         .is_err(),
         "tampered catalog failure probe unexpectedly passed",
     )?;
+    let marketing = capture_physical_marketing(
+        &options.out,
+        device,
+        &options.app,
+        &marketing_route,
+        panel_width,
+        panel_height,
+        panel_session,
+    )?;
 
     let mut evidence = Evidence {
         mode: "attended-device",
@@ -1246,6 +2004,7 @@ fn run_physical_inner(
         after,
         preservation_before,
         preservation_after,
+        marketing,
         events: Vec::new(),
     };
     for (name, detail) in [
@@ -1260,12 +2019,224 @@ fn run_physical_inner(
     ] {
         event(&mut evidence, name, detail);
     }
+    evidence.events.push(Event {
+        name: "marketing-capture".to_owned(),
+        result: if evidence.marketing.complete {
+            "passed"
+        } else {
+            "incomplete"
+        }
+        .to_owned(),
+        detail: evidence.marketing.reason.as_ref().map_or_else(
+            || {
+                "post-acceptance public route captured title, interaction, and result without recording Nickel"
+                    .to_owned()
+            },
+            |reason| format!("marketing artifacts are incomplete: {reason}"),
+        ),
+    });
     write_report(&options.out, &evidence)?;
+    if !evidence.marketing.complete {
+        return Err(
+            "marketing capture is incomplete; see report.json and marketing/ffmpeg-command.sh"
+                .to_owned(),
+        );
+    }
     println!(
         "attended Beta Store acceptance passed; evidence: {}",
         options.out.display()
     );
     Ok(())
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    reason = "the capture binds the accepted app, route, panel, evidence root, and owned session"
+)]
+fn capture_physical_marketing(
+    evidence_root: &Path,
+    device: &str,
+    app: &str,
+    route: &MarketingRoute,
+    width: u32,
+    height: u32,
+    panel_session: &mut Option<crate::panel::StorePanelSession>,
+) -> Result<MarketingEvidence, String> {
+    prepare_marketing_interaction()?;
+    let directory = evidence_root.join("marketing");
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("create marketing evidence directory: {error}"))?;
+    write_marketing_route(&directory, route)?;
+    let remote = format!("root@{device}");
+    let _ignored = crate::run_remote_shell(
+        &remote,
+        &format!("rm -f '{}'\n", crate::RECORDING_ON_DEVICE),
+        Duration::from_secs(30),
+    );
+    let route_millis = route.title_ms + route.result_ms;
+    let seconds = route_millis.saturating_add(4_000).div_ceil(1_000).max(6);
+    *panel_session = Some(crate::panel::present_store_app(
+        app,
+        device,
+        seconds.saturating_add(60),
+    )?);
+    physical_launch_health(device, app)?;
+    crate::panel::ensure_store_session_running(
+        panel_session
+            .as_ref()
+            .ok_or("marketing panel session ownership was lost")?,
+    )?;
+
+    let record_arguments = [
+        "--device".to_owned(),
+        device.to_owned(),
+        "--seconds".to_owned(),
+        seconds.to_string(),
+        "--fps".to_owned(),
+        MARKETING_FPS.to_string(),
+        "--out".to_owned(),
+        directory.display().to_string(),
+    ];
+    let (capture_sender, capture_receiver) = std::sync::mpsc::channel();
+    let (transfer_sender, transfer_receiver) = std::sync::mpsc::channel();
+    let recorder = std::thread::spawn(move || {
+        crate::record_command_notifying(
+            &record_arguments,
+            Some((capture_sender, transfer_receiver)),
+        )
+    });
+    let route_result = (|| {
+        wait_for_recording_start(device, Duration::from_secs(180))?;
+        crate::panel::ensure_store_session_running(
+            panel_session
+                .as_ref()
+                .ok_or("marketing panel session ownership was lost")?,
+        )?;
+        std::thread::sleep(Duration::from_millis(route.title_ms));
+        crate::panel::ensure_store_session_running(
+            panel_session
+                .as_ref()
+                .ok_or("marketing panel session ownership was lost")?,
+        )?;
+        perform_marketing_interaction(device, route.x, route.y)?;
+        std::thread::sleep(Duration::from_millis(route.result_ms));
+        crate::panel::ensure_store_session_running(
+            panel_session
+                .as_ref()
+                .ok_or("marketing panel session ownership was lost")?,
+        )?;
+        Ok::<(), String>(())
+    })();
+    let capture_result = capture_receiver
+        .recv_timeout(Duration::from_secs(seconds.saturating_add(60)))
+        .map_err(|_| "the read-only marketing capture did not complete in time".to_owned());
+    let session_result = capture_result.and_then(|()| {
+        crate::panel::ensure_store_session_running(
+            panel_session
+                .as_ref()
+                .ok_or("marketing panel session ownership was lost")?,
+        )
+    });
+    let stop_result = crate::panel::stop_store_app(
+        panel_session
+            .as_ref()
+            .ok_or("marketing panel session ownership was lost")?,
+    );
+    if stop_result.is_ok() {
+        *panel_session = None;
+    }
+    let _ignored = transfer_sender.send(());
+    let recording_result = recorder
+        .join()
+        .map_err(|_| "marketing recording thread panicked".to_owned())?;
+    if let Err(error) = route_result
+        .and(recording_result)
+        .and(session_result)
+        .and(stop_result)
+    {
+        let _ignored = fs::remove_dir_all(&directory);
+        return Err(error);
+    }
+
+    match finalize_marketing(
+        evidence_root,
+        route,
+        width,
+        height,
+        seconds.saturating_mul(1_000),
+        discover_encoder_tools(),
+    ) {
+        Ok(evidence) => Ok(evidence),
+        Err(error) => {
+            let command_path = directory.join("ffmpeg-command.sh");
+            if !command_path.exists() {
+                fs::write(&command_path, marketing_command_text())
+                    .map_err(|write_error| format!("{error}; write fallback: {write_error}"))?;
+            }
+            let artifacts = collect_marketing_artifacts(evidence_root, &directory)?;
+            Ok(MarketingEvidence {
+                complete: false,
+                reason: Some(error),
+                title: route.title.clone(),
+                interaction: route.interaction.clone(),
+                result: route.result.clone(),
+                width,
+                height,
+                frame_count: artifacts
+                    .iter()
+                    .filter(|artifact| artifact.kind == "frame")
+                    .count(),
+                duration_ms: 0,
+                fps: MARKETING_FPS,
+                reproducible_command: relative_path(evidence_root, &command_path)?,
+                artifacts,
+            })
+        }
+    }
+}
+
+fn wait_for_recording_start(device: &str, timeout: Duration) -> Result<(), String> {
+    let deadline = Instant::now() + timeout;
+    let remote = format!("root@{device}");
+    while Instant::now() < deadline {
+        let script = format!(
+            "test -f '{}' && test \"$(wc -c < '{}')\" -gt 16\n",
+            crate::RECORDING_ON_DEVICE,
+            crate::RECORDING_ON_DEVICE
+        );
+        if crate::run_remote_shell(&remote, &script, Duration::from_secs(10))
+            .is_ok_and(|output| output.status.success())
+        {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_secs(2));
+    }
+    Err("timed out waiting for the read-only frame recorder".to_owned())
+}
+
+#[cfg(feature = "device-write")]
+fn prepare_marketing_interaction() -> Result<(), String> {
+    let mut build = crate::device_build_command("kobo-tap", Some("device-write"))?;
+    crate::run_status(&mut build, "build fixed marketing interaction artifact")
+}
+
+#[cfg(not(feature = "device-write"))]
+fn prepare_marketing_interaction() -> Result<(), String> {
+    Err(
+        "attended marketing capture requires a host CLI built with --features device-write"
+            .to_owned(),
+    )
+}
+
+#[cfg(feature = "device-write")]
+fn perform_marketing_interaction(device: &str, x: u32, y: u32) -> Result<(), String> {
+    crate::run_remote_fixed_artifact(device, &crate::RemoteArtifact::tap(format!("{x},{y}"), 0))
+}
+
+#[cfg(not(feature = "device-write"))]
+fn perform_marketing_interaction(_device: &str, _x: u32, _y: u32) -> Result<(), String> {
+    Err("marketing interaction support is not compiled in".to_owned())
 }
 
 fn remote_beta(device: &str, arguments: &[&str], write: bool) -> Result<String, String> {
@@ -1515,6 +2486,50 @@ mod tests {
     fn fixture(path: &Path) {
         fs::create_dir_all(path).expect("fixture directory");
         fs::write(path.join(FIXTURE_SEED), format!("{}\n", "2a".repeat(32))).expect("fixture seed");
+        fs::write(path.join(FIXTURE_MARKETING_ROUTE), route_text()).expect("marketing route");
+    }
+
+    fn route_text() -> &'static str {
+        "cobalt-beta-marketing-route 1\n\
+         privacy public-demo-no-owner-data\n\
+         title Beta acceptance\n\
+         interaction Open result|64|48\n\
+         result Accepted result\n\
+         timing 1200|2200\n"
+    }
+
+    fn route(path: &Path) -> MarketingRoute {
+        fs::create_dir_all(path.parent().expect("route parent")).expect("route parent");
+        fs::write(path, route_text()).expect("route");
+        read_marketing_route(path).expect("parsed route")
+    }
+
+    #[cfg(unix)]
+    fn fake_encoders(root: &Path) -> EncoderTools {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::create_dir_all(root).expect("encoder directory");
+        let ffmpeg = root.join("ffmpeg");
+        fs::write(
+            &ffmpeg,
+            "#!/bin/sh\nfor last do :; done\ncp frame-0000.png \"$last\"\n",
+        )
+        .expect("fake ffmpeg");
+        let ffprobe = root.join("ffprobe");
+        fs::write(
+            &ffprobe,
+            "#!/bin/sh\nprintf 'width=320\\nheight=240\\nduration=4.400000\\n'\n",
+        )
+        .expect("fake ffprobe");
+        for path in [&ffmpeg, &ffprobe] {
+            let mut permissions = fs::metadata(path).expect("metadata").permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(path, permissions).expect("executable");
+        }
+        EncoderTools {
+            ffmpeg: ffmpeg.canonicalize().expect("ffmpeg path"),
+            ffprobe: ffprobe.canonicalize().expect("ffprobe path"),
+        }
     }
 
     #[test]
@@ -1535,6 +2550,8 @@ mod tests {
             "0.3.4",
             "--expected-firmware",
             "4.45.23697",
+            "--marketing-route",
+            "routes/public.txt",
             "--confirm",
             "CLARA_BW_391/Cobalt-0.3.4/4.45.23697",
         ]
@@ -1545,6 +2562,8 @@ mod tests {
         beta[3] = kobod::app_store::BETA_CATALOG_URL.to_owned();
         beta[beta.len() - 1] = "wrong".to_owned();
         assert!(parse(&beta).is_err());
+        beta[beta.len() - 1] = "CLARA_BW_391/Cobalt-0.3.4/4.45.23697".to_owned();
+        assert!(parse(&beta).is_ok());
     }
 
     #[test]
@@ -1552,7 +2571,8 @@ mod tests {
         let fixture_path = root("fixture");
         fixture(&fixture_path);
         let out = root("evidence");
-        command(
+        let encoders_available = discover_encoder_tools().is_ok();
+        let result = command(
             &[
                 "--app",
                 "fixture",
@@ -1562,8 +2582,8 @@ mod tests {
                 out.to_str().expect("output path"),
             ]
             .map(str::to_owned),
-        )
-        .expect("mock acceptance");
+        );
+        assert_eq!(result.is_ok(), encoders_available, "{result:?}");
         let report = fs::read_to_string(out.join("report.json")).expect("report");
         for scenario in [
             "clean-install",
@@ -1586,6 +2606,128 @@ mod tests {
         }
         assert!(out.join("01-clean-install.png").is_file());
         assert!(out.join("02-recovered-launch.png").is_file());
+        assert!(out.join("marketing/frame-0000.png").is_file());
+        assert!(out.join("marketing/ffmpeg-command.sh").is_file());
+        if encoders_available {
+            assert!(out.join("marketing/marketing.mp4").is_file());
+            assert!(out.join("marketing/marketing.webm").is_file());
+            assert!(out.join("marketing/marketing.gif").is_file());
+            assert!(report.contains("\"marketing\":{\"complete\":true"));
+        } else {
+            assert!(report.contains("\"marketing\":{\"complete\":false"));
+        }
+    }
+
+    #[test]
+    fn missing_encoders_retain_frames_and_reproducible_command() {
+        let out = root("marketing-missing");
+        let route = route(&out.join("route.txt"));
+        let evidence = create_mock_marketing(
+            &out,
+            &route,
+            Err("ffmpeg is not available on PATH".to_owned()),
+        )
+        .expect("incomplete marketing evidence");
+        assert!(!evidence.complete);
+        assert_eq!(evidence.frame_count, 3);
+        assert!(out.join("marketing/frame-0000.png").is_file());
+        assert!(out.join("marketing/ffmpeg-command.sh").is_file());
+        assert!(evidence
+            .artifacts
+            .iter()
+            .all(|artifact| artifact.sha256.len() == 64));
+        for artifact in &evidence.artifacts {
+            let bytes = fs::read(out.join(&artifact.path)).expect("hashed artifact");
+            assert_eq!(artifact.sha256, crate::sha256::hex_digest(&bytes));
+        }
+        fs::write(out.join("marketing/recording.mp4"), b"unvalidated").expect("generic video");
+        let evidence = finalize_marketing(
+            &out,
+            &route,
+            320,
+            240,
+            4_400,
+            Err("ffprobe is not available on PATH".to_owned()),
+        )
+        .expect("missing validator evidence");
+        assert!(!out.join("marketing/recording.mp4").exists());
+        assert!(!evidence
+            .artifacts
+            .iter()
+            .any(|artifact| artifact.kind == "mp4"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn available_encoders_produce_validated_hashed_marketing_artifacts() {
+        let out = root("marketing-encoded");
+        let route = route(&out.join("route.txt"));
+        let tools = fake_encoders(&out.join("encoders"));
+        let evidence =
+            create_mock_marketing(&out, &route, Ok(tools)).expect("complete marketing evidence");
+        assert!(evidence.complete, "{:?}", evidence.reason);
+        for kind in ["mp4", "webm", "gif"] {
+            assert!(evidence
+                .artifacts
+                .iter()
+                .any(|artifact| artifact.kind == kind && artifact.bytes > 0));
+        }
+        for artifact in &evidence.artifacts {
+            let bytes = fs::read(out.join(&artifact.path)).expect("hashed artifact");
+            assert_eq!(artifact.sha256, crate::sha256::hex_digest(&bytes));
+        }
+    }
+
+    #[test]
+    fn frame_continuity_and_public_route_labels_fail_closed() {
+        let out = root("marketing-invalid");
+        let route_path = out.join("route.txt");
+        fs::create_dir_all(&out).expect("invalid route root");
+        fs::write(
+            &route_path,
+            route_text().replace("Beta acceptance", "ssid=Private"),
+        )
+        .expect("invalid route");
+        assert!(read_marketing_route(&route_path).is_err());
+
+        let route = route(&route_path);
+        create_mock_marketing(
+            &out,
+            &route,
+            Err("ffmpeg is not available on PATH".to_owned()),
+        )
+        .expect("frames");
+        fs::rename(
+            out.join("marketing/frame-0001.png"),
+            out.join("marketing/frame-0004.png"),
+        )
+        .expect("break continuity");
+        assert!(validate_marketing_frames(&out.join("marketing"), 320, 240).is_err());
+    }
+
+    #[test]
+    fn marketing_frames_must_cover_title_interaction_and_result_milestones() {
+        let route = MarketingRoute {
+            title: "Title".to_owned(),
+            interaction: "Open".to_owned(),
+            result: "Result".to_owned(),
+            x: 10,
+            y: 10,
+            title_ms: 1_200,
+            result_ms: 2_200,
+        };
+        let early = vec![
+            ("frame-0000.png".to_owned(), 0),
+            ("frame-0001.png".to_owned(), 100),
+            ("frame-0002.png".to_owned(), 200),
+        ];
+        assert!(validate_marketing_milestones(&early, &route).is_err());
+        let complete = vec![
+            ("frame-0000.png".to_owned(), 0),
+            ("frame-0001.png".to_owned(), 1_200),
+            ("frame-0002.png".to_owned(), 1_500),
+        ];
+        assert!(validate_marketing_milestones(&complete, &route).is_ok());
     }
 
     #[test]

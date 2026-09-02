@@ -44,8 +44,55 @@ Use `--dry-run` to verify and export the fixture artifacts without creating
 mock device state.
 
 The evidence directory contains `report.json`, exact catalog/signature/package
-bytes, PNG screenshots, sanitized logs, and the mock device filesystem. Report
-digests reveal no state or secret values.
+bytes, PNG screenshots, sanitized logs, the mock device filesystem, and the
+mandatory `marketing/` capture. Report digests reveal no state or secret
+values.
+
+## Marketing capture
+
+Marketing capture runs only after functional acceptance. Its route is a
+strict, non-shell file with exactly one public title, one bounded interaction,
+and one public result:
+
+```text
+cobalt-beta-marketing-route 1
+privacy public-demo-no-owner-data
+title Public app title
+interaction Open sample|536|724
+result Public sample result
+timing 1200|2200
+```
+
+Labels are bounded and reject credential, account, notification, network, and
+private-data terms. Coordinates must be inside the confirmed panel. Use only a
+reviewed public/demo route that does not open owner content or require a
+credential. The explicit `privacy` line is mandatory. The recorder starts
+after the app owns the panel and stops before Nickel returns, so Nickel and its
+notifications are never marketing frames.
+
+On a device, the harness invokes the existing read-only equivalent of:
+
+```sh
+kobo record --device DEVICE_IP --seconds N --fps 4 --out EVIDENCE/marketing
+```
+
+It retains consecutive `frame-NNNN.png` files and their real timestamps,
+validates dimensions, strict timestamp order, title/interaction/result frame
+coverage, duration, and size, then uses local `ffmpeg`/`ffprobe` to produce and
+validate:
+
+- `marketing.mp4` (H.264);
+- `marketing.webm` (VP9); and
+- `marketing.gif` (48-colour differential palette).
+
+Every frame, route, timing/concat file, command, video, and GIF is recorded in
+`report.json` with byte size and SHA-256. `marketing/ffmpeg-command.sh` is the
+exact reproducible encoding command.
+
+If `ffmpeg`, `ffprobe`, or a required codec is unavailable, the numbered PNGs,
+timings, route, concat input, and command remain. `marketing.complete` is
+`false`, the reason is recorded, and the smoke command fails instead of
+silently accepting incomplete marketing evidence.
 
 ## PR to physical proof
 
@@ -71,7 +118,7 @@ digests reveal no state or secret values.
 7. While the owner is present, run:
 
    ```sh
-   kobo beta-store-smoke \
+   cargo run --locked -p kobo-cli --features device-write -- beta-store-smoke \
      --app APP_ID \
      --beta-catalog \
        https://github.com/BandarLabs/Cobalt/releases/download/app-catalog-beta/cobalt-app-catalog.json \
@@ -79,6 +126,7 @@ digests reveal no state or secret values.
      --expected-profile PROFILE_ID \
      --expected-cobalt COBALT_VERSION \
      --expected-firmware FIRMWARE_VERSION \
+     --marketing-route routes/APP_ID-marketing.txt \
      --confirm PROFILE_ID/Cobalt-COBALT_VERSION/FIRMWARE_VERSION \
      --out evidence/APP_ID-BETA_COMMIT
    ```
@@ -90,7 +138,8 @@ the run, the launched app, Nickel after hand-back, sanitized runtime logs,
 remove/reinstall results, and before/after preservation digests. Target-owned
 state/data is compared immediately before removal and after reinstall;
 unrelated state/data is held constant across the whole run. The panel session
-is limited to 45 seconds.
+is limited to 45 seconds. A second, bounded session records only the reviewed
+public marketing route after every functional check passes.
 After refresh, the device reports the SHA-256 of its verified cached catalog
 and signature; both must match the exact bytes archived by the host. Runtime
 logs are read only from the byte offset recorded immediately before this

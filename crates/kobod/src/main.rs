@@ -162,6 +162,8 @@ fn beta_store_maintenance(arguments: &[String]) -> Result<(), Box<dyn Error>> {
             );
             println!("cobalt={}", env!("CARGO_PKG_VERSION"));
             println!("protocol={}", kobo_protocol::VERSION);
+            println!("panel_width={}", profile.width);
+            println!("panel_height={}", profile.height);
             let channel = match autoupdate::preferences(Path::new(ROOT)).channel {
                 kobo_protocol::UpdateChannel::Stable => "stable",
                 kobo_protocol::UpdateChannel::Beta => "beta",

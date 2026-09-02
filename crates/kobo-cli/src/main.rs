@@ -4946,6 +4946,15 @@ const RECORD_USAGE: &str = "usage: kobo record --device HOST [--seconds N] [--fp
 /// for reading and never grabs, refreshes or writes, so it can watch our own
 /// application or the stock reader without changing either.
 fn record_command(arguments: &[String]) -> Result<(), String> {
+    record_command_notifying(arguments, None)
+}
+
+/// Runs `kobo record`, optionally notifying a coordinator the instant the
+/// device has finished writing frames and before the slower pull/encode work.
+fn record_command_notifying(
+    arguments: &[String],
+    capture_barrier: Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>,
+) -> Result<(), String> {
     let mut host: Option<String> = None;
     let mut seconds = 20_u64;
     let mut fps = 2_u32;
@@ -4998,6 +5007,12 @@ fn record_command(arguments: &[String]) -> Result<(), String> {
         "device kept {} frames",
         summary.split(' ').nth(1).unwrap_or("?")
     );
+    if let Some((complete, resume)) = capture_barrier {
+        let _ignored = complete.send(());
+        resume
+            .recv_timeout(Duration::from_secs(120))
+            .map_err(|_| "recording coordinator did not release the transfer".to_owned())?;
+    }
 
     let raw = pull_recording(&host)?;
     let frames = decode_recording(&raw)?;
@@ -5808,8 +5823,8 @@ fn print_help() {
                                    Build and verify every registered Store app\n\
            app-release --registry PATH --seed PATH --out PATH --base-url HTTPS_URL [--prebuilt-dir PATH | --artifact-dir PATH]\n\
                                    Build and sign every registered Store app\n\
-           beta-store-smoke --app ID (--fixture DIR | --beta-catalog URL --device IP) --out DIR\n\
-                                   Verify the isolated Beta Store lifecycle and retain evidence\n\
+           beta-store-smoke --app ID (--fixture DIR | --beta-catalog URL --device IP) --out DIR [--marketing-route PATH]\n\
+                                   Verify Beta Store lifecycle and required marketing evidence\n\
            host-release-sign --manifest PATH --seed PATH --signature PATH --ssh-signature PATH\n\
                                    Sign host release metadata for publishing\n\
            host-release-verify --manifest PATH --signature PATH\n\
