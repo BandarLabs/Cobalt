@@ -68,6 +68,24 @@ Both permit embedding and redistribution. The OFL forbids selling the font on
 its own and requires the reserved name to be kept, which embedding does not
 touch.
 
+## Flashcards compatibility research
+
+Flashcards compatibility is an independently implemented, offline format
+bridge. It is not affiliated with Ankitects, Anki, AnkiDroid, or AnkiWeb, and
+uses no upstream logo or trademark. Anki is AGPL-3.0-or-later and AnkiDroid is
+GPL-3.0-or-later; the exact pinned source revisions, upstream notices, and
+distribution requirements are in
+[`licenses/NOTICE-Flashcards-Anki.md`](licenses/NOTICE-Flashcards-Anki.md).
+Keep that notice with Flashcards source, host tooling, documentation, and
+device packages.
+
+## Flashcards SVG rendering
+
+The device Flashcards application links `resvg` 0.45.1 to rasterize retained,
+safe SVG image media through the existing bounded image path. It is
+dual-licensed Apache-2.0 or MIT; both selected terms travel in
+[`licenses/LICENSE-resvg.txt`](licenses/LICENSE-resvg.txt).
+
 ## Services
 
 The example applications talk to services this project does not own.

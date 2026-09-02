@@ -57,6 +57,17 @@
       "capabilities": ["network"]
     },
     {
+      "package": "kobo-flashcards",
+      "id": "flashcards",
+      "display_name": "Flashcards",
+      "short_label": "Flashcards",
+      "summary": "Review verified offline Flashcards bundles with unofficial Anki-package compatibility; not affiliated with Anki or AnkiDroid.",
+      "version": "0.3.3",
+      "minimum_cobalt_version": "0.3.1",
+      "glyph": "note",
+      "capabilities": []
+    },
+    {
       "package": "kobo-gutenbird",
       "id": "gutenbird",
       "display_name": "Gutenbird",

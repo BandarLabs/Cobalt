@@ -1,0 +1,21 @@
+[package]
+name = "kobo-flashcards-import"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "flashcards-import"
+path = "src/main.rs"
+
+[dependencies]
+kobo-flashcards-format = { path = "../kobo-flashcards-format" }
+kobo-html = { path = "../kobo-html" }
+rusqlite = { version = "0.32.1", features = ["bundled"] }
+serde_json = "1.0.140"
+zip = { version = "2.2.2", default-features = false, features = ["deflate"] }
+
+[lints]
+workspace = true

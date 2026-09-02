@@ -1,0 +1,19 @@
+[package]
+name = "kobo-flashcards"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+kobo-flashcards-format = { path = "../../crates/kobo-flashcards-format" }
+kobo-image = { path = "../../crates/kobo-image" }
+kobo-sdk = { path = "../../crates/kobo-sdk" }
+resvg = { version = "0.45.1", default-features = false }
+
+[dev-dependencies]
+kobo-ui = { path = "../../crates/kobo-ui" }
+
+[lints]
+workspace = true
