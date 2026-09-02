@@ -63,6 +63,7 @@ const INSTALLED_PACKAGES: &[(&str, Option<&str>)] = &[
 const STORE_PACKAGES: &[&str] = &[
     "kobo-arxiv",
     "kobo-audiobook",
+    "kobo-backgammon",
     "kobo-brief",
     "kobo-chat",
     "kobo-gallery",
