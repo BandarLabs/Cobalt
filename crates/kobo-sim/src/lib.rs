@@ -2981,6 +2981,27 @@ mod tests {
     }
 
     #[test]
+    fn diagnostics_fail_when_an_interactive_control_is_offscreen() {
+        let screen = Screen::new(
+            1,
+            vec![Node::Grid {
+                id: NodeId(100),
+                columns: 1,
+                square: false,
+                cells: (0..81)
+                    .map(|index| kobo_ui::Cell::new(ActionId(index + 1), index.to_string()))
+                    .collect(),
+            }],
+        );
+        let payload = diagnostics_json(&screen, &kobo_ui::PictureCache::default());
+        assert!(
+            payload.contains("interactive control is outside the visible panel"),
+            "{payload}"
+        );
+        assert!(payload.contains("\"severity\":\"error\""));
+    }
+
+    #[test]
     fn accepts_only_requested_loopback_addresses() {
         assert_eq!(
             parse_local_address("3000").expect("port"),

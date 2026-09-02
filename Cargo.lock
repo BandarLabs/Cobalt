@@ -745,6 +745,7 @@ version = "0.3.5"
 name = "kobo-launcher"
 version = "0.3.5"
 dependencies = [
+ "kobo-profile",
  "kobo-sdk",
  "kobo-ui",
 ]
@@ -835,9 +836,11 @@ name = "kobo-sdk"
 version = "0.3.5"
 dependencies = [
  "kobo-policy",
+ "kobo-profile",
  "kobo-protocol",
  "kobo-text",
  "kobo-ui",
+ "unicode-width",
 ]
 
 [[package]]
@@ -970,7 +973,9 @@ dependencies = [
 name = "kobo-ui"
 version = "0.3.5"
 dependencies = [
+ "kobo-profile",
  "unicode-segmentation",
+ "unicode-width",
 ]
 
 [[package]]
