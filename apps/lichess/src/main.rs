@@ -26,6 +26,7 @@ use std::time::Duration;
 const SESSION_KEY: &str = "lichess.session.v1";
 const PUZZLE_KEY: &str = "lichess.puzzles.v1";
 const BOARD_RATE_KEY: &str = "lichess.board-rate.v1";
+const EVENT_RATE_KEY: &str = "lichess.event-rate.v1";
 const MAX_STORED_PUZZLES: usize = 32;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -60,6 +61,9 @@ enum Pending {
     EventOpen,
     EventNext,
     EventRetry,
+    EventRateWait {
+        remaining: u32,
+    },
     EventClose,
     Seek,
     SeekGrace,
@@ -210,6 +214,7 @@ struct Lichess {
     loaded_session: bool,
     loaded_puzzles: bool,
     loaded_board_rate: bool,
+    loaded_event_rate: bool,
     playing_ready: bool,
     session: Option<Session>,
     summaries: Vec<GameSummary>,
@@ -217,6 +222,7 @@ struct Lichess {
     challenge: Option<Challenge>,
     tasks: BTreeMap<TaskId, Pending>,
     event_open: bool,
+    event_rate_limit: Option<u64>,
     board_open: Option<String>,
     board_ready: bool,
     board_rate_limits: BTreeMap<String, u64>,
@@ -255,6 +261,7 @@ impl Default for Lichess {
             loaded_session: false,
             loaded_puzzles: false,
             loaded_board_rate: false,
+            loaded_event_rate: false,
             playing_ready: false,
             session: None,
             summaries: Vec::new(),
@@ -262,6 +269,7 @@ impl Default for Lichess {
             challenge: None,
             tasks: BTreeMap::new(),
             event_open: false,
+            event_rate_limit: None,
             board_open: None,
             board_ready: false,
             board_rate_limits: BTreeMap::new(),
@@ -821,6 +829,55 @@ impl Lichess {
         let _ = self.spawn(context, Pending::Playing, api::playing(), true);
     }
 
+    fn set_event_rate_limit(&mut self, context: &mut Context, seconds: u32) {
+        let not_before = unix_seconds().saturating_add(u64::from(seconds.max(1)));
+        self.event_rate_limit = Some(not_before);
+        context.store().save(
+            EVENT_RATE_KEY,
+            ObjectBuilder::new()
+                .set("version", 1_u32)
+                .set("not_before", u32::try_from(not_before).unwrap_or(u32::MAX))
+                .build()
+                .to_json()
+                .into_bytes(),
+        );
+    }
+
+    fn clear_event_rate_limit(&mut self, context: &mut Context) {
+        if self.event_rate_limit.take().is_some() {
+            context.store().forget(EVENT_RATE_KEY);
+        }
+    }
+
+    fn event_rate_remaining(&self) -> Option<u32> {
+        Some(
+            u32::try_from(self.event_rate_limit?.saturating_sub(unix_seconds()))
+                .unwrap_or(u32::MAX),
+        )
+    }
+
+    fn schedule_event_rate_wait(&mut self, context: &mut Context, remaining: u32) {
+        if self.suspended
+            || self.has_pending(|pending| matches!(pending, Pending::EventRateWait { .. }))
+        {
+            return;
+        }
+        if remaining == 0 {
+            self.clear_event_rate_limit(context);
+            self.open_event_stream(context);
+            return;
+        }
+        let step = remaining.min(300);
+        let _ = self.spawn(
+            context,
+            Pending::EventRateWait {
+                remaining: remaining.saturating_sub(step),
+            },
+            Task::Sleep { seconds: step },
+            false,
+        );
+    }
+
     fn open_event_stream(&mut self, context: &mut Context) {
         if self.suspended
             || self.event_open
@@ -828,6 +885,13 @@ impl Lichess {
             || !matches!(self.account, AccountState::Ready(_))
         {
             return;
+        }
+        if let Some(remaining) = self.event_rate_remaining() {
+            if remaining > 0 {
+                self.schedule_event_rate_wait(context, remaining);
+                return;
+            }
+            self.clear_event_rate_limit(context);
         }
         let _ = self.spawn(
             context,
@@ -1395,7 +1459,18 @@ impl Lichess {
     }
 
     fn encode_puzzles(&self) -> Vec<u8> {
-        Value::Array(self.puzzles.iter().map(Puzzle::stored).collect())
+        ObjectBuilder::new()
+            .set("version", 2_u32)
+            .set(
+                "current",
+                u32::try_from(self.current_puzzle).unwrap_or(u32::MAX),
+            )
+            .set("wrong", u32::from(self.puzzle_wrong))
+            .set(
+                "puzzles",
+                Value::Array(self.puzzles.iter().map(Puzzle::stored).collect()),
+            )
+            .build()
             .to_json()
             .into_bytes()
     }
@@ -1410,7 +1485,10 @@ impl Lichess {
         let Ok(value) = kobo_json::parse(text) else {
             return false;
         };
-        let Some(items) = value.as_array() else {
+        if value.get("version").and_then(Value::as_i64) != Some(2) {
+            return false;
+        }
+        let Some(items) = value.get("puzzles").and_then(Value::as_array) else {
             return false;
         };
         let puzzles = items
@@ -1421,8 +1499,28 @@ impl Lichess {
         if puzzles.is_empty() && !items.is_empty() {
             return false;
         }
+        let Some(current) = value
+            .get("current")
+            .and_then(Value::as_i64)
+            .and_then(|current| usize::try_from(current).ok())
+        else {
+            return false;
+        };
+        if (puzzles.is_empty() && current != 0) || (!puzzles.is_empty() && current >= puzzles.len())
+        {
+            return false;
+        }
+        let Some(wrong) = value
+            .get("wrong")
+            .and_then(Value::as_i64)
+            .and_then(|wrong| u8::try_from(wrong).ok())
+            .filter(|wrong| *wrong <= 2)
+        else {
+            return false;
+        };
         self.puzzles = puzzles;
-        self.current_puzzle = 0;
+        self.current_puzzle = current;
+        self.puzzle_wrong = wrong;
         true
     }
 
@@ -1497,6 +1595,7 @@ impl Lichess {
         if self.loaded_session
             && self.loaded_puzzles
             && self.loaded_board_rate
+            && self.loaded_event_rate
             && self.session.is_some()
         {
             self.validate_account(context);
@@ -1899,6 +1998,9 @@ impl Lichess {
                     if self.accepted_challenge.is_some() {
                         self.clear_accepted_challenge_wait();
                     }
+                    let seconds = delay.unwrap_or(30).max(1);
+                    self.set_event_rate_limit(context, seconds);
+                    self.schedule_event_rate_wait(context, seconds);
                 }
                 Pending::Playing if self.accepted_challenge.is_some() => {
                     self.clear_accepted_challenge_wait();
@@ -1993,6 +2095,7 @@ impl Lichess {
             Pending::EventOpen => {
                 if bytes.is_empty() {
                     self.event_open = true;
+                    self.clear_event_rate_limit(context);
                     self.event_backoff = 1;
                     self.next_event(context);
                 } else {
@@ -2013,6 +2116,9 @@ impl Lichess {
                 }
             }
             Pending::EventRetry => self.open_event_stream(context),
+            Pending::EventRateWait { remaining } => {
+                self.schedule_event_rate_wait(context, remaining);
+            }
             Pending::EventClose => self.schedule_event_reconnect(context),
             Pending::Seek => {
                 if self.route == Route::Pairing && self.seek_waiting {
@@ -2219,6 +2325,7 @@ impl Lichess {
                 self.notice = Some(Failure::of(error).naming(api::SECRET));
             }
             Pending::EventRetry
+            | Pending::EventRateWait { .. }
             | Pending::EventClose
             | Pending::SeekGrace
             | Pending::BoardRetry(_)
@@ -2315,6 +2422,7 @@ impl Lichess {
                 Pending::EventOpen
                     | Pending::EventNext
                     | Pending::EventRetry
+                    | Pending::EventRateWait { .. }
                     | Pending::EventClose
                     | Pending::BoardOpen(_)
                     | Pending::BoardNext(_)
@@ -2460,6 +2568,7 @@ impl Lichess {
         self.loaded_session = true;
         self.loaded_puzzles = true;
         self.loaded_board_rate = true;
+        self.loaded_event_rate = true;
         true
     }
 
@@ -2484,6 +2593,7 @@ impl KoboApp for Lichess {
         context.store().load(SESSION_KEY);
         context.store().load(PUZZLE_KEY);
         context.store().load(BOARD_RATE_KEY);
+        context.store().load(EVENT_RATE_KEY);
         self.show(context);
     }
 
@@ -2514,6 +2624,17 @@ impl KoboApp for Lichess {
                         context.store().forget(BOARD_RATE_KEY);
                         self.notice =
                             Some("Corrupted board retry metadata was discarded.".to_owned());
+                    }
+                }
+            } else if key == EVENT_RATE_KEY {
+                self.loaded_event_rate = true;
+                if let Some(value) = value {
+                    if let Some(not_before) = decode_rate_deadline(&value) {
+                        self.event_rate_limit = Some(not_before);
+                    } else {
+                        context.store().forget(EVENT_RATE_KEY);
+                        self.notice =
+                            Some("Corrupted event retry metadata was discarded.".to_owned());
                     }
                 }
             }
@@ -2674,6 +2795,7 @@ impl KoboApp for Lichess {
         } else if action == action_id("skip-puzzle") {
             self.puzzle_wrong = 2;
             self.route = Route::PuzzleResult;
+            context.store().save(PUZZLE_KEY, self.encode_puzzles());
         } else if action == action_id("next-puzzle") {
             self.current_puzzle = self.current_puzzle.saturating_add(1);
             self.puzzle_wrong = 0;
@@ -2687,7 +2809,10 @@ impl KoboApp for Lichess {
         } else if let Some(square) = square_action(action) {
             match self.route {
                 Route::Game => self.choose_game_square(context, square),
-                Route::Solve => self.choose_puzzle_square(square),
+                Route::Solve => {
+                    self.choose_puzzle_square(square);
+                    context.store().save(PUZZLE_KEY, self.encode_puzzles());
+                }
                 _ => {}
             }
         }
@@ -2844,6 +2969,18 @@ fn unix_seconds() -> u64 {
         .map_or(0, |duration| duration.as_secs())
 }
 
+fn decode_rate_deadline(bytes: &[u8]) -> Option<u64> {
+    if bytes.len() > 1024 {
+        return None;
+    }
+    let value = kobo_json::parse(std::str::from_utf8(bytes).ok()?).ok()?;
+    if value.get("version")?.as_i64()? != 1 {
+        return None;
+    }
+    let not_before = u64::try_from(value.get("not_before")?.as_i64()?).ok()?;
+    (not_before <= unix_seconds().saturating_add(24 * 60 * 60)).then_some(not_before)
+}
+
 fn decode_board_rate_limits(bytes: &[u8]) -> Option<BTreeMap<String, u64>> {
     if bytes.len() > 16 * 1024 {
         return None;
@@ -2886,8 +3023,8 @@ fn main() -> ExitCode {
 mod tests {
     use super::{
         api, board_cells, clock, AccountState, ActionScope, Challenge, ChallengeDirection,
-        ChallengeTime, Color, FullGame, Game, GameAction, Lichess, Pending, Player, Route,
-        ServerState, Session, BOARD_RATE_KEY,
+        ChallengeTime, Color, FullGame, Game, GameAction, Lichess, Pending, Player, Puzzle, Route,
+        ServerState, Session, BOARD_RATE_KEY, EVENT_RATE_KEY,
     };
     use kobo_sdk::{action_id, ActionId, Command, Context, KoboApp, StoreRequest, TaskOutcome};
     use kobo_ui::{Chrome, CLARA_BW_METRICS};
@@ -3042,6 +3179,37 @@ mod tests {
             app.game.as_ref().expect("game").state.moves,
             ["e2e4".to_owned()]
         );
+    }
+
+    #[test]
+    fn puzzle_resume_position_and_progress_survive_restart() {
+        let mut app = Lichess {
+            puzzles: vec![
+                Puzzle {
+                    id: "first".to_owned(),
+                    fen: super::chess::START.to_owned(),
+                    solution: vec!["e2e4".to_owned()],
+                    cursor: 0,
+                },
+                Puzzle {
+                    id: "second".to_owned(),
+                    fen: super::chess::START.to_owned(),
+                    solution: vec!["d2d4".to_owned(), "d7d5".to_owned()],
+                    cursor: 1,
+                },
+            ],
+            current_puzzle: 1,
+            puzzle_wrong: 1,
+            ..Lichess::default()
+        };
+        let encoded = app.encode_puzzles();
+        app.puzzles.clear();
+        app.current_puzzle = 0;
+        app.puzzle_wrong = 0;
+        assert!(app.decode_puzzles(&encoded));
+        assert_eq!(app.current_puzzle, 1);
+        assert_eq!(app.puzzle_wrong, 1);
+        assert_eq!(app.puzzles[1].cursor, 1);
     }
 
     #[test]
@@ -3297,6 +3465,47 @@ mod tests {
         assert!(app.challenge.is_none());
         assert_eq!(app.route, Route::Play);
         assert!(app.notice.as_deref().unwrap_or_default().contains("19s"));
+    }
+
+    #[test]
+    fn event_stream_rate_limit_reopens_after_persisted_retry_after() {
+        let mut app = Lichess {
+            account: AccountState::Ready(super::Account {
+                id: "owner123".to_owned(),
+                username: "Owner".to_owned(),
+            }),
+            ..Lichess::default()
+        };
+        let mut context = Context::default();
+        app.handle_completed(
+            &mut context,
+            Pending::EventOpen,
+            b"COBALT-HTTP/1 429\nRetry-After: 21\n\n",
+        );
+        assert!(!app.event_open);
+        assert!(app.event_rate_limit.is_some());
+        assert!(app
+            .has_pending(|pending| { matches!(pending, Pending::EventRateWait { remaining: 0 }) }));
+        let saved = context.commands().iter().find_map(|command| match command {
+            Command::Store(StoreRequest::Save { key, value }) if key == EVENT_RATE_KEY => {
+                super::decode_rate_deadline(value)
+            }
+            _ => None,
+        });
+        assert!(saved.is_some_and(|not_before| not_before >= super::unix_seconds()));
+
+        app.close_live_reads(&mut context);
+        let mut resumed = Lichess {
+            account: AccountState::Ready(super::Account {
+                id: "owner123".to_owned(),
+                username: "Owner".to_owned(),
+            }),
+            event_rate_limit: saved,
+            ..Lichess::default()
+        };
+        resumed.open_event_stream(&mut Context::default());
+        assert!(resumed.has_pending(|pending| { matches!(pending, Pending::EventRateWait { .. }) }));
+        assert!(!resumed.has_pending(|pending| matches!(pending, Pending::EventOpen)));
     }
 
     #[test]
