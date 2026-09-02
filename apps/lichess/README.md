@@ -46,7 +46,8 @@ broadening credential authority.
 - Last move, check, result, turn, server clocks, and opponent-gone countdown
 - Move, resign, abort during Lichess's first-two-ply window, draw offer/accept/decline, and
   claim-victory requests
-- Restart/reconnect using only game ID, color, opponent label, and rated flag
+- Restart/reconnect using only game ID, color, opponent label, rated flag, and
+  a bounded server retry deadline
 - Anonymous offline puzzle batches; local solves do not affect Lichess rating
 
 ## Deliberate boundaries

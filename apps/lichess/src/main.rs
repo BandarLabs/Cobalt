@@ -25,6 +25,7 @@ use std::time::Duration;
 
 const SESSION_KEY: &str = "lichess.session.v1";
 const PUZZLE_KEY: &str = "lichess.puzzles.v1";
+const BOARD_RATE_KEY: &str = "lichess.board-rate.v1";
 const MAX_STORED_PUZZLES: usize = 32;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -73,6 +74,7 @@ enum Pending {
     Action {
         action: GameAction,
         scope: ActionScope,
+        generation: u64,
     },
 }
 
@@ -207,6 +209,7 @@ struct Lichess {
     account: AccountState,
     loaded_session: bool,
     loaded_puzzles: bool,
+    loaded_board_rate: bool,
     playing_ready: bool,
     session: Option<Session>,
     summaries: Vec<GameSummary>,
@@ -216,11 +219,16 @@ struct Lichess {
     event_open: bool,
     board_open: Option<String>,
     board_ready: bool,
+    board_rate_limit: Option<(String, u64)>,
     seek_task: Option<TaskId>,
     seek_waiting: bool,
     seek_baseline: BTreeSet<String>,
     seek_candidate: Option<GameSummary>,
     pending_action: Option<GameAction>,
+    pending_scope: Option<ActionScope>,
+    pending_action_generation: Option<u64>,
+    next_action_generation: u64,
+    accepted_challenge: Option<Challenge>,
     pending_move: Option<PendingMove>,
     selected: Option<String>,
     promotion: Option<Promotion>,
@@ -245,6 +253,7 @@ impl Default for Lichess {
             account: AccountState::Unknown,
             loaded_session: false,
             loaded_puzzles: false,
+            loaded_board_rate: false,
             playing_ready: false,
             session: None,
             summaries: Vec::new(),
@@ -254,11 +263,16 @@ impl Default for Lichess {
             event_open: false,
             board_open: None,
             board_ready: false,
+            board_rate_limit: None,
             seek_task: None,
             seek_waiting: false,
             seek_baseline: BTreeSet::new(),
             seek_candidate: None,
             pending_action: None,
+            pending_scope: None,
+            pending_action_generation: None,
+            next_action_generation: 0,
+            accepted_challenge: None,
             pending_move: None,
             selected: None,
             promotion: None,
@@ -584,7 +598,7 @@ impl Lichess {
         if let Some(notice) = &self.notice {
             screen = screen.banner(BannerLevel::Attention, notice);
         }
-        let pending = self.pending_action.is_some();
+        let pending = self.pending_action.is_some() || self.accepted_challenge.is_some();
         screen
             .button_with_state(
                 "accept-challenge",
@@ -867,6 +881,12 @@ impl Lichess {
             return;
         }
         let id = session.game_id.clone();
+        if self.accepted_challenge.is_some() {
+            self.notice = Some(
+                "Wait for the accepted challenge to start before opening another board.".to_owned(),
+            );
+            return;
+        }
         if (self.pending_action.is_some() || self.pending_move.is_some())
             && self.game.as_ref().is_some_and(|game| game.id != id)
         {
@@ -882,7 +902,11 @@ impl Lichess {
                         if open == &previous
                 ) {
                     context.cancel(task);
+                    self.tasks.remove(&task);
                 }
+            }
+            if let Some(work) = api::board_stream(&previous, "close") {
+                let _ = self.spawn(context, Pending::BoardClose(previous), work, false);
             }
             self.board_open = None;
             self.board_ready = false;
@@ -890,6 +914,18 @@ impl Lichess {
         }
         self.session = Some(session);
         self.persist_session(context);
+        if let Some(remaining) = self.board_rate_remaining(&id) {
+            if remaining > 0 {
+                self.board_open = None;
+                self.board_ready = false;
+                self.notice = Some(format!(
+                    "Lichess asked this board to wait {remaining}s before reconnecting."
+                ));
+                self.schedule_board_rate_wait(context, &id, remaining);
+                return;
+            }
+            self.clear_board_rate_limit(context, &id);
+        }
         if self.board_open.as_deref() == Some(id.as_str())
             || self.has_pending(|pending| {
                 matches!(
@@ -927,8 +963,10 @@ impl Lichess {
     }
 
     fn close_board(&mut self, context: &mut Context, id: &str) {
-        self.board_open = None;
-        self.board_ready = false;
+        if self.board_open.as_deref() == Some(id) {
+            self.board_open = None;
+            self.board_ready = false;
+        }
         if self.has_pending(|pending| matches!(pending, Pending::BoardClose(open) if open == id)) {
             return;
         }
@@ -957,13 +995,15 @@ impl Lichess {
         self.close_board(context, game_id);
         self.clock.stop(context);
         self.game = None;
-        self.pending_action = None;
+        self.clear_pending_action();
+        self.accepted_challenge = None;
         self.pending_move = None;
         self.selected = None;
         self.promotion = None;
         self.confirmation = None;
         self.menu_open = false;
         self.board_ready = false;
+        self.clear_board_rate_limit(context, game_id);
         if self
             .session
             .as_ref()
@@ -977,6 +1017,13 @@ impl Lichess {
     }
 
     fn schedule_board_reconnect(&mut self, context: &mut Context, id: &str) {
+        if self
+            .session
+            .as_ref()
+            .is_none_or(|session| session.game_id != id)
+        {
+            return;
+        }
         self.board_open = None;
         self.board_ready = false;
         self.clock.stop(context);
@@ -1001,7 +1048,23 @@ impl Lichess {
         if self.suspended {
             return;
         }
+        if self
+            .session
+            .as_ref()
+            .is_none_or(|session| session.game_id != id)
+        {
+            return;
+        }
+        if self.has_pending(|pending| {
+            matches!(
+                pending,
+                Pending::BoardRateWait { id: waiting, .. } if waiting == id
+            )
+        }) {
+            return;
+        }
         if remaining == 0 {
+            self.clear_board_rate_limit(context, id);
             if let Some(session) = self.session.clone().filter(|session| session.game_id == id) {
                 self.open_board(context, session);
             }
@@ -1124,17 +1187,33 @@ impl Lichess {
                 at_ply: game.state.moves.len(),
             });
         }
+        if let GameAction::AcceptChallenge(id) = &action {
+            self.accepted_challenge = self
+                .challenge
+                .as_ref()
+                .filter(|challenge| challenge.id == id.as_str())
+                .cloned();
+        }
+        self.next_action_generation = self.next_action_generation.saturating_add(1);
+        let generation = self.next_action_generation;
         self.pending_action = Some(action.clone());
+        self.pending_scope = Some(scope.clone());
+        self.pending_action_generation = Some(generation);
         if self
             .spawn(
                 context,
-                Pending::Action { action, scope },
+                Pending::Action {
+                    action,
+                    scope,
+                    generation,
+                },
                 work.expect("checked"),
                 false,
             )
             .is_none()
         {
-            self.pending_action = None;
+            self.clear_pending_action();
+            self.accepted_challenge = None;
             self.pending_move = None;
             self.notice = Some("Too many requests are already in flight.".to_owned());
         }
@@ -1151,6 +1230,18 @@ impl Lichess {
                 .as_ref()
                 .is_some_and(|challenge| challenge.id == id.as_str()),
         }
+    }
+
+    fn pending_action_is(&self, action: &GameAction, scope: &ActionScope, generation: u64) -> bool {
+        self.pending_action.as_ref() == Some(action)
+            && self.pending_scope.as_ref() == Some(scope)
+            && self.pending_action_generation == Some(generation)
+    }
+
+    fn clear_pending_action(&mut self) {
+        self.pending_action = None;
+        self.pending_scope = None;
+        self.pending_action_generation = None;
     }
 
     fn choose_game_square(&mut self, context: &mut Context, square: String) {
@@ -1336,13 +1427,51 @@ impl Lichess {
         }
     }
 
+    fn set_board_rate_limit(&mut self, context: &mut Context, id: &str, seconds: u32) {
+        let not_before = unix_seconds().saturating_add(u64::from(seconds.max(1)));
+        self.board_rate_limit = Some((id.to_owned(), not_before));
+        context.store().save(
+            BOARD_RATE_KEY,
+            ObjectBuilder::new()
+                .set("version", 1_u32)
+                .set("game_id", id)
+                .set("not_before", u32::try_from(not_before).unwrap_or(u32::MAX))
+                .build()
+                .to_json()
+                .into_bytes(),
+        );
+    }
+
+    fn clear_board_rate_limit(&mut self, context: &mut Context, id: &str) {
+        if self
+            .board_rate_limit
+            .as_ref()
+            .is_some_and(|(game, _)| game == id)
+        {
+            self.board_rate_limit = None;
+            context.store().forget(BOARD_RATE_KEY);
+        }
+    }
+
+    fn board_rate_remaining(&self, id: &str) -> Option<u32> {
+        let (game, not_before) = self.board_rate_limit.as_ref()?;
+        if game != id {
+            return None;
+        }
+        Some(u32::try_from(not_before.saturating_sub(unix_seconds())).unwrap_or(u32::MAX))
+    }
+
     fn clear_session(&mut self, context: &mut Context) {
         self.session = None;
         context.store().forget(SESSION_KEY);
     }
 
     fn maybe_start(&mut self, context: &mut Context) {
-        if self.loaded_session && self.loaded_puzzles && self.session.is_some() {
+        if self.loaded_session
+            && self.loaded_puzzles
+            && self.loaded_board_rate
+            && self.session.is_some()
+        {
             self.validate_account(context);
         }
     }
@@ -1364,7 +1493,8 @@ impl Lichess {
         if let Some(task) = self.seek_task {
             context.cancel(task);
         }
-        self.pending_action = None;
+        self.clear_pending_action();
+        self.accepted_challenge = None;
         self.pending_move = None;
         self.selected = None;
         self.promotion = None;
@@ -1375,6 +1505,10 @@ impl Lichess {
         self.close_live_reads(context);
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the account stream has five event kinds and two explicitly correlated game-start paths"
+    )]
     fn handle_event(&mut self, context: &mut Context, event: Event) {
         match event {
             Event::GameStart(summary) => {
@@ -1389,24 +1523,28 @@ impl Lichess {
                 let seek_match = self.seek_waiting
                     && summary.quick_pair_candidate()
                     && !self.seek_baseline.contains(&summary.id);
-                let accepted_challenge = match (&self.pending_action, &self.challenge) {
-                    (Some(GameAction::AcceptChallenge(id)), Some(challenge))
-                        if id == &challenge.id =>
-                    {
-                        challenge.matches_game_start(&summary)
-                    }
-                    _ => false,
-                };
+                let accepted_challenge = self
+                    .accepted_challenge
+                    .as_ref()
+                    .filter(|challenge| challenge.matches_game_start(&summary))
+                    .map(|challenge| challenge.id.clone());
                 self.upsert_summary(summary.clone());
-                if accepted_challenge {
+                if let Some(challenge_id) = accepted_challenge {
                     if let Some(task) = self.seek_task {
                         context.cancel(task);
                     }
                     self.seek_task = None;
                     self.seek_waiting = false;
                     self.seek_baseline.clear();
-                    self.pending_action = None;
-                    self.challenge = None;
+                    if self
+                        .challenge
+                        .as_ref()
+                        .is_some_and(|challenge| challenge.id == challenge_id)
+                    {
+                        self.challenge = None;
+                    }
+                    self.clear_pending_action();
+                    self.accepted_challenge = None;
                     self.notice = Some("Challenge accepted. Opening the board.".to_owned());
                     self.open_board(context, summary.session());
                 } else if seek_match {
@@ -1433,8 +1571,19 @@ impl Lichess {
             }
             Event::Challenge(challenge) => {
                 if challenge.direction == ChallengeDirection::Incoming {
-                    self.challenge = Some(challenge);
-                    if self.route == Route::Play {
+                    if self
+                        .accepted_challenge
+                        .as_ref()
+                        .is_some_and(|accepted| accepted.id != challenge.id)
+                    {
+                        self.notice = Some(
+                            "Another challenge arrived while the accepted one is starting."
+                                .to_owned(),
+                        );
+                    } else {
+                        self.challenge = Some(challenge);
+                    }
+                    if self.route == Route::Play && self.accepted_challenge.is_none() {
                         self.notice = Some("An incoming challenge arrived.".to_owned());
                     }
                 }
@@ -1446,7 +1595,22 @@ impl Lichess {
                     .is_some_and(|challenge| challenge.id == id)
                 {
                     self.challenge = None;
-                    self.pending_action = None;
+                    if self
+                        .accepted_challenge
+                        .as_ref()
+                        .is_some_and(|challenge| challenge.id == id)
+                    {
+                        self.accepted_challenge = None;
+                    }
+                    if matches!(
+                        (&self.pending_action, &self.pending_scope),
+                        (
+                            Some(GameAction::AcceptChallenge(pending_id)),
+                            Some(ActionScope::Challenge(scope_id))
+                        ) if pending_id == &id && scope_id == &id
+                    ) {
+                        self.clear_pending_action();
+                    }
                     if self.route == Route::Challenge {
                         self.route = Route::Play;
                     }
@@ -1484,7 +1648,6 @@ impl Lichess {
                     self.notice = Some("The board reconciled the pending move.".to_owned());
                 } else if pending.is_some() {
                     self.pending_move = None;
-                    self.pending_action = None;
                     self.selected = None;
                     self.notice = Some(
                         "The move was absent from the authoritative reconnect state and was not replayed."
@@ -1506,7 +1669,6 @@ impl Lichess {
                 match applied {
                     Some(ApplyState::Changed) => {
                         self.board_ready = true;
-                        self.pending_action = None;
                         self.reconcile_pending_move();
                         self.notice = None;
                         self.reset_clock(context, active);
@@ -1560,9 +1722,6 @@ impl Lichess {
         };
         if game.id != pending.game_id {
             self.pending_move = None;
-            if self.pending_action == Some(GameAction::Move(pending.movement)) {
-                self.pending_action = None;
-            }
             return;
         }
         if game.state.moves.len() <= pending.at_ply {
@@ -1570,11 +1729,9 @@ impl Lichess {
         }
         if game.state.moves.get(pending.at_ply) == Some(&pending.movement) {
             self.pending_move = None;
-            self.pending_action = None;
             self.selected = None;
         } else {
             self.pending_move = None;
-            self.pending_action = None;
             self.selected = None;
             self.notice = Some(
                 "The server advanced without that move; the displayed board is authoritative."
@@ -1591,11 +1748,12 @@ impl Lichess {
             return;
         }
         let id = game.id.clone();
-        self.pending_action = None;
+        self.clear_pending_action();
         self.pending_move = None;
         self.selected = None;
         self.clock.stop(context);
         self.close_board(context, &id);
+        self.clear_board_rate_limit(context, &id);
         self.clear_session(context);
         self.summaries.retain(|summary| summary.id != id);
         self.route = Route::Game;
@@ -1630,8 +1788,16 @@ impl Lichess {
                 Pending::EventOpen | Pending::EventNext => self.event_open = false,
                 Pending::BoardOpen(id) | Pending::BoardNext(id) => {
                     self.close_board(context, &id);
-                    self.clock.stop(context);
-                    self.schedule_board_rate_wait(context, &id, delay.unwrap_or(30).max(1));
+                    if self
+                        .session
+                        .as_ref()
+                        .is_some_and(|session| session.game_id == id)
+                    {
+                        self.clock.stop(context);
+                        let seconds = delay.unwrap_or(30).max(1);
+                        self.set_board_rate_limit(context, &id, seconds);
+                        self.schedule_board_rate_wait(context, &id, seconds);
+                    }
                 }
                 Pending::Seek => {
                     self.seek_task = None;
@@ -1641,9 +1807,16 @@ impl Lichess {
                     self.clock.stop(context);
                     self.route = Route::Play;
                 }
-                Pending::Action { action, .. } if self.pending_action.as_ref() == Some(&action) => {
-                    self.pending_action = None;
+                Pending::Action {
+                    action,
+                    scope,
+                    generation,
+                } if self.pending_action_is(&action, &scope, generation) => {
+                    self.clear_pending_action();
                     self.pending_move = None;
+                    if matches!(scope, ActionScope::Challenge(_)) {
+                        self.accepted_challenge = None;
+                    }
                 }
                 _ => {}
             }
@@ -1744,6 +1917,14 @@ impl Lichess {
                 }
             }
             Pending::BoardOpen(id) => {
+                if self
+                    .session
+                    .as_ref()
+                    .is_none_or(|session| session.game_id != id)
+                {
+                    self.close_board(context, &id);
+                    return;
+                }
                 if bytes.is_empty() {
                     self.board_open = Some(id.clone());
                     self.board_ready = false;
@@ -1754,6 +1935,14 @@ impl Lichess {
                 }
             }
             Pending::BoardNext(id) => {
+                if self
+                    .session
+                    .as_ref()
+                    .is_none_or(|session| session.game_id != id)
+                {
+                    self.close_board(context, &id);
+                    return;
+                }
                 if let Some(record) = api::parse_board(bytes, &id) {
                     self.handle_board(context, &id, record);
                     if self.game.as_ref().is_some_and(Game::active) {
@@ -1778,12 +1967,19 @@ impl Lichess {
                 self.schedule_board_rate_wait(context, &id, remaining);
             }
             Pending::BoardClose(_) => {}
-            Pending::Action { action, scope } => {
-                if self.pending_action.as_ref() != Some(&action) {
+            Pending::Action {
+                action,
+                scope,
+                generation,
+            } => {
+                if !self.pending_action_is(&action, &scope, generation) {
                     return;
                 }
                 if !self.action_scope_is_current(&scope) {
-                    self.pending_action = None;
+                    self.clear_pending_action();
+                    if matches!(scope, ActionScope::Challenge(_)) {
+                        self.accepted_challenge = None;
+                    }
                     if self.pending_move.as_ref().is_some_and(
                         |pending| matches!(&scope, ActionScope::Game(id) if id == &pending.game_id),
                     ) {
@@ -1791,8 +1987,7 @@ impl Lichess {
                     }
                     return;
                 }
-                self.pending_action = match action {
-                    GameAction::Move(_) => None,
+                match action {
                     GameAction::DeclineChallenge(id) => {
                         if self
                             .challenge
@@ -1802,12 +1997,18 @@ impl Lichess {
                             self.challenge = None;
                             self.route = Route::Play;
                         }
-                        None
+                        self.clear_pending_action();
+                        self.accepted_challenge = None;
                     }
-                    GameAction::AcceptChallenge(_) if self.route == Route::Game => None,
-                    _other if self.game.as_ref().is_some_and(|game| !game.active()) => None,
-                    other => Some(other),
-                };
+                    GameAction::Move(_)
+                    | GameAction::AcceptChallenge(_)
+                    | GameAction::Resign
+                    | GameAction::Abort
+                    | GameAction::OfferDraw
+                    | GameAction::AcceptDraw
+                    | GameAction::DeclineDraw
+                    | GameAction::ClaimVictory => self.clear_pending_action(),
+                }
                 self.notice = Some(
                     "Lichess accepted the request; waiting for the stream to confirm it."
                         .to_owned(),
@@ -1862,16 +2063,24 @@ impl Lichess {
                     self.seek_task = None;
                 }
             }
-            Pending::Action { action, scope } => {
-                if self.pending_action.as_ref() != Some(&action) {
+            Pending::Action {
+                action,
+                scope,
+                generation,
+            } => {
+                if !self.pending_action_is(&action, &scope, generation) {
                     return;
                 }
-                self.pending_action = None;
+                let current = self.action_scope_is_current(&scope);
+                self.clear_pending_action();
+                if matches!(scope, ActionScope::Challenge(_)) {
+                    self.accepted_challenge = None;
+                }
                 self.notice = Some(format!(
                     "{} The action was not replayed; the board is being reconciled.",
                     Failure::of(error).naming(api::SECRET)
                 ));
-                if !matches!(action, GameAction::Move(_)) || !self.action_scope_is_current(&scope) {
+                if !matches!(action, GameAction::Move(_)) || !current {
                     self.pending_move = None;
                 }
                 if let ActionScope::Game(id) = scope {
@@ -1918,9 +2127,17 @@ impl Lichess {
                 self.board_open = None;
                 self.board_ready = false;
             }
-            Pending::Action { action, scope } if self.pending_action.as_ref() == Some(action) => {
-                self.pending_action = None;
-                if !matches!(action, GameAction::Move(_)) || !self.action_scope_is_current(scope) {
+            Pending::Action {
+                action,
+                scope,
+                generation,
+            } if self.pending_action_is(action, scope, *generation) => {
+                let current = self.action_scope_is_current(scope);
+                self.clear_pending_action();
+                if matches!(scope, ActionScope::Challenge(_)) {
+                    self.accepted_challenge = None;
+                }
+                if !matches!(action, GameAction::Move(_)) || !current {
                     self.pending_move = None;
                 }
                 self.notice = Some(
@@ -2117,6 +2334,7 @@ impl Lichess {
         }
         self.loaded_session = true;
         self.loaded_puzzles = true;
+        self.loaded_board_rate = true;
         true
     }
 
@@ -2140,6 +2358,7 @@ impl KoboApp for Lichess {
         }
         context.store().load(SESSION_KEY);
         context.store().load(PUZZLE_KEY);
+        context.store().load(BOARD_RATE_KEY);
         self.show(context);
     }
 
@@ -2161,6 +2380,13 @@ impl KoboApp for Lichess {
                         self.notice = Some("Corrupted puzzle state was discarded.".to_owned());
                     }
                 }
+            } else if key == BOARD_RATE_KEY {
+                self.loaded_board_rate = true;
+                self.board_rate_limit = value.as_deref().and_then(decode_board_rate_limit);
+                if value.is_some() && self.board_rate_limit.is_none() {
+                    context.store().forget(BOARD_RATE_KEY);
+                    self.notice = Some("Corrupted board retry metadata was discarded.".to_owned());
+                }
             }
             self.maybe_start(context);
             self.show(context);
@@ -2178,7 +2404,10 @@ impl KoboApp for Lichess {
                 || self.menu_open
             {
                 self.menu_open = false;
-            } else if self.pending_action.is_some() || self.pending_move.is_some() {
+            } else if self.pending_action.is_some()
+                || self.pending_move.is_some()
+                || self.accepted_challenge.is_some()
+            {
                 self.notice = Some(
                     "Wait for the current server action before leaving this screen.".to_owned(),
                 );
@@ -2480,6 +2709,28 @@ fn valid_move(value: &str) -> bool {
         && (bytes.len() == 4 || matches!(bytes[4], b'q' | b'r' | b'b' | b'n'))
 }
 
+fn unix_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs())
+}
+
+fn decode_board_rate_limit(bytes: &[u8]) -> Option<(String, u64)> {
+    if bytes.len() > 1024 {
+        return None;
+    }
+    let value = kobo_json::parse(std::str::from_utf8(bytes).ok()?).ok()?;
+    if value.get("version")?.as_i64()? != 1 {
+        return None;
+    }
+    let id = value.get("game_id")?.as_str()?;
+    if !(8..=16).contains(&id.len()) || !id.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+        return None;
+    }
+    let not_before = u64::try_from(value.get("not_before")?.as_i64()?).ok()?;
+    (not_before <= unix_seconds().saturating_add(24 * 60 * 60)).then(|| (id.to_owned(), not_before))
+}
+
 fn main() -> ExitCode {
     match kobo_sdk::run("lichess", Lichess::default()) {
         Ok(()) => ExitCode::SUCCESS,
@@ -2495,9 +2746,9 @@ mod tests {
     use super::{
         api, board_cells, clock, AccountState, ActionScope, Challenge, ChallengeDirection,
         ChallengeTime, Color, FullGame, Game, GameAction, Lichess, Pending, Player, Route,
-        ServerState, Session,
+        ServerState, Session, BOARD_RATE_KEY,
     };
-    use kobo_sdk::{action_id, ActionId, Command, Context, KoboApp, TaskOutcome};
+    use kobo_sdk::{action_id, ActionId, Command, Context, KoboApp, StoreRequest, TaskOutcome};
     use kobo_ui::{Chrome, CLARA_BW_METRICS};
 
     fn live_game(moves: &[&str], color: Color) -> Game {
@@ -2622,6 +2873,8 @@ mod tests {
             at_ply: 0,
         });
         app.pending_action = Some(GameAction::Move("e2e4".to_owned()));
+        app.pending_scope = Some(ActionScope::Game("abcdEF12".to_owned()));
+        app.pending_action_generation = Some(1);
         let mut context = Context::default();
         app.handle_board(
             &mut context,
@@ -2633,6 +2886,16 @@ mod tests {
             }),
         );
         assert!(app.pending_move.is_none());
+        assert!(app.pending_action.is_some());
+        app.handle_completed(
+            &mut context,
+            Pending::Action {
+                action: GameAction::Move("e2e4".to_owned()),
+                scope: ActionScope::Game("abcdEF12".to_owned()),
+                generation: 1,
+            },
+            &[],
+        );
         assert!(app.pending_action.is_none());
         assert_eq!(
             app.game.as_ref().expect("game").state.moves,
@@ -2740,25 +3003,40 @@ mod tests {
 
     #[test]
     fn accepted_challenge_waits_for_the_matching_opponent_game() {
+        let challenge = Challenge {
+            id: "chall123".to_owned(),
+            challenger: "ReaderTwo".to_owned(),
+            direction: ChallengeDirection::Incoming,
+            status: "created".to_owned(),
+            rated: false,
+            variant: "standard".to_owned(),
+            speed: "rapid".to_owned(),
+            time_control: ChallengeTime::Clock {
+                initial_seconds: Some(600),
+                increment_seconds: Some(0),
+            },
+        };
         let mut app = Lichess {
             route: Route::Challenge,
-            challenge: Some(Challenge {
-                id: "chall123".to_owned(),
-                challenger: "ReaderTwo".to_owned(),
-                direction: ChallengeDirection::Incoming,
-                status: "created".to_owned(),
-                rated: false,
-                variant: "standard".to_owned(),
-                speed: "rapid".to_owned(),
-                time_control: ChallengeTime::Clock {
-                    initial_seconds: Some(600),
-                    increment_seconds: Some(0),
-                },
-            }),
+            challenge: Some(challenge.clone()),
+            accepted_challenge: Some(challenge),
             pending_action: Some(GameAction::AcceptChallenge("chall123".to_owned())),
+            pending_scope: Some(ActionScope::Challenge("chall123".to_owned())),
+            pending_action_generation: Some(1),
             ..Lichess::default()
         };
         let mut context = Context::default();
+        let second_challenge = api::parse_event(
+            br#"{"type":"challenge","challenge":{"id":"other456","status":"created","direction":"in","challenger":{"name":"SomeoneElse"},"rated":false,"variant":{"key":"standard"},"speed":"rapid","timeControl":{"type":"clock","limit":600,"increment":0}}}"#,
+        )
+        .expect("second challenge");
+        app.handle_event(&mut context, second_challenge);
+        assert_eq!(
+            app.challenge
+                .as_ref()
+                .map(|challenge| challenge.id.as_str()),
+            Some("chall123")
+        );
         let unrelated = api::parse_event(
             br#"{"type":"gameStart","game":{"gameId":"other123","color":"white","rated":false,"speed":"rapid","source":"friend","variant":{"key":"standard"},"secondsLeft":600,"isMyTurn":true,"lastMove":"","opponent":{"username":"SomeoneElse"}}}"#,
         )
@@ -2931,6 +3209,29 @@ mod tests {
     }
 
     #[test]
+    fn late_old_game_result_cannot_pause_the_new_board() {
+        let mut app = app_with_game(&[], Color::White);
+        app.game.as_mut().expect("game").id = "other123".to_owned();
+        app.session = Some(Session {
+            game_id: "other123".to_owned(),
+            color: Color::White,
+            opponent: "New opponent".to_owned(),
+            rated: true,
+        });
+        app.board_open = Some("other123".to_owned());
+        app.board_ready = true;
+        let mut context = Context::default();
+        app.handle_completed(
+            &mut context,
+            Pending::BoardNext("abcdEF12".to_owned()),
+            br#"{"type":"gameState","moves":"","wtime":600000,"btime":600000,"status":"started"}"#,
+        );
+        assert_eq!(app.board_open.as_deref(), Some("other123"));
+        assert!(app.board_ready);
+        assert_eq!(app.game.as_ref().expect("game").id, "other123");
+    }
+
+    #[test]
     fn stale_playing_snapshot_clears_the_in_memory_board_and_route() {
         let mut app = app_with_game(&[], Color::White);
         app.board_open = Some("abcdEF12".to_owned());
@@ -2972,6 +3273,27 @@ mod tests {
         let screen = format!("{:?}", app.game_screen());
         assert!(screen.contains("Reconnect board"));
         assert!(!screen.contains("Offer draw"));
+        let saved = context.commands().iter().find_map(|command| match command {
+            Command::Store(StoreRequest::Save { key, value }) if key == BOARD_RATE_KEY => {
+                super::decode_board_rate_limit(value)
+            }
+            _ => None,
+        });
+        let saved = saved.expect("persisted retry deadline");
+        assert_eq!(saved.0, "abcdEF12");
+        assert!(saved.1 >= super::unix_seconds());
+
+        app.close_live_reads(&mut context);
+        assert!(!app.has_pending(|pending| { matches!(pending, Pending::BoardRateWait { .. }) }));
+        let mut resumed = app_with_game(&[], Color::White);
+        resumed.board_open = None;
+        resumed.board_ready = false;
+        resumed.board_rate_limit = Some(saved);
+        let mut resumed_context = Context::default();
+        let session = resumed.session.clone().expect("session");
+        resumed.open_board(&mut resumed_context, session);
+        assert!(resumed.has_pending(|pending| { matches!(pending, Pending::BoardRateWait { .. }) }));
+        assert!(!resumed.has_pending(|pending| { matches!(pending, Pending::BoardOpen(_)) }));
     }
 
     #[test]
@@ -2999,6 +3321,26 @@ mod tests {
             app.session.as_ref().map(|session| session.game_id.as_str()),
             Some("abcdEF12")
         );
+    }
+
+    #[test]
+    fn late_action_generation_cannot_clear_a_new_identical_action() {
+        let mut app = app_with_game(&[], Color::White);
+        app.pending_action = Some(GameAction::OfferDraw);
+        app.pending_scope = Some(ActionScope::Game("abcdEF12".to_owned()));
+        app.pending_action_generation = Some(2);
+        let mut context = Context::default();
+        app.handle_completed(
+            &mut context,
+            Pending::Action {
+                action: GameAction::OfferDraw,
+                scope: ActionScope::Game("abcdEF12".to_owned()),
+                generation: 1,
+            },
+            &[],
+        );
+        assert_eq!(app.pending_action, Some(GameAction::OfferDraw));
+        assert_eq!(app.pending_action_generation, Some(2));
     }
 
     #[test]
@@ -3106,6 +3448,7 @@ mod tests {
             Pending::Action {
                 action: GameAction::Move("e2e4".to_owned()),
                 scope: ActionScope::Game("abcdEF12".to_owned()),
+                generation: 1,
             },
             &[],
         );
@@ -3159,6 +3502,7 @@ mod tests {
             Pending::Action {
                 action: GameAction::AcceptDraw,
                 scope: ActionScope::Game("abcdEF12".to_owned()),
+                generation: 2,
             },
             &[],
         );
@@ -3196,7 +3540,8 @@ mod tests {
             Some(GameAction::AcceptChallenge(_))
         ));
 
-        app.pending_action = None;
+        app.clear_pending_action();
+        app.accepted_challenge = None;
         app.route = Route::Game;
         app.on_action(&mut context, action_id("confirm-resign"));
         app.on_action(&mut context, action_id("resign"));
@@ -3206,6 +3551,7 @@ mod tests {
             Pending::Action {
                 action: GameAction::Resign,
                 scope: ActionScope::Game("abcdEF12".to_owned()),
+                generation: 2,
             },
             &[],
         );
