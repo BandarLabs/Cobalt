@@ -1055,6 +1055,112 @@ mod responsive_profile_tests {
             }
         }
     }
+
+    #[test]
+    fn rich_document_overflow_is_reported_without_sacrificing_controls() {
+        for (name, metrics) in panels() {
+            let styled = |text: String, presentation| {
+                let strong = text.find("styled").expect("strong run");
+                let emphasis = text.find("document").expect("emphasis run");
+                Node::RichText {
+                    id: NodeId(1),
+                    text,
+                    spans: vec![
+                        RichTextSpan {
+                            start: strong,
+                            end: strong + "styled".len(),
+                            presentation: TextPresentation {
+                                strong: true,
+                                ..TextPresentation::default()
+                            },
+                        },
+                        RichTextSpan {
+                            start: emphasis,
+                            end: emphasis + "document".len(),
+                            presentation: TextPresentation {
+                                emphasis: true,
+                                ..TextPresentation::default()
+                            },
+                        },
+                    ],
+                    links: Vec::new(),
+                    presentation,
+                    selection: None,
+                    formulae: Vec::new(),
+                }
+            };
+            let presentation = ParagraphPresentation {
+                line_height_percent: 120,
+                margin_before_em: 25,
+                margin_after_em: 25,
+                first_line_indent_em: 100,
+                ..ParagraphPresentation::default()
+            };
+            let screen = Screen::new(
+                1,
+                vec![
+                    styled("A long styled document line ".repeat(500), presentation),
+                    Node::Grid {
+                        id: NodeId(2),
+                        columns: 3,
+                        square: false,
+                        cells: ["Previous", "Continue", "Close"]
+                            .into_iter()
+                            .enumerate()
+                            .map(|(index, label)| Cell::new(ActionId(index as u32 + 1), label))
+                            .collect(),
+                    },
+                ],
+            );
+            let diagnostics = screen.diagnostics(&metrics, &Chrome::with_back(false));
+            assert!(
+                diagnostics.issues.iter().any(|issue| {
+                    issue.node == Some(NodeId(1))
+                        && issue.severity == DiagnosticSeverity::Error
+                        && issue.kind == LayoutIssueKind::TextOverflow
+                }),
+                "{name}: truncated rich text was not reported: {:?}",
+                diagnostics.issues
+            );
+            assert!(
+                !diagnostics.issues.iter().any(|issue| matches!(
+                    issue.kind,
+                    LayoutIssueKind::InteractiveOffscreen | LayoutIssueKind::Clipped
+                )),
+                "{name}: {:?}",
+                diagnostics.issues
+            );
+            let bounded =
+                diagnostics.layout.nodes.iter().filter(|node| {
+                    node.id == NodeId(1) || matches!(node.kind, LayoutKind::Cell(..))
+                });
+            for node in bounded {
+                assert!(
+                    rect_is_inside(node.rect, diagnostics.layout.content),
+                    "{name}: {:?} is outside {:?}",
+                    node.rect,
+                    diagnostics.layout.content
+                );
+            }
+
+            let fitting = Screen::new(
+                2,
+                vec![styled(
+                    "A styled document line remains fully visible.".into(),
+                    presentation,
+                )],
+            )
+            .diagnostics(&metrics, &Chrome::with_back(false));
+            assert!(
+                !fitting
+                    .issues
+                    .iter()
+                    .any(|issue| issue.kind == LayoutIssueKind::TextOverflow),
+                "{name}: fully visible rich text reported overflow: {:?}",
+                fitting.issues
+            );
+        }
+    }
 }
 
 /// A stacked cell written with the heading its column was under.
@@ -6155,6 +6261,19 @@ fn rich_run_at(start: usize, line_end: usize, spans: &[RichTextSpan]) -> (usize,
     (line_end.max(start + 1), TextPresentation::default())
 }
 
+fn rich_text_spacing(presentation: ParagraphPresentation, prose: Face) -> (i32, i32, i32, i32) {
+    let natural = FontSize::Body.line_height_in(prose).max(1);
+    let line_height =
+        natural.saturating_mul(i32::from(presentation.line_height_percent.clamp(80, 250))) / 100;
+    let before = natural.saturating_mul(i32::from(presentation.margin_before_em)) / 100;
+    let after = natural.saturating_mul(i32::from(presentation.margin_after_em)) / 100;
+    let indent = measure_text_in("M", FontSize::Body, prose)
+        .0
+        .saturating_mul(i32::from(presentation.first_line_indent_em))
+        / 100;
+    (line_height, before, after, indent)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn layout_flow_node(
     node: &Node,
@@ -6326,16 +6445,12 @@ fn layout_node(
             selection,
             formulae,
         } => {
-            let natural = FontSize::Body.line_height_in(prose).max(1);
-            let line_height = natural
-                .saturating_mul(i32::from(presentation.line_height_percent.clamp(80, 250)))
-                / 100;
-            let before = natural.saturating_mul(i32::from(presentation.margin_before_em)) / 100;
-            let after = natural.saturating_mul(i32::from(presentation.margin_after_em)) / 100;
-            let indent = measure_text_in("M", FontSize::Body, prose)
-                .0
-                .saturating_mul(i32::from(presentation.first_line_indent_em))
-                / 100;
+            // Rich text is emitted as one node per styled run, so keep one
+            // empty run carrying the paragraph's actual layout bounds. It
+            // draws nothing, but lets diagnostics distinguish several runs
+            // on one line from wrapped lines discarded at the height bound.
+            let rich_text_limit = MAX_LAYOUT_NODES.saturating_sub(1);
+            let (line_height, before, after, indent) = rich_text_spacing(*presentation, prose);
             let measure = width.saturating_sub(indent.max(0)).max(1);
             let ranges =
                 wrap_ranges_with(text, measure, FontSize::Body, prose, formulae, line_height);
@@ -6355,6 +6470,9 @@ fn layout_node(
             };
             let mut line_y = y.saturating_add(before);
             for (line_index, &(from, to)) in ranges.iter().take(visible_lines).enumerate() {
+                if layout.nodes.len() >= rich_text_limit {
+                    break;
+                }
                 let line = &text[from..to];
                 let line_width =
                     measure_range_in(text, from, to, FontSize::Body, prose, formulae, line_height);
@@ -6393,7 +6511,7 @@ fn layout_node(
                     // it here instead would take the mathematics off the page
                     // and leave the sentence with a hole in it.
                     if let Some(formula) = formula_at(cursor, formulae)
-                        .filter(|_| layout.nodes.len().saturating_add(1) < MAX_LAYOUT_NODES)
+                        .filter(|_| layout.nodes.len().saturating_add(2) < MAX_LAYOUT_NODES)
                     {
                         let end = formula.end.min(to).max(cursor + 1);
                         if formula.start == cursor {
@@ -6444,7 +6562,7 @@ fn layout_node(
                     // block after it would be dropped without a word. The rest
                     // of the line goes out as a single plain run instead, which
                     // loses emphasis rather than losing the book.
-                    if layout.nodes.len().saturating_add(1) >= MAX_LAYOUT_NODES {
+                    if layout.nodes.len().saturating_add(2) >= MAX_LAYOUT_NODES {
                         end = to;
                         styled = TextPresentation::default();
                     }
@@ -6465,6 +6583,9 @@ fn layout_node(
                     cursor = end;
                 }
                 for link in links.iter().take(MAX_TEXT_LINKS) {
+                    if layout.nodes.len() >= rich_text_limit {
+                        break;
+                    }
                     let start = max(from, link.start);
                     let end = min(to, link.end);
                     if start < end && text.is_char_boundary(start) && text.is_char_boundary(end) {
@@ -6550,11 +6671,23 @@ fn layout_node(
                 }
                 line_y = line_y.saturating_add(line_height);
             }
-            if legacy_typography() && !flow_height_bound() {
+            let end = if legacy_typography() && !flow_height_bound() {
                 line_y.saturating_add(after)
             } else {
                 min(line_y.saturating_add(after), bottom)
-            }
+            };
+            layout.nodes.push(LayoutNode {
+                id: *id,
+                rect: Rect {
+                    x,
+                    y,
+                    width,
+                    height: end.saturating_sub(y),
+                },
+                kind: LayoutKind::RichText(TextPresentation::default()),
+                text_lines: Vec::new(),
+            });
+            end
         }
         Node::Secondary { id, text } => {
             // Measured at its own size, and with no minimum height. The floor
@@ -11424,6 +11557,47 @@ fn validate_content_bounds(
                     )
                     .len();
                     if required > text_layout.text_lines.len() {
+                        issues.push(LayoutIssue {
+                            severity: DiagnosticSeverity::Error,
+                            node: Some(id),
+                            kind: LayoutIssueKind::TextOverflow,
+                            rect: Some(text_layout.rect),
+                        });
+                    }
+                }
+            } else if let Node::RichText {
+                text,
+                presentation,
+                formulae,
+                ..
+            } = node
+            {
+                if let Some(text_layout) = laid_out.iter().find(|laid_out| {
+                    matches!(laid_out.kind, LayoutKind::RichText(_))
+                        && laid_out.text_lines.is_empty()
+                }) {
+                    let (line_height, before, after, indent) =
+                        rich_text_spacing(*presentation, layout.prose_face);
+                    let measure = text_layout.rect.width.saturating_sub(indent.max(0)).max(1);
+                    let required = wrap_ranges_with(
+                        text,
+                        measure,
+                        FontSize::Body,
+                        layout.prose_face,
+                        formulae,
+                        line_height,
+                    )
+                    .len();
+                    let rendered = usize::try_from(
+                        text_layout
+                            .rect
+                            .height
+                            .saturating_sub(before)
+                            .saturating_sub(after)
+                            / line_height.max(1),
+                    )
+                    .unwrap_or(0);
+                    if required > rendered {
                         issues.push(LayoutIssue {
                             severity: DiagnosticSeverity::Error,
                             node: Some(id),
