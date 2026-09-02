@@ -833,8 +833,10 @@ fn installed_manifests(root: &Path, key: &Ed25519PublicKey) -> Result<Vec<Manife
     }
     let mut manifests = Vec::new();
     for id in ids {
-        if let Ok(manifest) = installed_manifest(root, &id, key) {
-            manifests.push(manifest);
+        match installed_manifest(root, &id, key) {
+            Ok(manifest) => manifests.push(manifest),
+            Err(DeviceError::NotFound) => {}
+            Err(error) => return Err(error),
         }
     }
     Ok(manifests)
@@ -861,24 +863,32 @@ fn read_installed_manifest(
     id: &str,
     key: &Ed25519PublicKey,
 ) -> Result<Manifest, DeviceError> {
-    let bytes = fs::read(directory.join("manifest.json")).map_err(|_| DeviceError::NotFound)?;
+    let bytes = fs::read(directory.join("manifest.json"))
+        .map_err(|error| installed_component_read_error(&error))?;
     let manifest = Manifest::parse_public(&bytes).map_err(|_| DeviceError::Integrity)?;
     if manifest.id() != id || manifest.to_canonical_bytes() != bytes {
         return Err(DeviceError::Integrity);
     }
     let signature = fs::read_to_string(directory.join("manifest.json.sig"))
-        .map_err(|_| DeviceError::NotFound)?;
+        .map_err(|error| installed_component_read_error(&error))?;
     let signature =
         DetachedSignature::from_hex(signature.trim()).map_err(|_| DeviceError::Integrity)?;
     verify(&bytes, &signature, key).map_err(|_| DeviceError::Integrity)?;
     let binary = fs::read(directory.join("bin").join(format!("kobo-{id}")))
-        .map_err(|_| DeviceError::NotFound)?;
+        .map_err(|error| installed_component_read_error(&error))?;
     if binary.len() as u64 != manifest.binary_bytes()
         || kobo_net::sha256::hex_digest(&binary) != manifest.binary_sha256().as_str()
     {
         return Err(DeviceError::Integrity);
     }
     Ok(manifest)
+}
+
+fn installed_component_read_error(error: &std::io::Error) -> DeviceError {
+    match error.kind() {
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::InvalidData => DeviceError::Integrity,
+        _ => DeviceError::Backend,
+    }
 }
 
 fn recover_interrupted_transaction(
@@ -1403,6 +1413,48 @@ mod tests {
         assert!(!apps_root(&root)
             .join(format!("word-count.{UNINSTALLED_SUFFIX}"))
             .exists());
+        let _ignored = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn an_installed_manifest_without_its_binary_fails_closed() {
+        let root = root();
+        let seed = [9_u8; 32];
+        let key = derive_public_key(&seed).expect("key");
+        let (json, signature, package) = release(&seed);
+        refresh_with(&root, &key, |url, _| {
+            if url == CATALOG_URL {
+                Ok(json.clone())
+            } else {
+                Ok(signature.clone())
+            }
+        })
+        .expect("refresh");
+        install_with(&root, "word-count", &key, |_, _| Ok(package.clone())).expect("install");
+
+        assert_eq!(
+            resolve_using(&root, "word-count", &key).expect("resolve Store app"),
+            app_binary(&root, "word-count")
+        );
+        assert!(!builtin_binary(&root, "word-count").exists());
+        fs::remove_file(app_binary(&root, "word-count")).expect("remove installed binary");
+
+        assert!(matches!(
+            installed_with_key(&root, &key),
+            Err(DeviceError::Integrity)
+        ));
+        assert!(resolve_using(&root, "word-count", &key)
+            .expect_err("missing binary must not resolve")
+            .contains("invalid"));
+        assert_eq!(
+            install_with(&root, "word-count", &key, |_, _| Ok(package.clone())),
+            Err(DeviceError::Integrity)
+        );
+
+        uninstall_using(&root, "word-count", &key).expect("remove corrupt installation");
+        install_with(&root, "word-count", &key, |_, _| Ok(package.clone()))
+            .expect("clean reinstall");
+        assert!(app_binary(&root, "word-count").is_file());
         let _ignored = fs::remove_dir_all(root);
     }
 
