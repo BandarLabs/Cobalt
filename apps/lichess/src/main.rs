@@ -219,7 +219,7 @@ struct Lichess {
     event_open: bool,
     board_open: Option<String>,
     board_ready: bool,
-    board_rate_limit: Option<(String, u64)>,
+    board_rate_limits: BTreeMap<String, u64>,
     seek_task: Option<TaskId>,
     seek_waiting: bool,
     seek_baseline: BTreeSet<String>,
@@ -264,7 +264,7 @@ impl Default for Lichess {
             event_open: false,
             board_open: None,
             board_ready: false,
-            board_rate_limit: None,
+            board_rate_limits: BTreeMap::new(),
             seek_task: None,
             seek_waiting: false,
             seek_baseline: BTreeSet::new(),
@@ -1433,37 +1433,59 @@ impl Lichess {
     }
 
     fn set_board_rate_limit(&mut self, context: &mut Context, id: &str, seconds: u32) {
+        let now = unix_seconds();
+        self.board_rate_limits
+            .retain(|_, not_before| *not_before > now);
+        if self.board_rate_limits.len() >= 50 && !self.board_rate_limits.contains_key(id) {
+            if let Some(oldest) = self
+                .board_rate_limits
+                .iter()
+                .min_by_key(|(_, not_before)| *not_before)
+                .map(|(id, _)| id.clone())
+            {
+                self.board_rate_limits.remove(&oldest);
+            }
+        }
         let not_before = unix_seconds().saturating_add(u64::from(seconds.max(1)));
-        self.board_rate_limit = Some((id.to_owned(), not_before));
-        context.store().save(
-            BOARD_RATE_KEY,
-            ObjectBuilder::new()
-                .set("version", 1_u32)
-                .set("game_id", id)
-                .set("not_before", u32::try_from(not_before).unwrap_or(u32::MAX))
-                .build()
-                .to_json()
-                .into_bytes(),
-        );
+        self.board_rate_limits.insert(id.to_owned(), not_before);
+        self.persist_board_rate_limits(context);
     }
 
     fn clear_board_rate_limit(&mut self, context: &mut Context, id: &str) {
-        if self
-            .board_rate_limit
-            .as_ref()
-            .is_some_and(|(game, _)| game == id)
-        {
-            self.board_rate_limit = None;
-            context.store().forget(BOARD_RATE_KEY);
+        if self.board_rate_limits.remove(id).is_some() {
+            self.persist_board_rate_limits(context);
         }
     }
 
     fn board_rate_remaining(&self, id: &str) -> Option<u32> {
-        let (game, not_before) = self.board_rate_limit.as_ref()?;
-        if game != id {
-            return None;
-        }
+        let not_before = self.board_rate_limits.get(id)?;
         Some(u32::try_from(not_before.saturating_sub(unix_seconds())).unwrap_or(u32::MAX))
+    }
+
+    fn persist_board_rate_limits(&self, context: &mut Context) {
+        if self.board_rate_limits.is_empty() {
+            context.store().forget(BOARD_RATE_KEY);
+            return;
+        }
+        let limits = self
+            .board_rate_limits
+            .iter()
+            .map(|(id, not_before)| {
+                ObjectBuilder::new()
+                    .set("game_id", id.as_str())
+                    .set("not_before", u32::try_from(*not_before).unwrap_or(u32::MAX))
+                    .build()
+            })
+            .collect();
+        context.store().save(
+            BOARD_RATE_KEY,
+            ObjectBuilder::new()
+                .set("version", 2_u32)
+                .set("limits", Value::Array(limits))
+                .build()
+                .to_json()
+                .into_bytes(),
+        );
     }
 
     fn clear_session(&mut self, context: &mut Context) {
@@ -1832,6 +1854,32 @@ impl Lichess {
         }
     }
 
+    fn clear_accepted_challenge_wait(&mut self) {
+        let accepted = self.accepted_challenge.take().map(|challenge| challenge.id);
+        self.reconcile_accepted_challenge = false;
+        if self.challenge.as_ref().is_some_and(|challenge| {
+            accepted
+                .as_ref()
+                .is_some_and(|accepted| accepted == &challenge.id)
+        }) {
+            self.challenge = None;
+        }
+        if matches!(
+            (&self.pending_action, &self.pending_scope),
+            (
+                Some(GameAction::AcceptChallenge(id)),
+                Some(ActionScope::Challenge(scope_id))
+            ) if accepted.as_ref().is_some_and(|accepted| {
+                accepted == id && accepted == scope_id
+            })
+        ) {
+            self.clear_pending_action();
+        }
+        if self.route == Route::Challenge {
+            self.route = Route::Play;
+        }
+    }
+
     #[allow(
         clippy::too_many_lines,
         reason = "every asynchronous Board API operation is completed in one exhaustive state transition"
@@ -1846,7 +1894,15 @@ impl Lichess {
                 Pending::Account => {
                     self.account = AccountState::Failed(self.notice.clone().unwrap());
                 }
-                Pending::EventOpen | Pending::EventNext => self.event_open = false,
+                Pending::EventOpen | Pending::EventNext => {
+                    self.event_open = false;
+                    if self.accepted_challenge.is_some() {
+                        self.clear_accepted_challenge_wait();
+                    }
+                }
+                Pending::Playing if self.accepted_challenge.is_some() => {
+                    self.clear_accepted_challenge_wait();
+                }
                 Pending::BoardOpen(id) | Pending::BoardNext(id) => {
                     self.close_board(context, &id);
                     if self
@@ -2451,10 +2507,14 @@ impl KoboApp for Lichess {
                 }
             } else if key == BOARD_RATE_KEY {
                 self.loaded_board_rate = true;
-                self.board_rate_limit = value.as_deref().and_then(decode_board_rate_limit);
-                if value.is_some() && self.board_rate_limit.is_none() {
-                    context.store().forget(BOARD_RATE_KEY);
-                    self.notice = Some("Corrupted board retry metadata was discarded.".to_owned());
+                if let Some(value) = value {
+                    if let Some(limits) = decode_board_rate_limits(&value) {
+                        self.board_rate_limits = limits;
+                    } else {
+                        context.store().forget(BOARD_RATE_KEY);
+                        self.notice =
+                            Some("Corrupted board retry metadata was discarded.".to_owned());
+                    }
                 }
             }
             self.maybe_start(context);
@@ -2784,20 +2844,32 @@ fn unix_seconds() -> u64 {
         .map_or(0, |duration| duration.as_secs())
 }
 
-fn decode_board_rate_limit(bytes: &[u8]) -> Option<(String, u64)> {
-    if bytes.len() > 1024 {
+fn decode_board_rate_limits(bytes: &[u8]) -> Option<BTreeMap<String, u64>> {
+    if bytes.len() > 16 * 1024 {
         return None;
     }
     let value = kobo_json::parse(std::str::from_utf8(bytes).ok()?).ok()?;
-    if value.get("version")?.as_i64()? != 1 {
+    if value.get("version")?.as_i64()? != 2 {
         return None;
     }
-    let id = value.get("game_id")?.as_str()?;
-    if !(8..=16).contains(&id.len()) || !id.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+    let limits = value.get("limits")?.as_array()?;
+    if limits.len() > 50 {
         return None;
     }
-    let not_before = u64::try_from(value.get("not_before")?.as_i64()?).ok()?;
-    (not_before <= unix_seconds().saturating_add(24 * 60 * 60)).then(|| (id.to_owned(), not_before))
+    let mut decoded = BTreeMap::new();
+    for limit in limits {
+        let id = limit.get("game_id")?.as_str()?;
+        if !(8..=16).contains(&id.len()) || !id.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+            return None;
+        }
+        let not_before = u64::try_from(limit.get("not_before")?.as_i64()?).ok()?;
+        if not_before > unix_seconds().saturating_add(24 * 60 * 60)
+            || decoded.insert(id.to_owned(), not_before).is_some()
+        {
+            return None;
+        }
+    }
+    Some(decoded)
 }
 
 fn main() -> ExitCode {
@@ -3195,6 +3267,39 @@ mod tests {
     }
 
     #[test]
+    fn accepted_challenge_rate_limit_clears_the_navigation_lock() {
+        let challenge = Challenge {
+            id: "chall123".to_owned(),
+            challenger: "ReaderTwo".to_owned(),
+            direction: ChallengeDirection::Incoming,
+            status: "created".to_owned(),
+            rated: false,
+            variant: "standard".to_owned(),
+            speed: "rapid".to_owned(),
+            time_control: ChallengeTime::Clock {
+                initial_seconds: Some(600),
+                increment_seconds: Some(0),
+            },
+        };
+        let mut app = Lichess {
+            route: Route::Challenge,
+            challenge: Some(challenge.clone()),
+            accepted_challenge: Some(challenge),
+            reconcile_accepted_challenge: true,
+            ..Lichess::default()
+        };
+        app.handle_completed(
+            &mut Context::default(),
+            Pending::Playing,
+            b"COBALT-HTTP/1 429\nRetry-After: 19\n\n",
+        );
+        assert!(app.accepted_challenge.is_none());
+        assert!(app.challenge.is_none());
+        assert_eq!(app.route, Route::Play);
+        assert!(app.notice.as_deref().unwrap_or_default().contains("19s"));
+    }
+
+    #[test]
     fn seek_cancellation_arriving_after_game_start_does_not_stop_game_clock() {
         let mut app = app_with_game(&[], Color::White);
         let mut context = Context::default();
@@ -3404,22 +3509,31 @@ mod tests {
         let screen = format!("{:?}", app.game_screen());
         assert!(screen.contains("Reconnect board"));
         assert!(!screen.contains("Offer draw"));
-        let saved = context.commands().iter().find_map(|command| match command {
-            Command::Store(StoreRequest::Save { key, value }) if key == BOARD_RATE_KEY => {
-                super::decode_board_rate_limit(value)
-            }
-            _ => None,
-        });
+        app.set_board_rate_limit(&mut context, "other123", 31);
+        let saved = context
+            .commands()
+            .iter()
+            .rev()
+            .find_map(|command| match command {
+                Command::Store(StoreRequest::Save { key, value }) if key == BOARD_RATE_KEY => {
+                    super::decode_board_rate_limits(value)
+                }
+                _ => None,
+            });
         let saved = saved.expect("persisted retry deadline");
-        assert_eq!(saved.0, "abcdEF12");
-        assert!(saved.1 >= super::unix_seconds());
+        assert!(saved
+            .get("abcdEF12")
+            .is_some_and(|not_before| *not_before >= super::unix_seconds()));
+        assert!(saved
+            .get("other123")
+            .is_some_and(|not_before| *not_before >= super::unix_seconds()));
 
         app.close_live_reads(&mut context);
         assert!(!app.has_pending(|pending| { matches!(pending, Pending::BoardRateWait { .. }) }));
         let mut resumed = app_with_game(&[], Color::White);
         resumed.board_open = None;
         resumed.board_ready = false;
-        resumed.board_rate_limit = Some(saved);
+        resumed.board_rate_limits = saved;
         let mut resumed_context = Context::default();
         let session = resumed.session.clone().expect("session");
         resumed.open_board(&mut resumed_context, session);
