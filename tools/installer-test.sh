@@ -26,6 +26,9 @@ SIGNER=$(printf '%s\n' "$SIGNER" | awk '{print $1 " " $2 " " $3}')
 INSTALLER=$WORK/install.sh
 sed "s|cobalt-release ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIL7XUR3p+tvPgftO/kRbigc8gagzP2RBDG3tWIu/1KXe|$SIGNER|" \
     "$ROOT/install.sh" > "$INSTALLER"
+PAGES_INSTALLER=$WORK/pages-install.sh
+sed "s|cobalt-release ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIL7XUR3p+tvPgftO/kRbigc8gagzP2RBDG3tWIu/1KXe|$SIGNER|" \
+    "$ROOT/docs/install.sh" > "$PAGES_INSTALLER"
 
 make_release() {
     directory=$1
@@ -105,6 +108,7 @@ grep -F \
     "https://github.com/BandarLabs/Cobalt/releases/download/beta-v${WORKSPACE_VERSION}/install.sh" \
     "$ROOT/README.md" >/dev/null
 grep -F "sh -s -- --beta --version ${WORKSPACE_VERSION}" "$ROOT/README.md" >/dev/null
+grep -F "https://bandarlabs.github.io/Cobalt/install.sh" "$ROOT/README.md" >/dev/null
 
 # The first beta does not depend on a stable installer asset. An explicit beta
 # version resolves every download against its immutable beta-vX.Y.Z release.
@@ -162,6 +166,21 @@ if grep -F '/releases/latest/download/' "$WORK/first-beta-urls" >/dev/null; then
 fi
 grep -F "/releases/download/beta-v${WORKSPACE_VERSION}/cobalt-host-manifest.txt" \
     "$WORK/first-beta-urls" >/dev/null
+
+# Once main:/docs is promoted, the Pages discovery bootstrap is
+# channel-agnostic. It verifies the signed release installer before running it.
+pages_beta_home=$WORK/home-pages-beta
+: > "$WORK/pages-beta-urls"
+HOME=$pages_beta_home XDG_DATA_HOME=$pages_beta_home/data \
+XDG_CACHE_HOME=$pages_beta_home/cache \
+PATH="$mock_bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+KOBO_INSTALLER_TESTING=1 KOBO_TEST_RELEASE=$beta \
+KOBO_TEST_VERSION=$WORKSPACE_VERSION \
+KOBO_TEST_URL_LOG=$WORK/pages-beta-urls \
+sh "$PAGES_INSTALLER" --yes --no-setup --no-path --platform linux-x86_64 \
+    --beta --version "$WORKSPACE_VERSION" >/dev/null
+grep -F "/releases/download/beta-v${WORKSPACE_VERSION}/install.sh" \
+    "$WORK/pages-beta-urls" >/dev/null
 
 # Clean install, update, and idempotent rerun.
 home=$WORK/home-clean

@@ -39,14 +39,17 @@ prebuilt installer.
 Stable is the default:
 
 ```sh
-curl -fsSL https://github.com/BandarLabs/Cobalt/releases/latest/download/install.sh | sh
+curl -fsSL https://bandarlabs.github.io/Cobalt/install.sh | sh
 ```
 
-This one-line convenience route trusts GitHub HTTPS for `install.sh`, because a
-script cannot verify itself before the shell executes it. Once running, it
-verifies an OpenSSH Ed25519 signature over the versioned release manifest and
-checks every subsequently executed/downloaded host and device artifact by
-length and SHA-256. It installs `kobo` under `~/.local/bin` without sudo.
+This canonical stable discovery path is served by GitHub Pages from
+`main:/docs` after stable promotion. It fixes discovery and avoids depending on
+a particular stable release asset name; it does not solve self-verification.
+The one-line route trusts GitHub Pages HTTPS for the bootstrap because a script
+cannot verify itself before the shell executes it. Once running, the small
+Pages bootstrap verifies the signed release manifest and the full release
+installer before executing it. The release installer then verifies every host
+and device artifact.
 
 For the first beta candidate, use its exact beta release URL; no stable
 installer asset is required:
@@ -103,6 +106,11 @@ sh ./install.sh --beta --version "$version"
 For stable, use `tag=v$version` and omit `--beta`. Keep the pinned signer line
 from this repository or another out-of-band trusted copy, not from the release
 being checked.
+
+After the first stable promotion, the Pages discovery bootstrap is
+channel-agnostic, so `https://bandarlabs.github.io/Cobalt/install.sh` may also
+be run with `sh -s -- --beta`. The exact beta URL remains the first-beta and
+exact-version route.
 
 ## 2. Connect and confirm the reader
 

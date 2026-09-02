@@ -132,10 +132,12 @@ the [app request thread](https://github.com/BandarLabs/Cobalt/issues/41).
 On macOS or Linux, install the stable release:
 
 ```sh
-curl -fsSL https://github.com/BandarLabs/Cobalt/releases/latest/download/install.sh | sh
+curl -fsSL https://bandarlabs.github.io/Cobalt/install.sh | sh
 ```
 
-This convenience command trusts GitHub HTTPS for the bootstrap script itself.
+This canonical discovery URL is published by GitHub Pages from stable
+`main:/docs`; it becomes available with the first stable promotion containing
+the installer. It trusts GitHub Pages HTTPS for the bootstrap script itself.
 After it starts, every downloaded executable and device package is covered by
 the signed release manifest and SHA-256 checks. For pre-execution verification
 of `install.sh`, use the recommended
@@ -150,7 +152,8 @@ curl -fsSL https://github.com/BandarLabs/Cobalt/releases/download/beta-v0.3.4/in
 ```
 
 The installer supports macOS Intel and Apple Silicon, and Linux x86_64 and
-arm64. Stable remains the default; beta is explicit.
+arm64. The Pages bootstrap is channel-agnostic and accepts `--beta`, but the
+first beta must use the exact release URL above because Pages is stable-only.
 
 Rerun the same command to update. Restart the reader, wait one minute for
 NickelMenu's failsafe, then open **Cobalt** from Kobo's menu. Future

@@ -22,7 +22,7 @@ jobs:
       - run: cargo fmt --all -- --check
       - name: Test the POSIX host installer
         run: |
-          sh -n install.sh tools/installer-test.sh tools/build-host-release.sh
+          sh -n install.sh docs/install.sh tools/installer-test.sh tools/build-host-release.sh
           tools/installer-test.sh
       - run: node --test tools/*.test.mjs
       - name: Require current generated app pages

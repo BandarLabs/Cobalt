@@ -57,4 +57,8 @@ The long-lived `beta` branch is the only source for beta publishing:
   targeting the tested commit. It never rebuilds or replaces a tag or release.
 
 Promotion is never automatic. Merge the tested beta commit to main first so
-the main workspace version matches the artifact being promoted.
+the main workspace version matches the artifact being promoted. GitHub Pages
+continues to publish `main:/docs`; after that merge, `docs/install.sh` becomes
+the canonical stable discovery URL at
+`https://bandarlabs.github.io/Cobalt/install.sh`. The first beta must use its
+exact `beta-vX.Y.Z` release asset because beta does not publish Pages.
