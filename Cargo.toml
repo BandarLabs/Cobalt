@@ -50,6 +50,7 @@ members = [
     "apps/arxiv",
     "apps/backgammon",
     "apps/morse",
+    "apps/paperterm",
     "apps/sudoku",
     "apps/zotero-reader",
     "tools/icon-import",

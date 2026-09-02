@@ -44,8 +44,8 @@ use kobo_hal::{Rect, RefreshIntent, RefreshPlan, RegionSnapshot};
 use kobo_policy::{Backends, Capability, Declared, DeviceServices, PowerPolicy, TaskRunner};
 use kobo_protocol::{Frame, Lifecycle, Message, TaskError, TaskOutcome};
 use kobo_ui::{
-    render_all, ActionId, CellStyle, Chrome, FontHandle, FramePlanner, Layout, LayoutKind,
-    PanelWaveform, PictureCache, Screen, Surface,
+    ActionId, CellStyle, Chrome, FontHandle, FramePlanner, Layout, LayoutKind, PanelWaveform,
+    PictureCache, Screen, Surface,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -969,13 +969,14 @@ fn announce_reboot(
         usize::try_from(whole_screen.width).unwrap_or(0),
         usize::try_from(whole_screen.height).unwrap_or(0),
     );
-    render_all(
+    kobo_ui::render_oriented(
         &screen,
         &metrics_for(&screen),
         &Chrome::with_back(false),
         &(),
         &mut surface,
         None,
+        kobo_ui::Orientation::Portrait,
     );
     // A fresh planner, so its idea of what is already on the panel is blank and
     // the whole notice is drawn rather than diffed against the session's last
@@ -1058,6 +1059,11 @@ struct Hosted {
     pictures: PictureCache,
     /// Application-local font handles mapped onto runtime-global handles.
     fonts: BTreeMap<FontHandle, FontHandle>,
+    /// Logical direction requested by this application.
+    orientation: kobo_ui::Orientation,
+    /// Physical side selected by a verified orientation event, or the fixed
+    /// fallback on readers without an orientation sensor.
+    landscape_turn: kobo_ui::LandscapeTurn,
     painted: u32,
     /// When this was last on the panel, for deciding what to stop first.
     used: Instant,
@@ -1611,18 +1617,44 @@ fn host_applications(
                             // then the press is at least on the record.
                             trace(&format!("power button pressed={pressed}"));
                         }
-                        // The kernel's digested accelerometer verdict. Only
-                        // the two portrait poses move the key mapping; the
-                        // image itself does not rotate mid-session yet.
-                        // The pose each MSC_RAW value names was measured here
-                        // by a rotation-only capture, and then confirmed in
-                        // use: a reader turned end for end mid-session, with
-                        // no restart, goes on paging the way it is now held.
+                        // Sensor-equipped readers report which physical side
+                        // is down. Readers without these events keep the fixed
+                        // clockwise software-landscape fallback.
                         GpioEvent::Orientation(gpio::Orientation::PortraitUp) => {
                             forward_is_194 = true;
                         }
                         GpioEvent::Orientation(gpio::Orientation::PortraitDown) => {
                             forward_is_194 = false;
+                        }
+                        GpioEvent::Orientation(
+                            orientation @ (gpio::Orientation::LandscapeLeft
+                            | gpio::Orientation::LandscapeRight),
+                        ) => {
+                            let turn = match orientation {
+                                gpio::Orientation::LandscapeLeft => {
+                                    kobo_ui::LandscapeTurn::Clockwise
+                                }
+                                gpio::Orientation::LandscapeRight => {
+                                    kobo_ui::LandscapeTurn::CounterClockwise
+                                }
+                                _ => unreachable!(),
+                            };
+                            let changed = apps.iter().any(|app| app.landscape_turn != turn);
+                            for app in &mut apps {
+                                app.landscape_turn = turn;
+                            }
+                            if changed {
+                                repaint(
+                                    &mut apps,
+                                    front,
+                                    display,
+                                    whole_screen,
+                                    &mut surface,
+                                    &mut panel,
+                                    &home,
+                                    &mut status,
+                                )?;
+                            }
                         }
                         GpioEvent::Button { .. } | GpioEvent::Orientation(_) => {}
                     }
@@ -1642,6 +1674,8 @@ fn host_applications(
                         || Chrome::with_back(!at_home),
                         |screen| chrome_for(screen, at_home, &mut status),
                     );
+                    let orientation = apps[index].orientation;
+                    let landscape_turn = apps[index].landscape_turn;
                     // A control shows that it has been touched, before
                     // anything it does can be seen. Without this the panel is
                     // simply still for as long as the application takes to
@@ -1658,6 +1692,9 @@ fn host_applications(
                             TouchEvent::Down { x, y } => {
                                 if let (Ok(x), Ok(y)) = (i32::try_from(x), i32::try_from(y)) {
                                     landed = Some((Instant::now(), x, y));
+                                    if orientation == kobo_ui::Orientation::Landscape {
+                                        continue;
+                                    }
                                     let layout =
                                         current.layout_with(&metrics_for(current), &chrome);
                                     if let Some(rect) = layout.pressed_control(x, y) {
@@ -1736,6 +1773,8 @@ fn host_applications(
                         screen.as_ref(),
                         &chrome,
                         held,
+                        orientation,
+                        landscape_turn,
                     )?;
                     match disposition {
                         Tap::Handled => {}
@@ -1802,13 +1841,15 @@ fn host_applications(
                                 // rectangle of the new screen instead.
                                 pressed = None;
                                 release_due = None;
-                                render_all(
+                                kobo_ui::render_oriented_with_turn(
                                     &screen,
                                     &metrics_for(&screen),
                                     &chrome,
                                     &apps[index].pictures,
                                     &mut surface,
                                     None,
+                                    apps[index].orientation,
+                                    apps[index].landscape_turn,
                                 );
                                 panel.paint(display, whole_screen, &surface)?;
                                 apps[index].painted += 1;
@@ -1817,6 +1858,26 @@ fn host_applications(
                             // finished its work has a finished screen waiting,
                             // rather than the reader watching it be rebuilt.
                             apps[index].screen = Some(screen);
+                        }
+                        Message::SetOrientation(orientation) => {
+                            apps[index].orientation = orientation;
+                            if id == front {
+                                if let Some(screen) = apps[index].screen.as_ref() {
+                                    let chrome =
+                                        chrome_for(screen, apps[index].path == home, &mut status);
+                                    kobo_ui::render_oriented_with_turn(
+                                        screen,
+                                        &metrics_for(screen),
+                                        &chrome,
+                                        &apps[index].pictures,
+                                        &mut surface,
+                                        None,
+                                        orientation,
+                                        apps[index].landscape_turn,
+                                    );
+                                    panel.paint(display, whole_screen, &surface)?;
+                                }
+                            }
                         }
                         Message::PutPicture {
                             handle,
@@ -2621,13 +2682,15 @@ fn repaint(
         return Ok(());
     };
     let chrome = chrome_for(&screen, apps[index].path == home, status);
-    render_all(
+    kobo_ui::render_oriented_with_turn(
         &screen,
         &metrics_for(&screen),
         &chrome,
         &apps[index].pictures,
         surface,
         None,
+        apps[index].orientation,
+        apps[index].landscape_turn,
     );
     panel.paint(display, whole_screen, surface)?;
     apps[index].painted += 1;
@@ -3026,6 +3089,8 @@ fn start_application(
         screen: None,
         pictures: PictureCache::default(),
         fonts: BTreeMap::new(),
+        orientation: kobo_ui::Orientation::Portrait,
+        landscape_turn: kobo_ui::LandscapeTurn::Clockwise,
         painted: 0,
         used: Instant::now(),
     });
@@ -3267,11 +3332,30 @@ fn with_trace_failure(error: String, child: &ApplicationChild) -> String {
 /// Activation happens on release rather than on contact, so a finger that lands
 /// on the wrong control can be slid away from it without acting. That is what
 /// every touch interface the owner already uses has taught them to expect.
+#[cfg(test)]
 fn action_for(
     event: TouchEvent,
     screen: Option<&Screen>,
     chrome: &Chrome,
     held: bool,
+) -> Option<ActionId> {
+    action_for_oriented(
+        event,
+        screen,
+        chrome,
+        held,
+        kobo_ui::Orientation::Portrait,
+        kobo_ui::LandscapeTurn::Clockwise,
+    )
+}
+
+fn action_for_oriented(
+    event: TouchEvent,
+    screen: Option<&Screen>,
+    chrome: &Chrome,
+    held: bool,
+    orientation: kobo_ui::Orientation,
+    landscape_turn: kobo_ui::LandscapeTurn,
 ) -> Option<ActionId> {
     let TouchEvent::Up { x, y } = event else {
         return None;
@@ -3284,7 +3368,17 @@ fn action_for(
     };
     // The same chrome the frame was drawn with. Laying out with a different
     // one would move every control away from where the reader can see it.
-    let layout = screen.layout_with(&metrics_for(screen), chrome);
+    let physical = crate::device_metrics();
+    let metrics = metrics_for(screen).oriented(orientation);
+    let (x, y) = kobo_ui::logical_point_with_turn(
+        orientation,
+        landscape_turn,
+        physical.width,
+        physical.height,
+        x,
+        y,
+    );
+    let layout = screen.layout_with(&metrics, chrome);
     // A hold that the screen asked for wins over the tap the same pixels would
     // otherwise have been. Falls back rather than swallowing the touch: a
     // finger resting a moment too long on a page of a book that does not want
@@ -3334,11 +3428,12 @@ fn page_key_message(
     }
 }
 
-fn text_hold_for(
+fn text_hold_for_oriented(
     event: TouchEvent,
     screen: Option<&Screen>,
     chrome: &Chrome,
     held: bool,
+    orientation: kobo_ui::Orientation,
 ) -> Option<(ActionId, kobo_ui::TextHit)> {
     if !held {
         return None;
@@ -3350,7 +3445,7 @@ fn text_hold_for(
     let (Ok(x), Ok(y)) = (i32::try_from(x), i32::try_from(y)) else {
         return None;
     };
-    let layout = screen.layout_with(&metrics_for(screen), chrome);
+    let layout = screen.layout_with(&metrics_for(screen).oriented(orientation), chrome);
     let action = layout.hold?;
     layout.hit_text(x, y).map(|hit| (action, hit))
 }
@@ -3464,6 +3559,10 @@ enum Tap {
 /// inside an application goes back to where it was reached from rather than
 /// out of the application. That is a delivery, not a transfer of ownership:
 /// the caller still leaves if no new screen follows.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "touch delivery needs the negotiated protocol, retained screen, and physical pose"
+)]
 fn deliver_touch(
     stream: &mut std::os::unix::net::UnixStream,
     version: u8,
@@ -3471,8 +3570,33 @@ fn deliver_touch(
     current: Option<&Screen>,
     chrome: &Chrome,
     held: bool,
+    orientation: kobo_ui::Orientation,
+    landscape_turn: kobo_ui::LandscapeTurn,
 ) -> Result<Tap, String> {
-    if let Some((action, hit)) = text_hold_for(event, current, chrome, held) {
+    let logical_event = match event {
+        TouchEvent::Up { x, y } => {
+            let (Ok(x), Ok(y)) = (i32::try_from(x), i32::try_from(y)) else {
+                return Ok(Tap::Handled);
+            };
+            let physical = crate::device_metrics();
+            let (x, y) = kobo_ui::logical_point_with_turn(
+                orientation,
+                landscape_turn,
+                physical.width,
+                physical.height,
+                x,
+                y,
+            );
+            TouchEvent::Up {
+                x: u32::try_from(x).map_err(|_| "logical touch x is negative")?,
+                y: u32::try_from(y).map_err(|_| "logical touch y is negative")?,
+            }
+        }
+        other => other,
+    };
+    if let Some((action, hit)) =
+        text_hold_for_oriented(logical_event, current, chrome, held, orientation)
+    {
         kobo_protocol::write_to(
             stream,
             &Frame {
@@ -3489,7 +3613,9 @@ fn deliver_touch(
         .map_err(|error| format!("deliver a text hold: {error}"))?;
         return Ok(Tap::Handled);
     }
-    let Some(action) = action_for(event, current, chrome, held) else {
+    let Some(action) =
+        action_for_oriented(event, current, chrome, held, orientation, landscape_turn)
+    else {
         return Ok(Tap::Handled);
     };
     let offered = action == ActionId::BACK;
@@ -4048,7 +4174,13 @@ mod tests {
             Vec::new(),
         ));
         assert_eq!(
-            text_hold_for(touch, Some(&covered), &chrome, true),
+            text_hold_for_oriented(
+                touch,
+                Some(&covered),
+                &chrome,
+                true,
+                kobo_ui::Orientation::Portrait,
+            ),
             None,
             "covered text received a hold through the modal"
         );
@@ -4056,6 +4188,62 @@ mod tests {
             action_for(touch, Some(&covered), &chrome, true),
             Some(ActionId(13)),
             "the modal leaked the page hold"
+        );
+    }
+
+    #[test]
+    fn landscape_taps_reach_the_same_control_from_either_physical_side() {
+        let action = ActionId(77);
+        let screen = Screen::new(
+            1,
+            vec![kobo_ui::Node::Button {
+                id: kobo_ui::NodeId(1),
+                action,
+                label: "Open".to_owned(),
+                state: kobo_ui::ControlState::Enabled,
+                emphasis: kobo_ui::Emphasis::Primary,
+            }],
+        );
+        let chrome = kobo_ui::Chrome::default();
+        let physical = crate::device_metrics();
+        let logical_metrics = physical.oriented(kobo_ui::Orientation::Landscape);
+        let rect = screen
+            .layout_with(&logical_metrics, &chrome)
+            .rect_of_action(action)
+            .expect("button");
+        let logical_x = rect.x + rect.width / 2;
+        let logical_y = rect.y + rect.height / 2;
+
+        let clockwise = TouchEvent::Up {
+            x: u32::try_from(physical.width - 1 - logical_y).expect("physical x"),
+            y: u32::try_from(logical_x).expect("physical y"),
+        };
+        assert_eq!(
+            super::action_for_oriented(
+                clockwise,
+                Some(&screen),
+                &chrome,
+                false,
+                kobo_ui::Orientation::Landscape,
+                kobo_ui::LandscapeTurn::Clockwise,
+            ),
+            Some(action)
+        );
+
+        let counter_clockwise = TouchEvent::Up {
+            x: u32::try_from(logical_y).expect("physical x"),
+            y: u32::try_from(physical.height - 1 - logical_x).expect("physical y"),
+        };
+        assert_eq!(
+            super::action_for_oriented(
+                counter_clockwise,
+                Some(&screen),
+                &chrome,
+                false,
+                kobo_ui::Orientation::Landscape,
+                kobo_ui::LandscapeTurn::CounterClockwise,
+            ),
+            Some(action)
         );
     }
 
@@ -4192,6 +4380,8 @@ mod tests {
                 Some(&screen),
                 &chrome,
                 false,
+                kobo_ui::Orientation::Portrait,
+                kobo_ui::LandscapeTurn::Clockwise,
             )
             .expect("route the tap"),
             Tap::Leave,
@@ -4207,6 +4397,8 @@ mod tests {
                 Some(&owning),
                 &chrome,
                 false,
+                kobo_ui::Orientation::Portrait,
+                kobo_ui::LandscapeTurn::Clockwise,
             )
             .expect("route the tap"),
             Tap::OfferedBack

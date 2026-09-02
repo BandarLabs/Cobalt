@@ -788,6 +788,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "kobo-paperterm"
+version = "0.1.0"
+dependencies = [
+ "kobo-json",
+ "kobo-sdk",
+ "kobo-ui",
+]
+
+[[package]]
 name = "kobo-policy"
 version = "0.3.5"
 dependencies = [

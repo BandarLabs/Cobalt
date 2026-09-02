@@ -112,6 +112,25 @@
       "capabilities": ["frontlight-control", "keep-awake"]
     },
     {
+      "package": "kobo-paperterm",
+      "id": "paperterm",
+      "display_name": "Paperterm",
+      "short_label": "Paperterm",
+      "summary": "Pair with a computer to mirror a terminal session on e-ink.",
+      "page_description": "Use a Kobo in landscape as a secure e-ink terminal display and touch keyboard for a host computer.",
+      "version": "0.1.0",
+      "minimum_cobalt_version": "0.3.5",
+      "glyph": "terminal",
+      "capabilities": ["network"],
+      "setup": {
+        "steps": [
+          {
+            "text": "Run kobo stream init on the computer, install its stream trust root on the Kobo, then start kobo stream."
+          }
+        ]
+      }
+    },
+    {
       "package": "kobo-rss",
       "id": "rss",
       "display_name": "Feeds",

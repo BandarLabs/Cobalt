@@ -839,6 +839,41 @@ pub struct DisplayMetrics {
     pub text_scale: TextScale,
 }
 
+/// Direction of an application's logical viewport.
+///
+/// Portrait keeps the established panel coordinate system. Landscape is
+/// rendered in software into a swapped viewport, then rotated clockwise into
+/// the unchanged physical framebuffer.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[repr(u8)]
+pub enum Orientation {
+    #[default]
+    Portrait = 0,
+    Landscape = 1,
+}
+
+/// Which physical side is down while a landscape viewport is displayed.
+///
+/// Sensor-equipped readers may update this during a session. Readers without
+/// an orientation event source use [`LandscapeTurn::Clockwise`].
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum LandscapeTurn {
+    #[default]
+    Clockwise,
+    CounterClockwise,
+}
+
+impl Orientation {
+    #[must_use]
+    pub const fn from_wire(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::Portrait),
+            1 => Some(Self::Landscape),
+            _ => None,
+        }
+    }
+}
+
 /// A small, deliberate accessibility scale rather than an arbitrary zoom.
 ///
 /// Applications continue to ask for semantic sizes such as [`FontSize::Body`].
@@ -990,6 +1025,14 @@ impl Default for DisplayMetrics {
 }
 
 impl DisplayMetrics {
+    /// Metrics in the logical viewport requested by an application.
+    #[must_use]
+    pub const fn oriented(mut self, orientation: Orientation) -> Self {
+        if matches!(orientation, Orientation::Landscape) {
+            (self.width, self.height) = (self.height, self.width);
+        }
+        self
+    }
     /// Converts a tenth of a millimetre to whole pixels, rounding to nearest.
     ///
     /// Tenths because whole millimetres are too coarse for a type scale, and
@@ -11058,6 +11101,109 @@ pub fn render_with(
     render_all(screen, metrics, chrome, &(), surface, dirty);
 }
 
+/// Maps a physical touch into the current logical viewport.
+///
+/// The clockwise display convention puts logical top-left at physical
+/// top-right; this is its exact inverse.
+#[must_use]
+pub const fn logical_point(
+    orientation: Orientation,
+    physical_width: i32,
+    x: i32,
+    y: i32,
+) -> (i32, i32) {
+    logical_point_with_turn(
+        orientation,
+        LandscapeTurn::Clockwise,
+        physical_width,
+        0,
+        x,
+        y,
+    )
+}
+
+/// Maps a physical touch into a logical viewport using the observed side.
+#[must_use]
+pub const fn logical_point_with_turn(
+    orientation: Orientation,
+    turn: LandscapeTurn,
+    physical_width: i32,
+    physical_height: i32,
+    x: i32,
+    y: i32,
+) -> (i32, i32) {
+    match orientation {
+        Orientation::Portrait => (x, y),
+        Orientation::Landscape => match turn {
+            LandscapeTurn::Clockwise => (y, physical_width - 1 - x),
+            LandscapeTurn::CounterClockwise => (physical_height - 1 - y, x),
+        },
+    }
+}
+
+/// Renders into the physical framebuffer, using a full repaint for software
+/// landscape so rotated partial damage can never miss a changed pixel.
+pub fn render_oriented(
+    screen: &Screen,
+    metrics: &DisplayMetrics,
+    chrome: &Chrome,
+    pictures: &dyn Pictures,
+    surface: &mut Surface,
+    dirty: Option<Rect>,
+    orientation: Orientation,
+) {
+    render_oriented_with_turn(
+        screen,
+        metrics,
+        chrome,
+        pictures,
+        surface,
+        dirty,
+        orientation,
+        LandscapeTurn::Clockwise,
+    );
+}
+
+/// Renders an oriented viewport using the physical landscape side.
+#[allow(clippy::too_many_arguments)]
+pub fn render_oriented_with_turn(
+    screen: &Screen,
+    metrics: &DisplayMetrics,
+    chrome: &Chrome,
+    pictures: &dyn Pictures,
+    surface: &mut Surface,
+    dirty: Option<Rect>,
+    orientation: Orientation,
+    turn: LandscapeTurn,
+) {
+    if orientation == Orientation::Portrait {
+        render_all(screen, metrics, chrome, pictures, surface, dirty);
+        return;
+    }
+    let mut logical = Surface::new(surface.height, surface.width);
+    render_all(
+        screen,
+        &metrics.oriented(orientation),
+        chrome,
+        pictures,
+        &mut logical,
+        None,
+    );
+    rotate_landscape(&logical, surface, turn);
+}
+
+fn rotate_landscape(logical: &Surface, physical: &mut Surface, turn: LandscapeTurn) {
+    for y in 0..logical.height {
+        for x in 0..logical.width {
+            let destination = match turn {
+                LandscapeTurn::Clockwise => x * physical.width + (physical.width - 1 - y),
+                LandscapeTurn::CounterClockwise => (physical.height - 1 - x) * physical.width + y,
+            };
+            physical.pixels[destination] = logical.pixels[y * logical.width + x];
+        }
+    }
+}
+
 /// Rasterizes a retained screen, drawing pictures from `pictures`.
 ///
 /// This is the whole renderer; [`render_with`] is this with an empty picture
@@ -19958,5 +20104,53 @@ mod figure_tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn landscape_swaps_metrics_and_maps_both_physical_sides() {
+        let landscape = super::CLARA_BW_METRICS.oriented(super::Orientation::Landscape);
+        assert_eq!((landscape.width, landscape.height), (1448, 1072));
+        assert_eq!(
+            super::logical_point_with_turn(
+                super::Orientation::Landscape,
+                super::LandscapeTurn::Clockwise,
+                1072,
+                1448,
+                1071,
+                0,
+            ),
+            (0, 0)
+        );
+        assert_eq!(
+            super::logical_point_with_turn(
+                super::Orientation::Landscape,
+                super::LandscapeTurn::CounterClockwise,
+                1072,
+                1448,
+                0,
+                1447,
+            ),
+            (0, 0)
+        );
+    }
+
+    #[test]
+    fn software_rotation_places_every_corner_for_both_landscape_sides() {
+        let logical = super::Surface {
+            width: 3,
+            height: 2,
+            pixels: vec![1, 2, 3, 4, 5, 6],
+        };
+        let mut clockwise = super::Surface::new(2, 3);
+        super::rotate_landscape(&logical, &mut clockwise, super::LandscapeTurn::Clockwise);
+        assert_eq!(clockwise.pixels, [4, 1, 5, 2, 6, 3]);
+
+        let mut counter_clockwise = super::Surface::new(2, 3);
+        super::rotate_landscape(
+            &logical,
+            &mut counter_clockwise,
+            super::LandscapeTurn::CounterClockwise,
+        );
+        assert_eq!(counter_clockwise.pixels, [3, 6, 2, 5, 1, 4]);
     }
 }

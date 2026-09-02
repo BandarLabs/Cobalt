@@ -14,7 +14,8 @@ Start the host once with `kobo stream init`, install its root with
 kobo stream --controls -- claude
 ```
 
-The app sends its measured portrait grid in `/hello`, long-polls `/screen`,
+Paperterm requires Cobalt 0.3.5's protocol-12 orientation API. It requests
+landscape once when the session starts, sends its measured landscape grid in `/hello`,
 and holds the last received rows behind an `off the air` banner when the host
 cannot be reached. The banner paints once on the offline transition; unchanged
 retries do not repaint, and the first successful response clears it once.

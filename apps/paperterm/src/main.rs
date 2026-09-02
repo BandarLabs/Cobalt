@@ -2,8 +2,8 @@
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::terminal::{TerminalKeys, Typed};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Caret, Context, KoboApp, Screen, ScreenBuilder, Space,
-    StoreResult, Task, TaskId, TaskOutcome,
+    action_id, ActionId, BannerLevel, Caret, Context, KoboApp, Orientation, Screen, ScreenBuilder,
+    Space, StoreResult, Task, TaskId, TaskOutcome,
 };
 use std::process::ExitCode;
 
@@ -153,7 +153,10 @@ impl Paperterm {
     }
 
     fn grid(context: &Context) -> (u16, u16) {
-        kobo_sdk::terminal_grid_for(&Self::screen_for_grid(), &context.metrics())
+        kobo_sdk::terminal_grid_for(
+            &Self::screen_for_grid(),
+            &context.metrics().oriented(Orientation::Landscape),
+        )
     }
     fn screen_for_grid() -> Screen {
         ScreenBuilder::new("paperterm-grid")
@@ -323,6 +326,7 @@ impl Paperterm {
 
 impl KoboApp for Paperterm {
     fn on_start(&mut self, context: &mut Context) {
+        context.set_orientation(Orientation::Landscape);
         context.store().load(PAIRING);
         self.show(context);
     }
@@ -649,8 +653,23 @@ mod tests {
 
     #[test]
     fn paperterm_uses_the_terminal_viewport_reported_by_the_runtime() {
-        let grid = kobo_sdk::terminal_grid_for(&Paperterm::screen_for_grid(), &CLARA_BW_METRICS);
+        let grid = kobo_sdk::terminal_grid_for(
+            &Paperterm::screen_for_grid(),
+            &CLARA_BW_METRICS.oriented(Orientation::Landscape),
+        );
         assert!(grid.0 > 0);
         assert!(grid.1 > 0);
+        assert!(grid.0 > grid.1);
+    }
+
+    #[test]
+    fn paperterm_requests_landscape_before_its_first_screen() {
+        let mut app = Paperterm::default();
+        let mut context = Context::default();
+        app.on_start(&mut context);
+        assert_eq!(
+            context.commands().first(),
+            Some(&Command::SetOrientation(Orientation::Landscape))
+        );
     }
 }
