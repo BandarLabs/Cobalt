@@ -229,6 +229,7 @@ struct Lichess {
     pending_action_generation: Option<u64>,
     next_action_generation: u64,
     accepted_challenge: Option<Challenge>,
+    reconcile_accepted_challenge: bool,
     pending_move: Option<PendingMove>,
     selected: Option<String>,
     promotion: Option<Promotion>,
@@ -273,6 +274,7 @@ impl Default for Lichess {
             pending_action_generation: None,
             next_action_generation: 0,
             accepted_challenge: None,
+            reconcile_accepted_challenge: false,
             pending_move: None,
             selected: None,
             promotion: None,
@@ -997,6 +999,7 @@ impl Lichess {
         self.game = None;
         self.clear_pending_action();
         self.accepted_challenge = None;
+        self.reconcile_accepted_challenge = false;
         self.pending_move = None;
         self.selected = None;
         self.promotion = None;
@@ -1193,6 +1196,7 @@ impl Lichess {
                 .as_ref()
                 .filter(|challenge| challenge.id == id.as_str())
                 .cloned();
+            self.reconcile_accepted_challenge = false;
         }
         self.next_action_generation = self.next_action_generation.saturating_add(1);
         let generation = self.next_action_generation;
@@ -1214,6 +1218,7 @@ impl Lichess {
         {
             self.clear_pending_action();
             self.accepted_challenge = None;
+            self.reconcile_accepted_challenge = false;
             self.pending_move = None;
             self.notice = Some("Too many requests are already in flight.".to_owned());
         }
@@ -1495,6 +1500,7 @@ impl Lichess {
         }
         self.clear_pending_action();
         self.accepted_challenge = None;
+        self.reconcile_accepted_challenge = false;
         self.pending_move = None;
         self.selected = None;
         self.promotion = None;
@@ -1545,6 +1551,7 @@ impl Lichess {
                     }
                     self.clear_pending_action();
                     self.accepted_challenge = None;
+                    self.reconcile_accepted_challenge = false;
                     self.notice = Some("Challenge accepted. Opening the board.".to_owned());
                     self.open_board(context, summary.session());
                 } else if seek_match {
@@ -1601,6 +1608,7 @@ impl Lichess {
                         .is_some_and(|challenge| challenge.id == id)
                     {
                         self.accepted_challenge = None;
+                        self.reconcile_accepted_challenge = false;
                     }
                     if matches!(
                         (&self.pending_action, &self.pending_scope),
@@ -1771,6 +1779,59 @@ impl Lichess {
         }
     }
 
+    fn reconcile_accepted_challenge_from_playing(&mut self, context: &mut Context) -> bool {
+        if !self.reconcile_accepted_challenge {
+            return false;
+        }
+        self.reconcile_accepted_challenge = false;
+        let Some(accepted) = self.accepted_challenge.take() else {
+            return false;
+        };
+        let matched = self
+            .summaries
+            .iter()
+            .find(|summary| accepted.matches_game_start(summary))
+            .cloned();
+        if self
+            .challenge
+            .as_ref()
+            .is_some_and(|challenge| challenge.id == accepted.id)
+        {
+            self.challenge = None;
+        }
+        if matches!(
+            (&self.pending_action, &self.pending_scope),
+            (
+                Some(GameAction::AcceptChallenge(id)),
+                Some(ActionScope::Challenge(scope_id))
+            ) if id == &accepted.id && scope_id == &accepted.id
+        ) {
+            self.clear_pending_action();
+        }
+        if let Some(summary) = matched {
+            self.notice =
+                Some("Recovered the accepted challenge from the current-game snapshot.".to_owned());
+            self.open_board(context, summary.session());
+            true
+        } else {
+            if self.route == Route::Challenge {
+                self.route = Route::Play;
+            }
+            self.notice = Some(
+                "The accepted challenge was not active after reconnect; the wait was cleared."
+                    .to_owned(),
+            );
+            false
+        }
+    }
+
+    fn recover_accepted_challenge(&mut self, context: &mut Context) {
+        if self.accepted_challenge.is_some() {
+            self.reconcile_accepted_challenge = true;
+            self.refresh_playing(context);
+        }
+    }
+
     #[allow(
         clippy::too_many_lines,
         reason = "every asynchronous Board API operation is completed in one exhaustive state transition"
@@ -1839,20 +1900,23 @@ impl Lichess {
                 if let Some(games) = api::parse_playing(bytes) {
                     self.playing_ready = true;
                     self.summaries = games;
-                    if let Some(session) = self.session.clone() {
-                        if let Some(summary) = self
-                            .summaries
-                            .iter()
-                            .find(|summary| summary.id == session.game_id)
-                            .cloned()
-                        {
-                            self.open_board(context, summary.session());
-                        } else {
-                            self.notice = Some(
-                                "The saved game is no longer active; stale reconnect state was cleared."
-                                    .to_owned(),
-                            );
-                            self.discard_game(context, &session.game_id);
+                    let recovered = self.reconcile_accepted_challenge_from_playing(context);
+                    if !recovered {
+                        if let Some(session) = self.session.clone() {
+                            if let Some(summary) = self
+                                .summaries
+                                .iter()
+                                .find(|summary| summary.id == session.game_id)
+                                .cloned()
+                            {
+                                self.open_board(context, summary.session());
+                            } else {
+                                self.notice = Some(
+                                    "The saved game is no longer active; stale reconnect state was cleared."
+                                        .to_owned(),
+                                );
+                                self.discard_game(context, &session.game_id);
+                            }
                         }
                     }
                 } else {
@@ -1888,6 +1952,7 @@ impl Lichess {
                         "The event stream record was malformed; reopening without replay."
                             .to_owned(),
                     );
+                    self.recover_accepted_challenge(context);
                     self.close_event(context);
                 }
             }
@@ -2029,6 +2094,7 @@ impl Lichess {
         match pending {
             Pending::EventOpen | Pending::EventNext => {
                 self.notice = Some(Failure::of(error).naming(api::SECRET));
+                self.recover_accepted_challenge(context);
                 self.schedule_event_reconnect(context);
             }
             Pending::BoardOpen(id) | Pending::BoardNext(id) => {
@@ -2184,6 +2250,9 @@ impl Lichess {
     }
 
     fn close_live_reads(&mut self, context: &mut Context) {
+        if self.accepted_challenge.is_some() {
+            self.reconcile_accepted_challenge = true;
+        }
         for (task, pending) in self.tasks.clone() {
             if matches!(
                 pending,
@@ -3061,6 +3130,68 @@ mod tests {
             app.session.as_ref().map(|session| session.game_id.as_str()),
             Some("match123")
         );
+    }
+
+    #[test]
+    fn accepted_challenge_recovers_from_playing_snapshot_after_suspend() {
+        let challenge = Challenge {
+            id: "chall123".to_owned(),
+            challenger: "ReaderTwo".to_owned(),
+            direction: ChallengeDirection::Incoming,
+            status: "created".to_owned(),
+            rated: false,
+            variant: "standard".to_owned(),
+            speed: "rapid".to_owned(),
+            time_control: ChallengeTime::Clock {
+                initial_seconds: Some(600),
+                increment_seconds: Some(0),
+            },
+        };
+        let mut app = Lichess {
+            route: Route::Challenge,
+            challenge: Some(challenge.clone()),
+            accepted_challenge: Some(challenge),
+            reconcile_accepted_challenge: true,
+            ..Lichess::default()
+        };
+        let mut context = Context::default();
+        app.handle_completed(
+            &mut context,
+            Pending::Playing,
+            br#"{"nowPlaying":[{"gameId":"match123","color":"black","rated":false,"source":"friend","speed":"rapid","variant":{"key":"standard"},"secondsLeft":600,"isMyTurn":false,"lastMove":"","opponent":{"username":"ReaderTwo"}}]}"#,
+        );
+        assert!(app.accepted_challenge.is_none());
+        assert_eq!(app.route, Route::Game);
+        assert_eq!(
+            app.session.as_ref().map(|session| session.game_id.as_str()),
+            Some("match123")
+        );
+
+        let mut missing = Lichess {
+            route: Route::Challenge,
+            accepted_challenge: Some(Challenge {
+                id: "chall123".to_owned(),
+                challenger: "ReaderTwo".to_owned(),
+                direction: ChallengeDirection::Incoming,
+                status: "created".to_owned(),
+                rated: false,
+                variant: "standard".to_owned(),
+                speed: "rapid".to_owned(),
+                time_control: ChallengeTime::Clock {
+                    initial_seconds: Some(600),
+                    increment_seconds: Some(0),
+                },
+            }),
+            reconcile_accepted_challenge: true,
+            ..Lichess::default()
+        };
+        missing.handle_completed(
+            &mut Context::default(),
+            Pending::Playing,
+            br#"{"nowPlaying":[]}"#,
+        );
+        assert!(missing.accepted_challenge.is_none());
+        assert_eq!(missing.route, Route::Play);
     }
 
     #[test]
