@@ -2263,7 +2263,7 @@ impl Screen {
                 cursor = max(cursor, content_bottom.saturating_sub(trailing));
                 continue;
             }
-            let bottom = if matches!(node, Node::Splash { .. }) {
+            let bottom = if matches!(node, Node::Splash { .. } | Node::Terminal { .. }) {
                 content_bottom.saturating_sub(trailing_height(
                     &self.nodes[position + 1..],
                     margin,
@@ -7765,9 +7765,11 @@ fn layout_node(
         Node::Terminal { id, rows, cursor } => {
             let (cell_width, cell_height) = mono_cell(TERMINAL_SIZE);
             let columns = (width / max(1, cell_width)).clamp(0, MAX_TERMINAL_COLUMNS as i32);
+            let visible_rows =
+                (bottom.saturating_sub(y) / max(1, cell_height)).clamp(0, MAX_TERMINAL_ROWS as i32);
             let lines: Vec<String> = rows
                 .iter()
-                .take(MAX_TERMINAL_ROWS)
+                .take(visible_rows as usize)
                 // Clipped, never wrapped. A row that overflowed onto the next
                 // one would shift every row below it and the grid would stop
                 // being a grid.
@@ -7859,11 +7861,13 @@ pub fn terminal_grid_for(screen: &Screen, metrics: &DisplayMetrics) -> (u16, u16
             ) && node.rect.y >= terminal.rect.y.saturating_add(terminal.rect.height)
         })
         .map(|node| node.rect.y)
-        .min()
-        .unwrap_or(bottom);
+        .min();
+    // Flow layout inserts one small gap after the empty terminal before the
+    // first trailing node. That gap is not terminal capacity.
+    let terminal_bottom = floor.map_or(bottom, |y| y.saturating_sub(metrics.space(Space::Small)));
     terminal_grid(
         terminal.rect.width,
-        min(floor, bottom).saturating_sub(terminal.rect.y),
+        min(terminal_bottom, bottom).saturating_sub(terminal.rect.y),
     )
 }
 

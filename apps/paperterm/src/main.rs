@@ -672,4 +672,69 @@ mod tests {
             Some(&Command::SetOrientation(Orientation::Landscape))
         );
     }
+
+    #[test]
+    fn terminal_rows_never_push_enabled_controls_off_panel() {
+        for metrics in [
+            CLARA_BW_METRICS,
+            CLARA_BW_METRICS.oriented(Orientation::Landscape),
+        ] {
+            for input in [Input::Controls, Input::Full] {
+                let app = Paperterm {
+                    view: View::Watching,
+                    input,
+                    rows: vec!["terminal row".to_owned(); 64],
+                    ..Paperterm::default()
+                };
+                let screen = app.screen();
+                let chrome = Chrome::measuring(true);
+                assert!(
+                    screen.diagnostics(&metrics, &chrome).issues.is_empty(),
+                    "{input:?} controls were clipped at {}x{}",
+                    metrics.width,
+                    metrics.height
+                );
+                let required = match input {
+                    Input::Controls => CONTROL_KEYS
+                        .iter()
+                        .map(|(name, _, _)| action_id(name))
+                        .collect::<Vec<_>>(),
+                    Input::Full => ["term.esc", "term.right", "kb.r0c0", "kb.enter"]
+                        .map(action_id)
+                        .to_vec(),
+                    Input::None => unreachable!(),
+                };
+                let layout = screen.layout_with(&metrics, &chrome);
+                for action in required {
+                    assert!(
+                        layout.rect_of_action(action).is_some(),
+                        "{input:?} action {action:?} was not visible at {}x{}",
+                        metrics.width,
+                        metrics.height
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn negotiated_grid_matches_the_rows_the_layout_can_show() {
+        let metrics = CLARA_BW_METRICS.oriented(Orientation::Landscape);
+        let (_, rows) = kobo_sdk::terminal_grid_for(&Paperterm::screen_for_grid(), &metrics);
+        let app = Paperterm {
+            view: View::Watching,
+            input: Input::Full,
+            rows: vec!["terminal row".to_owned(); usize::from(rows)],
+            ..Paperterm::default()
+        };
+        let layout = app.screen().layout_with(&metrics, &Chrome::measuring(true));
+        let shown = layout
+            .nodes
+            .iter()
+            .find(|node| node.kind == kobo_ui::LayoutKind::TerminalGrid)
+            .expect("terminal")
+            .text_lines
+            .len();
+        assert_eq!(shown, usize::from(rows));
+    }
 }

@@ -27,4 +27,5 @@ request and checks that control-mode input is in this same closed list.
 The mirror uses the platform terminal node and its measured grid. Received
 deltas update only changed rows; an empty poll paints nothing. Text styling is
 discarded except for the cursor, so the panel earns its repaints rather than
-pretending to be an LCD terminal.
+pretending to be an LCD terminal. The responsive terminal layout clips excess
+rows before layout, so controls and every enabled keyboard key remain visible.
