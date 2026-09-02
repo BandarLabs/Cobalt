@@ -20,6 +20,10 @@ jobs:
       - name: Install the ARM cross-compiler the packaging tests look for
         run: sudo apt-get update && sudo apt-get install --yes gcc-arm-linux-gnueabihf
       - run: cargo fmt --all -- --check
+      - name: Test the POSIX host installer
+        run: |
+          sh -n install.sh docs/install.sh tools/installer-test.sh tools/build-host-release.sh
+          tools/installer-test.sh
       - run: node --test tools/*.test.mjs
       - name: Require current generated app pages
         run: |
@@ -100,6 +104,46 @@ jobs:
             --registry apps/catalog.json \
             --published-catalog published-state/cobalt-app-catalog.json \
             --base "$published_sha"
+
+  host-release-build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-x86_64
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+            cc: ""
+          - platform: macos-arm64
+            runner: macos-14
+            target: aarch64-apple-darwin
+            cc: ""
+          - platform: linux-x86_64
+            runner: ubuntu-22.04
+            target: x86_64-unknown-linux-musl
+            cc: musl-gcc
+          - platform: linux-arm64
+            runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-musl
+            cc: musl-gcc
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.85.1
+          targets: ${{ matrix.target }}
+      - name: Install Linux host tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes musl-tools
+      - name: Build release host binary
+        env:
+          CC_x86_64_unknown_linux_musl: ${{ matrix.cc }}
+          CC_aarch64_unknown_linux_musl: ${{ matrix.cc }}
+        run: |
+          cargo build --locked --release -p kobo-cli --target "${{ matrix.target }}"
+          test -x "target/${{ matrix.target }}/release/kobo"
+          echo "built ${{ matrix.platform }}"
 
   advisories:
     runs-on: ubuntu-latest
