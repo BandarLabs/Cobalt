@@ -116,6 +116,11 @@ usual names and names the package to install when there is none. Rust code is
 linked by `rust-lld`, which ships with the toolchain. The resulting binaries
 are statically linked and need no library installed on the reader.
 
+The attended
+[N365 same-process Nickel candidate](N365_PAUSE_RESUME_CANDIDATE.md) is gated
+to one exact firmware profile and includes its trace-derived acceptance and
+rollback procedure.
+
 ## Before you commit a credential by accident
 
 A key must never reach a commit. `tools/pre-commit` refuses one, and is
