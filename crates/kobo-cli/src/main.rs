@@ -1530,7 +1530,7 @@ fn build_device(device: bool) -> Result<(), String> {
     run_status(&mut command, "cargo build")?;
     if device {
         for name in DEVICE_PACKAGES {
-            let binary = Path::new("target/armv7-unknown-linux-musleabihf/release").join(name);
+            let binary = workspace_device_binary(name);
             verify_arm_elf(&binary)?;
             println!(
                 "verified static ARMv7 hard-float binary: {}",
@@ -2599,11 +2599,44 @@ fn workspace_manifest() -> PathBuf {
 ///
 /// Pinning it to this manifest means an uploaded artifact always comes from the
 /// reviewed source tree rather than whatever workspace the caller stood in.
+/// Cargo resolves a relative `CARGO_TARGET_DIR` from its invoking current
+/// directory, not from the manifest's workspace.
 fn workspace_device_binary(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join("target/armv7-unknown-linux-musleabihf/release")
+    workspace_target_directory()
+        .join("armv7-unknown-linux-musleabihf/release")
         .join(name)
+}
+
+fn workspace_host_binary(name: &str) -> PathBuf {
+    workspace_target_directory().join("debug").join(name)
+}
+
+fn workspace_target_directory() -> PathBuf {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let invocation = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    configured_target_directory(
+        &workspace,
+        &invocation,
+        env::var_os("CARGO_TARGET_DIR").as_deref(),
+    )
+}
+
+fn configured_target_directory(
+    workspace: &Path,
+    invocation: &Path,
+    configured: Option<&OsStr>,
+) -> PathBuf {
+    configured.map_or_else(
+        || workspace.join("target"),
+        |target| {
+            let target = Path::new(target);
+            if target.is_absolute() {
+                target.to_path_buf()
+            } else {
+                invocation.join(target)
+            }
+        },
+    )
 }
 
 fn workspace_doctor_binary() -> PathBuf {
@@ -3145,7 +3178,7 @@ fn build_package_bytes() -> Result<BuiltPackage, String> {
             &mut device_build_command(name, *features)?,
             format!("cargo build {name}"),
         )?;
-        let binary = Path::new("target/armv7-unknown-linux-musleabihf/release").join(name);
+        let binary = workspace_device_binary(name);
         // The same check the device build already applies, repeated here
         // because this is the artifact somebody else's device will run.
         verify_arm_elf(&binary)?;
@@ -4390,7 +4423,7 @@ fn run_simulation(arguments: &[String]) -> Result<(), String> {
         ));
     }
 
-    let app_status = Command::new(format!("target/debug/{package}"))
+    let app_status = Command::new(workspace_host_binary(package))
         .env("KOBO_SOCKET", &simulation.socket)
         .env("KOBO_SIM_ONESHOT", "1")
         .status()
@@ -4503,7 +4536,7 @@ impl SimulationGuard {
     }
 
     fn spawn_daemon(&mut self) -> Result<(), String> {
-        let daemon = Command::new("target/debug/kobod")
+        let daemon = Command::new(workspace_host_binary("kobod"))
             .args(["--sim-socket"])
             .arg(&self.socket)
             .arg("--frame")
@@ -6127,19 +6160,18 @@ mod tests {
 
     use super::package;
     use super::{
-        build_executables, canonical, is_device_flag, manifest_uses_sdk, normalise_secret_value,
-        parse_deploy, parse_devices, parse_logs, parse_touch_probe, unreachable_device,
-        valid_device_host, valid_slug, verify_arm_elf, wait_for_remote_child,
-        workspace_doctor_binary, DevSessionGuard, RemoteArtifact, SimulationGuard, ALIASES,
+        build_executables, canonical, configured_target_directory, is_device_flag,
+        manifest_uses_sdk, normalise_secret_value, parse_deploy, parse_devices, parse_logs,
+        parse_touch_probe, unreachable_device, valid_device_host, valid_slug, verify_arm_elf,
+        wait_for_remote_child, DevSessionGuard, RemoteArtifact, SimulationGuard, ALIASES,
         DEFAULT_TRACE_LINES, DEPLOY_TIMEOUT, DEVICE_PACKAGES, TOUCH_PROBE_DEFAULT_SECONDS,
         TOUCH_PROBE_MAXIMUM_SECONDS,
     };
     #[cfg(feature = "device-write")]
     use super::{
-        parse_guard_test, parse_smoke_display, run, workspace_smoke_binary, RemoteArtifactSession,
-        RemoteProgram, SmokeStage, GUARD_TEST_CHILD, GUARD_TEST_CONFIRMATION,
-        REMOTE_CLEANUP_TIMEOUT, REMOTE_COMMAND_TIMEOUT, REMOTE_CONNECT_TIMEOUT_SECONDS,
-        REMOTE_SMOKE_TIMEOUT_SECONDS,
+        parse_guard_test, parse_smoke_display, run, RemoteArtifactSession, RemoteProgram,
+        SmokeStage, GUARD_TEST_CHILD, GUARD_TEST_CONFIRMATION, REMOTE_CLEANUP_TIMEOUT,
+        REMOTE_COMMAND_TIMEOUT, REMOTE_CONNECT_TIMEOUT_SECONDS, REMOTE_SMOKE_TIMEOUT_SECONDS,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -6682,18 +6714,33 @@ mod tests {
         assert!(!valid_device_host(""));
         assert!(!valid_device_host("reader;reboot"));
         assert!(!valid_device_host("reader name"));
+    }
+
+    #[test]
+    fn cargo_target_dir_resolves_exactly_like_the_build_invocation() {
+        let workspace = PathBuf::from("/source/cobalt");
+        let invocation = PathBuf::from("/runner/jobs/package");
+        let relative = std::ffi::OsStr::new("../../cobalt-targets");
+        let resolved = configured_target_directory(&workspace, &invocation, Some(relative));
+        assert_eq!(resolved, invocation.join(relative));
+        assert_ne!(resolved, workspace.join(relative));
         assert_eq!(
-            workspace_doctor_binary(),
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../..")
-                .join("target/armv7-unknown-linux-musleabihf/release/kobo-doctor")
+            resolved.join("armv7-unknown-linux-musleabihf/release/kobod"),
+            invocation
+                .join(relative)
+                .join("armv7-unknown-linux-musleabihf/release/kobod")
         );
-        #[cfg(feature = "device-write")]
         assert_eq!(
-            workspace_smoke_binary(),
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../..")
-                .join("target/armv7-unknown-linux-musleabihf/release/kobo-smoke")
+            configured_target_directory(&workspace, &invocation, None),
+            workspace.join("target")
+        );
+        assert_eq!(
+            configured_target_directory(
+                &workspace,
+                &invocation,
+                Some(std::ffi::OsStr::new("/external/cobalt-targets"))
+            ),
+            PathBuf::from("/external/cobalt-targets")
         );
     }
 
