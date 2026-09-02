@@ -154,6 +154,26 @@ jobs:
                 provenance_loaded=true
               fi
             fi
+            if [ "$provenance_loaded" = true ]; then
+              archive_run="$(
+                node -p 'require(process.argv[1]).workflow_run_id' \
+                  ./published-app-catalog-provenance.json
+              )"
+              archive_attempt="$(
+                node -p 'require(process.argv[1]).workflow_run_attempt' \
+                  ./published-app-catalog-provenance.json
+              )"
+              archive_catalog="cobalt-app-catalog-${archive_run}-${archive_attempt}.json"
+              archive_signature="${archive_catalog}.sig"
+              archive_provenance="cobalt-app-catalog-provenance-${archive_run}-${archive_attempt}.json"
+              for archive_name in \
+                "$archive_catalog" "$archive_signature" "$archive_provenance"
+              do
+                if [ -z "$(asset_id "$release_state" "$archive_name")" ]; then
+                  repair=true
+                fi
+              done
+            fi
             if [ "$provenance_loaded" = false ]; then
               # shellcheck disable=SC2016
               transaction="$(

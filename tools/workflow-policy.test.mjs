@@ -45,4 +45,9 @@ test("Beta and Stable retain immutable transaction assets for rollback", () => {
   assert.match(promotion, /cmp "\$package"/);
   assert.match(apps, /archive_name="cobalt-app-catalog-\$\{archive_run\}-\$\{archive_attempt\}\.json"/);
   assert.match(apps, /api_download_asset published-app-catalog\.json "\$archive_id"/);
+  assert.match(apps, /archive_signature="\$\{archive_catalog\}\.sig"/);
+  assert.match(
+    apps,
+    /archive_provenance="cobalt-app-catalog-provenance-\$\{archive_run\}-\$\{archive_attempt\}\.json"/
+  );
 });
