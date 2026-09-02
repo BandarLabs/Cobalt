@@ -27,6 +27,26 @@ const AUDIOBOOK_VOICES: [&str; 6] = [
 /// header convention, request kind, exact HTTPS origin, path, and query.
 #[must_use]
 pub fn allowed(app: &str, credential: &Credential, url: &str, usage: CredentialUse) -> bool {
+    allowed_request(app, credential, url, usage, None, None)
+}
+
+/// The complete credential decision, including the body shape of writes.
+///
+/// The shorter [`allowed`] entry point remains for read-only callers and
+/// tests. A state-changing API must come through this form so permission to
+/// POST one route cannot be stretched into arbitrary parameters.
+#[must_use]
+pub fn allowed_request(
+    app: &str,
+    credential: &Credential,
+    url: &str,
+    usage: CredentialUse,
+    body: Option<&str>,
+    content_type: Option<&str>,
+) -> bool {
+    if app == "lichess" {
+        return lichess_credential_allowed(credential, url, usage, body, content_type);
+    }
     if app == "zotero-reader" {
         return usage == CredentialUse::Fetch && zotero_credential_allowed(credential, url);
     }
@@ -74,6 +94,91 @@ pub fn allowed(app: &str, credential: &Credential, url: &str, usage: CredentialU
         }
         _ => false,
     }
+}
+
+fn lichess_credential_allowed(
+    credential: &Credential,
+    url: &str,
+    usage: CredentialUse,
+    body: Option<&str>,
+    content_type: Option<&str>,
+) -> bool {
+    if credential.secret != "lichess"
+        || credential.header != SecretHeader::Bearer
+        || !has_origin(url, "lichess.org", 443)
+    {
+        return false;
+    }
+    let Ok(target) = parse(url) else {
+        return false;
+    };
+    if target.path.contains(['%', '\\', '#'])
+        || target.path.starts_with("//")
+        || target
+            .path
+            .split('/')
+            .any(|part| matches!(part, "." | ".."))
+    {
+        return false;
+    }
+    match usage {
+        CredentialUse::Fetch => {
+            body.is_none()
+                && content_type.is_none()
+                && (matches!(
+                    target.path.as_str(),
+                    "/api/account"
+                        | "/api/account/playing"
+                        | "/api/stream/event"
+                        | "/api/puzzle/batch/mix?nb=32&difficulty=normal"
+                ) || target
+                    .path
+                    .strip_prefix("/api/board/game/stream/")
+                    .is_some_and(lichess_id))
+        }
+        CredentialUse::Post => {
+            content_type == Some("application/x-www-form-urlencoded")
+                && body.is_some_and(|body| lichess_post(&target.path, body))
+        }
+    }
+}
+
+fn lichess_post(path: &str, body: &str) -> bool {
+    if path == "/api/board/seek" {
+        return body == "rated=true&time=10&increment=0&variant=standard&color=random";
+    }
+    let parts = path.trim_start_matches('/').split('/').collect::<Vec<_>>();
+    match parts.as_slice() {
+        ["api", "board", "game", game, "move", movement] => {
+            body.is_empty() && lichess_id(game) && uci_move(movement)
+        }
+        ["api", "board", "game", game, action]
+            if matches!(*action, "resign" | "abort" | "claim-victory") =>
+        {
+            body.is_empty() && lichess_id(game)
+        }
+        ["api", "board", "game", game, "draw", answer] => {
+            body.is_empty() && lichess_id(game) && matches!(*answer, "yes" | "no")
+        }
+        ["api", "challenge", challenge, action] if matches!(*action, "accept" | "decline") => {
+            body.is_empty() && lichess_id(challenge)
+        }
+        _ => false,
+    }
+}
+
+fn lichess_id(value: &str) -> bool {
+    (8..=16).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_alphanumeric())
+}
+
+fn uci_move(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    matches!(bytes.len(), 4 | 5)
+        && matches!(bytes[0], b'a'..=b'h')
+        && matches!(bytes[1], b'1'..=b'8')
+        && matches!(bytes[2], b'a'..=b'h')
+        && matches!(bytes[3], b'1'..=b'8')
+        && (bytes.len() == 4 || matches!(bytes[4], b'q' | b'r' | b'b' | b'n'))
 }
 
 /// Binds a dedicated Zotero key to the exact read endpoints used by Zotero
@@ -159,7 +264,7 @@ fn zotero_key(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{allowed, AUDIOBOOK_VOICES};
+    use super::{allowed, allowed_request, AUDIOBOOK_VOICES};
     use kobo_protocol::{Credential, CredentialUse};
 
     #[test]
@@ -231,6 +336,124 @@ mod tests {
                 CredentialUse::Fetch
             ));
         }
+    }
+
+    #[test]
+    fn lichess_token_is_bound_to_the_board_api_routes_the_app_uses() {
+        let token = Credential::bearer("lichess");
+        for url in [
+            "https://lichess.org/api/account",
+            "https://lichess.org/api/account/playing",
+            "https://lichess.org/api/stream/event",
+            "https://lichess.org/api/board/game/stream/abcdEF12",
+            "https://lichess.org/api/puzzle/batch/mix?nb=32&difficulty=normal",
+        ] {
+            assert!(
+                allowed("lichess", &token, url, CredentialUse::Fetch),
+                "{url}"
+            );
+        }
+        for (url, body) in [
+            (
+                "https://lichess.org/api/board/seek",
+                "rated=true&time=10&increment=0&variant=standard&color=random",
+            ),
+            ("https://lichess.org/api/board/game/abcdEF12/move/e2e4", ""),
+            ("https://lichess.org/api/board/game/abcdEF12/resign", ""),
+            ("https://lichess.org/api/board/game/abcdEF12/abort", ""),
+            (
+                "https://lichess.org/api/board/game/abcdEF12/claim-victory",
+                "",
+            ),
+            ("https://lichess.org/api/board/game/abcdEF12/draw/yes", ""),
+            ("https://lichess.org/api/board/game/abcdEF12/draw/no", ""),
+            ("https://lichess.org/api/challenge/abcdEF12/accept", ""),
+            ("https://lichess.org/api/challenge/abcdEF12/decline", ""),
+        ] {
+            assert!(
+                allowed_request(
+                    "lichess",
+                    &token,
+                    url,
+                    CredentialUse::Post,
+                    Some(body),
+                    Some("application/x-www-form-urlencoded"),
+                ),
+                "{url}"
+            );
+        }
+    }
+
+    #[test]
+    fn lichess_policy_refuses_origin_path_method_and_body_expansion() {
+        let token = Credential::bearer("lichess");
+        for url in [
+            "http://lichess.org/api/account",
+            "https://lichess.org:8443/api/account",
+            "https://lichess.org.attacker.invalid/api/account",
+            "https://user@lichess.org/api/account",
+            "https://lichess.org/api/token",
+            "https://lichess.org/api/board/game/stream/short",
+            "https://lichess.org/api/board/game/stream/abcdEF12?token=leak",
+            "https://lichess.org/api/board/game/stream/%2e%2e",
+        ] {
+            assert!(
+                !allowed("lichess", &token, url, CredentialUse::Fetch),
+                "{url}"
+            );
+        }
+        for (url, body, content_type) in [
+            (
+                "https://lichess.org/api/board/seek",
+                "rated=false&time=10&increment=0&variant=standard&color=random",
+                "application/x-www-form-urlencoded",
+            ),
+            (
+                "https://lichess.org/api/board/seek",
+                "rated=true&time=10&increment=0&variant=standard&color=random&extra=1",
+                "application/x-www-form-urlencoded",
+            ),
+            (
+                "https://lichess.org/api/board/game/abcdEF12/move/e2e4",
+                "again=1",
+                "application/x-www-form-urlencoded",
+            ),
+            (
+                "https://lichess.org/api/board/game/abcdEF12/move/e2e9",
+                "",
+                "application/x-www-form-urlencoded",
+            ),
+            (
+                "https://lichess.org/api/board/game/abcdEF12/resign",
+                "",
+                "application/json",
+            ),
+        ] {
+            assert!(!allowed_request(
+                "lichess",
+                &token,
+                url,
+                CredentialUse::Post,
+                Some(body),
+                Some(content_type),
+            ));
+        }
+        assert!(!allowed_request(
+            "other",
+            &token,
+            "https://lichess.org/api/account",
+            CredentialUse::Fetch,
+            None,
+            None,
+        ));
+        assert!(!allowed_request(
+            "lichess",
+            &Credential::bearer("other"),
+            "https://lichess.org/api/account",
+            CredentialUse::Fetch,
+            None,
+            None,
+        ));
     }
 
     #[test]

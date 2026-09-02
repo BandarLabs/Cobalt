@@ -2109,11 +2109,21 @@ fn simulated_tasks(name: &str) -> TaskRunner {
     // and could only ever be run on hardware.
     let app = name.to_owned();
     runner
-        .with_fetch(Arc::new(kobo_net::fetch_from))
-        .with_post(Arc::new(kobo_net::post))
-        .with_credential_policy(Arc::new(move |credential, url, usage| {
-            kobo_policy::credentials::allowed(&app, credential, url, usage)
-        }))
+        .with_fetch(Arc::new(kobo_net::fetch_from_controlled))
+        .with_post(Arc::new(kobo_net::post_controlled))
+        .with_line_streams(Arc::new(kobo_net::LineStreams::default()))
+        .with_credential_policy(Arc::new(
+            move |credential, url, usage, body, content_type| {
+                kobo_policy::credentials::allowed_request(
+                    &app,
+                    credential,
+                    url,
+                    usage,
+                    body,
+                    content_type,
+                )
+            },
+        ))
         .with_capabilities([kobo_policy::Capability::Network])
 }
 

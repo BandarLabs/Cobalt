@@ -25,15 +25,19 @@
 //! maintained ring provider instead of an experimental provider.
 
 pub mod gzip;
+mod lines;
 pub mod pem;
 pub mod serve;
 pub mod sha256;
+
+pub use lines::{LineStreamAction, LineStreams};
 
 use kobo_protocol::TaskError;
 use std::borrow::Cow;
 use std::fmt::Write as _;
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -56,8 +60,25 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 /// was the runtime giving up, not the network.
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(180);
 
+/// How often a blocking socket wakes to notice task cancellation.
+const IO_POLL: Duration = Duration::from_millis(250);
+
 /// The largest response header block accepted before the body is refused.
 const MAX_HEADER_BYTES: usize = 32 * 1024;
+
+/// A malicious server cannot ask an e-reader UI to suppress retry forever.
+const MAX_RETRY_AFTER_SECONDS: u32 = 60 * 60;
+
+/// Runtime-only behavior layered on the existing protocol-11 request shape.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RequestOptions {
+    /// Return a small status envelope for HTTP 429 instead of flattening it
+    /// into `NotFound`, so an opted-in application can honor `Retry-After`.
+    pub report_rate_limit: bool,
+    /// Keep a successful POST open until its task is cancelled, discarding
+    /// blank keepalives. This is for APIs whose open request is the resource.
+    pub wait_until_cancelled: bool,
+}
 
 /// Where Linux lists the routes it holds, and so whether there is a network.
 const ROUTE_TABLE: &str = "/proc/net/route";
@@ -190,6 +211,46 @@ pub enum Response<'a> {
     Body(Cow<'a, [u8]>),
     /// The value of the `Location` header, which may be relative.
     Redirect(String),
+}
+
+/// A protocol-neutral body used only by requests that explicitly opt in to
+/// HTTP rate-limit metadata.
+///
+/// It travels as ordinary task bytes, so the protocol remains version 11.
+/// The upstream response body is deliberately omitted: rate-limit pages often
+/// contain request identifiers and are not needed to decide when to retry.
+fn rate_limit_envelope(seconds: Option<u32>) -> Vec<u8> {
+    format!(
+        "COBALT-HTTP/1 429\nRetry-After: {}\n\n",
+        seconds.map_or_else(|| "-".to_owned(), |seconds| seconds.to_string())
+    )
+    .into_bytes()
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RateLimit {
+    No,
+    Limited(Option<u32>),
+}
+
+/// Reads bounded rate-limit metadata without retaining the response body.
+fn rate_limit(response: &[u8]) -> Result<RateLimit, TaskError> {
+    let mut headers = [httparse::EMPTY_HEADER; MAX_RESPONSE_HEADERS];
+    let mut parsed = httparse::Response::new(&mut headers);
+    match parsed.parse(response) {
+        Ok(httparse::Status::Complete(end)) if end <= MAX_HEADER_BYTES => {}
+        Ok(httparse::Status::Complete(_) | httparse::Status::Partial) | Err(_) => {
+            return Err(TaskError::Unreachable);
+        }
+    }
+    if parsed.code != Some(429) {
+        return Ok(RateLimit::No);
+    }
+    Ok(RateLimit::Limited(
+        header(parsed.headers, "retry-after")
+            .and_then(|value| value.parse::<u32>().ok())
+            .map(|seconds| seconds.min(MAX_RETRY_AFTER_SECONDS)),
+    ))
 }
 
 /// Separates a response into its status code and its body.
@@ -430,7 +491,16 @@ fn decode_chunked(mut body: &[u8]) -> Result<Vec<u8>, TaskError> {
 /// past the ceiling is [`TaskError::TooLarge`], and a refusal by the server is
 /// [`TaskError::NotFound`].
 pub fn fetch(url: &str, max_bytes: u32) -> Result<Vec<u8>, TaskError> {
-    get(url, None, max_bytes, None, &[])
+    let cancel = AtomicBool::new(false);
+    get(
+        url,
+        None,
+        max_bytes,
+        None,
+        &[],
+        RequestOptions::default(),
+        &cancel,
+    )
 }
 
 /// Fetches `url` starting `offset` bytes in, returning at most `max_bytes`.
@@ -468,6 +538,36 @@ pub fn fetch_from(
     credential: Option<(&str, &str)>,
     headers: &[(&str, &str)],
 ) -> Result<Vec<u8>, TaskError> {
+    let cancel = AtomicBool::new(false);
+    fetch_from_controlled(
+        url,
+        offset,
+        max_bytes,
+        credential,
+        headers,
+        RequestOptions::default(),
+        &cancel,
+    )
+}
+
+/// The cancellable runtime form of [`fetch_from`].
+///
+/// Applications cannot call this function: the policy runner supplies both
+/// the resolved credential and the runtime-only options.
+///
+/// # Errors
+///
+/// Returns the same bounded transport failures as [`fetch_from`], plus
+/// cancellation as [`TaskError::TimedOut`] for the policy runner to translate.
+pub fn fetch_from_controlled(
+    url: &str,
+    offset: u32,
+    max_bytes: u32,
+    credential: Option<(&str, &str)>,
+    headers: &[(&str, &str)],
+    options: RequestOptions,
+    cancel: &AtomicBool,
+) -> Result<Vec<u8>, TaskError> {
     // The last gate before the socket, and the same one `post` applies to its
     // own headers: both names and values may ultimately originate outside the
     // runtime, so grammar is checked here rather than trusted from upstream.
@@ -481,7 +581,18 @@ pub fn fetch_from(
     {
         return Err(TaskError::Denied);
     }
-    get(url, Some(offset), max_bytes, credential, headers)
+    if options.wait_until_cancelled {
+        return Err(TaskError::Denied);
+    }
+    get(
+        url,
+        Some(offset),
+        max_bytes,
+        credential,
+        headers,
+        options,
+        cancel,
+    )
 }
 
 /// The one implementation behind [`fetch`] and [`fetch_from`].
@@ -491,6 +602,8 @@ fn get(
     max_bytes: u32,
     credential: Option<(&str, &str)>,
     headers: &[(&str, &str)],
+    options: RequestOptions,
+    cancel: &AtomicBool,
 ) -> Result<Vec<u8>, TaskError> {
     let mut target = url.to_string();
     let mut forwarded = headers;
@@ -502,9 +615,16 @@ fn get(
                 offset,
                 credential,
                 headers: forwarded,
+                streaming: false,
             },
             max_bytes,
+            cancel,
         )?;
+        if options.report_rate_limit {
+            if let RateLimit::Limited(delay) = rate_limit(&response)? {
+                return Ok(rate_limit_envelope(delay));
+            }
+        }
         match split_response(&response, max_bytes)? {
             Response::Body(body) => {
                 return if body.len() > max_bytes as usize {
@@ -555,6 +675,9 @@ enum Method<'a> {
         /// them `Range`: that one is derived from `offset` alone, in [`head`],
         /// so an application cannot widen or move the piece it was granted.
         headers: &'a [(&'a str, &'a str)],
+        /// A retained line stream asks for identity encoding and is never put
+        /// in the ordinary idle-connection cache.
+        streaming: bool,
     },
     Post {
         body: &'a [u8],
@@ -604,6 +727,44 @@ pub fn post(
     headers: &[(&str, &str)],
     max_bytes: u32,
 ) -> Result<Vec<u8>, TaskError> {
+    let cancel = AtomicBool::new(false);
+    post_controlled(
+        url,
+        body,
+        content_type,
+        credential,
+        headers,
+        max_bytes,
+        RequestOptions::default(),
+        &cancel,
+    )
+}
+
+/// The cancellable runtime form of [`post`].
+///
+/// A wait-until-cancelled POST is sent exactly once. Once the server accepts
+/// it, body bytes are discarded until the task is cancelled; neither stale
+/// connections nor transport failures ever replay the request.
+///
+/// # Errors
+///
+/// Returns the same bounded transport failures as [`post`]. Cancellation is
+/// returned as [`TaskError::TimedOut`] so the policy runner can report the
+/// task's explicit cancelled outcome.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the runtime transport boundary keeps body, credential, headers, limits, options, and cancellation explicit"
+)]
+pub fn post_controlled(
+    url: &str,
+    body: &[u8],
+    content_type: &str,
+    credential: Option<(&str, &str)>,
+    headers: &[(&str, &str)],
+    max_bytes: u32,
+    options: RequestOptions,
+    cancel: &AtomicBool,
+) -> Result<Vec<u8>, TaskError> {
     // Header grammar is checked by the same maintained types used for URI
     // syntax. This is the last gate before the socket, and both names and
     // values may ultimately originate outside the runtime.
@@ -625,6 +786,17 @@ pub fn post(
         return Err(TaskError::Denied);
     }
     let address = parse(url)?;
+    if options.wait_until_cancelled {
+        return post_until_cancelled(
+            &address,
+            body,
+            content_type,
+            credential,
+            headers,
+            options,
+            cancel,
+        );
+    }
     let response = request(
         &address,
         &Method::Post {
@@ -634,7 +806,13 @@ pub fn post(
             headers,
         },
         max_bytes,
+        cancel,
     )?;
+    if options.report_rate_limit {
+        if let RateLimit::Limited(delay) = rate_limit(&response)? {
+            return Ok(rate_limit_envelope(delay));
+        }
+    }
     match split_response(&response, max_bytes)? {
         Response::Body(body) => {
             if body.len() > max_bytes as usize {
@@ -644,6 +822,105 @@ pub fn post(
             }
         }
         Response::Redirect(_) => Err(TaskError::NotFound),
+    }
+}
+
+fn post_until_cancelled(
+    address: &Address,
+    body: &[u8],
+    content_type: &str,
+    credential: Option<(&str, &str)>,
+    headers: &[(&str, &str)],
+    options: RequestOptions,
+    cancel: &AtomicBool,
+) -> Result<Vec<u8>, TaskError> {
+    let method = Method::Post {
+        body,
+        content_type,
+        credential,
+        headers,
+    };
+    let mut held = connect(address)?;
+    let mut tls = rustls::Stream::new(&mut held.connection, &mut held.socket);
+    tls.write_all(head(address, &method, 1).as_bytes())
+        .and_then(|()| tls.write_all(body))
+        .and_then(|()| tls.flush())
+        .map_err(|_| TaskError::Unreachable)?;
+
+    let mut response = Vec::new();
+    let mut buffer = [0_u8; 4096];
+    let mut last_progress = Instant::now();
+    let status = loop {
+        if cancel.load(Ordering::SeqCst) {
+            return Err(TaskError::TimedOut);
+        }
+        let mut parsed_headers = [httparse::EMPTY_HEADER; MAX_RESPONSE_HEADERS];
+        let mut parsed = httparse::Response::new(&mut parsed_headers);
+        match parsed.parse(&response) {
+            Ok(httparse::Status::Complete(end)) if end <= MAX_HEADER_BYTES => {
+                let status = parsed.code.ok_or(TaskError::Unreachable)?;
+                let delay = (status == 429).then(|| {
+                    header(parsed.headers, "retry-after")
+                        .and_then(|value| value.parse::<u32>().ok())
+                        .map(|seconds| seconds.min(MAX_RETRY_AFTER_SECONDS))
+                });
+                break (status, delay);
+            }
+            Ok(httparse::Status::Complete(_)) | Err(_) => return Err(TaskError::Unreachable),
+            Ok(httparse::Status::Partial) => {}
+        }
+        match tls.read(&mut buffer) {
+            Ok(0) => return Err(TaskError::Unreachable),
+            Ok(read) => {
+                response.extend_from_slice(&buffer[..read]);
+                last_progress = Instant::now();
+                if response.len() > MAX_HEADER_BYTES {
+                    return Err(TaskError::Unreachable);
+                }
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                if last_progress.elapsed() >= RESPONSE_TIMEOUT {
+                    return Err(TaskError::TimedOut);
+                }
+            }
+            Err(_) => return Err(TaskError::Unreachable),
+        }
+    };
+
+    match status {
+        (200..=299, _) => {}
+        (401 | 403, _) => return Err(TaskError::Unauthorized),
+        (429, Some(delay)) if options.report_rate_limit => {
+            return Ok(rate_limit_envelope(delay));
+        }
+        (301..=303 | 307 | 308 | 400..=599, _) => return Err(TaskError::NotFound),
+        _ => return Err(TaskError::Unreachable),
+    }
+
+    loop {
+        if cancel.load(Ordering::SeqCst) {
+            return Err(TaskError::TimedOut);
+        }
+        match tls.read(&mut buffer) {
+            Ok(0) => return Err(TaskError::Unreachable),
+            Ok(_) => last_progress = Instant::now(),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                if last_progress.elapsed() >= RESPONSE_TIMEOUT {
+                    return Err(TaskError::TimedOut);
+                }
+            }
+            Err(_) => return Err(TaskError::Unreachable),
+        }
     }
 }
 
@@ -669,8 +946,16 @@ fn head(address: &Address, method: &Method<'_>, max_bytes: u32) -> String {
     let encoding = match method {
         Method::Get {
             offset: Some(_), ..
+        }
+        | Method::Get {
+            streaming: true, ..
         } => "identity",
-        Method::Get { offset: None, .. } | Method::Post { .. } => "gzip",
+        Method::Get {
+            offset: None,
+            streaming: false,
+            ..
+        }
+        | Method::Post { .. } => "gzip",
     };
     // A POST hangs up after its answer; a GET does not. HTTP/1.1 is
     // persistent by default, so the difference is whether `close` is said at
@@ -688,6 +973,7 @@ fn head(address: &Address, method: &Method<'_>, max_bytes: u32) -> String {
             offset,
             credential,
             headers,
+            ..
         } => {
             // Closed at both ends, because an open-ended range invites the
             // server to send the rest of a book that does not fit. Sent for
@@ -695,7 +981,7 @@ fn head(address: &Address, method: &Method<'_>, max_bytes: u32) -> String {
             // 256 KB of a 738 KB novel without a range is answered with the
             // whole novel, and then rejected by the ceiling.
             if let Some(start) = offset {
-                let last = u64::from(*start) + u64::from(max_bytes) - 1;
+                let last = u64::from(*start) + u64::from(max_bytes.saturating_sub(1));
                 write!(head, "Range: bytes={start}-{last}\r\n")
                     .expect("writing to a String cannot fail");
             }
@@ -928,7 +1214,12 @@ enum Failed {
     Real(TaskError),
 }
 
-fn request(address: &Address, method: &Method<'_>, max_bytes: u32) -> Result<Vec<u8>, TaskError> {
+fn request(
+    address: &Address,
+    method: &Method<'_>,
+    max_bytes: u32,
+    cancel: &AtomicBool,
+) -> Result<Vec<u8>, TaskError> {
     // Only a GET is replayed. A POST that failed after leaving this machine
     // may have been acted on by the far end, and asking a model to answer
     // twice or a daemon to run a command twice is a worse failure than the one
@@ -936,7 +1227,7 @@ fn request(address: &Address, method: &Method<'_>, max_bytes: u32) -> Result<Vec
     let reusable = matches!(method, Method::Get { .. });
     if reusable {
         if let Some(mut held) = take_idle(address) {
-            match exchange(&mut held, address, method, max_bytes) {
+            match exchange(&mut held, address, method, max_bytes, cancel) {
                 Ok((response, again)) => {
                     if again {
                         keep_idle(address, held);
@@ -949,7 +1240,7 @@ fn request(address: &Address, method: &Method<'_>, max_bytes: u32) -> Result<Vec
         }
     }
     let mut held = connect(address)?;
-    match exchange(&mut held, address, method, max_bytes) {
+    match exchange(&mut held, address, method, max_bytes, cancel) {
         Ok((response, again)) => {
             if reusable && again {
                 keep_idle(address, held);
@@ -988,7 +1279,7 @@ fn connect(address: &Address) -> Result<Held, TaskError> {
         .find_map(|address| TcpStream::connect_timeout(&address, CONNECT_TIMEOUT).ok())
         .ok_or_else(could_not_connect)?;
     socket
-        .set_read_timeout(Some(RESPONSE_TIMEOUT))
+        .set_read_timeout(Some(IO_POLL))
         .and_then(|()| socket.set_write_timeout(Some(RESPONSE_TIMEOUT)))
         .map_err(|_| TaskError::Unreachable)?;
     // Nagle's algorithm holds a small write back waiting for company. A
@@ -1005,6 +1296,7 @@ fn exchange(
     address: &Address,
     method: &Method<'_>,
     max_bytes: u32,
+    cancel: &AtomicBool,
 ) -> Result<(Vec<u8>, bool), Failed> {
     let mut tls = rustls::Stream::new(&mut held.connection, &mut held.socket);
     // A write failure here is the ordinary way a pooled connection reports
@@ -1022,7 +1314,11 @@ fn exchange(
     let ceiling = (max_bytes as usize).saturating_add(MAX_HEADER_BYTES);
     let mut response = Vec::new();
     let mut buffer = [0_u8; 8192];
+    let mut last_progress = Instant::now();
     loop {
+        if cancel.load(Ordering::SeqCst) {
+            return Err(Failed::Real(TaskError::TimedOut));
+        }
         // Asked before each read rather than after, so a response that is
         // already complete never waits on a socket that has nothing more to
         // send. Reading to the end of the socket is what made every request
@@ -1049,12 +1345,20 @@ fn exchange(
             }
             Ok(read) => {
                 response.extend_from_slice(&buffer[..read]);
+                last_progress = Instant::now();
                 if response.len() > ceiling {
                     return Err(Failed::Real(TaskError::TooLarge));
                 }
             }
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                return Err(Failed::Real(TaskError::TimedOut))
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                if last_progress.elapsed() >= RESPONSE_TIMEOUT {
+                    return Err(Failed::Real(TaskError::TimedOut));
+                }
             }
             Err(_) if response.is_empty() => return Err(Failed::Stale),
             Err(_) => return Ok((response, false)),
@@ -1396,7 +1700,8 @@ mod tests {
             &Method::Get {
                 offset: None,
                 credential: None,
-                headers: &[]
+                headers: &[],
+                streaming: false,
             },
             1024
         )
@@ -1406,7 +1711,8 @@ mod tests {
             &Method::Get {
                 offset: Some(1024),
                 credential: None,
-                headers: &[]
+                headers: &[],
+                streaming: false,
             },
             1024
         )
@@ -1452,6 +1758,7 @@ mod tests {
                 offset: Some(0),
                 credential: None,
                 headers: &[],
+                streaming: false,
             },
             262_144,
         );
@@ -1469,6 +1776,7 @@ mod tests {
                 offset: Some(262_144),
                 credential: None,
                 headers: &[],
+                streaming: false,
             },
             262_144,
         );
@@ -1488,6 +1796,7 @@ mod tests {
                 offset: None,
                 credential: None,
                 headers: &[],
+                streaming: false,
             },
             262_144,
         );
@@ -1590,6 +1899,7 @@ mod tests {
                 offset: None,
                 credential: None,
                 headers: &[],
+                streaming: false,
             },
             1024,
         );
@@ -1609,6 +1919,28 @@ mod tests {
     fn a_server_refusal_is_reported_as_such() {
         let response = b"HTTP/1.1 404 Not Found\r\n\r\nmissing";
         assert_eq!(split_response(response, CEILING), Err(TaskError::NotFound));
+    }
+
+    #[test]
+    fn rate_limit_metadata_is_bounded_and_contains_no_server_body() {
+        let response =
+            b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 17\r\nContent-Length: 18\r\n\r\nprivate request id";
+        assert_eq!(
+            super::rate_limit(response),
+            Ok(super::RateLimit::Limited(Some(17)))
+        );
+        assert_eq!(
+            String::from_utf8(super::rate_limit_envelope(Some(17))).expect("envelope"),
+            "COBALT-HTTP/1 429\nRetry-After: 17\n\n"
+        );
+        let huge =
+            b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 999999\r\nContent-Length: 0\r\n\r\n";
+        assert_eq!(
+            super::rate_limit(huge),
+            Ok(super::RateLimit::Limited(Some(
+                super::MAX_RETRY_AFTER_SECONDS
+            )))
+        );
     }
 
     #[test]
@@ -1731,6 +2063,7 @@ mod tests {
                 offset: None,
                 credential: None,
                 headers: &[],
+                streaming: false,
             },
             512 * 1024,
         );
@@ -1764,6 +2097,7 @@ mod tests {
                 offset: Some(262_144),
                 credential: None,
                 headers: &[],
+                streaming: false,
             },
             262_144,
         );
@@ -1967,6 +2301,7 @@ mod tests {
                 offset: None,
                 credential: Some(("x-api-key", "not-a-real-key")),
                 headers: &[("anthropic-version", "2023-06-01")],
+                streaming: false,
             },
             1024,
         );

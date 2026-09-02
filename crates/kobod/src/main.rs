@@ -525,8 +525,9 @@ fn serve_application(
     // application made.
     let tasks = std::sync::Arc::new(std::sync::Mutex::new(
         TaskRunner::simulated(std::env::temp_dir())
-            .with_fetch(std::sync::Arc::new(kobo_net::fetch_from))
-            .with_post(std::sync::Arc::new(kobo_net::post))
+            .with_fetch(std::sync::Arc::new(kobo_net::fetch_from_controlled))
+            .with_post(std::sync::Arc::new(kobo_net::post_controlled))
+            .with_line_streams(std::sync::Arc::new(kobo_net::LineStreams::default()))
             .with_capabilities([kobo_policy::Capability::Network]),
     ));
     // Outcomes are delivered from their own thread. This loop blocks on the

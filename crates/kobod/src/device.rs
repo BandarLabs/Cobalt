@@ -2951,12 +2951,22 @@ fn start_application(
     let waker = sender.clone();
     let credential_app = name.clone();
     let tasks = TaskRunner::simulated(std::env::temp_dir())
-        .with_fetch(Arc::new(kobo_net::fetch_from))
-        .with_post(Arc::new(kobo_net::post))
+        .with_fetch(Arc::new(kobo_net::fetch_from_controlled))
+        .with_post(Arc::new(kobo_net::post_controlled))
+        .with_line_streams(Arc::new(kobo_net::LineStreams::default()))
         .with_secrets(SECRETS)
-        .with_credential_policy(Arc::new(move |credential, url, usage| {
-            kobo_policy::credentials::allowed(&credential_app, credential, url, usage)
-        }))
+        .with_credential_policy(Arc::new(
+            move |credential, url, usage, body, content_type| {
+                kobo_policy::credentials::allowed_request(
+                    &credential_app,
+                    credential,
+                    url,
+                    usage,
+                    body,
+                    content_type,
+                )
+            },
+        ))
         .with_wake(Arc::new(move || {
             let _ = waker.send(Event::TaskReady);
         }))
