@@ -129,29 +129,32 @@ the [app request thread](https://github.com/BandarLabs/Cobalt/issues/41).
 
 ## Install
 
-Install [rustup](https://rustup.rs), let it install the stable Rust toolchain,
-then add the ARM target and connect a charged, fully supported reader over USB.
-You do not need a separate operating-system `rust` package; rustup supplies
-`rustc` and `cargo`:
+On macOS or Linux, install the stable release:
 
 ```sh
-rustup toolchain install stable
-git clone https://github.com/BandarLabs/Cobalt.git
-cd Cobalt
-rustup override set stable
-rustup target add armv7-unknown-linux-musleabihf
-cargo run -p kobo-cli -- setup
+curl -fsSL https://github.com/BandarLabs/Cobalt/releases/latest/download/install.sh | sh
 ```
 
-Restart the reader and open **Cobalt** from Kobo's menu. Future applications
-are installed from **Store** over Wi-Fi. Full Cobalt updates remain under
-**Settings**.
+The installer verifies the signed release manifest and SHA-256 checksums,
+installs the `kobo` command without sudo, then guides the USB setup. It supports
+macOS Intel and Apple Silicon, and Linux x86_64 and arm64.
+
+Beta is explicit:
+
+```sh
+curl -fsSL https://github.com/BandarLabs/Cobalt/releases/latest/download/install.sh |
+  sh -s -- --beta
+```
+
+Rerun the same command to update. Restart the reader, wait one minute for
+NickelMenu's failsafe, then open **Cobalt** from Kobo's menu. Future
+applications are installed from **Store** over Wi-Fi.
 
 If you already use NickelMenu, Cobalt is added to it; existing entries are
 left alone.
 
 See [docs/INSTALL.md](docs/INSTALL.md) for the complete walkthrough and
-recovery steps.
+recovery, uninstall, and source-build instructions.
 
 ## App Store
 

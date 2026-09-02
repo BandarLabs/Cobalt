@@ -17,11 +17,10 @@ packaging, so `kobo-sdk` cannot complete its dry run until the preceding crates
 exist in the registry at the same version.
 
 Runtime binaries, CLI tools and examples are distributed from this repository,
-not as library crates. Pushing a tag `vX.Y.Z` from a clean commit runs the
-[release workflow](.github/workflows/release.yml), which checks the tag against
-the workspace version, builds the device package per profile, and publishes a
-GitHub release with assets named `cobalt-X.Y.Z-<device>-KoboRoot.tgz` alongside
-their checksums and third-party notices.
+not as library crates. The beta workflow builds the device package and the
+`kobo` host command for macOS x86_64/arm64 and Linux x86_64/arm64. Host archives
+carry the project license, dependency terms, third-party notices, and exact
+source commit.
 
 ## Stable and beta platform channels
 
@@ -38,7 +37,14 @@ The long-lived `beta` branch is the only source for beta publishing:
   must advance the workspace version for every published test build; an
   existing beta tag or release is never moved or replaced. Assets retain the
   stable deterministic names, including `cobalt-X.Y.Z-KoboRoot.tgz` and
-  `cobalt-X.Y.Z.sha256`.
+  `cobalt-X.Y.Z.sha256`. It also publishes `install.sh`, four
+  `kobo-X.Y.Z-<platform>.tar.gz` archives, and a versioned host manifest.
+  The manifest fixes every host/device asset name, size, SHA-256, version, and
+  source commit. The protected `COBALT_APP_SIGNING_SEED` signs it twice with
+  the repository's existing Ed25519 release key: raw detached form for
+  in-process verification and standard OpenSSH SSHSIG form for the POSIX
+  bootstrap. Pull-request tests use disposable fixture keys and never require
+  the protected seed.
 - `.github/workflows/apps.yml` publishes beta branch apps only to
   `app-catalog-beta`; main continues to publish only to `app-catalog`.
 - `.github/workflows/promote-beta.yml` is a manual, guarded promotion. Supply
@@ -46,9 +52,9 @@ The long-lived `beta` branch is the only source for beta publishing:
   SHA-256, and the exact confirmation `promote-beta-vX.Y.Z`. It requires the
   prerelease tag to target that commit, requires the commit to be in current
   main, enforces the workspace version, verifies the downloaded checksum
-  files and expected archive digest, and publishes those exact bytes as
-  `vX.Y.Z` targeting the tested commit. It never rebuilds or replaces a tag or
-  release.
+  files, both manifest signatures, all host/device manifest entries, and the
+  expected archive digest, then publishes those exact bytes as `vX.Y.Z`
+  targeting the tested commit. It never rebuilds or replaces a tag or release.
 
 Promotion is never automatic. Merge the tested beta commit to main first so
 the main workspace version matches the artifact being promoted.

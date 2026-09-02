@@ -28,38 +28,38 @@ at.
 - A **USB cable** that carries data. Charge-only cables are common and they
   look identical; if the reader charges but never offers to connect, suspect
   the cable before anything else.
-- **An internet connection**, and **`curl`** on your path. Setup downloads
-  NickelMenu v0.6.0 (the one piece that cannot live on the book partition) and
-  checks it against a recorded SHA-256.
-- [**rustup**](https://rustup.rs) with its stable Rust toolchain. You do not
-  need a separate operating-system `rust` package: rustup supplies `rustc` and
-  `cargo`. If stable is not installed, run `rustup toolchain install stable`;
-  the next section selects it only for this checkout.
-- An **ARM cross-compiler**, because the TLS stack carries C and assembly that
-  is built from source. Everything else is linked by `rust-lld`, which the Rust
-  toolchain already ships.
+- An internet connection, `curl` or `wget`, `tar`, and OpenSSH `ssh-keygen`.
+  These are included with current macOS and mainstream Linux distributions.
 
-  ```sh
-  # macOS
-  brew install messense/macos-cross-toolchains/armv7-unknown-linux-musleabihf
-  # Debian or Ubuntu
-  sudo apt-get install gcc-arm-linux-gnueabihf
-  ```
+No Rust toolchain, Git checkout, or ARM cross-compiler is needed for the
+prebuilt installer.
 
-  Cobalt finds it under any of its usual names, and tells you which package to
-  install if it is missing.
+## 1. Install the host command
 
-## 1. Get the code and the cross-compilation target
+Stable is the default:
 
 ```sh
-rustup toolchain install stable
-git clone https://github.com/BandarLabs/Cobalt
-cd Cobalt
-rustup override set stable
-rustup target add armv7-unknown-linux-musleabihf
+curl -fsSL https://github.com/BandarLabs/Cobalt/releases/latest/download/install.sh | sh
 ```
 
-## 2. Connect the reader over USB
+The script selects macOS Intel/Apple Silicon or Linux x86_64/arm64, verifies an
+OpenSSH Ed25519 signature over the versioned release manifest, verifies the
+host and device package sizes and SHA-256 digests, and installs `kobo` under
+`~/.local/bin` without sudo. It prompts through `/dev/tty`, so piping the
+script does not consume its answers.
+
+For the current beta candidate:
+
+```sh
+curl -fsSL https://github.com/BandarLabs/Cobalt/releases/latest/download/install.sh |
+  sh -s -- --beta
+```
+
+To install an exact immutable release, add `--version X.Y.Z`. For CI, use
+`--non-interactive --yes`; add `--no-setup` when no physical reader is
+attached. Beta is never selected implicitly.
+
+## 2. Connect and confirm the reader
 
 This is the step people get stuck on, so in full:
 
@@ -72,28 +72,26 @@ This is the step people get stuck on, so in full:
    volume is the reader's book partition, and it is the only thing Cobalt
    writes to.
 
-Leave it mounted. Setup ejects it for you when it is finished.
+The installer waits for the volume, resolves its friendly model and support
+status through Cobalt's device profiles, then shows the model, device code,
+profile, firmware, mount point, release version/channel, and intended changes.
+It does not print the full serial. The write requires an explicit default-no
+confirmation. Unsupported or changed devices, unsupported firmware, and
+multiple mounted readers are refused.
 
-## 3. Run setup
-
-```sh
-cargo run -p kobo-cli -- setup
-```
-
-That one command builds every device-side program, finds the mounted reader,
-copies Cobalt into `.adds/cobalt`, reads every file back to prove it arrived
-intact, sets the reader's own `ForceWifiOn` and `AutoSleepMinutes` settings,
-stages the **Cobalt** menu entry, and ejects. It builds before it writes
-anything, so a build that fails leaves the reader untouched. It leaves the
-firmware's root SSH server disabled.
-
-The first run takes a while, because it builds the whole workspace for ARM.
+Setup copies the verified prebuilt package directly into `.adds/cobalt`, reads
+every file back byte for byte, preserves installed apps, app state, secrets,
+owner files, and unrelated NickelMenu entries, then ejects where supported.
+Under WSL it tells you to eject from Windows and does not claim WSL ejected it.
+The firmware's root SSH server remains disabled unless `--enable-ssh` is
+explicitly supplied.
 
 The binaries are statically linked, so nothing has to be installed on the
 reader to support them.
 
-Not sure? Add `--dry-run` and it prints every step it would take and touches
-nothing.
+Not sure? Run `kobo setup --dry-run`. If installation was deferred with
+`--no-setup`, run `kobo setup`; the installed command automatically reuses its
+signed prebuilt package.
 
 ## 4. Restart the reader
 
@@ -158,14 +156,14 @@ if an install fails, the previous installed copy remains in place.
   was installed.** A firmware update removes the plugin but leaves its files
   on the book partition, so setup believes NickelMenu is still there and
   stages nothing. Setup says so when it notices the dates disagree. Run
-  `cargo run -p kobo-cli -- setup --menu` to stage NickelMenu again; that
-  keeps every menu entry already on the reader.
+  `kobo setup --menu` to stage NickelMenu again; that keeps every menu entry
+  already on the reader.
 - **The Cobalt entry was there and then vanished.** That is NickelMenu's
   failsafe, which reads any unexpected restart of the reader software as a
   crash and disables itself rather than risk a boot loop. You can confirm it:
   the plugin is left beside itself as `libnm.so.failsafe`. Run
-  `cargo run -p kobo-cli -- setup` again and restart, and this time let the
-  reader sit on its home screen for a minute before touching it.
+  `kobo setup` again and restart, and this time let the reader sit on its home
+  screen for a minute before touching it.
 - **Setup refused to do something.** Read what it printed. It refuses rather
   than guesses, and it names the reason: an unrecognised volume, a menu slot
   another mod is already using, or a file that did not read back byte for byte.
@@ -180,15 +178,43 @@ the firmware's own SSH server so that `kobo deploy` can install without a
 reboot. That is a developer path with its own trade-offs, and it is described
 under [Connecting a device](DEVICES.md#connecting-a-device).
 
+## Updating or building from source
+
+Rerun the same stable or beta installer command to update. The host binary and
+verified release directory are replaced atomically; an interrupted download is
+never activated. Running it again at the same version is safe.
+
+Developers can keep the original source-build path:
+
+```sh
+rustup toolchain install stable
+git clone https://github.com/BandarLabs/Cobalt.git
+cd Cobalt
+rustup override set stable
+rustup target add armv7-unknown-linux-musleabihf
+# macOS: brew install messense/macos-cross-toolchains/armv7-unknown-linux-musleabihf
+# Debian/Ubuntu: sudo apt-get install gcc-arm-linux-gnueabihf
+cargo run -p kobo-cli -- setup --source
+```
+
+`--source` builds the device package before writing. The direct-folder writer,
+profile checks, confirmation, preservation rules, and byte-for-byte readback
+are the same as the prebuilt path.
+
 ## Removing it
 
 Cobalt never writes to the root filesystem, the bootloader, the kernel, a
 partition table or any startup script, so removing it is deleting a folder:
 
 ```sh
-cargo run -p kobo-cli -- setup --undo
+kobo setup --undo
 ```
 
 Or, with no tooling at all, plug the reader in and delete `.adds/cobalt` from
 it. That is the entire uninstall. If you used `--enable-ssh`, `--undo` also
 switches the SSH server back off.
+
+To remove the host command, read `~/.local/share/kobo/install-state`, remove
+only the `binary` path named there and `~/.local/share/kobo`, then remove the
+clearly delimited `Cobalt kobo installer` block from the shell startup file the
+installer reported. Do not delete another `kobo` command at a different path.
