@@ -237,6 +237,16 @@ impl Slack {
             None => Ok(()),
         }
     }
+
+    /// Transfers responsibility for re-arming to out-of-process recovery.
+    ///
+    /// Used only when the runtime cannot safely resume Nickel itself and has
+    /// left the detached recovery watchdog running. Re-arming immediately
+    /// would start a 31-second hardware-reset deadline against a still-paused
+    /// reader, before recovery's first 60-second check.
+    pub fn leave_slack(mut self) {
+        self.restore = None;
+    }
 }
 
 impl Drop for Slack {
@@ -365,6 +375,20 @@ mod tests {
             assert_eq!(fs::read_to_string(&node).expect("read"), "0 31\n");
         }
         assert_eq!(fs::read_to_string(&node).expect("read"), "1 31\n");
+    }
+
+    #[test]
+    fn recovery_can_take_over_without_starting_a_reset_deadline() {
+        let node = scratch("recovery");
+        fs::write(&node, "enabled timeout\n1    31      \n").expect("seed");
+        let slack = SocWatchdog::at(&node).slacken().expect("slacken");
+        assert_eq!(fs::read_to_string(&node).expect("read"), "0 31\n");
+        slack.leave_slack();
+        assert_eq!(
+            fs::read_to_string(&node).expect("read"),
+            "0 31\n",
+            "out-of-process recovery needs longer than the hardware fuse"
+        );
     }
 
     #[test]

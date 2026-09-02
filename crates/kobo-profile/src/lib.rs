@@ -975,6 +975,22 @@ pub struct ValidationReport {
 }
 
 impl DeviceProfile {
+    /// Whether this is the one firmware/hardware profile approved for the
+    /// attended same-process Nickel pause/resume candidate.
+    ///
+    /// Profile resolution has already exact-matched the live serial prefix,
+    /// firmware, kernel, device code, framebuffer and touch identity before
+    /// this method is consulted.
+    #[must_use]
+    pub fn supports_nickel_pause_resume(&self) -> bool {
+        self.id == CLARA_BW_391.id
+            && self.device_code == 391
+            && self.serial_prefix == "N365"
+            && self.firmware_versions == ["4.45.23697"]
+            && self.kernel_release == "4.9.77"
+            && self.framebuffer_controller == FramebufferController::Hwtcon
+    }
+
     #[must_use]
     pub fn validate(&self, snapshot: &DeviceSnapshot) -> ValidationReport {
         let mut mismatches = Vec::new();
@@ -2664,6 +2680,14 @@ mod tests {
         assert_eq!(identity.firmware_version.as_deref(), Some("4.45.23697"));
         assert_eq!(identity.kernel_release.as_deref(), Some("4.9.77"));
         assert_eq!(identity.device_code, Some(391));
+    }
+
+    #[test]
+    fn only_the_exact_n365_profile_allows_same_process_pause_resume() {
+        assert!(CLARA_BW_391.supports_nickel_pause_resume());
+        assert!(!CLARA_BW_395.supports_nickel_pause_resume());
+        assert!(!CLARA_COLOUR_393.supports_nickel_pause_resume());
+        assert!(!LIBRA_2_388.supports_nickel_pause_resume());
     }
 
     #[test]

@@ -47,6 +47,7 @@ use kobo_ui::{
     render_all, ActionId, CellStyle, Chrome, FontHandle, FramePlanner, Layout, LayoutKind,
     PanelWaveform, PictureCache, Screen, Surface,
 };
+use kobo_wifi_trace::{Lifecycle as WifiTraceEvent, TraceClient};
 use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -221,6 +222,8 @@ const BATTERY_INTERVAL: Duration = Duration::from_secs(30);
 
 /// The wireless interface every Kobo names the same thing.
 const WIFI_LINK: &str = "wlan0";
+const N365_PAUSE_UNLOCK_ENV: &str = "KOBO_N365_PAUSE_RESUME";
+const N365_PAUSE_UNLOCK_PHRASE: &str = "OWNER_ATTENDED_N365_NICKEL_PAUSE_RESUME";
 
 /// How often the band is re-read.
 ///
@@ -479,6 +482,26 @@ impl Default for Limits {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NickelHandoff {
+    StopRestart,
+    PauseResume,
+}
+
+impl NickelHandoff {
+    fn manages_network_owners(self) -> bool {
+        matches!(self, Self::StopRestart)
+    }
+}
+
+fn nickel_handoff(profile: &kobo_profile::DeviceProfile, unlock: Option<&str>) -> NickelHandoff {
+    if unlock == Some(N365_PAUSE_UNLOCK_PHRASE) && profile.supports_nickel_pause_resume() {
+        NickelHandoff::PauseResume
+    } else {
+        NickelHandoff::StopRestart
+    }
+}
+
 /// Runs `application` on the panel until it asks to leave, is left alone for
 /// `limits.idle`, or reaches `limits.ceiling`.
 ///
@@ -491,7 +514,11 @@ impl Default for Limits {
 /// Returns an error describing what failed and, always, what state the device
 /// was left in.
 #[allow(clippy::too_many_lines)]
-pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
+pub fn present(
+    application: &Path,
+    limits: Limits,
+    wifi_trace: &mut TraceClient,
+) -> Result<String, String> {
     let limits = Limits {
         idle: limits.idle.min(MAX_SESSION),
         ceiling: limits.ceiling.min(MAX_SESSION),
@@ -538,6 +565,20 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
         .map_err(|error| format!("open display: {error}"))?;
     let profile = display.profile();
     crate::remember_device_profile(profile)?;
+    let nickel_handoff = nickel_handoff(
+        profile,
+        std::env::var(N365_PAUSE_UNLOCK_ENV).ok().as_deref(),
+    );
+    if nickel_handoff == NickelHandoff::PauseResume {
+        if let Err(problems) = kobo_wifi_trace::verify_pause_resume_preflight() {
+            watchdog.disarm();
+            let _ignored = fs::remove_dir_all(&state);
+            return Err(format!(
+                "Nickel pause/resume preflight refused: {}",
+                problems.join("; ")
+            ));
+        }
+    }
 
     // The display's exact profile is now retained for every later layout and
     // hit test. Installing a face may fail, but that is not fatal: `kobo-ui`
@@ -601,31 +642,113 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
         .slacken()
         .map_err(|error| format!("slacken the hardware watchdog: {error}"))?;
 
-    // The point of no return.
-    trace("stopping the reader");
-    reader
-        .stop(STOP_GRACE)
-        .map_err(|error| format!("stop the reader: {error}"))?;
-
-    // Nickel owns Wi-Fi while it runs, but its supplicant and DHCP client are
-    // detached processes. Capture them before the handoff and restore exactly
-    // those processes if stopping Nickel drops the route. Cobalt never invents
-    // a network or starts a daemon that was not already serving the owner.
-    if network.was_online() {
-        if let Some(wifi) = kobo_hal::wifi::Wifi::open() {
-            let reconnected = wifi.set_enabled(true);
+    // The point of no return. The attended N365 candidate freezes the exact
+    // existing Nickel PID/starttime instead of destroying it. Every network
+    // owner therefore remains the process Nickel created at boot; this branch
+    // performs no Wi-Fi recovery, daemon start, daemon stop, or WMT operation.
+    let (mut paused_reader, mut session_network) = if nickel_handoff == NickelHandoff::PauseResume {
+        if let Err(problems) = kobo_wifi_trace::verify_pause_resume_preflight() {
             trace(&format!(
-                "asked the captured Wi-Fi owner to reconnect: {reconnected:?}"
+                "Nickel pause/resume final preflight refused: {}",
+                problems.join("; ")
             ));
+            let _ignored = restore_screen(&display, &backup, whole_screen);
+            let _ignored = touch.release();
+            drop(touch);
+            drop(display);
+            if matches!(reader.is_stopped(), Ok(false)) {
+                let freeze = suspended.resume();
+                let hardware = slack.rearm();
+                if freeze.is_ok() && hardware.is_ok() {
+                    watchdog.disarm();
+                    let _ignored = fs::remove_dir_all(&state);
+                }
+                return Err(format!(
+                    "the final pause/resume ownership preflight failed: {}; freeze watchdog: {freeze:?}; hardware watchdog: {hardware:?}; recovery {}",
+                    problems.join("; "),
+                    if freeze.is_ok() && hardware.is_ok() {
+                        "was disarmed"
+                    } else {
+                        "remains armed"
+                    }
+                ));
+            }
+            slack.leave_slack();
+            return request_clean_reboot().map(|()| {
+                format!(
+                    "the final pause/resume ownership preflight found unsafe Nickel state ({}), so a clean reboot was requested",
+                    problems.join("; ")
+                )
+            });
         }
-    }
-    let session_network = network.restore_for_session(Duration::from_secs(30));
-    trace(&format!(
-        "session network: {:?}; uncertain captures: {:?}; start errors: {:?}",
-        session_network.outcome(),
-        session_network.uncertain_executables(),
-        session_network.start_errors()
-    ));
+        trace("pausing the exact existing reader");
+        wifi_trace.checkpoint(WifiTraceEvent::NickelPauseRequested);
+        let paused = match reader.pause(&state, STOP_GRACE) {
+            Ok(paused) => paused,
+            Err(error) => {
+                trace(&format!("the reader could not be paused safely: {error}"));
+                let _ignored = restore_screen(&display, &backup, whole_screen);
+                let _ignored = touch.release();
+                drop(touch);
+                drop(display);
+                if matches!(reader.is_stopped(), Ok(false)) {
+                    let freeze = suspended.resume();
+                    let hardware = slack.rearm();
+                    if freeze.is_ok() && hardware.is_ok() {
+                        watchdog.disarm();
+                        let _ignored = fs::remove_dir_all(&state);
+                    }
+                    return Err(format!(
+                        "pause the exact reader: {error}; freeze watchdog: {freeze:?}; hardware watchdog: {hardware:?}; recovery {}",
+                        if freeze.is_ok() && hardware.is_ok() {
+                            "was disarmed"
+                        } else {
+                            "remains armed"
+                        }
+                    ));
+                }
+                slack.leave_slack();
+                return request_clean_reboot().map(|()| {
+                    format!(
+                        "the exact reader could not be paused ({error}), so a clean reboot was requested"
+                    )
+                });
+            }
+        };
+        wifi_trace.checkpoint(WifiTraceEvent::NickelPaused);
+        (Some(paused), None)
+    } else {
+        trace("stopping the reader");
+        wifi_trace.checkpoint(WifiTraceEvent::PreStop);
+        reader
+            .stop(STOP_GRACE)
+            .map_err(|error| format!("stop the reader: {error}"))?;
+        wifi_trace.checkpoint(WifiTraceEvent::NickelStopped);
+        wifi_trace.checkpoint(WifiTraceEvent::RecoveryBegin);
+
+        // Nickel owns Wi-Fi while it runs, but its supplicant and DHCP client
+        // are detached processes. Preserve the existing #94 behaviour on every
+        // profile outside the explicit pause candidate.
+        if network.was_online() {
+            if let Some(wifi) = kobo_hal::wifi::Wifi::open() {
+                let reconnected = wifi.set_enabled(true);
+                trace(&format!(
+                    "asked the captured Wi-Fi owner to reconnect: {reconnected:?}"
+                ));
+            }
+        }
+        let restored = network.restore_for_session(Duration::from_secs(30));
+        if network.was_online() && kobo_hal::network::is_online(kobo_hal::network::WIRELESS_LINK) {
+            wifi_trace.checkpoint(WifiTraceEvent::RecoveryFirstSuccess);
+        }
+        trace(&format!(
+            "session network: {:?}; uncertain captures: {:?}; start errors: {:?}",
+            restored.outcome(),
+            restored.uncertain_executables(),
+            restored.start_errors()
+        ));
+        (None, Some(restored))
+    };
 
     // One reader thread on the touch descriptor for the whole panel session,
     // started here rather than per application.
@@ -668,6 +791,7 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
         limits,
         forward_is_194,
         &watchdog,
+        nickel_handoff.manages_network_owners(),
     );
     // No panel work may outlive Cobalt's ownership of the display. This is an
     // explicit lifecycle fence rather than a timing assumption: the stock
@@ -689,29 +813,34 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     // Without this the recovery watchdog would conclude the runtime had died
     // and restart a reader that is already starting.
     let teardown = KeepBeating::start(&watchdog);
-    let captured_supplicant_release_failed = if profile.reap_nickel_supplicant {
-        trace("stopping the captured leftover supplicant before the reader returns");
-        if let Err(error) =
-            network.release_captured(kobo_hal::network::SUPPLICANT_EXECUTABLE, STOP_GRACE)
-        {
-            trace(&format!("the leftover supplicant would not stop: {error}"));
-            true
+    let captured_supplicant_release_failed =
+        if nickel_handoff.manages_network_owners() && profile.reap_nickel_supplicant {
+            trace("stopping the captured leftover supplicant before the reader returns");
+            if let Err(error) =
+                network.release_captured(kobo_hal::network::SUPPLICANT_EXECUTABLE, STOP_GRACE)
+            {
+                trace(&format!("the leftover supplicant would not stop: {error}"));
+                true
+            } else {
+                false
+            }
         } else {
             false
-        }
-    } else {
-        false
-    };
-    let network_start_uncertain = !session_network.start_errors().is_empty()
-        || !session_network.uncertain_executables().is_empty();
-    let network_release_failed = match session_network.release(STOP_GRACE) {
-        Ok(()) => false,
-        Err(errors) => {
-            trace(&format!(
-                "session network would not stop cleanly: {errors:?}"
-            ));
-            true
-        }
+        };
+    let network_start_uncertain = session_network.as_ref().is_some_and(|network| {
+        !network.start_errors().is_empty() || !network.uncertain_executables().is_empty()
+    });
+    let network_release_failed = match session_network.take() {
+        None => false,
+        Some(network) => match network.release(STOP_GRACE) {
+            Ok(()) => false,
+            Err(errors) => {
+                trace(&format!(
+                    "session network would not stop cleanly: {errors:?}"
+                ));
+                true
+            }
+        },
     };
     // Asked once, before the panel is given up, because the answer decides
     // whether the owner is owed an explanation and the display is gone by the
@@ -774,56 +903,146 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
             "{detail}; rebooting cleanly instead of restarting the reader"
         ));
         println!("shared hardware needs a clean handoff; rebooting back to the reader");
-        watchdog.disarm();
-        drop(teardown);
-        let _ignored = fs::remove_dir_all(&state);
         let summary = outcome.unwrap_or_else(|error| format!("application ended: {error}"));
-        return request_clean_reboot().map(|()| {
-            format!(
-                "{summary}; typeface {typeface}; {detail}, so a clean reboot was requested before returning to the stock reader"
-            )
-        });
-    }
-    trace("panel and touch released, restarting the reader");
-    println!("panel released, restarting the reader");
-    let restarted = match reader.start(START_GRACE) {
-        Ok(pid) => pid,
-        Err(error) => {
-            trace(&format!(
-                "the reader did not restart ({error}); requesting a clean reboot"
-            ));
-            watchdog.disarm();
+        if let Some(paused) = paused_reader.take() {
             drop(teardown);
-            let _ignored = fs::remove_dir_all(&state);
-            let summary = outcome.unwrap_or_else(|error| format!("application ended: {error}"));
-            return request_clean_reboot().map(|()| {
-                format!(
-                    "{summary}; typeface {typeface}; the reader did not restart ({error}), so a clean reboot was requested"
-                )
-            });
+            return match request_clean_reboot() {
+                Ok(()) => {
+                    paused.disarm_for_reboot();
+                    watchdog.disarm();
+                    let _ignored = fs::remove_dir_all(&state);
+                    Ok(format!(
+                        "{summary}; typeface {typeface}; {detail}, so a clean reboot was requested before returning to the stock reader"
+                    ))
+                }
+                Err(reboot_error) => {
+                    wifi_trace.checkpoint(WifiTraceEvent::NickelResumeRequested);
+                    let resume = paused.resume(START_GRACE);
+                    if resume.is_ok() {
+                        wifi_trace.checkpoint(WifiTraceEvent::NickelResumed);
+                    }
+                    if resume.is_ok() {
+                        let resumed = suspended.resume_once_fed(WATCHDOG_HANDBACK);
+                        let rearmed = slack.rearm();
+                        watchdog.disarm();
+                        let _ignored = fs::remove_dir_all(&state);
+                        Err(format!(
+                            "{reboot_error}; fallback resume: {resume:?}; freeze watchdog: {resumed:?}; hardware watchdog: {rearmed:?}"
+                        ))
+                    } else {
+                        slack.leave_slack();
+                        Err(format!(
+                            "{reboot_error}; fallback resume failed ({resume:?}); exact pause recovery remains armed"
+                        ))
+                    }
+                }
+            };
         }
-    };
-    // Any daemon Cobalt started for the session was stopped by exact captured
-    // identity above. A stop or capture uncertainty takes the clean-reboot
-    // path, so Nickel is never started on top of an unproven network owner.
-    trace("reader restart returned, waiting for it to feed the freeze watchdog");
-    println!("waiting for the reader to feed the freeze watchdog");
-    let reader_wifi = restore_reader_wifi(network.was_online(), Duration::from_secs(45));
-    if !reader_wifi {
-        trace("the reader did not complete Wi-Fi association; requesting a clean reboot");
-        watchdog.disarm();
-        drop(teardown);
-        let _ignored = fs::remove_dir_all(&state);
-        let summary = outcome.unwrap_or_else(|error| format!("application ended: {error}"));
-        return request_clean_reboot().map(|()| {
-            format!(
-                "{summary}; typeface {typeface}; the reader did not reclaim Wi-Fi, so a clean reboot was requested"
-            )
-        });
+        loop {
+            match request_clean_reboot() {
+                Ok(()) => {
+                    watchdog.disarm();
+                    drop(teardown);
+                    let _ignored = fs::remove_dir_all(&state);
+                    return Ok(format!(
+                        "{summary}; typeface {typeface}; {detail}, so a clean reboot was requested before returning to the stock reader"
+                    ));
+                }
+                Err(error) => {
+                    trace(&format!(
+                        "clean reboot request failed ({error}); keeping recovery armed and retrying in five minutes"
+                    ));
+                    thread::sleep(Duration::from_secs(5 * 60));
+                }
+            }
+        }
     }
-    // Resumed only once the reader is feeding it again. Resuming the moment
-    // the process exists lights a ten second fuse that a still-starting reader
-    // cannot feed, which is what rebooted the device at the end of a session.
+    let (restarted, resumed_same_reader) = if let Some(paused) = paused_reader.take() {
+        trace("panel and touch released, resuming the exact reader");
+        println!("panel released, resuming the reader");
+        wifi_trace.checkpoint(WifiTraceEvent::NickelResumeRequested);
+        match paused.resume(START_GRACE) {
+            Ok(pid) => {
+                wifi_trace.checkpoint(WifiTraceEvent::NickelResumed);
+                (pid, true)
+            }
+            Err(error) => {
+                trace(&format!(
+                    "the exact reader did not resume ({error}); requesting a clean reboot"
+                ));
+                drop(teardown);
+                slack.leave_slack();
+                let summary = outcome.unwrap_or_else(|error| format!("application ended: {error}"));
+                return request_clean_reboot().map(|()| {
+                    format!(
+                        "{summary}; typeface {typeface}; the exact reader did not resume ({error}), so a clean reboot was requested"
+                    )
+                });
+            }
+        }
+    } else {
+        trace("panel and touch released, restarting the reader");
+        println!("panel released, restarting the reader");
+        wifi_trace.checkpoint(WifiTraceEvent::NickelStartRequested);
+        let pid = match reader.start(START_GRACE) {
+            Ok(pid) => pid,
+            Err(error) => {
+                trace(&format!(
+                    "the reader did not restart ({error}); requesting a clean reboot"
+                ));
+                drop(teardown);
+                slack.leave_slack();
+                let summary = outcome.unwrap_or_else(|error| format!("application ended: {error}"));
+                return match request_clean_reboot() {
+                    Ok(()) => {
+                        watchdog.disarm();
+                        let _ignored = fs::remove_dir_all(&state);
+                        Ok(format!(
+                            "{summary}; typeface {typeface}; the reader did not restart ({error}), so a clean reboot was requested"
+                        ))
+                    }
+                    Err(reboot_error) => Err(format!(
+                        "{reboot_error}; reader restart failed ({error}); recovery state remains armed"
+                    )),
+                };
+            }
+        };
+        wifi_trace.checkpoint(WifiTraceEvent::NickelPidObserved);
+        (pid, false)
+    };
+    trace("reader hand-back returned, waiting for it to feed the freeze watchdog");
+    println!("waiting for the reader to feed the freeze watchdog");
+    if !resumed_same_reader {
+        wifi_trace.checkpoint(WifiTraceEvent::NickelRecoveryBegin);
+        let reader_wifi =
+            restore_reader_wifi(network.was_online(), Duration::from_secs(45), wifi_trace);
+        if !reader_wifi {
+            trace("the reader did not complete Wi-Fi association; requesting a clean reboot");
+            let summary = outcome.unwrap_or_else(|error| format!("application ended: {error}"));
+            return match request_clean_reboot() {
+                Ok(()) => {
+                    watchdog.disarm();
+                    drop(teardown);
+                    let _ignored = fs::remove_dir_all(&state);
+                    Ok(format!(
+                        "{summary}; typeface {typeface}; the reader did not reclaim Wi-Fi, so a clean reboot was requested"
+                    ))
+                }
+                Err(reboot_error) => {
+                    let freeze = suspended.resume_once_fed(WATCHDOG_HANDBACK);
+                    let hardware = slack.rearm();
+                    watchdog.disarm();
+                    drop(teardown);
+                    let _ignored = fs::remove_dir_all(&state);
+                    Err(format!(
+                        "{reboot_error}; reader remained running; freeze watchdog: {freeze:?}; hardware watchdog: {hardware:?}"
+                    ))
+                }
+            };
+        }
+    }
+    // The freeze watchdog returns only after the continued or restarted reader
+    // is feeding it in a sustained rhythm.
     let resumed = suspended.resume_once_fed(WATCHDOG_HANDBACK);
     // Armed again only now. The reader has been given the panel back and has
     // proved it is feeding the freeze watchdog, which is the best evidence
@@ -842,8 +1061,17 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
             "the reader is running again as pid {restarted}, but the freeze watchdog could not be resumed ({error}); it returns on the next reboot"
         ),
     };
-    let reader_state =
-        format!("{reader_state}; the Wi-Fi connection is the reader's own again, so reconnect from its network screen if it does not return by itself");
+    let reader_state = if resumed_same_reader {
+        format!(
+            "{reader_state}; the exact pre-session Nickel process was continued and the \
+             network/WMT owners were not stopped, replaced, or signalled"
+        )
+    } else {
+        format!(
+            "{reader_state}; the Wi-Fi connection is the reader's own again, so reconnect \
+             from its network screen if it does not return by itself"
+        )
+    };
     // Worth saying out loud rather than swallowing. The device is running
     // without its hardware watchdog until it is rebooted, which is a real loss
     // even though the kernel arms it again on the next boot.
@@ -862,8 +1090,9 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     }
 }
 
-fn restore_reader_wifi(was_online: bool, within: Duration) -> bool {
+fn restore_reader_wifi(was_online: bool, within: Duration, wifi_trace: &mut TraceClient) -> bool {
     if !was_online {
+        wifi_trace.checkpoint(WifiTraceEvent::Current94GateAccepted);
         return true;
     }
     let deadline = Instant::now() + within;
@@ -875,8 +1104,13 @@ fn restore_reader_wifi(was_online: bool, within: Duration) -> bool {
             let healthy =
                 associated && kobo_hal::network::is_online(kobo_hal::network::WIRELESS_LINK);
             if healthy {
+                let first_success = healthy_since.is_none();
                 let since = healthy_since.get_or_insert_with(Instant::now);
+                if first_success {
+                    wifi_trace.checkpoint(WifiTraceEvent::NickelRecoveryFirstSuccess);
+                }
                 if since.elapsed() >= Duration::from_secs(10) {
+                    wifi_trace.checkpoint(WifiTraceEvent::Current94GateAccepted);
                     return true;
                 }
             } else {
@@ -901,7 +1135,7 @@ fn restore_reader_wifi(was_online: bool, within: Duration) -> bool {
 }
 
 /// Syncs user storage and requests the firmware's ordinary reboot path.
-fn request_clean_reboot() -> Result<(), String> {
+pub(crate) fn request_clean_reboot() -> Result<(), String> {
     let sync = Command::new("sync")
         .status()
         .map_err(|error| format!("start sync before Bluetooth reboot: {error}"))?;
@@ -1228,7 +1462,7 @@ impl Hosted {
 /// is told, so it can save; its work in flight keeps running and its answers
 /// keep arriving; and what it draws is kept rather than shown. Coming back is
 /// one repaint of a screen the runtime already has.
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn host_applications(
     application: &Path,
     display: &DisplaySession,
@@ -1237,6 +1471,7 @@ fn host_applications(
     limits: Limits,
     forward_is_194: bool,
     watchdog: &Arc<Watchdog>,
+    radio_control_allowed: bool,
 ) -> Result<String, String> {
     // Kept current by the orientation channel: a reader flipped mid-session
     // keeps "forward" pointing forward even though the image does not rotate
@@ -1270,15 +1505,22 @@ fn host_applications(
     if frontlight.is_some() {
         backends.push(Capability::FrontlightControl);
     }
-    let bluetooth = kobo_hal::bluetooth::Bluetooth::open();
+    let bluetooth = radio_control_allowed
+        .then(kobo_hal::bluetooth::Bluetooth::open)
+        .flatten();
     if bluetooth.is_some() {
         backends.push(Capability::BluetoothControl);
     }
-    let wifi = kobo_hal::wifi::Wifi::open();
-    if wifi.is_some() {
-        backends.push(Capability::WifiControl);
+    let discovered_wifi = kobo_hal::wifi::Wifi::open();
+    if discovered_wifi.is_some() {
         backends.push(Capability::Network);
     }
+    let wifi = if radio_control_allowed && discovered_wifi.is_some() {
+        backends.push(Capability::WifiControl);
+        discovered_wifi
+    } else {
+        None
+    };
     // Opened once for the whole session rather than per request, because the
     // sensor's value is in the edges and a reader that is only open while
     // somebody asks sees none of them.
@@ -1318,7 +1560,9 @@ fn host_applications(
             }
         })
     });
-    let audio = kobo_hal::audio::Audio::open(Some(audio_fetcher));
+    let audio = radio_control_allowed
+        .then(|| kobo_hal::audio::Audio::open(Some(audio_fetcher)))
+        .flatten();
     if audio.is_some() {
         backends.push(Capability::Audio);
         backends.push(Capability::BluetoothAudio);
@@ -3759,6 +4003,31 @@ fn pump_application(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn pause_resume_is_exactly_gated_and_never_manages_network_owners() {
+        use super::{nickel_handoff, NickelHandoff, N365_PAUSE_UNLOCK_PHRASE};
+        use kobo_profile::{CLARA_BW_391, CLARA_BW_395, LIBRA_2_388};
+
+        assert_eq!(
+            nickel_handoff(&CLARA_BW_391, None),
+            NickelHandoff::StopRestart
+        );
+        assert_eq!(
+            nickel_handoff(&CLARA_BW_391, Some(N365_PAUSE_UNLOCK_PHRASE)),
+            NickelHandoff::PauseResume
+        );
+        assert!(!NickelHandoff::PauseResume.manages_network_owners());
+        assert!(NickelHandoff::StopRestart.manages_network_owners());
+        assert_eq!(
+            nickel_handoff(&CLARA_BW_395, Some(N365_PAUSE_UNLOCK_PHRASE)),
+            NickelHandoff::StopRestart
+        );
+        assert_eq!(
+            nickel_handoff(&LIBRA_2_388, Some(N365_PAUSE_UNLOCK_PHRASE)),
+            NickelHandoff::StopRestart
+        );
+    }
+
     /// `TZ` is read from the environment, which is process-global, so these
     /// are one test rather than several: two tests setting it at once would
     /// see each other's value.

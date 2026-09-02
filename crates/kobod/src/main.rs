@@ -283,6 +283,7 @@ fn fetch_once(url: &str, max_bytes: &str) -> Result<(), Box<dyn Error>> {
 /// everything back afterwards.
 #[cfg(feature = "device-write")]
 fn present_on_panel(application: &Path) -> Result<(), Box<dyn Error>> {
+    use kobo_wifi_trace::TraceClient;
     use std::time::Duration;
     const UNLOCK_ENV: &str = "KOBO_PRESENT_UNLOCK";
     const UNLOCK_PHRASE: &str = "OWNER_ATTENDED_PANEL_SESSION";
@@ -303,17 +304,77 @@ fn present_on_panel(application: &Path) -> Result<(), Box<dyn Error>> {
             .and_then(|value| value.parse::<u64>().ok())
             .map_or(device::Limits::default().ceiling, Duration::from_secs),
     };
-    println!("{}", device::present(application, limits)?);
+    let mut wifi_trace = TraceClient::start_if_enabled()?;
+    if let Some(path) = wifi_trace.trace_path() {
+        println!("passive Wi-Fi handoff trace: {}", path.display());
+    }
+    println!("{}", device::present(application, limits, &mut wifi_trace)?);
     Ok(())
 }
 
 /// Brings the stock reader back from a saved description.
 #[cfg(feature = "device-write")]
 fn restart_reader(state: &Path) -> Result<(), Box<dyn Error>> {
-    use kobo_hal::reader::Reader;
-    if Reader::find().is_ok() {
-        println!("the reader is already running; nothing to do");
+    use kobo_hal::reader::{PauseRecovery, Reader};
+    if Reader::pause_recovery_pending(state) {
+        let saved = match Reader::load(state) {
+            Ok(saved) => saved,
+            Err(error) => {
+                return request_reboot_until_accepted(&format!(
+                    "the paused-reader recovery description is unreadable ({error})"
+                ));
+            }
+        };
+        let suspended =
+            kobo_hal::supervisor::Suspended::suspend(saved.environment("DBUS_SESSION_BUS_ADDRESS"));
+        if let Err(error) = &suspended {
+            println!(
+                "the freeze watchdog could not be held for paused-reader recovery ({error}); continuing the exact reader with freeze protection left degraded"
+            );
+        }
+        let recovery = match Reader::recover_paused(state, std::time::Duration::from_secs(10)) {
+            Ok(recovery) => recovery,
+            Err(error) => {
+                return request_reboot_until_accepted(&format!(
+                    "the exact paused reader could not be recovered ({error})"
+                ));
+            }
+        };
+        let pid = match recovery {
+            PauseRecovery::Resumed(pid) | PauseRecovery::AlreadyRunning(pid) => pid,
+        };
+        let freeze = suspended
+            .map(|suspended| suspended.resume_once_fed(std::time::Duration::from_secs(90)));
+        let hardware = kobo_hal::soc_watchdog::SocWatchdog::default().arm();
+        println!(
+            "continued the saved reader as pid {pid}; freeze watchdog: {freeze:?}; hardware watchdog: {hardware:?}"
+        );
+        println!("{}", clear_session_files(state));
         return Ok(());
+    }
+
+    if let Ok(reader) = Reader::find() {
+        return match reader.is_stopped() {
+            Ok(false) => {
+                let saved = Reader::load(state)?;
+                let freeze = kobo_hal::supervisor::Suspended::suspend(
+                    saved.environment("DBUS_SESSION_BUS_ADDRESS"),
+                )
+                .map(|suspended| suspended.resume_once_fed(std::time::Duration::from_secs(90)));
+                let hardware = kobo_hal::soc_watchdog::SocWatchdog::default().arm();
+                println!(
+                    "the reader is already running; freeze watchdog: {freeze:?}; hardware watchdog: {hardware:?}"
+                );
+                println!("{}", clear_session_files(state));
+                Ok(())
+            }
+            Ok(true) => {
+                request_reboot_until_accepted("a stopped reader had no complete exact-pause marker")
+            }
+            Err(error) => request_reboot_until_accepted(&format!(
+                "the existing reader state could not be verified ({error})"
+            )),
+        };
     }
     let reader = Reader::load(state)?;
     // The restart below is the operation that trips the SoC watchdog, and this
@@ -343,6 +404,22 @@ fn restart_reader(state: &Path) -> Result<(), Box<dyn Error>> {
     }
     println!("{}", clear_session_files(state));
     Ok(())
+}
+
+#[cfg(feature = "device-write")]
+fn request_reboot_until_accepted(reason: &str) -> Result<(), Box<dyn Error>> {
+    loop {
+        println!("{reason}; requesting a clean reboot");
+        match device::request_clean_reboot() {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                println!(
+                    "clean reboot request failed ({error}); exact pause state is retained and recovery will retry in five minutes"
+                );
+                std::thread::sleep(std::time::Duration::from_secs(5 * 60));
+            }
+        }
+    }
 }
 
 /// Removes what a session that died without cleaning up left behind.

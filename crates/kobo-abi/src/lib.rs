@@ -170,6 +170,7 @@ pub mod process {
 
     pub const SIGTERM: c_int = 15;
     pub const SIGKILL: c_int = 9;
+    pub const SIGSTOP: c_int = 19;
     pub const SIGCONT: c_int = 18;
 
     unsafe extern "C" {

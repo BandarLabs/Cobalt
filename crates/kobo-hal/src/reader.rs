@@ -22,7 +22,7 @@
 //!   from the live process, so the reader we start is the reader that was
 //!   running rather than a guess about what it needs.
 
-use kobo_abi::process::{signal, SIGKILL, SIGTERM};
+use kobo_abi::process::{signal, SIGCONT, SIGKILL, SIGSTOP, SIGTERM};
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
@@ -32,6 +32,7 @@ use std::os::unix::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
@@ -58,6 +59,10 @@ const POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// A daemon launched with `-B` briefly leaves its pre-fork process visible.
 /// Requiring an unchanged process set avoids capturing that transient parent.
 const START_CAPTURE_SETTLE: Duration = Duration::from_millis(500);
+#[cfg(not(test))]
+const DROP_RESUME_GRACE: Duration = Duration::from_secs(2);
+#[cfg(test)]
+const DROP_RESUME_GRACE: Duration = Duration::from_millis(1);
 
 #[derive(Debug)]
 pub enum ReaderError {
@@ -70,6 +75,16 @@ pub enum ReaderError {
     IdentityChanged(i32),
     /// The reader did not exit within the allowed time even after `SIGKILL`.
     WillNotStop(i32),
+    /// The reader was already stopped before this session touched it.
+    AlreadyStopped(i32),
+    /// The exact reader did not enter the stopped state after `SIGSTOP`.
+    WillNotPause(i32),
+    /// The exact reader was not stopped when this session attempted to resume it.
+    NotPaused(i32),
+    /// The exact reader remained stopped after `SIGCONT`.
+    WillNotResume(i32),
+    /// The exact reader disappeared while this session held it paused.
+    DiedWhilePaused(i32),
     /// The reader was started but never appeared in the process table.
     DidNotStart,
     Io(io::Error),
@@ -89,6 +104,15 @@ impl fmt::Display for ReaderError {
                 write!(formatter, "process {pid} is no longer the reader")
             }
             Self::WillNotStop(pid) => write!(formatter, "reader {pid} did not exit"),
+            Self::AlreadyStopped(pid) => {
+                write!(formatter, "reader {pid} was already stopped unexpectedly")
+            }
+            Self::WillNotPause(pid) => write!(formatter, "reader {pid} did not pause"),
+            Self::NotPaused(pid) => {
+                write!(formatter, "reader {pid} was no longer paused as expected")
+            }
+            Self::WillNotResume(pid) => write!(formatter, "reader {pid} did not resume"),
+            Self::DiedWhilePaused(pid) => write!(formatter, "reader {pid} died while paused"),
             Self::DidNotStart => write!(formatter, "the reader did not come back"),
             Self::Io(error) => write!(formatter, "{error}"),
         }
@@ -126,6 +150,57 @@ pub struct Reader {
     /// the process has changed identity when it has not moved at all — which
     /// turns `stop` into a refusal that never sends a signal.
     identity: Identity,
+}
+
+const PAUSED_READER: &str = "paused-reader";
+const PAUSED_READER_STAGING: &str = ".paused-reader-staging";
+
+trait SignalSender: Send + Sync {
+    fn send(&self, pid: i32, signal_number: i32) -> io::Result<()>;
+}
+
+struct KernelSignals;
+
+impl SignalSender for KernelSignals {
+    fn send(&self, pid: i32, signal_number: i32) -> io::Result<()> {
+        signal(pid, signal_number)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ProcessObservation {
+    state: char,
+    starttime: u64,
+}
+
+impl ProcessObservation {
+    fn stopped(self) -> bool {
+        matches!(self.state, 'T' | 't')
+    }
+
+    fn safely_running(self) -> bool {
+        matches!(self.state, 'R' | 'S' | 'I')
+    }
+}
+
+/// One exact Nickel process held with `SIGSTOP`.
+///
+/// Dropping this value makes a best-effort `SIGCONT`, but release builds abort
+/// on panic, so the detached recovery watchdog also reads the saved PID and
+/// starttime and resumes only that exact process.
+pub struct PausedReader {
+    reader: Reader,
+    starttime: u64,
+    recovery_state: PathBuf,
+    proc_root: PathBuf,
+    signals: Arc<dyn SignalSender>,
+    resumed: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PauseRecovery {
+    Resumed(i32),
+    AlreadyRunning(i32),
 }
 
 impl Reader {
@@ -267,6 +342,164 @@ impl Reader {
             Identity::Executable => fs::read_link(proc_root.join(self.pid.to_string()).join("exe"))
                 .is_ok_and(|target| target == Path::new(&self.executable)),
         }
+    }
+
+    /// Pauses this exact reader without replacing it.
+    ///
+    /// The PID and `/proc` starttime are written into `recovery_state` before
+    /// `SIGSTOP`, so the detached session watchdog can safely resume the same
+    /// process if the runtime dies.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when identity cannot be established, the reader was
+    /// already stopped, the marker cannot be written, the signal fails, or the
+    /// exact process does not enter the stopped state within `within`.
+    pub fn pause(
+        &self,
+        recovery_state: &Path,
+        within: Duration,
+    ) -> Result<PausedReader, ReaderError> {
+        self.pause_in(
+            Path::new("/proc"),
+            recovery_state,
+            within,
+            Arc::new(KernelSignals),
+        )
+    }
+
+    fn pause_in(
+        &self,
+        proc_root: &Path,
+        recovery_state: &Path,
+        within: Duration,
+        signals: Arc<dyn SignalSender>,
+    ) -> Result<PausedReader, ReaderError> {
+        let observed = self.observe_exact_in(proc_root, None)?;
+        if observed.stopped() {
+            return Err(ReaderError::AlreadyStopped(self.pid));
+        }
+        save_pause_identity(recovery_state, self.pid, observed.starttime)?;
+        // Re-read after writing the recovery marker. The process may have
+        // exited or the PID may have been reused during that filesystem work.
+        let verified = self.observe_exact_in(proc_root, Some(observed.starttime))?;
+        if verified.stopped() {
+            remove_pause_identity(recovery_state);
+            return Err(ReaderError::AlreadyStopped(self.pid));
+        }
+        if let Err(error) = signals.send(self.pid, SIGSTOP) {
+            remove_pause_identity(recovery_state);
+            return Err(ReaderError::Io(error));
+        }
+        let deadline = Instant::now() + within;
+        loop {
+            match self.observe_exact_in(proc_root, Some(observed.starttime)) {
+                Ok(state) if state.stopped() => {
+                    return Ok(PausedReader {
+                        reader: self.clone(),
+                        starttime: observed.starttime,
+                        recovery_state: recovery_state.to_path_buf(),
+                        proc_root: proc_root.to_path_buf(),
+                        signals,
+                        resumed: false,
+                    });
+                }
+                Ok(_) if Instant::now() < deadline => sleep(POLL_INTERVAL),
+                Ok(_) => {
+                    if self
+                        .observe_exact_in(proc_root, Some(observed.starttime))
+                        .is_ok()
+                        && signals.send(self.pid, SIGCONT).is_ok()
+                        && wait_until_resumed(
+                            self,
+                            proc_root,
+                            observed.starttime,
+                            DROP_RESUME_GRACE,
+                        )
+                        .is_ok()
+                    {
+                        remove_pause_identity(recovery_state);
+                    }
+                    return Err(ReaderError::WillNotPause(self.pid));
+                }
+                Err(_) => {
+                    remove_pause_identity(recovery_state);
+                    return Err(ReaderError::DiedWhilePaused(self.pid));
+                }
+            }
+        }
+    }
+
+    /// Resumes a reader recorded by [`Reader::pause`] after the runtime died.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the saved marker is incomplete, the PID was
+    /// reused, the process disappeared, or `SIGCONT` failed.
+    pub fn recover_paused(
+        recovery_state: &Path,
+        within: Duration,
+    ) -> Result<PauseRecovery, ReaderError> {
+        Self::recover_paused_in(Path::new("/proc"), recovery_state, within, &KernelSignals)
+    }
+
+    #[must_use]
+    pub fn pause_recovery_pending(recovery_state: &Path) -> bool {
+        recovery_state.join(PAUSED_READER).is_file()
+    }
+
+    /// Returns whether this exact reader is currently stopped.
+    ///
+    /// # Errors
+    ///
+    /// Returns an identity error when the PID, executable, or process stat can
+    /// no longer be proven to belong to this reader.
+    pub fn is_stopped(&self) -> Result<bool, ReaderError> {
+        self.observe_exact_in(Path::new("/proc"), None)
+            .map(ProcessObservation::stopped)
+    }
+
+    fn recover_paused_in(
+        proc_root: &Path,
+        recovery_state: &Path,
+        within: Duration,
+        signals: &dyn SignalSender,
+    ) -> Result<PauseRecovery, ReaderError> {
+        let (pid, starttime) = load_pause_identity(recovery_state)?;
+        let mut reader = Self::load(recovery_state)?;
+        reader.pid = pid;
+        let observed = reader.observe_exact_in(proc_root, Some(starttime))?;
+        if observed.safely_running() {
+            remove_pause_identity(recovery_state);
+            return Ok(PauseRecovery::AlreadyRunning(pid));
+        }
+        if !observed.stopped() {
+            return Err(ReaderError::NotPaused(pid));
+        }
+        signals.send(pid, SIGCONT)?;
+        wait_until_resumed(&reader, proc_root, starttime, within)?;
+        remove_pause_identity(recovery_state);
+        Ok(PauseRecovery::Resumed(pid))
+    }
+
+    fn observe_exact_in(
+        &self,
+        proc_root: &Path,
+        expected_starttime: Option<u64>,
+    ) -> Result<ProcessObservation, ReaderError> {
+        if !self.still_running_in(proc_root) {
+            return Err(ReaderError::IdentityChanged(self.pid));
+        }
+        match fs::read_link(proc_root.join(self.pid.to_string()).join("exe")) {
+            Ok(target) if target == Path::new(&self.executable) => {}
+            Ok(_) | Err(_) => return Err(ReaderError::IdentityChanged(self.pid)),
+        }
+        let observed = read_process_observation(proc_root, self.pid)
+            .ok_or(ReaderError::IdentityChanged(self.pid))?;
+        if expected_starttime.is_some_and(|expected| observed.starttime != expected) {
+            return Err(ReaderError::IdentityChanged(self.pid));
+        }
+        Ok(observed)
     }
 
     /// Asks the reader to exit, escalating to `SIGKILL` if it will not.
@@ -464,6 +697,152 @@ impl Reader {
             identity: Identity::ZerothArgument,
         })
     }
+}
+
+impl PausedReader {
+    #[must_use]
+    pub fn pid(&self) -> i32 {
+        self.reader.pid
+    }
+
+    /// Resumes the exact PID/starttime captured before `SIGSTOP`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error without signalling when the process disappeared, the
+    /// PID was reused, or Nickel was already resumed unexpectedly.
+    pub fn resume(mut self, within: Duration) -> Result<i32, ReaderError> {
+        let proc_root = self.proc_root.clone();
+        let signals = Arc::clone(&self.signals);
+        match self.resume_in(&proc_root, within, signals.as_ref()) {
+            Ok(()) => Ok(self.reader.pid),
+            Err(error) => {
+                // Preserve the exact marker for the detached watchdog rather
+                // than making an unverified second attempt from Drop.
+                self.resumed = true;
+                Err(error)
+            }
+        }
+    }
+
+    fn resume_in(
+        &mut self,
+        proc_root: &Path,
+        within: Duration,
+        signals: &dyn SignalSender,
+    ) -> Result<(), ReaderError> {
+        let observed = self
+            .reader
+            .observe_exact_in(proc_root, Some(self.starttime))
+            .map_err(|_| ReaderError::DiedWhilePaused(self.reader.pid))?;
+        if !observed.stopped() {
+            return Err(ReaderError::NotPaused(self.reader.pid));
+        }
+        signals.send(self.reader.pid, SIGCONT)?;
+        wait_until_resumed(&self.reader, proc_root, self.starttime, within)?;
+        self.resumed = true;
+        remove_pause_identity(&self.recovery_state);
+        Ok(())
+    }
+
+    /// Prevents the drop fallback when a successful clean reboot has already
+    /// taken ownership of recovery.
+    pub fn disarm_for_reboot(mut self) {
+        self.resumed = true;
+    }
+}
+
+impl Drop for PausedReader {
+    fn drop(&mut self) {
+        if self.resumed {
+            return;
+        }
+        let Ok(observed) = self
+            .reader
+            .observe_exact_in(&self.proc_root, Some(self.starttime))
+        else {
+            return;
+        };
+        if observed.stopped()
+            && self.signals.send(self.reader.pid, SIGCONT).is_ok()
+            && wait_until_resumed(
+                &self.reader,
+                &self.proc_root,
+                self.starttime,
+                DROP_RESUME_GRACE,
+            )
+            .is_ok()
+        {
+            remove_pause_identity(&self.recovery_state);
+        }
+    }
+}
+
+fn wait_until_resumed(
+    reader: &Reader,
+    proc_root: &Path,
+    starttime: u64,
+    within: Duration,
+) -> Result<(), ReaderError> {
+    let deadline = Instant::now() + within;
+    loop {
+        let observed = reader
+            .observe_exact_in(proc_root, Some(starttime))
+            .map_err(|_| ReaderError::DiedWhilePaused(reader.pid))?;
+        if observed.safely_running() {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(ReaderError::WillNotResume(reader.pid));
+        }
+        sleep(POLL_INTERVAL);
+    }
+}
+
+fn save_pause_identity(directory: &Path, pid: i32, starttime: u64) -> io::Result<()> {
+    let staging = directory.join(PAUSED_READER_STAGING);
+    let complete = directory.join(PAUSED_READER);
+    let _ignored = fs::remove_file(&staging);
+    fs::write(&staging, format!("{pid} {starttime}\n"))?;
+    fs::rename(staging, complete)
+}
+
+fn load_pause_identity(directory: &Path) -> io::Result<(i32, u64)> {
+    let content = fs::read_to_string(directory.join(PAUSED_READER))?;
+    let mut fields = content.split_whitespace();
+    let pid = fields
+        .next()
+        .and_then(|value| value.parse().ok())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid paused PID"))?;
+    let starttime = fields
+        .next()
+        .and_then(|value| value.parse().ok())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid paused starttime"))?;
+    if fields.next().is_some() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "paused reader marker has extra fields",
+        ));
+    }
+    Ok((pid, starttime))
+}
+
+fn remove_pause_identity(directory: &Path) {
+    let _ignored = fs::remove_file(directory.join(PAUSED_READER));
+    let _ignored = fs::remove_file(directory.join(PAUSED_READER_STAGING));
+}
+
+fn read_process_observation(proc_root: &Path, pid: i32) -> Option<ProcessObservation> {
+    let stat = fs::read_to_string(proc_root.join(pid.to_string()).join("stat")).ok()?;
+    let close = stat.rfind(')')?;
+    let fields = stat
+        .get(close + 1..)?
+        .split_whitespace()
+        .collect::<Vec<_>>();
+    Some(ProcessObservation {
+        state: fields.first()?.chars().next()?,
+        starttime: fields.get(19)?.parse().ok()?,
+    })
 }
 
 fn matching_pids_in(
@@ -694,12 +1073,16 @@ fn read_environment(proc_root: &Path, pid: i32) -> io::Result<BTreeMap<OsString,
 #[cfg(test)]
 mod tests {
     use super::{
-        newly_started_pids, read_argv, read_environment, sibling, watchdog_script, Reader,
-        ReaderError, READER_EXECUTABLE,
+        newly_started_pids, read_argv, read_environment, read_process_observation, sibling,
+        watchdog_script, PauseRecovery, Reader, ReaderError, SignalSender, READER_EXECUTABLE,
     };
+    use kobo_abi::process::{SIGCONT, SIGSTOP};
     use std::ffi::OsString;
     use std::fs;
+    use std::io;
+    use std::os::unix::fs::symlink;
     use std::path::{Path, PathBuf};
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
     /// Builds a fake `/proc` so discovery can be tested without a device.
@@ -726,8 +1109,75 @@ mod tests {
                 b"A=1\0LD_LIBRARY_PATH=/usr/local/Kobo\0",
             )
             .expect("write environ");
+            symlink(executable, directory.join("exe")).expect("write exe link");
+            write_fake_stat(&root, *pid, 'R', u64::try_from(*pid).unwrap_or(0) * 100);
         }
         root
+    }
+
+    fn write_fake_stat(root: &Path, pid: i32, state: char, starttime: u64) {
+        let mut fields = vec![state.to_string(), "1".to_owned()];
+        fields.resize(19, "0".to_owned());
+        fields.push(starttime.to_string());
+        fs::write(
+            root.join(pid.to_string()).join("stat"),
+            format!("{pid} (nickel) {}\n", fields.join(" ")),
+        )
+        .expect("write stat");
+    }
+
+    struct FakeSignals {
+        root: PathBuf,
+        sent: Mutex<Vec<i32>>,
+        fail: Mutex<Option<i32>>,
+        hold_stopped_after_cont: Mutex<bool>,
+    }
+
+    impl FakeSignals {
+        fn new(root: PathBuf) -> Self {
+            Self {
+                root,
+                sent: Mutex::new(Vec::new()),
+                fail: Mutex::new(None),
+                hold_stopped_after_cont: Mutex::new(false),
+            }
+        }
+
+        fn fail(&self, signal: i32) {
+            *self.fail.lock().expect("failure lock") = Some(signal);
+        }
+
+        fn sent(&self) -> Vec<i32> {
+            self.sent.lock().expect("sent lock").clone()
+        }
+
+        fn hold_stopped_after_cont(&self) {
+            *self.hold_stopped_after_cont.lock().expect("hold lock") = true;
+        }
+    }
+
+    impl SignalSender for FakeSignals {
+        fn send(&self, pid: i32, signal: i32) -> io::Result<()> {
+            self.sent.lock().expect("sent lock").push(signal);
+            if *self.fail.lock().expect("failure lock") == Some(signal) {
+                return Err(io::Error::other("injected signal failure"));
+            }
+            let observed = read_process_observation(&self.root, pid)
+                .ok_or_else(|| io::Error::other("gone"))?;
+            let state = if signal == SIGSTOP {
+                'T'
+            } else if signal == SIGCONT {
+                if *self.hold_stopped_after_cont.lock().expect("hold lock") {
+                    'T'
+                } else {
+                    'R'
+                }
+            } else {
+                observed.state
+            };
+            write_fake_stat(&self.root, pid, state, observed.starttime);
+            Ok(())
+        }
     }
 
     #[test]
@@ -744,6 +1194,272 @@ mod tests {
         assert_eq!(
             reader.arguments(),
             [OsString::from("-platform"), OsString::from("kobo")]
+        );
+        let _ignored = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn pauses_and_resumes_the_same_reader_identity() {
+        let root = fake_proc("pause_resume", &[(360, READER_EXECUTABLE, &[])]);
+        let recovery = root.join("recovery");
+        fs::create_dir_all(&recovery).expect("recovery");
+        let reader = Reader::find_in(&root).expect("reader");
+        reader.save(&recovery).expect("save reader");
+        let signals = Arc::new(FakeSignals::new(root.clone()));
+        let mut paused = reader
+            .pause_in(&root, &recovery, Duration::from_millis(1), signals.clone())
+            .expect("pause");
+        assert!(read_process_observation(&root, 360)
+            .expect("paused process")
+            .stopped());
+        paused
+            .resume_in(&root, Duration::from_millis(1), signals.as_ref())
+            .expect("resume");
+        assert!(!read_process_observation(&root, 360)
+            .expect("resumed process")
+            .stopped());
+        assert_eq!(signals.sent(), [SIGSTOP, SIGCONT]);
+        assert!(!recovery.join(super::PAUSED_READER).exists());
+        let _ignored = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn already_stopped_reader_refuses_a_nested_pause() {
+        let root = fake_proc("already_stopped", &[(360, READER_EXECUTABLE, &[])]);
+        write_fake_stat(&root, 360, 'T', 36_000);
+        let recovery = root.join("recovery");
+        fs::create_dir_all(&recovery).expect("recovery");
+        let reader = Reader::find_in(&root).expect("reader");
+        let signals = Arc::new(FakeSignals::new(root.clone()));
+        assert!(matches!(
+            reader.pause_in(&root, &recovery, Duration::from_millis(1), signals.clone()),
+            Err(ReaderError::AlreadyStopped(360))
+        ));
+        assert!(signals.sent().is_empty());
+        let _ignored = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn pid_reuse_while_paused_is_never_signalled() {
+        let root = fake_proc("pid_reuse", &[(360, READER_EXECUTABLE, &[])]);
+        let recovery = root.join("recovery");
+        fs::create_dir_all(&recovery).expect("recovery");
+        let reader = Reader::find_in(&root).expect("reader");
+        reader.save(&recovery).expect("save reader");
+        let signals = Arc::new(FakeSignals::new(root.clone()));
+        let mut paused = reader
+            .pause_in(&root, &recovery, Duration::from_millis(1), signals.clone())
+            .expect("pause");
+        write_fake_stat(&root, 360, 'T', 99_999);
+        assert!(matches!(
+            paused.resume_in(&root, Duration::from_millis(1), signals.as_ref()),
+            Err(ReaderError::DiedWhilePaused(360))
+        ));
+        assert_eq!(signals.sent(), [SIGSTOP]);
+        let _ignored = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn executable_change_while_paused_is_never_signalled() {
+        let root = fake_proc("exec_change", &[(360, READER_EXECUTABLE, &[])]);
+        let recovery = root.join("recovery");
+        fs::create_dir_all(&recovery).expect("recovery");
+        let reader = Reader::find_in(&root).expect("reader");
+        reader.save(&recovery).expect("save reader");
+        let signals = Arc::new(FakeSignals::new(root.clone()));
+        let mut paused = reader
+            .pause_in(&root, &recovery, Duration::from_millis(1), signals.clone())
+            .expect("pause");
+        fs::remove_file(root.join("360/exe")).expect("remove exe");
+        symlink("/bin/sh", root.join("360/exe")).expect("replace exe");
+        assert!(matches!(
+            paused.resume_in(&root, Duration::from_millis(1), signals.as_ref()),
+            Err(ReaderError::DiedWhilePaused(360))
+        ));
+        assert_eq!(signals.sent(), [SIGSTOP]);
+        let _ignored = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn nickel_death_while_paused_is_reported_without_another_signal() {
+        let root = fake_proc("paused_death", &[(360, READER_EXECUTABLE, &[])]);
+        let recovery = root.join("recovery");
+        fs::create_dir_all(&recovery).expect("recovery");
+        let reader = Reader::find_in(&root).expect("reader");
+        reader.save(&recovery).expect("save reader");
+        let signals = Arc::new(FakeSignals::new(root.clone()));
+        let mut paused = reader
+            .pause_in(&root, &recovery, Duration::from_millis(1), signals.clone())
+            .expect("pause");
+        fs::remove_dir_all(root.join("360")).expect("remove process");
+        assert!(matches!(
+            paused.resume_in(&root, Duration::from_millis(1), signals.as_ref()),
+            Err(ReaderError::DiedWhilePaused(360))
+        ));
+        assert_eq!(signals.sent(), [SIGSTOP]);
+        let _ignored = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resume_failure_keeps_the_exact_pause_marker_for_recovery() {
+        let root = fake_proc("resume_failure", &[(360, READER_EXECUTABLE, &[])]);
+        let recovery = root.join("recovery");
+        fs::create_dir_all(&recovery).expect("recovery");
+        let reader = Reader::find_in(&root).expect("reader");
+        reader.save(&recovery).expect("save reader");
+        let signals = Arc::new(FakeSignals::new(root.clone()));
+        let paused = reader
+            .pause_in(&root, &recovery, Duration::from_millis(1), signals.clone())
+            .expect("pause");
+        signals.fail(SIGCONT);
+        assert!(matches!(
+            paused.resume(Duration::from_millis(1)),
+            Err(ReaderError::Io(_))
+        ));
+        assert!(recovery.join(super::PAUSED_READER).exists());
+        assert_eq!(signals.sent(), [SIGSTOP, SIGCONT]);
+        let _ignored = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_reader_that_stays_stopped_after_sigcont_fails_closed() {
+        let root = fake_proc("resume_timeout", &[(360, READER_EXECUTABLE, &[])]);
+        let recovery = root.join("recovery");
+        fs::create_dir_all(&recovery).expect("recovery");
+        let reader = Reader::find_in(&root).expect("reader");
+        reader.save(&recovery).expect("save reader");
+        let signals = Arc::new(FakeSignals::new(root.clone()));
+        let paused = reader
+            .pause_in(&root, &recovery, Duration::from_millis(1), signals.clone())
+            .expect("pause");
+        signals.hold_stopped_after_cont();
+        assert!(matches!(
+            paused.resume(Duration::ZERO),
+            Err(ReaderError::WillNotResume(360))
+        ));
+        assert!(recovery.join(super::PAUSED_READER).exists());
+        assert_eq!(signals.sent(), [SIGSTOP, SIGCONT]);
+        let _ignored = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn drop_guard_resumes_only_the_exact_paused_reader() {
+        let root = fake_proc("drop_resume", &[(360, READER_EXECUTABLE, &[])]);
+        let recovery = root.join("recovery");
+        fs::create_dir_all(&recovery).expect("recovery");
+        let reader = Reader::find_in(&root).expect("reader");
+        reader.save(&recovery).expect("save reader");
+        let signals = Arc::new(FakeSignals::new(root.clone()));
+        let paused = reader
+            .pause_in(&root, &recovery, Duration::from_millis(1), signals.clone())
+            .expect("pause");
+        drop(paused);
+        assert!(!read_process_observation(&root, 360)
+            .expect("resumed")
+            .stopped());
+        assert_eq!(signals.sent(), [SIGSTOP, SIGCONT]);
+        let _ignored = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn drop_guard_keeps_recovery_marker_until_resume_is_observed() {
+        let root = fake_proc("drop_unverified", &[(360, READER_EXECUTABLE, &[])]);
+        let recovery = root.join("recovery");
+        fs::create_dir_all(&recovery).expect("recovery");
+        let reader = Reader::find_in(&root).expect("reader");
+        reader.save(&recovery).expect("save reader");
+        let signals = Arc::new(FakeSignals::new(root.clone()));
+        let paused = reader
+            .pause_in(&root, &recovery, Duration::from_millis(1), signals.clone())
+            .expect("pause");
+        signals.hold_stopped_after_cont();
+        drop(paused);
+        assert!(read_process_observation(&root, 360)
+            .expect("still paused")
+            .stopped());
+        assert!(recovery.join(super::PAUSED_READER).exists());
+        assert_eq!(signals.sent(), [SIGSTOP, SIGCONT]);
+        let _ignored = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn app_crash_signal_and_timeout_all_drop_into_exact_resume() {
+        for exit in ["app-crash", "sigterm", "timeout"] {
+            let root = fake_proc(exit, &[(360, READER_EXECUTABLE, &[])]);
+            let recovery = root.join("recovery");
+            fs::create_dir_all(&recovery).expect("recovery");
+            let reader = Reader::find_in(&root).expect("reader");
+            reader.save(&recovery).expect("save reader");
+            let signals = Arc::new(FakeSignals::new(root.clone()));
+            let paused = reader
+                .pause_in(&root, &recovery, Duration::from_millis(1), signals.clone())
+                .expect("pause");
+            // Every host-loop outcome converges on dropping or explicitly
+            // consuming the same guard. Simulate the exceptional exits here.
+            drop(paused);
+            assert!(
+                !read_process_observation(&root, 360)
+                    .expect("reader")
+                    .stopped(),
+                "{exit} left Nickel paused"
+            );
+            assert_eq!(signals.sent(), [SIGSTOP, SIGCONT], "{exit}");
+            let _ignored = fs::remove_dir_all(&root);
+        }
+    }
+
+    #[test]
+    fn detached_recovery_resumes_saved_identity() {
+        let root = fake_proc("saved_recovery", &[(360, READER_EXECUTABLE, &[])]);
+        let recovery = root.join("recovery");
+        fs::create_dir_all(&recovery).expect("recovery");
+        let reader = Reader::find_in(&root).expect("reader");
+        reader.save(&recovery).expect("save reader");
+        let signals = Arc::new(FakeSignals::new(root.clone()));
+        let paused = reader
+            .pause_in(&root, &recovery, Duration::from_millis(1), signals.clone())
+            .expect("pause");
+        std::mem::forget(paused);
+        assert_eq!(
+            Reader::recover_paused_in(&root, &recovery, Duration::from_millis(1), signals.as_ref())
+                .expect("recover"),
+            PauseRecovery::Resumed(360)
+        );
+        assert_eq!(signals.sent(), [SIGSTOP, SIGCONT]);
+        let _ignored = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn detached_recovery_never_continues_a_reused_pid() {
+        let root = fake_proc("saved_stale", &[(360, READER_EXECUTABLE, &[])]);
+        let recovery = root.join("recovery");
+        fs::create_dir_all(&recovery).expect("recovery");
+        let reader = Reader::find_in(&root).expect("reader");
+        reader.save(&recovery).expect("save reader");
+        let signals = Arc::new(FakeSignals::new(root.clone()));
+        let paused = reader
+            .pause_in(&root, &recovery, Duration::from_millis(1), signals.clone())
+            .expect("pause");
+        std::mem::forget(paused);
+        write_fake_stat(&root, 360, 'T', 99_999);
+        assert!(matches!(
+            Reader::recover_paused_in(&root, &recovery, Duration::from_millis(1), signals.as_ref()),
+            Err(ReaderError::IdentityChanged(360))
+        ));
+        assert_eq!(signals.sent(), [SIGSTOP]);
+        let _ignored = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn incomplete_staging_marker_never_claims_a_paused_reader() {
+        let root = fake_proc("partial_marker", &[(360, READER_EXECUTABLE, &[])]);
+        let recovery = root.join("recovery");
+        fs::create_dir_all(&recovery).expect("recovery");
+        fs::write(recovery.join(super::PAUSED_READER_STAGING), b"360 36000\n")
+            .expect("staging marker");
+        assert!(
+            !Reader::pause_recovery_pending(&recovery),
+            "a kill before atomic rename must leave the live reader alone"
         );
         let _ignored = fs::remove_dir_all(&root);
     }
@@ -819,6 +1535,7 @@ mod tests {
         let root = fake_proc("exe_link", &[(500, "wpa_supplicant", &["-B"])]);
         // The exe link points at the real binary however the process was
         // launched; /bin/sh exists on every machine the tests run on.
+        fs::remove_file(root.join("500").join("exe")).expect("remove fixture exe link");
         std::os::unix::fs::symlink("/bin/sh", root.join("500").join("exe"))
             .expect("create exe link");
         let daemon = Reader::find_matching_in(&root, "/bin/sh", super::Identity::Executable)
