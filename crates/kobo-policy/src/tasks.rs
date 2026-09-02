@@ -12,7 +12,6 @@ use kobo_protocol::{
 };
 use std::collections::HashMap;
 use std::io::Read;
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
@@ -540,11 +539,7 @@ fn read_secret(root: &Path, path: &Path) -> Option<String> {
             return None;
         }
     }
-    let file = std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(path)
-        .ok()?;
+    let file = kobo_abi::open_read_nofollow(path).ok()?;
     let mut bytes = Vec::new();
     file.take(MAX_SECRET_BYTES as u64 + 1)
         .read_to_end(&mut bytes)
