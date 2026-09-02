@@ -45,6 +45,7 @@ use std::path::{Path, PathBuf};
 /// Relative, because a tar member path must be, and because a leading slash is
 /// exactly the thing that would let a tarball escape.
 pub const INSTALL_ROOT: &str = "mnt/onboard/.adds/cobalt";
+pub const INSTALL_ROOT_PREFIX: &str = "mnt/onboard/.adds/cobalt/";
 
 /// The largest member this builder will write.
 ///
@@ -479,6 +480,7 @@ mod tests {
     /// project's safety argument is void.
     #[test]
     fn nothing_outside_the_install_root_can_be_packaged() {
+        assert_eq!(super::INSTALL_ROOT_PREFIX, format!("{INSTALL_ROOT}/"));
         for path in [
             "etc/init.d/rcS",
             "usr/local/Kobo/nickel",

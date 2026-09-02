@@ -645,7 +645,7 @@ fn verify_payload_at(members: &[crate::package::Member], destination: &Path) -> 
 fn member_relative(member: &crate::package::Member) -> Result<&str, String> {
     member
         .path
-        .strip_prefix(&format!("{}/", crate::package::INSTALL_ROOT))
+        .strip_prefix(crate::package::INSTALL_ROOT_PREFIX)
         .ok_or_else(|| format!("{:?} is outside the install root", member.path))
 }
 

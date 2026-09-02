@@ -243,9 +243,17 @@ fi
 
 [ "$(sed -n '1p' "$MANIFEST")" = "cobalt-host-release 1" ] ||
     fail "unsupported release manifest format"
-manifest_version=$(awk '$1 == "version" && NF == 2 {print $2}' "$MANIFEST")
-manifest_channels=$(awk '$1 == "channels" && NF == 2 {print $2}' "$MANIFEST")
-manifest_source=$(awk '$1 == "source" && NF == 2 {print $2}' "$MANIFEST")
+manifest_field() {
+    field=$1
+    count=$(awk -v field="$field" '$1 == field && NF == 2 {count++} END {print count + 0}' \
+        "$MANIFEST")
+    [ "$count" -eq 1 ] ||
+        fail "signed manifest must contain exactly one $field field"
+    awk -v field="$field" '$1 == field && NF == 2 {print $2}' "$MANIFEST"
+}
+manifest_version=$(manifest_field version)
+manifest_channels=$(manifest_field channels)
+manifest_source=$(manifest_field source)
 case ",$manifest_channels," in
     *,"$CHANNEL",*) ;;
     *) fail "signed manifest does not allow the requested $CHANNEL channel" ;;
@@ -297,7 +305,7 @@ download "$BASE_URL/$HOST_ASSET" "$HOST_ARCHIVE" ||
 download "$BASE_URL/$DEVICE_ASSET" "$DEVICE_ARCHIVE" ||
     fail "cannot download $DEVICE_ASSET"
 download "$BASE_URL/cobalt-host-manifest.txt.sig" "$RAW_SIGNATURE" ||
-    fail "cannot download the setup signature"
+    fail "cannot download the raw release-manifest signature"
 
 verify_asset() {
     path=$1

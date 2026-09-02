@@ -212,5 +212,15 @@ cp -R "$stable" "$bad_signature"
 printf x >> "$bad_signature/cobalt-host-manifest.txt"
 expect_failure "signature failure" \
     run_install "$WORK/home-signature" "$bad_signature" --platform linux-x86_64
+duplicate=$WORK/duplicate-field
+cp -R "$stable" "$duplicate"
+printf 'version 9.9.9\n' >> "$duplicate/cobalt-host-manifest.txt"
+ssh-keygen -q -Y sign -f "$WORK/signing" -n cobalt-host-release \
+    "$duplicate/cobalt-host-manifest.txt" >/dev/null
+mv "$duplicate/cobalt-host-manifest.txt.sig" \
+    "$duplicate/cobalt-host-manifest.txt.sshsig"
+printf '%0128d\n' 0 > "$duplicate/cobalt-host-manifest.txt.sig"
+expect_failure "duplicate signed manifest field" \
+    run_install "$WORK/home-duplicate" "$duplicate" --platform linux-x86_64
 
 printf 'installer tests passed\n'

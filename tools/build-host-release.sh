@@ -16,7 +16,16 @@ printf '%s\n' "$SOURCE_SHA" | grep -Eq '^[0-9a-f]{40}$'
 [ -d "$DIST" ]
 
 sha256_file() {
-    sha256sum "$1" | awk '{print $1}'
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | awk '{print $1}'
+    elif command -v openssl >/dev/null 2>&1; then
+        openssl dgst -sha256 "$1" | awk '{print $NF}'
+    else
+        echo "sha256sum, shasum, or openssl is required" >&2
+        exit 1
+    fi
 }
 
 size_file() {
