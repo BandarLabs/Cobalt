@@ -33,7 +33,8 @@ jobs:
           test -n "$version"
           test "$(printf '%s\n' "$version" | wc -l)" -eq 1
           echo "version=$version" >> "$GITHUB_OUTPUT"
-      - name: Require a new highest beta version
+      - name: Decide whether this version needs publishing
+        id: release
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
@@ -65,25 +66,78 @@ jobs:
                 ;;
             esac
           }
-          require_absent() {
-            label="$1"
-            endpoint="$2"
-            state="$RUNNER_TEMP/${label}.json"
-            if api_get "$state" "$endpoint"; then
-              echo "$label already exists. Bump the workspace version before publishing another beta build." >&2
-              exit 1
-            else
-              lookup_status=$?
-              if [ "$lookup_status" -ne 1 ]; then
-                exit 1
-              fi
-            fi
-          }
           tag="beta-v${VERSION}"
-          require_absent "$tag tag" \
+          tag_present=false
+          release_present=false
+          if api_get "$RUNNER_TEMP/tag.json" \
             "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}"
-          require_absent "$tag release" \
+          then
+            tag_present=true
+          else
+            status=$?
+            test "$status" -eq 1
+          fi
+          if api_get "$RUNNER_TEMP/release.json" \
             "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}"
+          then
+            release_present=true
+          else
+            status=$?
+            test "$status" -eq 1
+          fi
+          if [ "$tag_present" != "$release_present" ]; then
+            echo "$tag has an incomplete tag/release pair; refusing to continue" >&2
+            exit 1
+          fi
+          if [ "$tag_present" = true ]; then
+            # shellcheck disable=SC2016
+            node -e '
+              const release = require(process.argv[1]);
+              const expected = [
+                `cobalt-${process.argv[3]}-ClaraBW-KoboRoot.tgz`,
+                `cobalt-${process.argv[3]}-ClaraBW.sha256`,
+                `cobalt-${process.argv[3]}-KoboRoot.tgz`,
+                `cobalt-${process.argv[3]}.sha256`,
+                "THIRD-PARTY.md",
+              ].sort();
+              const assets = release.assets.map(asset => asset.name).sort();
+              if (
+                release.tag_name !== process.argv[2] ||
+                release.draft !== false ||
+                release.prerelease !== true ||
+                JSON.stringify(assets) !== JSON.stringify(expected)
+              ) process.exit(1);
+            ' "$RUNNER_TEMP/release.json" "$tag" "$VERSION"
+            tag_sha="$(
+              # shellcheck disable=SC2016
+              node -e '
+                const tag = require(process.argv[1]);
+                if (
+                  tag.object.type !== "commit" ||
+                  !/^[0-9a-f]{40}$/.test(tag.object.sha)
+                ) process.exit(1);
+                process.stdout.write(tag.object.sha);
+              ' "$RUNNER_TEMP/tag.json"
+            )"
+            git cat-file -e "${tag_sha}^{commit}"
+            git merge-base --is-ancestor "$tag_sha" "$GITHUB_SHA"
+            published="$RUNNER_TEMP/published-$tag"
+            mkdir -p "$published"
+            gh release download "$tag" --dir "$published"
+            test "$(find "$published" -maxdepth 1 -type f | wc -l)" -eq 5
+            cd "$published"
+            cmp \
+              "cobalt-${VERSION}.sha256" \
+              "cobalt-${VERSION}-ClaraBW.sha256"
+            cmp \
+              "cobalt-${VERSION}-KoboRoot.tgz" \
+              "cobalt-${VERSION}-ClaraBW-KoboRoot.tgz"
+            sha256sum --check "cobalt-${VERSION}.sha256"
+            cd "$GITHUB_WORKSPACE"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "$tag is already immutable; this beta push does not need a platform release."
+            exit 0
+          fi
           latest="$(gh api --paginate \
             "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/beta-v?per_page=100" \
             --jq '.[].ref' |
@@ -104,12 +158,15 @@ jobs:
               exit 1
             }
           fi
+          echo "publish=true" >> "$GITHUB_OUTPUT"
       - name: Build the device package once
+        if: steps.release.outputs.publish == 'true'
         run: cargo run --locked -p kobo-cli -- package --out dist/KoboRoot.tgz
         env:
           CC_armv7_unknown_linux_musleabihf: arm-linux-gnueabihf-gcc
           CFLAGS_armv7_unknown_linux_musleabihf: -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0
       - name: Name deterministic assets and checksums
+        if: steps.release.outputs.publish == 'true'
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
@@ -124,6 +181,7 @@ jobs:
           sha256sum THIRD-PARTY.md "$asset" "$legacy_asset" > "$digest"
           cp "$digest" "$legacy_digest"
       - name: Create the immutable isolated prerelease
+        if: steps.release.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}

@@ -2,7 +2,7 @@ name: Publish apps
 
 on:
   push:
-    branches: [main, beta]
+    branches: [beta]
   workflow_dispatch:
 
 permissions:
@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   trusted-tool:
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/beta'
+    if: github.ref == 'refs/heads/beta'
     runs-on: ubuntu-latest
     outputs:
       packages: ${{ steps.registry.outputs.packages }}
@@ -315,7 +315,7 @@ jobs:
 
   build-apps:
     if: >-
-      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/beta') &&
+      github.ref == 'refs/heads/beta' &&
       needs.trusted-tool.outputs.publish == 'true' &&
       needs.trusted-tool.outputs.packages != '[]'
     needs: trusted-tool
@@ -357,7 +357,7 @@ jobs:
   publish:
     if: >-
       always() &&
-      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/beta') &&
+      github.ref == 'refs/heads/beta' &&
       needs.trusted-tool.result == 'success' &&
       needs.trusted-tool.outputs.publish == 'true' &&
       (
