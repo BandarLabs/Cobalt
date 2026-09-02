@@ -14,10 +14,12 @@ use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, ControlState, Failure, Glyph, Heartbeat, KoboApp,
     Screen, ScreenBuilder, StoreResult, Task, TaskError, TaskId, TaskOutcome,
 };
-use model::{Account, ApplyState, Challenge, Color, Game, GameSummary, Session};
+use model::{
+    Account, ApplyState, Challenge, ChallengeDirection, Color, Game, GameSummary, Session,
+};
 #[cfg(any(test, debug_assertions))]
-use model::{FullGame, Player, ServerState};
-use std::collections::BTreeMap;
+use model::{ChallengeTime, FullGame, Player, ServerState};
+use std::collections::{BTreeMap, BTreeSet};
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -190,6 +192,7 @@ struct Lichess {
     account: AccountState,
     loaded_session: bool,
     loaded_puzzles: bool,
+    playing_ready: bool,
     session: Option<Session>,
     summaries: Vec<GameSummary>,
     game: Option<Game>,
@@ -198,6 +201,7 @@ struct Lichess {
     event_open: bool,
     board_open: Option<String>,
     seek_task: Option<TaskId>,
+    seek_baseline: BTreeSet<String>,
     pending_action: Option<GameAction>,
     pending_move: Option<PendingMove>,
     selected: Option<String>,
@@ -223,6 +227,7 @@ impl Default for Lichess {
             account: AccountState::Unknown,
             loaded_session: false,
             loaded_puzzles: false,
+            playing_ready: false,
             session: None,
             summaries: Vec::new(),
             game: None,
@@ -231,6 +236,7 @@ impl Default for Lichess {
             event_open: false,
             board_open: None,
             seek_task: None,
+            seek_baseline: BTreeSet::new(),
             pending_action: None,
             pending_move: None,
             selected: None,
@@ -470,6 +476,7 @@ impl Lichess {
         }
         let ready = matches!(self.account, AccountState::Ready(_))
             && self.event_open
+            && self.playing_ready
             && self.seek_task.is_none()
             && self.game.as_ref().is_none_or(|game| !game.active())
             && self.pending_action.is_none();
@@ -687,7 +694,7 @@ impl Lichess {
                 ),
                 Confirmation::Abort => screen.confirm(
                     "Abort game?",
-                    "Abort is offered only before a move has been acknowledged; Lichess makes the final decision.",
+                    "Abort is offered only before both players have moved; Lichess makes the final decision.",
                     ("abort", "Abort"),
                     ("cancel-confirm", "Keep playing"),
                 ),
@@ -732,6 +739,7 @@ impl Lichess {
             return;
         }
         self.account = AccountState::Checking;
+        self.playing_ready = false;
         self.notice = None;
         let _ = self.spawn(context, Pending::Account, api::account(), true);
     }
@@ -878,10 +886,19 @@ impl Lichess {
     }
 
     fn start_seek(&mut self, context: &mut Context) {
-        if self.seek_task.is_some() || !self.event_open {
-            self.notice = Some("The event stream must be ready before pairing.".to_owned());
+        if self.seek_task.is_some() || !self.event_open || !self.playing_ready {
+            self.notice = Some(
+                "The event stream and current-game snapshot must be ready before pairing."
+                    .to_owned(),
+            );
             return;
         }
+        self.seek_baseline = self
+            .summaries
+            .iter()
+            .map(|game| game.id.clone())
+            .chain(self.game.iter().map(|game| game.id.clone()))
+            .collect();
         if let Some(task) = self.spawn(context, Pending::Seek, api::seek(), false) {
             self.seek_task = Some(task);
             self.route = Route::Pairing;
@@ -1137,15 +1154,34 @@ impl Lichess {
 
     fn handle_event(&mut self, context: &mut Context, event: Event) {
         match event {
-            Event::GameStart(summary) => {
-                if let Some(task) = self.seek_task {
-                    context.cancel(task);
-                }
-                self.seek_task = None;
-                self.pending_action = None;
-                self.notice = Some("Game paired. Opening the board.".to_owned());
+            Event::GameStart {
+                game: summary,
+                quick_pair_candidate,
+            } => {
+                let seek_match = self.seek_task.is_some()
+                    && quick_pair_candidate
+                    && !self.seek_baseline.contains(&summary.id);
+                let accepted_challenge =
+                    matches!(self.pending_action, Some(GameAction::AcceptChallenge(_)));
                 self.upsert_summary(summary.clone());
-                self.open_board(context, summary.session());
+                if seek_match || accepted_challenge {
+                    if let Some(task) = self.seek_task {
+                        context.cancel(task);
+                    }
+                    self.seek_task = None;
+                    self.seek_baseline.clear();
+                    self.pending_action = None;
+                    self.challenge = None;
+                    self.notice = Some(if seek_match {
+                        "Quick pairing matched. Opening the board.".to_owned()
+                    } else {
+                        "Challenge accepted. Opening the board.".to_owned()
+                    });
+                    self.open_board(context, summary.session());
+                } else if self.route == Route::Play {
+                    self.notice =
+                        Some("A Lichess game started. Open it from Ongoing games.".to_owned());
+                }
             }
             Event::GameFinish(id) => {
                 if self.game.as_ref().is_some_and(|game| game.id == id) {
@@ -1157,9 +1193,11 @@ impl Lichess {
                 self.summaries.retain(|summary| summary.id != id);
             }
             Event::Challenge(challenge) => {
-                self.challenge = Some(challenge);
-                if self.route == Route::Play {
-                    self.notice = Some("An incoming challenge arrived.".to_owned());
+                if challenge.direction == ChallengeDirection::Incoming {
+                    self.challenge = Some(challenge);
+                    if self.route == Route::Play {
+                        self.notice = Some("An incoming challenge arrived.".to_owned());
+                    }
                 }
             }
             Event::ChallengeCanceled(id) | Event::ChallengeDeclined(id) => {
@@ -1335,6 +1373,7 @@ impl Lichess {
                 Pending::BoardOpen(_) | Pending::BoardNext(_) => self.board_open = None,
                 Pending::Seek => {
                     self.seek_task = None;
+                    self.seek_baseline.clear();
                     self.clock.stop(context);
                     self.route = Route::Play;
                 }
@@ -1361,6 +1400,7 @@ impl Lichess {
             }
             Pending::Playing => {
                 if let Some(games) = api::parse_playing(bytes) {
+                    self.playing_ready = true;
                     self.summaries = games;
                     if let Some(session) = self.session.clone() {
                         if let Some(summary) = self
@@ -1379,6 +1419,7 @@ impl Lichess {
                         }
                     }
                 } else {
+                    self.playing_ready = false;
                     self.notice =
                         Some("Lichess returned a game list this client cannot read.".to_owned());
                 }
@@ -1417,6 +1458,7 @@ impl Lichess {
             Pending::EventClose => self.schedule_event_reconnect(context),
             Pending::Seek => {
                 self.seek_task = None;
+                self.seek_baseline.clear();
                 if self.route == Route::Pairing {
                     self.clock.stop(context);
                     self.route = Route::Play;
@@ -1519,6 +1561,7 @@ impl Lichess {
             }
             Pending::Seek => {
                 self.seek_task = None;
+                self.seek_baseline.clear();
                 if self.route == Route::Pairing {
                     self.clock.stop(context);
                     self.route = Route::Play;
@@ -1560,6 +1603,7 @@ impl Lichess {
         match pending {
             Pending::Seek => {
                 self.seek_task = None;
+                self.seek_baseline.clear();
                 if self.route == Route::Pairing {
                     self.clock.stop(context);
                     self.route = Route::Play;
@@ -1568,10 +1612,10 @@ impl Lichess {
                 }
             }
             Pending::EventNext | Pending::EventOpen => self.event_open = false,
-            Pending::BoardNext(id) | Pending::BoardOpen(id) => {
-                if self.board_open.as_deref() == Some(id) {
-                    self.board_open = None;
-                }
+            Pending::BoardNext(id) | Pending::BoardOpen(id)
+                if self.board_open.as_deref() == Some(id) =>
+            {
+                self.board_open = None;
             }
             Pending::Action(_) => {
                 self.pending_action = None;
@@ -1621,6 +1665,7 @@ impl Lichess {
             }
         }
         self.seek_task = None;
+        self.seek_baseline.clear();
         self.event_open = false;
         self.board_open = None;
         self.clock.stop(context);
@@ -1697,11 +1742,15 @@ impl Lichess {
                 self.challenge = Some(Challenge {
                     id: "chall123".to_owned(),
                     challenger: "KnightReader".to_owned(),
+                    direction: ChallengeDirection::Incoming,
+                    status: "created".to_owned(),
                     rated: false,
                     variant: "standard".to_owned(),
                     speed: "rapid".to_owned(),
-                    initial_seconds: 600,
-                    increment_seconds: 0,
+                    time_control: ChallengeTime::Clock {
+                        initial_seconds: Some(600),
+                        increment_seconds: Some(0),
+                    },
                 });
                 self.route = Route::Challenge;
             }
@@ -2210,6 +2259,7 @@ mod tests {
                 username: "Owner".to_owned(),
             }),
             event_open: true,
+            playing_ready: true,
             ..Lichess::default()
         };
         let mut context = Context::default();
@@ -2228,6 +2278,70 @@ mod tests {
             })
             .count();
         assert_eq!(seeks, 1);
+    }
+
+    #[test]
+    fn account_global_game_starts_do_not_hijack_a_pending_seek() {
+        let mut app = Lichess {
+            route: Route::Play,
+            account: AccountState::Ready(super::Account {
+                id: "owner123".to_owned(),
+                username: "Owner".to_owned(),
+            }),
+            summaries: vec![super::GameSummary {
+                id: "oldGame1".to_owned(),
+                color: Color::White,
+                opponent: "Existing".to_owned(),
+                rated: true,
+                is_my_turn: false,
+                last_move: Some("e2e4".to_owned()),
+            }],
+            event_open: true,
+            playing_ready: true,
+            ..Lichess::default()
+        };
+        let mut context = Context::default();
+        app.start_seek(&mut context);
+        let seek = app.seek_task;
+        let replayed = api::parse_event(
+            br#"{"type":"gameStart","game":{"id":"oldGame1","color":"white","rated":true,"speed":"rapid","source":"lobby","variant":{"key":"standard"},"secondsLeft":600,"isMyTurn":false,"lastMove":"e2e4","opponent":{"username":"Existing"}}}"#,
+        )
+        .expect("replayed game");
+        app.handle_event(&mut context, replayed);
+        assert_eq!(app.seek_task, seek);
+        assert_eq!(app.route, Route::Pairing);
+
+        let unrelated = api::parse_event(
+            br#"{"type":"gameStart","game":{"id":"friend12","color":"black","rated":true,"speed":"rapid","source":"friend","variant":{"key":"standard"},"secondsLeft":600,"isMyTurn":false,"lastMove":"","opponent":{"username":"Friend"}}}"#,
+        )
+        .expect("unrelated game");
+        app.handle_event(&mut context, unrelated);
+        assert_eq!(app.seek_task, seek);
+        assert_eq!(app.route, Route::Pairing);
+    }
+
+    #[test]
+    fn outgoing_and_non_clock_challenges_never_offer_invalid_actions() {
+        let mut app = Lichess {
+            route: Route::Play,
+            ..Lichess::default()
+        };
+        let mut context = Context::default();
+        let outgoing = api::parse_event(
+            br#"{"type":"challenge","challenge":{"id":"other123","status":"created","direction":"out","challenger":{"name":"Owner"},"rated":false,"variant":{"key":"standard"},"speed":"correspondence","timeControl":{"type":"unlimited"}}}"#,
+        )
+        .expect("outgoing challenge");
+        app.handle_event(&mut context, outgoing);
+        assert!(app.challenge.is_none());
+
+        let correspondence = api::parse_event(
+            br#"{"type":"challenge","challenge":{"id":"days1234","status":"created","direction":"in","challenger":{"name":"Friend"},"rated":false,"variant":{"key":"standard"},"speed":"correspondence","timeControl":{"type":"correspondence","daysPerTurn":3}}}"#,
+        )
+        .expect("correspondence challenge");
+        app.handle_event(&mut context, correspondence);
+        assert!(app.challenge.is_some());
+        assert!(!app.challenge.as_ref().expect("challenge").supported());
+        assert!(format!("{:?}", app.challenge_screen()).contains("standard clock games only"));
     }
 
     #[test]
@@ -2272,6 +2386,7 @@ mod tests {
                 username: "Owner".to_owned(),
             }),
             event_open: true,
+            playing_ready: true,
             ..Lichess::default()
         };
         let mut pairing = Context::default();
@@ -2280,7 +2395,7 @@ mod tests {
         assert!(app.seek_task.is_some());
 
         let started = api::parse_event(
-            br#"{"type":"gameStart","game":{"id":"abcdEF12","color":"white","rated":true,"isMyTurn":true,"lastMove":"","opponent":{"username":"Other"}}}"#,
+            br#"{"type":"gameStart","game":{"id":"abcdEF12","color":"white","rated":true,"speed":"rapid","source":"lobby","variant":{"key":"standard"},"secondsLeft":600,"isMyTurn":true,"lastMove":"","opponent":{"username":"Other"}}}"#,
         )
         .expect("gameStart");
         app.handle_event(&mut pairing, started);
@@ -2377,7 +2492,7 @@ mod tests {
         let mut app = app_with_game(&["e2e4"], Color::Black);
         app.event_open = true;
         let challenge = api::parse_event(
-            br#"{"type":"challenge","challenge":{"id":"chall123","challenger":{"name":"ReaderTwo"},"rated":false,"variant":{"key":"standard"},"speed":"rapid","timeControl":{"limit":600,"increment":0}}}"#,
+            br#"{"type":"challenge","challenge":{"id":"chall123","status":"created","direction":"in","challenger":{"name":"ReaderTwo"},"rated":false,"variant":{"key":"standard"},"speed":"rapid","timeControl":{"type":"clock","limit":600,"increment":0}}}"#,
         )
         .expect("challenge");
         let mut context = Context::default();

@@ -100,24 +100,68 @@ impl Session {
 pub struct Challenge {
     pub id: String,
     pub challenger: String,
+    pub direction: ChallengeDirection,
+    pub status: String,
     pub rated: bool,
     pub variant: String,
     pub speed: String,
-    pub initial_seconds: u32,
-    pub increment_seconds: u32,
+    pub time_control: ChallengeTime,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChallengeDirection {
+    Incoming,
+    Outgoing,
+    Unknown,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ChallengeTime {
+    Clock {
+        initial_seconds: Option<u32>,
+        increment_seconds: Option<u32>,
+    },
+    Correspondence {
+        days_per_turn: Option<u32>,
+    },
+    Unlimited,
+    Unknown,
 }
 
 impl Challenge {
     pub fn supported(&self) -> bool {
-        self.variant == "standard" && self.initial_seconds > 0
+        self.direction == ChallengeDirection::Incoming
+            && self.status == "created"
+            && self.variant == "standard"
+            && matches!(
+                &self.time_control,
+                ChallengeTime::Clock {
+                    initial_seconds: Some(seconds),
+                    increment_seconds: Some(_),
+                } if *seconds > 0
+            )
     }
 
     pub fn description(&self) -> String {
-        let minutes = self.initial_seconds / 60;
+        let timing = match &self.time_control {
+            ChallengeTime::Clock {
+                initial_seconds: Some(initial),
+                increment_seconds: Some(increment),
+            } => format!("{}+{increment}", initial / 60),
+            ChallengeTime::Correspondence {
+                days_per_turn: Some(days),
+            } => format!("{days} day(s) per turn"),
+            ChallengeTime::Correspondence {
+                days_per_turn: None,
+            } => "Correspondence".to_owned(),
+            ChallengeTime::Unlimited => "Unlimited".to_owned(),
+            ChallengeTime::Clock { .. } | ChallengeTime::Unknown => {
+                "Unknown time control".to_owned()
+            }
+        };
         format!(
-            "{} · {minutes}+{} · {}",
+            "{} · {timing} · {}",
             if self.rated { "Rated" } else { "Casual" },
-            self.increment_seconds,
             self.speed
         )
     }
@@ -270,7 +314,7 @@ impl Game {
     }
 
     pub fn can_abort(&self) -> bool {
-        self.active() && self.state.moves.is_empty()
+        self.active() && self.state.moves.len() < 2
     }
 
     pub fn draw_offer_from_opponent(&self) -> bool {
@@ -398,10 +442,12 @@ mod tests {
 
     #[test]
     fn zero_move_games_are_valid_reconnect_state() {
-        let game = game("");
-        assert!(game.state.moves.is_empty());
-        assert!(game.my_turn());
-        assert!(game.can_abort());
+        let zero = game("");
+        assert!(zero.state.moves.is_empty());
+        assert!(zero.my_turn());
+        assert!(zero.can_abort());
+        assert!(game("e2e4").can_abort());
+        assert!(!game("e2e4 e7e5").can_abort());
     }
 
     #[test]

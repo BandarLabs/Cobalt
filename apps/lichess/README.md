@@ -40,7 +40,7 @@ broadening credential authority.
 - Board stream reconstruction from server-acknowledged UCI moves
 - White/black orientation, castling, en passant, and four promotion choices
 - Last move, check, result, turn, server clocks, and opponent-gone countdown
-- Move, resign, conservative zero-move abort, draw offer/accept/decline, and
+- Move, resign, abort during Lichess's first-two-ply window, draw offer/accept/decline, and
   claim-victory requests
 - Restart/reconnect using only game ID, color, opponent label, and rated flag
 - Anonymous offline puzzle batches; local solves do not affect Lichess rating
@@ -51,8 +51,8 @@ broadening credential authority.
 - Takeback controls are not offered. A takeback made elsewhere causes an
   authoritative stream reopen instead of guessing at local history.
 - Only standard chess clock challenges are accepted.
-- Abort is shown only before any move has been acknowledged; Lichess still
-  makes the final API decision.
+- Abort is shown only before both players have moved; Lichess still makes the
+  final API decision.
 - No custom Lichess-compatible base URL is accepted.
 
 ## Validate

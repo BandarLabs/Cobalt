@@ -1,4 +1,7 @@
-use crate::model::{Account, Challenge, Color, FullGame, GameSummary, Player, ServerState};
+use crate::model::{
+    Account, Challenge, ChallengeDirection, ChallengeTime, Color, FullGame, GameSummary, Player,
+    ServerState,
+};
 use kobo_json::Value;
 use kobo_sdk::{Credential, Header, Task};
 
@@ -146,7 +149,10 @@ fn post(url: String) -> Task {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Event {
-    GameStart(GameSummary),
+    GameStart {
+        game: GameSummary,
+        quick_pair_candidate: bool,
+    },
     GameFinish(String),
     Challenge(Challenge),
     ChallengeCanceled(String),
@@ -198,7 +204,24 @@ pub fn parse_playing(bytes: &[u8]) -> Option<Vec<GameSummary>> {
 pub fn parse_event(bytes: &[u8]) -> Option<Event> {
     let value = json(bytes)?;
     match value.get("type")?.as_str()? {
-        "gameStart" => Some(Event::GameStart(game_summary(value.get("game")?)?)),
+        "gameStart" => {
+            let game = value.get("game")?;
+            Some(Event::GameStart {
+                game: game_summary(game)?,
+                quick_pair_candidate: game.get("rated").and_then(Value::as_bool) == Some(true)
+                    && game.get("speed").and_then(Value::as_str) == Some("rapid")
+                    && game.get("source").and_then(Value::as_str) == Some("lobby")
+                    && game
+                        .get("variant")
+                        .and_then(|variant| variant.get("key"))
+                        .and_then(Value::as_str)
+                        == Some("standard")
+                    && game
+                        .get("secondsLeft")
+                        .and_then(unsigned)
+                        .is_some_and(|seconds| (540..=600).contains(&seconds)),
+            })
+        }
         "gameFinish" => Some(Event::GameFinish(identifier(
             value.get("game")?.get("id")?.as_str()?,
         )?)),
@@ -264,16 +287,19 @@ pub fn parse_board(bytes: &[u8], expected_id: &str) -> Option<BoardRecord> {
 fn game_summary(value: &Value) -> Option<GameSummary> {
     let opponent = value.get("opponent")?;
     Some(GameSummary {
-        id: identifier(value.get("id")?.as_str()?)?,
+        id: identifier(value.get("gameId").or_else(|| value.get("id"))?.as_str()?)?,
         color: Color::parse(value.get("color")?.as_str()?)?,
-        opponent: label(
-            opponent
-                .get("username")
-                .or_else(|| opponent.get("name"))?
-                .as_str()?,
-            1,
-            80,
-        )?,
+        opponent: opponent
+            .get("username")
+            .or_else(|| opponent.get("name"))
+            .and_then(Value::as_str)
+            .and_then(|name| label(name, 1, 80))
+            .or_else(|| {
+                opponent
+                    .get("ai")
+                    .and_then(unsigned)
+                    .map(|level| format!("Lichess AI {level}"))
+            })?,
         rated: value.get("rated").and_then(Value::as_bool).unwrap_or(false),
         is_my_turn: value
             .get("isMyTurn")
@@ -289,6 +315,17 @@ fn game_summary(value: &Value) -> Option<GameSummary> {
 
 fn parse_challenge(value: &Value) -> Option<Challenge> {
     let time = value.get("timeControl")?;
+    let time_control = match time.get("type").and_then(Value::as_str) {
+        Some("clock") => ChallengeTime::Clock {
+            initial_seconds: time.get("limit").and_then(unsigned),
+            increment_seconds: time.get("increment").and_then(unsigned),
+        },
+        Some("correspondence") => ChallengeTime::Correspondence {
+            days_per_turn: time.get("daysPerTurn").and_then(unsigned),
+        },
+        Some("unlimited") => ChallengeTime::Unlimited,
+        _ => ChallengeTime::Unknown,
+    };
     Some(Challenge {
         id: identifier(value.get("id")?.as_str()?)?,
         challenger: label(
@@ -300,11 +337,16 @@ fn parse_challenge(value: &Value) -> Option<Challenge> {
             1,
             80,
         )?,
+        direction: match value.get("direction").and_then(Value::as_str) {
+            Some("in") => ChallengeDirection::Incoming,
+            Some("out") => ChallengeDirection::Outgoing,
+            _ => ChallengeDirection::Unknown,
+        },
+        status: bounded(value.get("status")?.as_str()?, 1, 32)?,
         rated: value.get("rated").and_then(Value::as_bool).unwrap_or(false),
         variant: bounded(value.get("variant")?.get("key")?.as_str()?, 1, 32)?,
         speed: bounded(value.get("speed")?.as_str()?, 1, 32)?,
-        initial_seconds: unsigned(time.get("limit")?)?,
-        increment_seconds: unsigned(time.get("increment")?)?,
+        time_control,
     })
 }
 
@@ -455,7 +497,7 @@ mod tests {
         let account = parse_account(br#"{"id":"owner123","username":"Owner"}"#).expect("account");
         assert_eq!(account.username, "Owner");
         let playing = parse_playing(
-            br#"{"nowPlaying":[{"id":"abcdEF12","color":"white","rated":true,"isMyTurn":true,"lastMove":"","opponent":{"username":"Other"}}]}"#,
+            br#"{"nowPlaying":[{"gameId":"abcdEF12","color":"white","rated":true,"isMyTurn":true,"lastMove":"","opponent":{"username":"Other"}}]}"#,
         )
         .expect("playing");
         assert_eq!(playing.len(), 1);
@@ -474,15 +516,29 @@ mod tests {
     #[test]
     fn parses_event_lifecycle_and_board_updates() {
         let started = parse_event(
-            br#"{"type":"gameStart","game":{"id":"abcdEF12","color":"black","rated":true,"isMyTurn":false,"lastMove":"e2e4","opponent":{"username":"Other"}}}"#,
+            br#"{"type":"gameStart","game":{"id":"abcdEF12","color":"black","rated":true,"speed":"rapid","source":"friend","variant":{"key":"standard"},"secondsLeft":600,"isMyTurn":false,"lastMove":"e2e4","opponent":{"username":"Other"}}}"#,
         )
         .expect("event");
-        assert!(matches!(started, Event::GameStart(_)));
+        assert!(matches!(
+            started,
+            Event::GameStart {
+                quick_pair_candidate: false,
+                ..
+            }
+        ));
         let challenge = parse_event(
-            br#"{"type":"challenge","challenge":{"id":"chall123","challenger":{"name":"Other"},"rated":false,"variant":{"key":"standard"},"speed":"rapid","timeControl":{"limit":600,"increment":0}}}"#,
+            br#"{"type":"challenge","challenge":{"id":"chall123","status":"created","direction":"in","challenger":{"name":"Other"},"rated":false,"variant":{"key":"standard"},"speed":"rapid","timeControl":{"type":"clock","limit":600,"increment":0}}}"#,
         )
         .expect("challenge");
         assert!(matches!(challenge, Event::Challenge(_)));
+        let unlimited = parse_event(
+            br#"{"type":"challenge","challenge":{"id":"other123","status":"created","direction":"out","challenger":{"name":"Owner"},"rated":false,"variant":{"key":"standard"},"speed":"correspondence","timeControl":{"type":"unlimited"}}}"#,
+        )
+        .expect("valid unlimited challenge");
+        let Event::Challenge(unlimited) = unlimited else {
+            panic!("challenge")
+        };
+        assert!(!unlimited.supported());
         let update = parse_board(
             br#"{"type":"gameState","moves":"e2e4 e7e5","wtime":599000,"btime":598000,"winc":0,"binc":0,"status":"started","wdraw":false,"bdraw":true}"#,
             "abcdEF12",
