@@ -288,7 +288,12 @@ pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     firmware_versions: &["4.45.23697"],
     kernel_release: "4.9.77",
     write_ready: true,
-    reap_nickel_supplicant: false,
+    // Measured on the device on 2026-09-02: preserving Nickel's detached
+    // supplicant kept SSH alive throughout Cobalt's panel session, but the
+    // restarted reader launched a replacement and Wi-Fi then stayed down
+    // until the owner reconnected it. Reaping the exact captured process
+    // before Nickel returns prevents the two-owner handoff.
+    reap_nickel_supplicant: true,
 };
 
 /// The 2025 P365 hardware refresh of the Clara BW. Kobo lists N365 and P365
@@ -1728,7 +1733,7 @@ mod tests {
         assert_eq!(
             declared,
             [
-                ("clara-bw-391", false),
+                ("clara-bw-391", true),
                 ("clara-bw-395", false),
                 ("clara-hd-376", false),
                 ("clara-colour-393", false),
