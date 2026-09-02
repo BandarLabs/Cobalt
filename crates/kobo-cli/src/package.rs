@@ -325,6 +325,51 @@ pub fn list(archive: &[u8]) -> Result<Vec<Listed>, String> {
     Ok(entries)
 }
 
+/// Reads regular files from a checked package archive.
+///
+/// This is the inverse of [`tar`] used by the prebuilt host installer. It
+/// first applies the same archive checks as [`list`], then returns only plain
+/// files as [`Member`] values suitable for the direct-folder USB writer.
+///
+/// # Errors
+///
+/// Returns an error for any archive [`list`] refuses or for a member list that
+/// does not satisfy [`check`].
+pub fn members(archive: &[u8]) -> Result<Vec<Member>, String> {
+    let listed = list(archive)?;
+    let mut offset = 0usize;
+    let mut members = Vec::new();
+    for entry in listed {
+        let payload_offset = offset
+            .checked_add(BLOCK)
+            .ok_or_else(|| format!("{:?} has an overflowing offset", entry.path))?;
+        if entry.kind == b'0' {
+            let payload_end = payload_offset
+                .checked_add(entry.size)
+                .ok_or_else(|| format!("{:?} has an overflowing size", entry.path))?;
+            let bytes = archive
+                .get(payload_offset..payload_end)
+                .ok_or_else(|| format!("{:?} is truncated", entry.path))?
+                .to_vec();
+            members.push(Member {
+                path: entry.path.clone(),
+                bytes,
+                program: entry.mode & 0o111 != 0,
+            });
+        }
+        let payload = if entry.kind == b'5' { 0 } else { entry.size };
+        offset = offset
+            .checked_add(BLOCK)
+            .and_then(|value| value.checked_add(payload.div_ceil(BLOCK) * BLOCK))
+            .ok_or_else(|| format!("{:?} has an overflowing offset", entry.path))?;
+    }
+    check(&members)?;
+    if members.is_empty() {
+        return Err("the archive contains no files".to_owned());
+    }
+    Ok(members)
+}
+
 fn verify_checksum(block: &[u8]) -> Result<(), String> {
     let stated = read_octal(&block[148..156])?;
     let computed: u32 = block
@@ -424,6 +469,7 @@ mod tests {
         assert_eq!(files[0].size, 6);
         assert_eq!(files[0].mode, 0o755);
         assert_eq!(files[1].mode, 0o644);
+        assert_eq!(super::members(&archive).expect("member bytes"), members);
     }
 
     /// The property the whole design rests on.

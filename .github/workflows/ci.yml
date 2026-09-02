@@ -20,6 +20,10 @@ jobs:
       - name: Install the ARM cross-compiler the packaging tests look for
         run: sudo apt-get update && sudo apt-get install --yes gcc-arm-linux-gnueabihf
       - run: cargo fmt --all -- --check
+      - name: Test the POSIX host installer
+        run: |
+          sh -n install.sh tools/installer-test.sh tools/build-host-release.sh
+          tools/installer-test.sh
       - run: node --test tools/*.test.mjs
       - name: Require current generated app pages
         run: |

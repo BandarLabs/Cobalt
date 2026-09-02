@@ -107,12 +107,72 @@ impl Mounted {
     #[must_use]
     pub fn summary(&self) -> String {
         format!(
-            "{} at {} · serial {} · firmware {}",
+            "{} at {} · firmware {}",
             self.model_code(),
             self.volume.display(),
-            self.serial,
             self.firmware
         )
+    }
+}
+
+/// Resolves USB-visible identity through the shared device profile table.
+///
+/// A mounted book partition exposes only the serial prefix and firmware. That
+/// is enough to select one reviewed profile because those pairs are unique in
+/// [`kobo_profile::SUPPORTED_PROFILES`]. Panel geometry and kernel identity are
+/// checked again by the runtime before it can write to a display.
+///
+/// # Errors
+///
+/// Returns a hardware- or firmware-specific refusal, or an ambiguity error if
+/// profile data ever stops being unique.
+pub fn install_profile(reader: &Mounted) -> Result<&'static kobo_profile::DeviceProfile, String> {
+    let hardware = kobo_profile::SUPPORTED_PROFILES
+        .iter()
+        .copied()
+        .filter(|profile| profile.serial_prefix == reader.model_code())
+        .collect::<Vec<_>>();
+    if hardware.is_empty() {
+        return Err(format!(
+            "unsupported Kobo hardware: model code {} has no reviewed Cobalt profile",
+            reader.model_code()
+        ));
+    }
+    let matching = hardware
+        .iter()
+        .copied()
+        .filter(|profile| {
+            profile
+                .firmware_versions
+                .contains(&reader.firmware.as_str())
+        })
+        .collect::<Vec<_>>();
+    match matching.as_slice() {
+        [profile] if profile.write_ready => Ok(*profile),
+        [profile] => Err(format!(
+            "{} ({}) is not enabled for installation: {}",
+            profile.model,
+            profile.id,
+            kobo_profile::WRITE_EVIDENCE_PENDING
+        )),
+        [] => {
+            let supported = hardware
+                .iter()
+                .flat_map(|profile| profile.firmware_versions.iter().copied())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>()
+                .join(", ");
+            Err(format!(
+                "unsupported firmware {} on {}; reviewed firmware: {}",
+                reader.firmware, hardware[0].model, supported
+            ))
+        }
+        _ => Err(format!(
+            "ambiguous device profiles for {} on firmware {}; refusing to guess",
+            reader.model_code(),
+            reader.firmware
+        )),
     }
 }
 
@@ -508,8 +568,35 @@ fn edit_settings<'a>(
 /// When a member lies outside the install root, or the volume cannot be
 /// written to.
 pub fn write_payload(members: &[crate::package::Member], volume: &Path) -> Result<usize, String> {
+    crate::package::check(members)?;
+    let adds = volume.join(".adds");
+    fs::create_dir_all(&adds).map_err(|error| format!("{}: {error}", adds.display()))?;
+    let stage = adds.join(format!(".cobalt-stage-{}", std::process::id()));
+    if stage.exists() {
+        fs::remove_dir_all(&stage).map_err(|error| format!("{}: {error}", stage.display()))?;
+    }
+    crate::package::write_folder(members, &stage)?;
+    verify_payload_at(members, &stage)?;
+
     let destination = volume.join(INSTALL_FOLDER);
-    crate::package::write_folder(members, &destination)?;
+    for member in members {
+        let relative = member_relative(member)?;
+        let staged = stage.join(relative);
+        let installed = destination.join(relative);
+        let parent = installed
+            .parent()
+            .ok_or_else(|| format!("{} has no parent", installed.display()))?;
+        fs::create_dir_all(parent).map_err(|error| format!("{}: {error}", parent.display()))?;
+        if let Err(error) = fs::rename(&staged, &installed) {
+            let _ = fs::remove_dir_all(&stage);
+            return Err(format!(
+                "replace {} atomically from {}: {error}",
+                installed.display(),
+                staged.display()
+            ));
+        }
+    }
+    fs::remove_dir_all(&stage).map_err(|error| format!("{}: {error}", stage.display()))?;
     Ok(members.len())
 }
 
@@ -527,13 +614,13 @@ pub fn write_payload(members: &[crate::package::Member], volume: &Path) -> Resul
 /// When a file is missing, short, or different, naming which, because the
 /// answer determines whether to run setup again or replace the cable.
 pub fn verify_payload(members: &[crate::package::Member], volume: &Path) -> Result<(), String> {
-    let prefix = format!("{}/", crate::package::INSTALL_ROOT);
     let destination = volume.join(INSTALL_FOLDER);
+    verify_payload_at(members, &destination)
+}
+
+fn verify_payload_at(members: &[crate::package::Member], destination: &Path) -> Result<(), String> {
     for member in members {
-        let relative = member
-            .path
-            .strip_prefix(&prefix)
-            .ok_or_else(|| format!("{:?} is outside the install root", member.path))?;
+        let relative = member_relative(member)?;
         let path = destination.join(relative);
         let written =
             fs::read(&path).map_err(|error| format!("read back {}: {error}", path.display()))?;
@@ -553,6 +640,13 @@ pub fn verify_payload(members: &[crate::package::Member], volume: &Path) -> Resu
         }
     }
     Ok(())
+}
+
+fn member_relative(member: &crate::package::Member) -> Result<&str, String> {
+    member
+        .path
+        .strip_prefix(&format!("{}/", crate::package::INSTALL_ROOT))
+        .ok_or_else(|| format!("{:?} is outside the install root", member.path))
 }
 
 /// Removes an installed Cobalt from a mounted reader.
@@ -582,12 +676,20 @@ pub fn remove_payload(volume: &Path) -> Result<bool, String> {
 /// still sitting in a directory on the volume.
 pub fn eject(volume: &Path) -> Result<(), String> {
     let _ = Command::new("sync").status();
+    if is_wsl() {
+        return Err(format!(
+            "{} is mounted through WSL. Close files using it, then use Windows \
+             'Safely Remove Hardware' or eject the Kobo in File Explorer; WSL did not eject it",
+            volume.display()
+        ));
+    }
     if !cfg!(target_os = "macos") {
         return Err(format!(
             "eject {} yourself, then restart the reader",
             volume.display()
         ));
     }
+
     let output = Command::new("diskutil")
         .arg("eject")
         .arg(volume)
@@ -601,6 +703,14 @@ pub fn eject(volume: &Path) -> Result<(), String> {
         volume.display(),
         String::from_utf8_lossy(&output.stderr).trim()
     ))
+}
+
+#[must_use]
+pub fn is_wsl() -> bool {
+    std::env::var_os("WSL_INTEROP").is_some()
+        || fs::read_to_string("/proc/sys/kernel/osrelease")
+            .or_else(|_| fs::read_to_string("/proc/version"))
+            .is_ok_and(|value| value.to_ascii_lowercase().contains("microsoft"))
 }
 
 /// What a completed setup did, in the order it did it.
@@ -627,7 +737,18 @@ pub struct Report {
 impl Report {
     /// The whole of what happened, and how to undo each part of it.
     #[must_use]
+    #[cfg(test)]
     pub fn describe(&self, volume: &Path) -> String {
+        self.describe_with_firmware(volume, None)
+    }
+
+    /// The completed report with the menu location for the mounted firmware.
+    #[must_use]
+    pub fn describe_for(&self, reader: &Mounted) -> String {
+        self.describe_with_firmware(&reader.volume, Some(&reader.firmware))
+    }
+
+    fn describe_with_firmware(&self, volume: &Path, firmware: Option<&str>) -> String {
         let mut text = String::new();
         let _ = writeln!(text, "\nSet up {}:", volume.display());
         let _ = writeln!(
@@ -681,7 +802,17 @@ impl Report {
                 "volume left mounted"
             }
         );
-        text.push_str(&next_steps(self.waiting, self.staged_an_archive()));
+        if !self.ejected {
+            let _ = writeln!(
+                text,
+                "  · safely eject it from the host before disconnecting the USB cable"
+            );
+        }
+        text.push_str(&next_steps_for(
+            self.waiting,
+            self.staged_an_archive(),
+            firmware,
+        ));
         text
     }
 
@@ -734,18 +865,42 @@ fn describe_key(key: crate::authorize::Key, staged: crate::authorize::Staged) ->
 /// Telling somebody to run `kobo devices` and then running it for them reads
 /// as though one of the two did not happen.
 #[must_use]
+#[cfg(test)]
 pub fn next_steps(waiting: bool, staged: Staged) -> String {
+    next_steps_for(waiting, staged, None)
+}
+
+fn next_steps_for(waiting: bool, staged: Staged, firmware: Option<&str>) -> String {
     let finding = if waiting {
-        "  3. This command is waiting for it, and will print its address when it\n\
+        "  4. This command is waiting for it, and will print its address when it\n\
          \x20    appears. Ctrl-C stops the wait; nothing on the reader depends on it."
     } else {
-        "  3. Find it with 'kobo devices', then 'kobo deploy' works from here on."
+        "  4. Find it with 'kobo devices', then 'kobo deploy' works from here on."
     };
+    let menu = firmware.map_or_else(
+        || "Open the Kobo menu and choose Cobalt.".to_owned(),
+        |version| {
+            if firmware_at_least(version, [4, 23, 15_505]) {
+                "Open the bottom-right Kobo menu and choose Cobalt.".to_owned()
+            } else {
+                "Open the top-left Kobo menu and choose Cobalt.".to_owned()
+            }
+        },
+    );
     format!(
-        "{}{}{finding}{NEXT_STEPS_TAIL}",
+        "{}{}{finding}\n  5. {menu}{NEXT_STEPS_TAIL}",
         staged.scope(),
         staged.restart()
     )
+}
+
+fn firmware_at_least(value: &str, minimum: [u64; 3]) -> bool {
+    let parts = value
+        .split('.')
+        .take(3)
+        .map(|part| part.parse::<u64>().unwrap_or(0))
+        .collect::<Vec<_>>();
+    parts.len() == 3 && [parts[0], parts[1], parts[2]] >= minimum
 }
 
 /// What ended up in the single archive the firmware extracts as root.
@@ -834,9 +989,10 @@ unable to boot. To undo all of it: 'kobo setup --undo'.
 const RESTART_BY_HAND: &str = "
 Next, on the reader:
 
-  1. Restart it. Hold the power button until it powers off, then press it
+  1. After the host has safely ejected it, disconnect the USB cable.
+  2. Restart it. Hold the power button until it powers off, then press it
      again. The SSH server only starts at boot.
-  2. Join it to Wi-Fi if it is not already.
+  3. Join it to Wi-Fi if it is not already.
 ";
 
 /// The same, for a reader that was left an archive.
@@ -848,10 +1004,11 @@ Next, on the reader:
 const RESTARTS_ITSELF: &str = "
 Next, on the reader:
 
-  1. Nothing. It restarts by itself: ejecting leaves the archive where the
-     firmware looks, so it shows its Updating screen, takes it, and reboots.
-     The SSH server starts with that boot.
-  2. Join it to Wi-Fi if it is not already.
+  1. After the host has safely ejected it, disconnect the USB cable.
+  2. It restarts by itself: ejecting leaves the archive where the firmware
+     looks, so it shows its Updating screen, takes it, and reboots. The SSH
+     server starts with that boot.
+  3. Join it to Wi-Fi if it is not already.
 ";
 
 /// Everything below it.
@@ -860,6 +1017,10 @@ const NEXT_STEPS_TAIL: &str = "
 Cobalt itself is started from the Cobalt entry in the reader's own menu, or
 from .adds/cobalt/start.sh. Starting it stops the reader and takes the screen;
 a restart always returns to the stock reader.
+
+After a restart, leave the home screen alone for one minute before opening the
+menu. NickelMenu uses that window as a boot-loop failsafe and disables itself
+after an interrupted startup.
 
 The reader is also set to stay awake for ninety minutes rather than a few, so
 that it is still reachable when you come back to it. That costs battery. The
@@ -971,10 +1132,12 @@ pub fn wait_for_reader(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "linux")]
+    use super::mount_roots;
     use super::{
-        carry_trust_from, clear_setting, is_kobo_serial, next_steps, parse_version, set_setting,
-        wait_for_reader, Arrival, Mounted, Report, Ssh, Staged, Verdict, INSTALL_FOLDER,
-        SETTINGS_APPLIED, SSH_DISABLED, SSH_ENABLED,
+        carry_trust_from, clear_setting, install_profile, is_kobo_serial, next_steps,
+        next_steps_for, parse_version, set_setting, wait_for_reader, Arrival, Mounted, Report, Ssh,
+        Staged, Verdict, INSTALL_FOLDER, SETTINGS_APPLIED, SSH_DISABLED, SSH_ENABLED,
     };
     use std::net::Ipv4Addr;
     use std::path::PathBuf;
@@ -1207,8 +1370,19 @@ mod tests {
             assert!(text.contains("restarts by itself"), "{text}");
             assert!(!text.contains("Hold the power button"), "{text}");
         }
+
         let untouched = next_steps(false, Staged::Nothing);
         assert!(untouched.contains("Hold the power button"), "{untouched}");
+    }
+
+    #[test]
+    fn menu_instructions_follow_the_firmware_generation() {
+        assert!(next_steps_for(false, Staged::Nothing, Some("4.45.23697"))
+            .contains("bottom-right Kobo menu"));
+        assert!(next_steps_for(false, Staged::Nothing, Some("4.22.15190"))
+            .contains("top-left Kobo menu"));
+        assert!(next_steps_for(false, Staged::Nothing, Some("4.45.23697"))
+            .contains("leave the home screen alone for one minute"));
     }
 
     #[test]
@@ -1220,7 +1394,10 @@ mod tests {
         // about the archive that exists.
         let key_only = next_steps(false, Staged::Key);
         assert!(key_only.contains("authorized_keys"), "{key_only}");
-        assert!(!key_only.contains("NickelMenu"), "{key_only}");
+        assert!(
+            !key_only.contains("NickelMenu, checked first"),
+            "{key_only}"
+        );
 
         let plugin_only = next_steps(false, Staged::Plugin);
         assert!(plugin_only.contains("NickelMenu"), "{plugin_only}");
@@ -1297,6 +1474,34 @@ mod tests {
     }
 
     #[test]
+    fn usb_identity_resolves_through_the_shared_profile_table() {
+        let reader = Mounted {
+            volume: PathBuf::from("/Volumes/KOBOeReader"),
+            serial: "N365410043013".to_owned(),
+            firmware: "4.45.23697".to_owned(),
+        };
+        let profile = install_profile(&reader).expect("supported");
+        assert_eq!(profile.model, "Kobo Clara BW");
+        assert_eq!(profile.device_code, 391);
+        assert_eq!(profile.id, "clara-bw-391");
+    }
+
+    #[test]
+    fn unsupported_hardware_and_firmware_are_refused_before_writes() {
+        let reader = |serial: &str, firmware: &str| Mounted {
+            volume: PathBuf::from("/Volumes/KOBOeReader"),
+            serial: serial.to_owned(),
+            firmware: firmware.to_owned(),
+        };
+        assert!(install_profile(&reader("N999000000000", "4.45.23697"))
+            .expect_err("hardware")
+            .contains("unsupported Kobo hardware"));
+        assert!(install_profile(&reader("N365000000000", "9.9.9"))
+            .expect_err("firmware")
+            .contains("unsupported firmware"));
+    }
+
+    #[test]
     fn a_truncated_version_line_is_not_an_error() {
         let (serial, firmware) = parse_version("N365410043013");
         assert_eq!(serial, "N365410043013");
@@ -1312,6 +1517,12 @@ mod tests {
         assert!(!is_kobo_serial("NABC410043013"));
         assert!(!is_kobo_serial("PABC410043013"));
         assert!(!is_kobo_serial("Q365410043013"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_mount_discovery_includes_wsl_drive_roots() {
+        assert!(mount_roots().contains(&PathBuf::from("/mnt")));
     }
 
     #[test]
@@ -1606,6 +1817,15 @@ mod tests {
 
         assert_eq!(write_payload(&members, &root).expect("write"), 1);
         verify_payload(&members, &root).expect("what was written reads back");
+        let owner_state = root.join(INSTALL_FOLDER).join("apps/state.db");
+        std::fs::create_dir_all(owner_state.parent().expect("parent")).expect("state folder");
+        std::fs::write(&owner_state, b"owner state").expect("state");
+        assert_eq!(write_payload(&members, &root).expect("rerun"), 1);
+        assert_eq!(
+            std::fs::read(&owner_state).expect("preserved"),
+            b"owner state",
+            "files outside the signed platform member list survive updates"
+        );
 
         let installed = root.join(INSTALL_FOLDER).join("bin/kobod");
         std::fs::write(&installed, b"a whole").expect("truncate");
@@ -1625,5 +1845,6 @@ mod tests {
         assert_eq!(reader.model_code(), "N365");
         assert!(reader.summary().contains("/Volumes/KOBOeReader"));
         assert!(reader.summary().contains("4.45.23697"));
+        assert!(!reader.summary().contains("N365410043013"));
     }
 }
