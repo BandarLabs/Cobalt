@@ -15,6 +15,9 @@ const FAILURE_SLEEP_SECONDS: u32 = 5;
 const MAX_REPLY_BYTES: u32 = 64 * 1024;
 const PAIRING: &str = "pairing";
 const REPAIR: &str = "repair";
+const OFF_AIR: &str = "off the air";
+const PAIRING_REFUSED: &str = "Pairing was refused — run kobo stream init.";
+const INPUT_REFUSED: &str = "Input was not accepted by your computer.";
 const CONTROL_KEYS: [(&str, &str, &[u8]); 9] = [
     ("key-up", "↑", b"\x1b[A"),
     ("key-down", "↓", b"\x1b[B"),
@@ -201,6 +204,16 @@ impl Paperterm {
             seconds: FAILURE_SLEEP_SECONDS,
         });
     }
+    fn set_failure(&mut self, message: &str) -> bool {
+        if self.failure.as_deref() == Some(message) {
+            return false;
+        }
+        self.failure = Some(message.to_owned());
+        true
+    }
+    fn clear_failure(&mut self) -> bool {
+        self.failure.take().is_some()
+    }
     fn save_pairing(&self, context: &mut Context) {
         context
             .store()
@@ -263,20 +276,15 @@ impl Paperterm {
         );
         true
     }
-    fn parse_screen(&mut self, bytes: &[u8]) -> bool {
+    fn parse_screen(&mut self, bytes: &[u8]) -> Option<bool> {
         let Ok(value) = kobo_json::parse(std::str::from_utf8(bytes).unwrap_or("")) else {
-            return false;
+            return None;
         };
-        let Some(sequence) = value
+        let sequence = value
             .get("seq")
             .and_then(kobo_json::Value::as_i64)
-            .and_then(|value| u64::try_from(value).ok())
-        else {
-            return false;
-        };
-        let Some(rows) = value.get("rows").and_then(kobo_json::Value::as_array) else {
-            return false;
-        };
+            .and_then(|value| u64::try_from(value).ok())?;
+        let rows = value.get("rows").and_then(kobo_json::Value::as_array)?;
         let mut changed = false;
         for row in rows {
             let (Some(y), Some(cells)) = (
@@ -309,7 +317,7 @@ impl Paperterm {
             self.view = View::Ended;
             changed = true;
         }
-        changed
+        Some(changed)
     }
 }
 
@@ -373,28 +381,38 @@ impl KoboApp for Paperterm {
             self.poll = None;
             match outcome {
                 TaskOutcome::Completed(bytes) => {
-                    self.failure = None;
-                    let repaint = if self.session.is_none() {
-                        self.parse_hello(&bytes)
-                    } else {
-                        self.parse_screen(&bytes)
-                    };
                     if self.session.is_none() {
-                        self.failure =
-                            Some("Pairing was refused — run kobo stream init.".to_owned());
-                        self.retry(context);
-                        self.show(context);
-                    } else if self.view != View::Ended {
-                        if repaint {
+                        if self.parse_hello(&bytes) {
+                            self.clear_failure();
                             self.show(context);
+                            if self.view != View::Ended {
+                                self.poll(context);
+                            }
+                        } else {
+                            if self.set_failure(PAIRING_REFUSED) {
+                                self.show(context);
+                            }
+                            self.retry(context);
                         }
-                        self.poll(context);
+                    } else {
+                        if let Some(content_changed) = self.parse_screen(&bytes) {
+                            let repaint = self.clear_failure() || content_changed;
+                            if repaint {
+                                self.show(context);
+                            }
+                            if self.view != View::Ended {
+                                self.poll(context);
+                            }
+                        } else {
+                            self.poll(context);
+                        }
                     }
                 }
                 TaskOutcome::Failed(_) => {
-                    self.failure = Some("off the air".to_owned());
                     self.session = None;
-                    self.show(context);
+                    if self.set_failure(OFF_AIR) {
+                        self.show(context);
+                    }
                     self.retry(context);
                 }
                 TaskOutcome::Cancelled => {}
@@ -408,8 +426,7 @@ impl KoboApp for Paperterm {
             }
         } else if self.send == Some(task) {
             self.send = None;
-            if !matches!(outcome, TaskOutcome::Completed(_)) {
-                self.failure = Some("Input was not accepted by your computer.".to_owned());
+            if !matches!(outcome, TaskOutcome::Completed(_)) && self.set_failure(INPUT_REFUSED) {
                 self.show(context);
             }
         }
@@ -478,10 +495,16 @@ mod tests {
             view: View::Watching,
             ..Paperterm::default()
         };
-        assert!(app.parse_screen(
-            br#"{"seq":1,"rows":[{"y":0,"cells":"hello","cursor":5}],"ended":false,"exit":null}"#
-        ));
-        assert!(!app.parse_screen(br#"{"seq":1,"rows":[],"ended":false,"exit":null}"#));
+        assert_eq!(
+            app.parse_screen(
+                br#"{"seq":1,"rows":[{"y":0,"cells":"hello","cursor":5}],"ended":false,"exit":null}"#
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            app.parse_screen(br#"{"seq":1,"rows":[],"ended":false,"exit":null}"#),
+            Some(false)
+        );
     }
     #[test]
     fn controls_send_exact_bytes_and_full_input_is_not_shown_when_read_only() {
@@ -533,11 +556,95 @@ mod tests {
             TaskOutcome::Failed(kobo_sdk::TaskError::Unreachable),
         );
         assert_eq!(app.session, None);
+        assert_eq!(
+            context
+                .commands()
+                .iter()
+                .filter(|command| matches!(command, Command::SetScreen(_)))
+                .count(),
+            1
+        );
         let nap = app.nap.expect("retry sleep");
         app.on_task(&mut context, nap, TaskOutcome::Completed(Vec::new()));
         assert!(context.commands().iter().any(
             |command| matches!(command, Command::Spawn { work: Task::Fetch { url, .. }, .. } if url.contains("/hello?"))
         ));
+    }
+
+    #[test]
+    fn repeated_offline_failures_do_not_repaint() {
+        let mut app = Paperterm {
+            view: View::Watching,
+            failure: Some(OFF_AIR.to_owned()),
+            poll: Some(TaskId(9)),
+            ..Paperterm::default()
+        };
+        let mut context = Context::default();
+        app.on_task(
+            &mut context,
+            TaskId(9),
+            TaskOutcome::Failed(kobo_sdk::TaskError::Unreachable),
+        );
+        assert!(!context
+            .commands()
+            .iter()
+            .any(|command| matches!(command, Command::SetScreen(_))));
+        assert!(app.nap.is_some());
+    }
+
+    #[test]
+    fn successful_hello_clears_offline_state_with_one_repaint() {
+        let mut app = Paperterm {
+            view: View::Watching,
+            address: "host:9332".to_owned(),
+            code: "abc123".to_owned(),
+            failure: Some(OFF_AIR.to_owned()),
+            poll: Some(TaskId(9)),
+            ..Paperterm::default()
+        };
+        let mut context = Context::default();
+        app.on_task(
+            &mut context,
+            TaskId(9),
+            TaskOutcome::Completed(br#"{"session":4,"input":"full"}"#.to_vec()),
+        );
+        assert_eq!(app.failure, None);
+        assert_eq!(
+            context
+                .commands()
+                .iter()
+                .filter(|command| matches!(command, Command::SetScreen(_)))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn successful_unchanged_screen_clears_failure_with_one_repaint() {
+        let mut app = Paperterm {
+            view: View::Watching,
+            address: "host:9332".to_owned(),
+            code: "abc123".to_owned(),
+            session: Some(4),
+            failure: Some(OFF_AIR.to_owned()),
+            poll: Some(TaskId(9)),
+            ..Paperterm::default()
+        };
+        let mut context = Context::default();
+        app.on_task(
+            &mut context,
+            TaskId(9),
+            TaskOutcome::Completed(br#"{"seq":0,"rows":[],"ended":false,"exit":null}"#.to_vec()),
+        );
+        assert_eq!(app.failure, None);
+        assert_eq!(
+            context
+                .commands()
+                .iter()
+                .filter(|command| matches!(command, Command::SetScreen(_)))
+                .count(),
+            1
+        );
     }
 
     #[test]
