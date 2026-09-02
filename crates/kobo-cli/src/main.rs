@@ -409,6 +409,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "package" => build_package(&arguments[1..]),
         "app-key" => app_key(&arguments[1..]),
         "app-bundle" => app_bundle(&arguments[1..]),
+        "app-verify" => app_verify(&arguments[1..]),
         "app-catalog" => app_catalog(&arguments[1..]),
         "app-list" => app_list(&arguments[1..]),
         "app-check" => app_check(&arguments[1..]),
@@ -470,6 +471,43 @@ fn app_bundle(arguments: &[String]) -> Result<(), String> {
         .map_err(|error| format!("build app bundle: {error}"))?;
     fs::write(&output, bundle).map_err(|error| format!("write {}: {error}", output.display()))?;
     println!("created {}", output.display());
+    Ok(())
+}
+
+fn app_verify(arguments: &[String]) -> Result<(), String> {
+    const USAGE: &str =
+        "usage: kobo app-verify --package PATH --public-key PATH --manifest PATH --binary PATH";
+    let package_path = single_path_flag(arguments, "--package", USAGE)?;
+    let public_key_path = single_path_flag(arguments, "--public-key", USAGE)?;
+    let manifest_path = single_path_flag(arguments, "--manifest", USAGE)?;
+    let binary_path = single_path_flag(arguments, "--binary", USAGE)?;
+    ensure_only_flags(
+        arguments,
+        &["--package", "--public-key", "--manifest", "--binary"],
+        USAGE,
+    )?;
+
+    let public_key = fs::read_to_string(&public_key_path)
+        .map_err(|error| format!("read {}: {error}", public_key_path.display()))?
+        .trim()
+        .parse::<kobo_app_store::Ed25519PublicKey>()
+        .map_err(|error| format!("invalid public key: {error}"))?;
+    let package = fs::read(&package_path)
+        .map_err(|error| format!("read {}: {error}", package_path.display()))?;
+    let parsed = kobo_app_store::parse_public_bundle(&package, &public_key)
+        .map_err(|error| format!("verify {}: {error}", package_path.display()))?;
+    let expected_manifest = fs::read(&manifest_path)
+        .map_err(|error| format!("read {}: {error}", manifest_path.display()))?;
+    if parsed.manifest().to_canonical_bytes() != expected_manifest {
+        return Err("packaged manifest differs from the expected canonical manifest".to_owned());
+    }
+    verify_arm_elf(&binary_path)?;
+    let expected_binary = fs::read(&binary_path)
+        .map_err(|error| format!("read {}: {error}", binary_path.display()))?;
+    if parsed.binary() != expected_binary {
+        return Err("packaged binary differs from the expected ARM ELF".to_owned());
+    }
+    println!("verified {}", package_path.display());
     Ok(())
 }
 
@@ -5315,6 +5353,8 @@ fn print_help() {
            app-key --seed PATH     Print the Ed25519 public key for a release seed\n\
            app-bundle --manifest PATH --binary PATH --seed PATH --out PATH\n\
                                    Build one signed, pathless .cobalt-app package\n\
+           app-verify --package PATH --public-key PATH --manifest PATH --binary PATH\n\
+                                   Verify package signature, canonical manifest, and ARM binary\n\
            app-catalog --seed PATH --out PATH --signature PATH --entry PACKAGE HTTPS_URL ...\n\
                                    Build and sign the public app catalog\n\
            app-list --registry PATH\n\
@@ -5401,6 +5441,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "bundle creation, signature verification, catalog creation, and tamper checks form one fixture"
+    )]
     fn app_bundle_and_catalog_commands_produce_verified_assets() {
         let root = std::env::temp_dir().join(format!("kobo-app-assets-{}", std::process::id()));
         fs::create_dir_all(&root).expect("create fixture");
@@ -5408,6 +5452,7 @@ mod tests {
         let manifest_path = root.join("manifest.json");
         let binary_path = root.join("kobo-word-count");
         let bundle_path = root.join("word-count.cobalt-app");
+        let public_key_path = root.join("public-key.txt");
         let catalog_path = root.join("cobalt-app-catalog.json");
         let signature_path = root.join("cobalt-app-catalog.json.sig");
         let seed = [9_u8; 32];
@@ -5468,6 +5513,19 @@ mod tests {
             bundle_path.display().to_string(),
         ])
         .expect("build bundle");
+        let public = kobo_app_store::derive_public_key(&seed).expect("public key");
+        fs::write(&public_key_path, format!("{public}\n")).expect("write public key");
+        super::app_verify(&[
+            "--package".to_owned(),
+            bundle_path.display().to_string(),
+            "--public-key".to_owned(),
+            public_key_path.display().to_string(),
+            "--manifest".to_owned(),
+            manifest_path.display().to_string(),
+            "--binary".to_owned(),
+            binary_path.display().to_string(),
+        ])
+        .expect("verify bundle command");
         super::app_catalog(&[
             "--seed".to_owned(),
             seed_path.display().to_string(),
@@ -5481,7 +5539,6 @@ mod tests {
         ])
         .expect("build catalog");
 
-        let public = kobo_app_store::derive_public_key(&seed).expect("public key");
         let bundle = fs::read(&bundle_path).expect("read bundle");
         assert_eq!(
             kobo_app_store::parse_public_bundle(&bundle, &public)

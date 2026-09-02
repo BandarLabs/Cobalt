@@ -20,11 +20,13 @@ device="$target_root/armv7-unknown-linux-musleabihf/release/kobo-flashcards"
 audit_device="$target_root/audit-unstripped/armv7-unknown-linux-musleabihf/release/kobo-flashcards"
 package="$target_root/artifacts/flashcards-validation.cobalt-app"
 manifest="$target_root/artifacts/flashcards.manifest.json"
+public_key="$target_root/artifacts/validation-public-key.txt"
 host="$target_root/host-target/release/flashcards-import"
+cli="$target_root/host-tools/release/kobo"
 source_commit_file="$target_root/artifacts/flashcards-import.source-commit.txt"
 readelf=${READELF:-armv7-unknown-linux-musleabihf-readelf}
 
-for path in "$device" "$audit_device" "$package" "$manifest" "$host" "$source_commit_file"; do
+for path in "$device" "$audit_device" "$package" "$manifest" "$public_key" "$host" "$cli" "$source_commit_file"; do
   if [ ! -f "$path" ]; then
     echo "missing artifact: $path" >&2
     exit 1
@@ -97,36 +99,61 @@ if printf '%s\n' "$audit_symbols" |
   exit 1
 fi
 
-python3 - "$package" "$device" "$manifest" <<'PY'
+python3 - "$repo/apps/catalog.json" "$device" "$manifest" <<'PY'
 import hashlib
 import json
 import sys
 from pathlib import Path
 
-package = Path(sys.argv[1]).read_bytes()
+catalog = json.loads(Path(sys.argv[1]).read_text())
+app = next(app for app in catalog["apps"] if app["id"] == "flashcards")
 device = Path(sys.argv[2]).read_bytes()
-external_manifest = Path(sys.argv[3]).read_bytes()
-header = 8 + 2 + 4 + 64
-if len(package) < header or package[:8] != b"COBALTAP":
-    raise SystemExit("package has an invalid header")
-if int.from_bytes(package[8:10], "big") != 1:
-    raise SystemExit("package has an unsupported version")
-manifest_length = int.from_bytes(package[10:14], "big")
-manifest_end = header + manifest_length
-if manifest_end > len(package):
-    raise SystemExit("package manifest is truncated")
-embedded_manifest = package[header:manifest_end]
-packaged_binary = package[manifest_end:]
-if embedded_manifest != external_manifest:
-    raise SystemExit("external and packaged manifests differ")
-manifest = json.loads(embedded_manifest)
-if manifest["binary_bytes"] != len(device):
-    raise SystemExit("manifest binary length differs from device ELF")
-if manifest["binary_sha256"] != hashlib.sha256(device).hexdigest():
-    raise SystemExit("manifest binary digest differs from device ELF")
-if packaged_binary != device:
-    raise SystemExit("packaged binary differs from standalone device ELF")
+actual = Path(sys.argv[3]).read_bytes()
+manifest = {
+    "format_version": 1,
+    "id": app["id"],
+    "display_name": app["display_name"],
+    "short_label": app["short_label"],
+    "summary": app["summary"],
+    "version": app["version"],
+    "minimum_cobalt_version": app["minimum_cobalt_version"],
+    "glyph": app["glyph"],
+    "capabilities": app["capabilities"],
+    "binary_sha256": hashlib.sha256(device).hexdigest(),
+    "binary_bytes": len(device),
+}
+order = [
+    "format_version",
+    "id",
+    "display_name",
+    "short_label",
+    "summary",
+    "version",
+    "minimum_cobalt_version",
+    "glyph",
+    "capabilities",
+    "binary_sha256",
+    "binary_bytes",
+]
+expected = (
+    "{"
+    + ",".join(
+        json.dumps(key, separators=(",", ":"))
+        + ":"
+        + json.dumps(manifest[key], ensure_ascii=False, separators=(",", ":"))
+        for key in order
+    )
+    + "}"
+).encode()
+if actual != expected:
+    raise SystemExit("artifact manifest differs from apps/catalog.json and device ELF")
 PY
+
+"$cli" app-verify \
+  --package "$package" \
+  --public-key "$public_key" \
+  --manifest "$manifest" \
+  --binary "$device" >/dev/null
 
 for path in "$device" "$package"; do
   if strings "$path" |
@@ -178,7 +205,7 @@ echo "device ELF/package strings and unstripped symbols: no Anki or AnkiDroid im
 echo "device production/audit ELFs: static, with no declared remote-network capability"
 echo "device symbols: no known high-level remote-network implementation"
 echo "device local transport: generic socket primitives remain for required Cobalt Unix-domain IPC"
-echo "device package: embedded manifest and binary exactly match the standalone ELF"
+echo "device package: signature/canonical manifest verified against catalog and standalone ELF"
 echo "host helper: pinned Anki rslib/i18n, AGPL notice, source pin, and source instructions present"
 (
   cd "$target_root"
@@ -186,6 +213,8 @@ echo "host helper: pinned Anki rslib/i18n, AGPL notice, source pin, and source i
     armv7-unknown-linux-musleabihf/release/kobo-flashcards \
     audit-unstripped/armv7-unknown-linux-musleabihf/release/kobo-flashcards \
     artifacts/flashcards-validation.cobalt-app \
+    artifacts/flashcards.manifest.json \
+    artifacts/validation-public-key.txt \
     artifacts/flashcards-import.source-commit.txt \
     host-target/release/flashcards-import
 )
