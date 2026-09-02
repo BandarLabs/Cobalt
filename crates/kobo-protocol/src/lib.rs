@@ -1794,7 +1794,9 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
         }
         Message::Exit => {}
         Message::Launch { name } => push_string(&mut payload, name)?,
-        Message::DeviceRequest(request) => encode_device_request(&mut payload, request)?,
+        Message::DeviceRequest(request) => {
+            encode_device_request(&mut payload, request, frame.version)?;
+        }
         Message::DeviceResult(result) => encode_device_result(&mut payload, result)?,
         Message::Spawn { .. } | Message::Cancel { .. } | Message::TaskOutcome { .. } => {
             encode_task_message(&mut payload, &frame.message)?;
@@ -2340,7 +2342,7 @@ fn encoded_message_layout(message: &Message, version: u8) -> Result<(u8, usize),
             add_encoded_len(&mut length, encoded_string_len(name)?)?;
             Ok((12, length))
         }
-        Message::DeviceRequest(request) => Ok((7, device_request_len(request)?)),
+        Message::DeviceRequest(request) => Ok((7, device_request_len(request, version)?)),
         Message::DeviceResult(result) => Ok((8, device_result_len(result)?)),
         Message::Spawn { work, .. } => Ok((9, encoded_task_len(work)?)),
         Message::Cancel { .. } => Ok((10, 4)),
@@ -2432,6 +2434,7 @@ fn picture_len(width: u32, height: u32) -> Result<usize, ProtocolError> {
 fn encode_device_request(
     output: &mut Vec<u8>,
     request: &DeviceRequest,
+    version: u8,
 ) -> Result<(), ProtocolError> {
     match request {
         DeviceRequest::ReadBattery => fixed_device_request(output, 1, 0),
@@ -2561,7 +2564,8 @@ fn encode_device_request(
             output.extend_from_slice(&[46, channel.wire()]);
         }
         DeviceRequest::SetSecret { name, value }
-            if valid_app_id(name)
+            if version == VERSION
+                && valid_app_id(name)
                 && !value.as_str().is_empty()
                 && value.as_str().len() <= MAX_APP_SECRET_BYTES
                 && !value.as_str().chars().any(char::is_control) =>
@@ -2612,9 +2616,9 @@ fn fixed_device_request(output: &mut Vec<u8>, tag: u8, argument: u32) {
     push_u32(output, argument);
 }
 
-fn device_request_len(request: &DeviceRequest) -> Result<usize, ProtocolError> {
+fn device_request_len(request: &DeviceRequest, version: u8) -> Result<usize, ProtocolError> {
     let mut encoded = Vec::new();
-    encode_device_request(&mut encoded, request)?;
+    encode_device_request(&mut encoded, request, version)?;
     Ok(encoded.len())
 }
 
@@ -2752,7 +2756,10 @@ fn valid_radio_flags(flags: u8, field: &'static str) -> Result<u8, ProtocolError
     clippy::too_many_lines,
     reason = "one explicit bounded request tag table"
 )]
-fn decode_device_request(reader: &mut Reader<'_>) -> Result<DeviceRequest, ProtocolError> {
+fn decode_device_request(
+    reader: &mut Reader<'_>,
+    version: u8,
+) -> Result<DeviceRequest, ProtocolError> {
     let tag = reader.u8()?;
     match tag {
         1 => fixed_argument(reader, 0).map(|()| DeviceRequest::ReadBattery),
@@ -2877,7 +2884,7 @@ fn decode_device_request(reader: &mut Reader<'_>) -> Result<DeviceRequest, Proto
         46 => Ok(DeviceRequest::SetUpdateChannel {
             channel: UpdateChannel::from_wire(reader.u8()?)?,
         }),
-        47 => {
+        47 if version == VERSION => {
             let name = reader.string()?;
             let value = reader.string()?;
             if !valid_app_id(&name)
@@ -4082,7 +4089,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
         12 => Message::Launch {
             name: reader.string()?,
         },
-        7 => Message::DeviceRequest(decode_device_request(&mut reader)?),
+        7 => Message::DeviceRequest(decode_device_request(&mut reader, version)?),
         8 => Message::DeviceResult(decode_device_result(&mut reader)?),
         9 => {
             let task = TaskId(reader.u32()?);
@@ -7030,6 +7037,33 @@ mod tests {
         assert!(debug.contains("zotero"));
         assert!(debug.contains("[redacted]"));
         assert!(!debug.contains("must-not-appear"));
+    }
+
+    #[test]
+    fn protocol_11_cannot_encode_or_decode_application_secret_requests() {
+        let request = Frame {
+            version: LEGACY_VERSION,
+            request_id: 9,
+            message: Message::DeviceRequest(DeviceRequest::SetSecret {
+                name: "zotero".to_owned(),
+                value: SecretValue::new("owner-value"),
+            }),
+        };
+        assert_eq!(
+            encode(&request),
+            Err(ProtocolError::InvalidValue("application secret"))
+        );
+
+        let mut bytes = encode(&Frame {
+            version: VERSION,
+            ..request
+        })
+        .expect("protocol 12 secret request");
+        bytes[4] = LEGACY_VERSION;
+        assert_eq!(
+            decode(&bytes),
+            Err(ProtocolError::InvalidValue("device request"))
+        );
     }
 
     #[test]

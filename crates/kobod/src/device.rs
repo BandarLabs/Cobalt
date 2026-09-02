@@ -2962,7 +2962,7 @@ fn start_application(
     };
     let id = *next_id;
     *next_id += 1;
-    if let Err(error) = pump_application(&stream, sender, id) {
+    if let Err(error) = pump_application(&stream, sender, id, version) {
         stop_application(&mut child, jail.as_deref());
         let error = with_trace_failure(error, &child);
         if let Some(root) = &jail {
@@ -3770,6 +3770,7 @@ fn pump_application(
     stream: &std::os::unix::net::UnixStream,
     sender: &Sender<Event>,
     id: u64,
+    version: u8,
 ) -> Result<(), String> {
     let mut reader = stream
         .try_clone()
@@ -3780,6 +3781,10 @@ fn pump_application(
             let _ignored = sender.send(Event::AppGone(id));
             return;
         };
+        if frame.version != version {
+            let _ignored = sender.send(Event::AppGone(id));
+            return;
+        }
         if sender.send(Event::App(id, Box::new(frame))).is_err() {
             return;
         }
@@ -3789,6 +3794,30 @@ fn pump_application(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_application_cannot_change_protocol_version_after_greeting() {
+        let (runtime, mut application) =
+            std::os::unix::net::UnixStream::pair().expect("socket pair");
+        let (sender, receiver) = std::sync::mpsc::channel();
+        super::pump_application(&runtime, &sender, 42, kobo_protocol::VERSION)
+            .expect("start application pump");
+        kobo_protocol::write_to(
+            &mut application,
+            &kobo_protocol::Frame {
+                version: kobo_protocol::LEGACY_VERSION,
+                request_id: 1,
+                message: kobo_protocol::Message::Exit,
+            },
+        )
+        .expect("send mixed-version frame");
+        assert!(matches!(
+            receiver
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .expect("application rejection"),
+            super::Event::AppGone(42)
+        ));
+    }
+
     /// `TZ` is read from the environment, which is process-global, so these
     /// are one test rather than several: two tests setting it at once would
     /// see each other's value.
