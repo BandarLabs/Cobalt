@@ -18,6 +18,7 @@ kobo-json = { path = "../kobo-json" }
 kobo-net = { path = "../kobo-net" }
 kobo-profile = { path = "../kobo-profile" }
 ring = "0.17"
+kobo-stream = { path = "../kobo-stream" }
 
 [features]
 default = []
