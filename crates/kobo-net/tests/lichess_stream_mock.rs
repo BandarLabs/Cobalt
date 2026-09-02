@@ -135,6 +135,19 @@ fn local_https_ndjson_mock_streams_game_start_without_exposing_controls() {
         )
         .expect("next event");
     assert_eq!(record, br#"{"type":"gameStart","game":{"id":"abcdEF12"}}"#);
+    assert_eq!(
+        streams.request(
+            LineStreamAction::Next,
+            &url,
+            2048,
+            Some(("Authorization", "Bearer mock-only-token")),
+            &headers,
+            RequestOptions::default(),
+            &cancel,
+        ),
+        Err(TaskError::Denied),
+        "a later task cannot silently lower the retained record ceiling"
+    );
     streams
         .request(
             LineStreamAction::Close,

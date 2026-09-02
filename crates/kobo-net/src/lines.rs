@@ -74,7 +74,7 @@ impl LineStreams {
             LineStreamAction::Open => {
                 self.open(url, max_bytes, credential, headers, options, cancel)
             }
-            LineStreamAction::Next => self.next(url, credential, headers, cancel),
+            LineStreamAction::Next => self.next(url, max_bytes, credential, headers, cancel),
             LineStreamAction::Close => {
                 self.close(url);
                 Ok(Vec::new())
@@ -110,12 +110,15 @@ impl LineStreams {
         }
         let format = Format::from_headers(headers)?;
         let identity = credential_identity(credential);
+        let headers_identity = headers_identity(headers);
         {
             let mut streams = self.streams.lock().map_err(|_| TaskError::Unreachable)?;
-            if streams
-                .get(url)
-                .is_some_and(|stream| stream.identity == identity && stream.format == format)
-            {
+            if streams.get(url).is_some_and(|stream| {
+                stream.identity == identity
+                    && stream.headers_identity == headers_identity
+                    && stream.format == format
+                    && stream.maximum == max_bytes as usize
+            }) {
                 return Ok(Vec::new());
             }
             streams.remove(url);
@@ -166,6 +169,7 @@ impl LineStreams {
             held,
             format,
             identity,
+            headers_identity,
             framing,
             wire: response.body,
             decoded: Vec::new(),
@@ -190,6 +194,7 @@ impl LineStreams {
     fn next(
         &self,
         url: &str,
+        max_bytes: u32,
         credential: Option<(&str, &str)>,
         headers: &[(&str, &str)],
         cancel: &AtomicBool,
@@ -204,7 +209,10 @@ impl LineStreams {
         if stream.identity != credential_identity(credential) {
             return Err(TaskError::Unauthorized);
         }
-        if stream.format != format {
+        if stream.format != format
+            || stream.headers_identity != headers_identity(headers)
+            || stream.maximum != max_bytes as usize
+        {
             return Err(TaskError::Denied);
         }
         let result = stream.next(cancel);
@@ -266,6 +274,17 @@ fn credential_identity(credential: Option<(&str, &str)>) -> String {
         material.extend_from_slice(name.as_bytes());
         material.push(0);
         material.extend_from_slice(value.as_bytes());
+    }
+    super::sha256::hex_digest(&material)
+}
+
+fn headers_identity(headers: &[(&str, &str)]) -> String {
+    let mut material = Vec::new();
+    for (name, value) in headers {
+        material.extend_from_slice(name.to_ascii_lowercase().as_bytes());
+        material.push(0);
+        material.extend_from_slice(value.as_bytes());
+        material.push(0xff);
     }
     super::sha256::hex_digest(&material)
 }
@@ -359,6 +378,7 @@ struct LineStream {
     held: Held,
     format: Format,
     identity: String,
+    headers_identity: String,
     framing: Framing,
     wire: Vec<u8>,
     decoded: Vec<u8>,
