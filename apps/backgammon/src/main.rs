@@ -1070,9 +1070,9 @@ fn checker(pixels: &mut [u8], x: i32, y: i32, white: bool) {
 
 fn triangle(pixels: &mut [u8], x: i32, width: i32, top: bool, dark: bool) {
     let base: i32 = if top { 28 } else { 552 };
-    let tip: i32 = if top { 270 } else { 310 };
+    let apex_y: i32 = if top { 270 } else { 310 };
     let tone = if dark { 102 } else { 182 };
-    let span = (base - tip).abs();
+    let span = (base - apex_y).abs();
     for step in 0..=span {
         let y = if top { base + step } else { base - step };
         let half = (width / 2) * (span - step) / span;
