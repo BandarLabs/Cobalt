@@ -165,6 +165,27 @@ impl Challenge {
             self.speed
         )
     }
+
+    pub fn matches_game_start(&self, game: &GameSummary) -> bool {
+        if !self.supported()
+            || !self.challenger.eq_ignore_ascii_case(&game.opponent)
+            || self.rated != game.rated
+            || game.source.as_deref() != Some("friend")
+            || game.variant.as_deref() != Some("standard")
+            || game.speed.as_deref() != Some(self.speed.as_str())
+        {
+            return false;
+        }
+        let ChallengeTime::Clock {
+            initial_seconds: Some(initial),
+            ..
+        } = &self.time_control
+        else {
+            return false;
+        };
+        game.seconds_left
+            .is_some_and(|seconds| seconds <= *initial && initial.saturating_sub(seconds) <= 60)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -175,9 +196,23 @@ pub struct GameSummary {
     pub rated: bool,
     pub is_my_turn: bool,
     pub last_move: Option<String>,
+    pub source: Option<String>,
+    pub speed: Option<String>,
+    pub variant: Option<String>,
+    pub seconds_left: Option<u32>,
 }
 
 impl GameSummary {
+    pub fn quick_pair_candidate(&self) -> bool {
+        self.rated
+            && self.source.as_deref() == Some("lobby")
+            && self.speed.as_deref() == Some("rapid")
+            && self.variant.as_deref() == Some("standard")
+            && self
+                .seconds_left
+                .is_some_and(|seconds| (540..=600).contains(&seconds))
+    }
+
     pub fn session(&self) -> Session {
         Session {
             game_id: self.id.clone(),

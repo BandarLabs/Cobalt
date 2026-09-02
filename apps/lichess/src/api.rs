@@ -149,10 +149,7 @@ fn post(url: String) -> Task {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Event {
-    GameStart {
-        game: GameSummary,
-        quick_pair_candidate: bool,
-    },
+    GameStart(GameSummary),
     GameFinish(String),
     Challenge(Challenge),
     ChallengeCanceled(String),
@@ -206,21 +203,7 @@ pub fn parse_event(bytes: &[u8]) -> Option<Event> {
     match value.get("type")?.as_str()? {
         "gameStart" => {
             let game = value.get("game")?;
-            Some(Event::GameStart {
-                game: game_summary(game)?,
-                quick_pair_candidate: game.get("rated").and_then(Value::as_bool) == Some(true)
-                    && game.get("speed").and_then(Value::as_str) == Some("rapid")
-                    && game.get("source").and_then(Value::as_str) == Some("lobby")
-                    && game
-                        .get("variant")
-                        .and_then(|variant| variant.get("key"))
-                        .and_then(Value::as_str)
-                        == Some("standard")
-                    && game
-                        .get("secondsLeft")
-                        .and_then(unsigned)
-                        .is_some_and(|seconds| (540..=600).contains(&seconds)),
-            })
+            Some(Event::GameStart(game_summary(game)?))
         }
         "gameFinish" => Some(Event::GameFinish(identifier(
             value.get("game")?.get("id")?.as_str()?,
@@ -310,6 +293,20 @@ fn game_summary(value: &Value) -> Option<GameSummary> {
             .and_then(Value::as_str)
             .filter(|movement| valid_move(movement))
             .map(str::to_owned),
+        source: value
+            .get("source")
+            .and_then(Value::as_str)
+            .and_then(|source| bounded(source, 1, 32)),
+        speed: value
+            .get("speed")
+            .and_then(Value::as_str)
+            .and_then(|speed| bounded(speed, 1, 32)),
+        variant: value
+            .get("variant")
+            .and_then(|variant| variant.get("key"))
+            .and_then(Value::as_str)
+            .and_then(|variant| bounded(variant, 1, 32)),
+        seconds_left: value.get("secondsLeft").and_then(unsigned),
     })
 }
 
@@ -519,13 +516,10 @@ mod tests {
             br#"{"type":"gameStart","game":{"id":"abcdEF12","color":"black","rated":true,"speed":"rapid","source":"friend","variant":{"key":"standard"},"secondsLeft":600,"isMyTurn":false,"lastMove":"e2e4","opponent":{"username":"Other"}}}"#,
         )
         .expect("event");
-        assert!(matches!(
-            started,
-            Event::GameStart {
-                quick_pair_candidate: false,
-                ..
-            }
-        ));
+        let Event::GameStart(started) = started else {
+            panic!("game start")
+        };
+        assert!(!started.quick_pair_candidate());
         let challenge = parse_event(
             br#"{"type":"challenge","challenge":{"id":"chall123","status":"created","direction":"in","challenger":{"name":"Other"},"rated":false,"variant":{"key":"standard"},"speed":"rapid","timeControl":{"type":"clock","limit":600,"increment":0}}}"#,
         )

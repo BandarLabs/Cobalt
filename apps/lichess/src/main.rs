@@ -1177,15 +1177,18 @@ impl Lichess {
 
     fn handle_event(&mut self, context: &mut Context, event: Event) {
         match event {
-            Event::GameStart {
-                game: summary,
-                quick_pair_candidate,
-            } => {
+            Event::GameStart(summary) => {
                 let seek_match = self.seek_waiting
-                    && quick_pair_candidate
+                    && summary.quick_pair_candidate()
                     && !self.seek_baseline.contains(&summary.id);
-                let accepted_challenge =
-                    matches!(self.pending_action, Some(GameAction::AcceptChallenge(_)));
+                let accepted_challenge = match (&self.pending_action, &self.challenge) {
+                    (Some(GameAction::AcceptChallenge(id)), Some(challenge))
+                        if id == &challenge.id =>
+                    {
+                        challenge.matches_game_start(&summary)
+                    }
+                    _ => false,
+                };
                 self.upsert_summary(summary.clone());
                 if seek_match || accepted_challenge {
                     if let Some(task) = self.seek_task {
@@ -1698,11 +1701,17 @@ impl Lichess {
                 pending,
                 Pending::EventOpen
                     | Pending::EventNext
+                    | Pending::EventRetry
+                    | Pending::EventClose
                     | Pending::BoardOpen(_)
                     | Pending::BoardNext(_)
+                    | Pending::BoardRetry(_)
+                    | Pending::BoardClose(_)
                     | Pending::Seek
+                    | Pending::SeekGrace
             ) {
                 context.cancel(task);
+                self.tasks.remove(&task);
             }
         }
         self.seek_task = None;
@@ -2157,8 +2166,8 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        api, board_cells, clock, AccountState, Color, FullGame, Game, GameAction, Lichess, Pending,
-        Player, Route, ServerState, Session,
+        api, board_cells, clock, AccountState, Challenge, ChallengeDirection, ChallengeTime, Color,
+        FullGame, Game, GameAction, Lichess, Pending, Player, Route, ServerState, Session,
     };
     use kobo_sdk::{action_id, ActionId, Command, Context, KoboApp, TaskOutcome};
     use kobo_ui::{Chrome, CLARA_BW_METRICS};
@@ -2345,6 +2354,10 @@ mod tests {
                 rated: true,
                 is_my_turn: false,
                 last_move: Some("e2e4".to_owned()),
+                source: Some("lobby".to_owned()),
+                speed: Some("rapid".to_owned()),
+                variant: Some("standard".to_owned()),
+                seconds_left: Some(600),
             }],
             event_open: true,
             playing_ready: true,
@@ -2392,6 +2405,53 @@ mod tests {
         assert!(app.challenge.is_some());
         assert!(!app.challenge.as_ref().expect("challenge").supported());
         assert!(format!("{:?}", app.challenge_screen()).contains("standard clock games only"));
+    }
+
+    #[test]
+    fn accepted_challenge_waits_for_the_matching_opponent_game() {
+        let mut app = Lichess {
+            route: Route::Challenge,
+            challenge: Some(Challenge {
+                id: "chall123".to_owned(),
+                challenger: "ReaderTwo".to_owned(),
+                direction: ChallengeDirection::Incoming,
+                status: "created".to_owned(),
+                rated: false,
+                variant: "standard".to_owned(),
+                speed: "rapid".to_owned(),
+                time_control: ChallengeTime::Clock {
+                    initial_seconds: Some(600),
+                    increment_seconds: Some(0),
+                },
+            }),
+            pending_action: Some(GameAction::AcceptChallenge("chall123".to_owned())),
+            ..Lichess::default()
+        };
+        let mut context = Context::default();
+        let unrelated = api::parse_event(
+            br#"{"type":"gameStart","game":{"gameId":"other123","color":"white","rated":false,"speed":"rapid","source":"friend","variant":{"key":"standard"},"secondsLeft":600,"isMyTurn":true,"lastMove":"","opponent":{"username":"SomeoneElse"}}}"#,
+        )
+        .expect("unrelated friend game");
+        app.handle_event(&mut context, unrelated);
+        assert!(app.challenge.is_some());
+        assert!(matches!(
+            app.pending_action,
+            Some(GameAction::AcceptChallenge(_))
+        ));
+        assert_eq!(app.route, Route::Challenge);
+
+        let matched = api::parse_event(
+            br#"{"type":"gameStart","game":{"gameId":"match123","color":"black","rated":false,"speed":"rapid","source":"friend","variant":{"key":"standard"},"secondsLeft":600,"isMyTurn":false,"lastMove":"","opponent":{"username":"ReaderTwo"}}}"#,
+        )
+        .expect("accepted challenge game");
+        app.handle_event(&mut context, matched);
+        assert!(app.challenge.is_none());
+        assert!(app.pending_action.is_none());
+        assert_eq!(app.route, Route::Game);
+        assert_eq!(
+            app.session.as_ref().map(|session| session.game_id.as_str()),
+            Some("match123")
+        );
     }
 
     #[test]
@@ -2508,6 +2568,31 @@ mod tests {
                 })
             )
         }));
+    }
+
+    #[test]
+    fn stale_stream_cancellation_after_resume_cannot_clear_new_stream_state() {
+        let mut app = Lichess {
+            event_open: true,
+            board_open: Some("abcdEF12".to_owned()),
+            ..Lichess::default()
+        };
+        let event_task = kobo_sdk::TaskId(41);
+        let board_task = kobo_sdk::TaskId(42);
+        app.tasks.insert(event_task, Pending::EventNext);
+        app.tasks
+            .insert(board_task, Pending::BoardNext("abcdEF12".to_owned()));
+        let mut context = Context::default();
+        app.close_live_reads(&mut context);
+        assert!(!app.tasks.contains_key(&event_task));
+        assert!(!app.tasks.contains_key(&board_task));
+
+        app.event_open = true;
+        app.board_open = Some("abcdEF12".to_owned());
+        app.on_task(&mut context, event_task, TaskOutcome::Cancelled);
+        app.on_task(&mut context, board_task, TaskOutcome::Cancelled);
+        assert!(app.event_open);
+        assert_eq!(app.board_open.as_deref(), Some("abcdEF12"));
     }
 
     #[test]
