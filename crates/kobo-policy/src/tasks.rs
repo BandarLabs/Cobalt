@@ -455,7 +455,6 @@ impl TaskRunner {
 
         let cancel = Arc::new(AtomicBool::new(false));
         let stream_url = line_stream_url(&work);
-        let cleanup_url = stream_url.clone();
         let sender = self.sender.clone();
         let root = self.root.clone();
         let fetch = self.fetch.clone();
@@ -481,11 +480,6 @@ impl TaskRunner {
                     &flag,
                 );
                 let outcome = if flag.load(Ordering::SeqCst) {
-                    if let (Some(streams), Some(url)) =
-                        (line_streams.as_deref(), cleanup_url.as_deref())
-                    {
-                        streams.close(url);
-                    }
                     TaskOutcome::Cancelled
                 } else {
                     outcome

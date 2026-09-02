@@ -175,10 +175,15 @@ impl LineStreams {
             last_progress: Instant::now(),
         };
         stream.decode_available()?;
-        self.streams
-            .lock()
-            .map_err(|_| TaskError::Unreachable)?
-            .insert(url.to_owned(), stream);
+        let mut streams = self.streams.lock().map_err(|_| TaskError::Unreachable)?;
+        if cancel.load(Ordering::SeqCst) {
+            return Err(TaskError::TimedOut);
+        }
+        streams.insert(url.to_owned(), stream);
+        if cancel.load(Ordering::SeqCst) {
+            streams.remove(url);
+            return Err(TaskError::TimedOut);
+        }
         Ok(Vec::new())
     }
 

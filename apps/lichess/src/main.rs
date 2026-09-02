@@ -2048,9 +2048,6 @@ impl Lichess {
                 }
                 Pending::EventOpen | Pending::EventNext => {
                     self.event_open = false;
-                    if self.accepted_challenge.is_some() {
-                        self.clear_accepted_challenge_wait();
-                    }
                     let seconds = delay.unwrap_or(30).max(1);
                     self.set_event_rate_limit(context, seconds);
                     self.schedule_event_rate_wait(context, seconds);
@@ -3595,6 +3592,20 @@ mod tests {
                 id: "owner123".to_owned(),
                 username: "Owner".to_owned(),
             }),
+            accepted_challenge: Some(Challenge {
+                id: "chall123".to_owned(),
+                challenger: "ReaderTwo".to_owned(),
+                direction: ChallengeDirection::Incoming,
+                status: "created".to_owned(),
+                rated: false,
+                variant: "standard".to_owned(),
+                speed: "rapid".to_owned(),
+                time_control: ChallengeTime::Clock {
+                    initial_seconds: Some(600),
+                    increment_seconds: Some(0),
+                },
+            }),
+            reconcile_accepted_challenge: true,
             ..Lichess::default()
         };
         let mut context = Context::default();
@@ -3604,6 +3615,7 @@ mod tests {
             b"COBALT-HTTP/1 429\nRetry-After: 21\n\n",
         );
         assert!(!app.event_open);
+        assert!(app.accepted_challenge.is_some());
         assert!(app.event_rate_limit.is_some());
         assert!(app
             .has_pending(|pending| { matches!(pending, Pending::EventRateWait { remaining: 0 }) }));
