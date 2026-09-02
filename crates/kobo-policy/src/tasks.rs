@@ -1129,6 +1129,20 @@ mod tests {
             Some("owner-global"),
             "legacy and CLI-installed globals remain the deliberate fallback"
         );
+
+        let legacy = temp_root("legacy-global-secret");
+        std::fs::write(legacy.join("openai"), "legacy-global").expect("legacy secret");
+        for app in ["chat", "audiobook"] {
+            let store = SecretStore {
+                root: legacy.clone(),
+                app: Some(app.to_owned()),
+            };
+            assert_eq!(
+                scoped_secret(Some(&store), "openai").as_deref(),
+                Some("legacy-global"),
+                "{app} lost the pre-namespace credential"
+            );
+        }
     }
 
     #[test]
