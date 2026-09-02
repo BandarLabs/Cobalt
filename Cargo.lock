@@ -797,6 +797,8 @@ version = "0.3.3"
 dependencies = [
  "kobo-flashcards-format",
  "kobo-html",
+ "kobo-image",
+ "resvg",
  "rusqlite",
  "serde_json",
  "zip",

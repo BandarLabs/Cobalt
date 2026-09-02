@@ -13,6 +13,8 @@ path = "src/main.rs"
 [dependencies]
 kobo-flashcards-format = { path = "../kobo-flashcards-format" }
 kobo-html = { path = "../kobo-html" }
+kobo-image = { path = "../kobo-image" }
+resvg = { version = "0.45.1", default-features = false }
 rusqlite = { version = "0.32.1", features = ["bundled"] }
 serde_json = "1.0.140"
 zip = { version = "2.2.2", default-features = false, features = ["deflate"] }

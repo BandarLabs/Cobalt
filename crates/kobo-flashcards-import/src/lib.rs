@@ -179,11 +179,12 @@ pub fn verify_bundle(path: &Path) -> Result<ImportReport, ImportError> {
                 .rendered_name
                 .as_deref()
                 .unwrap_or(&attachment.name);
-            if parsed.media(name).is_none() {
+            let Some(image) = parsed.media(name) else {
                 return Err(ImportError::InvalidPackage(format!(
                     "image attachment {name:?} has no digest-verified bytes"
                 )));
-            }
+            };
+            verify_image_rendering(&attachment.mime, image)?;
         }
     }
     Ok(report_for(
@@ -191,6 +192,57 @@ pub fn verify_bundle(path: &Path) -> Result<ImportReport, ImportError> {
         &parsed.manifest().source.package_kind,
         &bytes,
     ))
+}
+
+fn verify_image_rendering(mime: &str, bytes: &[u8]) -> Result<(), ImportError> {
+    let rendered;
+    let bytes = if mime == "image/svg+xml" {
+        rendered = rasterize_svg(bytes)?;
+        &rendered
+    } else {
+        bytes
+    };
+    kobo_image::decode(bytes).map_err(|_| {
+        ImportError::InvalidPackage(
+            "a referenced image could not be decoded by the Kobo image path".to_owned(),
+        )
+    })?;
+    Ok(())
+}
+
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "both dimensions are capped to 1,920 pixels before scaling"
+)]
+fn rasterize_svg(bytes: &[u8]) -> Result<Vec<u8>, ImportError> {
+    let sanitized = std::str::from_utf8(bytes)
+        .map_err(|_| ImportError::InvalidPackage("a referenced SVG is not UTF-8".to_owned()))?
+        .replace("kvg:", "metadata-kvg-")
+        .replace("inkscape:", "metadata-inkscape-")
+        .replace("sodipodi:", "metadata-sodipodi-");
+    let tree = resvg::usvg::Tree::from_data(sanitized.as_bytes(), &resvg::usvg::Options::default())
+        .map_err(|_| {
+            ImportError::InvalidPackage("a referenced SVG cannot be rendered safely".to_owned())
+        })?;
+    let size = tree.size().to_int_size();
+    let width = size.width().min(1_920);
+    let height = size.height().min(1_920);
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(width, height).ok_or_else(|| {
+        ImportError::InvalidPackage("a referenced SVG has unsupported dimensions".to_owned())
+    })?;
+    resvg::render(
+        &tree,
+        resvg::tiny_skia::Transform::from_scale(
+            width as f32 / size.width() as f32,
+            height as f32 / size.height() as f32,
+        ),
+        &mut pixmap.as_mut(),
+    );
+    pixmap.encode_png().map_err(|_| {
+        ImportError::InvalidPackage(
+            "a referenced SVG cannot be encoded for Kobo rendering".to_owned(),
+        )
+    })
 }
 
 /// Stages a verified bundle to the fixed private Flashcards shelf on a mounted
@@ -1528,9 +1580,7 @@ mod tests {
         fs::create_dir_all(&root).expect("fixture root");
         let collection = root.join("collection.anki2");
         create_fixture_collection(&collection);
-        let image = [
-            0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n', 0, 0, 0, 13, b'I', b'H', b'D', b'R',
-        ];
+        let image = kobo_image::encode_png_grey(1, 1, &[0]).expect("tiny PNG");
         let database = fs::read(&collection).expect("database");
         let package = root.join("fixture.apkg");
         fs::write(
@@ -1555,6 +1605,7 @@ mod tests {
         let bundle_bytes = fs::read(&output).expect("bundle");
         let bundle = decode(&bundle_bytes).expect("verified bundle");
         assert_eq!(bundle.media("picture.png"), Some(image.as_slice()));
+        verify_bundle(&output).expect("Kobo image verification");
         assert_eq!(bundle.manifest().revlog.len(), 1);
         assert!(bundle.manifest().notetypes[0]
             .original_json

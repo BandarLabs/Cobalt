@@ -13,6 +13,9 @@ This is engineering guidance, not legal advice.
 in replacement mode and creates one deterministic, compressed
 `collection.cobfc` bundle. `flashcards-import stage BUNDLE --kobo-root MOUNT`
 copies only to the fixed Flashcards shelf entry on a mounted USB volume.
+`flashcards-import verify BUNDLE` additionally decodes every referenced image
+through the same Kobo image primitive (including safe SVG rasterization) before
+reporting that image references resolve to digest-verified bytes.
 An APKG can merge with an existing Flashcards bundle only when card identifiers
 do not collide and same-named media have the same digest. Differing media is
 refused rather than renamed or overwritten. A COLPKG always replaces the
