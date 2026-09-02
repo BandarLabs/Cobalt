@@ -15,7 +15,7 @@ use anki::services::MediaService;
 use anki_proto::generic;
 use kobo_flashcards_format::{
     canonical_media_name, decode, digest_hex, encode, media_type, rasterize_svg,
-    validate_review_log, validate_svg_source, verify_svg_bindings, Attachment, AttachmentKind,
+    validate_review_log, validate_svg_source, verify_card_images, Attachment, AttachmentKind,
     BundleManifest, Card, CollectionConfig, CollectionTag, Deck, DeckConfiguration, DeckQueue,
     Diagnostic, FormatError, Grave, Note as BundleNote, NoteType, ReviewLog, ReviewQueue, Source,
     MAX_BUNDLE_BYTES, MAX_CARDS, MAX_MEDIA_BYTES, MAX_MEDIA_ENTRIES, MAX_PAYLOAD_BYTES,
@@ -211,33 +211,7 @@ fn verify_bundle_bytes(bytes: &[u8]) -> Result<kobo_flashcards_format::ParsedBun
         .iter()
         .map(|card| card.id)
         .collect::<Vec<_>>();
-    verify_svg_bindings(&parsed, &card_ids)?;
-    let mut verified = BTreeSet::new();
-    for card in &parsed.manifest().cards {
-        for attachment in card
-            .attachments
-            .iter()
-            .filter(|attachment| attachment.kind == AttachmentKind::Image)
-        {
-            let name = attachment
-                .rendered_name
-                .as_deref()
-                .unwrap_or(&attachment.name);
-            if !verified.insert(name.to_owned()) {
-                continue;
-            }
-            let Some(image) = parsed.media(name) else {
-                return Err(ImportError::InvalidPackage(format!(
-                    "image attachment {name:?} has no digest-verified bytes"
-                )));
-            };
-            kobo_image::decode(image).map_err(|_| {
-                ImportError::InvalidPackage(
-                    "a referenced image could not be decoded by the Kobo image path".to_owned(),
-                )
-            })?;
-        }
-    }
+    verify_card_images(&parsed, &card_ids)?;
     Ok(parsed)
 }
 

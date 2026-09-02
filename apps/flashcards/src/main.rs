@@ -5,7 +5,7 @@
 //! no card can execute script, access a file, or open a network socket.
 
 use kobo_flashcards_format::{
-    decode, digest_hex, validate_review_log, verify_svg_bindings, AttachmentKind, ParsedBundle,
+    decode, digest_hex, validate_review_log, verify_card_images, AttachmentKind, ParsedBundle,
     DISTRIBUTION_DOCUMENTS, MAX_BUNDLE_BYTES, MAX_REVIEW_LOG_BYTES,
 };
 use kobo_sdk::{
@@ -161,7 +161,7 @@ impl Flashcards {
         match decode(&bytes) {
             Ok(bundle) => {
                 if let Err(error) =
-                    verify_svg_bindings(&bundle, &bundle.manifest().review_queue.card_ids)
+                    verify_card_images(&bundle, &bundle.manifest().review_queue.card_ids)
                 {
                     self.message = format!("The transferred collection was rejected: {error}");
                     context.set_screen(

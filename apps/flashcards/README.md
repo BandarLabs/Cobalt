@@ -32,11 +32,13 @@ The device draws bounded PNG/JPEG only. Accepted SVG is parsed with no
 file/data/network resolver and controlled bundled fonts on the host, then
 stored as a digest-addressed greyscale PNG. At admission the Kobo re-rasterizes
 SVG sources referenced by the bounded due queue and requires exact PNG
-equality, then displays only the PNG. GIF and WebP are explicitly unsupported.
-Audio and video remain visible as non-playing attachments and cannot cause
-playback or network activity. Answer-only media is selected only after reveal.
-A card side with more than one rendered image is rejected on the host rather
-than silently dropping or reordering images for the app's single image slot.
+equality, and decodes every due-card PNG/JPEG before accepting the bundle. It
+then displays only checked raster bytes. GIF and WebP are explicitly
+unsupported. Audio and video remain visible as non-playing attachments and
+cannot cause playback or network activity. Answer-only media is selected only
+after reveal. A card side with more than one rendered image is rejected on the
+host rather than silently dropping or reordering images for the app's single
+image slot.
 
 Choose **Notices** on the question screen to read the non-affiliation notice,
 exact source pins, full Anki/AnkiDroid/resvg terms, font terms, and resolved

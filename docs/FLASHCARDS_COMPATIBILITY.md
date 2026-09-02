@@ -89,8 +89,9 @@ deterministic greyscale PNG named from the source digest; the original SVG is
 retained for reconciliation. Host verification/staging check every SVG, and
 device admission checks every SVG referenced by the bounded due queue: both
 re-parse/re-rasterize and require byte-for-byte equality with the PNG. The
-review screen then decodes only that bounded PNG, so a crafted redirect cannot
-detach displayed bytes from the retained source.
+device also decodes every due-card PNG/JPEG during admission. The review screen
+then uses only those checked bytes, so a crafted redirect or corrupt raster
+cannot detach or silently remove displayed content.
 
 ## Merge, replacement, and review records
 

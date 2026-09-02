@@ -371,6 +371,49 @@ pub fn verify_svg_bindings(bundle: &ParsedBundle, card_ids: &[i64]) -> Result<()
     Ok(())
 }
 
+/// Verifies SVG source/raster equality and decodes every image used by the
+/// selected cards through the bounded Kobo image path.
+///
+/// # Errors
+///
+/// Returns an error for unsafe SVG, missing media, a source/raster mismatch,
+/// or PNG/JPEG bytes the device decoder refuses.
+pub fn verify_card_images(bundle: &ParsedBundle, card_ids: &[i64]) -> Result<(), FormatError> {
+    verify_svg_bindings(bundle, card_ids)?;
+    let mut verified = BTreeSet::new();
+    for card_id in card_ids {
+        let index = bundle
+            .manifest
+            .cards
+            .binary_search_by_key(card_id, |card| card.id)
+            .map_err(|_| {
+                FormatError::InvalidManifest("image verification card is missing".to_owned())
+            })?;
+        for attachment in bundle.manifest.cards[index]
+            .attachments
+            .iter()
+            .filter(|attachment| attachment.kind == AttachmentKind::Image)
+        {
+            let name = attachment
+                .rendered_name
+                .as_deref()
+                .unwrap_or(&attachment.name);
+            if !verified.insert(name.to_owned()) {
+                continue;
+            }
+            let bytes = bundle.media(name).ok_or_else(|| {
+                FormatError::InvalidManifest("image attachment bytes are missing".to_owned())
+            })?;
+            kobo_image::decode(bytes).map_err(|error| {
+                FormatError::InvalidManifest(format!(
+                    "image attachment is outside the device decode path: {error}"
+                ))
+            })?;
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FormatError {
     TooShort,
@@ -1373,5 +1416,26 @@ mod tests {
             encode(manifest, media),
             Err(FormatError::InvalidManifest(_))
         ));
+    }
+
+    #[test]
+    fn device_admission_rejects_undecodable_due_images() {
+        let mut manifest = single_card_manifest();
+        manifest.cards[0].question_media_names = vec!["front.png".to_owned()];
+        manifest.cards[0].answer_media_names = vec!["front.png".to_owned()];
+        manifest.cards[0].media_names = vec!["front.png".to_owned()];
+        manifest.cards[0].attachments = vec![Attachment {
+            name: "front.png".to_owned(),
+            rendered_name: None,
+            mime: "image/png".to_owned(),
+            kind: AttachmentKind::Image,
+        }];
+        let encoded = encode(
+            manifest,
+            BTreeMap::from([("front.png".to_owned(), b"not a PNG".to_vec())]),
+        )
+        .expect("structurally valid bundle");
+        let bundle = decode(&encoded).expect("bundle decode");
+        assert!(verify_card_images(&bundle, &[1]).is_err());
     }
 }
