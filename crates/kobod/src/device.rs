@@ -621,8 +621,9 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     }
     let session_network = network.restore_for_session(Duration::from_secs(30));
     trace(&format!(
-        "session network: {:?}; start errors: {:?}",
+        "session network: {:?}; uncertain captures: {:?}; start errors: {:?}",
         session_network.outcome(),
+        session_network.uncertain_executables(),
         session_network.start_errors()
     ));
 
@@ -701,7 +702,8 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     } else {
         false
     };
-    let network_start_uncertain = !session_network.start_errors().is_empty();
+    let network_start_uncertain = !session_network.start_errors().is_empty()
+        || !session_network.uncertain_executables().is_empty();
     let network_release_failed = match session_network.release(STOP_GRACE) {
         Ok(()) => false,
         Err(errors) => {
@@ -730,10 +732,10 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     {
         Some((
             kobo_ui::Glyph::Wifi,
-            "Cobalt could not prove that its temporary network processes stopped. \
-             Restarting avoids giving Wi-Fi to two owners at once. This is expected, \
-             it is not a crash, and everything you have saved is already on the disk.",
-            "the temporary session network could not be released safely",
+            "Cobalt could not prove that Wi-Fi has exactly one owner. Restarting avoids \
+             handing the radio to competing processes. This is expected, it is not a \
+             crash, and everything you have saved is already on the disk.",
+            "Wi-Fi ownership could not be handed back safely",
         ))
     } else {
         None
@@ -784,7 +786,23 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     }
     trace("panel and touch released, restarting the reader");
     println!("panel released, restarting the reader");
-    let restarted = reader.start(START_GRACE);
+    let restarted = match reader.start(START_GRACE) {
+        Ok(pid) => pid,
+        Err(error) => {
+            trace(&format!(
+                "the reader did not restart ({error}); requesting a clean reboot"
+            ));
+            watchdog.disarm();
+            drop(teardown);
+            let _ignored = fs::remove_dir_all(&state);
+            let summary = outcome.unwrap_or_else(|error| format!("application ended: {error}"));
+            return request_clean_reboot().map(|()| {
+                format!(
+                    "{summary}; typeface {typeface}; the reader did not restart ({error}), so a clean reboot was requested"
+                )
+            });
+        }
+    };
     // Any daemon Cobalt started for the session was stopped by exact captured
     // identity above. A stop or capture uncertainty takes the clean-reboot
     // path, so Nickel is never started on top of an unproven network owner.
@@ -816,15 +834,12 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     drop(teardown);
     let _ignored = fs::remove_dir_all(&state);
 
-    let reader_state = match (restarted, resumed) {
-        (Ok(pid), Ok(after)) => {
-            format!("the reader is running again as pid {pid}, and the freeze watchdog was resumed {after}")
+    let reader_state = match resumed {
+        Ok(after) => {
+            format!("the reader is running again as pid {restarted}, and the freeze watchdog was resumed {after}")
         }
-        (Ok(pid), Err(error)) => format!(
-            "the reader is running again as pid {pid}, but the freeze watchdog could not be resumed ({error}); it returns on the next reboot"
-        ),
-        (Err(error), _) => format!(
-            "THE READER DID NOT COME BACK ({error}). Power cycle the device; it always boots the stock reader"
+        Err(error) => format!(
+            "the reader is running again as pid {restarted}, but the freeze watchdog could not be resumed ({error}); it returns on the next reboot"
         ),
     };
     let reader_state =

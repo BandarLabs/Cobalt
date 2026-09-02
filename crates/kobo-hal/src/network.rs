@@ -85,6 +85,7 @@ pub struct SessionConnection {
     outcome: Restored,
     started: Vec<Reader>,
     start_errors: Vec<ReaderError>,
+    uncertain_executables: Vec<String>,
 }
 
 impl SessionConnection {
@@ -96,6 +97,11 @@ impl SessionConnection {
     #[must_use]
     pub fn start_errors(&self) -> &[ReaderError] {
         &self.start_errors
+    }
+
+    #[must_use]
+    pub fn uncertain_executables(&self) -> &[String] {
+        &self.uncertain_executables
     }
 
     /// Stops every daemon this session started, even if one stop fails.
@@ -143,7 +149,7 @@ impl Connection {
         }
     }
 
-    /// Returns whether anything was recorded.
+    /// Returns whether any daemon identity was captured.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.daemons.is_empty()
@@ -214,11 +220,8 @@ impl Connection {
     /// Restores a dropped connection and records only daemons Cobalt starts.
     #[must_use]
     pub fn restore_for_session(&self, within: Duration) -> SessionConnection {
-        let mut start_errors = self
-            .uncertain
-            .iter()
-            .map(|_| ReaderError::DidNotStart)
-            .collect::<Vec<_>>();
+        let mut start_errors = Vec::new();
+        let uncertain_executables = self.uncertain.clone();
         // A device that was already offline has nothing to put back, and
         // starting a supplicant it was not running would be inventing state.
         if !self.was_online {
@@ -226,6 +229,7 @@ impl Connection {
                 outcome: Restored::Unaffected,
                 started: Vec::new(),
                 start_errors,
+                uncertain_executables,
             };
         }
         if !went_offline(WIRELESS_LINK, SETTLE) {
@@ -233,6 +237,7 @@ impl Connection {
                 outcome: Restored::Unaffected,
                 started: Vec::new(),
                 start_errors,
+                uncertain_executables,
             };
         }
         let mut started = Vec::new();
@@ -276,6 +281,7 @@ impl Connection {
             outcome,
             started,
             start_errors,
+            uncertain_executables,
         }
     }
 }
