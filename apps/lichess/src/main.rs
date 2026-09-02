@@ -2048,6 +2048,7 @@ impl Lichess {
                 }
                 Pending::EventOpen | Pending::EventNext => {
                     self.event_open = false;
+                    self.recover_accepted_challenge(context);
                     let seconds = delay.unwrap_or(30).max(1);
                     self.set_event_rate_limit(context, seconds);
                     self.schedule_event_rate_wait(context, seconds);
@@ -3616,6 +3617,7 @@ mod tests {
         );
         assert!(!app.event_open);
         assert!(app.accepted_challenge.is_some());
+        assert!(app.has_pending(|pending| matches!(pending, Pending::Playing)));
         assert!(app.event_rate_limit.is_some());
         assert!(app
             .has_pending(|pending| { matches!(pending, Pending::EventRateWait { remaining: 0 }) }));
