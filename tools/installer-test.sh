@@ -41,6 +41,8 @@ make_release() {
 printf '%s\n' '$marker'
 EOF
     chmod 755 "$directory/package/kobo"
+    cp "$INSTALLER" "$directory/package/updater.sh"
+    chmod 700 "$directory/package/updater.sh"
     printf 'license\n' > "$directory/package/LICENSE"
     printf 'notices\n' > "$directory/package/THIRD-PARTY.md"
     printf 'dependency terms\n' > "$directory/package/licenses/LICENSE-Rust-dependencies.txt"
@@ -90,6 +92,21 @@ run_install() {
     sh "$INSTALLER" --yes --no-setup --no-path "$@"
 }
 
+run_host_update() {
+    home=$1
+    release=$2
+    channel=$3
+    shift 3
+    HOME=$home \
+    XDG_DATA_HOME=$home/data \
+    XDG_CACHE_HOME=$home/cache \
+    PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+    KOBO_INSTALLER_TESTING=1 \
+    KOBO_INSTALLER_BASE_URL="file://$release" \
+    "$@" sh "$home/data/kobo/updater/install.sh" \
+        --host-update --channel "$channel" --platform linux-x86_64
+}
+
 expect_failure() {
     label=$1
     shift
@@ -100,7 +117,9 @@ expect_failure() {
 }
 
 stable=$WORK/stable
+beta=$WORK/beta
 make_release "$stable" 0.3.3 stable stable-one
+make_release "$beta" 0.3.4 beta beta-one
 grep -F "https://bandarlabs.github.io/Cobalt/install.sh" "$ROOT/README.md" >/dev/null
 if grep -Eq 'beta-v[0-9.]+/install\.sh|sh -s -- --beta' "$ROOT/README.md"; then
     printf 'README exposes a beta bootstrap route\n' >&2
@@ -175,6 +194,72 @@ grep -F "/releases/latest/download/cobalt-host-manifest.txt" \
 grep -F "/releases/latest/download/install.sh" "$WORK/pages-urls" >/dev/null
 grep -F "/releases/download/v0.3.3/cobalt-host-manifest.txt" \
     "$WORK/pages-urls" >/dev/null
+
+# Host-only update uses the installed verified updater. Stable is the normal
+# path, Beta is explicit, and neither path invokes setup or touches a volume.
+host_update_home=$WORK/home-host-update
+run_install "$host_update_home" "$stable" --platform linux-x86_64 >/dev/null
+attached=$host_update_home/mounted-reader
+mkdir -p "$attached/.kobo"
+printf 'N365000000000,4.9.77,4.45.23697\n' > "$attached/.kobo/version"
+printf 'owner bytes\n' > "$attached/untouched"
+run_host_update "$host_update_home" "$stable" stable > "$WORK/already-current.out"
+grep -F "already current on the stable channel" "$WORK/already-current.out" >/dev/null
+run_host_update "$host_update_home" "$beta" beta >/dev/null
+[ "$("$host_update_home/.local/bin/kobo")" = beta-one ]
+grep -Fx "host-channel beta" "$host_update_home/data/kobo/install-state" >/dev/null
+grep -Fx \
+    "release $host_update_home/data/kobo/releases/0.3.3-stable" \
+    "$host_update_home/data/kobo/install-state" >/dev/null
+run_host_update "$host_update_home" "$stable" stable >/dev/null
+[ "$("$host_update_home/.local/bin/kobo")" = stable-one ]
+grep -Fx "host-channel stable" "$host_update_home/data/kobo/install-state" >/dev/null
+[ "$(cat "$attached/untouched")" = "owner bytes" ]
+
+host_updated=$WORK/host-updated
+make_release "$host_updated" 0.3.5 stable stable-two
+run_host_update "$host_update_home" "$host_updated" stable >/dev/null
+[ "$("$host_update_home/.local/bin/kobo")" = stable-two ]
+
+host_truncated=$WORK/host-truncated
+make_release "$host_truncated" 0.3.6 stable stable-three
+printf x >> "$host_truncated/kobo-0.3.6-linux-x86_64.tar.gz"
+expect_failure "host update truncated download" \
+    run_host_update "$host_update_home" "$host_truncated" stable
+host_checksum=$WORK/host-checksum
+make_release "$host_checksum" 0.3.6 stable stable-three
+printf X | dd of="$host_checksum/kobo-0.3.6-linux-x86_64.tar.gz" \
+    bs=1 seek=8 conv=notrunc 2>/dev/null
+expect_failure "host update checksum failure" \
+    run_host_update "$host_update_home" "$host_checksum" stable
+host_signature=$WORK/host-signature
+make_release "$host_signature" 0.3.6 stable stable-three
+printf x >> "$host_signature/cobalt-host-manifest.txt"
+expect_failure "host update signature failure" \
+    run_host_update "$host_update_home" "$host_signature" stable
+
+mkdir "$host_update_home/data/kobo/install.lock"
+printf '%s\n' "$$" > "$host_update_home/data/kobo/install.lock/pid"
+expect_failure "host update lock contention" \
+    run_host_update "$host_update_home" "$host_updated" stable
+printf '%s\n' 999999 > "$host_update_home/data/kobo/install.lock/pid"
+expect_failure "host update stale-looking lock" \
+    run_host_update "$host_update_home" "$host_updated" stable
+rm -rf "$host_update_home/data/kobo/install.lock"
+expect_failure "host update unsupported platform" \
+    run_host_update "$host_update_home" "$host_updated" stable \
+    env KOBO_TEST_UNAME_S=FreeBSD
+conflicting_path=$WORK/host-update-conflict
+mkdir "$conflicting_path"
+printf '#!/bin/sh\nexit 0\n' > "$conflicting_path/kobo"
+chmod 755 "$conflicting_path/kobo"
+expect_failure "host update command conflict" env \
+    PATH="$conflicting_path:/usr/bin:/bin:/usr/sbin:/sbin" \
+    HOME="$host_update_home" XDG_DATA_HOME="$host_update_home/data" \
+    XDG_CACHE_HOME="$host_update_home/cache" KOBO_INSTALLER_TESTING=1 \
+    KOBO_INSTALLER_BASE_URL="file://$beta" \
+    sh "$host_update_home/data/kobo/updater/install.sh" \
+    --host-update --channel beta
 
 # Clean install, update, and idempotent rerun.
 home=$WORK/home-clean

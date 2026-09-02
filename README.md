@@ -144,11 +144,22 @@ of `install.sh`, use the recommended
 [signed-bootstrap procedure](docs/INSTALL.md#high-assurance-signed-bootstrap).
 
 The installer supports macOS Intel and Apple Silicon, and Linux x86_64 and
-arm64. It installs stable Cobalt only. Beta participation is enabled later in
-Cobalt Settings, or through the developer/source workflow. Settings shows the
-installed version and current channel, confirms channel changes explicitly,
-and verifies signed Beta platform metadata. Returning to Stable needs no USB
-connection and preserves installed apps, state, and secrets.
+arm64. It installs the stable Kobo platform only. The platform Beta channel is
+enabled exclusively in Cobalt Settings after first launch, or through the
+developer/source workflow. Settings shows the installed version and current
+channel, confirms channel changes explicitly, and verifies signed Beta
+platform metadata. Returning to Stable needs no USB connection and preserves
+installed apps, state, and secrets.
+
+Update the installed host command independently:
+
+```sh
+kobo update
+kobo update --channel beta   # explicit host CLI beta; never writes to a reader
+```
+
+The host CLI channel does not select the Kobo platform channel. Device Beta
+updates remain an explicit choice in Cobalt Settings.
 
 Rerun the same command to update. Restart the reader, wait one minute for
 NickelMenu's failsafe, then open **Cobalt** from Kobo's menu. Future

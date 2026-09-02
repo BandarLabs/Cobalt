@@ -52,6 +52,8 @@ for platform in macos-x86_64 macos-arm64 linux-x86_64 linux-arm64; do
     mkdir -p "$package/licenses"
     cp "$binary" "$package/kobo"
     chmod 755 "$package/kobo"
+    cp install.sh "$package/updater.sh"
+    chmod 700 "$package/updater.sh"
     cp LICENSE "$package/LICENSE"
     cp THIRD-PARTY.md "$package/THIRD-PARTY.md"
     cp licenses/LICENSE-Rust-dependencies.txt \

@@ -419,6 +419,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "app-release" => app_release(&arguments[1..]),
         "host-release-sign" => host_release_sign(&arguments[1..]),
         "host-release-verify" => host_release_verify(&arguments[1..]),
+        "update" => update_host(&arguments[1..]),
         "setup" => setup_device(&arguments[1..]),
         "deploy" => deploy_package(&arguments[1..]),
         "secret" => secret_command(&arguments[1..]),
@@ -440,6 +441,83 @@ fn run(arguments: &[String]) -> Result<(), String> {
             Ok(())
         }
         unknown => Err(format!("unknown command '{unknown}'")),
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum HostUpdateChannel {
+    Stable,
+    Beta,
+}
+
+impl HostUpdateChannel {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Stable => "stable",
+            Self::Beta => "beta",
+        }
+    }
+}
+
+fn parse_host_update(arguments: &[String]) -> Result<HostUpdateChannel, String> {
+    match arguments {
+        [] => Ok(HostUpdateChannel::Stable),
+        [flag, channel] if flag == "--channel" => match channel.as_str() {
+            "stable" => Ok(HostUpdateChannel::Stable),
+            "beta" => Ok(HostUpdateChannel::Beta),
+            _ => Err("usage: kobo update [--channel stable|beta]".to_owned()),
+        },
+        _ => Err("usage: kobo update [--channel stable|beta]".to_owned()),
+    }
+}
+
+fn update_host(arguments: &[String]) -> Result<(), String> {
+    let channel = parse_host_update(arguments)?;
+    let home = env::var_os("HOME").ok_or("HOME is not set")?;
+    let data = env::var_os("XDG_DATA_HOME")
+        .map_or_else(|| Path::new(&home).join(".local/share"), PathBuf::from);
+    let root = data.join("kobo");
+    let state_path = root.join("install-state");
+    let state = fs::read_to_string(&state_path).map_err(|error| {
+        format!(
+            "kobo update requires a managed host installation (read {}: {error})",
+            state_path.display()
+        )
+    })?;
+    let binary = state
+        .lines()
+        .find_map(|line| line.strip_prefix("binary "))
+        .map(PathBuf::from)
+        .ok_or("managed installation state has no binary path")?;
+    let current = env::current_exe()
+        .and_then(|path| path.canonicalize())
+        .map_err(|error| format!("locate running kobo: {error}"))?;
+    let installed = binary
+        .canonicalize()
+        .map_err(|error| format!("locate managed kobo {}: {error}", binary.display()))?;
+    if current != installed {
+        return Err(
+            "kobo update is available only from the host command installed by Cobalt; \
+             source checkouts use git and cargo"
+                .to_owned(),
+        );
+    }
+    let updater = root.join("updater/install.sh");
+    if !updater.is_file() {
+        return Err(format!(
+            "verified host updater is missing at {}; rerun the stable installer",
+            updater.display()
+        ));
+    }
+    let status = Command::new("sh")
+        .arg(&updater)
+        .args(["--host-update", "--channel", channel.name()])
+        .status()
+        .map_err(|error| format!("run verified host updater: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("host update exited with {status}"))
     }
 }
 
@@ -3342,12 +3420,12 @@ fn load_release_package_from_manifest(
     directory: &Path,
     manifest: host_release::Manifest,
 ) -> Result<SetupPayload, String> {
-    if manifest.version != env!("CARGO_PKG_VERSION") {
+    if !kobo_app_store::cobalt_version_at_least(env!("CARGO_PKG_VERSION"), &manifest.version) {
         return Err(format!(
-                "release metadata is for Cobalt {}, but this kobo is {}; reinstall the matching host package",
-                manifest.version,
-                env!("CARGO_PKG_VERSION")
-            ));
+            "stable setup package {} is newer than this kobo {}; update the host command first",
+            manifest.version,
+            env!("CARGO_PKG_VERSION")
+        ));
     }
     let asset = manifest
         .device()
@@ -5705,6 +5783,8 @@ fn print_help() {
                                    Sign host release metadata for publishing\n\
            host-release-verify --manifest PATH --signature PATH\n\
                                    Verify signed host release metadata\n\
+           update [--channel stable|beta]\n\
+                                   Update only the installed host kobo command; Stable is default\n\
            setup [--volume PATH] [--undo] [--enable-ssh] [--no-key] [--dry-run]\n\
                  [--yes] [--non-interactive] [--release-dir PATH | --source]\n\
                                    Prepare a reader over USB after default-no confirmation;\n\
@@ -5739,7 +5819,28 @@ mod tests {
             raw.extend_from_slice(&millis.to_le_bytes());
             raw.extend(std::iter::repeat_n(*fill, (width * height) as usize));
         }
+
         raw
+    }
+
+    #[test]
+    fn host_update_defaults_stable_and_requires_explicit_beta() {
+        let arguments = |values: &[&str]| {
+            values
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            super::parse_host_update(&arguments(&[])),
+            Ok(super::HostUpdateChannel::Stable)
+        );
+        assert_eq!(
+            super::parse_host_update(&arguments(&["--channel", "beta"])),
+            Ok(super::HostUpdateChannel::Beta)
+        );
+        assert!(super::parse_host_update(&arguments(&["--beta"])).is_err());
+        assert!(super::parse_host_update(&arguments(&["--channel", "nightly"])).is_err());
     }
 
     #[test]

@@ -53,12 +53,13 @@ and device artifact.
 
 To install an exact immutable release, add `--version X.Y.Z`. For CI, use
 `--non-interactive --yes`; add `--no-setup` when no physical reader is
-attached. The public bootstrap installs stable only. Enable **Beta updates** in
-Cobalt Settings after a normal stable installation, or use the source workflow
-for development. Settings shows the installed version and channel, requires a
-separate confirmation before changing it, persists the choice, and verifies
-the signed platform manifest. Returning to Stable changes future platform and
-Store checks without USB, downgrading, or deleting apps, state, or secrets.
+attached. The public bootstrap and prebuilt `kobo setup` install the stable
+platform only. Enable **Beta updates** exclusively in Cobalt Settings after a
+normal stable installation, or use the source workflow for development.
+Settings shows the installed version and channel, requires a separate
+confirmation before changing it, persists the choice, and verifies the signed
+platform manifest. Returning to Stable changes future platform and Store
+checks without USB, downgrading, or deleting apps, state, or secrets.
 
 ### High-assurance signed bootstrap
 
@@ -230,6 +231,20 @@ Rerun the stable installer command to update. The host binary and verified
 release directory are replaced atomically; an interrupted download is never
 activated. Running it again at the same version is safe. Beta platform updates
 remain inside Cobalt Settings and do not require USB.
+
+After the first installation, update only the host command with:
+
+```sh
+kobo update
+kobo update --channel beta
+```
+
+Stable is the default. Host Beta requires the explicit selector and changes
+only the installed `kobo` executable; it never scans, mounts, ejects, or writes
+an attached reader. Returning from a Beta host CLI to the latest Stable CLI is
+`kobo update`. An already-current command reports that result without replacing
+the binary. The stable setup package remains separate, so `kobo setup` never
+turns into a Beta USB installation.
 
 The installer lock fails closed. If an interrupted process leaves
 `~/.local/share/kobo/install.lock`, first verify that no installer is still

@@ -46,7 +46,9 @@ The long-lived `beta` branch is the only source for beta publishing:
   bootstrap. Pull-request tests use disposable fixture keys and never require
   the protected seed. Cobalt Settings and background platform updates verify
   the raw signature for both Stable and Beta before accepting the device
-  archive digest.
+  archive digest. The same host packages support `kobo update`; its default is
+  Stable and its Beta host channel is explicit and independent from the
+  in-product platform channel.
 - `.github/workflows/apps.yml` publishes beta branch apps only to
   `app-catalog-beta`; main continues to publish only to `app-catalog`.
 - `.github/workflows/promote-beta.yml` is a manual, guarded promotion. Supply

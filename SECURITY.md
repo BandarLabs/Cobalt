@@ -44,6 +44,13 @@ release manifest before accepting the device archive digest; background
 updates use the same signed metadata. Returning to Stable changes only the
 persisted preference and never removes or downgrades apps or owner data.
 
+`kobo update` is a host-only operation using the verified updater stored by the
+stable installer. It reuses the installer lock, platform detection, SSHSIG
+manifest verification, archive length/SHA-256 checks, conflict checks, and
+atomic binary replacement. Stable is the default; `--channel beta` is explicit
+and changes only the host CLI. It does not discover or write mounted readers,
+and the cached USB setup package remains Stable.
+
 After either bootstrap starts, it verifies the signed versioned manifest before
 parsing it, then checks the selected host archive and device package against
 the manifest's exact byte lengths and SHA-256 digests. `kobo setup`

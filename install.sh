@@ -4,6 +4,7 @@ set -eu
 
 REPOSITORY=${KOBO_INSTALLER_REPOSITORY:-BandarLabs/Cobalt}
 CHANNEL=stable
+HOST_UPDATE=false
 VERSION=
 VERSION_EXPLICIT=false
 INSTALL_DIR=${KOBO_INSTALL_DIR:-"$HOME/.local/bin"}
@@ -52,6 +53,18 @@ while [ "$#" -gt 0 ]; do
         --beta)
             fail "the host bootstrap installs stable only; enable Beta updates in Cobalt Settings after installation"
             ;;
+        --host-update)
+            HOST_UPDATE=true
+            NO_SETUP=true
+            NO_PATH=true
+            YES=true
+            NONINTERACTIVE=true
+            ;;
+        --channel)
+            [ "$#" -ge 2 ] || fail "--channel needs stable or beta"
+            CHANNEL=$2
+            shift
+            ;;
         --version)
             [ "$#" -ge 2 ] || fail "--version needs X.Y.Z"
             VERSION=$2
@@ -83,6 +96,14 @@ while [ "$#" -gt 0 ]; do
     esac
     shift
 done
+
+if [ "$HOST_UPDATE" != true ] && [ "$CHANNEL" != stable ]; then
+    fail "channel selection is available only through 'kobo update'"
+fi
+case "$CHANNEL" in
+    stable|beta) ;;
+    *) fail "update channel must be stable or beta" ;;
+esac
 
 case "$VERSION" in
     '') ;;
@@ -137,6 +158,14 @@ esac
 
 DATA_HOME=${XDG_DATA_HOME:-"$HOME/.local/share"}
 CACHE_HOME=${XDG_CACHE_HOME:-"$HOME/.cache"}
+ROOT=$DATA_HOME/kobo
+STATE=$ROOT/install-state
+if [ "$HOST_UPDATE" = true ]; then
+    [ -f "$STATE" ] || fail "kobo update requires an installation managed by this installer"
+    managed_binary=$(sed -n 's/^binary //p' "$STATE")
+    [ -n "$managed_binary" ] || fail "managed installation state has no binary path"
+    INSTALL_DIR=$(dirname "$managed_binary")
+fi
 case "$INSTALL_DIR:$DATA_HOME:$CACHE_HOME" in
     *'
 '*) fail "installation paths must not contain newlines" ;;
@@ -147,7 +176,6 @@ for directory in "$INSTALL_DIR" "$DATA_HOME" "$CACHE_HOME"; do
         *) fail "installation paths must be absolute: $directory" ;;
     esac
 done
-ROOT=$DATA_HOME/kobo
 mkdir -p "$ROOT" "$CACHE_HOME/kobo" "$INSTALL_DIR"
 chmod 700 "$ROOT" "$CACHE_HOME/kobo" 2>/dev/null || true
 
@@ -205,8 +233,15 @@ file_size() {
 }
 
 if [ -z "$BASE_URL" ]; then
+    if [ "$HOST_UPDATE" = true ] && [ "$CHANNEL" = beta ] && [ -z "$VERSION" ]; then
+        beta_manifest=$STAGE/Cargo.toml
+        download "https://raw.githubusercontent.com/$REPOSITORY/beta/Cargo.toml" "$beta_manifest" ||
+            fail "cannot discover the current beta version"
+        VERSION=$(sed -n 's/^version = "\([0-9][0-9.]*\)"$/\1/p' "$beta_manifest")
+        [ -n "$VERSION" ] || fail "beta branch does not declare one workspace version"
+    fi
     if [ -n "$VERSION" ]; then
-        tag=v$VERSION
+        if [ "$CHANNEL" = beta ]; then tag=beta-v$VERSION; else tag=v$VERSION; fi
         BASE_URL=https://github.com/$REPOSITORY/releases/download/$tag
     else
         BASE_URL=https://github.com/$REPOSITORY/releases/latest/download
@@ -247,8 +282,8 @@ manifest_version=$(manifest_field version)
 manifest_channels=$(manifest_field channels)
 manifest_source=$(manifest_field source)
 case ",$manifest_channels," in
-    *,stable,*) ;;
-    *) fail "signed manifest does not allow stable installation" ;;
+    *,"$CHANNEL",*) ;;
+    *) fail "signed manifest does not allow $CHANNEL installation" ;;
 esac
 if [ -n "$VERSION" ] && [ "$manifest_version" != "$VERSION" ]; then
     fail "requested version $VERSION, but the signed manifest is $manifest_version"
@@ -259,7 +294,17 @@ printf '%s\n' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' ||
 printf '%s\n' "$manifest_source" | grep -Eq '^[0-9a-f]{40}$' ||
     fail "signed manifest has an invalid source commit"
 installed_version=$(sed -n 's/^version //p' "$ROOT/install-state" 2>/dev/null || true)
-if [ -n "$installed_version" ] && [ "$VERSION_EXPLICIT" != true ]; then
+installed_host_channel=$(sed -n 's/^host-channel //p' "$ROOT/install-state" 2>/dev/null || true)
+[ -n "$installed_host_channel" ] || installed_host_channel=stable
+if [ "$HOST_UPDATE" = true ] &&
+    [ "$installed_version" = "$VERSION" ] &&
+    [ "$installed_host_channel" = "$CHANNEL" ]; then
+    say "kobo $VERSION is already current on the $CHANNEL channel."
+    exit 0
+fi
+if [ -n "$installed_version" ] &&
+    [ "$VERSION_EXPLICIT" != true ] &&
+    { [ "$HOST_UPDATE" != true ] || [ "$installed_host_channel" = "$CHANNEL" ]; }; then
     if ! awk -v old="$installed_version" -v new="$VERSION" 'BEGIN {
         split(old, a, "."); split(new, b, ".");
         for (i = 1; i <= 3; i++) {
@@ -300,27 +345,42 @@ case "$HOST_ASSET:$DEVICE_ASSET" in
     *[!A-Za-z0-9._:-]*) fail "signed manifest contains an unsafe asset name" ;;
 esac
 
-case "$0" in
-    sh|-sh|bash|-bash|dash|-dash|*/sh|*/bash|*/dash)
-        say "Bootstrap note: piped shell input is trusted through HTTPS; downloaded artifacts remain signature-verified."
-        ;;
-    *)
-        [ -f "$0" ] || fail "cannot inspect bootstrap path $0"
-        [ "$(file_size "$0")" = "$BOOTSTRAP_BYTES" ] ||
-            fail "this install.sh does not match the signed bootstrap length"
-        [ "$(sha256_file "$0")" = "$BOOTSTRAP_SHA" ] ||
-            fail "this install.sh does not match the signed bootstrap checksum"
-        ;;
-esac
+BOOTSTRAP_SOURCE=
+if [ "$HOST_UPDATE" != true ]; then
+    BOOTSTRAP_SOURCE=$STAGE/verified-install.sh
+    case "$0" in
+        sh|-sh|bash|-bash|dash|-dash|*/sh|*/bash|*/dash)
+            say "Bootstrap note: piped shell input is trusted through HTTPS; downloaded artifacts remain signature-verified."
+            download "$BASE_URL/install.sh" "$BOOTSTRAP_SOURCE" ||
+                fail "cannot download the stable updater"
+            ;;
+        *)
+            [ -f "$0" ] || fail "cannot inspect bootstrap path $0"
+            cp "$0" "$BOOTSTRAP_SOURCE"
+            ;;
+    esac
+fi
+if [ -n "$BOOTSTRAP_SOURCE" ]; then
+    [ "$(file_size "$BOOTSTRAP_SOURCE")" = "$BOOTSTRAP_BYTES" ] ||
+        fail "install.sh does not match the signed bootstrap length"
+    [ "$(sha256_file "$BOOTSTRAP_SOURCE")" = "$BOOTSTRAP_SHA" ] ||
+        fail "install.sh does not match the signed bootstrap checksum"
+fi
 
 HOST_ARCHIVE=$STAGE/$HOST_ASSET
 DEVICE_ARCHIVE=$STAGE/$DEVICE_ASSET
+CACHE_SETUP=true
+if [ "$HOST_UPDATE" = true ] && [ "$CHANNEL" = beta ]; then
+    CACHE_SETUP=false
+fi
 download "$BASE_URL/$HOST_ASSET" "$HOST_ARCHIVE" ||
     fail "cannot download $HOST_ASSET"
-download "$BASE_URL/$DEVICE_ASSET" "$DEVICE_ARCHIVE" ||
-    fail "cannot download $DEVICE_ASSET"
-download "$BASE_URL/cobalt-host-manifest.txt.sig" "$RAW_SIGNATURE" ||
-    fail "cannot download the raw release-manifest signature"
+if [ "$CACHE_SETUP" = true ]; then
+    download "$BASE_URL/$DEVICE_ASSET" "$DEVICE_ARCHIVE" ||
+        fail "cannot download $DEVICE_ASSET"
+    download "$BASE_URL/cobalt-host-manifest.txt.sig" "$RAW_SIGNATURE" ||
+        fail "cannot download the raw release-manifest signature"
+fi
 
 verify_asset() {
     path=$1
@@ -334,7 +394,9 @@ verify_asset() {
         fail "$(basename "$path") checksum failed"
 }
 verify_asset "$HOST_ARCHIVE" "$HOST_BYTES" "$HOST_SHA"
-verify_asset "$DEVICE_ARCHIVE" "$DEVICE_BYTES" "$DEVICE_SHA"
+if [ "$CACHE_SETUP" = true ]; then
+    verify_asset "$DEVICE_ARCHIVE" "$DEVICE_BYTES" "$DEVICE_SHA"
+fi
 
 PACKAGE=$STAGE/host
 mkdir "$PACKAGE"
@@ -349,17 +411,23 @@ cat > "$STAGE/host-files.expected" <<'EOF'
 ./kobo
 ./licenses/
 ./licenses/LICENSE-Rust-dependencies.txt
+./updater.sh
 EOF
 if ! cmp "$STAGE/host-files.expected" "$STAGE/host-files.sorted" >/dev/null 2>&1; then
     fail "$HOST_ASSET contains an unexpected path"
 fi
 tar -xzf "$HOST_ARCHIVE" -C "$PACKAGE" ||
     fail "$HOST_ASSET is not a readable host package"
-for required in kobo LICENSE THIRD-PARTY.md licenses/LICENSE-Rust-dependencies.txt SOURCE.txt; do
+for required in kobo updater.sh LICENSE THIRD-PARTY.md licenses/LICENSE-Rust-dependencies.txt SOURCE.txt; do
     [ -f "$PACKAGE/$required" ] || fail "$HOST_ASSET is missing $required"
     [ ! -L "$PACKAGE/$required" ] || fail "$HOST_ASSET contains a symbolic link"
 done
 [ -x "$PACKAGE/kobo" ] || chmod 755 "$PACKAGE/kobo"
+[ "$(file_size "$PACKAGE/updater.sh")" = "$BOOTSTRAP_BYTES" ] ||
+    fail "packaged updater length does not match the signed manifest"
+[ "$(sha256_file "$PACKAGE/updater.sh")" = "$BOOTSTRAP_SHA" ] ||
+    fail "packaged updater checksum does not match the signed manifest"
+UPDATER_SOURCE=$PACKAGE/updater.sh
 
 TARGET=$INSTALL_DIR/kobo
 STATE=$ROOT/install-state
@@ -374,10 +442,16 @@ if [ -n "$existing" ] && [ "$existing" != "$TARGET" ] &&
 fi
 
 say ""
-say "Install Cobalt $VERSION ($CHANNEL)"
+if [ "$HOST_UPDATE" = true ]; then
+    say "Update kobo to $VERSION ($CHANNEL)"
+else
+    say "Install Cobalt $VERSION ($CHANNEL)"
+fi
 say "  Platform: $PLATFORM"
 say "  Host command: $TARGET"
-say "  Device package: $DEVICE_ASSET"
+if [ "$CACHE_SETUP" = true ]; then
+    say "  Stable setup package: $DEVICE_ASSET"
+fi
 say "  Source commit: $manifest_source"
 if [ "$YES" != true ]; then
     [ "$NONINTERACTIVE" != true ] || fail "noninteractive install was not confirmed"
@@ -387,26 +461,34 @@ if [ "$YES" != true ]; then
     case "$answer" in y|Y|yes|YES|Yes) ;; *) say "Declined; nothing was installed."; exit 0 ;; esac
 fi
 
-RELEASE=$ROOT/releases/$VERSION-stable
-RELEASE_NEW=$ROOT/releases/.new-$VERSION-stable-$$
-mkdir -p "$ROOT/releases"
-rm -rf "$RELEASE_NEW"
-mkdir "$RELEASE_NEW"
-cp "$MANIFEST" "$RELEASE_NEW/cobalt-host-manifest.txt"
-cp "$RAW_SIGNATURE" "$RELEASE_NEW/cobalt-host-manifest.txt.sig"
-cp "$SSH_SIGNATURE" "$RELEASE_NEW/cobalt-host-manifest.txt.sshsig"
-cp "$DEVICE_ARCHIVE" "$RELEASE_NEW/$DEVICE_ASSET"
-printf '%s\n' "$CHANNEL" > "$RELEASE_NEW/channel"
-if [ -d "$RELEASE" ]; then
-    for file in cobalt-host-manifest.txt cobalt-host-manifest.txt.sig \
-        cobalt-host-manifest.txt.sshsig "$DEVICE_ASSET" channel; do
-        cmp "$RELEASE/$file" "$RELEASE_NEW/$file" >/dev/null 2>&1 ||
-            fail "installed immutable release $VERSION-$CHANNEL differs from the signed release"
-    done
+if [ "$CACHE_SETUP" = true ]; then
+    RELEASE=$ROOT/releases/$VERSION-stable
+    RELEASE_NEW=$ROOT/releases/.new-$VERSION-stable-$$
+    mkdir -p "$ROOT/releases"
     rm -rf "$RELEASE_NEW"
+    mkdir "$RELEASE_NEW"
+    cp "$MANIFEST" "$RELEASE_NEW/cobalt-host-manifest.txt"
+    cp "$RAW_SIGNATURE" "$RELEASE_NEW/cobalt-host-manifest.txt.sig"
+    cp "$SSH_SIGNATURE" "$RELEASE_NEW/cobalt-host-manifest.txt.sshsig"
+    cp "$DEVICE_ARCHIVE" "$RELEASE_NEW/$DEVICE_ASSET"
+    printf '%s\n' stable > "$RELEASE_NEW/channel"
+    if [ -d "$RELEASE" ]; then
+        for file in cobalt-host-manifest.txt cobalt-host-manifest.txt.sig \
+            cobalt-host-manifest.txt.sshsig "$DEVICE_ASSET" channel; do
+            cmp "$RELEASE/$file" "$RELEASE_NEW/$file" >/dev/null 2>&1 ||
+                fail "installed immutable release $VERSION-stable differs from the signed release"
+        done
+        rm -rf "$RELEASE_NEW"
+    else
+        mv "$RELEASE_NEW" "$RELEASE" ||
+            fail "cannot activate the verified release package"
+    fi
+    SETUP_CHANNEL=stable
 else
-    mv "$RELEASE_NEW" "$RELEASE" ||
-        fail "cannot activate the verified release package"
+    RELEASE=$(sed -n 's/^release //p' "$STATE")
+    SETUP_CHANNEL=$(sed -n 's/^channel //p' "$STATE")
+    [ -n "$RELEASE" ] && [ "$SETUP_CHANNEL" = stable ] ||
+        fail "managed installation has no stable setup package"
 fi
 
 TARGET_NEW=$INSTALL_DIR/.kobo.new.$$
@@ -416,13 +498,21 @@ chmod 755 "$TARGET_NEW"
     fail "staged kobo binary changed while copying"
 mv -f "$TARGET_NEW" "$TARGET" || fail "cannot replace $TARGET"
 
+mkdir -p "$ROOT/updater"
+UPDATER_NEW=$ROOT/updater/install.sh.new.$$
+cp "$UPDATER_SOURCE" "$UPDATER_NEW"
+chmod 700 "$UPDATER_NEW"
+mv -f "$UPDATER_NEW" "$ROOT/updater/install.sh" ||
+    fail "cannot activate the verified host updater"
+
 STATE_NEW=$ROOT/install-state.new.$$
 {
     printf 'cobalt-kobo-install 1\n'
     printf 'binary %s\n' "$TARGET"
     printf 'release %s\n' "$RELEASE"
     printf 'version %s\n' "$VERSION"
-    printf 'channel %s\n' "$CHANNEL"
+    printf 'channel %s\n' "$SETUP_CHANNEL"
+    printf 'host-channel %s\n' "$CHANNEL"
     printf 'platform %s\n' "$PLATFORM"
     printf 'source %s\n' "$manifest_source"
 } > "$STATE_NEW"
@@ -454,6 +544,10 @@ if [ "$NO_PATH" != true ]; then
     esac
 fi
 
+if [ "$HOST_UPDATE" = true ]; then
+    say "Updated kobo to $VERSION ($CHANNEL) at $TARGET."
+    exit 0
+fi
 say "Installed kobo $VERSION at $TARGET."
 if [ "$WSL" = true ]; then
     say "WSL detected. Kobo drives normally appear below /mnt; eject them from Windows, not WSL."
