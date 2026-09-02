@@ -221,6 +221,7 @@ struct Lichess {
     game: Option<Game>,
     challenge: Option<Challenge>,
     tasks: BTreeMap<TaskId, Pending>,
+    retired_tasks: BTreeSet<TaskId>,
     event_open: bool,
     event_rate_limit: Option<u64>,
     board_open: Option<String>,
@@ -268,6 +269,7 @@ impl Default for Lichess {
             game: None,
             challenge: None,
             tasks: BTreeMap::new(),
+            retired_tasks: BTreeSet::new(),
             event_open: false,
             event_rate_limit: None,
             board_open: None,
@@ -829,11 +831,15 @@ impl Lichess {
         }
     }
 
-    fn refresh_playing(&mut self, context: &mut Context) {
-        if self.suspended || self.has_pending(|pending| matches!(pending, Pending::Playing)) {
-            return;
+    fn refresh_playing(&mut self, context: &mut Context) -> bool {
+        if self.suspended {
+            return false;
         }
-        let _ = self.spawn(context, Pending::Playing, api::playing(), true);
+        if self.has_pending(|pending| matches!(pending, Pending::Playing)) {
+            return true;
+        }
+        self.spawn(context, Pending::Playing, api::playing(), true)
+            .is_some()
     }
 
     fn set_event_rate_limit(&mut self, context: &mut Context, seconds: u32) {
@@ -988,6 +994,7 @@ impl Lichess {
                 ) {
                     context.cancel(task);
                     self.tasks.remove(&task);
+                    self.retired_tasks.insert(task);
                 }
             }
             if let Some(work) = api::board_stream(&previous, "close") {
@@ -1080,6 +1087,7 @@ impl Lichess {
             ) {
                 context.cancel(task);
                 self.tasks.remove(&task);
+                self.retired_tasks.insert(task);
             }
         }
         self.close_board(context, game_id);
@@ -1999,7 +2007,7 @@ impl Lichess {
         if self.accepted_challenge.is_some() {
             self.reconcile_accepted_challenge = true;
             if !self.suspended {
-                self.refresh_playing(context);
+                let _ = self.refresh_playing(context);
             }
         }
     }
@@ -2106,8 +2114,8 @@ impl Lichess {
                 if let Some(account) = api::parse_account(bytes) {
                     self.account = AccountState::Ready(account);
                     self.event_backoff = 1;
+                    let _ = self.refresh_playing(context);
                     self.open_event_stream(context);
-                    self.refresh_playing(context);
                 } else {
                     self.account = AccountState::Failed(
                         "Lichess returned an account response this client cannot read.".to_owned(),
@@ -2145,6 +2153,7 @@ impl Lichess {
                     self.notice =
                         Some("Lichess returned a game list this client cannot read.".to_owned());
                 }
+                self.open_event_stream(context);
             }
             Pending::Puzzle => {
                 if self.accept_puzzles(bytes) {
@@ -2399,6 +2408,7 @@ impl Lichess {
                     self.clear_accepted_challenge_wait();
                 }
                 self.notice = Some(Failure::of(error).naming(api::SECRET));
+                self.open_event_stream(context);
             }
             Pending::EventRetry
             | Pending::EventRateWait { .. }
@@ -2520,6 +2530,7 @@ impl Lichess {
             ) {
                 context.cancel(task);
                 self.tasks.remove(&task);
+                self.retired_tasks.insert(task);
             }
         }
         self.seek_task = None;
@@ -2870,7 +2881,7 @@ impl KoboApp for Lichess {
             }
         } else if action == action_id("back-to-play") {
             self.route = Route::Play;
-            self.refresh_playing(context);
+            let _ = self.refresh_playing(context);
         } else if action == action_id("new-puzzles") {
             if !self.has_pending(|pending| matches!(pending, Pending::Puzzle)) {
                 let _ = self.spawn(context, Pending::Puzzle, api::puzzle(false), true);
@@ -2919,6 +2930,12 @@ impl KoboApp for Lichess {
             return;
         }
         let Some(pending) = self.tasks.remove(&task) else {
+            if self.retired_tasks.remove(&task) && !self.suspended {
+                if self.accepted_challenge.is_some() || self.reconcile_accepted_challenge {
+                    let _ = self.refresh_playing(context);
+                }
+                self.open_event_stream(context);
+            }
             return;
         };
         match outcome {
@@ -3961,6 +3978,35 @@ mod tests {
         );
         assert!(app.accepted_challenge.is_some());
         assert!(app.reconcile_accepted_challenge);
+    }
+
+    #[test]
+    fn retired_task_completion_retries_deferred_challenge_reconciliation() {
+        let mut app = Lichess {
+            account: AccountState::Ready(super::Account {
+                id: "owner123".to_owned(),
+                username: "Owner".to_owned(),
+            }),
+            accepted_challenge: Some(Challenge {
+                id: "chall123".to_owned(),
+                challenger: "ReaderTwo".to_owned(),
+                direction: ChallengeDirection::Incoming,
+                status: "created".to_owned(),
+                rated: false,
+                variant: "standard".to_owned(),
+                speed: "rapid".to_owned(),
+                time_control: ChallengeTime::Clock {
+                    initial_seconds: Some(600),
+                    increment_seconds: Some(0),
+                },
+            }),
+            reconcile_accepted_challenge: true,
+            ..Lichess::default()
+        };
+        let retired = kobo_sdk::TaskId(88);
+        app.retired_tasks.insert(retired);
+        app.on_task(&mut Context::default(), retired, TaskOutcome::Cancelled);
+        assert!(app.has_pending(|pending| matches!(pending, Pending::Playing)));
     }
 
     #[test]
