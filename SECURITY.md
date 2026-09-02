@@ -47,9 +47,16 @@ persisted preference and never removes or downgrades apps or owner data.
 `kobo update` is a host-only operation using the verified updater stored by the
 stable installer. It reuses the installer lock, platform detection, SSHSIG
 manifest verification, archive length/SHA-256 checks, conflict checks, and
-atomic binary replacement. Stable is the default; `--channel beta` is explicit
-and changes only the host CLI. It does not discover or write mounted readers,
-and the cached USB setup package remains Stable.
+atomic activation. Stable is the default; `--channel beta` is explicit and
+changes only the host CLI. It does not discover or write mounted readers, and
+the cached USB setup package remains Stable.
+
+Host packages are installed into immutable version/channel/platform directories
+containing the CLI and its verified next updater. One atomically replaced
+`current` selector file selects the complete pair; the public `kobo` command
+link and stable setup state do not change during host updates. An interruption
+before the selector leaves the old pair live, and an interruption after it
+leaves the complete new pair live.
 
 After either bootstrap starts, it verifies the signed versioned manifest before
 parsing it, then checks the selected host archive and device package against

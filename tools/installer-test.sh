@@ -97,13 +97,14 @@ run_host_update() {
     release=$2
     channel=$3
     shift 3
+    selected=$(cat "$home/data/kobo/current")
     HOME=$home \
     XDG_DATA_HOME=$home/data \
     XDG_CACHE_HOME=$home/cache \
     PATH=/usr/bin:/bin:/usr/sbin:/sbin \
     KOBO_INSTALLER_TESTING=1 \
     KOBO_INSTALLER_BASE_URL="file://$release" \
-    "$@" sh "$home/data/kobo/updater/install.sh" \
+    "$@" sh "$home/data/kobo/hosts/$selected/updater.sh" \
         --host-update --channel "$channel" --platform linux-x86_64
 }
 
@@ -199,6 +200,24 @@ grep -F "/releases/download/v0.3.3/cobalt-host-manifest.txt" \
 # path, Beta is explicit, and neither path invokes setup or touches a volume.
 host_update_home=$WORK/home-host-update
 run_install "$host_update_home" "$stable" --platform linux-x86_64 >/dev/null
+setup_release=$host_update_home/data/kobo/releases/0.3.3-stable
+setup_state_sha=$(sha256_file "$host_update_home/data/kobo/install-state")
+setup_manifest_sha=$(sha256_file "$setup_release/cobalt-host-manifest.txt")
+setup_signature_sha=$(sha256_file "$setup_release/cobalt-host-manifest.txt.sig")
+setup_device_sha=$(sha256_file "$setup_release/cobalt-0.3.3-KoboRoot.tgz")
+command_destination=$(readlink "$host_update_home/.local/bin/kobo")
+ln -s "$host_update_home/.local/bin/kobo" "$host_update_home/.local/bin/kobo-compat"
+assert_setup_cache_unchanged() {
+    [ "$(sha256_file "$host_update_home/data/kobo/install-state")" = "$setup_state_sha" ]
+    [ "$(sha256_file "$setup_release/cobalt-host-manifest.txt")" = "$setup_manifest_sha" ]
+    [ "$(sha256_file "$setup_release/cobalt-host-manifest.txt.sig")" = "$setup_signature_sha" ]
+    [ "$(sha256_file "$setup_release/cobalt-0.3.3-KoboRoot.tgz")" = "$setup_device_sha" ]
+    grep -Fx "release $setup_release" "$host_update_home/data/kobo/install-state" >/dev/null
+    grep -Fx "channel stable" "$host_update_home/data/kobo/install-state" >/dev/null
+    grep -Fx "version 0.3.3" "$host_update_home/data/kobo/install-state" >/dev/null
+    grep -Fx "version 0.3.3" "$setup_release/cobalt-host-manifest.txt" >/dev/null
+    [ "$(readlink "$host_update_home/.local/bin/kobo")" = "$command_destination" ]
+}
 attached=$host_update_home/mounted-reader
 mkdir -p "$attached/.kobo"
 printf 'N365000000000,4.9.77,4.45.23697\n' > "$attached/.kobo/version"
@@ -207,33 +226,83 @@ run_host_update "$host_update_home" "$stable" stable > "$WORK/already-current.ou
 grep -F "already current on the stable channel" "$WORK/already-current.out" >/dev/null
 run_host_update "$host_update_home" "$beta" beta >/dev/null
 [ "$("$host_update_home/.local/bin/kobo")" = beta-one ]
-grep -Fx "host-channel beta" "$host_update_home/data/kobo/install-state" >/dev/null
-grep -Fx \
-    "release $host_update_home/data/kobo/releases/0.3.3-stable" \
-    "$host_update_home/data/kobo/install-state" >/dev/null
+[ "$("$host_update_home/.local/bin/kobo-compat")" = beta-one ]
+selected=$(cat "$host_update_home/data/kobo/current")
+grep -Fx beta "$host_update_home/data/kobo/hosts/$selected/CHANNEL" >/dev/null
+assert_setup_cache_unchanged
 run_host_update "$host_update_home" "$stable" stable >/dev/null
 [ "$("$host_update_home/.local/bin/kobo")" = stable-one ]
-grep -Fx "host-channel stable" "$host_update_home/data/kobo/install-state" >/dev/null
+[ "$("$host_update_home/.local/bin/kobo-compat")" = stable-one ]
+selected=$(cat "$host_update_home/data/kobo/current")
+grep -Fx stable "$host_update_home/data/kobo/hosts/$selected/CHANNEL" >/dev/null
+assert_setup_cache_unchanged
 [ "$(cat "$attached/untouched")" = "owner bytes" ]
 
 host_updated=$WORK/host-updated
 make_release "$host_updated" 0.3.5 stable stable-two
+rm "$host_updated/cobalt-0.3.5-KoboRoot.tgz" \
+    "$host_updated/cobalt-host-manifest.txt.sig" \
+    "$host_updated/install.sh"
 run_host_update "$host_update_home" "$host_updated" stable >/dev/null
 [ "$("$host_update_home/.local/bin/kobo")" = stable-two ]
+assert_setup_cache_unchanged
+
+activation_failure() {
+    point=$1
+    version=$2
+    marker=$3
+    release=$WORK/activation-$version
+    make_release "$release" "$version" stable "$marker"
+    previous=$(cat "$host_update_home/data/kobo/current")
+    previous_output=$("$host_update_home/.local/bin/kobo")
+    updater=$host_update_home/data/kobo/hosts/$previous/updater.sh
+    set +e
+    HOME=$host_update_home XDG_DATA_HOME=$host_update_home/data \
+    XDG_CACHE_HOME=$host_update_home/cache \
+    PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+    KOBO_INSTALLER_TESTING=1 KOBO_TEST_FAIL_AT=$point \
+    KOBO_INSTALLER_BASE_URL="file://$release" \
+    sh "$updater" \
+        --host-update --channel stable --platform linux-x86_64 \
+        >"$WORK/activation-$point.out" 2>&1
+    status=$?
+    set -e
+    [ "$status" -ne 0 ]
+    [ ! -d "$host_update_home/data/kobo/install.lock" ]
+    test -z "$(find "$host_update_home/data/kobo" -maxdepth 1 -name '.current.new.*' -print)"
+    test -z "$(find "$host_update_home/data/kobo/hosts" -maxdepth 1 -name '.new-*' -print)"
+    [ "$(readlink "$host_update_home/.local/bin/kobo")" = "$command_destination" ]
+    assert_setup_cache_unchanged
+    if [ "$point" = after-selector ]; then
+        [ "$("$host_update_home/.local/bin/kobo")" = "$marker" ]
+        [ "$("$host_update_home/.local/bin/kobo-compat")" = "$marker" ]
+    else
+        [ "$(cat "$host_update_home/data/kobo/current")" = "$previous" ]
+        [ "$("$host_update_home/.local/bin/kobo")" = "$previous_output" ]
+        [ "$("$host_update_home/.local/bin/kobo-compat")" = "$previous_output" ]
+    fi
+    run_host_update "$host_update_home" "$release" stable >/dev/null
+    [ "$("$host_update_home/.local/bin/kobo")" = "$marker" ]
+    [ "$("$host_update_home/.local/bin/kobo-compat")" = "$marker" ]
+    assert_setup_cache_unchanged
+}
+activation_failure host-directory 0.3.6 stable-three
+activation_failure before-selector 0.3.7 stable-four
+activation_failure after-selector 0.3.8 stable-five
 
 host_truncated=$WORK/host-truncated
-make_release "$host_truncated" 0.3.6 stable stable-three
-printf x >> "$host_truncated/kobo-0.3.6-linux-x86_64.tar.gz"
+make_release "$host_truncated" 0.3.9 stable stable-six
+printf x >> "$host_truncated/kobo-0.3.9-linux-x86_64.tar.gz"
 expect_failure "host update truncated download" \
     run_host_update "$host_update_home" "$host_truncated" stable
 host_checksum=$WORK/host-checksum
-make_release "$host_checksum" 0.3.6 stable stable-three
-printf X | dd of="$host_checksum/kobo-0.3.6-linux-x86_64.tar.gz" \
+make_release "$host_checksum" 0.3.9 stable stable-six
+printf X | dd of="$host_checksum/kobo-0.3.9-linux-x86_64.tar.gz" \
     bs=1 seek=8 conv=notrunc 2>/dev/null
 expect_failure "host update checksum failure" \
     run_host_update "$host_update_home" "$host_checksum" stable
 host_signature=$WORK/host-signature
-make_release "$host_signature" 0.3.6 stable stable-three
+make_release "$host_signature" 0.3.9 stable stable-six
 printf x >> "$host_signature/cobalt-host-manifest.txt"
 expect_failure "host update signature failure" \
     run_host_update "$host_update_home" "$host_signature" stable
@@ -253,12 +322,13 @@ conflicting_path=$WORK/host-update-conflict
 mkdir "$conflicting_path"
 printf '#!/bin/sh\nexit 0\n' > "$conflicting_path/kobo"
 chmod 755 "$conflicting_path/kobo"
+selected=$(cat "$host_update_home/data/kobo/current")
 expect_failure "host update command conflict" env \
     PATH="$conflicting_path:/usr/bin:/bin:/usr/sbin:/sbin" \
     HOME="$host_update_home" XDG_DATA_HOME="$host_update_home/data" \
     XDG_CACHE_HOME="$host_update_home/cache" KOBO_INSTALLER_TESTING=1 \
     KOBO_INSTALLER_BASE_URL="file://$beta" \
-    sh "$host_update_home/data/kobo/updater/install.sh" \
+    sh "$host_update_home/data/kobo/hosts/$selected/updater.sh" \
     --host-update --channel beta
 
 # Clean install, update, and idempotent rerun.

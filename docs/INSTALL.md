@@ -243,8 +243,11 @@ Stable is the default. Host Beta requires the explicit selector and changes
 only the installed `kobo` executable; it never scans, mounts, ejects, or writes
 an attached reader. Returning from a Beta host CLI to the latest Stable CLI is
 `kobo update`. An already-current command reports that result without replacing
-the binary. The stable setup package remains separate, so `kobo setup` never
-turns into a Beta USB installation.
+the binary. The stable setup package and its signed metadata remain
+byte-for-byte unchanged, so `kobo setup` never turns into a Beta USB
+installation. Each host release keeps `kobo` and its next updater together in
+an immutable directory; one atomic selector changes the live pair while the
+public command link stays fixed.
 
 The installer lock fails closed. If an interrupted process leaves
 `~/.local/share/kobo/install.lock`, first verify that no installer is still

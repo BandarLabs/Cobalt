@@ -18,6 +18,9 @@ PLATFORM=
 LOCK=
 LOCK_HELD=false
 STAGE=
+HOST_NEW=
+CURRENT_NEW=
+COMMAND_NEW=
 
 fail() {
     printf 'kobo installer: %s\n' "$*" >&2
@@ -35,6 +38,9 @@ cleanup() {
     if [ "$LOCK_HELD" = true ] && [ -n "$LOCK" ] && [ -d "$LOCK" ]; then
         rm -rf "$LOCK"
     fi
+    [ -z "$HOST_NEW" ] || rm -rf "$HOST_NEW"
+    [ -z "$CURRENT_NEW" ] || rm -f "$CURRENT_NEW"
+    [ -z "$COMMAND_NEW" ] || rm -f "$COMMAND_NEW"
 }
 trap cleanup EXIT HUP INT TERM
 
@@ -188,8 +194,8 @@ remove that exact directory manually and rerun"
 fi
 LOCK_HELD=true
 printf '%s\n' "$$" > "$LOCK/pid"
-rm -rf "$CACHE_HOME/kobo"/install.* "$ROOT/releases"/.new-*
-rm -f "$INSTALL_DIR"/.kobo.new.*
+rm -rf "$CACHE_HOME/kobo"/install.* "$ROOT/releases"/.new-* "$ROOT/hosts"/.new-*
+rm -f "$ROOT"/.current.new.* "$INSTALL_DIR"/.kobo.new.*
 
 STAGE=$CACHE_HOME/kobo/install.$$
 rm -rf "$STAGE"
@@ -230,6 +236,13 @@ sha256_file() {
 
 file_size() {
     wc -c < "$1" | tr -d ' '
+}
+
+fail_point() {
+    if [ "${KOBO_INSTALLER_TESTING:-0}" = 1 ] &&
+        [ "${KOBO_TEST_FAIL_AT:-}" = "$1" ]; then
+        fail "injected failure after $1"
+    fi
 }
 
 if [ -z "$BASE_URL" ]; then
@@ -293,8 +306,17 @@ printf '%s\n' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' ||
     fail "signed manifest has an invalid version"
 printf '%s\n' "$manifest_source" | grep -Eq '^[0-9a-f]{40}$' ||
     fail "signed manifest has an invalid source commit"
-installed_version=$(sed -n 's/^version //p' "$ROOT/install-state" 2>/dev/null || true)
-installed_host_channel=$(sed -n 's/^host-channel //p' "$ROOT/install-state" 2>/dev/null || true)
+if [ "$HOST_UPDATE" = true ] && [ -f "$ROOT/current" ]; then
+    current_host=$(cat "$ROOT/current")
+    case "$current_host" in
+        ''|*[!A-Za-z0-9._-]*) fail "managed host selector is invalid" ;;
+    esac
+    installed_version=$(cat "$ROOT/hosts/$current_host/VERSION" 2>/dev/null || true)
+    installed_host_channel=$(cat "$ROOT/hosts/$current_host/CHANNEL" 2>/dev/null || true)
+else
+    installed_version=$(sed -n 's/^version //p' "$ROOT/install-state" 2>/dev/null || true)
+    installed_host_channel=$(sed -n 's/^host-channel //p' "$ROOT/install-state" 2>/dev/null || true)
+fi
 [ -n "$installed_host_channel" ] || installed_host_channel=stable
 if [ "$HOST_UPDATE" = true ] &&
     [ "$installed_version" = "$VERSION" ] &&
@@ -370,7 +392,7 @@ fi
 HOST_ARCHIVE=$STAGE/$HOST_ASSET
 DEVICE_ARCHIVE=$STAGE/$DEVICE_ASSET
 CACHE_SETUP=true
-if [ "$HOST_UPDATE" = true ] && [ "$CHANNEL" = beta ]; then
+if [ "$HOST_UPDATE" = true ]; then
     CACHE_SETUP=false
 fi
 download "$BASE_URL/$HOST_ASSET" "$HOST_ARCHIVE" ||
@@ -427,7 +449,6 @@ done
     fail "packaged updater length does not match the signed manifest"
 [ "$(sha256_file "$PACKAGE/updater.sh")" = "$BOOTSTRAP_SHA" ] ||
     fail "packaged updater checksum does not match the signed manifest"
-UPDATER_SOURCE=$PACKAGE/updater.sh
 
 TARGET=$INSTALL_DIR/kobo
 STATE=$ROOT/install-state
@@ -439,6 +460,11 @@ existing=$(command -v kobo 2>/dev/null || true)
 if [ -n "$existing" ] && [ "$existing" != "$TARGET" ] &&
     [ "$managed_binary" != "$existing" ] && [ "$FORCE_CONFLICT" != true ]; then
     fail "another kobo command is already on PATH at $existing; refusing to shadow it"
+fi
+COMMAND_DESTINATION=$ROOT/launcher/kobo
+if [ "$HOST_UPDATE" = true ]; then
+    [ -L "$TARGET" ] && [ "$(readlink "$TARGET")" = "$COMMAND_DESTINATION" ] ||
+        fail "managed kobo command link changed; refusing to replace it"
 fi
 
 say ""
@@ -491,32 +517,101 @@ else
         fail "managed installation has no stable setup package"
 fi
 
-TARGET_NEW=$INSTALL_DIR/.kobo.new.$$
-cp "$PACKAGE/kobo" "$TARGET_NEW"
-chmod 755 "$TARGET_NEW"
-[ "$(sha256_file "$TARGET_NEW")" = "$(sha256_file "$PACKAGE/kobo")" ] ||
-    fail "staged kobo binary changed while copying"
-mv -f "$TARGET_NEW" "$TARGET" || fail "cannot replace $TARGET"
+HOST_ID=$VERSION-$CHANNEL-$PLATFORM-$HOST_SHA
+HOST_DIR=$ROOT/hosts/$HOST_ID
+HOST_NEW=$ROOT/hosts/.new-$HOST_ID-$$
+mkdir -p "$ROOT/hosts"
+rm -rf "$HOST_NEW"
+mkdir "$HOST_NEW"
+cp -R "$PACKAGE/." "$HOST_NEW/"
+printf '%s\n' "$VERSION" > "$HOST_NEW/VERSION"
+printf '%s\n' "$CHANNEL" > "$HOST_NEW/CHANNEL"
+printf '%s\n' "$PLATFORM" > "$HOST_NEW/PLATFORM"
+printf '%s\n' "$manifest_source" > "$HOST_NEW/SOURCE_COMMIT"
+printf '%s\n' "$HOST_SHA" > "$HOST_NEW/HOST_ARCHIVE_SHA256"
+fail_point host-directory
+if [ -d "$HOST_DIR" ]; then
+    for file in kobo updater.sh VERSION CHANNEL PLATFORM SOURCE_COMMIT HOST_ARCHIVE_SHA256; do
+        cmp "$HOST_DIR/$file" "$HOST_NEW/$file" >/dev/null 2>&1 ||
+            fail "immutable host release $HOST_ID differs from its verified copy"
+    done
+    rm -rf "$HOST_NEW"
+else
+    mv "$HOST_NEW" "$HOST_DIR" || fail "cannot activate immutable host release $HOST_ID"
+fi
+HOST_NEW=
 
-mkdir -p "$ROOT/updater"
-UPDATER_NEW=$ROOT/updater/install.sh.new.$$
-cp "$UPDATER_SOURCE" "$UPDATER_NEW"
-chmod 700 "$UPDATER_NEW"
-mv -f "$UPDATER_NEW" "$ROOT/updater/install.sh" ||
-    fail "cannot activate the verified host updater"
+if [ "$HOST_UPDATE" != true ]; then
+    LAUNCHER_NEW=$STAGE/launcher
+    mkdir "$LAUNCHER_NEW"
+    printf '%s\n' "$ROOT" > "$LAUNCHER_NEW/root"
+    cat > "$LAUNCHER_NEW/kobo" <<'EOF'
+#!/bin/sh
+set -eu
+target=$0
+while [ -L "$target" ]; do
+    link=$(readlink "$target") || {
+        echo "kobo: managed command link is invalid" >&2
+        exit 1
+    }
+    case "$link" in
+        /*) target=$link ;;
+        *) target=$(dirname "$target")/$link ;;
+    esac
+done
+launcher=$(dirname "$target")
+root=$(cat "$launcher/root")
+selected=$(cat "$root/current")
+case "$selected" in
+    ''|*[!A-Za-z0-9._-]*)
+        echo "kobo: managed host selector is invalid" >&2
+        exit 1
+        ;;
+esac
+exec "$root/hosts/$selected/kobo" "$@"
+EOF
+    chmod 700 "$LAUNCHER_NEW/kobo"
+    if [ -d "$ROOT/launcher" ]; then
+        if ! cmp "$ROOT/launcher/root" "$LAUNCHER_NEW/root" >/dev/null 2>&1 ||
+            ! cmp "$ROOT/launcher/kobo" "$LAUNCHER_NEW/kobo" >/dev/null 2>&1; then
+            fail "managed kobo launcher changed; refusing to replace it"
+        fi
+    else
+        mv "$LAUNCHER_NEW" "$ROOT/launcher" ||
+            fail "cannot activate the stable kobo launcher"
+    fi
+fi
 
-STATE_NEW=$ROOT/install-state.new.$$
-{
-    printf 'cobalt-kobo-install 1\n'
-    printf 'binary %s\n' "$TARGET"
-    printf 'release %s\n' "$RELEASE"
-    printf 'version %s\n' "$VERSION"
-    printf 'channel %s\n' "$SETUP_CHANNEL"
-    printf 'host-channel %s\n' "$CHANNEL"
-    printf 'platform %s\n' "$PLATFORM"
-    printf 'source %s\n' "$manifest_source"
-} > "$STATE_NEW"
-mv "$STATE_NEW" "$STATE"
+CURRENT_NEW=$ROOT/.current.new.$$
+rm -f "$CURRENT_NEW"
+printf '%s\n' "$HOST_ID" > "$CURRENT_NEW"
+fail_point before-selector
+mv -f "$CURRENT_NEW" "$ROOT/current" ||
+    fail "cannot atomically select host release $HOST_ID"
+CURRENT_NEW=
+fail_point after-selector
+
+if [ "$HOST_UPDATE" != true ]; then
+    COMMAND_NEW=$INSTALL_DIR/.kobo.new.$$
+    rm -f "$COMMAND_NEW"
+    ln -s "$COMMAND_DESTINATION" "$COMMAND_NEW" ||
+        fail "cannot stage the kobo command link"
+    mv -f "$COMMAND_NEW" "$TARGET" || fail "cannot activate the kobo command link"
+    COMMAND_NEW=
+
+    STATE_NEW=$ROOT/install-state.new.$$
+    {
+        printf 'cobalt-kobo-install 1\n'
+        printf 'binary %s\n' "$TARGET"
+        printf 'release %s\n' "$RELEASE"
+        printf 'version %s\n' "$VERSION"
+        printf 'channel %s\n' "$SETUP_CHANNEL"
+        printf 'host-channel %s\n' "$CHANNEL"
+        printf 'platform %s\n' "$PLATFORM"
+        printf 'source %s\n' "$manifest_source"
+    } > "$STATE_NEW"
+    mv "$STATE_NEW" "$STATE"
+fi
 
 if [ "$NO_PATH" != true ]; then
     case ":${PATH:-}:" in

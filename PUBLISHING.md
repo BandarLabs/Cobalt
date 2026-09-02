@@ -19,8 +19,8 @@ exist in the registry at the same version.
 Runtime binaries, CLI tools and examples are distributed from this repository,
 not as library crates. The beta workflow builds the device package and the
 `kobo` host command for macOS x86_64/arm64 and Linux x86_64/arm64. Host archives
-carry the project license, dependency terms, third-party notices, and exact
-source commit.
+carry the command, the verified updater used by `kobo update`, the project
+license, dependency terms, third-party notices, and exact source commit.
 
 ## Stable and beta platform channels
 

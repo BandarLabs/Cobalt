@@ -489,12 +489,20 @@ fn update_host(arguments: &[String]) -> Result<(), String> {
         .find_map(|line| line.strip_prefix("binary "))
         .map(PathBuf::from)
         .ok_or("managed installation state has no binary path")?;
+    if !binary.exists() {
+        return Err(format!(
+            "managed kobo command is missing at {}",
+            binary.display()
+        ));
+    }
+    let host = managed_host_directory(&root)?;
     let current = env::current_exe()
         .and_then(|path| path.canonicalize())
         .map_err(|error| format!("locate running kobo: {error}"))?;
-    let installed = binary
+    let installed = host
+        .join("kobo")
         .canonicalize()
-        .map_err(|error| format!("locate managed kobo {}: {error}", binary.display()))?;
+        .map_err(|error| format!("locate selected host kobo: {error}"))?;
     if current != installed {
         return Err(
             "kobo update is available only from the host command installed by Cobalt; \
@@ -502,7 +510,7 @@ fn update_host(arguments: &[String]) -> Result<(), String> {
                 .to_owned(),
         );
     }
-    let updater = root.join("updater/install.sh");
+    let updater = host.join("updater.sh");
     if !updater.is_file() {
         return Err(format!(
             "verified host updater is missing at {}; rerun the stable installer",
@@ -519,6 +527,21 @@ fn update_host(arguments: &[String]) -> Result<(), String> {
     } else {
         Err(format!("host update exited with {status}"))
     }
+}
+
+fn managed_host_directory(root: &Path) -> Result<PathBuf, String> {
+    let selector = root.join("current");
+    let selected = fs::read_to_string(&selector)
+        .map_err(|error| format!("read host selector {}: {error}", selector.display()))?;
+    let selected = selected.trim();
+    if selected.is_empty()
+        || !selected
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        return Err("managed host selector is invalid".to_owned());
+    }
+    Ok(root.join("hosts").join(selected))
 }
 
 fn host_release_sign(arguments: &[String]) -> Result<(), String> {
@@ -3516,7 +3539,11 @@ fn managed_release_directory() -> Option<PathBuf> {
     }
     let current = env::current_exe().ok()?.canonicalize().ok()?;
     let installed = binary?.canonicalize().ok()?;
-    if current != installed {
+    let root = data.join("kobo");
+    let selected = managed_host_directory(&root)
+        .ok()
+        .and_then(|directory| directory.join("kobo").canonicalize().ok());
+    if current != installed && selected.as_ref() != Some(&current) {
         return None;
     }
     let derived =
