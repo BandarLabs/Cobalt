@@ -116,6 +116,10 @@ usual names and names the package to install when there is none. Rust code is
 linked by `rust-lld`, which ships with the toolchain. The resulting binaries
 are statically linked and need no library installed on the reader.
 
+The owner-attended
+[official 0.3.3 baseline Wi-Fi trace](WIFI_HANDOFF_BASELINE_TRACE.md) adds
+passive diagnostics without importing the later PR #94 recovery behavior.
+
 ## Before you commit a credential by accident
 
 A key must never reach a commit. `tools/pre-commit` refuses one, and is
