@@ -12,8 +12,13 @@ const MANIFEST_FIELDS = [
   "glyph"
 ];
 const COMPATIBLE_PLATFORM_PATHS = new Set([
+  "crates/kobo-abi/src/lib.rs",
+  "crates/kobo-policy/src/credentials.rs",
   "crates/kobo-policy/src/services.rs",
+  "crates/kobo-policy/src/tasks.rs",
   "crates/kobo-protocol/src/lib.rs",
+  "crates/kobo-sdk/src/credentials.rs",
+  "crates/kobo-sdk/src/keyboard.rs",
   "crates/kobo-sdk/src/lib.rs",
   "crates/kobo-text/src/lib.rs",
   "crates/kobo-ui/src/lib.rs"
@@ -360,7 +365,7 @@ export function compatibleChangePaths(
       if (
         typeof file?.path !== "string" ||
         !COMPATIBLE_PLATFORM_PATHS.has(file.path) ||
-        !/^[0-9a-f]{40}$/.test(file?.base_blob) ||
+        (file?.base_blob !== null && !/^[0-9a-f]{40}$/.test(file?.base_blob)) ||
         !/^[0-9a-f]{40}$/.test(file?.compatible_blob)
       ) {
         throw new Error("invalid app release compatible-change file");
