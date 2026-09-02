@@ -688,14 +688,13 @@ pub const LIBRA_COLOUR_390: DeviceProfile = DeviceProfile {
     reap_nickel_supplicant: false,
 };
 
-/// Kobo Libra Colour on firmware 4.46.23836. The read-only doctor report from
-/// the test device matches every framebuffer, touch, device-tree, code, and
-/// kernel field above. The firmware is kept as a separate exact identity and
-/// write readiness remains disabled until the evidence is reviewed upstream.
+/// Kobo Libra Colour on firmware 4.46.23836. The doctor report and attended
+/// display, touch, exit, and recovery evidence match the hardware profile
+/// above. The firmware is kept as a separate exact identity.
 pub const LIBRA_COLOUR_390_446: DeviceProfile = DeviceProfile {
     id: "libra-colour-390-4.46.23836",
     firmware_versions: &["4.46.23836"],
-    write_ready: false,
+    write_ready: true,
     ..LIBRA_COLOUR_390
 };
 
@@ -1651,10 +1650,10 @@ mod tests {
     const CLARA_HD_POSE: PanelPose<'static> = PanelPose::reference(&CLARA_HD_376);
 
     use super::{
-        identify_profile, Bitfield, DeviceProfile, DeviceSnapshot, FramebufferSnapshot,
-        IdentitySnapshot, Readiness, TouchSnapshot, CLARA_BW_391, CLARA_BW_395, CLARA_COLOUR_393,
-        CLARA_HD_376, ELIPSA_2E_389, LIBRA_2_388, LIBRA_COLOUR_390, LIBRA_COLOUR_390_446,
-        WRITE_EVIDENCE_PENDING,
+        identify_profile, write_ready_profile, Bitfield, DeviceProfile, DeviceSnapshot,
+        FramebufferSnapshot, IdentitySnapshot, Readiness, TouchSnapshot, CLARA_BW_391,
+        CLARA_BW_395, CLARA_COLOUR_393, CLARA_HD_376, ELIPSA_2E_389, LIBRA_2_388, LIBRA_COLOUR_390,
+        LIBRA_COLOUR_390_446, WRITE_EVIDENCE_PENDING,
     };
 
     /// The Libra 2 as `kobo doctor` read it from a cold boot into Nickel, in
@@ -2432,19 +2431,15 @@ mod tests {
     }
 
     /// The 4.46.23836 doctor report matches the existing Libra Colour hardware
-    /// fields, but its exact firmware identity selects this profile and its
-    /// write readiness remains deliberately pending upstream review.
+    /// fields, and its exact firmware identity selects the write-ready profile.
     #[test]
-    fn libra_colour_446_profile_matches_doctor_but_stays_read_only() {
+    fn libra_colour_446_profile_matches_doctor_and_is_write_ready() {
         let mut snapshot = measured_libra_colour();
         snapshot.identity.firmware_version = Some("4.46.23836".into());
         let report = LIBRA_COLOUR_390_446.validate(&snapshot);
         assert!(report.mismatches.is_empty(), "{:?}", report.mismatches);
-        assert_eq!(report.readiness, Readiness::ReadOnlyMatched);
-        assert_eq!(
-            report.write_blockers,
-            vec![WRITE_EVIDENCE_PENDING.to_owned()]
-        );
+        assert_eq!(report.readiness, Readiness::WriteReady);
+        assert!(report.write_blockers.is_empty());
         assert!(LIBRA_COLOUR_390.validate(&snapshot).mismatches.is_empty());
         assert!(!LIBRA_COLOUR_390
             .write_identity_blockers(&snapshot)
@@ -2452,6 +2447,10 @@ mod tests {
         assert_eq!(
             identify_profile(&snapshot).map(|profile| profile.id),
             Some("libra-colour-390-4.46.23836")
+        );
+        assert_eq!(
+            write_ready_profile(&snapshot).map(|profile| profile.id),
+            Ok("libra-colour-390-4.46.23836")
         );
     }
 

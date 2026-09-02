@@ -145,7 +145,7 @@ result: read-only matched
 write blocker: owner-attended display, touch, exit, and recovery evidence is incomplete
 ```
 
-The 4.46.23836 Libra Colour candidate probe reads:
+The 4.46.23836 Libra Colour probe reads:
 
 ```
 profile: libra-colour-390-4.46.23836 (Kobo Libra Colour)
@@ -154,8 +154,7 @@ device-tree model: MediaTek MT8110 board
 framebuffer: id=hwtcon 1264x1680 virtual=1264x1680 offset=0,0 bpp=32 grayscale=0 stride=5056 map=8494080 type=0 visual=2 rotation=1
 identity: model=N428 firmware=4.46.23836 kernel=4.9.77 device-code=390
 touch: Elan Touchscreen at /dev/input/event1 X=0..1680 Y=0..1264
-result: read-only matched
-write blocker: owner-attended display, touch, exit, and recovery evidence is incomplete
+result: write ready
 ```
 
 Every field a profile needs is on that page. The doctor compares the probe with
