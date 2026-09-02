@@ -61,6 +61,7 @@ enum Pending {
     EventRetry,
     EventClose,
     Seek,
+    SeekGrace,
     BoardOpen(String),
     BoardNext(String),
     BoardRetry(String),
@@ -201,6 +202,7 @@ struct Lichess {
     event_open: bool,
     board_open: Option<String>,
     seek_task: Option<TaskId>,
+    seek_waiting: bool,
     seek_baseline: BTreeSet<String>,
     pending_action: Option<GameAction>,
     pending_move: Option<PendingMove>,
@@ -236,6 +238,7 @@ impl Default for Lichess {
             event_open: false,
             board_open: None,
             seek_task: None,
+            seek_waiting: false,
             seek_baseline: BTreeSet::new(),
             pending_action: None,
             pending_move: None,
@@ -478,6 +481,7 @@ impl Lichess {
             && self.event_open
             && self.playing_ready
             && self.seek_task.is_none()
+            && !self.seek_waiting
             && self.game.as_ref().is_none_or(|game| !game.active())
             && self.pending_action.is_none();
         screen
@@ -525,11 +529,7 @@ impl Lichess {
             .button_with_state(
                 "cancel-seek",
                 "Cancel pairing",
-                if self.seek_task.is_some() {
-                    ControlState::Enabled
-                } else {
-                    ControlState::Disabled
-                },
+                enabled(self.seek_task.is_some() || self.seek_waiting),
             )
             .build()
     }
@@ -899,19 +899,42 @@ impl Lichess {
             .map(|game| game.id.clone())
             .chain(self.game.iter().map(|game| game.id.clone()))
             .collect();
+        self.seek_waiting = true;
         if let Some(task) = self.spawn(context, Pending::Seek, api::seek(), false) {
             self.seek_task = Some(task);
             self.route = Route::Pairing;
             self.notice = None;
             self.reset_clock(context, true);
             Self::keep_live(context);
+        } else {
+            self.seek_waiting = false;
+            self.seek_baseline.clear();
         }
     }
 
     fn cancel_seek(&mut self, context: &mut Context) {
+        self.seek_waiting = false;
+        self.seek_baseline.clear();
         if let Some(task) = self.seek_task {
             context.cancel(task);
             self.notice = Some("Cancelling the pending seek.".to_owned());
+        } else if self.route == Route::Pairing {
+            self.clock.stop(context);
+            self.route = Route::Play;
+            self.notice = Some("Pairing cancelled. No duplicate seek was created.".to_owned());
+        }
+    }
+
+    fn await_seek_event(&mut self, context: &mut Context, message: String) {
+        self.seek_task = None;
+        self.notice = Some(message);
+        if self.seek_waiting && !self.has_pending(|pending| matches!(pending, Pending::SeekGrace)) {
+            let _ = self.spawn(
+                context,
+                Pending::SeekGrace,
+                Task::Sleep { seconds: 10 },
+                false,
+            );
         }
     }
 
@@ -1158,7 +1181,7 @@ impl Lichess {
                 game: summary,
                 quick_pair_candidate,
             } => {
-                let seek_match = self.seek_task.is_some()
+                let seek_match = self.seek_waiting
                     && quick_pair_candidate
                     && !self.seek_baseline.contains(&summary.id);
                 let accepted_challenge =
@@ -1169,6 +1192,7 @@ impl Lichess {
                         context.cancel(task);
                     }
                     self.seek_task = None;
+                    self.seek_waiting = false;
                     self.seek_baseline.clear();
                     self.pending_action = None;
                     self.challenge = None;
@@ -1233,6 +1257,7 @@ impl Lichess {
                 let pending = self.pending_move.clone();
                 let Some(game) = Game::from_full(full, session.color) else {
                     self.notice = Some("The server board could not be reconstructed.".to_owned());
+                    self.close_board(context, id);
                     self.schedule_board_reconnect(context, id);
                     return;
                 };
@@ -1256,6 +1281,7 @@ impl Lichess {
             BoardRecord::State(state) => {
                 let Some(game) = self.game.as_mut().filter(|game| game.id == id) else {
                     self.notice = Some("Waiting for the complete board state.".to_owned());
+                    self.close_board(context, id);
                     self.schedule_board_reconnect(context, id);
                     return;
                 };
@@ -1373,6 +1399,7 @@ impl Lichess {
                 Pending::BoardOpen(_) | Pending::BoardNext(_) => self.board_open = None,
                 Pending::Seek => {
                     self.seek_task = None;
+                    self.seek_waiting = false;
                     self.seek_baseline.clear();
                     self.clock.stop(context);
                     self.route = Route::Play;
@@ -1457,13 +1484,24 @@ impl Lichess {
             Pending::EventRetry => self.open_event_stream(context),
             Pending::EventClose => self.schedule_event_reconnect(context),
             Pending::Seek => {
-                self.seek_task = None;
-                self.seek_baseline.clear();
-                if self.route == Route::Pairing {
+                if self.route == Route::Pairing && self.seek_waiting {
+                    self.await_seek_event(
+                        context,
+                        "The seek connection ended; waiting briefly for gameStart. It was not replayed."
+                            .to_owned(),
+                    );
+                } else {
+                    self.seek_task = None;
+                }
+            }
+            Pending::SeekGrace => {
+                if self.seek_waiting {
+                    self.seek_waiting = false;
+                    self.seek_baseline.clear();
                     self.clock.stop(context);
                     self.route = Route::Play;
                     self.notice = Some(
-                        "The seek ended before a gameStart event. It was not replayed.".to_owned(),
+                        "No gameStart followed the ended seek. It was not replayed.".to_owned(),
                     );
                 }
             }
@@ -1560,15 +1598,16 @@ impl Lichess {
                 }
             }
             Pending::Seek => {
-                self.seek_task = None;
-                self.seek_baseline.clear();
-                if self.route == Route::Pairing {
-                    self.clock.stop(context);
-                    self.route = Route::Play;
-                    self.notice = Some(format!(
-                        "{} The seek was not replayed.",
-                        Failure::of(error).naming(api::SECRET)
-                    ));
+                if self.route == Route::Pairing && self.seek_waiting {
+                    self.await_seek_event(
+                        context,
+                        format!(
+                            "{} Waiting briefly for gameStart; the seek was not replayed.",
+                            Failure::of(error).naming(api::SECRET)
+                        ),
+                    );
+                } else {
+                    self.seek_task = None;
                 }
             }
             Pending::Action(action) => {
@@ -1593,6 +1632,7 @@ impl Lichess {
             }
             Pending::EventRetry
             | Pending::EventClose
+            | Pending::SeekGrace
             | Pending::BoardRetry(_)
             | Pending::BoardClose(_)
             | Pending::Account => {}
@@ -1603,6 +1643,7 @@ impl Lichess {
         match pending {
             Pending::Seek => {
                 self.seek_task = None;
+                self.seek_waiting = false;
                 self.seek_baseline.clear();
                 if self.route == Route::Pairing {
                     self.clock.stop(context);
@@ -1665,6 +1706,7 @@ impl Lichess {
             }
         }
         self.seek_task = None;
+        self.seek_waiting = false;
         self.seek_baseline.clear();
         self.event_open = false;
         self.board_open = None;
@@ -1818,15 +1860,23 @@ impl KoboApp for Lichess {
     )]
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         if action == ActionId::BACK {
-            self.promotion = None;
-            self.confirmation = None;
-            self.selected = None;
-            self.menu_open = false;
-            self.route = match self.route {
-                Route::Solve | Route::PuzzleResult => Route::Puzzles,
-                Route::Game | Route::Pairing | Route::Challenge => Route::Play,
-                _ => Route::Home,
-            };
+            if self.promotion.take().is_some()
+                || self.confirmation.take().is_some()
+                || self.menu_open
+            {
+                self.menu_open = false;
+            } else if self.route == Route::Pairing
+                && (self.seek_task.is_some() || self.seek_waiting)
+            {
+                self.cancel_seek(context);
+            } else {
+                self.selected = None;
+                self.route = match self.route {
+                    Route::Solve | Route::PuzzleResult => Route::Puzzles,
+                    Route::Game | Route::Pairing | Route::Challenge => Route::Play,
+                    _ => Route::Home,
+                };
+            }
         } else if action == action_id("puzzles") {
             self.route = Route::Puzzles;
         } else if action == action_id("play") {
@@ -2110,7 +2160,7 @@ mod tests {
         api, board_cells, clock, AccountState, Color, FullGame, Game, GameAction, Lichess, Pending,
         Player, Route, ServerState, Session,
     };
-    use kobo_sdk::{action_id, Command, Context, KoboApp, TaskOutcome};
+    use kobo_sdk::{action_id, ActionId, Command, Context, KoboApp, TaskOutcome};
     use kobo_ui::{Chrome, CLARA_BW_METRICS};
 
     fn live_game(moves: &[&str], color: Color) -> Game {
@@ -2353,6 +2403,111 @@ mod tests {
         app.handle_cancelled(&mut context, &Pending::Seek);
         assert!(app.clock.is_running());
         assert_eq!(app.route, Route::Game);
+    }
+
+    #[test]
+    fn back_from_pairing_cancels_before_leaving_the_screen() {
+        let mut app = Lichess {
+            route: Route::Play,
+            account: AccountState::Ready(super::Account {
+                id: "owner123".to_owned(),
+                username: "Owner".to_owned(),
+            }),
+            event_open: true,
+            playing_ready: true,
+            ..Lichess::default()
+        };
+        let mut context = Context::default();
+        app.start_seek(&mut context);
+        let seek = app.seek_task.expect("seek");
+        app.on_action(&mut context, ActionId::BACK);
+        assert_eq!(app.route, Route::Pairing);
+        assert!(!app.seek_waiting);
+        assert!(context
+            .commands()
+            .iter()
+            .any(|command| matches!(command, Command::Cancel(task) if *task == seek)));
+        app.handle_cancelled(&mut context, &Pending::Seek);
+        assert_eq!(app.route, Route::Play);
+    }
+
+    #[test]
+    fn game_start_can_win_the_race_after_the_seek_connection_ends() {
+        let mut app = Lichess {
+            route: Route::Play,
+            account: AccountState::Ready(super::Account {
+                id: "owner123".to_owned(),
+                username: "Owner".to_owned(),
+            }),
+            event_open: true,
+            playing_ready: true,
+            ..Lichess::default()
+        };
+        let mut context = Context::default();
+        app.start_seek(&mut context);
+        app.handle_failed(
+            &mut context,
+            Pending::Seek,
+            kobo_sdk::TaskError::Unreachable,
+        );
+        assert!(app.seek_waiting);
+        assert_eq!(app.route, Route::Pairing);
+        let started = api::parse_event(
+            br#"{"type":"gameStart","game":{"gameId":"abcdEF12","color":"white","rated":true,"speed":"rapid","source":"lobby","variant":{"key":"standard"},"secondsLeft":600,"isMyTurn":true,"lastMove":"","opponent":{"username":"Other"}}}"#,
+        )
+        .expect("matched game");
+        app.handle_event(&mut context, started);
+        assert!(!app.seek_waiting);
+        assert_eq!(app.route, Route::Game);
+        assert_eq!(
+            app.session.as_ref().map(|session| session.game_id.as_str()),
+            Some("abcdEF12")
+        );
+    }
+
+    #[test]
+    fn unusable_board_state_closes_the_retained_stream_before_retrying() {
+        let mut app = Lichess {
+            route: Route::Game,
+            session: Some(Session {
+                game_id: "abcdEF12".to_owned(),
+                color: Color::White,
+                opponent: "Other".to_owned(),
+                rated: true,
+            }),
+            board_open: Some("abcdEF12".to_owned()),
+            ..Lichess::default()
+        };
+        let mut context = Context::default();
+        app.handle_board(
+            &mut context,
+            "abcdEF12",
+            api::BoardRecord::State(ServerState {
+                moves: Vec::new(),
+                white_ms: 600_000,
+                black_ms: 600_000,
+                white_increment_ms: 0,
+                black_increment_ms: 0,
+                status: "started".to_owned(),
+                winner: None,
+                white_draw: false,
+                black_draw: false,
+                white_takeback: false,
+                black_takeback: false,
+            }),
+        );
+        assert!(context.commands().iter().any(|command| {
+            matches!(
+                command,
+                Command::Spawn {
+                    work: kobo_sdk::Task::Fetch { headers, .. },
+                    ..
+                } if headers.iter().any(|header| {
+                    header.name.eq_ignore_ascii_case("x-cobalt-line-stream")
+                        && header.value == "close"
+                })
+            )
+        }));
     }
 
     #[test]
