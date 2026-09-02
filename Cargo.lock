@@ -680,6 +680,7 @@ dependencies = [
  "kobo-doc",
  "kobo-image",
  "kobo-opds",
+ "kobo-profile",
  "kobo-read",
  "kobo-sdk",
  "kobo-ui",

@@ -1023,6 +1023,14 @@ mod responsive_profile_tests {
             );
             let diagnostics = screen.diagnostics(&metrics, &Chrome::with_back(false));
             assert!(
+                diagnostics.issues.iter().any(|issue| {
+                    issue.node == Some(NodeId(1))
+                        && issue.severity == DiagnosticSeverity::Error
+                        && issue.kind == LayoutIssueKind::TextOverflow
+                }),
+                "{name}: truncated document text was not reported"
+            );
+            assert!(
                 !diagnostics
                     .issues
                     .iter()
@@ -5470,7 +5478,7 @@ impl std::fmt::Display for LayoutIssue {
                 "{node}: touch target is smaller than the {minimum}px minimum"
             ),
             LayoutIssueKind::TextOverflow => {
-                write!(formatter, "{node}: rendered text exceeds its rectangle")
+                write!(formatter, "{node}: text does not fit its rectangle")
             }
             LayoutIssueKind::MissingPicture(handle) => {
                 write!(
@@ -11401,6 +11409,30 @@ fn validate_content_bounds(
                 kind: LayoutIssueKind::Clipped,
                 rect,
             });
+        }
+        if !completely_hidden {
+            if let Node::Text { text, .. } = node {
+                if let Some(text_layout) = laid_out
+                    .iter()
+                    .find(|laid_out| laid_out.kind == LayoutKind::Text)
+                {
+                    let required = wrap_ranges(
+                        text,
+                        text_layout.rect.width,
+                        FontSize::Body,
+                        layout.prose_face,
+                    )
+                    .len();
+                    if required > text_layout.text_lines.len() {
+                        issues.push(LayoutIssue {
+                            severity: DiagnosticSeverity::Error,
+                            node: Some(id),
+                            kind: LayoutIssueKind::TextOverflow,
+                            rect: Some(text_layout.rect),
+                        });
+                    }
+                }
+            }
         }
         if let Some(offscreen) = offscreen_interactive {
             issues.push(LayoutIssue {
