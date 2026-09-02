@@ -68,6 +68,7 @@ const STORE_PACKAGES: &[&str] = &[
     "kobo-gallery",
     "kobo-gutenbird",
     "kobo-hn",
+    "kobo-lichess",
     "kobo-magnet",
     "kobo-morse",
     "kobo-rss",

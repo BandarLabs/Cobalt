@@ -2,9 +2,8 @@
 
 Cobalt is licensed under the GNU Affero General Public License, version 3. It
 links code and embeds fonts written by other people, all under permissive
-licences that impose no copyleft of their own, so a binary built from this tree
-can be redistributed under the AGPL as long as the notices below travel with
-it.
+licences or compatible GPL terms, so a binary built from this tree can be
+redistributed under the AGPL as long as the notices below travel with it.
 
 ## Rust dependencies
 
@@ -23,6 +22,7 @@ cargo metadata --format-version 1 --all-features
 | ISC | `rustls-webpki`, `untrusted` |
 | BSD-3-Clause | `subtle` |
 | CDLA-Permissive-2.0 | `webpki-roots` |
+| GPL-3.0-or-later | `shakmaty` |
 | Zlib | `foldhash` |
 
 Proc-macro and build-script crates (`unicode-ident` and its dependents, `cc`,
@@ -32,7 +32,8 @@ their terms do not attach to the distribution.
 The release archive contains the complete selected terms and package-specific
 notices in `licenses/LICENSE-Rust-dependencies.txt`. That includes `ring`'s
 Apache-2.0 and ISC terms and the CDLA-Permissive-2.0 agreement for the Mozilla
-CA data bundled by `webpki-roots`.
+CA data bundled by `webpki-roots`. The GPL-3.0-or-later terms selected for
+`shakmaty` ship separately in `licenses/LICENSE-shakmaty.txt`.
 
 ## Icons
 
@@ -76,6 +77,7 @@ The example applications talk to services this project does not own.
 | --- | --- | --- |
 | `hn` | Hacker News Firebase API | Public, unauthenticated, no key |
 | `gutenbird` | Gutendex and Project Gutenberg | Public; Gutenberg texts are public domain in the US |
+| `lichess` | Lichess Board and puzzle APIs | Official HTTPS origin; Board API access uses a runtime-held personal token |
 | `rss` | Feedsearch | Public; the search screen carries the attribution its terms ask for |
 
 None of them is paid for or rate-limit-exempt. An application that hammers

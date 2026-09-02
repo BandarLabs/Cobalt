@@ -90,6 +90,38 @@
       "capabilities": ["cover-sensor"]
     },
     {
+      "package": "kobo-lichess",
+      "id": "lichess",
+      "display_name": "Lichess",
+      "short_label": "Lichess",
+      "summary": "Play live standard chess on Lichess with e-ink-friendly clocks and reconnect.",
+      "version": "1.0.0",
+      "minimum_cobalt_version": "0.3.4",
+      "glyph": "grid",
+      "capabilities": ["network", "hold-wifi", "keep-awake"],
+      "setup": {
+        "steps": [
+          {
+            "text": "Create a Lichess Personal Access Token granting only board:play.",
+            "link": {
+              "label": "Create a Lichess API token",
+              "url": "https://lichess.org/account/oauth/token/create?scopes[]=board:play&description=Cobalt"
+            }
+          },
+          {
+            "text": "Save the token in a private local file, then install it under the exact secret name lichess.",
+            "command": "kobo secret set lichess --from <token-file> --device <address>"
+          },
+          {
+            "text": "Use Cobalt 0.3.4 or newer. The app remains protocol 11, but the 0.3.3 runtime does not support its pull streams or cancellable seek."
+          },
+          {
+            "text": "Only official lichess.org Board API play is supported. Chat, local takeback controls, and custom server URLs are not included."
+          }
+        ]
+      }
+    },
+    {
       "package": "kobo-morse",
       "id": "morse",
       "display_name": "Morse",

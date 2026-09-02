@@ -47,6 +47,7 @@ members = [
     "examples/sidekick",
     "examples/store",
     "apps/arxiv",
+    "apps/lichess",
     "apps/morse",
     "apps/sudoku",
     "apps/zotero-reader",
