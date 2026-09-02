@@ -46,6 +46,14 @@ pub const SYSTEM_FOLDER: &str = ".kobo";
 
 /// Where Cobalt is installed, relative to the mounted volume.
 pub const INSTALL_FOLDER: &str = ".adds/cobalt";
+// The current/next/previous names and owner-folder list deliberately match
+// kobod's OTA transaction. USB setup can therefore recover the same directory
+// swap states instead of inventing a parallel layout.
+const STAGING_FOLDER: &str = ".adds/cobalt.next";
+const PREVIOUS_FOLDER: &str = ".adds/cobalt.prev";
+const OWNER_HOLD_FOLDER: &str = ".adds/cobalt.owner";
+const TRANSACTION_MARKER: &str = ".managed-complete";
+const OWNER_FOLDERS: &[&str] = &["secrets", "trust", "state", "data", "apps", "store"];
 
 /// The firmware's own marker for a disabled SSH server.
 ///
@@ -569,35 +577,335 @@ fn edit_settings<'a>(
 /// written to.
 pub fn write_payload(members: &[crate::package::Member], volume: &Path) -> Result<usize, String> {
     crate::package::check(members)?;
+    refuse_managed_owner_folders(members)?;
+    recover_payload_transaction(volume)?;
     let adds = volume.join(".adds");
     fs::create_dir_all(&adds).map_err(|error| format!("{}: {error}", adds.display()))?;
-    let stage = adds.join(format!(".cobalt-stage-{}", std::process::id()));
+    let stage = volume.join(STAGING_FOLDER);
     if stage.exists() {
         fs::remove_dir_all(&stage).map_err(|error| format!("{}: {error}", stage.display()))?;
     }
     crate::package::write_folder(members, &stage)?;
     verify_payload_at(members, &stage)?;
+    fs::write(stage.join(TRANSACTION_MARKER), b"complete\n")
+        .map_err(|error| format!("write transaction marker: {error}"))?;
+    activate_staged(&adds, &mut |_| Ok(()))?;
+    if let Err(error) = verify_payload(members, volume) {
+        let rollback = rollback_activation(&adds, &mut |_| Ok(()));
+        return Err(with_rollback(&error, rollback));
+    }
+    let previous = volume.join(PREVIOUS_FOLDER);
+    if previous.exists() {
+        fs::remove_dir_all(&previous).map_err(|error| {
+            format!(
+                "remove verified previous payload {}: {error}",
+                previous.display()
+            )
+        })?;
+    }
+    Ok(members.len())
+}
 
-    let destination = volume.join(INSTALL_FOLDER);
+fn refuse_managed_owner_folders(members: &[crate::package::Member]) -> Result<(), String> {
     for member in members {
         let relative = member_relative(member)?;
-        let staged = stage.join(relative);
-        let installed = destination.join(relative);
-        let parent = installed
-            .parent()
-            .ok_or_else(|| format!("{} has no parent", installed.display()))?;
-        fs::create_dir_all(parent).map_err(|error| format!("{}: {error}", parent.display()))?;
-        if let Err(error) = fs::rename(&staged, &installed) {
-            let _ = fs::remove_dir_all(&stage);
+        let first = relative.split('/').next().unwrap_or_default();
+        if OWNER_FOLDERS.contains(&first) {
             return Err(format!(
-                "replace {} atomically from {}: {error}",
-                installed.display(),
-                staged.display()
+                "release member {:?} overlaps owner-managed folder {first:?}",
+                member.path
             ));
         }
     }
-    fs::remove_dir_all(&stage).map_err(|error| format!("{}: {error}", stage.display()))?;
-    Ok(members.len())
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ActivationStep {
+    HoldOwner(&'static str),
+    RemovePrevious,
+    RetireCurrent,
+    ActivateStaged,
+    RestoreOwner(&'static str),
+    RollbackNew,
+    RollbackPrevious,
+    RollbackOwner(&'static str),
+}
+
+fn activate_staged(
+    adds: &Path,
+    step: &mut impl FnMut(ActivationStep) -> Result<(), String>,
+) -> Result<(), String> {
+    let current = adds.join("cobalt");
+    let staging = adds.join("cobalt.next");
+    let previous = adds.join("cobalt.prev");
+    let holder = adds.join("cobalt.owner");
+    if !staging.join(TRANSACTION_MARKER).is_file() {
+        return Err("staged Cobalt payload is incomplete".to_owned());
+    }
+    if holder.exists() {
+        return Err(format!(
+            "{} still holds an interrupted owner-data transaction",
+            holder.display()
+        ));
+    }
+    fs::create_dir(&holder).map_err(|error| format!("{}: {error}", holder.display()))?;
+
+    if current.exists() {
+        for &folder in OWNER_FOLDERS {
+            let source = current.join(folder);
+            if source.exists() {
+                if let Err(error) = rename_step(
+                    &source,
+                    &holder.join(folder),
+                    ActivationStep::HoldOwner(folder),
+                    step,
+                ) {
+                    let rollback = restore_owner_folders(
+                        &holder,
+                        &current,
+                        ActivationStep::RollbackOwner,
+                        step,
+                    );
+                    return Err(with_rollback(&error, rollback));
+                }
+            }
+        }
+        if previous.exists() {
+            if let Err(error) = step(ActivationStep::RemovePrevious) {
+                let rollback =
+                    restore_owner_folders(&holder, &current, ActivationStep::RollbackOwner, step);
+                return Err(with_rollback(&error, rollback));
+            }
+            if let Err(error) = fs::remove_dir_all(&previous)
+                .map_err(|error| format!("remove {}: {error}", previous.display()))
+            {
+                let rollback =
+                    restore_owner_folders(&holder, &current, ActivationStep::RollbackOwner, step);
+                return Err(with_rollback(&error, rollback));
+            }
+        }
+        if let Err(error) = rename_step(&current, &previous, ActivationStep::RetireCurrent, step) {
+            let rollback =
+                restore_owner_folders(&holder, &current, ActivationStep::RollbackOwner, step);
+            return Err(with_rollback(&error, rollback));
+        }
+    }
+
+    if let Err(error) = rename_step(&staging, &current, ActivationStep::ActivateStaged, step) {
+        let rollback = rollback_activation(adds, step);
+        return Err(with_rollback(&error, rollback));
+    }
+
+    if let Err(error) = restore_owner_folders(&holder, &current, ActivationStep::RestoreOwner, step)
+    {
+        let rollback = rollback_activation(adds, step);
+        return Err(with_rollback(&error, rollback));
+    }
+    remove_empty_directory(&holder)?;
+    Ok(())
+}
+
+fn rollback_activation(
+    adds: &Path,
+    step: &mut impl FnMut(ActivationStep) -> Result<(), String>,
+) -> Result<(), String> {
+    let current = adds.join("cobalt");
+    let staging = adds.join("cobalt.next");
+    let previous = adds.join("cobalt.prev");
+    let holder = adds.join("cobalt.owner");
+    if current.exists() && current.join(TRANSACTION_MARKER).is_file() {
+        restore_owner_folders(&current, &holder, ActivationStep::RollbackOwner, step)?;
+        rename_step(&current, &staging, ActivationStep::RollbackNew, step)?;
+    }
+    if !current.exists() && previous.exists() {
+        rename_step(&previous, &current, ActivationStep::RollbackPrevious, step)?;
+    }
+    restore_owner_folders(&holder, &current, ActivationStep::RollbackOwner, step)?;
+    remove_empty_directory(&holder)
+}
+
+fn rename_step(
+    source: &Path,
+    destination: &Path,
+    operation: ActivationStep,
+    step: &mut impl FnMut(ActivationStep) -> Result<(), String>,
+) -> Result<(), String> {
+    step(operation)?;
+    fs::rename(source, destination).map_err(|error| {
+        format!(
+            "rename {} to {}: {error}",
+            source.display(),
+            destination.display()
+        )
+    })
+}
+
+fn restore_owner_folders(
+    source_root: &Path,
+    destination_root: &Path,
+    operation: fn(&'static str) -> ActivationStep,
+    step: &mut impl FnMut(ActivationStep) -> Result<(), String>,
+) -> Result<(), String> {
+    if !source_root.exists() {
+        return Ok(());
+    }
+    fs::create_dir_all(destination_root)
+        .map_err(|error| format!("{}: {error}", destination_root.display()))?;
+    for &folder in OWNER_FOLDERS {
+        let source = source_root.join(folder);
+        if !source.exists() {
+            continue;
+        }
+        let destination = destination_root.join(folder);
+        if destination.exists() {
+            merge_owner_tree(&source, &destination)?;
+        } else {
+            rename_step(&source, &destination, operation(folder), step)?;
+        }
+    }
+    Ok(())
+}
+
+fn merge_owner_tree(source: &Path, destination: &Path) -> Result<(), String> {
+    let source_type = fs::symlink_metadata(source)
+        .map_err(|error| format!("inspect {}: {error}", source.display()))?
+        .file_type();
+    if source_type.is_symlink() {
+        return Err(format!(
+            "owner data {} is a symbolic link; refusing to follow it",
+            source.display()
+        ));
+    }
+    let destination_type = fs::symlink_metadata(destination)
+        .ok()
+        .map(|value| value.file_type());
+    if destination_type.is_some_and(|kind| kind.is_symlink()) {
+        return Err(format!(
+            "owner data destination {} is a symbolic link; refusing to follow it",
+            destination.display()
+        ));
+    }
+    if source_type.is_dir() && destination_type.is_some_and(|kind| kind.is_dir()) {
+        for entry in
+            fs::read_dir(source).map_err(|error| format!("read {}: {error}", source.display()))?
+        {
+            let entry = entry.map_err(|error| format!("read {}: {error}", source.display()))?;
+            merge_owner_tree(&entry.path(), &destination.join(entry.file_name()))?;
+        }
+        remove_empty_directory(source)
+    } else if source_type.is_file() && destination_type.is_some_and(|kind| kind.is_file()) {
+        let source_bytes =
+            fs::read(source).map_err(|error| format!("read {}: {error}", source.display()))?;
+        let destination_bytes = fs::read(destination)
+            .map_err(|error| format!("read {}: {error}", destination.display()))?;
+        if source_bytes != destination_bytes {
+            return Err(format!(
+                "owner data exists with different bytes at {} and {}; refusing to overwrite either",
+                source.display(),
+                destination.display()
+            ));
+        }
+        fs::remove_file(source).map_err(|error| format!("remove {}: {error}", source.display()))
+    } else if !destination.exists() {
+        fs::rename(source, destination).map_err(|error| {
+            format!(
+                "move owner data {} to {}: {error}",
+                source.display(),
+                destination.display()
+            )
+        })
+    } else {
+        Err(format!(
+            "owner data has conflicting file types at {} and {}",
+            source.display(),
+            destination.display()
+        ))
+    }
+}
+
+fn remove_empty_directory(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let mut entries =
+        fs::read_dir(path).map_err(|error| format!("read {}: {error}", path.display()))?;
+    if entries.next().is_some() {
+        return Err(format!(
+            "{} still contains owner data; leaving it for recovery",
+            path.display()
+        ));
+    }
+    fs::remove_dir(path).map_err(|error| format!("remove {}: {error}", path.display()))
+}
+
+fn with_rollback(error: &str, rollback: Result<(), String>) -> String {
+    match rollback {
+        Ok(()) => format!("{error}; activation rolled back"),
+        Err(rollback) => format!(
+            "{error}; rollback was incomplete ({rollback}); rerun setup to recover before writing"
+        ),
+    }
+}
+
+/// Recovers any interrupted directory transaction before a new USB setup.
+///
+/// The current installation is always preferred when present. If the commit
+/// window left it absent, the complete previous installation is restored
+/// before a staged first install is considered. Owner folders are merged
+/// without overwriting differing bytes.
+pub fn recover_payload_transaction(volume: &Path) -> Result<(), String> {
+    let adds = volume.join(".adds");
+    let current = volume.join(INSTALL_FOLDER);
+    let staging = volume.join(STAGING_FOLDER);
+    let previous = volume.join(PREVIOUS_FOLDER);
+    let holder = volume.join(OWNER_HOLD_FOLDER);
+    if !adds.exists() {
+        return Ok(());
+    }
+    if !current.exists() {
+        if previous.exists() {
+            fs::rename(&previous, &current).map_err(|error| {
+                format!(
+                    "recover {} as {}: {error}",
+                    previous.display(),
+                    current.display()
+                )
+            })?;
+        } else if staging.join(TRANSACTION_MARKER).is_file() {
+            fs::rename(&staging, &current).map_err(|error| {
+                format!(
+                    "recover {} as {}: {error}",
+                    staging.display(),
+                    current.display()
+                )
+            })?;
+        }
+    }
+    if current.exists() {
+        restore_owner_folders(
+            &holder,
+            &current,
+            ActivationStep::RollbackOwner,
+            &mut |_| Ok(()),
+        )?;
+        if previous.exists() {
+            restore_owner_folders(
+                &previous,
+                &current,
+                ActivationStep::RollbackOwner,
+                &mut |_| Ok(()),
+            )?;
+        }
+        if staging.exists() {
+            fs::remove_dir_all(&staging)
+                .map_err(|error| format!("remove {}: {error}", staging.display()))?;
+        }
+    }
+    if holder.exists() {
+        remove_empty_directory(&holder)?;
+    }
+    Ok(())
 }
 
 /// Reads back everything that was written and compares it byte for byte.
@@ -655,13 +963,21 @@ fn member_relative(member: &crate::package::Member) -> Result<&str, String> {
 ///
 /// When the folder exists but cannot be removed.
 pub fn remove_payload(volume: &Path) -> Result<bool, String> {
-    let installed = volume.join(INSTALL_FOLDER);
-    if !installed.exists() {
-        return Ok(false);
+    let folders = [
+        volume.join(INSTALL_FOLDER),
+        volume.join(STAGING_FOLDER),
+        volume.join(PREVIOUS_FOLDER),
+        volume.join(OWNER_HOLD_FOLDER),
+    ];
+    let mut removed = false;
+    for installed in folders {
+        if installed.exists() {
+            fs::remove_dir_all(&installed)
+                .map_err(|error| format!("remove {}: {error}", installed.display()))?;
+            removed = true;
+        }
     }
-    fs::remove_dir_all(&installed)
-        .map_err(|error| format!("remove {}: {error}", installed.display()))?;
-    Ok(true)
+    Ok(removed)
 }
 
 /// Flushes the volume and ejects it, so the reader remounts its own storage.
@@ -1140,7 +1456,7 @@ mod tests {
         Staged, Verdict, INSTALL_FOLDER, SETTINGS_APPLIED, SSH_DISABLED, SSH_ENABLED,
     };
     use std::net::Ipv4Addr;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn the_machines_trust_roots_ride_along_with_a_setup() {
@@ -1821,6 +2137,7 @@ mod tests {
         std::fs::create_dir_all(owner_state.parent().expect("parent")).expect("state folder");
         std::fs::write(&owner_state, b"owner state").expect("state");
         assert_eq!(write_payload(&members, &root).expect("rerun"), 1);
+        assert!(!root.join(super::PREVIOUS_FOLDER).exists());
         assert_eq!(
             std::fs::read(&owner_state).expect("preserved"),
             b"owner state",
@@ -1833,6 +2150,168 @@ mod tests {
         assert!(error.contains("written short"), "{error}");
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn transaction_fixture(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "kobo-setup-transaction-{name}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let adds = root.join(".adds");
+        std::fs::create_dir_all(adds.join("cobalt/state")).expect("old state");
+        std::fs::create_dir_all(adds.join("cobalt/apps/example")).expect("old app");
+        std::fs::write(adds.join("cobalt/start.sh"), b"old managed").expect("old managed");
+        std::fs::write(adds.join("cobalt/state/settings"), b"owner state").expect("state");
+        std::fs::write(adds.join("cobalt/apps/example/data"), b"owner app").expect("app");
+        std::fs::create_dir_all(adds.join("cobalt.prev")).expect("previous");
+        std::fs::write(adds.join("cobalt.prev/start.sh"), b"older managed").expect("previous");
+        std::fs::create_dir_all(adds.join("cobalt.next")).expect("staging");
+        std::fs::write(adds.join("cobalt.next/start.sh"), b"new managed").expect("new managed");
+        std::fs::write(
+            adds.join("cobalt.next").join(super::TRANSACTION_MARKER),
+            b"complete\n",
+        )
+        .expect("marker");
+        root
+    }
+
+    fn assert_owner_data(root: &Path) {
+        assert_eq!(
+            std::fs::read(root.join(INSTALL_FOLDER).join("state/settings")).expect("state"),
+            b"owner state"
+        );
+        assert_eq!(
+            std::fs::read(root.join(INSTALL_FOLDER).join("apps/example/data")).expect("app"),
+            b"owner app"
+        );
+    }
+
+    #[test]
+    fn every_activation_failure_rolls_back_without_mixing_managed_files() {
+        use super::ActivationStep;
+
+        let failures = [
+            ActivationStep::HoldOwner("state"),
+            ActivationStep::RemovePrevious,
+            ActivationStep::RetireCurrent,
+            ActivationStep::ActivateStaged,
+            ActivationStep::RestoreOwner("apps"),
+        ];
+        for failure in failures {
+            let root = transaction_fixture(&format!("{failure:?}"));
+            let adds = root.join(".adds");
+            let mut failed = false;
+            let error = super::activate_staged(&adds, &mut |step| {
+                if !failed && step == failure {
+                    failed = true;
+                    Err(format!("injected failure at {step:?}"))
+                } else {
+                    Ok(())
+                }
+            })
+            .expect_err("activation fails");
+            assert!(error.contains("activation rolled back"), "{error}");
+            super::recover_payload_transaction(&root).expect("recovery");
+            assert_eq!(
+                std::fs::read(root.join(INSTALL_FOLDER).join("start.sh")).expect("managed"),
+                b"old managed",
+                "failure at {failure:?} mixed managed versions"
+            );
+            assert_owner_data(&root);
+
+            let staging = root.join(super::STAGING_FOLDER);
+            std::fs::create_dir_all(&staging).expect("restage");
+            std::fs::write(staging.join("start.sh"), b"new managed").expect("new managed");
+            std::fs::write(staging.join(super::TRANSACTION_MARKER), b"complete\n").expect("marker");
+            super::activate_staged(&adds, &mut |_| Ok(())).expect("safe rerun");
+            assert_eq!(
+                std::fs::read(root.join(INSTALL_FOLDER).join("start.sh")).expect("managed"),
+                b"new managed"
+            );
+            assert_owner_data(&root);
+            let _ = std::fs::remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn failed_rollback_is_recovered_on_the_next_run() {
+        use super::ActivationStep;
+
+        let root = transaction_fixture("rollback-previous");
+        let adds = root.join(".adds");
+        let error = super::activate_staged(&adds, &mut |step| {
+            if matches!(
+                step,
+                ActivationStep::ActivateStaged | ActivationStep::RollbackPrevious
+            ) {
+                Err(format!("injected failure at {step:?}"))
+            } else {
+                Ok(())
+            }
+        })
+        .expect_err("rollback fails");
+        assert!(error.contains("rollback was incomplete"), "{error}");
+        assert!(!root.join(INSTALL_FOLDER).exists());
+        super::recover_payload_transaction(&root).expect("rerun recovery");
+        assert_eq!(
+            std::fs::read(root.join(INSTALL_FOLDER).join("start.sh")).expect("managed"),
+            b"old managed"
+        );
+        assert_owner_data(&root);
+        let _ = std::fs::remove_dir_all(root);
+
+        let root = transaction_fixture("rollback-new");
+        let adds = root.join(".adds");
+        let error = super::activate_staged(&adds, &mut |step| {
+            if matches!(
+                step,
+                ActivationStep::RestoreOwner("apps") | ActivationStep::RollbackNew
+            ) {
+                Err(format!("injected failure at {step:?}"))
+            } else {
+                Ok(())
+            }
+        })
+        .expect_err("rollback fails");
+        assert!(error.contains("rollback was incomplete"), "{error}");
+        super::recover_payload_transaction(&root).expect("rerun completes committed transaction");
+        assert_eq!(
+            std::fs::read(root.join(INSTALL_FOLDER).join("start.sh")).expect("managed"),
+            b"new managed"
+        );
+        assert_owner_data(&root);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn post_activation_verification_failure_can_restore_the_previous_tree() {
+        let root = transaction_fixture("post-verify");
+        let adds = root.join(".adds");
+        super::activate_staged(&adds, &mut |_| Ok(())).expect("activate new");
+        assert_eq!(
+            std::fs::read(root.join(INSTALL_FOLDER).join("start.sh")).expect("new"),
+            b"new managed"
+        );
+        super::rollback_activation(&adds, &mut |_| Ok(())).expect("rollback after readback");
+        assert_eq!(
+            std::fs::read(root.join(INSTALL_FOLDER).join("start.sh")).expect("old"),
+            b"old managed"
+        );
+        assert_owner_data(&root);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_release_cannot_claim_owner_managed_folders() {
+        let member = crate::package::Member {
+            path: format!("{}/state/settings", crate::package::INSTALL_ROOT),
+            bytes: b"replacement".to_vec(),
+            program: false,
+        };
+        assert!(super::refuse_managed_owner_folders(&[member])
+            .expect_err("owner overlap")
+            .contains("owner-managed"));
     }
 
     #[test]
