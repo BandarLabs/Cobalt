@@ -2931,10 +2931,16 @@ impl KoboApp for Lichess {
         }
         let Some(pending) = self.tasks.remove(&task) else {
             if self.retired_tasks.remove(&task) && !self.suspended {
-                if self.accepted_challenge.is_some() || self.reconcile_accepted_challenge {
-                    let _ = self.refresh_playing(context);
+                if matches!(self.account, AccountState::Unknown)
+                    && !self.has_pending(|pending| matches!(pending, Pending::Account))
+                {
+                    self.validate_account(context);
+                } else {
+                    if self.accepted_challenge.is_some() || self.reconcile_accepted_challenge {
+                        let _ = self.refresh_playing(context);
+                    }
+                    self.open_event_stream(context);
                 }
-                self.open_event_stream(context);
             }
             return;
         };
@@ -4007,6 +4013,16 @@ mod tests {
         app.retired_tasks.insert(retired);
         app.on_task(&mut Context::default(), retired, TaskOutcome::Cancelled);
         assert!(app.has_pending(|pending| matches!(pending, Pending::Playing)));
+    }
+
+    #[test]
+    fn retired_task_completion_retries_deferred_account_validation() {
+        let mut app = Lichess::default();
+        let retired = kobo_sdk::TaskId(89);
+        app.retired_tasks.insert(retired);
+        app.on_task(&mut Context::default(), retired, TaskOutcome::Cancelled);
+        assert!(matches!(app.account, AccountState::Checking));
+        assert!(app.has_pending(|pending| matches!(pending, Pending::Account)));
     }
 
     #[test]
