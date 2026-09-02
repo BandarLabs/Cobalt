@@ -165,6 +165,7 @@ pub enum BoardRecord {
         gone: bool,
         claim_win_seconds: Option<u32>,
     },
+    Unsupported(String),
     Ignored,
 }
 
@@ -195,7 +196,13 @@ pub fn parse_account(bytes: &[u8]) -> Option<Account> {
 pub fn parse_playing(bytes: &[u8]) -> Option<Vec<GameSummary>> {
     let value = json(bytes)?;
     let games = value.get("nowPlaying")?.as_array()?;
-    Some(games.iter().filter_map(game_summary).collect())
+    Some(
+        games
+            .iter()
+            .filter_map(game_summary)
+            .filter(GameSummary::supported)
+            .collect(),
+    )
 }
 
 pub fn parse_event(bytes: &[u8]) -> Option<Event> {
@@ -232,7 +239,7 @@ pub fn parse_board(bytes: &[u8], expected_id: &str) -> Option<BoardRecord> {
             }
             let variant = value.get("variant")?.get("key").and_then(Value::as_str)?;
             if variant != "standard" {
-                return None;
+                return Some(BoardRecord::Unsupported(variant.to_owned()));
             }
             Some(BoardRecord::Full(FullGame {
                 id,
@@ -494,7 +501,7 @@ mod tests {
         let account = parse_account(br#"{"id":"owner123","username":"Owner"}"#).expect("account");
         assert_eq!(account.username, "Owner");
         let playing = parse_playing(
-            br#"{"nowPlaying":[{"gameId":"abcdEF12","color":"white","rated":true,"isMyTurn":true,"lastMove":"","opponent":{"username":"Other"}}]}"#,
+            br#"{"nowPlaying":[{"gameId":"abcdEF12","color":"white","rated":true,"source":"lobby","speed":"rapid","variant":{"key":"standard"},"secondsLeft":600,"isMyTurn":true,"lastMove":"","opponent":{"username":"Other"}}]}"#,
         )
         .expect("playing");
         assert_eq!(playing.len(), 1);
@@ -508,6 +515,13 @@ mod tests {
             panic!("full")
         };
         assert!(full.state.moves.is_empty());
+        assert!(matches!(
+            parse_board(
+                br#"{"type":"gameFull","id":"abcdEF12","rated":false,"speed":"rapid","variant":{"key":"chess960"},"initialFen":"startpos","white":{"name":"Owner"},"black":{"name":"Other"},"state":{"moves":"","wtime":600000,"btime":600000,"status":"started"}}"#,
+                "abcdEF12",
+            ),
+            Some(BoardRecord::Unsupported(variant)) if variant == "chess960"
+        ));
     }
 
     #[test]

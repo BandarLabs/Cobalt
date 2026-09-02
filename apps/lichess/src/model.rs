@@ -203,11 +203,15 @@ pub struct GameSummary {
 }
 
 impl GameSummary {
+    pub fn supported(&self) -> bool {
+        self.variant.as_deref() == Some("standard")
+    }
+
     pub fn quick_pair_candidate(&self) -> bool {
-        self.rated
+        self.supported()
+            && self.rated
             && self.source.as_deref() == Some("lobby")
             && self.speed.as_deref() == Some("rapid")
-            && self.variant.as_deref() == Some("standard")
             && self
                 .seconds_left
                 .is_some_and(|seconds| (540..=600).contains(&seconds))

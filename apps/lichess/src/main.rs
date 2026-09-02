@@ -66,7 +66,10 @@ enum Pending {
     BoardNext(String),
     BoardRetry(String),
     BoardClose(String),
-    Action(GameAction),
+    Action {
+        action: GameAction,
+        scope: ActionScope,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -80,6 +83,12 @@ enum GameAction {
     ClaimVictory,
     AcceptChallenge(String),
     DeclineChallenge(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ActionScope {
+    Game(String),
+    Challenge(String),
 }
 
 impl GameAction {
@@ -100,6 +109,7 @@ impl GameAction {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PendingMove {
+    game_id: String,
     movement: String,
     at_ply: usize,
 }
@@ -827,6 +837,13 @@ impl Lichess {
             return;
         }
         let id = session.game_id.clone();
+        if (self.pending_action.is_some() || self.pending_move.is_some())
+            && self.game.as_ref().is_some_and(|game| game.id != id)
+        {
+            self.notice =
+                Some("Wait for the current game action before switching boards.".to_owned());
+            return;
+        }
         if let Some(previous) = self.board_open.clone().filter(|previous| previous != &id) {
             for (task, pending) in self.tasks.clone() {
                 if matches!(
@@ -977,18 +994,30 @@ impl Lichess {
         if self.pending_action.is_some() || work.is_none() {
             return;
         }
+        let scope = match &action {
+            GameAction::AcceptChallenge(id) | GameAction::DeclineChallenge(id) => {
+                ActionScope::Challenge(id.clone())
+            }
+            _ => {
+                let Some(game) = &self.game else {
+                    return;
+                };
+                ActionScope::Game(game.id.clone())
+            }
+        };
         if let GameAction::Move(movement) = &action {
-            let at_ply = self.game.as_ref().map_or(0, |game| game.state.moves.len());
+            let game = self.game.as_ref().expect("game-scoped move");
             self.pending_move = Some(PendingMove {
+                game_id: game.id.clone(),
                 movement: movement.clone(),
-                at_ply,
+                at_ply: game.state.moves.len(),
             });
         }
         self.pending_action = Some(action.clone());
         if self
             .spawn(
                 context,
-                Pending::Action(action),
+                Pending::Action { action, scope },
                 work.expect("checked"),
                 false,
             )
@@ -997,6 +1026,19 @@ impl Lichess {
             self.pending_action = None;
             self.pending_move = None;
             self.notice = Some("Too many requests are already in flight.".to_owned());
+        }
+    }
+
+    fn action_scope_is_current(&self, scope: &ActionScope) -> bool {
+        match scope {
+            ActionScope::Game(id) => self
+                .game
+                .as_ref()
+                .is_some_and(|game| game.id == id.as_str()),
+            ActionScope::Challenge(id) => self
+                .challenge
+                .as_ref()
+                .is_some_and(|challenge| challenge.id == id.as_str()),
         }
     }
 
@@ -1213,6 +1255,14 @@ impl Lichess {
     fn handle_event(&mut self, context: &mut Context, event: Event) {
         match event {
             Event::GameStart(summary) => {
+                if !summary.supported() {
+                    if self.route == Route::Play {
+                        self.notice = Some(
+                            "A non-standard game started and was not offered here.".to_owned(),
+                        );
+                    }
+                    return;
+                }
                 let seek_match = self.seek_waiting
                     && summary.quick_pair_candidate()
                     && !self.seek_baseline.contains(&summary.id);
@@ -1364,6 +1414,17 @@ impl Lichess {
                     self.gone_tick = self.total_ticks;
                 }
             }
+            BoardRecord::Unsupported(variant) => {
+                self.notice = Some(format!(
+                    "The {variant} variant is not supported; its reconnect state was cleared."
+                ));
+                self.close_board(context, id);
+                self.game = None;
+                self.pending_action = None;
+                self.pending_move = None;
+                self.route = Route::Play;
+                self.clear_session(context);
+            }
             BoardRecord::Ignored => {}
         }
     }
@@ -1375,6 +1436,13 @@ impl Lichess {
         let Some(game) = &self.game else {
             return;
         };
+        if game.id != pending.game_id {
+            self.pending_move = None;
+            if self.pending_action == Some(GameAction::Move(pending.movement)) {
+                self.pending_action = None;
+            }
+            return;
+        }
         if game.state.moves.len() <= pending.at_ply {
             return;
         }
@@ -1447,7 +1515,7 @@ impl Lichess {
                     self.clock.stop(context);
                     self.route = Route::Play;
                 }
-                Pending::Action(_) => {
+                Pending::Action { action, .. } if self.pending_action.as_ref() == Some(&action) => {
                     self.pending_action = None;
                     self.pending_move = None;
                 }
@@ -1485,6 +1553,14 @@ impl Lichess {
                                 "The saved game is no longer active; stale reconnect state was cleared."
                                     .to_owned(),
                             );
+                            self.close_board(context, &session.game_id);
+                            self.game = None;
+                            self.pending_action = None;
+                            self.pending_move = None;
+                            self.selected = None;
+                            if self.route == Route::Game {
+                                self.route = Route::Play;
+                            }
                             self.clear_session(context);
                         }
                     }
@@ -1580,7 +1656,19 @@ impl Lichess {
                 }
             }
             Pending::BoardClose(_) => {}
-            Pending::Action(action) => {
+            Pending::Action { action, scope } => {
+                if self.pending_action.as_ref() != Some(&action) {
+                    return;
+                }
+                if !self.action_scope_is_current(&scope) {
+                    self.pending_action = None;
+                    if self.pending_move.as_ref().is_some_and(
+                        |pending| matches!(&scope, ActionScope::Game(id) if id == &pending.game_id),
+                    ) {
+                        self.pending_move = None;
+                    }
+                    return;
+                }
                 self.pending_action = match action {
                     GameAction::Move(_) => None,
                     GameAction::DeclineChallenge(id) => {
@@ -1654,18 +1742,23 @@ impl Lichess {
                     self.seek_task = None;
                 }
             }
-            Pending::Action(action) => {
+            Pending::Action { action, scope } => {
+                if self.pending_action.as_ref() != Some(&action) {
+                    return;
+                }
                 self.pending_action = None;
                 self.notice = Some(format!(
                     "{} The action was not replayed; the board is being reconciled.",
                     Failure::of(error).naming(api::SECRET)
                 ));
-                if !matches!(action, GameAction::Move(_)) {
+                if !matches!(action, GameAction::Move(_)) || !self.action_scope_is_current(&scope) {
                     self.pending_move = None;
                 }
-                if let Some(id) = self.game.as_ref().map(|game| game.id.clone()) {
-                    self.close_board(context, &id);
-                    self.schedule_board_reconnect(context, &id);
+                if let ActionScope::Game(id) = scope {
+                    if self.game.as_ref().is_some_and(|game| game.id == id) {
+                        self.close_board(context, &id);
+                        self.schedule_board_reconnect(context, &id);
+                    }
                 }
             }
             Pending::Puzzle => {
@@ -1703,12 +1796,26 @@ impl Lichess {
             {
                 self.board_open = None;
             }
-            Pending::Action(_) => {
+            Pending::Action { action, scope } if self.pending_action.as_ref() == Some(action) => {
                 self.pending_action = None;
+                if !matches!(action, GameAction::Move(_)) || !self.action_scope_is_current(scope) {
+                    self.pending_move = None;
+                }
                 self.notice = Some(
                     "The action was cancelled with an unknown server outcome; reconnecting."
                         .to_owned(),
                 );
+                if let ActionScope::Game(id) = scope {
+                    if self
+                        .game
+                        .as_ref()
+                        .is_some_and(|game| game.id == id.as_str())
+                    {
+                        let id = id.clone();
+                        self.close_board(context, &id);
+                        self.schedule_board_reconnect(context, &id);
+                    }
+                }
             }
             _ => {}
         }
@@ -1766,6 +1873,10 @@ impl Lichess {
     }
 
     #[cfg(debug_assertions)]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "named simulator fixtures keep each review screen deterministic and self-contained"
+    )]
     fn install_demo(&mut self, scenario: &str) -> bool {
         match scenario {
             "home" => {
@@ -1941,6 +2052,10 @@ impl KoboApp for Lichess {
                 || self.menu_open
             {
                 self.menu_open = false;
+            } else if self.pending_action.is_some() || self.pending_move.is_some() {
+                self.notice = Some(
+                    "Wait for the current server action before leaving this screen.".to_owned(),
+                );
             } else if self.route == Route::Pairing
                 && (self.seek_task.is_some() || self.seek_waiting)
             {
@@ -2238,8 +2353,9 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        api, board_cells, clock, AccountState, Challenge, ChallengeDirection, ChallengeTime, Color,
-        FullGame, Game, GameAction, Lichess, Pending, Player, Route, ServerState, Session,
+        api, board_cells, clock, AccountState, ActionScope, Challenge, ChallengeDirection,
+        ChallengeTime, Color, FullGame, Game, GameAction, Lichess, Pending, Player, Route,
+        ServerState, Session,
     };
     use kobo_sdk::{action_id, ActionId, Command, Context, KoboApp, TaskOutcome};
     use kobo_ui::{Chrome, CLARA_BW_METRICS};
@@ -2359,6 +2475,7 @@ mod tests {
     fn move_acknowledgement_comes_only_from_board_state() {
         let mut app = app_with_game(&[], Color::White);
         app.pending_move = Some(super::PendingMove {
+            game_id: "abcdEF12".to_owned(),
             movement: "e2e4".to_owned(),
             at_ply: 0,
         });
@@ -2672,6 +2789,70 @@ mod tests {
     }
 
     #[test]
+    fn stale_playing_snapshot_clears_the_in_memory_board_and_route() {
+        let mut app = app_with_game(&[], Color::White);
+        app.board_open = Some("abcdEF12".to_owned());
+        let mut context = Context::default();
+        app.handle_completed(&mut context, Pending::Playing, br#"{"nowPlaying":[]}"#);
+        assert!(app.session.is_none());
+        assert!(app.game.is_none());
+        assert!(app.board_open.is_none());
+        assert_eq!(app.route, Route::Play);
+    }
+
+    #[test]
+    fn unresolved_game_action_blocks_navigation_and_board_switching() {
+        let mut app = app_with_game(&[], Color::White);
+        app.pending_action = Some(GameAction::Resign);
+        let mut context = Context::default();
+        app.on_action(&mut context, ActionId::BACK);
+        assert_eq!(app.route, Route::Game);
+        assert_eq!(
+            app.session.as_ref().map(|session| session.game_id.as_str()),
+            Some("abcdEF12")
+        );
+
+        app.open_board(
+            &mut context,
+            Session {
+                game_id: "other123".to_owned(),
+                color: Color::Black,
+                opponent: "Someone".to_owned(),
+                rated: true,
+            },
+        );
+        assert_eq!(
+            app.session.as_ref().map(|session| session.game_id.as_str()),
+            Some("abcdEF12")
+        );
+    }
+
+    #[test]
+    fn unsupported_game_full_stops_instead_of_retrying_forever() {
+        let mut app = Lichess {
+            route: Route::Game,
+            session: Some(Session {
+                game_id: "abcdEF12".to_owned(),
+                color: Color::White,
+                opponent: "Other".to_owned(),
+                rated: false,
+            }),
+            board_open: Some("abcdEF12".to_owned()),
+            ..Lichess::default()
+        };
+        let mut context = Context::default();
+        app.handle_board(
+            &mut context,
+            "abcdEF12",
+            api::BoardRecord::Unsupported("chess960".to_owned()),
+        );
+        assert!(app.session.is_none());
+        assert!(app.game.is_none());
+        assert_eq!(app.route, Route::Play);
+        assert!(!app.has_pending(|pending| matches!(pending, Pending::BoardRetry(_))));
+    }
+
+    #[test]
     fn auth_and_rate_limit_guidance_never_echoes_a_token() {
         let mut app = Lichess::default();
         let mut context = Context::default();
@@ -2747,7 +2928,10 @@ mod tests {
         assert!(app.pending_move.is_some());
         app.handle_completed(
             &mut move_context,
-            Pending::Action(GameAction::Move("e2e4".to_owned())),
+            Pending::Action {
+                action: GameAction::Move("e2e4".to_owned()),
+                scope: ActionScope::Game("abcdEF12".to_owned()),
+            },
             &[],
         );
         assert!(
@@ -2796,7 +2980,10 @@ mod tests {
         assert_eq!(app.pending_action, Some(GameAction::AcceptDraw));
         app.handle_completed(
             &mut draw_context,
-            Pending::Action(GameAction::AcceptDraw),
+            Pending::Action {
+                action: GameAction::AcceptDraw,
+                scope: ActionScope::Game("abcdEF12".to_owned()),
+            },
             &[],
         );
         let finished = api::parse_board(
@@ -2838,7 +3025,14 @@ mod tests {
         app.on_action(&mut context, action_id("confirm-resign"));
         app.on_action(&mut context, action_id("resign"));
         assert_eq!(app.pending_action, Some(GameAction::Resign));
-        app.handle_completed(&mut context, Pending::Action(GameAction::Resign), &[]);
+        app.handle_completed(
+            &mut context,
+            Pending::Action {
+                action: GameAction::Resign,
+                scope: ActionScope::Game("abcdEF12".to_owned()),
+            },
+            &[],
+        );
         let finished = api::parse_board(
             br#"{"type":"gameState","moves":"e2e4","wtime":599000,"btime":600000,"winc":0,"binc":0,"status":"resign","winner":"white"}"#,
             "abcdEF12",
