@@ -2,23 +2,28 @@
   "format_version": 1,
   "changes": [
     {
-      "protocol_version": 11,
-      "reason": "Additive protocol-11 update-channel settings used only by the bundled runtime and Settings app",
+      "protocol_version": 12,
+      "reason": "The 0.3.5 runtime retains protocol-11 rendering, responses, and Atkinson metrics for unchanged Store binaries. Protocol 12 adds Folio nodes and a write-only app-scoped credential request that protocol-11 apps cannot emit; only catalog apps changed to use the new SDK surface are rebuilt.",
       "files": [
         {
           "path": "crates/kobo-protocol/src/lib.rs",
-          "base_blob": "8c30366191af89abc121075544635bf871fdfac4",
-          "compatible_blob": "f34528d7b407e542a7836b0348b91de043822274"
-        },
-        {
-          "path": "crates/kobo-policy/src/services.rs",
-          "base_blob": "d0a852942683f396baaf3803830d9c19c9911f18",
-          "compatible_blob": "e5b8617ac601332dd9b5d39c8e6ea83d613e171b"
+          "base_blob": "f34528d7b407e542a7836b0348b91de043822274",
+          "compatible_blob": "b183ec1e3a2a47a1b4b695dbc72dc1df09aecbc9"
         },
         {
           "path": "crates/kobo-sdk/src/lib.rs",
-          "base_blob": "52bd17b242beee85f691ebefdd0083fdabbd4550",
-          "compatible_blob": "9a645f3f3d9c8746dda47d858bb3fcd744621df8"
+          "base_blob": "9a645f3f3d9c8746dda47d858bb3fcd744621df8",
+          "compatible_blob": "0ac8561a00f10350dfac28501ae49362e37b1ed6"
+        },
+        {
+          "path": "crates/kobo-text/src/lib.rs",
+          "base_blob": "229e03073b19f78f623b2ab15d183fef86c9e48f",
+          "compatible_blob": "c645479d92d9bdcc7e07a38f2e8fca591fc9cf57"
+        },
+        {
+          "path": "crates/kobo-ui/src/lib.rs",
+          "base_blob": "b423c372440c61e785db9dd0128eac22343cb9f8",
+          "compatible_blob": "2f8c87d0677cd5e1c8e9b0914d0b8510f77fa1a2"
         }
       ]
     }

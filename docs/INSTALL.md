@@ -72,7 +72,7 @@ repository; its SHA-256 fingerprint is
 `SHA256:ufJnWeLeZxeWlrY7KXb1MadhxMHYZdHSmk21Nmovgbo`.
 
 ```sh
-version=0.3.4
+version=0.3.5
 tag=v$version
 base=https://github.com/BandarLabs/Cobalt/releases/download/$tag
 dir=cobalt-installer-$version

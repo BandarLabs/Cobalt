@@ -67,10 +67,17 @@ escapes all catalog text. The setup block is website metadata and does not
 enter the signed device catalog, so correcting these instructions does not by
 itself require an app version bump.
 
-Apps built from the current SDK require Cobalt 0.2.4 or newer because that is
-the first release supporting the current wire protocol. A newer runtime
-service can require a higher minimum. CI rejects a registry entry below the
-SDK protocol floor.
+An app that fails with `TaskError::NoCredential` must not stop at a generic
+network error. Use `kobo_sdk::credentials::CredentialSetup` to offer both
+attended, masked entry on the reader and the exact `kobo secret set` command.
+The runtime must explicitly authorize the app/secret-name pair in
+`kobo_policy::credentials::may_set`; an app cannot create arbitrary secrets.
+The CLI route tells the owner to close and reopen the app after installation.
+
+Existing protocol-11 apps remain valid from Cobalt 0.3.1 during the 0.3.5
+compatibility window. New apps that use Folio protocol-12 fields require
+Cobalt 0.3.5 or newer; set that `minimum_cobalt_version` and increment the
+app version. A newer runtime service can require a higher minimum.
 
 ## Test the app
 
@@ -131,7 +138,7 @@ install pages, or sitemap entries after merge.
 
 ## Publish or update an app
 
-Open a pull request containing the app source, tests, workspace and Store
+Open a pull request against `beta` containing the app source, tests, workspace and Store
 entries, registry metadata, README, clean screenshot, generated website files,
 and physical-device evidence. Increment the app's `version` whenever its code,
 local dependencies, release inputs, or public metadata change. Shared SDK and
@@ -140,18 +147,26 @@ each package with the last published catalog and rejects a reused version.
 
 Do not change the Cobalt platform version for an ordinary app update. Raise
 `minimum_cobalt_version` when the app starts using a protocol or runtime
-service absent from older platform releases.
+service absent from older platform releases. For Folio protocol 12, target
+`beta`, declare at least `0.3.5`, and physically confirm the beta OTA still
+launches an installed protocol-11 app with its state, preferences, secrets,
+legacy pagination, rollback, and Nickel handoff intact.
 
-After merge to `main`, `.github/workflows/apps.yml`:
+After merge to `beta`, `.github/workflows/apps.yml`:
 
 1. Builds every registered app as static ARMv7 hard-float on its own runner.
 2. Verifies and uploads exactly that app's executable.
 3. Downloads the immutable artifacts on a fresh signing runner.
 4. Creates signed `.cobalt-app` packages.
 5. Creates and signs the complete catalog.
-6. Updates the fixed `app-catalog` GitHub release.
+6. Updates the fixed `app-catalog-beta` GitHub release.
 
-Installed readers fetch:
+Record the beta catalog digest, package digest, and physical-device evidence.
+Promote the tested `beta` commit to `main`, then run `promote-beta-apps`; it
+verifies and promotes the exact tested beta packages to Stable without
+rebuilding them. App-only changes need no platform version bump.
+
+Stable readers fetch:
 
 - `https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog.json`
 - `https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog.json.sig`

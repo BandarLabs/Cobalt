@@ -14,7 +14,9 @@ const MANIFEST_FIELDS = [
 const COMPATIBLE_PLATFORM_PATHS = new Set([
   "crates/kobo-policy/src/services.rs",
   "crates/kobo-protocol/src/lib.rs",
-  "crates/kobo-sdk/src/lib.rs"
+  "crates/kobo-sdk/src/lib.rs",
+  "crates/kobo-text/src/lib.rs",
+  "crates/kobo-ui/src/lib.rs"
 ]);
 
 // Store packages are built from the current SDK and therefore speak its exact
@@ -22,7 +24,8 @@ const COMPATIBLE_PLATFORM_PATHS = new Set([
 // here before the catalog can be published.
 const PROTOCOL_MINIMUMS = new Map([
   [10, "0.2.4"],
-  [11, "0.3.1"]
+  [11, "0.3.1"],
+  [12, "0.3.5"]
 ]);
 
 function readJson(path, label) {
@@ -190,7 +193,12 @@ function versionIsOlder(value, minimum) {
   return false;
 }
 
-export function checkProtocolMinimums(registry, protocolVersion, baselines = PROTOCOL_MINIMUMS) {
+export function checkProtocolMinimums(
+  registry,
+  protocolVersion,
+  baselines = PROTOCOL_MINIMUMS,
+  affectedPackages = null
+) {
   if (!Array.isArray(registry.apps)) throw new Error("registry apps must be an array");
   const minimum = baselines.get(protocolVersion);
   if (!minimum) {
@@ -199,6 +207,7 @@ export function checkProtocolMinimums(registry, protocolVersion, baselines = PRO
     );
   }
   const failures = registry.apps
+    .filter(app => !affectedPackages || affectedPackages.has(app.package))
     .filter(app => versionIsOlder(app.minimum_cobalt_version, minimum))
     .map(
       app =>
@@ -649,9 +658,15 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     const registry = readJson(resolve(values.get("--registry")), "app registry");
     const published = readJson(resolve(values.get("--published-catalog")), "published catalog");
     const affected = affectedWorkspacePackages(values.get("--base"), registry);
-    checkProtocolMinimums(registry, currentProtocolVersion());
+    const packages = packagesToBuild(registry, published, affected);
+    checkProtocolMinimums(
+      registry,
+      currentProtocolVersion(),
+      PROTOCOL_MINIMUMS,
+      new Set(packages)
+    );
     if (mode === "--list-packages") {
-      console.log(JSON.stringify(packagesToBuild(registry, published, affected)));
+      console.log(JSON.stringify(packages));
     } else if (mode === "--publish-needed") {
       console.log(releaseNeeded(registry, published, affected) ? "true" : "false");
     } else {
