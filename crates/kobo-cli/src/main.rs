@@ -25,7 +25,13 @@ mod panel;
 mod setup;
 mod sha256;
 
-const DEVICE_PACKAGES: &[&str] = &["kobo-doctor", "kobod", "kobo-todo", "kobo-terminal"];
+const DEVICE_PACKAGES: &[&str] = &[
+    "kobo-doctor",
+    "kobod",
+    "kobo-wifi-trace",
+    "kobo-todo",
+    "kobo-terminal",
+];
 /// Everything an owner's device needs, in the order it is packaged, with the
 /// features each one has to be built with.
 ///
@@ -41,6 +47,7 @@ const DEVICE_PACKAGES: &[&str] = &["kobo-doctor", "kobod", "kobo-todo", "kobo-te
 /// the artifact check in `build_package` both exist to keep it shipped.
 const INSTALLED_PACKAGES: &[(&str, Option<&str>)] = &[
     ("kobod", Some("device-write")),
+    ("kobo-wifi-trace", None),
     ("kobo-launcher", None),
     ("kobo-audiobook", None),
     ("kobo-terminal", None),
@@ -385,6 +392,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         "session" => dev_session(&arguments[1..]),
         "wait" => wait_for_device(&arguments[1..]),
         "logs" => device_logs(&arguments[1..]),
+        "wifi-trace" => wifi_trace_command(&arguments[1..]),
         // Reached only when something other than main dispatches, which today
         // is the tests. main takes this verb first so that the reader's own
         // exit code survives.
@@ -1374,7 +1382,7 @@ fn build_device(device: bool) -> Result<(), String> {
     run_status(&mut command, "cargo build")?;
     if device {
         for name in DEVICE_PACKAGES {
-            let binary = Path::new("target/armv7-unknown-linux-musleabihf/release").join(name);
+            let binary = workspace_device_binary(name);
             verify_arm_elf(&binary)?;
             println!(
                 "verified static ARMv7 hard-float binary: {}",
@@ -1832,6 +1840,56 @@ fn device_logs(arguments: &[String]) -> Result<(), String> {
             "reading the trace from {} failed with status {code}",
             request.host
         ))),
+    }
+}
+
+fn wifi_trace_command(arguments: &[String]) -> Result<(), String> {
+    const USAGE: &str = "usage: kobo wifi-trace summarize PATH | \
+                         kobo wifi-trace retrieve --device HOST --out PATH";
+    match arguments {
+        [action, path] if action == "summarize" => {
+            let bytes = fs::read(path).map_err(|error| format!("read {path}: {error}"))?;
+            println!("{}", kobo_wifi_trace::summarize(&bytes).render());
+            Ok(())
+        }
+        [action, device, host, out, path]
+            if action == "retrieve" && is_device_flag(device) && out == "--out" =>
+        {
+            if !valid_device_host(host) {
+                return Err("device host contains unsupported characters".to_owned());
+            }
+            let script = format!(
+                "set -e\n\
+                 dir={directory}\n\
+                 latest=$(ls -1t \"$dir\"/wifi-handoff-baseline-v1-*.jsonl 2>/dev/null | head -n 1)\n\
+                 if [ -z \"$latest\" ]; then\n\
+                   echo 'no baseline Wi-Fi handoff trace on this device' >&2\n\
+                   exit 3\n\
+                 fi\n\
+                 cat \"$latest\"\n",
+                directory = kobo_wifi_trace::DIAGNOSTICS_DIR,
+            );
+            let remote = format!("root@{host}");
+            let output = run_remote_shell(&remote, &script, REMOTE_SESSION_TIMEOUT)
+                .map_err(unreachable_device)?;
+            if !output.status.success() {
+                return Err(match output.status.code() {
+                    Some(3) => "no baseline Wi-Fi handoff trace to retrieve".to_owned(),
+                    _ => unreachable_device(format!(
+                        "retrieving the baseline Wi-Fi handoff trace from {host} failed"
+                    )),
+                });
+            }
+            fs::write(path, &output.stdout)
+                .map_err(|error| format!("write retrieved trace to {path}: {error}"))?;
+            println!(
+                "saved {} bytes to {path}\n{}",
+                output.stdout.len(),
+                kobo_wifi_trace::summarize(&output.stdout).render()
+            );
+            Ok(())
+        }
+        _ => Err(USAGE.to_owned()),
     }
 }
 
@@ -2439,14 +2497,26 @@ fn workspace_manifest() -> PathBuf {
         .join("Cargo.toml")
 }
 
-/// Resolves a device binary inside this workspace's own target directory.
+/// Resolves a device binary from this workspace's configured target directory.
 ///
 /// Pinning it to this manifest means an uploaded artifact always comes from the
 /// reviewed source tree rather than whatever workspace the caller stood in.
+/// Honouring `CARGO_TARGET_DIR` keeps cross-build output off constrained disks.
 fn workspace_device_binary(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join("target/armv7-unknown-linux-musleabihf/release")
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let target = env::var_os("CARGO_TARGET_DIR").map_or_else(
+        || workspace.join("target"),
+        |target| {
+            let target = PathBuf::from(target);
+            if target.is_absolute() {
+                target
+            } else {
+                workspace.join(target)
+            }
+        },
+    );
+    target
+        .join("armv7-unknown-linux-musleabihf/release")
         .join(name)
 }
 
@@ -2989,7 +3059,7 @@ fn build_package_bytes() -> Result<BuiltPackage, String> {
             &mut device_build_command(name, *features)?,
             format!("cargo build {name}"),
         )?;
-        let binary = Path::new("target/armv7-unknown-linux-musleabihf/release").join(name);
+        let binary = workspace_device_binary(name);
         // The same check the device build already applies, repeated here
         // because this is the artifact somebody else's device will run.
         verify_arm_elf(&binary)?;
@@ -5305,6 +5375,8 @@ fn print_help() {
            session --device IP --hold [minutes]  Keep it reachable for unattended testing\n\
            wait --device IP       Block until a device answers again\n\
            logs --device IP [--follow] [--lines N]  Read the runtime trace from the device\n\
+           wifi-trace summarize PATH  Report baseline handoff generations and first divergence\n\
+           wifi-trace retrieve --device IP --out PATH  Retrieve and summarize the latest baseline trace\n\
            shell --device IP [command ...]  Run one command on the reader, or open a\n\
            \x20                             session when no command is given. Exits with\n\
            \x20                             whatever the reader exited with\n\
@@ -5880,8 +5952,8 @@ mod tests {
     fn every_installed_package_is_a_member_of_this_workspace() {
         let manifest = fs::read_to_string(super::workspace_manifest()).expect("read the workspace");
         for (name, _) in super::INSTALLED_PACKAGES {
-            let directory = if *name == "kobod" {
-                "crates/kobod".to_owned()
+            let directory = if matches!(*name, "kobod" | "kobo-wifi-trace") {
+                format!("crates/{name}")
             } else {
                 format!("examples/{}", name.trim_start_matches("kobo-"))
             };
@@ -6091,7 +6163,13 @@ mod tests {
     fn default_device_build_excludes_guard_and_smoke() {
         assert_eq!(
             DEVICE_PACKAGES,
-            ["kobo-doctor", "kobod", "kobo-todo", "kobo-terminal"]
+            [
+                "kobo-doctor",
+                "kobod",
+                "kobo-wifi-trace",
+                "kobo-todo",
+                "kobo-terminal"
+            ]
         );
         assert!(!DEVICE_PACKAGES.contains(&"kobo-guard"));
         assert!(!DEVICE_PACKAGES.contains(&"kobo-smoke"));
@@ -6154,24 +6232,17 @@ mod tests {
     }
 
     #[test]
-    fn remote_doctor_uses_strict_hosts_and_workspace_artifact() {
+    fn remote_doctor_uses_strict_hosts_and_configured_target_artifact() {
         assert!(valid_device_host("192.0.2.1"));
         assert!(valid_device_host("kobo-reader_1"));
         assert!(!valid_device_host(""));
         assert!(!valid_device_host("reader;reboot"));
         assert!(!valid_device_host("reader name"));
-        assert_eq!(
-            workspace_doctor_binary(),
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../..")
-                .join("target/armv7-unknown-linux-musleabihf/release/kobo-doctor")
-        );
+        assert!(workspace_doctor_binary()
+            .ends_with("armv7-unknown-linux-musleabihf/release/kobo-doctor"));
         #[cfg(feature = "device-write")]
-        assert_eq!(
-            workspace_smoke_binary(),
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../..")
-                .join("target/armv7-unknown-linux-musleabihf/release/kobo-smoke")
+        assert!(
+            workspace_smoke_binary().ends_with("armv7-unknown-linux-musleabihf/release/kobo-smoke")
         );
     }
 

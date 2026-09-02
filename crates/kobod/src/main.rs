@@ -283,6 +283,7 @@ fn fetch_once(url: &str, max_bytes: &str) -> Result<(), Box<dyn Error>> {
 /// everything back afterwards.
 #[cfg(feature = "device-write")]
 fn present_on_panel(application: &Path) -> Result<(), Box<dyn Error>> {
+    use kobo_wifi_trace::TraceClient;
     use std::time::Duration;
     const UNLOCK_ENV: &str = "KOBO_PRESENT_UNLOCK";
     const UNLOCK_PHRASE: &str = "OWNER_ATTENDED_PANEL_SESSION";
@@ -303,7 +304,11 @@ fn present_on_panel(application: &Path) -> Result<(), Box<dyn Error>> {
             .and_then(|value| value.parse::<u64>().ok())
             .map_or(device::Limits::default().ceiling, Duration::from_secs),
     };
-    println!("{}", device::present(application, limits)?);
+    let mut wifi_trace = TraceClient::start_if_enabled()?;
+    if let Some(path) = wifi_trace.trace_path() {
+        println!("passive baseline Wi-Fi handoff trace: {}", path.display());
+    }
+    println!("{}", device::present(application, limits, &mut wifi_trace)?);
     Ok(())
 }
 

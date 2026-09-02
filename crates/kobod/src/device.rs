@@ -47,6 +47,7 @@ use kobo_ui::{
     render_all, ActionId, CellStyle, Chrome, FontHandle, FramePlanner, Layout, LayoutKind,
     PanelWaveform, PictureCache, Screen, Surface,
 };
+use kobo_wifi_trace::{Lifecycle as WifiTraceEvent, TraceClient};
 use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -491,7 +492,11 @@ impl Default for Limits {
 /// Returns an error describing what failed and, always, what state the device
 /// was left in.
 #[allow(clippy::too_many_lines)]
-pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
+pub fn present(
+    application: &Path,
+    limits: Limits,
+    wifi_trace: &mut TraceClient,
+) -> Result<String, String> {
     let limits = Limits {
         idle: limits.idle.min(MAX_SESSION),
         ceiling: limits.ceiling.min(MAX_SESSION),
@@ -602,9 +607,11 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
 
     // The point of no return.
     trace("stopping the reader");
+    wifi_trace.checkpoint(WifiTraceEvent::PreStop);
     reader
         .stop(STOP_GRACE)
         .map_err(|error| format!("stop the reader: {error}"))?;
+    wifi_trace.checkpoint(WifiTraceEvent::NickelStopped);
 
     // One reader thread on the touch descriptor for the whole panel session,
     // started here rather than per application.
@@ -736,7 +743,12 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     }
     trace("panel and touch released, restarting the reader");
     println!("panel released, restarting the reader");
+    wifi_trace.checkpoint(WifiTraceEvent::NickelStartRequested);
     let restarted = reader.start(START_GRACE);
+    if restarted.is_ok() {
+        wifi_trace.checkpoint(WifiTraceEvent::NickelPidObserved);
+        wifi_trace.checkpoint(WifiTraceEvent::BaselineHandoffObserved);
+    }
     // The connection is never put back, and there is no longer a way to ask
     // for it. Restoring it meant starting a supplicant and a DHCP client on
     // `wlan0` while the reader we had just restarted drives that same radio
