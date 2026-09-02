@@ -960,12 +960,24 @@ impl Lichess {
                 Some("Wait for the current game action before switching boards.".to_owned());
             return;
         }
-        if let Some(previous) = self.board_open.clone().filter(|previous| previous != &id) {
+        let previous = self
+            .session
+            .as_ref()
+            .map(|session| session.game_id.clone())
+            .or_else(|| self.game.as_ref().map(|game| game.id.clone()))
+            .filter(|previous| previous != &id);
+        if let Some(previous) = previous {
             for (task, pending) in self.tasks.clone() {
                 if matches!(
-                    pending,
-                    Pending::BoardOpen(ref open) | Pending::BoardNext(ref open)
+                    &pending,
+                    Pending::BoardOpen(open)
+                        | Pending::BoardNext(open)
+                        | Pending::BoardRetry(open)
+                        | Pending::BoardClose(open)
                         if open == &previous
+                ) || matches!(
+                    &pending,
+                    Pending::BoardRateWait { id: waiting, .. } if waiting == &previous
                 ) {
                     context.cancel(task);
                     self.tasks.remove(&task);
@@ -977,6 +989,11 @@ impl Lichess {
             self.board_open = None;
             self.board_ready = false;
             self.game = None;
+            self.selected = None;
+            self.promotion = None;
+            self.confirmation = None;
+            self.menu_open = false;
+            self.clock.stop(context);
         }
         self.session = Some(session);
         self.persist_session(context);
@@ -1373,6 +1390,7 @@ impl Lichess {
         let Some(puzzle) = self.puzzles.get_mut(self.current_puzzle) else {
             return;
         };
+        let solver = chess::side_to_move(&puzzle.fen);
         let Some(from) = self.selected.take() else {
             self.selected = Some(square);
             self.notice = None;
@@ -1423,10 +1441,23 @@ impl Lichess {
             puzzle.fen = fen;
             puzzle.cursor = puzzle.cursor.saturating_add(1);
         }
+        let mut reply = None;
+        while puzzle.cursor < puzzle.solution.len() && chess::side_to_move(&puzzle.fen) != solver {
+            let forced = puzzle.solution[puzzle.cursor].clone();
+            let Some((fen, san)) = chess::play(&puzzle.fen, &forced) else {
+                self.puzzle_wrong = 2;
+                self.notice = Some("The stored puzzle reply could not be replayed.".to_owned());
+                self.route = Route::PuzzleResult;
+                return;
+            };
+            puzzle.fen = fen;
+            puzzle.cursor = puzzle.cursor.saturating_add(1);
+            reply = Some(san);
+        }
         if puzzle.cursor >= puzzle.solution.len() {
             self.route = Route::PuzzleResult;
         } else {
-            self.notice = None;
+            self.notice = reply.map(|reply| format!("Opponent replied {reply}."));
         }
     }
 
@@ -3231,6 +3262,38 @@ mod tests {
     }
 
     #[test]
+    fn puzzle_solver_auto_plays_forced_opponent_replies() {
+        let mut app = Lichess {
+            route: Route::Solve,
+            puzzles: vec![Puzzle {
+                id: "line".to_owned(),
+                fen: super::chess::START.to_owned(),
+                solution: vec!["e2e4", "e7e5", "g1f3"]
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect(),
+                cursor: 0,
+            }],
+            ..Lichess::default()
+        };
+        app.choose_puzzle_square("e2".to_owned());
+        app.choose_puzzle_square("e4".to_owned());
+        assert_eq!(app.puzzles[0].cursor, 2);
+        assert_eq!(super::chess::piece_at(&app.puzzles[0].fen, "e5"), Some('p'));
+        assert_eq!(app.route, Route::Solve);
+        assert!(app
+            .notice
+            .as_deref()
+            .unwrap_or_default()
+            .contains("Opponent replied"));
+
+        app.choose_puzzle_square("g1".to_owned());
+        app.choose_puzzle_square("f3".to_owned());
+        assert_eq!(app.puzzles[0].cursor, 3);
+        assert_eq!(app.route, Route::PuzzleResult);
+    }
+
+    #[test]
     fn background_puzzle_download_does_not_interrupt_a_live_game() {
         let mut app = app_with_game(&[], Color::White);
         let mut context = Context::default();
@@ -3743,6 +3806,43 @@ mod tests {
         assert_eq!(app.board_open.as_deref(), Some("other123"));
         assert!(app.board_ready);
         assert_eq!(app.game.as_ref().expect("game").id, "other123");
+    }
+
+    #[test]
+    fn switching_from_paused_board_retires_old_retry_tasks() {
+        let mut app = app_with_game(&[], Color::White);
+        app.board_open = None;
+        app.board_ready = false;
+        app.board_rate_limits
+            .insert("abcdEF12".to_owned(), super::unix_seconds() + 30);
+        let old_wait = kobo_sdk::TaskId(77);
+        app.tasks.insert(
+            old_wait,
+            Pending::BoardRateWait {
+                id: "abcdEF12".to_owned(),
+                remaining: 30,
+            },
+        );
+        let mut context = Context::default();
+        app.open_board(
+            &mut context,
+            Session {
+                game_id: "other123".to_owned(),
+                color: Color::Black,
+                opponent: "New opponent".to_owned(),
+                rated: true,
+            },
+        );
+        assert!(!app.tasks.contains_key(&old_wait));
+        assert!(app.game.is_none());
+        assert_eq!(
+            app.session.as_ref().map(|session| session.game_id.as_str()),
+            Some("other123")
+        );
+        assert!(app.has_pending(|pending| {
+            matches!(pending, Pending::BoardOpen(id) if id == "other123")
+        }));
+        assert!(app.board_rate_limits.contains_key("abcdEF12"));
     }
 
     #[test]
