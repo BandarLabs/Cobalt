@@ -153,6 +153,20 @@ offline or incompatible reader is refused rather than reconfigured. A
 pre-existing Cobalt panel session is also refused; the harness never stops a
 session it did not start.
 
+Signed Store binaries are canonical at
+`.adds/cobalt/apps/APP_ID/bin/kobo-APP_ID`; `.adds/cobalt/bin/` contains
+platform-owned built-ins. The matching Beta host command asks `kobod` to
+resolve that verified app-scoped path. An older `kobo present` that checks only
+the platform `bin/` directory will incorrectly report a Store app as not
+installed and must be updated with the Beta platform before acceptance.
+
+An app directory containing `manifest.json` but missing its app-scoped binary,
+signature, or other verified package component is a corrupt installation, not
+an absent app. Status, Store refresh/install planning, and Beta smoke fail
+closed on that condition. The attended run must stop before mutation; remove
+the corrupt package explicitly and reinstall it through the signed Beta
+catalog before collecting acceptance evidence.
+
 ## Promotion and retention
 
 Review `report.json` and screenshots, then record the beta source commit and

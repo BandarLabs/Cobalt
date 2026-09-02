@@ -863,8 +863,13 @@ fn read_installed_manifest(
     id: &str,
     key: &Ed25519PublicKey,
 ) -> Result<Manifest, DeviceError> {
-    let bytes = fs::read(directory.join("manifest.json"))
-        .map_err(|error| installed_component_read_error(&error))?;
+    let bytes = fs::read(directory.join("manifest.json")).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            DeviceError::NotFound
+        } else {
+            DeviceError::Backend
+        }
+    })?;
     let manifest = Manifest::parse_public(&bytes).map_err(|_| DeviceError::Integrity)?;
     if manifest.id() != id || manifest.to_canonical_bytes() != bytes {
         return Err(DeviceError::Integrity);
@@ -1791,6 +1796,10 @@ mod tests {
         let install = || {
             install_with(&root, "word-count", &key, |_, _| Ok(package.clone())).expect("install");
         };
+        let clean_reinstall = || {
+            uninstall_using(&root, "word-count", &key).expect("remove corrupt installation");
+            install();
+        };
 
         install();
         let directory = apps_root(&root).join("word-count");
@@ -1807,7 +1816,7 @@ mod tests {
             Err(DeviceError::Integrity)
         );
 
-        install();
+        clean_reinstall();
         let signature_path = directory.join("manifest.json.sig");
         let mut manifest_signature = fs::read(&signature_path).expect("signature");
         manifest_signature[0] = if manifest_signature[0] == b'0' {
@@ -1821,7 +1830,7 @@ mod tests {
             Err(DeviceError::Integrity)
         );
 
-        install();
+        clean_reinstall();
         let binary_path = app_binary(&root, "word-count");
         let mut binary = fs::read(&binary_path).expect("binary");
         binary[0] ^= 1;

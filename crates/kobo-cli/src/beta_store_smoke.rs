@@ -2619,6 +2619,25 @@ mod tests {
     }
 
     #[test]
+    fn an_installed_manifest_without_its_binary_blocks_acceptance_and_reinstall() {
+        let root = root("missing-installed-binary");
+        let seed = [42_u8; 32];
+        let key = derive_public_key(&seed).expect("public key");
+        let target = release("fixture", "1.0.0", true, &seed).expect("release");
+        refresh(&root, &target, &key).expect("refresh");
+        install_direct(&root, "fixture", &target, &key).expect("install");
+        fs::remove_file(root.join("apps/fixture/bin/kobo-fixture"))
+            .expect("remove installed binary");
+
+        let status = app_snapshot(&root, "fixture", &key)
+            .expect_err("an orphan manifest must fail Beta acceptance");
+        assert!(status.contains("did not match"), "{status}");
+        let reinstall = install_direct(&root, "fixture", &target, &key)
+            .expect_err("an orphan manifest must not be silently repaired");
+        assert!(reinstall.contains("did not match"), "{reinstall}");
+    }
+
+    #[test]
     fn missing_encoders_retain_frames_and_reproducible_command() {
         let out = root("marketing-missing");
         let route = route(&out.join("route.txt"));
