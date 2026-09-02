@@ -56,6 +56,7 @@ pub struct Finished {
 struct Running {
     cancel: Arc<AtomicBool>,
     handle: Option<thread::JoinHandle<()>>,
+    stream_url: Option<String>,
 }
 
 /// The host-provided network implementation a task's fetch runs through.
@@ -255,6 +256,19 @@ fn own_headers(headers: &[kobo_protocol::Header]) -> Result<PreparedHeaders<'_>,
     })
 }
 
+fn line_stream_url(work: &Task) -> Option<String> {
+    let Task::Fetch { url, headers, .. } = work else {
+        return None;
+    };
+    headers
+        .iter()
+        .any(|header| {
+            header.name.eq_ignore_ascii_case(LINE_STREAM_HEADER)
+                && matches!(header.value.as_str(), "open" | "next" | "close")
+        })
+        .then(|| url.clone())
+}
+
 /// Told, from the finishing task's own thread, that a result is now waiting.
 ///
 /// It carries nothing. The runtime still calls [`TaskRunner::drain`] for the
@@ -440,6 +454,8 @@ impl TaskRunner {
         }
 
         let cancel = Arc::new(AtomicBool::new(false));
+        let stream_url = line_stream_url(&work);
+        let cleanup_url = stream_url.clone();
         let sender = self.sender.clone();
         let root = self.root.clone();
         let fetch = self.fetch.clone();
@@ -465,6 +481,11 @@ impl TaskRunner {
                     &flag,
                 );
                 let outcome = if flag.load(Ordering::SeqCst) {
+                    if let (Some(streams), Some(url)) =
+                        (line_streams.as_deref(), cleanup_url.as_deref())
+                    {
+                        streams.close(url);
+                    }
                     TaskOutcome::Cancelled
                 } else {
                     outcome
@@ -482,6 +503,7 @@ impl TaskRunner {
             Running {
                 cancel,
                 handle: Some(handle),
+                stream_url,
             },
         );
         Ok(())
@@ -494,6 +516,11 @@ impl TaskRunner {
     pub fn cancel(&mut self, task: TaskId) {
         if let Some(running) = self.running.get(&task) {
             running.cancel.store(true, Ordering::SeqCst);
+            if let (Some(streams), Some(url)) =
+                (self.line_streams.as_deref(), running.stream_url.as_deref())
+            {
+                streams.close(url);
+            }
         }
     }
 

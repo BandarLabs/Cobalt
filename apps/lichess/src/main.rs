@@ -1390,6 +1390,10 @@ impl Lichess {
         let Some(puzzle) = self.puzzles.get_mut(self.current_puzzle) else {
             return;
         };
+        if puzzle.cursor >= puzzle.solution.len() {
+            self.route = Route::PuzzleResult;
+            return;
+        }
         let solver = chess::side_to_move(&puzzle.fen);
         let Some(from) = self.selected.take() else {
             self.selected = Some(square);
@@ -1537,8 +1541,7 @@ impl Lichess {
         else {
             return false;
         };
-        if (puzzles.is_empty() && current != 0) || (!puzzles.is_empty() && current >= puzzles.len())
-        {
+        if current > puzzles.len() {
             return false;
         }
         let Some(wrong) = value
@@ -1552,6 +1555,14 @@ impl Lichess {
         self.puzzles = puzzles;
         self.current_puzzle = current;
         self.puzzle_wrong = wrong;
+        while self
+            .puzzles
+            .get(self.current_puzzle)
+            .is_some_and(|puzzle| puzzle.cursor >= puzzle.solution.len())
+        {
+            self.current_puzzle = self.current_puzzle.saturating_add(1);
+            self.puzzle_wrong = 0;
+        }
         true
     }
 
@@ -2458,7 +2469,11 @@ impl Lichess {
     }
 
     fn remaining_puzzles(&self) -> usize {
-        self.puzzles.len().saturating_sub(self.current_puzzle)
+        self.puzzles
+            .iter()
+            .skip(self.current_puzzle)
+            .filter(|puzzle| puzzle.cursor < puzzle.solution.len())
+            .count()
     }
 
     fn close_live_reads(&mut self, context: &mut Context) {
@@ -3259,6 +3274,13 @@ mod tests {
         assert_eq!(app.current_puzzle, 1);
         assert_eq!(app.puzzle_wrong, 1);
         assert_eq!(app.puzzles[1].cursor, 1);
+
+        app.current_puzzle = 0;
+        app.puzzles[0].cursor = app.puzzles[0].solution.len();
+        let completed = app.encode_puzzles();
+        assert!(app.decode_puzzles(&completed));
+        assert_eq!(app.current_puzzle, 1);
+        assert_eq!(app.remaining_puzzles(), 1);
     }
 
     #[test]
