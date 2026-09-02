@@ -51,17 +51,11 @@ Pages bootstrap verifies the signed release manifest and the full release
 installer before executing it. The release installer then verifies every host
 and device artifact.
 
-For the first beta candidate, use its exact beta release URL; no stable
-installer asset is required:
-
-```sh
-curl -fsSL https://github.com/BandarLabs/Cobalt/releases/download/beta-v0.3.4/install.sh |
-  sh -s -- --beta --version 0.3.4
-```
-
 To install an exact immutable release, add `--version X.Y.Z`. For CI, use
 `--non-interactive --yes`; add `--no-setup` when no physical reader is
-attached. Beta is never selected implicitly.
+attached. The public bootstrap installs stable only. Enable **Beta updates** in
+Cobalt Settings after a normal stable installation, or use the source workflow
+for development.
 
 ### High-assurance signed bootstrap
 
@@ -75,7 +69,7 @@ repository; its SHA-256 fingerprint is
 
 ```sh
 version=0.3.4
-tag=beta-v$version                 # use v$version after stable promotion
+tag=v$version
 base=https://github.com/BandarLabs/Cobalt/releases/download/$tag
 dir=cobalt-installer-$version
 (umask 077 && mkdir "$dir") || exit
@@ -100,17 +94,11 @@ else
   actual=$(shasum -a 256 install.sh | awk '{print $1}')
 fi
 test "$actual" = "$2"
-sh ./install.sh --beta --version "$version"
+sh ./install.sh --version "$version"
 ```
 
-For stable, use `tag=v$version` and omit `--beta`. Keep the pinned signer line
-from this repository or another out-of-band trusted copy, not from the release
-being checked.
-
-After the first stable promotion, the Pages discovery bootstrap is
-channel-agnostic, so `https://bandarlabs.github.io/Cobalt/install.sh` may also
-be run with `sh -s -- --beta`. The exact beta URL remains the first-beta and
-exact-version route.
+Keep the pinned signer line from this repository or another out-of-band trusted
+copy, not from the release being checked.
 
 ## 2. Connect and confirm the reader
 

@@ -30,7 +30,9 @@ only its public key belongs in the repository.
 
 The canonical one-line `curl | sh` route trusts GitHub Pages HTTPS for the
 discovery bootstrap itself; it is not protected retroactively by the manifest
-it later downloads. Pages fixes stable discovery, not self-verification.
+it later downloads. Pages fixes stable discovery, not self-verification. The
+public bootstrap installs stable only; beta remains an authenticated
+in-product update-channel choice after installation.
 The installation guide therefore provides a recommended high-assurance route
 that downloads `install.sh` as data and verifies its signed-manifest entry
 before execution using an out-of-band pinned OpenSSH Ed25519 key.

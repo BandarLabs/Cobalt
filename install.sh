@@ -39,18 +39,20 @@ trap cleanup EXIT HUP INT TERM
 
 usage() {
     cat <<'EOF'
-usage: install.sh [--stable|--beta] [--version X.Y.Z] [--yes]
+usage: install.sh [--version X.Y.Z] [--yes]
                   [--non-interactive] [--no-setup] [--no-path]
                   [--install-dir PATH] [--force-conflict]
 
-Stable is the default. Beta must be selected explicitly.
+This installs stable Cobalt. Beta is selected later in Cobalt Settings.
 EOF
 }
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --stable) CHANNEL=stable ;;
-        --beta) CHANNEL=beta ;;
+        --stable) ;;
+        --beta)
+            fail "the host bootstrap installs stable only; enable Beta updates in Cobalt Settings after installation"
+            ;;
         --version)
             [ "$#" -ge 2 ] || fail "--version needs X.Y.Z"
             VERSION=$2
@@ -204,15 +206,8 @@ file_size() {
 }
 
 if [ -z "$BASE_URL" ]; then
-    if [ "$CHANNEL" = beta ] && [ -z "$VERSION" ]; then
-        beta_manifest=$STAGE/Cargo.toml
-        download "https://raw.githubusercontent.com/$REPOSITORY/beta/Cargo.toml" "$beta_manifest" ||
-            fail "cannot discover the current beta version"
-        VERSION=$(sed -n 's/^version = "\([0-9][0-9.]*\)"$/\1/p' "$beta_manifest")
-        [ -n "$VERSION" ] || fail "beta branch does not declare one workspace version"
-    fi
     if [ -n "$VERSION" ]; then
-        if [ "$CHANNEL" = beta ]; then tag=beta-v$VERSION; else tag=v$VERSION; fi
+        tag=v$VERSION
         BASE_URL=https://github.com/$REPOSITORY/releases/download/$tag
     else
         BASE_URL=https://github.com/$REPOSITORY/releases/latest/download
@@ -253,8 +248,8 @@ manifest_version=$(manifest_field version)
 manifest_channels=$(manifest_field channels)
 manifest_source=$(manifest_field source)
 case ",$manifest_channels," in
-    *,"$CHANNEL",*) ;;
-    *) fail "signed manifest does not allow the requested $CHANNEL channel" ;;
+    *,stable,*) ;;
+    *) fail "signed manifest does not allow stable installation" ;;
 esac
 if [ -n "$VERSION" ] && [ "$manifest_version" != "$VERSION" ]; then
     fail "requested version $VERSION, but the signed manifest is $manifest_version"
@@ -393,8 +388,8 @@ if [ "$YES" != true ]; then
     case "$answer" in y|Y|yes|YES|Yes) ;; *) say "Declined; nothing was installed."; exit 0 ;; esac
 fi
 
-RELEASE=$ROOT/releases/$VERSION-$CHANNEL
-RELEASE_NEW=$ROOT/releases/.new-$VERSION-$CHANNEL-$$
+RELEASE=$ROOT/releases/$VERSION-stable
+RELEASE_NEW=$ROOT/releases/.new-$VERSION-stable-$$
 mkdir -p "$ROOT/releases"
 rm -rf "$RELEASE_NEW"
 mkdir "$RELEASE_NEW"

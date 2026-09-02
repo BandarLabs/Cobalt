@@ -33,7 +33,7 @@ artifacts are promoted from beta rather than rebuilt.
    installer, manifest, and signatures as `vX.Y.Z` without rebuilding.
    The `docs/install.sh` merged to main is then available from the canonical
    GitHub Pages stable discovery URL. Beta itself never changes the live Pages
-   source and uses exact `beta-vX.Y.Z` release URLs.
+   source or publishes a public host bootstrap.
 
 Direct stable publication from `main` is intentionally disabled for Store
 applications. A successful build is necessary but does not replace physical

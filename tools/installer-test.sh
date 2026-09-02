@@ -3,7 +3,6 @@ set -eu
 
 ROOT=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
 WORK=$ROOT/target/installer-tests
-WORKSPACE_VERSION=$(sed -n 's/^version = "\([0-9][0-9.]*\)"$/\1/p' "$ROOT/Cargo.toml")
 rm -rf "$WORK"
 mkdir -p "$WORK"
 trap 'rm -rf "$WORK"' EXIT HUP INT TERM
@@ -101,25 +100,28 @@ expect_failure() {
 }
 
 stable=$WORK/stable
-beta=$WORK/beta
 make_release "$stable" 0.3.3 stable stable-one
-make_release "$beta" "$WORKSPACE_VERSION" beta beta-one
-grep -F \
-    "https://github.com/BandarLabs/Cobalt/releases/download/beta-v${WORKSPACE_VERSION}/install.sh" \
-    "$ROOT/README.md" >/dev/null
-grep -F "sh -s -- --beta --version ${WORKSPACE_VERSION}" "$ROOT/README.md" >/dev/null
 grep -F "https://bandarlabs.github.io/Cobalt/install.sh" "$ROOT/README.md" >/dev/null
+if grep -Eq 'beta-v[0-9.]+/install\.sh|sh -s -- --beta' "$ROOT/README.md"; then
+    printf 'README exposes a beta bootstrap route\n' >&2
+    exit 1
+fi
+expect_failure "release installer beta route" \
+    env HOME="$WORK/home-reject-beta" KOBO_INSTALLER_TESTING=1 \
+    sh "$INSTALLER" --beta
+expect_failure "Pages installer beta route" \
+    env HOME="$WORK/home-pages-reject-beta" sh "$PAGES_INSTALLER" --beta
 
-# The first beta does not depend on a stable installer asset. An explicit beta
-# version resolves every download against its immutable beta-vX.Y.Z release.
+# The separately verified route checks the stable release installer before
+# execution with the out-of-band signer.
 printf '%s\n' "$SIGNER" > "$WORK/high-assurance-signers"
 ssh-keygen -Y verify -q -f "$WORK/high-assurance-signers" \
     -I cobalt-release -n cobalt-host-release \
-    -s "$beta/cobalt-host-manifest.txt.sshsig" \
-    < "$beta/cobalt-host-manifest.txt"
+    -s "$stable/cobalt-host-manifest.txt.sshsig" \
+    < "$stable/cobalt-host-manifest.txt"
 bootstrap_line=$(awk \
     '$1 == "bootstrap" && $2 == "install.sh" && NF == 4 {print $3 " " $4}' \
-    "$beta/cobalt-host-manifest.txt")
+    "$stable/cobalt-host-manifest.txt")
 IFS=' ' read -r bootstrap_bytes bootstrap_sha <<EOF
 $bootstrap_line
 EOF
@@ -144,43 +146,35 @@ while [ "$#" -gt 0 ]; do
     shift
 done
 printf '%s\n' "$url" >> "$KOBO_TEST_URL_LOG"
-prefix=https://github.com/BandarLabs/Cobalt/releases/download/beta-v$KOBO_TEST_VERSION/
 case "$url" in
-    "$prefix"*) cp "$KOBO_TEST_RELEASE/${url#"$prefix"}" "$output" ;;
+    https://github.com/BandarLabs/Cobalt/releases/latest/download/*)
+        cp "$KOBO_TEST_RELEASE/${url#https://github.com/BandarLabs/Cobalt/releases/latest/download/}" \
+            "$output"
+        ;;
+    https://github.com/BandarLabs/Cobalt/releases/download/v0.3.3/*)
+        cp "$KOBO_TEST_RELEASE/${url#https://github.com/BandarLabs/Cobalt/releases/download/v0.3.3/}" \
+            "$output"
+        ;;
     *) exit 22 ;;
 esac
 EOF
 chmod 755 "$mock_bin/curl"
-first_beta_home=$WORK/home-first-beta
-HOME=$first_beta_home XDG_DATA_HOME=$first_beta_home/data \
-XDG_CACHE_HOME=$first_beta_home/cache \
+# Once main:/docs is promoted, Pages discovers stable and verifies the signed
+# release installer before running it.
+pages_home=$WORK/home-pages
+: > "$WORK/pages-urls"
+HOME=$pages_home XDG_DATA_HOME=$pages_home/data \
+XDG_CACHE_HOME=$pages_home/cache \
 PATH="$mock_bin:/usr/bin:/bin:/usr/sbin:/sbin" \
-KOBO_INSTALLER_TESTING=1 KOBO_TEST_RELEASE=$beta \
-KOBO_TEST_VERSION=$WORKSPACE_VERSION \
-KOBO_TEST_URL_LOG=$WORK/first-beta-urls \
-sh "$INSTALLER" --yes --no-setup --no-path --platform linux-x86_64 \
-    --beta --version "$WORKSPACE_VERSION" >/dev/null
-if grep -F '/releases/latest/download/' "$WORK/first-beta-urls" >/dev/null; then
-    printf 'first beta unexpectedly depended on a stable latest asset\n' >&2
-    exit 1
-fi
-grep -F "/releases/download/beta-v${WORKSPACE_VERSION}/cobalt-host-manifest.txt" \
-    "$WORK/first-beta-urls" >/dev/null
-
-# Once main:/docs is promoted, the Pages discovery bootstrap is
-# channel-agnostic. It verifies the signed release installer before running it.
-pages_beta_home=$WORK/home-pages-beta
-: > "$WORK/pages-beta-urls"
-HOME=$pages_beta_home XDG_DATA_HOME=$pages_beta_home/data \
-XDG_CACHE_HOME=$pages_beta_home/cache \
-PATH="$mock_bin:/usr/bin:/bin:/usr/sbin:/sbin" \
-KOBO_INSTALLER_TESTING=1 KOBO_TEST_RELEASE=$beta \
-KOBO_TEST_VERSION=$WORKSPACE_VERSION \
-KOBO_TEST_URL_LOG=$WORK/pages-beta-urls \
+KOBO_INSTALLER_TESTING=1 KOBO_TEST_RELEASE=$stable \
+KOBO_TEST_URL_LOG=$WORK/pages-urls \
 sh "$PAGES_INSTALLER" --yes --no-setup --no-path --platform linux-x86_64 \
-    --beta --version "$WORKSPACE_VERSION" >/dev/null
-grep -F "/releases/download/beta-v${WORKSPACE_VERSION}/install.sh" \
-    "$WORK/pages-beta-urls" >/dev/null
+    >/dev/null
+grep -F "/releases/latest/download/cobalt-host-manifest.txt" \
+    "$WORK/pages-urls" >/dev/null
+grep -F "/releases/latest/download/install.sh" "$WORK/pages-urls" >/dev/null
+grep -F "/releases/download/v0.3.3/cobalt-host-manifest.txt" \
+    "$WORK/pages-urls" >/dev/null
 
 # Clean install, update, and idempotent rerun.
 home=$WORK/home-clean
@@ -237,9 +231,7 @@ set -e
 rm -rf "$lock_home/data/kobo/install.lock"
 run_install "$lock_home" "$stable" --platform linux-x86_64 >/dev/null
 
-# Stable/beta and explicit version enforcement.
-run_install "$WORK/home-beta" "$beta" --beta --platform linux-arm64
-grep -Fx "channel beta" "$WORK/home-beta/data/kobo/install-state" >/dev/null
+# Stable and explicit version enforcement.
 run_install "$WORK/home-version" "$stable" --version 0.3.3 --platform macos-arm64
 expect_failure "wrong explicit version" \
     run_install "$WORK/home-wrong-version" "$stable" --version 9.9.9 --platform linux-x86_64

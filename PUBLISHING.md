@@ -37,8 +37,8 @@ The long-lived `beta` branch is the only source for beta publishing:
   must advance the workspace version for every published test build; an
   existing beta tag or release is never moved or replaced. Assets retain the
   stable deterministic names, including `cobalt-X.Y.Z-KoboRoot.tgz` and
-  `cobalt-X.Y.Z.sha256`. It also publishes `install.sh`, four
-  `kobo-X.Y.Z-<platform>.tar.gz` archives, and a versioned host manifest.
+  `cobalt-X.Y.Z.sha256`. It also publishes four
+  `kobo-X.Y.Z-<platform>.tar.gz` archives and a versioned host manifest.
   The manifest fixes every host/device asset name, size, SHA-256, version, and
   source commit. The protected `COBALT_APP_SIGNING_SEED` signs it twice with
   the repository's existing Ed25519 release key: raw detached form for
@@ -53,12 +53,14 @@ The long-lived `beta` branch is the only source for beta publishing:
   prerelease tag to target that commit, requires the commit to be in current
   main, enforces the workspace version, verifies the downloaded checksum
   files, both manifest signatures, all host/device manifest entries, and the
-  expected archive digest, then publishes those exact bytes as `vX.Y.Z`
-  targeting the tested commit. It never rebuilds or replaces a tag or release.
+  expected archive digest. It takes `install.sh` from the exact tested commit,
+  verifies it against the signed bootstrap manifest entry, and publishes the
+  stable release without rebuilding any binary. It never replaces a tag or
+  release.
 
 Promotion is never automatic. Merge the tested beta commit to main first so
 the main workspace version matches the artifact being promoted. GitHub Pages
 continues to publish `main:/docs`; after that merge, `docs/install.sh` becomes
 the canonical stable discovery URL at
-`https://bandarlabs.github.io/Cobalt/install.sh`. The first beta must use its
-exact `beta-vX.Y.Z` release asset because beta does not publish Pages.
+`https://bandarlabs.github.io/Cobalt/install.sh`. Beta does not publish a
+public host bootstrap; owners opt into beta later through Cobalt Settings.

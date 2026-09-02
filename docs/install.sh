@@ -7,7 +7,6 @@
 set -eu
 
 REPOSITORY=${KOBO_INSTALLER_REPOSITORY:-BandarLabs/Cobalt}
-CHANNEL=stable
 VERSION=
 VERSION_EXPLICIT=false
 EXPECT_VERSION=false
@@ -33,8 +32,10 @@ for argument in "$@"; do
         continue
     fi
     case "$argument" in
-        --stable) CHANNEL=stable ;;
-        --beta) CHANNEL=beta ;;
+        --stable) ;;
+        --beta)
+            fail "the public bootstrap installs stable only; enable Beta updates in Cobalt Settings after installation"
+            ;;
         --version) EXPECT_VERSION=true ;;
     esac
 done
@@ -96,21 +97,8 @@ file_size() {
     wc -c < "$1" | tr -d ' '
 }
 
-if [ "$CHANNEL" = beta ] && [ -z "$VERSION" ]; then
-    beta_manifest=$STAGE/Cargo.toml
-    download "https://raw.githubusercontent.com/$REPOSITORY/beta/Cargo.toml" \
-        "$beta_manifest"
-    VERSION=$(sed -n 's/^version = "\([0-9][0-9.]*\)"$/\1/p' "$beta_manifest")
-    printf '%s\n' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' ||
-        fail "beta branch does not declare one workspace version"
-fi
-
 if [ -n "$VERSION" ]; then
-    if [ "$CHANNEL" = beta ]; then
-        tag=beta-v$VERSION
-    else
-        tag=v$VERSION
-    fi
+    tag=v$VERSION
     BASE_URL=https://github.com/$REPOSITORY/releases/download/$tag
 else
     BASE_URL=https://github.com/$REPOSITORY/releases/latest/download
@@ -145,8 +133,8 @@ manifest_field() {
 manifest_version=$(manifest_field version)
 manifest_channels=$(manifest_field channels)
 case ",$manifest_channels," in
-    *,"$CHANNEL",*) ;;
-    *) fail "signed manifest does not allow the requested $CHANNEL channel" ;;
+    *,stable,*) ;;
+    *) fail "signed manifest does not allow stable installation" ;;
 esac
 if [ "$VERSION_EXPLICIT" = true ] && [ "$manifest_version" != "$VERSION" ]; then
     fail "requested version $VERSION, but the signed manifest is $manifest_version"

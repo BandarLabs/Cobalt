@@ -57,7 +57,6 @@ jobs:
             `cobalt-${version}-KoboRoot.tgz`,
             `cobalt-${version}.sha256`,
             "THIRD-PARTY.md",
-            "install.sh",
             "cobalt-host-manifest.txt",
             "cobalt-host-manifest.txt.sig",
             "cobalt-host-manifest.txt.sshsig",
@@ -76,6 +75,8 @@ jobs:
             git cat-file -e "${tag_sha}^{commit}"
             git merge-base --is-ancestor "$tag_sha" "$GITHUB_SHA"
             published="$RUNNER_TEMP/published-$tag"
+            bootstrap="$RUNNER_TEMP/install-$tag.sh"
+            git show "${tag_sha}:install.sh" > "$bootstrap"
             mkdir "$published"
             gh release download "$tag" --dir "$published"
             cd "$published"
@@ -115,8 +116,15 @@ jobs:
           NODE
             while read -r kind first second third fourth; do
               case "$kind" in
-                device|bootstrap)
+                device)
                   name=$first
+                  bytes=$second
+                  checksum=$third
+                  test -z "${fourth:-}"
+                  ;;
+                bootstrap)
+                  test "$first" = install.sh
+                  name=$bootstrap
                   bytes=$second
                   checksum=$third
                   test -z "${fourth:-}"
@@ -273,6 +281,7 @@ jobs:
             --seed "$seed" \
             --signature dist/cobalt-host-manifest.txt.sig \
             --ssh-signature dist/cobalt-host-manifest.txt.sshsig
+          rm dist/install.sh
       - name: Create the immutable isolated prerelease
         env:
           GH_TOKEN: ${{ github.token }}
@@ -288,7 +297,7 @@ jobs:
             --field "ref=refs/tags/${tag}" --field "sha=${GITHUB_SHA}" \
             --jq '.object.sha' | grep -Fx "$GITHUB_SHA"
           find dist -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} +
-          test "$(find dist -maxdepth 1 -type f | wc -l)" -eq 13
+          test "$(find dist -maxdepth 1 -type f | wc -l)" -eq 12
           gh release create "$tag" dist/* \
             --title "Cobalt ${VERSION} beta" \
             --notes "Immutable prerelease built from the beta branch at ${GITHUB_SHA}." \

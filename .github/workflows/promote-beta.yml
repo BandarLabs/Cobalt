@@ -151,6 +151,8 @@ jobs:
             "$beta_ref"
           test "$(resolve_ref_commit "$beta_ref")" = "$TESTED_COMMIT"
           git cat-file -e "${TESTED_COMMIT}^{commit}"
+          git cat-file -e "${TESTED_COMMIT}:install.sh"
+          git cat-file -e "${TESTED_COMMIT}:docs/install.sh"
           git merge-base --is-ancestor "$TESTED_COMMIT" HEAD
           stable_tag="v${VERSION}"
           require_absent "$stable_tag tag" \
@@ -181,14 +183,13 @@ jobs:
           test -f "$digest"
           test -f "cobalt-${VERSION}-ClaraBW.sha256"
           test -f THIRD-PARTY.md
-          test -f install.sh
           test -f cobalt-host-manifest.txt
           test -f cobalt-host-manifest.txt.sig
           test -f cobalt-host-manifest.txt.sshsig
           for platform in macos-x86_64 macos-arm64 linux-x86_64 linux-arm64; do
             test -f "kobo-${VERSION}-${platform}.tar.gz"
           done
-          test "$(find . -maxdepth 1 -type f | wc -l)" -eq 13
+          test "$(find . -maxdepth 1 -type f | wc -l)" -eq 12
           grep -Eq "^[0-9a-f]{64}  ${asset}$" "$digest"
           grep -Eq "^[0-9a-f]{64}  ${legacy_asset}$" "$digest"
           cmp "$digest" "cobalt-${VERSION}-ClaraBW.sha256"
@@ -211,6 +212,7 @@ jobs:
             -s cobalt-host-manifest.txt.sshsig \
             < cobalt-host-manifest.txt
           rm allowed_signers
+          git show "${TESTED_COMMIT}:install.sh" > install.sh
           while read -r kind first second third fourth; do
             case "$kind" in
               device)
@@ -236,6 +238,7 @@ jobs:
             test "$(wc -c < "$name" | tr -d ' ')" = "$bytes"
             test "$(sha256sum "$name" | cut -d' ' -f1)" = "$checksum"
           done < cobalt-host-manifest.txt
+          test "$(find . -maxdepth 1 -type f | wc -l)" -eq 13
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: 1.85.1
@@ -306,5 +309,5 @@ jobs:
           test "$created_sha" = "$TESTED_COMMIT"
           gh release create "$tag" dist/* \
             --title "Cobalt ${VERSION}" \
-            --notes "Promoted unchanged from tested beta-v${VERSION}." \
+            --notes "Promoted verified artifacts from tested beta-v${VERSION}." \
             --latest
