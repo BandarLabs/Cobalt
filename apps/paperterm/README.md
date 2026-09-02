@@ -16,7 +16,9 @@ kobo stream --controls -- claude
 
 The app sends its measured portrait grid in `/hello`, long-polls `/screen`,
 and holds the last received rows behind an `off the air` banner when the host
-cannot be reached. Read-only sessions show no terminal input. Controls mode
+cannot be reached. The banner paints once on the offline transition; unchanged
+retries do not repaint, and the first successful response clears it once.
+Read-only sessions show no terminal input. Controls mode
 offers only arrows, Enter, Esc, y, n, and Ctrl-C; full mode also exposes the
 platform terminal keyboard. The host accepts at most 64 input bytes per
 request and checks that control-mode input is in this same closed list.
