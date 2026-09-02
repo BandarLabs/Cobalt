@@ -793,6 +793,7 @@ dependencies = [
  "kobo-dict",
  "kobo-net",
  "kobo-protocol",
+ "libc",
 ]
 
 [[package]]

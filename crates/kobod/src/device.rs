@@ -49,8 +49,6 @@ use kobo_ui::{
 };
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::Write;
-use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -61,51 +59,12 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const COBALT_ROOT: &str = "/mnt/onboard/.adds/cobalt";
-/// Where named credentials live.
+/// Where owner-managed global and app-scoped credentials live.
 ///
 /// On the book partition, because that is the one place the owner can reach
 /// over USB without a shell, and because `/tmp` is a RAM disk that every
 /// reboot empties. An application names a secret; only the runtime reads one.
 const SECRETS: &str = "/mnt/onboard/.adds/cobalt/secrets";
-
-fn install_app_secret(
-    directory: &Path,
-    app: &str,
-    name: &str,
-    value: &str,
-) -> Result<(), kobo_protocol::DeviceError> {
-    if !kobo_policy::credentials::may_set(app, name)
-        || !kobo_protocol::valid_app_id(name)
-        || value.is_empty()
-        || value.len() > kobo_protocol::MAX_APP_SECRET_BYTES
-        || value.chars().any(char::is_control)
-    {
-        return Err(kobo_protocol::DeviceError::InvalidInput);
-    }
-    fs::create_dir_all(directory).map_err(|_| kobo_protocol::DeviceError::Backend)?;
-    fs::set_permissions(directory, fs::Permissions::from_mode(0o700))
-        .map_err(|_| kobo_protocol::DeviceError::Backend)?;
-    let temporary = directory.join(format!(".{name}.new"));
-    let destination = directory.join(name);
-    let result: std::io::Result<()> = (|| {
-        let mut file = fs::OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .mode(0o600)
-            .open(&temporary)?;
-        file.set_permissions(fs::Permissions::from_mode(0o600))?;
-        file.write_all(value.as_bytes())?;
-        file.sync_all()?;
-        fs::rename(&temporary, &destination)?;
-        fs::File::open(directory)?.sync_all()?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ignored = fs::remove_file(&temporary);
-    }
-    result.map_err(|_| kobo_protocol::DeviceError::Backend)
-}
 
 /// Where owner-installed TLS trust roots live, beside the credentials and for
 /// the same reasons. A certificate here lets the runtime verify a daemon on
@@ -2350,7 +2309,7 @@ fn host_applications(
                                         }
                                     }
                                     kobo_protocol::DeviceRequest::SetSecret { name, value } => {
-                                        match install_app_secret(
+                                        match kobo_policy::credentials::install_app_secret(
                                             Path::new(SECRETS),
                                             &apps[index].name,
                                             name,
@@ -3016,7 +2975,7 @@ fn start_application(
     let tasks = TaskRunner::simulated(std::env::temp_dir())
         .with_fetch(Arc::new(kobo_net::fetch_from))
         .with_post(Arc::new(kobo_net::post))
-        .with_secrets(SECRETS)
+        .with_app_secrets(SECRETS, &name)
         .with_credential_policy(Arc::new(move |credential, url, usage| {
             kobo_policy::credentials::allowed(&credential_app, credential, url, usage)
         }))
@@ -4453,10 +4412,15 @@ mod hosting_tests {
         let directory =
             std::env::temp_dir().join(format!("kobo-app-secret-{}", std::process::id()));
         let _ignored = std::fs::remove_dir_all(&directory);
-        super::install_app_secret(&directory, "zotero-reader", "zotero", "first")
-            .expect("install credential");
+        kobo_policy::credentials::install_app_secret(
+            &directory,
+            "zotero-reader",
+            "zotero",
+            "first",
+        )
+        .expect("install credential");
         assert_eq!(
-            std::fs::read(directory.join("zotero")).expect("read credential"),
+            std::fs::read(directory.join("apps/zotero-reader/zotero")).expect("read credential"),
             b"first"
         );
         assert_eq!(
@@ -4468,24 +4432,32 @@ mod hosting_tests {
             0o700
         );
         assert_eq!(
-            std::fs::metadata(directory.join("zotero"))
+            std::fs::metadata(directory.join("apps/zotero-reader/zotero"))
                 .expect("secret file")
                 .permissions()
                 .mode()
                 & 0o777,
             0o600
         );
-        super::install_app_secret(&directory, "zotero-reader", "zotero", "second")
-            .expect("replace credential");
+        kobo_policy::credentials::install_app_secret(
+            &directory,
+            "zotero-reader",
+            "zotero",
+            "second",
+        )
+        .expect("replace credential");
         assert_eq!(
-            std::fs::read(directory.join("zotero")).expect("read replacement"),
+            std::fs::read(directory.join("apps/zotero-reader/zotero")).expect("read replacement"),
             b"second"
         );
-        assert!(
-            super::install_app_secret(&directory, "zotero-reader", "openai", "not-authorized")
-                .is_err()
-        );
-        assert!(!directory.join("openai").exists());
+        assert!(kobo_policy::credentials::install_app_secret(
+            &directory,
+            "zotero-reader",
+            "openai",
+            "not-authorized"
+        )
+        .is_err());
+        assert!(!directory.join("apps/zotero-reader/openai").exists());
         let _ignored = std::fs::remove_dir_all(directory);
     }
 

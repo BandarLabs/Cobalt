@@ -12,6 +12,7 @@ use kobo_protocol::{
 };
 use std::collections::HashMap;
 use std::io::Read;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
@@ -55,6 +56,12 @@ pub struct Finished {
 struct Running {
     cancel: Arc<AtomicBool>,
     handle: Option<thread::JoinHandle<()>>,
+}
+
+#[derive(Clone, Debug)]
+struct SecretStore {
+    root: PathBuf,
+    app: Option<String>,
 }
 
 /// The host-provided network implementation a task's fetch runs through.
@@ -121,7 +128,7 @@ fn resolved_credential(
     url: &str,
     usage: CredentialUse,
     credentials: Option<&CredentialAuthorizer>,
-    secrets: Option<&Path>,
+    secrets: Option<&SecretStore>,
 ) -> Result<Option<(String, String)>, TaskError> {
     let Some(wanted) = wanted else {
         return Ok(None);
@@ -133,7 +140,7 @@ fn resolved_credential(
     // by the name the runtime publishes, and the check above already said so.
     // What is missing is the key itself, which is the reader owner's to
     // install.
-    let Some(value) = secret(secrets, &wanted.secret) else {
+    let Some(value) = scoped_secret(secrets, &wanted.secret) else {
         return Err(TaskError::NoCredential);
     };
     Ok(Some((
@@ -194,7 +201,7 @@ pub struct TaskRunner {
     fetch: Option<Arc<Fetcher>>,
     post: Option<Arc<Poster>>,
     /// Where named secrets are read from, if anywhere.
-    secrets: Option<PathBuf>,
+    secrets: Option<SecretStore>,
     /// Which secret and destination pairs this application is trusted to use.
     credentials: Option<Arc<CredentialAuthorizer>>,
     /// Called once, from the task's own thread, the moment a result is ready.
@@ -275,7 +282,28 @@ impl TaskRunner {
     /// a credential.
     #[must_use]
     pub fn with_secrets(mut self, directory: impl Into<PathBuf>) -> Self {
-        self.secrets = Some(directory.into());
+        self.secrets = Some(SecretStore {
+            root: directory.into(),
+            app: None,
+        });
+        self
+    }
+
+    /// Supplies app-scoped secrets plus the owner-managed global fallback.
+    ///
+    /// Lookup first tries `apps/{verified-app}/{name}`, then the legacy/global
+    /// `{name}` file. This preserves CLI-installed owner credentials while an
+    /// app-entered value can affect only the verified caller.
+    #[must_use]
+    pub fn with_app_secrets(
+        mut self,
+        directory: impl Into<PathBuf>,
+        verified_app: impl Into<String>,
+    ) -> Self {
+        self.secrets = Some(SecretStore {
+            root: directory.into(),
+            app: Some(verified_app.into()),
+        });
         self
     }
 
@@ -361,7 +389,7 @@ impl TaskRunner {
                     Backends {
                         fetch: fetch.as_deref(),
                         post: post.as_deref(),
-                        secrets: secrets.as_deref(),
+                        secrets: secrets.as_ref(),
                         credentials: credentials.as_deref(),
                     },
                     &flag,
@@ -457,7 +485,7 @@ impl Drop for TaskRunner {
 struct Backends<'a> {
     fetch: Option<&'a Fetcher>,
     post: Option<&'a Poster>,
-    secrets: Option<&'a Path>,
+    secrets: Option<&'a SecretStore>,
     credentials: Option<&'a CredentialAuthorizer>,
 }
 
@@ -468,17 +496,55 @@ struct Backends<'a> {
 /// choosing its own secret name must not be able to turn that into a read of
 /// an arbitrary file, because the value goes straight into a request to a
 /// server the application also chose.
-fn secret(directory: Option<&Path>, name: &str) -> Option<String> {
-    let directory = directory?;
-    if name.is_empty()
-        || name.len() > 64
-        || !name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
-    {
+fn scoped_secret(store: Option<&SecretStore>, name: &str) -> Option<String> {
+    let store = store?;
+    if !crate::credentials::valid_secret_name(name) {
         return None;
     }
-    let file = std::fs::File::open(directory.join(name)).ok()?;
+    if let Some(app) = store.app.as_deref() {
+        let path = crate::credentials::app_secret_path(&store.root, app, name)?;
+        if let Some(value) = read_secret(&store.root, &path) {
+            return Some(value);
+        }
+    }
+    read_secret(&store.root, &store.root.join(name))
+}
+
+#[cfg(test)]
+fn secret(directory: Option<&Path>, name: &str) -> Option<String> {
+    let directory = directory?;
+    if !crate::credentials::valid_secret_name(name) {
+        return None;
+    }
+    read_secret(directory, &directory.join(name))
+}
+
+fn read_secret(root: &Path, path: &Path) -> Option<String> {
+    let root_metadata = std::fs::symlink_metadata(root).ok()?;
+    if !root_metadata.file_type().is_dir() {
+        return None;
+    }
+    let relative = path.strip_prefix(root).ok()?;
+    let mut checked = root.to_owned();
+    for component in relative.components() {
+        let Component::Normal(component) = component else {
+            return None;
+        };
+        checked.push(component);
+        let metadata = std::fs::symlink_metadata(&checked).ok()?;
+        if checked == path {
+            if !metadata.file_type().is_file() {
+                return None;
+            }
+        } else if !metadata.file_type().is_dir() {
+            return None;
+        }
+    }
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+        .ok()?;
     let mut bytes = Vec::new();
     file.take(MAX_SECRET_BYTES as u64 + 1)
         .read_to_end(&mut bytes)
@@ -1028,6 +1094,56 @@ mod tests {
         // The simulator runs on a development machine and must never be able
         // to reach a real credential, however an application asks.
         assert_eq!(secret(None, "openai"), None);
+    }
+
+    #[test]
+    fn app_scoped_credentials_precede_global_owner_credentials() {
+        let root = temp_root("app-secret-precedence");
+        std::fs::write(root.join("openai"), "owner-global").expect("global secret");
+        crate::credentials::install_app_secret(&root, "chat", "openai", "chat-secret")
+            .expect("chat secret");
+        crate::credentials::install_app_secret(&root, "audiobook", "openai", "audiobook-secret")
+            .expect("audiobook secret");
+        let chat = SecretStore {
+            root: root.clone(),
+            app: Some("chat".to_owned()),
+        };
+        let audiobook = SecretStore {
+            root: root.clone(),
+            app: Some("audiobook".to_owned()),
+        };
+        let other = SecretStore {
+            root,
+            app: Some("zotero-reader".to_owned()),
+        };
+        assert_eq!(
+            scoped_secret(Some(&chat), "openai").as_deref(),
+            Some("chat-secret")
+        );
+        assert_eq!(
+            scoped_secret(Some(&audiobook), "openai").as_deref(),
+            Some("audiobook-secret")
+        );
+        assert_eq!(
+            scoped_secret(Some(&other), "openai").as_deref(),
+            Some("owner-global"),
+            "legacy and CLI-installed globals remain the deliberate fallback"
+        );
+    }
+
+    #[test]
+    fn app_secret_lookup_refuses_symlinked_namespaces_and_values() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_root("app-secret-symlink");
+        std::fs::create_dir_all(root.join("apps/chat")).expect("chat namespace");
+        std::fs::write(root.join("outside"), "must-not-be-read").expect("outside");
+        symlink(root.join("outside"), root.join("apps/chat/openai")).expect("secret link");
+        let store = SecretStore {
+            root,
+            app: Some("chat".to_owned()),
+        };
+        assert_eq!(scoped_secret(Some(&store), "openai"), None);
     }
 
     #[test]

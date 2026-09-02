@@ -27,10 +27,14 @@ app refresh moves a Stable reader to Beta. Switching Beta back to Stable also
 does not force a downgrade: future Stable checks resume, and Stable takes over
 only when its GA release equals or exceeds the installed beta. OTA delivery is
 over Wi-Fi and needs no USB connection. Before activation the archive digest is
-verified, unpacked into a staged sibling, and swapped by rename; the previous
-installation remains available for rollback. The swap carries `secrets`,
-`trust`, `state`, `data`, `apps`, and `store` transactionally, so a preservation
-failure restores the prior installation rather than claiming success. Nickel
+verified, unpacked into a staged sibling, and synced. The updater moves
+`secrets`, `trust`, `state`, `data`, `apps`, and `store` into a temporary
+owner-data holder before changing the active version. A synced direction
+journal is advanced by atomic renames; normal daemon startup completes an
+interrupted forward activation or rollback before launching an app. An
+in-process preservation failure reverses the transaction and restores every
+owner folder to the prior installation rather than claiming success. The
+previous managed installation remains beside the active one, and Nickel
 handoff remains the normal exit path throughout.
 
 ## Install links

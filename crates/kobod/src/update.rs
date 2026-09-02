@@ -9,11 +9,12 @@
 //! The sequence is deliberate. The archive is fetched whole and verified
 //! against its published digest before a single byte lands on disk. It is
 //! then unpacked next to the installation, not over it, and only a complete
-//! unpack is swapped in. The swap itself is two renames on one filesystem,
-//! which is as small as that window gets.
+//! unpack is swapped in. Owner data is held outside all three versioned trees
+//! while a durable direction journal makes every rename restartable.
 
 use kobo_protocol::DeviceError;
 use std::fs;
+use std::io::Write;
 use std::path::{Component, Path};
 
 /// Where an update may write, as recorded inside the archive. The same
@@ -89,6 +90,10 @@ fn install(archive: &[u8], sha256: &str, adds: &Path) -> Result<(), DeviceError>
         let _ignored = fs::remove_dir_all(&staging);
     }
     unpacked?;
+    if has_owner_folders(&staging) {
+        let _ignored = fs::remove_dir_all(&staging);
+        return Err(DeviceError::Backend);
+    }
     swap(adds, &staging)
 }
 
@@ -150,80 +155,207 @@ fn unpack(tar: &[u8], staging: &Path) -> Result<(), DeviceError> {
     if members == 0 {
         return Err(DeviceError::InvalidInput);
     }
+    sync_tree(staging)?;
     Ok(())
 }
 
 /// Retires the current installation and moves the staged one into place.
 ///
-/// Owner folders stay in the retired installation until the new tree is live.
-/// `cobalt.next` is disposable by design, so it must never be their only home.
+/// Owner folders are first moved to a transaction holder beside every
+/// versioned tree. A durable direction marker makes each following rename
+/// restartable, including when power disappears between two owner folders.
 fn swap(adds: &Path, staging: &Path) -> Result<(), DeviceError> {
-    swap_with_rename(adds, staging, |from, to| {
-        fs::rename(from, to).map_err(|_| DeviceError::Backend)
-    })
+    swap_with_fault(adds, staging, &mut |_| Ok(()))
 }
 
-/// The same staged swap with rename injected for failure-path verification.
-fn swap_with_rename(
-    adds: &Path,
-    staging: &Path,
-    rename: impl FnMut(&Path, &Path) -> Result<(), DeviceError>,
-) -> Result<(), DeviceError> {
-    swap_with_operations(adds, staging, rename, |path| {
-        fs::remove_dir_all(path).map_err(|_| DeviceError::Backend)
-    })
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TransactionStep {
+    SetForward,
+    HoldOwner(&'static str),
+    RemovePrevious,
+    RetireCurrent,
+    PromoteStaging,
+    RestoreOwner(&'static str),
+    SetRollback,
+    RollbackOwner(&'static str),
+    RollbackNew,
+    RollbackPrevious,
+    RemoveHolder,
+    ClearJournal,
 }
 
-/// The complete update transaction with filesystem fault injection for tests.
-fn swap_with_operations(
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TransactionFailure {
+    Backend,
+    #[allow(dead_code, reason = "constructed by fault-injection tests")]
+    Interrupted,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Direction {
+    Forward,
+    Rollback,
+}
+
+const OWNER_HOLDER: &str = "cobalt.owner";
+const JOURNAL: &str = ".cobalt-update-transaction";
+const JOURNAL_TEMPORARY: &str = ".cobalt-update-transaction.new";
+
+/// The complete update transaction with a power-loss boundary injected by
+/// tests. An interruption deliberately skips in-process rollback: the next
+/// normal startup must recover the durable state on disk.
+fn swap_with_fault(
     adds: &Path,
     staging: &Path,
-    mut rename: impl FnMut(&Path, &Path) -> Result<(), DeviceError>,
-    mut remove: impl FnMut(&Path) -> Result<(), DeviceError>,
+    step: &mut impl FnMut(TransactionStep) -> Result<(), TransactionFailure>,
 ) -> Result<(), DeviceError> {
+    if staging != adds.join("cobalt.next") {
+        return Err(DeviceError::InvalidInput);
+    }
+    if let Err(error) = write_direction(adds, Direction::Forward, step) {
+        return Err(device_error(error));
+    }
+    match recover_forward(adds, step) {
+        Ok(()) => Ok(()),
+        Err(TransactionFailure::Interrupted) => Err(DeviceError::Backend),
+        Err(TransactionFailure::Backend) => {
+            write_direction(adds, Direction::Rollback, step).map_err(device_error)?;
+            recover_rollback(adds, step).map_err(device_error)?;
+            Err(DeviceError::Backend)
+        }
+    }
+}
+
+fn recover_forward(
+    adds: &Path,
+    step: &mut impl FnMut(TransactionStep) -> Result<(), TransactionFailure>,
+) -> Result<(), TransactionFailure> {
     let current = adds.join("cobalt");
+    let staging = adds.join("cobalt.next");
     let previous = adds.join("cobalt.prev");
-    let mut retired = false;
+    let holder = adds.join(OWNER_HOLDER);
+
+    // No staging name means promotion already happened. Never collect from
+    // current in that topology: those are the owner folders being restored.
+    if !staging.exists() {
+        restore_owner_folders(&holder, &current, TransactionStep::RestoreOwner, step)?;
+        remove_empty_holder(adds, step)?;
+        clear_journal(adds, step)?;
+        return Ok(());
+    }
+
+    private_holder(&holder)?;
     if current.exists() {
-        if previous.exists() {
-            remove(&previous)?;
-        }
-        rename(&current, &previous)?;
-        retired = true;
+        move_owner_folders(&current, &holder, TransactionStep::HoldOwner, step)?;
     }
-    if rename(staging, &current).is_err() {
-        // The old installation was already stepped aside, and leaving the
-        // launcher pointing at nothing is the one outcome worse than any
-        // failure. Put it back; both names are on the same filesystem, so
-        // this rename is as likely to work as the one that just did.
-        if retired {
-            rename(&previous, &current)?;
-        }
-        return Err(DeviceError::Backend);
+    if previous.exists() && current.exists() {
+        step(TransactionStep::RemovePrevious)?;
+        remove_durable(&previous)?;
     }
-    if retired && carry_owner_folders(&previous, &current).is_err() {
-        rename(&current, staging)?;
-        rename(&previous, &current)?;
-        return Err(DeviceError::Backend);
+    if current.exists() {
+        step(TransactionStep::RetireCurrent)?;
+        rename_durable(&current, &previous)?;
     }
+    step(TransactionStep::PromoteStaging)?;
+    rename_durable(&staging, &current)?;
+    restore_owner_folders(&holder, &current, TransactionStep::RestoreOwner, step)?;
+    remove_empty_holder(adds, step)?;
+    clear_journal(adds, step)?;
     Ok(())
+}
+
+fn recover_rollback(
+    adds: &Path,
+    step: &mut impl FnMut(TransactionStep) -> Result<(), TransactionFailure>,
+) -> Result<(), TransactionFailure> {
+    let current = adds.join("cobalt");
+    let staging = adds.join("cobalt.next");
+    let previous = adds.join("cobalt.prev");
+    let holder = adds.join(OWNER_HOLDER);
+
+    if !previous.exists() && !staging.exists() {
+        // A first installation has no older tree to restore. Finishing the
+        // verified installation is the only rollback that leaves a launcher.
+        write_direction(adds, Direction::Forward, step)?;
+        return recover_forward(adds, step);
+    }
+
+    if !staging.exists() && current.exists() {
+        private_holder(&holder)?;
+        move_owner_folders(&current, &holder, TransactionStep::RollbackOwner, step)?;
+        step(TransactionStep::RollbackNew)?;
+        rename_durable(&current, &staging)?;
+    }
+    if !current.exists() {
+        if !previous.exists() {
+            return Err(TransactionFailure::Backend);
+        }
+        step(TransactionStep::RollbackPrevious)?;
+        rename_durable(&previous, &current)?;
+    }
+    restore_owner_folders(&holder, &current, TransactionStep::RollbackOwner, step)?;
+    remove_empty_holder(adds, step)?;
+    clear_journal(adds, step)?;
+    Ok(())
+}
+
+/// Recovers a durable OTA transaction before a runtime is allowed to launch.
+///
+/// This is called both before applying an update and by normal daemon startup.
+pub fn recover_at_startup(adds: &Path) -> Result<(), DeviceError> {
+    recover_interrupted_update(adds)
 }
 
 /// Recovers owner data from interrupted current/next/prev states before a
 /// retry may discard staging or an old rollback tree.
 fn recover_interrupted_update(adds: &Path) -> Result<(), DeviceError> {
+    if !adds.exists() {
+        return Ok(());
+    }
+    if let Some(direction) = read_direction(adds)? {
+        let mut uninterrupted = |_| Ok(());
+        return match direction {
+            Direction::Forward => recover_forward(adds, &mut uninterrupted),
+            Direction::Rollback => recover_rollback(adds, &mut uninterrupted),
+        }
+        .map_err(device_error);
+    }
+
+    // Pre-journal releases may have died after promotion and while moving
+    // owner folders. Recover those layouts once, without deleting either side
+    // of an ambiguous conflict.
     let current = adds.join("cobalt");
     let staging = adds.join("cobalt.next");
     let previous = adds.join("cobalt.prev");
+    let holder = adds.join(OWNER_HOLDER);
     if !current.exists() && previous.exists() {
-        fs::rename(&previous, &current).map_err(|_| DeviceError::Backend)?;
+        rename_durable(&previous, &current).map_err(device_error)?;
     }
-    if current.exists() && previous.exists() {
-        resume_owner_folders(&previous, &current)?;
-    }
-    if current.exists() && staging.exists() {
-        resume_owner_folders(&staging, &current)?;
-    } else if staging.exists() && has_owner_folders(&staging) {
+    if current.exists() {
+        let mut uninterrupted = |_| Ok(());
+        restore_owner_folders(
+            &holder,
+            &current,
+            TransactionStep::RollbackOwner,
+            &mut uninterrupted,
+        )
+        .map_err(device_error)?;
+        restore_owner_folders(
+            &previous,
+            &current,
+            TransactionStep::RestoreOwner,
+            &mut uninterrupted,
+        )
+        .map_err(device_error)?;
+        restore_owner_folders(
+            &staging,
+            &current,
+            TransactionStep::RestoreOwner,
+            &mut uninterrupted,
+        )
+        .map_err(device_error)?;
+        remove_empty_holder(adds, &mut uninterrupted).map_err(device_error)?;
+    } else if has_owner_folders(&staging) || has_owner_folders(&holder) {
         return Err(DeviceError::Backend);
     }
     Ok(())
@@ -235,64 +367,188 @@ fn has_owner_folders(path: &Path) -> bool {
         .any(|folder| path.join(folder).exists())
 }
 
-/// Finishes an owner-folder transfer interrupted between atomic renames.
-///
-/// A folder already present at both locations is ambiguous and therefore
-/// fails closed. The updater never deletes either copy in that state.
-fn resume_owner_folders(from: &Path, to: &Path) -> Result<(), DeviceError> {
-    for folder in OWNER_FOLDERS {
-        if from.join(folder).exists() && to.join(folder).exists() {
-            return Err(DeviceError::Backend);
-        }
-    }
-    for folder in OWNER_FOLDERS {
-        let source = from.join(folder);
-        if !source.exists() {
-            continue;
-        }
-        let destination = to.join(folder);
-        fs::rename(source, destination).map_err(|_| DeviceError::Backend)?;
-    }
-    Ok(())
-}
-
 /// What the owner put on the reader, as opposed to what a release ships:
 /// installed trust roots, secrets, application state and application data. A
 /// release archive never carries these folders, so an update carries them
 /// forward or the reader forgets everything it was trusted with.
 const OWNER_FOLDERS: [&str; 6] = ["secrets", "trust", "state", "data", "apps", "store"];
 
-/// Moves all owner folders as one transaction.
-///
-/// Destination folders are rejected rather than overwritten: a published
-/// release has no authority to supply secrets or state. On failure, every
-/// already-moved folder is moved back before returning an error.
-fn carry_owner_folders(from: &Path, to: &Path) -> Result<(), DeviceError> {
-    carry_owner_folders_with(from, to, |from, to| fs::rename(from, to).map_err(|_| ()))
-        .map_err(|()| DeviceError::Backend)
-}
-
-fn carry_owner_folders_with(
+fn move_owner_folders(
     from: &Path,
     to: &Path,
-    mut rename: impl FnMut(&Path, &Path) -> Result<(), ()>,
-) -> Result<(), ()> {
-    let mut moved = Vec::new();
+    operation: fn(&'static str) -> TransactionStep,
+    step: &mut impl FnMut(TransactionStep) -> Result<(), TransactionFailure>,
+) -> Result<(), TransactionFailure> {
     for folder in OWNER_FOLDERS {
         let source = from.join(folder);
-        let destination = to.join(folder);
         if !source.exists() {
             continue;
         }
-        if destination.exists() || rename(&source, &destination).is_err() {
-            for moved_folder in moved.into_iter().rev() {
-                let _ignored = rename(&to.join(moved_folder), &from.join(moved_folder));
-            }
-            return Err(());
+        let destination = to.join(folder);
+        if destination.exists() {
+            return Err(TransactionFailure::Backend);
         }
-        moved.push(folder);
+        step(operation(folder))?;
+        rename_durable(&source, &destination)?;
     }
     Ok(())
+}
+
+fn restore_owner_folders(
+    from: &Path,
+    to: &Path,
+    operation: fn(&'static str) -> TransactionStep,
+    step: &mut impl FnMut(TransactionStep) -> Result<(), TransactionFailure>,
+) -> Result<(), TransactionFailure> {
+    if !from.exists() {
+        return Ok(());
+    }
+    if !to.exists() {
+        return Err(TransactionFailure::Backend);
+    }
+    for folder in OWNER_FOLDERS {
+        let source = from.join(folder);
+        if !source.exists() {
+            continue;
+        }
+        let destination = to.join(folder);
+        if destination.exists() {
+            return Err(TransactionFailure::Backend);
+        }
+        step(operation(folder))?;
+        rename_durable(&source, &destination)?;
+    }
+    Ok(())
+}
+
+fn private_holder(holder: &Path) -> Result<(), TransactionFailure> {
+    match fs::symlink_metadata(holder) {
+        Ok(metadata) if metadata.file_type().is_dir() => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            fs::create_dir(holder).map_err(|_| TransactionFailure::Backend)?;
+            sync_directory(holder.parent().ok_or(TransactionFailure::Backend)?)
+                .map_err(|_| TransactionFailure::Backend)
+        }
+        Ok(_) | Err(_) => Err(TransactionFailure::Backend),
+    }
+}
+
+fn remove_empty_holder(
+    adds: &Path,
+    step: &mut impl FnMut(TransactionStep) -> Result<(), TransactionFailure>,
+) -> Result<(), TransactionFailure> {
+    let holder = adds.join(OWNER_HOLDER);
+    if !holder.exists() {
+        return Ok(());
+    }
+    if fs::read_dir(&holder)
+        .map_err(|_| TransactionFailure::Backend)?
+        .next()
+        .is_some()
+    {
+        return Err(TransactionFailure::Backend);
+    }
+    step(TransactionStep::RemoveHolder)?;
+    fs::remove_dir(&holder).map_err(|_| TransactionFailure::Backend)?;
+    sync_directory(adds).map_err(|_| TransactionFailure::Backend)
+}
+
+fn rename_durable(from: &Path, to: &Path) -> Result<(), TransactionFailure> {
+    fs::rename(from, to).map_err(|_| TransactionFailure::Backend)?;
+    let from_parent = from.parent().ok_or(TransactionFailure::Backend)?;
+    let to_parent = to.parent().ok_or(TransactionFailure::Backend)?;
+    sync_directory(from_parent).map_err(|_| TransactionFailure::Backend)?;
+    if to_parent != from_parent {
+        sync_directory(to_parent).map_err(|_| TransactionFailure::Backend)?;
+    }
+    Ok(())
+}
+
+fn remove_durable(path: &Path) -> Result<(), TransactionFailure> {
+    fs::remove_dir_all(path).map_err(|_| TransactionFailure::Backend)?;
+    sync_directory(path.parent().ok_or(TransactionFailure::Backend)?)
+        .map_err(|_| TransactionFailure::Backend)
+}
+
+fn write_direction(
+    adds: &Path,
+    direction: Direction,
+    step: &mut impl FnMut(TransactionStep) -> Result<(), TransactionFailure>,
+) -> Result<(), TransactionFailure> {
+    step(match direction {
+        Direction::Forward => TransactionStep::SetForward,
+        Direction::Rollback => TransactionStep::SetRollback,
+    })?;
+    let temporary = adds.join(JOURNAL_TEMPORARY);
+    let journal = adds.join(JOURNAL);
+    if temporary.exists() {
+        fs::remove_file(&temporary).map_err(|_| TransactionFailure::Backend)?;
+    }
+    let mut file = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&temporary)
+        .map_err(|_| TransactionFailure::Backend)?;
+    file.write_all(match direction {
+        Direction::Forward => b"forward\n",
+        Direction::Rollback => b"rollback\n",
+    })
+    .map_err(|_| TransactionFailure::Backend)?;
+    file.sync_all().map_err(|_| TransactionFailure::Backend)?;
+    fs::rename(&temporary, &journal).map_err(|_| TransactionFailure::Backend)?;
+    sync_directory(adds).map_err(|_| TransactionFailure::Backend)
+}
+
+fn read_direction(adds: &Path) -> Result<Option<Direction>, DeviceError> {
+    let journal = adds.join(JOURNAL);
+    let contents = match fs::read(&journal) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(DeviceError::Backend),
+    };
+    match contents.as_slice() {
+        b"forward\n" => Ok(Some(Direction::Forward)),
+        b"rollback\n" => Ok(Some(Direction::Rollback)),
+        _ => Err(DeviceError::Backend),
+    }
+}
+
+fn clear_journal(
+    adds: &Path,
+    step: &mut impl FnMut(TransactionStep) -> Result<(), TransactionFailure>,
+) -> Result<(), TransactionFailure> {
+    step(TransactionStep::ClearJournal)?;
+    match fs::remove_file(adds.join(JOURNAL)) {
+        Ok(()) => sync_directory(adds).map_err(|_| TransactionFailure::Backend),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err(TransactionFailure::Backend),
+    }
+}
+
+fn sync_directory(path: &Path) -> Result<(), DeviceError> {
+    fs::File::open(path)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|_| DeviceError::Backend)
+}
+
+fn sync_tree(path: &Path) -> Result<(), DeviceError> {
+    let metadata = fs::symlink_metadata(path).map_err(|_| DeviceError::Backend)?;
+    if metadata.file_type().is_symlink() {
+        return Err(DeviceError::Backend);
+    }
+    if metadata.is_file() {
+        return fs::File::open(path)
+            .and_then(|file| file.sync_all())
+            .map_err(|_| DeviceError::Backend);
+    }
+    for entry in fs::read_dir(path).map_err(|_| DeviceError::Backend)? {
+        sync_tree(&entry.map_err(|_| DeviceError::Backend)?.path())?;
+    }
+    sync_directory(path)
+}
+
+fn device_error(_: TransactionFailure) -> DeviceError {
+    DeviceError::Backend
 }
 
 /// Returns the path relative to the installation folder, or `None` for a
@@ -383,8 +639,8 @@ fn read_octal(field: &[u8]) -> Result<u64, DeviceError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        carry_owner_folders_with, install, recover_interrupted_update, swap_with_operations,
-        swap_with_rename, OWNER_FOLDERS, PREFIX,
+        install, recover_interrupted_update, swap_with_fault, TransactionFailure, TransactionStep,
+        JOURNAL, OWNER_FOLDERS, PREFIX,
     };
     use kobo_protocol::DeviceError;
     use std::fs;
@@ -529,64 +785,142 @@ mod tests {
         let _ignored = fs::remove_dir_all(&adds);
     }
 
-    #[test]
-    fn every_owner_folder_moves_into_the_verified_staging_installation() {
-        let root = scratch("all-owner-folders");
-        let current = root.join("cobalt");
-        let staging = root.join("cobalt.next");
+    fn transaction_fixture(name: &str) -> std::path::PathBuf {
+        let adds = scratch(name);
+        let current = adds.join("cobalt");
+        let staging = adds.join("cobalt.next");
         fs::create_dir_all(&current).expect("current");
+        fs::write(current.join("start.sh"), b"old").expect("old release");
         fs::create_dir_all(&staging).expect("staging");
+        fs::write(staging.join("start.sh"), b"new").expect("new release");
+        fs::create_dir_all(adds.join("cobalt.prev")).expect("stale previous");
+        fs::write(adds.join("cobalt.prev/start.sh"), b"older").expect("older release");
         for folder in OWNER_FOLDERS {
             fs::create_dir_all(current.join(folder)).expect("owner folder");
             fs::write(current.join(folder).join("kept"), folder).expect("owner data");
         }
-        carry_owner_folders_with(&current, &staging, |from, to| {
-            fs::rename(from, to).map_err(|_| ())
-        })
-        .expect("all owner data transferred");
-        for folder in OWNER_FOLDERS {
-            assert!(!current.join(folder).exists(), "{folder} remained behind");
-            assert_eq!(
-                fs::read_to_string(staging.join(folder).join("kept")).expect("staged owner data"),
-                folder
-            );
-        }
-        let _ignored = fs::remove_dir_all(&root);
+        adds
     }
 
-    #[test]
-    fn an_injected_owner_move_failure_rolls_every_prior_move_back() {
-        let root = scratch("owner-rollback");
-        let current = root.join("cobalt");
-        let staging = root.join("cobalt.next");
-        fs::create_dir_all(&current).expect("current");
-        fs::create_dir_all(&staging).expect("staging");
-        for folder in OWNER_FOLDERS {
-            fs::create_dir_all(current.join(folder)).expect("owner folder");
-            fs::write(current.join(folder).join("kept"), folder).expect("owner data");
-        }
+    fn assert_owner_data(adds: &std::path::Path, release: &[u8]) {
         assert_eq!(
-            carry_owner_folders_with(&current, &staging, |from, to| {
-                if to.starts_with(&staging) && from.file_name().is_some_and(|name| name == "data") {
-                    Err(())
-                } else {
-                    fs::rename(from, to).map_err(|_| ())
-                }
-            }),
-            Err(())
+            fs::read(adds.join("cobalt/start.sh")).expect("active release"),
+            release
         );
         for folder in OWNER_FOLDERS {
             assert_eq!(
-                fs::read_to_string(current.join(folder).join("kept")).expect("restored owner data"),
+                fs::read_to_string(adds.join("cobalt").join(folder).join("kept"))
+                    .expect("active owner data"),
                 folder,
-                "{folder} was stranded outside the current installation"
+                "{folder} was lost or attached to the wrong release"
             );
-            assert!(
-                !staging.join(folder).exists(),
-                "{folder} leaked into staging"
-            );
+            for inactive in ["cobalt.next", "cobalt.prev", "cobalt.owner"] {
+                assert!(
+                    !adds.join(inactive).join(folder).exists(),
+                    "{folder} remained split into {inactive}"
+                );
+            }
         }
-        let _ignored = fs::remove_dir_all(&root);
+        assert!(!adds.join(JOURNAL).exists(), "journal was not cleared");
+    }
+
+    #[test]
+    fn startup_recovers_every_forward_rename_and_phase_boundary() {
+        let trace_root = transaction_fixture("forward-trace");
+        let mut boundaries = Vec::new();
+        swap_with_fault(&trace_root, &trace_root.join("cobalt.next"), &mut |step| {
+            boundaries.push(step);
+            Ok(())
+        })
+        .expect("trace transaction");
+        assert_owner_data(&trace_root, b"new");
+        let _ignored = fs::remove_dir_all(trace_root);
+
+        for (failure, boundary) in boundaries.iter().copied().enumerate() {
+            let adds = transaction_fixture(&format!("forward-boundary-{failure}"));
+            let mut seen = 0usize;
+            assert_eq!(
+                swap_with_fault(&adds, &adds.join("cobalt.next"), &mut |step| {
+                    assert_eq!(
+                        step, boundaries[seen],
+                        "transaction changed before {boundary:?}"
+                    );
+                    let interrupt = seen == failure;
+                    seen += 1;
+                    if interrupt {
+                        Err(TransactionFailure::Interrupted)
+                    } else {
+                        Ok(())
+                    }
+                }),
+                Err(DeviceError::Backend),
+                "boundary {boundary:?} did not interrupt"
+            );
+            recover_interrupted_update(&adds).expect("normal startup recovery");
+            if boundary == TransactionStep::SetForward {
+                assert_owner_data(&adds, b"old");
+            } else {
+                assert_owner_data(&adds, b"new");
+            }
+            let _ignored = fs::remove_dir_all(adds);
+        }
+    }
+
+    #[test]
+    fn startup_recovers_every_atomic_rollback_boundary() {
+        let trace_root = transaction_fixture("rollback-trace");
+        let mut rollback = false;
+        let mut rollback_boundaries = Vec::new();
+        assert_eq!(
+            swap_with_fault(&trace_root, &trace_root.join("cobalt.next"), &mut |step| {
+                if step == TransactionStep::RestoreOwner("secrets") && !rollback {
+                    return Err(TransactionFailure::Backend);
+                }
+                if step == TransactionStep::SetRollback {
+                    rollback = true;
+                }
+                if rollback {
+                    rollback_boundaries.push(step);
+                }
+                Ok(())
+            }),
+            Err(DeviceError::Backend)
+        );
+        assert_owner_data(&trace_root, b"old");
+        let _ignored = fs::remove_dir_all(trace_root);
+
+        for (failure, boundary) in rollback_boundaries.iter().copied().enumerate() {
+            let adds = transaction_fixture(&format!("rollback-boundary-{failure}"));
+            let mut rollback = false;
+            let mut seen = 0usize;
+            assert_eq!(
+                swap_with_fault(&adds, &adds.join("cobalt.next"), &mut |step| {
+                    if step == TransactionStep::RestoreOwner("secrets") && !rollback {
+                        return Err(TransactionFailure::Backend);
+                    }
+                    if step == TransactionStep::SetRollback {
+                        rollback = true;
+                    }
+                    if rollback {
+                        let interrupt = seen == failure;
+                        seen += 1;
+                        if interrupt {
+                            return Err(TransactionFailure::Interrupted);
+                        }
+                    }
+                    Ok(())
+                }),
+                Err(DeviceError::Backend),
+                "rollback boundary {boundary:?} did not interrupt"
+            );
+            recover_interrupted_update(&adds).expect("normal startup rollback recovery");
+            if boundary == TransactionStep::SetRollback {
+                assert_owner_data(&adds, b"new");
+            } else {
+                assert_owner_data(&adds, b"old");
+            }
+            let _ignored = fs::remove_dir_all(adds);
+        }
     }
 
     #[test]
@@ -698,94 +1032,6 @@ mod tests {
         assert_eq!(
             fs::read(adds.join("cobalt/start.sh")).expect("current release"),
             b"old"
-        );
-        assert!(!adds.join("cobalt.prev").exists());
-        let _ignored = fs::remove_dir_all(&adds);
-    }
-
-    #[test]
-    fn a_failed_live_rename_restores_the_previous_installation_and_owner_data() {
-        let adds = scratch("promotion-rollback");
-        let current = adds.join("cobalt");
-        let staging = adds.join("cobalt.next");
-        fs::create_dir_all(current.join("state")).expect("current state");
-        fs::write(current.join("state/session"), b"kept").expect("state");
-        fs::write(current.join("start.sh"), b"old").expect("current release");
-        fs::create_dir_all(&staging).expect("staging");
-        fs::write(staging.join("start.sh"), b"new").expect("staged release");
-        assert_eq!(
-            swap_with_rename(&adds, &staging, |from, to| {
-                if from == staging && to == current {
-                    Err(DeviceError::Backend)
-                } else {
-                    fs::rename(from, to).map_err(|_| DeviceError::Backend)
-                }
-            }),
-            Err(DeviceError::Backend)
-        );
-        assert_eq!(
-            fs::read(current.join("start.sh")).expect("previous release restored"),
-            b"old"
-        );
-        assert_eq!(
-            fs::read(current.join("state/session")).expect("owner state restored"),
-            b"kept"
-        );
-        assert!(!adds.join("cobalt.prev").exists());
-        let _ignored = fs::remove_dir_all(&adds);
-    }
-
-    #[test]
-    fn an_injected_previous_delete_failure_restores_owner_data_before_returning() {
-        let adds = scratch("previous-delete-rollback");
-        let current = adds.join("cobalt");
-        let staging = adds.join("cobalt.next");
-        let previous = adds.join("cobalt.prev");
-        fs::create_dir_all(current.join("store")).expect("current store");
-        fs::write(current.join("store/catalog"), b"kept").expect("store");
-        fs::write(current.join("start.sh"), b"old").expect("current release");
-        fs::create_dir_all(&staging).expect("staging");
-        fs::create_dir_all(&previous).expect("previous");
-        fs::write(previous.join("start.sh"), b"older").expect("previous release");
-        assert_eq!(
-            swap_with_operations(
-                &adds,
-                &staging,
-                |from, to| fs::rename(from, to).map_err(|_| DeviceError::Backend),
-                |_| Err(DeviceError::Backend),
-            ),
-            Err(DeviceError::Backend)
-        );
-        assert_eq!(
-            fs::read(current.join("store/catalog")).expect("restored owner store"),
-            b"kept"
-        );
-        assert!(previous.exists(), "the old backup was deleted on failure");
-        let _ignored = fs::remove_dir_all(&adds);
-    }
-
-    #[test]
-    fn an_injected_retirement_failure_restores_staged_owner_data_to_current() {
-        let adds = scratch("retirement-rollback");
-        let current = adds.join("cobalt");
-        let staging = adds.join("cobalt.next");
-        fs::create_dir_all(current.join("data")).expect("current data");
-        fs::write(current.join("data/cache"), b"kept").expect("data");
-        fs::write(current.join("start.sh"), b"old").expect("current release");
-        fs::create_dir_all(&staging).expect("staging");
-        assert_eq!(
-            swap_with_rename(&adds, &staging, |from, to| {
-                if from == current && to.ends_with("cobalt.prev") {
-                    Err(DeviceError::Backend)
-                } else {
-                    fs::rename(from, to).map_err(|_| DeviceError::Backend)
-                }
-            }),
-            Err(DeviceError::Backend)
-        );
-        assert_eq!(
-            fs::read(current.join("data/cache")).expect("restored owner data"),
-            b"kept"
         );
         assert!(!adds.join("cobalt.prev").exists());
         let _ignored = fs::remove_dir_all(&adds);

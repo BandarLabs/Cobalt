@@ -6,7 +6,7 @@ use std::env;
 use std::error::Error;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -82,6 +82,14 @@ fn run(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     if arguments.is_empty() {
         print_safety_state();
         return Ok(());
+    }
+    #[cfg(feature = "device-write")]
+    if matches!(
+        arguments.first().map(String::as_str),
+        Some("--present" | "--restart-from")
+    ) {
+        update::recover_at_startup(Path::new("/mnt/onboard/.adds"))
+            .map_err(|error| format!("recover interrupted update before launch: {error}"))?;
     }
     if arguments.len() == 4 && arguments[0] == "--sim-socket" && arguments[2] == "--frame" {
         return serve_simulation(Path::new(&arguments[1]), Path::new(&arguments[3]));
@@ -502,30 +510,6 @@ fn host_secret_directory() -> PathBuf {
     std::env::temp_dir().join("cobalt-host-secrets")
 }
 
-fn install_host_secret(directory: &Path, name: &str, value: &str) -> std::io::Result<()> {
-    fs::create_dir_all(directory)?;
-    fs::set_permissions(directory, fs::Permissions::from_mode(0o700))?;
-    let temporary = directory.join(format!(".{name}.new"));
-    let destination = directory.join(name);
-    let result = (|| {
-        let mut file = OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .mode(0o600)
-            .open(&temporary)?;
-        file.set_permissions(fs::Permissions::from_mode(0o600))?;
-        file.write_all(value.as_bytes())?;
-        file.sync_all()?;
-        fs::rename(&temporary, destination)?;
-        fs::File::open(directory)?.sync_all()
-    })();
-    if result.is_err() {
-        let _ignored = fs::remove_file(temporary);
-    }
-    result
-}
-
 #[allow(
     clippy::too_many_lines,
     reason = "one arm per message type; splitting the dispatch hides it"
@@ -559,7 +543,7 @@ fn serve_application(
         TaskRunner::simulated(std::env::temp_dir())
             .with_fetch(std::sync::Arc::new(kobo_net::fetch_from))
             .with_post(std::sync::Arc::new(kobo_net::post))
-            .with_secrets(&secrets)
+            .with_app_secrets(&secrets, name)
             .with_credential_policy(std::sync::Arc::new(move |credential, url, usage| {
                 kobo_policy::credentials::allowed(&credential_app, credential, url, usage)
             }))
@@ -651,14 +635,15 @@ fn serve_application(
                 } = &request
                 {
                     if kobo_policy::credentials::may_set(name, secret_name) {
-                        install_host_secret(&secrets, secret_name, value.as_str()).map_or_else(
-                            |_| {
-                                kobo_protocol::DeviceResult::Failed(
-                                    kobo_protocol::DeviceError::Backend,
-                                )
-                            },
-                            |()| kobo_protocol::DeviceResult::Done,
+                        kobo_policy::credentials::install_app_secret(
+                            &secrets,
+                            name,
+                            secret_name,
+                            value.as_str(),
                         )
+                        .map_or_else(kobo_protocol::DeviceResult::Failed, |()| {
+                            kobo_protocol::DeviceResult::Done
+                        })
                     } else {
                         kobo_protocol::DeviceResult::Denied(kobo_protocol::DenyReason::NotDeclared)
                     }
@@ -941,13 +926,25 @@ mod tests {
         let directory =
             std::env::temp_dir().join(format!("cobalt-host-secret-test-{}", std::process::id()));
         let _ignored = std::fs::remove_dir_all(&directory);
-        super::install_host_secret(&directory, "zotero", "first").expect("install secret");
-        super::install_host_secret(&directory, "zotero", "second").expect("replace secret");
+        kobo_policy::credentials::install_app_secret(
+            &directory,
+            "zotero-reader",
+            "zotero",
+            "first",
+        )
+        .expect("install secret");
+        kobo_policy::credentials::install_app_secret(
+            &directory,
+            "zotero-reader",
+            "zotero",
+            "second",
+        )
+        .expect("replace secret");
         assert_eq!(
-            std::fs::read(directory.join("zotero")).expect("read secret"),
+            std::fs::read(directory.join("apps/zotero-reader/zotero")).expect("read secret"),
             b"second"
         );
-        assert!(!directory.join(".zotero.new").exists());
+        assert!(!directory.join("apps/zotero-reader/.zotero.new").exists());
         let _ignored = std::fs::remove_dir_all(directory);
     }
 

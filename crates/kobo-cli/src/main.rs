@@ -5475,7 +5475,11 @@ fn secret_command(arguments: &[String]) -> Result<(), String> {
         (SecretAction::List, SecretTarget::Device(host)) => {
             // Names only. A command that can print a key is a command someone
             // will run over a shoulder or paste into a bug report.
-            let script = format!("ls -1 {DEVICE_SECRETS_DIRECTORY} 2>/dev/null || true\n");
+            let script = format!(
+                "for secret in {DEVICE_SECRETS_DIRECTORY}/*; do\n\
+                 \x20 [ -f \"$secret\" ] && [ ! -L \"$secret\" ] && basename \"$secret\"\n\
+                 done\n"
+            );
             let output = run_remote_shell(&format!("root@{host}"), &script, DEVICE_PROBE_TIMEOUT)?;
             if !output.status.success() {
                 return Err(remote_shell_error(
@@ -5492,7 +5496,12 @@ fn secret_command(arguments: &[String]) -> Result<(), String> {
             let mut names = Vec::new();
             if let Ok(entries) = std::fs::read_dir(&directory) {
                 for entry in entries.flatten() {
-                    names.push(entry.file_name().to_string_lossy().into_owned());
+                    if entry
+                        .file_type()
+                        .is_ok_and(|kind| kind.is_file() && !kind.is_symlink())
+                    {
+                        names.push(entry.file_name().to_string_lossy().into_owned());
+                    }
                 }
             }
             names.sort();

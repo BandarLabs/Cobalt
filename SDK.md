@@ -899,10 +899,11 @@ Task::Post { secret: Some("openai".into()), .. }
 Task::Post { credential: Some(Credential::in_header("anthropic", "x-api-key")), .. }
 ```
 
-The application names a secret; the runtime reads
-`/mnt/onboard/.adds/cobalt/secrets/<name>` and attaches it, either as a bearer
-token or under the header the application named, which is what lets a request
-go straight to Anthropic or Gemini rather than through a proxy.
+The application names a secret; the runtime reads its private app namespace,
+with an owner-installed global credential as fallback, and attaches the value
+either as a bearer token or under the header the application named. That is
+what lets a request go straight to Anthropic or Gemini rather than through a
+proxy.
 A value already stored by the runtime is never in the application's memory,
 logs, or crash dump, and it cannot be sent anywhere the application did not
 name: the request is not replayed across a redirect.
@@ -930,6 +931,15 @@ an argument, so it does not reach a process table or a shell history, and it is
 never printed. A one-line `NAME=value` file is accepted as well as a raw key;
 only the value is installed. `--volume` does the same thing over USB for a
 reader that is not yet on Wi-Fi.
+
+Credentials entered inside an application are stored under that runtime-
+verified app ID (`secrets/apps/<app-id>/<name>`). Task lookup checks that
+private namespace first. A file installed by `kobo secret set` remains a
+global owner credential at `secrets/<name>` and is used only when the calling
+app has no private value. Thus Chat and Audiobook may hold different `openai`
+credentials, while existing CLI-installed credentials continue to work.
+Applications cannot name or write another app's namespace, and secret paths
+and symbolic links are refused rather than followed.
 
 Protocol-12 apps may also offer attended setup on the reader:
 

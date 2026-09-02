@@ -5,7 +5,7 @@
 use std::fs;
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -1929,30 +1929,6 @@ fn simulated_platform_request_allowed(
     !matches!(request, kobo_protocol::DeviceRequest::Update { .. }) || caller == "settings"
 }
 
-fn write_simulated_secret(directory: &Path, name: &str, value: &str) -> io::Result<()> {
-    fs::create_dir_all(directory)?;
-    fs::set_permissions(directory, fs::Permissions::from_mode(0o700))?;
-    let temporary = directory.join(format!(".{name}.new"));
-    let destination = directory.join(name);
-    let result = (|| {
-        let mut file = fs::OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .mode(0o600)
-            .open(&temporary)?;
-        file.set_permissions(fs::Permissions::from_mode(0o600))?;
-        file.write_all(value.as_bytes())?;
-        file.sync_all()?;
-        fs::rename(&temporary, destination)?;
-        fs::File::open(directory)?.sync_all()
-    })();
-    if result.is_err() {
-        let _ignored = fs::remove_file(temporary);
-    }
-    result
-}
-
 fn simulated_app_request(
     state: &Arc<Mutex<AppState>>,
     caller: &str,
@@ -1968,10 +1944,9 @@ fn simulated_app_request(
             return Ok(Some(DeviceResult::Denied(DenyReason::NotDeclared)));
         }
         let directory = std::env::temp_dir().join(SIM_SECRETS);
-        let result = write_simulated_secret(&directory, name, value.as_str()).map_or_else(
-            |_| DeviceResult::Failed(DeviceError::Backend),
-            |()| DeviceResult::Done,
-        );
+        let result =
+            kobo_policy::credentials::install_app_secret(&directory, caller, name, value.as_str())
+                .map_or_else(DeviceResult::Failed, |()| DeviceResult::Done);
         return Ok(Some(result));
     }
 
@@ -2166,7 +2141,7 @@ fn simulated_tasks(name: &str) -> TaskRunner {
         let _ = kobo_net::trust_owner_roots_from_dir(&directory);
     });
     let runner = TaskRunner::simulated(std::env::temp_dir())
-        .with_secrets(std::env::temp_dir().join(SIM_SECRETS));
+        .with_app_secrets(std::env::temp_dir().join(SIM_SECRETS), name);
     if std::env::var_os(OFFLINE).is_some() {
         return runner;
     }
@@ -2513,8 +2488,8 @@ mod tests {
         use kobo_protocol::{DeviceRequest, DeviceResult, SecretValue};
 
         let directory = std::env::temp_dir().join(SIM_SECRETS);
-        let path = directory.join("zotero");
-        let _ignored = fs::remove_file(&path);
+        let path = directory.join("apps/zotero-reader/zotero");
+        let _ignored = fs::remove_dir_all(directory.join("apps/zotero-reader"));
         let state = Arc::new(Mutex::new(AppState::with_apps(Arc::new(Mutex::new(
             SimulatedApps::default(),
         )))));
@@ -2534,7 +2509,7 @@ mod tests {
             app_result(&state, "todo", Scenario::Normal, &request),
             DeviceResult::Denied(_)
         ));
-        let _ignored = fs::remove_file(path);
+        let _ignored = fs::remove_dir_all(directory.join("apps/zotero-reader"));
     }
 
     #[test]

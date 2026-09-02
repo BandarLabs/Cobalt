@@ -13,6 +13,7 @@ kobo-abi = { version = "0.3.2", path = "../kobo-abi" }
 kobo-dict = { version = "0.3.2", path = "../kobo-dict" }
 kobo-net = { version = "0.3.2", path = "../kobo-net" }
 kobo-protocol = { version = "0.3.2", path = "../kobo-protocol" }
+libc = "0.2.189"
 
 [lints]
 workspace = true
