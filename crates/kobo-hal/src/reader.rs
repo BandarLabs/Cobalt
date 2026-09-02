@@ -55,6 +55,10 @@ pub const SUPERVISOR_EXECUTABLE: &str = "/usr/local/Kobo/sickel";
 /// How often to check whether a stopped reader has actually exited.
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 
+/// A daemon launched with `-B` briefly leaves its pre-fork process visible.
+/// Requiring an unchanged process set avoids capturing that transient parent.
+const START_CAPTURE_SETTLE: Duration = Duration::from_millis(500);
+
 #[derive(Debug)]
 pub enum ReaderError {
     /// No process is running the reader executable.
@@ -206,30 +210,7 @@ impl Reader {
         executable: &str,
         identity: Identity,
     ) -> Result<Self, ReaderError> {
-        let mut matches = Vec::new();
-        for entry in fs::read_dir(proc_root)? {
-            let entry = entry?;
-            let Some(pid) = entry
-                .file_name()
-                .to_str()
-                .and_then(|name| name.parse::<i32>().ok())
-            else {
-                continue;
-            };
-            if pid <= 1 {
-                continue;
-            }
-            let identified = match identity {
-                Identity::ZerothArgument => read_argv(proc_root, pid)
-                    .is_some_and(|argv| argv.first().is_some_and(|first| first == executable)),
-                Identity::Executable => fs::read_link(proc_root.join(pid.to_string()).join("exe"))
-                    .is_ok_and(|target| target == Path::new(executable)),
-            };
-            if identified {
-                matches.push(pid);
-            }
-        }
-        matches.sort_unstable();
+        let matches = matching_pids_in(proc_root, executable, identity)?;
         let pid = match matches.as_slice() {
             [] => return Err(ReaderError::NotRunning),
             [only] => *only,
@@ -370,32 +351,33 @@ impl Reader {
     /// Returns an error when the process cannot be spawned or never appears
     /// with the same identity mode that originally found it.
     pub fn start_captured(&self, appear_within: Duration) -> Result<Self, ReaderError> {
-        let mut command = Command::new("/bin/sh");
-        command
-            .arg("-c")
-            .arg(r#"nohup "$0" "$@" >/dev/null 2>&1 & printf '%s\n' "$!""#)
-            .arg(&self.executable)
-            .args(&self.arguments)
-            .current_dir(&self.working_directory)
-            .env_clear()
-            .envs(&self.environment)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
-        let output = command.output()?;
-        if !output.status.success() {
+        let proc_root = Path::new("/proc");
+        let before = matching_pids_in(proc_root, &self.executable, self.identity)?;
+        let status = self.start_command().status()?;
+        if !status.success() {
             return Err(ReaderError::DidNotStart);
         }
-        let pid = String::from_utf8_lossy(&output.stdout)
-            .trim()
-            .parse::<i32>()
-            .map_err(|_| ReaderError::DidNotStart)?;
         let deadline = Instant::now() + appear_within;
+        let mut last_started = Vec::new();
+        let mut unchanged_since = Instant::now();
         loop {
-            if let Ok(reader) =
-                Self::capture_pid_in(Path::new("/proc"), &self.executable, pid, self.identity)
-            {
-                return Ok(reader);
+            let running = matching_pids_in(proc_root, &self.executable, self.identity)?;
+            let started = newly_started_pids(&before, &running);
+            if started != last_started {
+                last_started = started;
+                unchanged_since = Instant::now();
+            } else if !started.is_empty() && unchanged_since.elapsed() >= START_CAPTURE_SETTLE {
+                match started.as_slice() {
+                    [pid] => {
+                        return Self::capture_pid_in(
+                            proc_root,
+                            &self.executable,
+                            *pid,
+                            self.identity,
+                        );
+                    }
+                    several => return Err(ReaderError::Ambiguous(several.to_vec())),
+                }
             }
             if Instant::now() >= deadline {
                 return Err(ReaderError::DidNotStart);
@@ -482,6 +464,46 @@ impl Reader {
             identity: Identity::ZerothArgument,
         })
     }
+}
+
+fn matching_pids_in(
+    proc_root: &Path,
+    executable: &str,
+    identity: Identity,
+) -> Result<Vec<i32>, ReaderError> {
+    let mut matches = Vec::new();
+    for entry in fs::read_dir(proc_root)? {
+        let entry = entry?;
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<i32>().ok())
+        else {
+            continue;
+        };
+        if pid <= 1 {
+            continue;
+        }
+        let identified = match identity {
+            Identity::ZerothArgument => read_argv(proc_root, pid)
+                .is_some_and(|argv| argv.first().is_some_and(|first| first == executable)),
+            Identity::Executable => fs::read_link(proc_root.join(pid.to_string()).join("exe"))
+                .is_ok_and(|target| target == Path::new(executable)),
+        };
+        if identified {
+            matches.push(pid);
+        }
+    }
+    matches.sort_unstable();
+    Ok(matches)
+}
+
+fn newly_started_pids(before: &[i32], running: &[i32]) -> Vec<i32> {
+    running
+        .iter()
+        .copied()
+        .filter(|pid| !before.contains(pid))
+        .collect()
 }
 
 /// A detached process that restarts the reader if we do not.
@@ -672,8 +694,8 @@ fn read_environment(proc_root: &Path, pid: i32) -> io::Result<BTreeMap<OsString,
 #[cfg(test)]
 mod tests {
     use super::{
-        read_argv, read_environment, sibling, watchdog_script, Reader, ReaderError,
-        READER_EXECUTABLE,
+        newly_started_pids, read_argv, read_environment, sibling, watchdog_script, Reader,
+        ReaderError, READER_EXECUTABLE,
     };
     use std::ffi::OsString;
     use std::fs;
@@ -810,6 +832,12 @@ mod tests {
         fs::remove_file(root.join("500").join("exe")).expect("remove exe link");
         assert!(!daemon.still_running_in(&root));
         let _ignored = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn detached_start_capture_ignores_processes_that_predate_the_launch() {
+        assert_eq!(newly_started_pids(&[400], &[400, 402]), vec![402]);
+        assert_eq!(newly_started_pids(&[400], &[402, 403]), vec![402, 403]);
     }
 
     #[test]

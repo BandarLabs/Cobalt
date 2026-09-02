@@ -790,6 +790,19 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     // path, so Nickel is never started on top of an unproven network owner.
     trace("reader restart returned, waiting for it to feed the freeze watchdog");
     println!("waiting for the reader to feed the freeze watchdog");
+    let reader_wifi = restore_reader_wifi(network.was_online(), Duration::from_secs(45));
+    if !reader_wifi {
+        trace("the reader did not complete Wi-Fi association; requesting a clean reboot");
+        watchdog.disarm();
+        drop(teardown);
+        let _ignored = fs::remove_dir_all(&state);
+        let summary = outcome.unwrap_or_else(|error| format!("application ended: {error}"));
+        return request_clean_reboot().map(|()| {
+            format!(
+                "{summary}; typeface {typeface}; the reader did not reclaim Wi-Fi, so a clean reboot was requested"
+            )
+        });
+    }
     // Resumed only once the reader is feeding it again. Resuming the moment
     // the process exists lights a ten second fuse that a still-starting reader
     // cannot feed, which is what rebooted the device at the end of a session.
@@ -831,6 +844,44 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
             "{summary}; typeface {typeface}; the screen could not be restored ({error}), but {reader_state} and repaints its own screen"
         )),
         (Err(error), _) => Err(format!("{error}; {reader_state}")),
+    }
+}
+
+fn restore_reader_wifi(was_online: bool, within: Duration) -> bool {
+    if !was_online {
+        return true;
+    }
+    let deadline = Instant::now() + within;
+    let mut retry_at = Instant::now();
+    let mut healthy_since = None;
+    loop {
+        if let Some(wifi) = kobo_hal::wifi::Wifi::open() {
+            let associated = wifi.associated().unwrap_or(false);
+            let healthy =
+                associated && kobo_hal::network::is_online(kobo_hal::network::WIRELESS_LINK);
+            if healthy {
+                let since = healthy_since.get_or_insert_with(Instant::now);
+                if since.elapsed() >= Duration::from_secs(10) {
+                    return true;
+                }
+            } else {
+                healthy_since = None;
+                if !associated && Instant::now() >= retry_at {
+                    if let Err(error) = wifi.recover_association() {
+                        trace(&format!(
+                            "the reader Wi-Fi recovery sequence was not accepted: {error:?}"
+                        ));
+                    }
+                    retry_at = Instant::now() + Duration::from_secs(5);
+                }
+            }
+        } else {
+            healthy_since = None;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(500));
     }
 }
 

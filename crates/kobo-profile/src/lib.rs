@@ -290,9 +290,10 @@ pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     write_ready: true,
     // Measured on the device on 2026-09-02: preserving Nickel's detached
     // supplicant kept SSH alive throughout Cobalt's panel session, but the
-    // restarted reader launched a replacement and Wi-Fi then stayed down
-    // until the owner reconnected it. Reaping the exact captured process
-    // before Nickel returns prevents the two-owner handoff.
+    // restarted reader launched a replacement. Reaping the exact captured
+    // process prevents the two-owner handoff; the runtime then reproduces the
+    // stock network screen's scan/reassociate sequence and waits for the
+    // replacement to complete association because a stale route can linger.
     reap_nickel_supplicant: true,
 };
 
