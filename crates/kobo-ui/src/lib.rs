@@ -7846,25 +7846,45 @@ pub fn terminal_grid_for(screen: &Screen, metrics: &DisplayMetrics) -> (u16, u16
         return (0, 0);
     };
     let bottom = content.y.saturating_add(content.height);
-    // The room between the top of the terminal and whatever is under it,
-    // rather than what is left at the bottom of the panel. Those were the same
-    // number until the keys were anchored to the foot: now the last thing on
-    // the screen always ends at the bottom edge, and measuring the remainder
-    // there says a terminal gets no rows at all.
-    let floor = layout
+    let Some(position) = screen
         .nodes
         .iter()
-        .filter(|node| {
-            !matches!(
-                node.kind,
-                LayoutKind::TerminalGrid | LayoutKind::TerminalCursor
-            ) && node.rect.y >= terminal.rect.y.saturating_add(terminal.rect.height)
-        })
-        .map(|node| node.rect.y)
-        .min();
-    // Flow layout inserts one small gap after the empty terminal before the
-    // first trailing node. That gap is not terminal capacity.
-    let terminal_bottom = floor.map_or(bottom, |y| y.saturating_sub(metrics.space(Space::Small)));
+        .position(|node| matches!(node, Node::Terminal { .. }))
+    else {
+        return (0, 0);
+    };
+    // Ask the same measurement routine the real layout uses. Looking for the
+    // first rectangle after an empty terminal is subtly wrong for composite
+    // controls: a grid's container starts immediately after the terminal even
+    // though its measured height is reserved at the foot of the viewport.
+    let margin = metrics.screen_margin();
+    let gap = metrics.space(Space::Tight);
+    let prose = if screen.reading {
+        Face::Reading
+    } else {
+        Face::Text
+    };
+    let rail_reserved = if !screen.legacy_typography
+        && screen
+            .nodes
+            .iter()
+            .any(|node| matches!(node, Node::PageRail { of, .. } if *of > 1))
+    {
+        metrics.tenth_mm(4).max(1) + gap
+    } else {
+        0
+    };
+    let flow_width = metrics.width - 2 * margin - rail_reserved;
+    let trailing = trailing_height(
+        &screen.nodes[position + 1..],
+        margin,
+        flow_width,
+        bottom,
+        metrics,
+        prose,
+        gap,
+    );
+    let terminal_bottom = bottom.saturating_sub(trailing);
     terminal_grid(
         terminal.rect.width,
         min(terminal_bottom, bottom).saturating_sub(terminal.rect.y),

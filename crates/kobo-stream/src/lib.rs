@@ -122,6 +122,7 @@ struct Terminal {
     parser: vt100::Parser,
     grid: Grid,
     previous: Vec<String>,
+    previous_cursor: Option<(u16, u16)>,
     seq: u64,
     ended: Option<i32>,
     last_snapshot: Instant,
@@ -134,6 +135,7 @@ impl Terminal {
             parser: vt100::Parser::new(grid.rows, grid.columns, 0),
             grid,
             previous: Vec::new(),
+            previous_cursor: None,
             seq: 0,
             ended: None,
             last_snapshot: Instant::now()
@@ -160,6 +162,7 @@ impl Terminal {
         self.parser.screen_mut().set_size(grid.rows, grid.columns);
         self.grid = grid;
         self.previous.clear();
+        self.previous_cursor = None;
         self.dirty = true;
     }
 
@@ -172,18 +175,16 @@ impl Terminal {
                 exit: self.ended,
             };
         }
-        let visible: Vec<String> = self
-            .parser
-            .screen()
-            .rows(0, self.grid.columns)
-            .take(self.grid.rows as usize)
-            .map(substitute)
+        let screen = self.parser.screen();
+        let visible: Vec<String> = (0..self.grid.rows)
+            .map(|row| visible_row(screen, row, self.grid.columns))
             .collect();
-        let (cursor_y, cursor_x) = self.parser.screen().cursor_position();
-        let cursor_visible = !self.parser.screen().hide_cursor()
-            && cursor_y < self.grid.rows
-            && cursor_x < self.grid.columns;
-        let changed = visible != self.previous;
+        let (cursor_y, cursor_x) = screen.cursor_position();
+        let cursor =
+            (!screen.hide_cursor() && cursor_y < self.grid.rows && cursor_x < self.grid.columns)
+                .then_some((cursor_y, cursor_x));
+        let cursor_changed = cursor != self.previous_cursor;
+        let changed = visible != self.previous || cursor_changed;
         if changed {
             self.seq = self.seq.saturating_add(1);
         }
@@ -191,14 +192,23 @@ impl Terminal {
         let rows = visible
             .iter()
             .enumerate()
-            .filter(|(index, row)| full || self.previous.get(*index) != Some(*row))
+            .filter(|(index, row)| {
+                let index = *index as u16;
+                full || self.previous.get(usize::from(index)) != Some(*row)
+                    || (cursor_changed
+                        && (self.previous_cursor.is_some_and(|(y, _)| y == index)
+                            || cursor.is_some_and(|(y, _)| y == index)))
+            })
             .map(|(index, cells)| Row {
                 y: index as u16,
                 cells: cells.clone(),
-                cursor: (cursor_visible && cursor_y as usize == index).then_some(cursor_x),
+                cursor: cursor
+                    .filter(|(row, _)| usize::from(*row) == index)
+                    .map(|(_, column)| column),
             })
             .collect();
         self.previous = visible;
+        self.previous_cursor = cursor;
         self.dirty = false;
         self.last_snapshot = Instant::now();
         Screen {
@@ -300,10 +310,15 @@ pub fn run(options: Options) -> Result<i32, String> {
         .set_nonblocking(true)
         .map_err(|error| format!("configure listener: {error}"))?;
     let arguments: Vec<&str> = options.command[1..].iter().map(String::as_str).collect();
+    let environment = host_environment();
+    let environment_refs = environment
+        .iter()
+        .map(|(name, value)| (name.as_str(), value.as_str()))
+        .collect::<Vec<_>>();
     let pty = kobo_abi::pty::Pty::spawn(
         &options.command[0],
         &arguments,
-        &[("TERM", "xterm-256color")],
+        &environment_refs,
         options.grid.columns,
         options.grid.rows,
     )
@@ -378,6 +393,41 @@ pub fn run(options: Options) -> Result<i32, String> {
         }
     }
     Ok(session.screen(0).exit.unwrap_or(0))
+}
+
+/// The deliberately small part of the host environment a terminal program
+/// needs to behave like it was launched from the owner's shell.
+///
+/// `Pty` clears its environment because its other caller runs untrusted Kobo
+/// applications. A host command is different: without `PATH` a command such as
+/// `claude` cannot be found, and without `HOME` its own configuration cannot be
+/// found. Credentials and unrelated application variables are not copied.
+fn host_environment() -> Vec<(String, String)> {
+    host_environment_with(|name| std::env::var(name).ok())
+}
+
+fn host_environment_with(mut read: impl FnMut(&str) -> Option<String>) -> Vec<(String, String)> {
+    const INHERITED: &[&str] = &[
+        "HOME",
+        "PATH",
+        "USER",
+        "LOGNAME",
+        "SHELL",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "TMPDIR",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_CACHE_HOME",
+    ];
+    let mut environment = vec![("TERM".to_owned(), "xterm-256color".to_owned())];
+    environment.extend(
+        INHERITED
+            .iter()
+            .filter_map(|name| read(name).map(|value| ((*name).to_owned(), value))),
+    );
+    environment
 }
 
 struct ReaderSlot(Arc<AtomicUsize>);
@@ -794,19 +844,39 @@ fn screen_json(screen: &Screen) -> String {
             .map_or_else(|| "null".to_owned(), |exit| exit.to_string())
     )
 }
-fn substitute(text: String) -> String {
-    text.chars()
-        .map(|character| match character {
-            '\u{2580}'..='\u{259f}' => '#',
-            '\u{2800}'..='\u{28ff}' => '·',
-            character
-                if character > '\u{7f}' && !('\u{2500}'..='\u{257f}').contains(&character) =>
-            {
-                '·'
-            }
-            character => character,
-        })
-        .collect()
+fn visible_row(screen: &vt100::Screen, row: u16, columns: u16) -> String {
+    let mut text = String::with_capacity(usize::from(columns));
+    for column in 0..columns {
+        let Some(cell) = screen.cell(row, column) else {
+            break;
+        };
+        if cell.is_wide_continuation() {
+            continue;
+        }
+        if !cell.has_contents() {
+            text.push(' ');
+            continue;
+        }
+        text.push(substitute_cell(cell.contents()));
+        if cell.is_wide() {
+            // Paperterm deliberately renders a one-cell replacement glyph.
+            // Keep its terminal continuation cell so following ASCII stays in
+            // the column the host TUI assigned it.
+            text.push(' ');
+        }
+    }
+    text.truncate(text.trim_end().len());
+    text
+}
+
+fn substitute_cell(text: &str) -> char {
+    let character = text.chars().next().unwrap_or(' ');
+    match character {
+        '\u{2580}'..='\u{259f}' => '#',
+        '\u{2800}'..='\u{28ff}' => '·',
+        character if character > '\u{7f}' && !('\u{2500}'..='\u{257f}').contains(&character) => '·',
+        character => character,
+    }
 }
 fn random_session() -> Result<u64, String> {
     // The device's intentionally small JSON parser stores numbers as f64.
@@ -875,6 +945,23 @@ mod tests {
         assert!(!permits_input(InputMode::Controls, b"rm -rf /"));
         assert!(!permits_input(InputMode::None, b"y"));
     }
+
+    #[test]
+    fn host_terminal_gets_shell_paths_but_not_ambient_credentials() {
+        let environment = host_environment_with(|name| match name {
+            "HOME" => Some("/home/reader".to_owned()),
+            "PATH" => Some("/opt/tools:/usr/bin".to_owned()),
+            "ANTHROPIC_API_KEY" => Some("must-not-leak".to_owned()),
+            _ => None,
+        });
+        assert!(environment.contains(&("TERM".to_owned(), "xterm-256color".to_owned())));
+        assert!(environment.contains(&("HOME".to_owned(), "/home/reader".to_owned())));
+        assert!(environment.contains(&("PATH".to_owned(), "/opt/tools:/usr/bin".to_owned())));
+        assert!(environment
+            .iter()
+            .all(|(name, _)| name != "ANTHROPIC_API_KEY"));
+    }
+
     #[test]
     fn rows_diff_after_terminal_bytes_and_substitute_braille() {
         let session = Session::new(Grid {
@@ -893,6 +980,80 @@ mod tests {
         assert_eq!(changed.rows[0].cells.trim(), "ok ·");
         assert!(session.screen(changed.seq).rows.is_empty());
     }
+
+    #[test]
+    fn substituted_wide_cells_keep_following_columns_aligned() {
+        let session = Session::new(Grid {
+            columns: 8,
+            rows: 1,
+        });
+        session.feed("好X".as_bytes());
+        std::thread::sleep(SNAPSHOT_INTERVAL);
+        let screen = session.screen(0);
+        assert_eq!(screen.rows[0].cells, "· X");
+        assert_eq!(screen.rows[0].cursor, Some(3));
+    }
+
+    #[test]
+    fn combining_marks_do_not_create_phantom_terminal_cells() {
+        let session = Session::new(Grid {
+            columns: 8,
+            rows: 1,
+        });
+        session.feed("e\u{301}X".as_bytes());
+        std::thread::sleep(SNAPSHOT_INTERVAL);
+        let screen = session.screen(0);
+        assert_eq!(screen.rows[0].cells, "eX");
+        assert_eq!(screen.rows[0].cursor, Some(2));
+    }
+
+    #[test]
+    fn cursor_only_moves_dirty_the_old_and_new_cursor_rows() {
+        let session = Session::new(Grid {
+            columns: 8,
+            rows: 2,
+        });
+        session.feed(b"abc");
+        std::thread::sleep(SNAPSHOT_INTERVAL);
+        let before = session.screen(0);
+        session.feed(b"\x1b[D");
+        std::thread::sleep(SNAPSHOT_INTERVAL);
+        let moved = session.screen(before.seq);
+        assert!(moved.seq > before.seq);
+        assert_eq!(moved.rows.len(), 1);
+        assert_eq!(moved.rows[0].cells, "abc");
+        assert_eq!(moved.rows[0].cursor, Some(2));
+
+        session.feed(b"\r\n");
+        std::thread::sleep(SNAPSHOT_INTERVAL);
+        let next_row = session.screen(moved.seq);
+        assert_eq!(
+            next_row.rows.iter().map(|row| row.y).collect::<Vec<_>>(),
+            vec![0, 1]
+        );
+        assert_eq!(next_row.rows[0].cursor, None);
+        assert_eq!(next_row.rows[1].cursor, Some(0));
+    }
+
+    #[test]
+    fn alternate_screen_returns_to_the_primary_screen_cleanly() {
+        let session = Session::new(Grid {
+            columns: 12,
+            rows: 2,
+        });
+        session.feed(b"primary");
+        std::thread::sleep(SNAPSHOT_INTERVAL);
+        let primary = session.screen(0);
+        session.feed(b"\x1b[?1049hsecondary");
+        std::thread::sleep(SNAPSHOT_INTERVAL);
+        let alternate = session.screen(primary.seq);
+        assert_eq!(alternate.rows[0].cells, "secondary");
+        session.feed(b"\x1b[?1049l");
+        std::thread::sleep(SNAPSHOT_INTERVAL);
+        let restored = session.screen(alternate.seq);
+        assert_eq!(restored.rows[0].cells, "primary");
+    }
+
     #[test]
     fn multiple_terminal_updates_share_one_snapshot() {
         let session = Session::new(Grid {
