@@ -48,9 +48,10 @@ separate from protocol 11 compatibility. Test the latter independently with
 `cargo test -p kobo-protocol version_11`.
 
 The screenshot directory must be absent or empty, and the report path must be
-outside it. A complete run currently checks 160 initial screens, 72 scenario
-probes, and 8 drive routes: 240 cases. Each scenario probe is a real SDK
-application that performs the affected service operation and verifies the
+outside it. Dangling symlinks in either output path are refused before any
+output is created. A complete run currently checks 160 initial screens, 72
+scenario probes, and 8 drive routes: 240 cases. Each scenario probe is a real
+SDK application that performs the affected service operation and verifies the
 result it renders. The report inventories every PNG by path, dimensions, and
 SHA-256.
 

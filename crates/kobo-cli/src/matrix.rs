@@ -624,6 +624,7 @@ fn resolved_path(path: &Path) -> Result<PathBuf, String> {
             .map_err(|error| format!("locate current directory: {error}"))?
             .join(path)
     };
+    reject_dangling_symlinks(&absolute)?;
     for existing in absolute.ancestors() {
         match fs::canonicalize(existing) {
             Ok(canonical) => {
@@ -637,6 +638,40 @@ fn resolved_path(path: &Path) -> Result<PathBuf, String> {
         }
     }
     Err(format!("resolve output path {}", path.display()))
+}
+
+fn reject_dangling_symlinks(path: &Path) -> Result<(), String> {
+    for component in path.ancestors().collect::<Vec<_>>().into_iter().rev() {
+        match fs::symlink_metadata(component) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                match fs::canonicalize(component) {
+                    Ok(_) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        return Err(format!(
+                            "output path {} contains dangling symlink {}",
+                            path.display(),
+                            component.display()
+                        ));
+                    }
+                    Err(error) => {
+                        return Err(format!(
+                            "resolve output symlink {}: {error}",
+                            component.display()
+                        ));
+                    }
+                }
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!(
+                    "inspect output path component {}: {error}",
+                    component.display()
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn normalize_path(path: &Path) -> PathBuf {
@@ -1349,6 +1384,69 @@ mod tests {
         )
         .expect_err("canonical equivalent report must be refused")
         .contains("must be outside screenshot directory"));
+        fs::remove_dir_all(root).expect("remove test directory");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_report_symlink_into_screenshots_is_rejected_without_artifacts() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "km-dangling-report-{}-{}",
+            std::process::id(),
+            NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
+        ));
+        let outside = root.join("outside");
+        let screenshots = root.join("screenshots");
+        let report = outside.join("report.json");
+        fs::create_dir_all(&outside).expect("create outside directory");
+        symlink("../screenshots/report.json", &report).expect("create dangling report symlink");
+        let arguments = vec![
+            "--report".to_owned(),
+            report.to_string_lossy().into_owned(),
+            "--screenshots".to_owned(),
+            screenshots.to_string_lossy().into_owned(),
+            "--skip-build".to_owned(),
+        ];
+        assert!(run(&arguments)
+            .expect_err("dangling report symlink must be refused")
+            .contains("contains dangling symlink"));
+        assert!(!screenshots.exists());
+        assert!(fs::symlink_metadata(&report)
+            .expect("report fixture remains")
+            .file_type()
+            .is_symlink());
+        fs::remove_dir_all(root).expect("remove test directory");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_screenshot_symlink_is_rejected_without_artifacts() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "km-dangling-screenshots-{}-{}",
+            std::process::id(),
+            NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
+        ));
+        let report = root.join("report.json");
+        let screenshots = root.join("screenshots");
+        let target = root.join("missing-screenshots");
+        fs::create_dir_all(&root).expect("create fixture directory");
+        symlink(&target, &screenshots).expect("create dangling screenshot symlink");
+        let arguments = vec![
+            "--report".to_owned(),
+            report.to_string_lossy().into_owned(),
+            "--screenshots".to_owned(),
+            screenshots.to_string_lossy().into_owned(),
+            "--skip-build".to_owned(),
+        ];
+        assert!(run(&arguments)
+            .expect_err("dangling screenshot symlink must be refused")
+            .contains("contains dangling symlink"));
+        assert!(!report.exists());
+        assert!(!target.exists());
         fs::remove_dir_all(root).expect("remove test directory");
     }
 }
