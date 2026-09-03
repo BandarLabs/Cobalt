@@ -226,6 +226,7 @@ struct Lichess {
     event_rate_limit: Option<u64>,
     board_open: Option<String>,
     board_ready: bool,
+    deferred_board_open: Option<Session>,
     board_rate_limits: BTreeMap<String, u64>,
     seek_task: Option<TaskId>,
     seek_waiting: bool,
@@ -274,6 +275,7 @@ impl Default for Lichess {
             event_rate_limit: None,
             board_open: None,
             board_ready: false,
+            deferred_board_open: None,
             board_rate_limits: BTreeMap::new(),
             seek_task: None,
             seek_waiting: false,
@@ -894,7 +896,8 @@ impl Lichess {
     fn open_event_stream(&mut self, context: &mut Context) {
         if self.suspended
             || self.event_open
-            || self.has_pending(|pending| matches!(pending, Pending::EventOpen))
+            || self
+                .has_pending(|pending| matches!(pending, Pending::EventOpen | Pending::EventClose))
             || !matches!(self.account, AccountState::Ready(_))
         {
             return;
@@ -955,6 +958,10 @@ impl Lichess {
         let _ = self.spawn(context, Pending::EventRetry, Task::Sleep { seconds }, false);
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "board opening serializes switching, persisted backoff, close fencing, and task-capacity deferral"
+    )]
     fn open_board(&mut self, context: &mut Context, session: Session) {
         if self.suspended {
             return;
@@ -1018,22 +1025,32 @@ impl Lichess {
                 self.notice = Some(format!(
                     "Lichess asked this board to wait {remaining}s before reconnecting."
                 ));
+                self.deferred_board_open = None;
                 self.schedule_board_rate_wait(context, &id, remaining);
                 return;
             }
             self.clear_board_rate_limit(context, &id);
         }
+        if self.has_pending(
+            |pending| matches!(pending, Pending::BoardClose(closing) if closing == &id),
+        ) {
+            self.deferred_board_open = self.session.clone();
+            return;
+        }
         if self.board_open.as_deref() == Some(id.as_str())
             || self.has_pending(|pending| {
                 matches!(
                     pending,
-                    Pending::BoardOpen(open) | Pending::BoardRetry(open) if open == &id
+                    Pending::BoardOpen(open)
+                        | Pending::BoardRetry(open)
+                        if open == &id
                 ) || matches!(
                     pending,
                     Pending::BoardRateWait { id: waiting, .. } if waiting == &id
                 )
             })
         {
+            self.deferred_board_open = None;
             return;
         }
         let Some(work) = api::board_stream(&id, "open") else {
@@ -1042,8 +1059,16 @@ impl Lichess {
         };
         self.route = Route::Game;
         self.board_ready = false;
-        let _ = self.spawn(context, Pending::BoardOpen(id), work, false);
-        Self::keep_live(context);
+        if self
+            .spawn(context, Pending::BoardOpen(id), work, false)
+            .is_some()
+        {
+            self.deferred_board_open = None;
+            Self::keep_live(context);
+        } else {
+            self.deferred_board_open = self.session.clone();
+            self.notice = Some("Waiting for a task slot before reopening the board.".to_owned());
+        }
     }
 
     fn next_board(&mut self, context: &mut Context, id: &str) {
@@ -1102,6 +1127,13 @@ impl Lichess {
         self.confirmation = None;
         self.menu_open = false;
         self.board_ready = false;
+        if self
+            .deferred_board_open
+            .as_ref()
+            .is_some_and(|session| session.game_id == game_id)
+        {
+            self.deferred_board_open = None;
+        }
         self.clear_board_rate_limit(context, game_id);
         if self
             .session
@@ -1135,12 +1167,17 @@ impl Lichess {
         }
         let seconds = self.board_backoff.min(30);
         self.board_backoff = self.board_backoff.saturating_mul(2).min(30);
-        let _ = self.spawn(
-            context,
-            Pending::BoardRetry(id.to_owned()),
-            Task::Sleep { seconds },
-            false,
-        );
+        if self
+            .spawn(
+                context,
+                Pending::BoardRetry(id.to_owned()),
+                Task::Sleep { seconds },
+                false,
+            )
+            .is_none()
+        {
+            self.deferred_board_open = self.session.clone();
+        }
     }
 
     fn schedule_board_rate_wait(&mut self, context: &mut Context, id: &str, remaining: u32) {
@@ -1170,19 +1207,33 @@ impl Lichess {
             return;
         }
         let step = remaining.min(300);
-        let _ = self.spawn(
-            context,
-            Pending::BoardRateWait {
-                id: id.to_owned(),
-                remaining: remaining.saturating_sub(step),
-            },
-            Task::Sleep { seconds: step },
-            false,
-        );
+        if self
+            .spawn(
+                context,
+                Pending::BoardRateWait {
+                    id: id.to_owned(),
+                    remaining: remaining.saturating_sub(step),
+                },
+                Task::Sleep { seconds: step },
+                false,
+            )
+            .is_none()
+        {
+            self.deferred_board_open = self.session.clone();
+        }
     }
 
     fn board_is_live(&self, id: &str) -> bool {
         self.board_ready && self.board_open.as_deref() == Some(id)
+    }
+
+    fn retry_deferred_board(&mut self, context: &mut Context) {
+        if self.suspended {
+            return;
+        }
+        if let Some(session) = self.deferred_board_open.clone() {
+            self.open_board(context, session);
+        }
     }
 
     fn start_seek(&mut self, context: &mut Context) {
@@ -1934,6 +1985,7 @@ impl Lichess {
             return;
         }
         let id = game.id.clone();
+        self.deferred_board_open = None;
         self.clear_pending_action();
         self.pending_move = None;
         self.selected = None;
@@ -2081,6 +2133,7 @@ impl Lichess {
                         .is_some_and(|session| session.game_id == id)
                     {
                         self.clock.stop(context);
+                        self.deferred_board_open = None;
                         let seconds = delay.unwrap_or(30).max(1);
                         self.set_board_rate_limit(context, &id, seconds);
                         self.schedule_board_rate_wait(context, &id, seconds);
@@ -2272,7 +2325,17 @@ impl Lichess {
             Pending::BoardRateWait { id, remaining } => {
                 self.schedule_board_rate_wait(context, &id, remaining);
             }
-            Pending::BoardClose(_) => {}
+            Pending::BoardClose(id) => {
+                if self
+                    .session
+                    .as_ref()
+                    .is_some_and(|session| session.game_id == id)
+                    && self.board_open.is_none()
+                    && self.board_rate_remaining(&id).unwrap_or(0) == 0
+                {
+                    self.schedule_board_reconnect(context, &id);
+                }
+            }
             Pending::Action {
                 action,
                 scope,
@@ -2941,6 +3004,7 @@ impl KoboApp for Lichess {
                     }
                     self.open_event_stream(context);
                 }
+                self.retry_deferred_board(context);
             }
             return;
         };
@@ -2949,6 +3013,7 @@ impl KoboApp for Lichess {
             TaskOutcome::Failed(error) => self.handle_failed(context, pending, error),
             TaskOutcome::Cancelled => self.handle_cancelled(context, &pending),
         }
+        self.retry_deferred_board(context);
         self.show(context);
     }
 
@@ -4026,6 +4091,23 @@ mod tests {
     }
 
     #[test]
+    fn event_reopen_waits_for_older_close_to_settle() {
+        let mut app = Lichess {
+            account: AccountState::Ready(super::Account {
+                id: "owner123".to_owned(),
+                username: "Owner".to_owned(),
+            }),
+            ..Lichess::default()
+        };
+        app.tasks.insert(kobo_sdk::TaskId(90), Pending::EventClose);
+        let mut context = Context::default();
+        app.open_event_stream(&mut context);
+        assert!(!app.has_pending(|pending| matches!(pending, Pending::EventOpen)));
+        app.handle_completed(&mut context, Pending::EventClose, &[]);
+        assert!(app.has_pending(|pending| matches!(pending, Pending::EventRetry)));
+    }
+
+    #[test]
     fn late_old_game_result_cannot_pause_the_new_board() {
         let mut app = app_with_game(&[], Color::White);
         app.game.as_mut().expect("game").id = "other123".to_owned();
@@ -4083,6 +4165,31 @@ mod tests {
             matches!(pending, Pending::BoardOpen(id) if id == "other123")
         }));
         assert!(app.board_rate_limits.contains_key("abcdEF12"));
+    }
+
+    #[test]
+    fn board_open_intent_retries_after_task_capacity_clears() {
+        let mut app = Lichess::default();
+        let session = Session {
+            game_id: "abcdEF12".to_owned(),
+            color: Color::White,
+            opponent: "Other".to_owned(),
+            rated: true,
+        };
+        let mut full = Context::default();
+        for _ in 0..4 {
+            assert!(full.spawn(kobo_sdk::Task::Sleep { seconds: 30 }).is_some());
+        }
+        app.open_board(&mut full, session.clone());
+        assert_eq!(app.deferred_board_open, Some(session));
+        assert!(!app.has_pending(|pending| matches!(pending, Pending::BoardOpen(_))));
+
+        let mut available = Context::default();
+        app.retry_deferred_board(&mut available);
+        assert!(app.deferred_board_open.is_none());
+        assert!(app.has_pending(|pending| {
+            matches!(pending, Pending::BoardOpen(id) if id == "abcdEF12")
+        }));
     }
 
     #[test]
