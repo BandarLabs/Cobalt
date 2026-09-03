@@ -510,6 +510,33 @@ fn host_secret_directory() -> PathBuf {
     std::env::temp_dir().join("cobalt-host-secrets")
 }
 
+#[derive(Default)]
+struct PreviewState {
+    orientation: kobo_ui::Orientation,
+    latest: Option<(Screen, kobo_ui::Chrome)>,
+}
+
+impl PreviewState {
+    fn remember(&mut self, screen: Screen, chrome: kobo_ui::Chrome) {
+        self.latest = Some((screen, chrome));
+    }
+}
+
+fn apply_preview_orientation<E>(
+    preview: &mut PreviewState,
+    requested: kobo_ui::Orientation,
+    rewrite: impl FnOnce(&Screen, &kobo_ui::Chrome, kobo_ui::Orientation) -> Result<(), E>,
+) -> Result<(), E> {
+    if preview.orientation == requested {
+        return Ok(());
+    }
+    preview.orientation = requested;
+    if let Some((screen, chrome)) = preview.latest.as_ref() {
+        rewrite(screen, chrome, requested)?;
+    }
+    Ok(())
+}
+
 #[allow(
     clippy::too_many_lines,
     reason = "one arm per message type; splitting the dispatch hides it"
@@ -564,7 +591,7 @@ fn serve_application(
     let store = kobo_policy::store::Store::new(std::env::temp_dir().join("cobalt-host-state"));
     let shelf = kobo_policy::shelf::Shelf::new(std::env::temp_dir().join("cobalt-host-data"));
     let mut pictures = kobo_ui::PictureCache::default();
-    let mut orientation = kobo_ui::Orientation::Portrait;
+    let mut preview = PreviewState::default();
     loop {
         let frame = kobo_protocol::read_from(stream)?;
         match frame.message {
@@ -572,9 +599,25 @@ fn serve_application(
                 // Per screen, as the device does it: a book is drawn
                 // without a band and everything else with one.
                 let chrome = simulated_chrome(name, &screen);
-                write_screen(frame_path, screen, &chrome, name, &pictures, orientation)?;
+                write_screen(
+                    frame_path,
+                    &screen,
+                    &chrome,
+                    name,
+                    &pictures,
+                    preview.orientation,
+                )?;
+                preview.remember(screen, chrome);
             }
-            Message::SetOrientation(requested) => orientation = requested,
+            Message::SetOrientation(requested) => {
+                apply_preview_orientation(
+                    &mut preview,
+                    requested,
+                    |screen, chrome, orientation| {
+                        write_screen(frame_path, screen, chrome, name, &pictures, orientation)
+                    },
+                )?;
+            }
             Message::PutPicture {
                 handle,
                 width,
@@ -833,7 +876,7 @@ const HOME_APPLICATION: &str = "launcher";
 
 fn write_screen(
     path: &Path,
-    screen: Screen,
+    screen: &Screen,
     chrome: &kobo_ui::Chrome,
     name: &str,
     pictures: &dyn kobo_ui::Pictures,
@@ -848,7 +891,7 @@ fn write_screen(
     // never exist. Rendering with &Chrome::default() here meant the way back
     // was the one part of every screen that could not be looked at without a
     // reader, and it is the part that traps somebody when it is missing.
-    let screen = kobo_ui::ensure_way_back(screen, chrome, name);
+    let screen = kobo_ui::ensure_way_back(screen.clone(), chrome, name);
     let metrics = crate::device_metrics();
     // The same reason as on the device: the typeface sets at the ambient
     // scale, so a preview of a screen that asked for larger prose has to say
@@ -981,6 +1024,40 @@ mod tests {
         let mut screen = plain();
         screen.reading = true;
         screen
+    }
+
+    #[test]
+    fn orientation_only_change_rewrites_the_latest_preview_immediately() {
+        let screen = plain();
+        let chrome = super::simulated_chrome("terminal", &screen);
+        let mut preview = super::PreviewState::default();
+        preview.remember(screen.clone(), chrome.clone());
+        let mut rewrites = Vec::new();
+
+        super::apply_preview_orientation(
+            &mut preview,
+            kobo_ui::Orientation::Landscape,
+            |retained, retained_chrome, orientation| {
+                rewrites.push((retained.id, retained_chrome.back, orientation));
+                Ok::<(), ()>(())
+            },
+        )
+        .expect("rewrite landscape preview");
+        assert_eq!(
+            rewrites,
+            vec![(screen.id, chrome.back, kobo_ui::Orientation::Landscape)]
+        );
+
+        super::apply_preview_orientation(
+            &mut preview,
+            kobo_ui::Orientation::Landscape,
+            |_, _, _| {
+                rewrites.push((0, false, kobo_ui::Orientation::Portrait));
+                Ok::<(), ()>(())
+            },
+        )
+        .expect("unchanged orientation");
+        assert_eq!(rewrites.len(), 1, "unchanged orientation rewrote preview");
     }
 
     #[test]
