@@ -13,13 +13,16 @@ kobo secret set homeassistant --device <ip>
 The URL must be HTTPS. Use Nabu Casa, a reverse proxy with a real
 certificate, or install a private CA with `kobo trust set homeassistant
 --device <ip>`. Home Panel posts one compact Jinja template per poll and
-never puts the token in its URL, body, log, or local store. It keeps tile IDs
-and the last visible grid locally; an unavailable server leaves the grid
-readable and says how to recover.
+never puts the token in its URL, body, log, or local store.
 
-Wall-panel mode, entity browsing, climate detail controls, and automatic
-background polling remain follow-up work. The MVP supports stored tiles,
-template polling, light/switch/service toggles, explicit setup validation,
-and offline recovery.
+Use the `+` action to browse or search Home Assistant devices by their
+friendly names. The grid keeps up to twelve tiles, refreshes them every ten
+seconds while open, and keeps the last visible state available when the
+server cannot be reached. Lights, switches, scenes, scripts, automations, and
+buttons can be triggered directly; unsupported domains remain useful as
+read-only tiles.
+
+Climate detail controls and a dedicated always-awake wall-panel mode are not
+included yet.
 
 ![Home Panel grid](screenshots/setup.png)

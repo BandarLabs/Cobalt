@@ -1,5 +1,7 @@
 expect Sync
-expect Sync is disabled
+expect Sync is off
+tap Refresh status
+expect Sync has not run
 tap Folders
 expect Sync folders
 clean

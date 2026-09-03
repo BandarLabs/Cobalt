@@ -36,14 +36,12 @@ impl Cadence {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Config {
-    pub device_id: String,
     pub cadence: Cadence,
     pub enabled: bool,
 }
 impl Default for Config {
     fn default() -> Self {
         Self {
-            device_id: "KOBOSYNC-DEVICE-ID".into(),
             cadence: Cadence::Manual,
             enabled: false,
         }
@@ -61,7 +59,8 @@ pub const FOLDERS: [(&str, &str); 4] = [
 /// generated daemon-side and deliberately absent from this app-owned model.
 #[cfg(test)]
 pub fn generated_config(config: &Config) -> String {
-    format!("<configuration version=\"37\"><options><globalAnnounceEnabled>true</globalAnnounceEnabled><relaysEnabled>true</relaysEnabled><natEnabled>false</natEnabled></options><gui enabled=\"true\" tls=\"false\" address=\"127.0.0.1:8384\"/><device id=\"{}\"/></configuration>", config.device_id)
+    let enabled = config.enabled;
+    format!("<configuration version=\"37\"><options><globalAnnounceEnabled>true</globalAnnounceEnabled><relaysEnabled>true</relaysEnabled><natEnabled>false</natEnabled></options><gui enabled=\"{enabled}\" tls=\"false\" address=\"127.0.0.1:8384\"/></configuration>")
 }
 
 #[cfg(test)]
