@@ -43,50 +43,60 @@ if [ "$source_commit" != "$(git -C "$repo" rev-parse HEAD)" ]; then
   exit 1
 fi
 
+if [ "$(tr -d '\n' < "$public_key")" != "$expected_validation_key" ]; then
+  echo "validation package public key is not the fixed audit key" >&2
+  exit 1
+fi
+
+fresh_device_root="$target_root/audit-device-fresh"
+rm -rf "$fresh_device_root"
+mkdir -p "$fresh_device_root/production" "$fresh_device_root/unstripped" "$target_root/build-tmp"
+(
+  cd "$repo"
+  export TMPDIR="$target_root/build-tmp"
+  export CC_armv7_unknown_linux_musleabihf="${CC_armv7_unknown_linux_musleabihf:-armv7-unknown-linux-musleabihf-gcc}"
+  export AR_armv7_unknown_linux_musleabihf="${AR_armv7_unknown_linux_musleabihf:-armv7-unknown-linux-musleabihf-ar}"
+  CARGO_TARGET_DIR="$fresh_device_root/production" \
+    cargo build --quiet --locked --release \
+    --target armv7-unknown-linux-musleabihf -p kobo-flashcards
+  CARGO_TARGET_DIR="$fresh_device_root/unstripped" \
+  CARGO_PROFILE_RELEASE_STRIP=none \
+    cargo build --quiet --locked --release \
+    --target armv7-unknown-linux-musleabihf -p kobo-flashcards
+)
+fresh_device="$fresh_device_root/production/armv7-unknown-linux-musleabihf/release/kobo-flashcards"
+fresh_audit_device="$fresh_device_root/unstripped/armv7-unknown-linux-musleabihf/release/kobo-flashcards"
+if ! cmp "$fresh_device" "$device" >/dev/null; then
+  echo "production device ELF differs from the fresh audited-source build" >&2
+  exit 1
+fi
+if ! cmp "$fresh_audit_device" "$audit_device" >/dev/null; then
+  echo "unstripped device ELF differs from the fresh audited-source build" >&2
+  exit 1
+fi
+
+submitted_host_root="$target_root/audit-submitted-host"
 audit_tools="$target_root/audit-tools"
-rm -rf "$audit_tools"
-mkdir -p "$audit_tools" "$target_root/build-tmp"
+rm -rf "$submitted_host_root" "$audit_tools"
+mkdir -p "$submitted_host_root" "$audit_tools"
+cp "$host" "$submitted_host_root/flashcards-import"
+rm -rf "$target_root/host-target"
 (
   cd "$repo"
   TMPDIR="$target_root/build-tmp" \
   COBALT_SOURCE_COMMIT="$source_commit" \
+  CARGO_TARGET_DIR="$target_root/host-target" \
+    cargo build --quiet --locked --release -p kobo-flashcards-import
+  TMPDIR="$target_root/build-tmp" \
   CARGO_TARGET_DIR="$audit_tools" \
-    cargo build --quiet --locked --release -p kobo-cli -p kobo-flashcards-import
+    cargo build --quiet --locked --release -p kobo-cli
 )
 trusted_cli="$audit_tools/release/kobo"
-trusted_host="$audit_tools/release/flashcards-import"
-cp "$trusted_host" "$host"
-if [ "$(tr -d '\n' < "$public_key")" != "$expected_validation_key" ]; then
-  echo "validation package public key is not the   fi
-
-  fresh_device_root="$target_root/audit-device-fresh"
-  rm -rf "$fresh_device_root"
-  mkdir -p "$fresh_device_root/production" "$fresh_device_root/unstripped" "$target_root/build-tmp"
-  (
-    cd "$repo"
-    export TMPDIR="$target_root/build-tmp"
-    export CC_armv7_unknown_linux_musleabihf="${CC_armv7_unknown_linux_musleabihf:-armv7-unknown-linux-musleabihf-gcc}"
-    export AR_armv7_unknown_linux_musleabihf="${AR_armv7_unknown_linux_musleabihf:-armv7-unknown-linux-musleabihf-ar}"
-    CARGO_TARGET_DIR="$fresh_device_root/production" \
-      cargo build --quiet --locked --release \
-      --target armv7-unknown-linux-musleabihf -p kobo-flashcards
-    CARGO_TARGET_DIR="$fresh_device_root/unstripped" \
-    CARGO_PROFILE_RELEASE_STRIP=none \
-      cargo build --quiet --locked --release \
-      --target armv7-unknown-linux-musleabihf -p kobo-flashcards
-  )
-  fresh_device="$fresh_device_root/production/armv7-unknown-linux-musleabihf/release/kobo-flashcards"
-  fresh_audit_device="$fresh_device_root/unstripped/armv7-unknown-linux-musleabihf/release/kobo-flashcards"
-  if ! cmp "$fresh_device" "$device" >/dev/null; then
-    echo "production device ELF differs from the fresh audited-source build" >&2
-    exit 1
-  fi
-  if ! cmp "$fresh_audit_device" "$audit_device" >/dev/null; then
-    echo "unstripped device ELF differs from the fresh audited-source build" >&2
-    exit 1
-  fixed audit key" >&2
+if ! cmp "$submitted_host_root/flashcards-import" "$host" >/dev/null; then
+  echo "submitted host helper differs from the fresh same-layout source build" >&2
   exit 1
 fi
+rm -rf "$submitted_host_root"
 
 device_tree=$(
   cd "$repo"
@@ -258,22 +268,22 @@ for required in \
   fi
 done
 
-if ! "$trusted_host" --licenses |
+if ! "$host" --licenses |
   grep -F 'Corresponding source for the Flashcards host converter' >/dev/null; then
   echo "host helper does not expose corresponding-source instructions" >&2
   exit 1
 fi
-if ! "$trusted_host" --licenses | grep -F "$source_commit" >/dev/null; then
+if ! "$host" --licenses | grep -F "$source_commit" >/dev/null; then
   echo "host helper does not expose its exact Cobalt source commit" >&2
   exit 1
 fi
-notice_hash=$("$trusted_host" --notice | shasum -a 256 | awk '{print $1}')
+notice_hash=$("$host" --notice | shasum -a 256 | awk '{print $1}')
 notice_file_hash=$(shasum -a 256 "$host_notice_file" | awk '{print $1}')
 if [ "$notice_hash" != "$notice_file_hash" ]; then
   echo "host notice sidecar differs from helper output" >&2
   exit 1
 fi
-licenses_hash=$("$trusted_host" --licenses | shasum -a 256 | awk '{print $1}')
+licenses_hash=$("$host" --licenses | shasum -a 256 | awk '{print $1}')
 licenses_file_hash=$(shasum -a 256 "$host_licenses_file" | awk '{print $1}')
 if [ "$licenses_hash" != "$licenses_file_hash" ]; then
   echo "host licence/source sidecar differs from helper output" >&2
@@ -288,7 +298,8 @@ echo "device local transport: generic socket primitives remain for required Coba
 echo "device package: signature/canonical manifest verified against catalog and standalone ELF"
 echo "validation catalog: signature and sole package entry verified"
 echo "device ELFs: byte-identical to fresh audited-source builds"
-echo "host verifier/helper: rebuilt from audited source in a fresh target directory"
+echo "host helper: submitted binary matches a fresh same-layout audited-source build"
+echo "host verifier CLI: rebuilt from audited source in a fresh target directory"
 echo "host helper: pinned Anki rslib/i18n/io/proto, AGPL notice, source pin, and source instructions present"
 echo "host notice sidecars: exact copies of helper notice/licence output"
 (
