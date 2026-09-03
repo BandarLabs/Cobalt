@@ -43,6 +43,26 @@ if [ "$source_commit" != "$(git -C "$repo" rev-parse HEAD)" ]; then
   echo "artifact source commit does not match this checkout" >&2
   exit 1
 fi
+
+audit_tools="$target_root/audit-tools"
+mkdir -p "$audit_tools" "$target_root/build-tmp"
+(
+  cd "$repo"
+  TMPDIR="$target_root/build-tmp" \
+  COBALT_SOURCE_COMMIT="$source_commit" \
+  CARGO_TARGET_DIR="$audit_tools" \
+    cargo build --quiet --locked --release -p kobo-cli -p kobo-flashcards-import
+)
+trusted_cli="$audit_tools/release/kobo"
+trusted_host="$audit_tools/release/flashcards-import"
+if ! cmp "$trusted_cli" "$cli" >/dev/null; then
+  echo "artifact kobo verifier differs from the fresh audited-source build" >&2
+  exit 1
+fi
+if ! cmp "$trusted_host" "$host" >/dev/null; then
+  echo "artifact host helper differs from the fresh audited-source build" >&2
+  exit 1
+fi
 if [ "$(tr -d '\n' < "$public_key")" != "$expected_validation_key" ]; then
   echo "validation package public key is not the fixed audit key" >&2
   exit 1
@@ -172,12 +192,12 @@ if entry.get("package_url") != "https://example.invalid/flashcards-validation.co
     raise SystemExit("validation catalog package URL differs")
 PY
 
-"$cli" app-verify \
+"$trusted_cli" app-verify \
   --package "$package" \
   --public-key "$public_key" \
   --manifest "$manifest" \
   --binary "$device" >/dev/null
-"$cli" app-catalog-verify \
+"$trusted_cli" app-catalog-verify \
   --catalog "$catalog" \
   --signature "$catalog_signature" \
   --public-key "$public_key" \
@@ -218,22 +238,22 @@ for required in \
   fi
 done
 
-if ! "$host" --licenses |
+if ! "$trusted_host" --licenses |
   grep -F 'Corresponding source for the Flashcards host converter' >/dev/null; then
   echo "host helper does not expose corresponding-source instructions" >&2
   exit 1
 fi
-if ! "$host" --licenses | grep -F "$source_commit" >/dev/null; then
+if ! "$trusted_host" --licenses | grep -F "$source_commit" >/dev/null; then
   echo "host helper does not expose its exact Cobalt source commit" >&2
   exit 1
 fi
-notice_hash=$("$host" --notice | shasum -a 256 | awk '{print $1}')
+notice_hash=$("$trusted_host" --notice | shasum -a 256 | awk '{print $1}')
 notice_file_hash=$(shasum -a 256 "$host_notice_file" | awk '{print $1}')
 if [ "$notice_hash" != "$notice_file_hash" ]; then
   echo "host notice sidecar differs from helper output" >&2
   exit 1
 fi
-licenses_hash=$("$host" --licenses | shasum -a 256 | awk '{print $1}')
+licenses_hash=$("$trusted_host" --licenses | shasum -a 256 | awk '{print $1}')
 licenses_file_hash=$(shasum -a 256 "$host_licenses_file" | awk '{print $1}')
 if [ "$licenses_hash" != "$licenses_file_hash" ]; then
   echo "host licence/source sidecar differs from helper output" >&2
@@ -247,6 +267,7 @@ echo "device symbols: no known high-level remote-network implementation"
 echo "device local transport: generic socket primitives remain for required Cobalt Unix-domain IPC"
 echo "device package: signature/canonical manifest verified against catalog and standalone ELF"
 echo "validation catalog: signature and sole package entry verified"
+echo "host verifier/helper: byte-identical to fresh audited-source builds"
 echo "host helper: pinned Anki rslib/i18n/io/proto, AGPL notice, source pin, and source instructions present"
 echo "host notice sidecars: exact copies of helper notice/licence output"
 (
