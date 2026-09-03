@@ -971,6 +971,7 @@ impl Lichess {
         if self.has_pending(|pending| matches!(pending, Pending::Account)) {
             return;
         }
+        let revalidating = matches!(self.account, AccountState::Ready(_));
         for (task, pending) in self.tasks.clone() {
             if matches!(pending, Pending::AccountRetry) {
                 context.cancel(task);
@@ -978,16 +979,23 @@ impl Lichess {
                 self.retired_tasks.insert(task, pending);
             }
         }
-        self.account = AccountState::Checking;
-        self.playing_ready = false;
-        self.notice = None;
+        if !revalidating {
+            self.account = AccountState::Checking;
+            self.playing_ready = false;
+            self.notice = None;
+        }
         if self
             .spawn(context, Pending::Account, api::account(), true)
             .is_none()
         {
-            self.account = AccountState::Unknown;
-            self.notice =
-                Some("Finishing previous requests. Refresh account again in a moment.".to_owned());
+            if revalidating {
+                self.schedule_account_retry(context);
+            } else {
+                self.account = AccountState::Unknown;
+                self.notice = Some(
+                    "Finishing previous requests. Refresh account again in a moment.".to_owned(),
+                );
+            }
         }
     }
 
@@ -2714,6 +2722,7 @@ impl Lichess {
                     self.event_backoff = 1;
                     let _ = self.refresh_playing(context);
                     self.open_event_stream(context);
+                    self.schedule_account_retry(context);
                     if let Some(remaining) = self
                         .seek_rate_remaining()
                         .filter(|remaining| *remaining > 0)
@@ -6094,6 +6103,42 @@ mod tests {
 
         assert!(matches!(app.account, AccountState::Checking));
         assert!(app.has_pending(|pending| matches!(pending, Pending::Account)));
+    }
+
+    #[test]
+    fn valid_credential_is_rechecked_without_hiding_ready_state() {
+        let mut app = ready_app();
+        let mut context = Context::default();
+        let account = kobo_sdk::TaskId(7);
+        app.tasks.insert(account, Pending::Account);
+
+        app.on_task(
+            &mut context,
+            account,
+            TaskOutcome::Completed(br#"{"id":"owner123","username":"Owner"}"#.to_vec()),
+        );
+
+        let retry = app
+            .tasks
+            .iter()
+            .find_map(|(task, pending)| matches!(pending, Pending::AccountRetry).then_some(*task))
+            .expect("credential recheck");
+        app.on_task(&mut context, retry, TaskOutcome::Completed(Vec::new()));
+
+        assert!(matches!(app.account, AccountState::Ready(_)));
+        let account = app
+            .tasks
+            .iter()
+            .find_map(|(task, pending)| matches!(pending, Pending::Account).then_some(*task))
+            .expect("account probe");
+        app.on_task(
+            &mut context,
+            account,
+            TaskOutcome::Failed(kobo_sdk::TaskError::NoCredential),
+        );
+
+        assert!(matches!(app.account, AccountState::Missing));
+        assert!(format!("{:?}", app.play_screen()).contains("Offline"));
     }
 
     #[test]
