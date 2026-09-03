@@ -53,6 +53,10 @@ jobs:
           CC_armv7_unknown_linux_musleabihf: arm-linux-gnueabihf-gcc
           CFLAGS_armv7_unknown_linux_musleabihf: -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0
       - name: Require versions for changed app packages
+        # This workflow runs on every push, tags included, and a tag belongs to
+        # no app catalog channel. The gate is about what a merge will publish,
+        # and nothing merges into a tag.
+        if: github.ref_type == 'branch'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

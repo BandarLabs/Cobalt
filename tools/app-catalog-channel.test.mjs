@@ -47,6 +47,40 @@ test("branches outside the release channels are checked against beta", () => {
   );
 });
 
+test("a tag refuses to guess a channel from its name", () => {
+  assert.throws(
+    () =>
+      catalogReleaseTag({ eventName: "push", refName: "v0.3.5", refType: "tag" }),
+    /push is on a tag/
+  );
+  // The name of a channel release tag looks resolvable and is not: it says
+  // which catalog was published, not which branch this tree came from.
+  assert.throws(
+    () =>
+      catalogReleaseTag({
+        eventName: "push",
+        refName: "app-catalog-beta",
+        refType: "tag"
+      }),
+    /push is on a tag/
+  );
+  assert.equal(
+    catalogReleaseTag({ eventName: "push", refName: "beta", refType: "branch" }),
+    "app-catalog-beta"
+  );
+  // A pull request reads its base branch, which is a branch whatever ref the
+  // merge commit was built from.
+  assert.equal(
+    catalogReleaseTag({
+      eventName: "pull_request",
+      baseRef: "main",
+      refName: "1234/merge",
+      refType: "tag"
+    }),
+    "app-catalog"
+  );
+});
+
 test("an event that names no branch refuses to guess a channel", () => {
   assert.throws(
     () => catalogReleaseTag({ eventName: "pull_request", baseRef: "", refName: "1/merge" }),
