@@ -634,28 +634,13 @@ impl Lichess {
         reason = "one declarative screen keeps all account, challenge, and ongoing-game states visible"
     )]
     fn play_screen(&self) -> Screen {
-        let mut screen = ScreenBuilder::new("lichess-play").top_bar("Play");
+        let mut screen = ScreenBuilder::new("lichess-play").top_bar("Account/Games");
         screen = match &self.account {
-            AccountState::Unknown => screen.text("Open Play to validate the named Lichess secret."),
-            AccountState::Checking => screen.activity("Validating Lichess account", None),
-            AccountState::Ready(account) => {
-                screen.secondary(format!("Signed in as {}", account.username))
-            }
-            AccountState::Missing => screen
-                .banner(
-                    BannerLevel::Attention,
-                    "No secret named lichess is installed.",
-                )
-                .text("Install it with kobo secret set lichess. The token is never shown on this screen."),
-            AccountState::Invalid => screen
-                .banner(
-                    BannerLevel::Attention,
-                    "The Lichess token is invalid, expired, or lacks Board API access.",
-                )
-                .text("Replace the named secret lichess with a token granting board:play."),
-            AccountState::Failed(message) => {
-                screen.banner(BannerLevel::Attention, message)
-            }
+            AccountState::Unknown | AccountState::Missing => screen.secondary("Offline"),
+            AccountState::Checking => screen.activity("Checking account", None),
+            AccountState::Ready(account) => screen.secondary(account.username.clone()),
+            AccountState::Invalid => screen.banner(BannerLevel::Attention, "Token rejected"),
+            AccountState::Failed(message) => screen.banner(BannerLevel::Attention, message),
         };
         if let Some(notice) = &self.notice {
             screen = screen.banner(BannerLevel::Attention, notice);
@@ -706,39 +691,16 @@ impl Lichess {
                 Glyph::Grid,
             )]);
         }
-        let ready = self.seek_ready();
         screen
             .button_with_state(
-                "quick-pair",
-                "Quick pair · Rated 10+0",
-                if ready {
-                    ControlState::Enabled
-                } else {
-                    ControlState::Disabled
-                },
-            )
-            .button_with_state(
                 "refresh-play",
-                "Refresh account and games",
+                "Refresh",
                 if self
                     .has_pending(|pending| matches!(pending, Pending::Account | Pending::Playing))
                 {
                     ControlState::Disabled
                 } else {
                     ControlState::Enabled
-                },
-            )
-            .secondary(
-                if let Some(remaining) = self
-                    .seek_rate_remaining()
-                    .filter(|remaining| *remaining > 0)
-                {
-                    format!("Pairing is rate-limited for {remaining}s.")
-                } else if matches!(self.account, AccountState::Ready(_)) && !self.event_open {
-                    "Preparing the event stream before pairing.".to_owned()
-                } else {
-                    "Closing a pending seek cancels it. It is never replayed automatically."
-                        .to_owned()
                 },
             )
             .build()
@@ -751,36 +713,18 @@ impl Lichess {
             return ScreenBuilder::new("lichess-pairing-candidate")
                 .top_bar("Game started")
                 .heading(format!("vs {}", candidate.opponent))
-                .text(format!(
-                    "The account event stream is global. Confirm this new rated {clock} {} game before Cobalt opens its board.",
-                    preset.speed_label()
-                ))
-                .primary_button("open-seek-candidate", "Open this game")
-                .buttons([
-                    ("keep-seeking", "Keep waiting"),
-                    ("cancel-seek", "Cancel pairing"),
-                ])
+                .secondary(format!("{clock} {} · Rated", preset.speed_label()))
+                .primary_button("open-seek-candidate", "Open game")
+                .buttons([("keep-seeking", "Keep waiting"), ("cancel-seek", "Cancel")])
                 .build();
         }
         let reconciling =
             self.has_pending(|pending| matches!(pending, Pending::SeekReconcile { .. }));
         let mut screen = ScreenBuilder::new("lichess-pairing")
-            .top_bar("Quick pairing")
-            .heading(format!("Rated {clock} {}", preset.speed_label()))
-            .activity(
-                if reconciling {
-                    "Checking current games"
-                } else {
-                    "Waiting for Lichess"
-                },
-                None,
-            )
-            .secondary(self.clock.waited_words())
-            .text(if reconciling {
-                "The seek transport ended. Cobalt is reconciling the selected preset against a fresh current-game snapshot before reporting failure."
-            } else {
-                "The account event stream was opened before this seek. Keep this screen open; Cancel closes the one pending seek."
-            });
+            .top_bar("Pairing")
+            .heading(format!("{clock} {} · Rated", preset.speed_label()))
+            .activity(if reconciling { "Checking" } else { "Waiting" }, None)
+            .secondary(self.clock.waited_words());
         if let Some(notice) = &self.notice {
             screen = screen.banner(BannerLevel::Attention, notice);
         }
@@ -1758,7 +1702,7 @@ impl Lichess {
         {
             return;
         }
-        self.notice = Some("The seek ended. Checking a fresh current-game snapshot.".to_owned());
+        self.notice = Some("Checking games.".to_owned());
         if self
             .spawn(
                 context,
@@ -1826,11 +1770,7 @@ impl Lichess {
             self.seek_baseline.clear();
             self.clock.stop(context);
             self.route = Route::Play;
-            self.notice = Some(format!(
-                "No new rated {} {} game appeared after current-game reconciliation. The seek was not replayed.",
-                preset.label(),
-                preset.speed_label()
-            ));
+            self.notice = Some("No match.".to_owned());
         }
     }
 
@@ -2878,8 +2818,7 @@ impl Lichess {
                         context,
                         generation,
                         preset,
-                        "The seek connection ended; waiting briefly for gameStart. It was not replayed."
-                            .to_owned(),
+                        "Waiting for match.".to_owned(),
                     );
                 } else if self.seek_generation == generation {
                     self.seek_task = None;
@@ -3397,8 +3336,7 @@ impl Lichess {
                 self.selected_preset = Some(SeekPreset::Rapid10_5);
                 self.tasks
                     .insert(TaskId(998), Pending::SeekReconcile { generation: 1 });
-                self.notice =
-                    Some("The seek ended. Checking a fresh current-game snapshot.".to_owned());
+                self.notice = Some("Checking games.".to_owned());
                 self.route = Route::Pairing;
             }
             "challenge" => {
@@ -5539,11 +5477,7 @@ mod tests {
         assert_eq!(app.route, Route::Play);
         assert!(!app.seek_waiting);
         assert!(app.selected_preset.is_none());
-        assert!(app
-            .notice
-            .as_deref()
-            .unwrap_or_default()
-            .contains("after current-game reconciliation"));
+        assert_eq!(app.notice.as_deref(), Some("No match."));
     }
 
     #[test]
@@ -6089,7 +6023,7 @@ mod tests {
         );
         assert!(matches!(app.account, AccountState::Missing));
         assert!(app.notice.is_none());
-        assert!(format!("{:?}", app.play_screen()).contains("No secret named lichess"));
+        assert!(format!("{:?}", app.play_screen()).contains("Offline"));
         app.tasks.insert(kobo_sdk::TaskId(8), Pending::Account);
         app.on_task(
             &mut context,
