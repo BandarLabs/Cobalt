@@ -9,13 +9,13 @@ distinguish it is a permission to enumerate and start other applications. If
 the launcher cannot be expressed with the public SDK, the SDK is not good
 enough yet, so keeping it honest here is the point.
 
-| Folio desk | Apps destination |
+| Home | Apps destination |
 | --- | --- |
-| ![Cobalt Folio desk with an honest Continue tile, featured cards, and labelled navigation](screenshots/home.png) | ![The full application catalogue in a dense paged grid, with a position rail and labelled navigation](screenshots/more-apps.png) |
+| ![Cobalt Home with a compact resume card and direct app grid](screenshots/home.png) | ![The full application catalogue in a dense paged grid](screenshots/more-apps.png) |
 
 *Captured from a Kobo Clara BW over Wi-Fi with `kobo shot --device`.*
 
-## The Folio desk and its way back
+## Home and the way back
 
 Returning to the stock reader is a first-class, always-visible destination
 rather than something hidden in a menu. The reader is not an application and
@@ -23,10 +23,9 @@ cannot be one: it owns the framebuffer, input, power and Wi-Fi while it runs,
 and its lifecycle belongs to vendor init. Showing it again means ending this
 session and restarting it.
 
-Folio keeps it as the fourth labelled destination, beside Home, Apps, and
-Settings. The desk only reports continuation state the launcher actually owns:
-a recently opened app is marked left open; first use directs the reader to the
-App Store instead of inventing a history.
+Home keeps it as the fourth destination, beside Home, Apps, and Settings. A
+recently opened app gets a compact Resume mark; otherwise Home opens directly
+onto the app grid. Apps remains the complete paged catalogue.
 
 The transient Starting screen uses a centered content-width Back action. Its
 navigation bar remains full-width because destinations, unlike one-off verbs,
