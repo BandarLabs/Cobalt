@@ -396,10 +396,10 @@ impl Lichess {
         }
         match self.account {
             AccountState::Unknown | AccountState::Missing | AccountState::Invalid => {
-                "Connect in Account/Games".to_owned()
+                "Offline".to_owned()
             }
             AccountState::Checking => "Checking account".to_owned(),
-            AccountState::Failed(_) => "Check Account/Games".to_owned(),
+            AccountState::Failed(_) => "Account error".to_owned(),
             AccountState::Ready(_) if !self.event_open => "Connecting".to_owned(),
             AccountState::Ready(_) if !self.playing_ready => "Refreshing games".to_owned(),
             AccountState::Ready(_) if self.game.as_ref().is_some_and(Game::active) => {
@@ -1608,7 +1608,7 @@ impl Lichess {
             self.clear_seek_rate_limit(context);
         }
         if !self.seek_ready() {
-            self.notice = Some("Connect in Account/Games.".to_owned());
+            self.notice = Some("Offline.".to_owned());
             return;
         }
         self.seek_generation = self.seek_generation.wrapping_add(1);
@@ -4231,7 +4231,7 @@ mod tests {
     fn unready_home_uses_one_status_and_safe_tiles_without_close_accessories() {
         let mut runner = AppRunner::new(Lichess::default());
         let screen = painted(runner.start()).expect("home");
-        assert!(format!("{screen:?}").contains("Connect in Account/Games"));
+        assert!(format!("{screen:?}").contains("Offline"));
         let tiles = declared_tiles(&screen.nodes);
         assert!(tiles.iter().all(|(action, _, state, badge_empty)| {
             let utility = *action == action_id("play") || *action == action_id("puzzles");
