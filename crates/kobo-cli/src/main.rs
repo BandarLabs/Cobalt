@@ -1355,7 +1355,10 @@ fn build_device(device: bool) -> Result<(), String> {
     run_status(&mut command, "cargo build")?;
     if device {
         for name in DEVICE_PACKAGES {
-            let binary = Path::new("target/armv7-unknown-linux-musleabihf/release").join(name);
+            let binary = std::env::var_os("CARGO_TARGET_DIR")
+                .map_or_else(|| PathBuf::from("target"), PathBuf::from)
+                .join("armv7-unknown-linux-musleabihf/release")
+                .join(name);
             verify_arm_elf(&binary)?;
             println!(
                 "verified static ARMv7 hard-float binary: {}",
@@ -2970,7 +2973,10 @@ fn build_package_bytes() -> Result<BuiltPackage, String> {
             &mut device_build_command(name, *features)?,
             format!("cargo build {name}"),
         )?;
-        let binary = Path::new("target/armv7-unknown-linux-musleabihf/release").join(name);
+        let binary = std::env::var_os("CARGO_TARGET_DIR")
+            .map_or_else(|| PathBuf::from("target"), PathBuf::from)
+            .join("armv7-unknown-linux-musleabihf/release")
+            .join(name);
         // The same check the device build already applies, repeated here
         // because this is the artifact somebody else's device will run.
         verify_arm_elf(&binary)?;
