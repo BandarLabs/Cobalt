@@ -9,6 +9,7 @@
 //! than the device it asked for.
 
 pub mod credentials;
+pub mod library;
 pub mod services;
 pub mod shelf;
 pub mod store;
@@ -57,6 +58,19 @@ pub enum Capability {
     Notifications,
     /// Read and write files in a shared, user-visible folder.
     SharedFiles,
+    /// List the documents already on the device, and read one of them.
+    ///
+    /// Read-only, and confined to the places books actually live: the stock
+    /// reader's own folders, Cobalt's designated one, and the shelves other
+    /// applications publish their downloads to. It exists because a shelf is
+    /// private to the application that filled it, which is right for an
+    /// application's own data and wrong for a book: a book the owner already
+    /// has is theirs, not gutenbird's, and a library that cannot see it is a
+    /// library that makes them download it twice.
+    ///
+    /// It does not grant the filesystem. The roots are fixed in the runtime,
+    /// an application never names a path, and nothing here can write.
+    Library,
     /// Watch the hall sensor behind the bezel: whether a magnet is near it,
     /// and when that changes.
     ///
@@ -98,6 +112,7 @@ impl Capability {
             Self::SleepScreen => "sleep-screen",
             Self::Notifications => "notifications",
             Self::SharedFiles => "shared-files",
+            Self::Library => "library",
             Self::CoverSensor => "cover-sensor",
             Self::Shell => "shell",
         }
@@ -114,7 +129,7 @@ impl Capability {
     }
 
     /// Every capability, in declaration order.
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 17] = [
         Self::Network,
         Self::BackgroundNetwork,
         Self::HoldWifi,
@@ -129,6 +144,7 @@ impl Capability {
         Self::SleepScreen,
         Self::Notifications,
         Self::SharedFiles,
+        Self::Library,
         Self::CoverSensor,
         Self::Shell,
     ];
