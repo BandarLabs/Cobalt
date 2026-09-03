@@ -59,6 +59,7 @@ pub fn apply(url: &str, sha256: &str) -> Result<(), DeviceError> {
         kobo_protocol::TaskError::NoCredential | kobo_protocol::TaskError::Unauthorized => {
             DeviceError::Authentication
         }
+        kobo_protocol::TaskError::RateLimited(_) => DeviceError::Unreachable,
     })?;
     install(&archive, sha256, Path::new(ADDS))
 }

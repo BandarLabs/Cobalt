@@ -73,6 +73,7 @@ mod autoupdate;
 mod blackbox;
 #[cfg(feature = "device-write")]
 mod device;
+mod syncthing;
 mod update;
 
 fn main() -> ExitCode {
@@ -133,6 +134,12 @@ fn run(arguments: &[String]) -> Result<(), Box<dyn Error>> {
                 .map_err(|error| format!("app link: {error}"))?
         );
         return Ok(());
+    }
+    if arguments
+        .first()
+        .is_some_and(|argument| argument == "--syncthing")
+    {
+        return syncthing::command(&arguments[1..]).map_err(Into::into);
     }
     Err("usage: kobod [--sim-socket PATH --frame PATH] [--present APP] [--fetch URL BYTES] [--key-test SECONDS] [--app-link status|unpair]".into())
 }
@@ -505,6 +512,18 @@ fn host_dictionary_directory() -> PathBuf {
     )
 }
 
+fn host_app_data_root(name: &str) -> PathBuf {
+    std::env::temp_dir().join("cobalt-host-data").join(name)
+}
+
+fn valid_app_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 32
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+}
+
 #[allow(
     clippy::too_many_lines,
     reason = "one arm per message type; splitting the dispatch hides it"
@@ -515,6 +534,9 @@ fn serve_application(
     name: &str,
     metrics: kobo_ui::DisplayMetrics,
 ) -> Result<(), Box<dyn Error>> {
+    if !valid_app_name(name) {
+        return Err("SDK application name is not a safe data directory name".into());
+    }
     // In simulation the daemon owns no hardware, so every hardware-touching
     // request is answered honestly rather than pretended.
     let mut services = DeviceServices::simulated();
@@ -531,8 +553,9 @@ fn serve_application(
     // runtime uses. Without the grant the backend could never run, so this
     // path claimed to be the real runtime while refusing every request an
     // application made.
+    let app_data_root = host_app_data_root(name);
     let tasks = std::sync::Arc::new(std::sync::Mutex::new(
-        TaskRunner::simulated(std::env::temp_dir())
+        TaskRunner::simulated(&app_data_root)
             .with_fetch(std::sync::Arc::new(kobo_net::fetch_from))
             .with_post(std::sync::Arc::new(kobo_net::post))
             .with_capabilities([kobo_policy::Capability::Network]),
@@ -550,8 +573,9 @@ fn serve_application(
         std::thread::spawn(move || deliver_outcomes(&draining, &writer));
     }
     let store = kobo_policy::store::Store::new(std::env::temp_dir().join("cobalt-host-state"));
-    let shelf = kobo_policy::shelf::Shelf::new(std::env::temp_dir().join("cobalt-host-data"));
+    let shelf = kobo_policy::shelf::Shelf::new(app_data_root);
     let mut pictures = kobo_ui::PictureCache::default();
+    let mut orientation = kobo_ui::Orientation::Portrait;
     loop {
         let frame = kobo_protocol::read_from(stream)?;
         match frame.message {
@@ -559,8 +583,9 @@ fn serve_application(
                 // Per screen, as the device does it: a book is drawn
                 // without a band and everything else with one.
                 let chrome = simulated_chrome(name, &screen);
-                write_screen(frame_path, screen, &chrome, name, &pictures)?;
+                write_screen(frame_path, screen, &chrome, name, &pictures, orientation)?;
             }
+            Message::SetOrientation(requested) => orientation = requested,
             Message::PutPicture {
                 handle,
                 width,
@@ -797,6 +822,7 @@ fn write_screen(
     chrome: &kobo_ui::Chrome,
     name: &str,
     pictures: &dyn kobo_ui::Pictures,
+    orientation: kobo_ui::Orientation,
 ) -> Result<(), Box<dyn Error>> {
     let mut surface = Surface::new(
         usize::try_from(crate::device_metrics().width)?,
@@ -815,7 +841,15 @@ fn write_screen(
     // the prose keeps the reader's own size either way.
     kobo_ui::set_text_scale(metrics.text_scale);
     kobo_ui::set_reading_scale(screen.text_scale.unwrap_or(metrics.text_scale));
-    kobo_ui::render_all(&screen, &metrics, chrome, pictures, &mut surface, None);
+    kobo_ui::render_oriented(
+        &screen,
+        &metrics,
+        chrome,
+        pictures,
+        &mut surface,
+        None,
+        orientation,
+    );
 
     let temporary = path.with_extension(format!("raw.tmp-{}", std::process::id()));
     let mut file = OpenOptions::new()
@@ -882,6 +916,16 @@ impl Drop for SocketGuard {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn host_file_task_roots_are_private_per_app() {
+        assert_ne!(
+            super::host_app_data_root("nonograms"),
+            super::host_app_data_root("panels")
+        );
+        assert!(super::valid_app_name("nonograms"));
+        assert!(!super::valid_app_name("../panels"));
+    }
 
     #[test]
     fn an_elipsa_session_keeps_its_verified_metrics_without_another_probe() {
