@@ -521,6 +521,12 @@ fn add_span(accumulator: &mut [i64], from: i64, to: i64) {
 /// a square box, which is exactly what this rasteriser already draws.
 #[must_use]
 pub fn shapes(glyph: Glyph) -> Vec<Shape> {
+    if let Some(shapes) = chess_shapes(glyph) {
+        return shapes;
+    }
+    if let Some(shapes) = game_piece_shapes(glyph) {
+        return shapes;
+    }
     tabler::outline(glyph)
         .iter()
         .map(|commands| Shape::Stroke {
@@ -528,6 +534,166 @@ pub fn shapes(glyph: Glyph) -> Vec<Shape> {
             width: WEIGHT,
         })
         .collect()
+}
+
+fn game_piece_shapes(glyph: Glyph) -> Option<Vec<Shape>> {
+    let (black, king) = match glyph {
+        Glyph::BlackDisc => (true, false),
+        Glyph::WhiteDisc => (false, false),
+        Glyph::BlackDraughtsKing => (true, true),
+        Glyph::WhiteDraughtsKing => (false, true),
+        Glyph::BlackDraughtsMan => (true, false),
+        Glyph::WhiteDraughtsMan => (false, false),
+        Glyph::MorrisPoint => {
+            return Some(vec![Shape::Fill(Path::circle(500, 500, 55))]);
+        }
+        Glyph::MorrisLegalPoint => {
+            return Some(vec![Shape::Stroke {
+                path: Path::circle(500, 500, 175),
+                width: 54,
+            }]);
+        }
+        _ => return None,
+    };
+    let paths = if king {
+        vec![Path::circle(500, 590, 270), Path::circle(500, 385, 215)]
+    } else {
+        vec![Path::circle(500, 500, 300)]
+    };
+    Some(
+        paths
+            .into_iter()
+            .map(|path| {
+                if black {
+                    Shape::Fill(path)
+                } else {
+                    Shape::Stroke { path, width: 64 }
+                }
+            })
+            .collect(),
+    )
+}
+
+fn chess_shapes(glyph: Glyph) -> Option<Vec<Shape>> {
+    let (piece, black) = match glyph {
+        Glyph::ChessWhiteKing => (0, false),
+        Glyph::ChessWhiteQueen => (1, false),
+        Glyph::ChessWhiteRook => (2, false),
+        Glyph::ChessWhiteBishop => (3, false),
+        Glyph::ChessWhiteKnight => (4, false),
+        Glyph::ChessWhitePawn => (5, false),
+        Glyph::ChessBlackKing => (0, true),
+        Glyph::ChessBlackQueen => (1, true),
+        Glyph::ChessBlackRook => (2, true),
+        Glyph::ChessBlackBishop => (3, true),
+        Glyph::ChessBlackKnight => (4, true),
+        Glyph::ChessBlackPawn => (5, true),
+        _ => return None,
+    };
+    let mut paths = match piece {
+        0 => king_paths(),
+        1 => queen_paths(),
+        2 => rook_paths(),
+        3 => bishop_paths(),
+        4 => knight_paths(),
+        _ => pawn_paths(),
+    };
+    paths.push(Path::rounded(170, 790, 660, 120, 35));
+    Some(
+        paths
+            .into_iter()
+            .map(|path| {
+                if black {
+                    Shape::Fill(path)
+                } else {
+                    Shape::Stroke { path, width: 48 }
+                }
+            })
+            .collect(),
+    )
+}
+
+fn body() -> Path {
+    Path::new()
+        .move_to(350, 470)
+        .line_to(650, 470)
+        .line_to(735, 780)
+        .line_to(265, 780)
+        .close()
+}
+
+fn king_paths() -> Vec<Path> {
+    vec![
+        Path::rounded(455, 90, 90, 285, 18),
+        Path::rounded(360, 185, 280, 90, 18),
+        Path::circle(500, 405, 105),
+        body(),
+    ]
+}
+
+fn queen_paths() -> Vec<Path> {
+    vec![
+        Path::circle(280, 245, 48),
+        Path::circle(425, 175, 48),
+        Path::circle(575, 175, 48),
+        Path::circle(720, 245, 48),
+        Path::new()
+            .move_to(255, 290)
+            .line_to(745, 290)
+            .line_to(655, 485)
+            .line_to(345, 485)
+            .close(),
+        body(),
+    ]
+}
+
+fn rook_paths() -> Vec<Path> {
+    vec![
+        Path::new()
+            .move_to(260, 175)
+            .line_to(385, 175)
+            .line_to(385, 270)
+            .line_to(615, 270)
+            .line_to(615, 175)
+            .line_to(740, 175)
+            .line_to(740, 390)
+            .line_to(260, 390)
+            .close(),
+        Path::rounded(325, 390, 350, 380, 25),
+    ]
+}
+
+fn bishop_paths() -> Vec<Path> {
+    vec![
+        Path::new()
+            .move_to(500, 120)
+            .quad_to(700, 300, 500, 470)
+            .quad_to(300, 300, 500, 120)
+            .close(),
+        body(),
+    ]
+}
+
+fn knight_paths() -> Vec<Path> {
+    vec![Path::new()
+        .move_to(270, 775)
+        .line_to(320, 610)
+        .line_to(420, 500)
+        .line_to(335, 410)
+        .line_to(405, 220)
+        .line_to(590, 105)
+        .line_to(720, 225)
+        .line_to(665, 310)
+        .line_to(755, 465)
+        .line_to(650, 535)
+        .line_to(560, 430)
+        .line_to(500, 520)
+        .line_to(700, 775)
+        .close()]
+}
+
+fn pawn_paths() -> Vec<Path> {
+    vec![Path::circle(500, 285, 145), body()]
 }
 
 /// The back control, drawn rather than typed.
@@ -787,6 +953,30 @@ mod tests {
             .filter(|&&value| value > 0 && value < 255)
             .count();
         assert!(partial > 40, "only {partial} grey pixels");
+    }
+
+    #[test]
+    fn chess_pieces_are_vector_art_with_distinct_sides() {
+        let white = inked(Glyph::ChessWhiteQueen, 64);
+        let black = inked(Glyph::ChessBlackQueen, 64);
+        assert!(white > 200, "white queen is too faint: {white}");
+        assert!(black > white, "black queen must read darker than white");
+        for glyph in [
+            Glyph::ChessWhiteKing,
+            Glyph::ChessWhiteQueen,
+            Glyph::ChessWhiteRook,
+            Glyph::ChessWhiteBishop,
+            Glyph::ChessWhiteKnight,
+            Glyph::ChessWhitePawn,
+            Glyph::ChessBlackKing,
+            Glyph::ChessBlackQueen,
+            Glyph::ChessBlackRook,
+            Glyph::ChessBlackBishop,
+            Glyph::ChessBlackKnight,
+            Glyph::ChessBlackPawn,
+        ] {
+            assert!(inked(glyph, 64) > 150, "{glyph:?} did not render");
+        }
     }
 
     #[test]
