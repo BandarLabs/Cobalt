@@ -77,6 +77,9 @@ struct Paperterm {
     sequence: u64,
     pairing_generation: u64,
     grid_generation: u64,
+    lease: Option<u64>,
+    lease_task: Option<TaskId>,
+    lease_pairing_generation: u64,
     hello: Option<TaskId>,
     hello_grid: Option<(u16, u16)>,
     hello_pairing_generation: u64,
@@ -88,7 +91,8 @@ struct Paperterm {
     nap_pairing_generation: u64,
     send: Option<TaskId>,
     send_pairing_generation: u64,
-    send_queue: VecDeque<u8>,
+    send_session: Option<u64>,
+    send_queue: VecDeque<Vec<u8>>,
     keys: TerminalKeys,
     failure: Option<String>,
 }
@@ -109,6 +113,9 @@ impl Default for Paperterm {
             sequence: 0,
             pairing_generation: 0,
             grid_generation: 0,
+            lease: None,
+            lease_task: None,
+            lease_pairing_generation: 0,
             hello: None,
             hello_grid: None,
             hello_pairing_generation: 0,
@@ -120,6 +127,7 @@ impl Default for Paperterm {
             nap_pairing_generation: 0,
             send: None,
             send_pairing_generation: 0,
+            send_session: None,
             send_queue: VecDeque::new(),
             keys: TerminalKeys::new(),
             failure: None,
@@ -242,14 +250,33 @@ impl Paperterm {
         self.rows.resize(usize::from(grid.1), String::new());
         self.viewport = grid;
     }
+    fn acquire_lease(&mut self, context: &mut Context) {
+        if self.lease.is_some() || self.lease_task.is_some() {
+            return;
+        }
+        self.lease_task = context.spawn_retrying(Task::Fetch {
+            url: format!("https://{}/lease?token={}", self.address, self.code),
+            offset: 0,
+            max_bytes: MAX_REPLY_BYTES,
+            credential: None,
+            headers: Vec::new(),
+        });
+        if self.lease_task.is_some() {
+            self.lease_pairing_generation = self.pairing_generation;
+        }
+    }
     fn hello(&mut self, context: &mut Context) {
         if self.hello.is_some() {
             return;
         }
+        let Some(lease) = self.lease else {
+            self.acquire_lease(context);
+            return;
+        };
         let (columns, rows) = self.grid(context);
         self.retain_grid((columns, rows));
         let url = format!(
-            "https://{}/hello?token={}&grid={}x{}&generation={}",
+            "https://{}/hello?token={}&grid={}x{}&lease={lease}&generation={}",
             self.address, self.code, columns, rows, self.grid_generation
         );
         self.hello = context.spawn_retrying(Task::Fetch {
@@ -278,11 +305,16 @@ impl Paperterm {
         self.hello(context);
     }
     fn poll(&mut self, context: &mut Context) {
-        if self.poll.is_some() || self.hello.is_some() || self.session.is_none() {
+        if self.poll.is_some()
+            || self.hello.is_some()
+            || self.session.is_none()
+            || self.lease.is_none()
+        {
             return;
         }
+        let lease = self.lease.unwrap_or(0);
         let url = format!(
-            "https://{}/screen?token={}&session={}&seq={}&wait={LONGEST_POLL_SECONDS}&generation={}",
+            "https://{}/screen?token={}&session={}&seq={}&wait={LONGEST_POLL_SECONDS}&lease={lease}&generation={}",
             self.address,
             self.code,
             self.session.unwrap_or(0),
@@ -331,22 +363,40 @@ impl Paperterm {
         if self.session.is_none() {
             return;
         }
-        self.send_queue.extend(bytes);
+        if bytes.is_empty() || bytes.len() > MAX_KEY_BYTES {
+            if self.set_failure(INPUT_REFUSED) {
+                self.show(context);
+            }
+            return;
+        }
+        self.send_queue.push_back(bytes.to_vec());
         self.flush_send(context);
     }
     fn flush_send(&mut self, context: &mut Context) {
         let Some(session) = self.session else { return };
+        let Some(lease) = self.lease else { return };
         if self.send.is_some() || self.send_queue.is_empty() {
             return;
         }
-        let count = self.send_queue.len().min(MAX_KEY_BYTES);
-        let bytes = self.send_queue.drain(..count).collect::<Vec<_>>();
+        let mut actions = Vec::new();
+        let mut bytes = Vec::new();
+        while let Some(action) = self.send_queue.front() {
+            if bytes.len() + action.len() > MAX_KEY_BYTES {
+                break;
+            }
+            let action = self.send_queue.pop_front().unwrap_or_default();
+            bytes.extend_from_slice(&action);
+            actions.push(action);
+        }
         let body = format!(
             r#"{{"session":{session},"bytes_b64":"{}"}}"#,
             base64(&bytes)
         );
         self.send = context.spawn(Task::Post {
-            url: format!("https://{}/keys?token={}", self.address, self.code),
+            url: format!(
+                "https://{}/keys?token={}&lease={lease}",
+                self.address, self.code
+            ),
             body,
             content_type: "application/json".to_owned(),
             credential: None,
@@ -355,14 +405,22 @@ impl Paperterm {
         });
         if self.send.is_some() {
             self.send_pairing_generation = self.pairing_generation;
+            self.send_session = Some(session);
         } else {
-            for byte in bytes.into_iter().rev() {
-                self.send_queue.push_front(byte);
+            for action in actions.into_iter().rev() {
+                self.send_queue.push_front(action);
             }
             if self.set_failure(INPUT_REFUSED) {
                 self.show(context);
             }
         }
+    }
+    fn clear_send(&mut self, context: &mut Context) {
+        if let Some(task) = self.send.take() {
+            context.cancel(task);
+        }
+        self.send_session = None;
+        self.send_queue.clear();
     }
     fn typed(&mut self, context: &mut Context, action: ActionId) -> bool {
         let Some(pressed) = self.keyboard.press(action) else {
@@ -384,6 +442,14 @@ impl Paperterm {
         }
         self.show(context);
         true
+    }
+    fn parse_lease(bytes: &[u8]) -> Option<u64> {
+        kobo_json::parse(std::str::from_utf8(bytes).unwrap_or(""))
+            .ok()?
+            .get("lease")
+            .and_then(kobo_json::Value::as_i64)
+            .and_then(|lease| u64::try_from(lease).ok())
+            .filter(|lease| *lease != 0)
     }
     fn parse_hello(&mut self, bytes: &[u8]) -> bool {
         let Ok(value) = kobo_json::parse(std::str::from_utf8(bytes).unwrap_or("")) else {
@@ -468,6 +534,134 @@ impl Paperterm {
             changed = true;
         }
         Some(changed)
+    }
+    fn disconnect(&mut self, context: &mut Context, message: &str) {
+        self.clear_send(context);
+        self.session = None;
+        self.lease = None;
+        if self.set_failure(message) {
+            self.show(context);
+        }
+        self.retry(context);
+    }
+    fn handle_lease(&mut self, context: &mut Context, outcome: TaskOutcome) {
+        let current = self.lease_pairing_generation == self.pairing_generation;
+        self.lease_task = None;
+        if !current {
+            return;
+        }
+        match outcome {
+            TaskOutcome::Completed(bytes) => {
+                if let Some(lease) = Self::parse_lease(&bytes) {
+                    self.lease = Some(lease);
+                    self.grid_generation = 0;
+                    self.hello(context);
+                } else {
+                    if self.set_failure(PAIRING_REFUSED) {
+                        self.show(context);
+                    }
+                    self.retry(context);
+                }
+            }
+            TaskOutcome::Failed(_) => {
+                if self.set_failure(OFF_AIR) {
+                    self.show(context);
+                }
+                self.retry(context);
+            }
+            TaskOutcome::Cancelled => {}
+        }
+    }
+    fn handle_hello(&mut self, context: &mut Context, outcome: TaskOutcome) {
+        let current = self.hello_pairing_generation == self.pairing_generation
+            && self.hello_grid_generation == self.grid_generation;
+        self.hello = None;
+        let requested_grid = self.hello_grid.take();
+        if !current {
+            return;
+        }
+        match outcome {
+            TaskOutcome::Completed(bytes) => {
+                let previous_input = self.input;
+                let previous_keyboard_open = self.keyboard_open;
+                let previous_session = self.session;
+                if self.parse_hello(&bytes) {
+                    if self.session != previous_session {
+                        self.clear_send(context);
+                    }
+                    let repaint = self.clear_failure()
+                        || self.input != previous_input
+                        || self.keyboard_open != previous_keyboard_open;
+                    if repaint {
+                        self.show(context);
+                    }
+                    if requested_grid == Some(self.grid(context)) {
+                        if self.view != View::Ended {
+                            self.poll(context);
+                        }
+                    } else {
+                        self.grid_generation = self.grid_generation.saturating_add(1);
+                        self.hello(context);
+                    }
+                } else {
+                    self.disconnect(context, PAIRING_REFUSED);
+                }
+            }
+            TaskOutcome::Failed(_) => self.disconnect(context, OFF_AIR),
+            TaskOutcome::Cancelled => {}
+        }
+    }
+    fn handle_poll(&mut self, context: &mut Context, outcome: TaskOutcome) {
+        let current = self.poll_pairing_generation == self.pairing_generation
+            && self.poll_grid_generation == self.grid_generation;
+        self.poll = None;
+        if !current {
+            return;
+        }
+        match outcome {
+            TaskOutcome::Completed(bytes) => {
+                if let Some(content_changed) = self.parse_screen(&bytes) {
+                    let repaint = self.clear_failure() || content_changed;
+                    if repaint {
+                        self.show(context);
+                    }
+                }
+                if self.view != View::Ended {
+                    self.poll(context);
+                }
+            }
+            TaskOutcome::Failed(_) => self.disconnect(context, OFF_AIR),
+            TaskOutcome::Cancelled => {}
+        }
+    }
+    fn handle_nap(&mut self, context: &mut Context) {
+        let current = self.nap_pairing_generation == self.pairing_generation;
+        self.nap = None;
+        if !current {
+            return;
+        }
+        if self.session.is_some() {
+            self.poll(context);
+        } else if self.lease.is_some() {
+            self.hello(context);
+        } else {
+            self.acquire_lease(context);
+        }
+    }
+    fn handle_send(&mut self, context: &mut Context, outcome: &TaskOutcome) {
+        let current = self.send_pairing_generation == self.pairing_generation
+            && self.send_session.is_some()
+            && self.send_session == self.session;
+        self.send = None;
+        self.send_session = None;
+        if !current {
+            return;
+        }
+        if matches!(outcome, TaskOutcome::Completed(_)) {
+            self.flush_send(context);
+        } else if self.set_failure(INPUT_REFUSED) {
+            self.show(context);
+        }
     }
 }
 
@@ -570,6 +764,10 @@ impl KoboApp for Paperterm {
         if action == action_id(REPAIR) {
             self.pairing_generation = self.pairing_generation.saturating_add(1);
             self.grid_generation = 0;
+            self.lease = None;
+            if let Some(task) = self.lease_task.take() {
+                context.cancel(task);
+            }
             if let Some(task) = self.hello.take() {
                 context.cancel(task);
             }
@@ -579,11 +777,8 @@ impl KoboApp for Paperterm {
             if let Some(task) = self.nap.take() {
                 context.cancel(task);
             }
-            if let Some(task) = self.send.take() {
-                context.cancel(task);
-            }
+            self.clear_send(context);
             self.hello_grid = None;
-            self.send_queue.clear();
             self.keyboard = Keyboard::with_text(&self.address);
             self.keyboard_open = false;
             self.input = Input::None;
@@ -617,102 +812,16 @@ impl KoboApp for Paperterm {
         }
     }
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
-        if self.hello == Some(task) {
-            let current = self.hello_pairing_generation == self.pairing_generation
-                && self.hello_grid_generation == self.grid_generation;
-            self.hello = None;
-            let requested_grid = self.hello_grid.take();
-            if !current {
-                return;
-            }
-            match outcome {
-                TaskOutcome::Completed(bytes) => {
-                    let previous_input = self.input;
-                    let previous_keyboard_open = self.keyboard_open;
-                    if self.parse_hello(&bytes) {
-                        let repaint = self.clear_failure()
-                            || self.input != previous_input
-                            || self.keyboard_open != previous_keyboard_open;
-                        if repaint {
-                            self.show(context);
-                        }
-                        if requested_grid == Some(self.grid(context)) {
-                            if self.view != View::Ended {
-                                self.poll(context);
-                            }
-                        } else {
-                            self.grid_generation = self.grid_generation.saturating_add(1);
-                            self.hello(context);
-                        }
-                    } else {
-                        self.session = None;
-                        if self.set_failure(PAIRING_REFUSED) {
-                            self.show(context);
-                        }
-                        self.retry(context);
-                    }
-                }
-                TaskOutcome::Failed(_) => {
-                    self.session = None;
-                    if self.set_failure(OFF_AIR) {
-                        self.show(context);
-                    }
-                    self.retry(context);
-                }
-                TaskOutcome::Cancelled => {}
-            }
+        if self.lease_task == Some(task) {
+            self.handle_lease(context, outcome);
+        } else if self.hello == Some(task) {
+            self.handle_hello(context, outcome);
         } else if self.poll == Some(task) {
-            let current = self.poll_pairing_generation == self.pairing_generation
-                && self.poll_grid_generation == self.grid_generation;
-            self.poll = None;
-            if !current {
-                return;
-            }
-            match outcome {
-                TaskOutcome::Completed(bytes) => {
-                    if let Some(content_changed) = self.parse_screen(&bytes) {
-                        let repaint = self.clear_failure() || content_changed;
-                        if repaint {
-                            self.show(context);
-                        }
-                        if self.view != View::Ended {
-                            self.poll(context);
-                        }
-                    } else {
-                        self.poll(context);
-                    }
-                }
-                TaskOutcome::Failed(_) => {
-                    self.session = None;
-                    if self.set_failure(OFF_AIR) {
-                        self.show(context);
-                    }
-                    self.retry(context);
-                }
-                TaskOutcome::Cancelled => {}
-            }
+            self.handle_poll(context, outcome);
         } else if self.nap == Some(task) {
-            let current = self.nap_pairing_generation == self.pairing_generation;
-            self.nap = None;
-            if !current {
-                return;
-            }
-            if self.session.is_some() {
-                self.poll(context);
-            } else {
-                self.hello(context);
-            }
+            self.handle_nap(context);
         } else if self.send == Some(task) {
-            let current = self.send_pairing_generation == self.pairing_generation;
-            self.send = None;
-            if !current {
-                return;
-            }
-            if matches!(outcome, TaskOutcome::Completed(_)) {
-                self.flush_send(context);
-            } else if self.set_failure(INPUT_REFUSED) {
-                self.show(context);
-            }
+            self.handle_send(context, &outcome);
         }
     }
     fn on_foreground(&mut self, context: &mut Context) {
@@ -772,6 +881,7 @@ mod tests {
     const HOST_MAX_ROWS: u16 = 120;
 
     fn begin_hello(app: &mut Paperterm, context: &mut Context) -> TaskId {
+        app.lease.get_or_insert(1);
         app.hello(context);
         app.hello.expect("hello task")
     }
@@ -858,7 +968,7 @@ mod tests {
                 value: Some(b"host:9332\nabc123".to_vec()),
             },
         );
-        assert!(context.commands().iter().any(|command| matches!(command, Command::Spawn { work: Task::Fetch { url, .. }, .. } if url.contains("/hello?token=abc123&grid="))));
+        assert!(context.commands().iter().any(|command| matches!(command, Command::Spawn { work: Task::Fetch { url, .. }, .. } if url.contains("/lease?token=abc123"))));
     }
 
     #[test]
@@ -872,6 +982,12 @@ mod tests {
                 value: Some(b"host:9332\nabc123".to_vec()),
             },
         );
+        let lease_task = app.lease_task.expect("lease task");
+        app.on_task(
+            &mut context,
+            lease_task,
+            TaskOutcome::Completed(br#"{"lease":7}"#.to_vec()),
+        );
         let url = context
             .commands()
             .iter()
@@ -884,6 +1000,7 @@ mod tests {
             })
             .expect("initial hello");
         assert_host_valid(grid_from_url(url), "Clara BW hidden-keyboard hello");
+        assert!(url.contains("lease=7"));
 
         let hello = app.hello.expect("hello task");
         app.on_task(
@@ -983,6 +1100,7 @@ mod tests {
             rows: rows.clone(),
             cursor,
             session: Some(41),
+            lease: Some(1),
             sequence: 19,
             ..Paperterm::default()
         };
@@ -1076,6 +1194,7 @@ mod tests {
             view: View::Watching,
             input: Input::Full,
             session: Some(41),
+            lease: Some(1),
             ..Paperterm::default()
         };
         app.retain_grid(hidden);
@@ -1132,39 +1251,57 @@ mod tests {
     fn rapid_keys_are_queued_in_order_and_batched_to_the_host_limit() {
         let mut app = Paperterm {
             view: View::Watching,
-            input: Input::Full,
+            input: Input::Controls,
             session: Some(41),
+            lease: Some(1),
             ..Paperterm::default()
         };
         let mut context = Context::default();
-        app.send(&mut context, b"a");
+        for _ in 0..22 {
+            app.send(&mut context, b"\x1b[A");
+        }
         let first = app.send.expect("first key post");
-        let queued = (0..130)
-            .map(|index| b'b' + u8::try_from(index % 24).expect("letter"))
-            .collect::<Vec<_>>();
-        app.send(&mut context, &queued);
-        assert_eq!(app.send_queue.len(), queued.len());
+        assert_eq!(app.send_queue.len(), 21);
 
         app.on_task(&mut context, first, TaskOutcome::Completed(Vec::new()));
-        let second = app.send.expect("first queued batch");
+        let second = app.send.expect("whole-action queued batch");
         app.on_task(&mut context, second, TaskOutcome::Completed(Vec::new()));
-        let third = app.send.expect("second queued batch");
-        app.on_task(&mut context, third, TaskOutcome::Completed(Vec::new()));
-        let fourth = app.send.expect("final queued batch");
-        app.on_task(&mut context, fourth, TaskOutcome::Completed(Vec::new()));
 
         let payloads = posted_key_payloads(&context);
         assert_eq!(
             payloads,
-            vec![
-                base64(b"a"),
-                base64(&queued[..64]),
-                base64(&queued[64..128]),
-                base64(&queued[128..]),
-            ]
+            vec![base64(b"\x1b[A"), base64(&b"\x1b[A".repeat(21))]
         );
+        assert!(kobo_stream::permits_input(
+            kobo_stream::InputMode::Controls,
+            &b"\x1b[A".repeat(21)
+        ));
         assert!(app.send_queue.is_empty());
         assert!(app.send.is_none());
+    }
+
+    #[test]
+    fn mixed_full_input_actions_keep_escape_and_utf8_sequences_whole() {
+        let mut app = Paperterm {
+            view: View::Watching,
+            input: Input::Full,
+            session: Some(41),
+            lease: Some(1),
+            ..Paperterm::default()
+        };
+        let mut context = Context::default();
+        app.send(&mut context, b"x");
+        let first = app.send.expect("active key post");
+        for action in [b"\x1b[A".as_slice(), "界".as_bytes(), b"\r".as_slice()] {
+            app.send(&mut context, action);
+        }
+        app.on_task(&mut context, first, TaskOutcome::Completed(Vec::new()));
+        let second = app.send.expect("mixed action batch");
+        app.on_task(&mut context, second, TaskOutcome::Completed(Vec::new()));
+        assert_eq!(
+            posted_key_payloads(&context),
+            vec![base64(b"x"), base64(b"\x1b[A\xe7\x95\x8c\r")]
+        );
     }
 
     #[test]
@@ -1173,6 +1310,7 @@ mod tests {
             view: View::Watching,
             input: Input::Full,
             session: Some(41),
+            lease: Some(1),
             ..Paperterm::default()
         };
         let mut context = Context::default();
@@ -1185,11 +1323,55 @@ mod tests {
             TaskOutcome::Failed(kobo_sdk::TaskError::Unreachable),
         );
         assert_eq!(app.failure.as_deref(), Some(INPUT_REFUSED));
-        assert_eq!(app.send_queue.iter().copied().collect::<Vec<_>>(), b"b");
+        assert_eq!(app.send_queue, VecDeque::from([b"b".to_vec()]));
 
         app.send(&mut context, b"c");
         assert!(app.send.is_some());
         assert_eq!(posted_key_payloads(&context).last(), Some(&base64(b"bc")));
+    }
+
+    #[test]
+    fn session_change_cancels_active_send_and_discards_queued_old_input() {
+        let mut app = Paperterm {
+            view: View::Watching,
+            input: Input::Full,
+            session: Some(41),
+            lease: Some(1),
+            ..Paperterm::default()
+        };
+        let mut context = Context::default();
+        app.send(&mut context, b"old-active");
+        let old_send = app.send.expect("active old-session post");
+        app.send(&mut context, b"old-queued");
+        app.hello = Some(TaskId(9));
+        app.hello_grid = Some(app.grid(&context));
+        app.on_task(
+            &mut context,
+            TaskId(9),
+            TaskOutcome::Completed(br#"{"session":42,"input":"full"}"#.to_vec()),
+        );
+        assert_eq!(app.session, Some(42));
+        assert!(app.send.is_none());
+        assert!(app.send_queue.is_empty());
+        assert!(context.commands().contains(&Command::Cancel(old_send)));
+
+        app.on_task(&mut context, old_send, TaskOutcome::Completed(Vec::new()));
+        assert!(app.send.is_none());
+        app.send(&mut context, b"new");
+        let latest_body = context
+            .commands()
+            .iter()
+            .rev()
+            .find_map(|command| match command {
+                Command::Spawn {
+                    work: Task::Post { body, .. },
+                    ..
+                } => Some(body),
+                _ => None,
+            })
+            .expect("new-session post");
+        assert!(latest_body.contains(r#""session":42"#));
+        assert_eq!(posted_key_payloads(&context).last(), Some(&base64(b"new")));
     }
 
     #[test]
@@ -1231,6 +1413,7 @@ mod tests {
             view: View::Watching,
             address: "host:9332".to_owned(),
             code: "abc123".to_owned(),
+            lease: Some(1),
             session: Some(4),
             poll: Some(TaskId(9)),
             ..Paperterm::default()
@@ -1253,7 +1436,7 @@ mod tests {
         let nap = app.nap.expect("retry sleep");
         app.on_task(&mut context, nap, TaskOutcome::Completed(Vec::new()));
         assert!(context.commands().iter().any(
-            |command| matches!(command, Command::Spawn { work: Task::Fetch { url, .. }, .. } if url.contains("/hello?"))
+            |command| matches!(command, Command::Spawn { work: Task::Fetch { url, .. }, .. } if url.contains("/lease?"))
         ));
     }
 
@@ -1268,6 +1451,7 @@ mod tests {
             rows: rows.clone(),
             cursor,
             input: Input::Full,
+            lease: Some(1),
             session: Some(4),
             sequence: 27,
             poll: Some(TaskId(9)),
@@ -1285,6 +1469,12 @@ mod tests {
 
         let nap = app.nap.expect("retry sleep");
         app.on_task(&mut context, nap, TaskOutcome::Completed(Vec::new()));
+        let lease_task = app.lease_task.expect("reconnect lease");
+        app.on_task(
+            &mut context,
+            lease_task,
+            TaskOutcome::Completed(br#"{"lease":2}"#.to_vec()),
+        );
         let hello = app.hello.expect("reconnect hello");
         app.on_task(
             &mut context,
@@ -1305,6 +1495,8 @@ mod tests {
             view: View::Watching,
             address: "old-host:9332".to_owned(),
             code: "old123".to_owned(),
+            lease: Some(1),
+            grid_generation: 9,
             hello: Some(TaskId(9)),
             hello_grid: Some((80, 24)),
             poll: Some(TaskId(10)),
@@ -1316,7 +1508,9 @@ mod tests {
         let mut context = Context::default();
         app.on_action(&mut context, action_id(REPAIR));
         assert_eq!(app.pairing_generation, 1);
+        assert_eq!(app.grid_generation, 0);
         assert!(app.hello.is_none());
+        assert!(app.lease.is_none());
         assert!(app.poll.is_none());
         assert!(app.nap.is_none());
         assert!(app.send.is_none());
@@ -1328,10 +1522,10 @@ mod tests {
         app.code = "new123".to_owned();
         app.view = View::Watching;
         app.hello(&mut context);
-        let current = app.hello.expect("new pairing hello");
+        let lease_task = app.lease_task.expect("new pairing lease");
         assert!(context.commands().iter().any(
             |command| matches!(command, Command::Spawn { task, work: Task::Fetch { url, .. } }
-                if *task == current && url.contains("new-host:9332/hello"))
+                if *task == lease_task && url.contains("new-host:9332/lease"))
         ));
 
         app.on_task(
@@ -1340,10 +1534,20 @@ mod tests {
             TaskOutcome::Completed(br#"{"session":99,"input":"full"}"#.to_vec()),
         );
         app.on_task(&mut context, TaskId(11), TaskOutcome::Completed(Vec::new()));
-        assert_eq!(app.hello, Some(current));
+        assert_eq!(app.lease_task, Some(lease_task));
         assert_eq!(app.session, None);
         assert_eq!(app.address, "new-host:9332");
 
+        app.on_task(
+            &mut context,
+            lease_task,
+            TaskOutcome::Completed(br#"{"lease":2}"#.to_vec()),
+        );
+        let current = app.hello.expect("new pairing hello");
+        assert!(context.commands().iter().any(
+            |command| matches!(command, Command::Spawn { task, work: Task::Fetch { url, .. } }
+                if *task == current && url.contains("lease=2") && url.contains("generation=0"))
+        ));
         app.on_task(
             &mut context,
             current,
@@ -1381,6 +1585,7 @@ mod tests {
             address: "host:9332".to_owned(),
             code: "abc123".to_owned(),
             failure: Some(OFF_AIR.to_owned()),
+            lease: Some(1),
             ..Paperterm::default()
         };
         let mut context = Context::default();
@@ -1409,6 +1614,7 @@ mod tests {
             address: "host:9332".to_owned(),
             code: "abc123".to_owned(),
             failure: Some(OFF_AIR.to_owned()),
+            lease: Some(1),
             ..Paperterm::default()
         };
         let mut context = Context::default();
