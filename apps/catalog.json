@@ -46,6 +46,17 @@
       "capabilities": ["network"]
     },
     {
+      "package": "kobo-color",
+      "id": "color",
+      "display_name": "Color Patterns",
+      "short_label": "Colors",
+      "summary": "Calibrated color test patterns and Color Filter Array calibration for color E-Ink displays.",
+      "version": "0.1.0",
+      "minimum_cobalt_version": "0.2.0",
+      "glyph": "chart",
+      "capabilities": []
+    },
+    {
       "package": "kobo-gallery",
       "id": "gallery",
       "display_name": "Components",

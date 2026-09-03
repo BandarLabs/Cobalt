@@ -69,6 +69,15 @@ const MANAGED_BUILTINS: &[BuiltinApp] = &[
         capabilities: &["network"],
     },
     BuiltinApp {
+        id: "color",
+        title: "Color Patterns",
+        label: "Colors",
+        summary: "Calibrated color test patterns and Color Filter Array calibration for color E-Ink displays.",
+        version: "0.1.0",
+        glyph: Glyph::Chart,
+        capabilities: &[],
+    },
+    BuiltinApp {
         id: "gallery",
         title: "Components",
         label: "Components",
