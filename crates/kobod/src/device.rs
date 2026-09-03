@@ -962,7 +962,6 @@ struct Sleeping {
     wifi_was_on: bool,
     light: Option<u8>,
     mem_at: Option<Instant>,
-    resleep_at: Option<Instant>,
 }
 
 fn wifi_enabled(wifi: &kobo_hal::wifi::Wifi) -> bool {
@@ -1077,14 +1076,14 @@ fn post_on_device(
 fn charger_blocks_mem(display: &DisplaySession) -> bool {
     charger_blocks_mem_with(
         display.profile().kernel_suspend_hangs_while_charging(),
-        kobo_hal::battery::read().map(|battery| battery.charging),
+        kobo_hal::battery::discharging(),
     )
 }
 
-/// `MediaTek` boards hang if we write `mem` while charging. Unknown charging
-/// is treated as charging: a missed battery read must not enable a hang.
-fn charger_blocks_mem_with(hangs_while_charging: bool, charging: Option<bool>) -> bool {
-    hangs_while_charging && charging.unwrap_or(true)
+/// `MediaTek` boards hang if we write `mem` on external power. Only an
+/// explicit `Discharging` status enables suspend; every other state is unsafe.
+fn charger_blocks_mem_with(hangs_while_charging: bool, discharging: Option<bool>) -> bool {
+    hangs_while_charging && discharging != Some(true)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1120,7 +1119,6 @@ fn enter_sleep(
         wifi_was_on,
         light: saved_light,
         mem_at: None,
-        resleep_at: None,
     };
     schedule_mem(&mut sleeping, kernel, display);
     Ok(sleeping)
@@ -1132,7 +1130,6 @@ fn schedule_mem(
     display: &DisplaySession,
 ) {
     sleeping.mem_at = None;
-    sleeping.resleep_at = None;
     let Some(kernel) = kernel else {
         return;
     };
@@ -1145,7 +1142,12 @@ fn schedule_mem(
     }
 }
 
-fn try_mem(kernel: &kobo_hal::power::Power, watchdog: &Watchdog) -> bool {
+fn try_mem(kernel: &kobo_hal::power::Power, watchdog: &Watchdog, display: &DisplaySession) -> bool {
+    if charger_blocks_mem(display) {
+        trace("suspend cancelled because the reader is not explicitly discharging");
+        let _ignored = kernel.unflag_subsystems();
+        return false;
+    }
     let _ignored = Command::new("sync").status();
     let resumed = match kernel.enter_mem() {
         Ok(()) => {
@@ -1259,9 +1261,6 @@ const NOTICE_DWELL: Duration = Duration::from_secs(5);
 /// Gap between flagging subsystems and writing `mem`. The kernel needs it;
 /// the loop keeps running so a second press can still abort.
 const SUBSYSTEM_SETTLE: Duration = Duration::from_secs(2);
-/// After a kernel wake that was not a button or the cover, wait this long
-/// for the owner to do something before going back to sleep.
-const UNEXPECTED_WAKE: Duration = Duration::from_secs(15);
 /// Ignore a power tap that arrives in the same moment as wake. Restoring
 /// Wi-Fi used to block the loop; extra taps queued and slept the session
 /// again the instant the overlay could have cleared.
@@ -1686,34 +1685,57 @@ fn host_applications(
                     trace(&format!("power off refused: {error}"));
                 }
             }
+            let mut mem_attempt_finished = false;
             let mut resumed_from_mem = false;
             if let Some(sleeping) = asleep.as_mut() {
                 if sleeping.mem_at.is_some_and(|at| now >= at) {
                     sleeping.mem_at = None;
                     if let Some(kernel) = kernel.as_ref() {
-                        resumed_from_mem = try_mem(kernel, watchdog);
+                        mem_attempt_finished = true;
+                        resumed_from_mem = try_mem(kernel, watchdog, display);
                     }
-                    sleeping.resleep_at = Some(Instant::now() + UNEXPECTED_WAKE);
-                } else if sleeping.resleep_at.is_some_and(|at| now >= at) {
-                    schedule_mem(sleeping, kernel.as_ref(), display);
                 }
             }
-            if resumed_from_mem {
-                // A recovery path or firmware service may have brought Nickel
-                // back while the machine was asleep. It then owns the panel;
-                // no Cobalt frame may be written after this observation.
-                if reader_owns_panel() {
-                    trace("the stock reader resumed during suspend; yielding the panel");
-                    return Ok(finish(
-                        &apps,
-                        &visited,
-                        "the stock reader resumed during suspend",
-                    ));
+            if mem_attempt_finished {
+                // Some firmware restarts Nickel as part of resume even though
+                // Cobalt deliberately stopped it before taking the panel.
+                // Stop that unexpected second owner before repainting. Merely
+                // yielding here left Cobalt's sleep screen visible over Nickel
+                // and made wake appear to have returned to the wrong program.
+                if resumed_from_mem && reader_owns_panel() {
+                    trace("the stock reader resumed during suspend; stopping it before repaint");
+                    let resumed_reader = Reader::find()
+                        .map_err(|error| format!("find reader after wake: {error}"))?;
+                    resumed_reader
+                        .stop(STOP_GRACE)
+                        .map_err(|error| format!("stop reader after wake: {error}"))?;
                 }
-                // Even without a live Nickel process, firmware may have
-                // restored its old framebuffer. Reclaim every pixel before
-                // waiting for the real wake event.
-                paint_sleep(display, whole_screen, &mut surface, &mut panel)?;
+                // The power-key edge that wakes the kernel is not reliably
+                // replayed to userspace. Treat the completed resume itself as
+                // the wake signal, then ignore a late release edge briefly.
+                if let Some(sleeping) = asleep.take() {
+                    leave_sleep(
+                        &sleeping,
+                        kernel.as_ref(),
+                        wifi.as_ref(),
+                        frontlight.as_ref(),
+                        &mut panel,
+                    );
+                    last_activity = Instant::now();
+                    if resumed_from_mem {
+                        wake_grace_until = Some(Instant::now() + WAKE_GRACE);
+                    }
+                    repaint(
+                        &mut apps,
+                        front,
+                        display,
+                        whole_screen,
+                        &mut surface,
+                        &mut panel,
+                        &home,
+                        &mut status,
+                    )?;
+                }
             }
             // The band is the only thing on the panel that changes without
             // anybody touching it, so the loop has to notice it on its own.
@@ -1855,12 +1877,6 @@ fn host_applications(
                     asleep
                         .as_ref()
                         .and_then(|sleeping| sleeping.mem_at)
-                        .map_or(BEAT_INTERVAL, |at| at.saturating_duration_since(now)),
-                )
-                .min(
-                    asleep
-                        .as_ref()
-                        .and_then(|sleeping| sleeping.resleep_at)
                         .map_or(BEAT_INTERVAL, |at| at.saturating_duration_since(now)),
                 );
             match events.recv_timeout(wait) {
@@ -4451,12 +4467,12 @@ mod hosting_tests {
     }
 
     #[test]
-    fn unknown_charging_on_mediatek_blocks_mem() {
+    fn mediatek_suspend_requires_explicit_discharging() {
         assert!(super::charger_blocks_mem_with(true, None));
-        assert!(super::charger_blocks_mem_with(true, Some(true)));
-        assert!(!super::charger_blocks_mem_with(true, Some(false)));
+        assert!(super::charger_blocks_mem_with(true, Some(false)));
+        assert!(!super::charger_blocks_mem_with(true, Some(true)));
         assert!(!super::charger_blocks_mem_with(false, None));
-        assert!(!super::charger_blocks_mem_with(false, Some(true)));
+        assert!(!super::charger_blocks_mem_with(false, Some(false)));
     }
 
     #[test]
