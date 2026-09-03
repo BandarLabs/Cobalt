@@ -5131,6 +5131,18 @@ pub enum Glyph {
     /// to draw it: "Dimmer" and "Smaller" are words somebody has to read, and
     /// a reader adjusting the light in the dark is not reading anything.
     Minus,
+    ChessWhiteKing,
+    ChessWhiteQueen,
+    ChessWhiteRook,
+    ChessWhiteBishop,
+    ChessWhiteKnight,
+    ChessWhitePawn,
+    ChessBlackKing,
+    ChessBlackQueen,
+    ChessBlackRook,
+    ChessBlackBishop,
+    ChessBlackKnight,
+    ChessBlackPawn,
 }
 
 impl Glyph {
@@ -5141,7 +5153,7 @@ impl Glyph {
     /// the set was twenty-one: `Light` and `Close` were authored, shipped, and
     /// covered by none of the tests that walk every glyph. A glyph nobody
     /// rasterises in a test is a blank space beside a label on the panel.
-    pub const ALL: [Self; 45] = [
+    pub const ALL: [Self; 57] = [
         Self::App,
         Self::Book,
         Self::Note,
@@ -5187,6 +5199,18 @@ impl Glyph {
         Self::Plus,
         Self::Headphones,
         Self::Minus,
+        Self::ChessWhiteKing,
+        Self::ChessWhiteQueen,
+        Self::ChessWhiteRook,
+        Self::ChessWhiteBishop,
+        Self::ChessWhiteKnight,
+        Self::ChessWhitePawn,
+        Self::ChessBlackKing,
+        Self::ChessBlackQueen,
+        Self::ChessBlackRook,
+        Self::ChessBlackBishop,
+        Self::ChessBlackKnight,
+        Self::ChessBlackPawn,
     ];
 }
 
