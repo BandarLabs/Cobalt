@@ -89,7 +89,6 @@ The example applications talk to services this project does not own.
 | `rss` | Feedsearch | Public; the search screen carries the attribution its terms ask for |
 | `calibre-web` | calibre-web or calibre content-server OPDS | Owner-supplied HTTPS service; optional HTTP Basic credential |
 | `fanshelf` | Archive of Our Own public work pages | Public, unauthenticated lookups with an identifying user agent |
-| `habits` | Habitica API | Optional account mode using a runtime-held API credential |
 | `homepanel` | Home Assistant API | Owner-supplied HTTPS service using a runtime-held long-lived token |
 | `kitchencard` | Mealie API | Owner-supplied service; Mealie is AGPL-3.0 |
 | `lichess` | Lichess API | Public puzzle access; optional personal access token for account features |

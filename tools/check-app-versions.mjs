@@ -12,12 +12,17 @@ const MANIFEST_FIELDS = [
   "glyph"
 ];
 
+// Cargo metadata grows with every workspace package. Bound it well above the
+// current workspace while still refusing an unexpectedly large child output.
+export const COMMAND_MAX_BUFFER = 8 * 1024 * 1024;
+
 // Store packages are built from the current SDK and therefore speak its exact
 // wire protocol. A new protocol must add its first compatible Cobalt release
 // here before the catalog can be published.
 const PROTOCOL_MINIMUMS = new Map([
   [10, "0.2.4"],
-  [11, "0.3.1"]
+  [11, "0.3.1"],
+  [12, "0.3.2"]
 ]);
 
 function readJson(path, label) {
@@ -132,7 +137,10 @@ function currentProtocolVersion() {
 
 function command(name, arguments_) {
   try {
-    return execFileSync(name, arguments_, { encoding: "utf8" }).trim();
+    return execFileSync(name, arguments_, {
+      encoding: "utf8",
+      maxBuffer: COMMAND_MAX_BUFFER
+    }).trim();
   } catch (error) {
     throw new Error(`${name} ${arguments_.join(" ")} failed: ${error.message}`);
   }

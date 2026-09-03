@@ -7,8 +7,8 @@
       "display_name": "arXiv",
       "short_label": "arXiv",
       "summary": "Browse and search arXiv, keep preprints, and read their HTML versions on your Kobo.",
-      "version": "1.3.4",
-      "minimum_cobalt_version": "0.3.1",
+      "version": "1.3.5",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "note",
       "capabilities": ["network"]
     },
@@ -18,8 +18,8 @@
       "display_name": "Audiobook Studio",
       "short_label": "Audiobooks",
       "summary": "Turn a topic into an original narrated audiobook and listen on your Kobo.",
-      "version": "1.0.4",
-      "minimum_cobalt_version": "0.3.1",
+      "version": "1.0.5",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "headphones",
       "capabilities": ["network", "audio", "bluetooth-audio", "bluetooth-control"]
     },
@@ -29,8 +29,8 @@
       "display_name": "Daily Brief",
       "short_label": "Daily Brief",
       "summary": "Build a daily news brief in the background while you use other apps.",
-      "version": "1.0.4",
-      "minimum_cobalt_version": "0.3.1",
+      "version": "1.0.5",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "clock",
       "capabilities": ["network"]
     },
@@ -40,8 +40,8 @@
       "display_name": "AI Command Center",
       "short_label": "AI Chat",
       "summary": "Ask a question, then read and navigate the answer with touch controls.",
-      "version": "1.0.4",
-      "minimum_cobalt_version": "0.3.1",
+      "version": "1.0.5",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "chat",
       "capabilities": ["network"]
     },
@@ -51,8 +51,8 @@
       "display_name": "Components",
       "short_label": "Components",
       "summary": "See every Cobalt UI component on the device in one reference app.",
-      "version": "1.0.4",
-      "minimum_cobalt_version": "0.3.1",
+      "version": "1.0.5",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "chart",
       "capabilities": ["network"]
     },
@@ -61,9 +61,9 @@
       "id": "gutenbird",
       "display_name": "Gutenbird",
       "short_label": "Gutenbird",
-      "summary": "Browse OPDS libraries and read their books on your Kobo.",
-      "version": "1.0.4",
-      "minimum_cobalt_version": "0.3.1",
+      "summary": "Browse ebook libraries and read their books on your Kobo.",
+      "version": "1.0.5",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "book",
       "capabilities": ["network", "frontlight-control"]
     },
@@ -73,8 +73,8 @@
       "display_name": "Hacker News",
       "short_label": "Hacker News",
       "summary": "Read Top, New, Ask, and Show stories with complete comment threads.",
-      "version": "1.0.4",
-      "minimum_cobalt_version": "0.3.1",
+      "version": "1.0.5",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "news",
       "capabilities": ["network"]
     },
@@ -83,9 +83,9 @@
       "id": "magnet",
       "display_name": "Magnet",
       "short_label": "Magnet",
-      "summary": "Find the hall sensor behind the bezel and watch it respond to a magnet.",
-      "version": "1.0.4",
-      "minimum_cobalt_version": "0.3.1",
+      "summary": "Find the sleep-cover sensor and watch it respond to a magnet.",
+      "version": "1.0.5",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "magnet",
       "capabilities": ["cover-sensor"]
     },
@@ -95,8 +95,8 @@
       "display_name": "Morse",
       "short_label": "Morse",
       "summary": "Type a message and send it in Morse code with the front light.",
-      "version": "1.0.6",
-      "minimum_cobalt_version": "0.3.1",
+      "version": "1.0.7",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "light",
       "capabilities": ["frontlight-control", "keep-awake"]
     },
@@ -106,8 +106,8 @@
       "display_name": "Feeds",
       "short_label": "Feeds",
       "summary": "Follow website feeds and read their articles without the web page around them.",
-      "version": "1.0.4",
-      "minimum_cobalt_version": "0.3.1",
+      "version": "1.0.5",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "rss",
       "capabilities": ["network"]
     },
@@ -116,10 +116,10 @@
       "id": "sidekick",
       "display_name": "Sidekick",
       "short_label": "Sidekick",
-      "summary": "Review coding-agent requests across multiple terminal sessions.",
-      "page_description": "An e-reader board for coding-agent approvals, distinguishing simultaneous terminal sessions before an answer is sent.",
+      "summary": "Review AI assistant questions from your computer.",
+      "page_description": "See requests from several computer sessions and send clear answers from your Kobo.",
       "version": "1.0.5",
-      "minimum_cobalt_version": "0.3.1",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "key",
       "capabilities": ["network"],
       "setup": {
@@ -145,8 +145,8 @@
       "display_name": "Sudoku",
       "short_label": "Sudoku",
       "summary": "Play touch-first Sudoku designed for an e-ink screen.",
-      "version": "1.0.5",
-      "minimum_cobalt_version": "0.3.1",
+      "version": "1.0.6",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "grid",
       "capabilities": []
     },
@@ -156,8 +156,8 @@
       "display_name": "Tic-tac-toe",
       "short_label": "Tic-tac-toe",
       "summary": "Play tic-tac-toe together on one Kobo.",
-      "version": "1.0.4",
-      "minimum_cobalt_version": "0.3.1",
+      "version": "1.0.5",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "grid",
       "capabilities": []
     },
@@ -167,8 +167,8 @@
       "display_name": "Todo",
       "short_label": "Todo",
       "summary": "Keep a simple to-do list that stays on your Kobo.",
-      "version": "1.0.4",
-      "minimum_cobalt_version": "0.3.1",
+      "version": "1.0.5",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "check",
       "capabilities": []
     },
@@ -177,10 +177,10 @@
       "id": "backgammon",
       "display_name": "Backgammon",
       "short_label": "Backgammon",
-      "summary": "Play a deterministic touch-first backgammon board on one Kobo.",
+      "summary": "Play backgammon together on one Kobo.",
       "page_description": "Play a tactile 24-point backgammon board built for Kobo's paper-like display.",
       "version": "0.1.0",
-      "minimum_cobalt_version": "0.3.1",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "circle",
       "capabilities": []
     },
@@ -189,10 +189,10 @@
       "id": "calibre-web",
       "display_name": "calibre-web",
       "short_label": "calibre-web",
-      "summary": "Browse a registered calibre-web OPDS library over HTTPS.",
-      "page_description": "Register an HTTPS calibre-web OPDS library and optionally attach a runtime-held Basic credential.",
-      "version": "0.1.0",
-      "minimum_cobalt_version": "0.3.1",
+      "summary": "Browse and read books from your calibre-web library.",
+      "page_description": "Connect your calibre-web library and browse its books from your Kobo.",
+      "version": "0.1.1",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "book",
       "capabilities": ["network"],
       "setup": {
@@ -219,7 +219,7 @@
       "summary": "Solve a compact touch-first crossword with clue navigation.",
       "page_description": "Work through a compact crossword with cell-by-cell touch entry and clue navigation.",
       "version": "0.1.0",
-      "minimum_cobalt_version": "0.3.1",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "grid",
       "capabilities": []
     },
@@ -228,16 +228,16 @@
       "id": "deck",
       "display_name": "Deck",
       "short_label": "Deck",
-      "summary": "Trigger configured computer commands through a paired Sidekick daemon.",
-      "page_description": "A paired-computer command surface with large e-ink keys and confirmation for risky commands.",
-      "version": "0.1.0",
-      "minimum_cobalt_version": "0.3.1",
+      "summary": "Turn your Kobo into a remote control for your computer.",
+      "page_description": "Pair with your computer and run favorite actions from large, clear controls.",
+      "version": "0.2.0",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "grid",
       "capabilities": ["network"],
       "setup": {
         "steps": [
           {
-            "text": "Deck requires a compatible kobo-sidekickd build with the /deck routes and a deck.toml command map; those routes are not yet included in this repository."
+            "text": "Create ~/.config/kobo/sidekick/deck.toml with the pages and controls you want on the reader."
           },
           {
             "text": "Initialize the companion daemon to obtain its address, certificate, and pairing code.",
@@ -255,10 +255,10 @@
       "id": "fanshelf",
       "display_name": "Fanshelf",
       "short_label": "Fanshelf",
-      "summary": "Track public AO3 works on an offline reader-first shelf.",
-      "page_description": "Enter an AO3 work URL or ID and keep its lookup entry on a reader-first shelf.",
-      "version": "0.1.0",
-      "minimum_cobalt_version": "0.3.1",
+      "summary": "Save public AO3 works to a shelf made for offline reading.",
+      "page_description": "Add an AO3 work and keep it ready for comfortable reading on your Kobo.",
+      "version": "0.2.0",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "book",
       "capabilities": ["network"]
     },
@@ -267,10 +267,10 @@
       "id": "fieldbook",
       "display_name": "Fieldbook",
       "short_label": "Fieldbook",
-      "summary": "Log offline bird sightings and keep a local life list.",
-      "page_description": "A field-first eBird companion for cached species packs, fast offline sightings, life lists, and desktop CSV export.",
+      "summary": "Log bird sightings anywhere and build your life list.",
+      "page_description": "A field-ready eBird companion for quick sightings, species lookup, life lists, and checklist sharing.",
       "version": "0.1.0",
-      "minimum_cobalt_version": "0.3.1",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "search",
       "capabilities": []
     },
@@ -279,10 +279,10 @@
       "id": "flashcards",
       "display_name": "Flashcards",
       "short_label": "Flashcards",
-      "summary": "Review a small offline queue of persistent flashcards.",
-      "page_description": "Review a small offline card queue with large reveal and answer controls made for an e-ink panel.",
+      "summary": "Review flashcards anywhere, even without Wi-Fi.",
+      "page_description": "Study with large reveal and answer controls designed for a Kobo screen.",
       "version": "0.1.0",
-      "minimum_cobalt_version": "0.3.1",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "bookmark",
       "capabilities": []
     },
@@ -291,12 +291,28 @@
       "id": "frame",
       "display_name": "Frame",
       "short_label": "Frame",
-      "summary": "Display monochrome photos with awake or scheduled frame modes.",
-      "page_description": "Turn a Kobo into a low-power monochrome photo frame with awake and scheduled display modes.",
-      "version": "0.1.0",
-      "minimum_cobalt_version": "0.3.1",
+      "summary": "Show computer-pushed monochrome photos in awake or scheduled slideshow modes.",
+      "page_description": "Turn a Kobo into a low-power monochrome photo frame with bounded, owner-pushed albums and awake or scheduled slideshow modes.",
+      "version": "1.0.1",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "app",
-      "capabilities": ["keep-awake", "scheduled-wake"]
+      "capabilities": ["keep-awake", "scheduled-wake"],
+      "setup": {
+        "steps": [
+          {
+            "text": "Enable Cobalt's owner-attended SSH path and install this computer's public key.",
+            "command": "kobo setup --enable-ssh"
+          },
+          {
+            "text": "Create Frame's private shelf through the established SSH connection.",
+            "command": "kobo frame init --device <address>"
+          },
+          {
+            "text": "Prepare and atomically push a photo or folder from this computer.",
+            "command": "kobo frame push ~/Pictures/family --device <address>"
+          }
+        ]
+      }
     },
     {
       "package": "kobo-grimoire",
@@ -306,7 +322,7 @@
       "summary": "Browse offline SRD references and manage tabletop combat.",
       "page_description": "Offline SRD reference and table tools for spell lookups, monster stat blocks, dice, initiative, and party HP.",
       "version": "0.1.0",
-      "minimum_cobalt_version": "0.3.1",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "book",
       "capabilities": []
     },
@@ -317,21 +333,10 @@
       "short_label": "Habits",
       "summary": "Track daily and weekday habits with local streaks.",
       "page_description": "An offline-first habit tracker that puts today's commitments and streaks on a calm paper display.",
-      "version": "0.1.0",
-      "minimum_cobalt_version": "0.3.1",
+      "version": "0.1.1",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "check",
-      "capabilities": ["network"],
-      "setup": {
-        "steps": [
-          {
-            "text": "Standalone mode needs no account. Habitica mode requires an API credential installed under the exact name habitica."
-          },
-          {
-            "text": "Install the Habitica API token from a computer before enabling account mode.",
-            "command": "kobo secret set habitica --device <address>"
-          }
-        ]
-      }
+      "capabilities": []
     },
     {
       "package": "kobo-homepanel",
@@ -339,9 +344,9 @@
       "display_name": "Home Panel",
       "short_label": "Home",
       "summary": "Control saved Home Assistant tiles from a low-power panel.",
-      "page_description": "A low-power Home Assistant control panel with persisted tiles and compact template polling.",
+      "page_description": "Keep your favorite Home Assistant controls on a simple, low-power panel.",
       "version": "0.1.0",
-      "minimum_cobalt_version": "0.3.1",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "light",
       "capabilities": ["network"],
       "setup": {
@@ -365,22 +370,24 @@
       "id": "inkling",
       "display_name": "Inkling",
       "short_label": "Inkling",
-      "summary": "Solve one deterministic offline five-letter puzzle each day.",
-      "page_description": "A deterministic offline five-letter daily puzzle whose shared answer comes from the date, not a server.",
+      "summary": "Solve a fresh five-letter puzzle each day.",
+      "page_description": "A daily five-letter word puzzle you can play anywhere, with or without Wi-Fi.",
       "version": "0.1.0",
-      "minimum_cobalt_version": "0.3.1",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "note",
-      "capabilities": []
+      "capabilities": [
+        "network"
+      ]
     },
     {
       "package": "kobo-kitchencard",
       "id": "kitchencard",
       "display_name": "Kitchen Card",
       "short_label": "Kitchen",
-      "summary": "Browse cached Mealie recipes in a counter-friendly cooking view.",
+      "summary": "Keep Mealie recipes handy in a counter-friendly cooking view.",
       "page_description": "A Mealie companion that keeps tonight's recipe legible, awake, and usable offline at the counter.",
       "version": "0.1.0",
-      "minimum_cobalt_version": "0.3.1",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "reader",
       "capabilities": ["network", "keep-awake"],
       "setup": {
@@ -400,10 +407,10 @@
       "id": "lichess",
       "display_name": "Lichess",
       "short_label": "Lichess",
-      "summary": "Download offline chess puzzles and check slow correspondence games.",
-      "page_description": "Offline tactics sessions and slow correspondence chess for an e-ink board.",
+      "summary": "Solve chess puzzles and check correspondence games.",
+      "page_description": "Keep an endless set of chess puzzles ready and follow slower games on your Kobo.",
       "version": "0.1.0",
-      "minimum_cobalt_version": "0.3.1",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "grid",
       "capabilities": ["network"],
       "setup": {
@@ -423,10 +430,10 @@
       "id": "logicpack",
       "display_name": "Logic Pack",
       "short_label": "Logic Pack",
-      "summary": "Play four deterministic touch-first pencil-puzzle modes.",
-      "page_description": "Four touch-first pencil-puzzle modes with deterministic daily starting state and paper-like mark cycles.",
+      "summary": "Play four touch-first pencil puzzles.",
+      "page_description": "A daily collection of familiar logic puzzles with paper-like marks and large controls.",
       "version": "0.1.0",
-      "minimum_cobalt_version": "0.3.1",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "grid",
       "capabilities": []
     },
@@ -435,10 +442,10 @@
       "id": "musicstand",
       "display_name": "Music Stand",
       "short_label": "Music",
-      "summary": "Read converted scores with setlists and half-page turns.",
+      "summary": "Read music scores with setlists and half-page turns.",
       "page_description": "A Kobo score reader with stable stand mode, setlists, and two-stage half-page turns.",
       "version": "0.1.0",
-      "minimum_cobalt_version": "0.3.1",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "note",
       "capabilities": ["keep-awake"]
     },
@@ -447,12 +454,12 @@
       "id": "needles",
       "display_name": "Needles",
       "short_label": "Needles",
-      "summary": "Count rows and browse synced Ravelry project patterns.",
-      "page_description": "A knuckle-sized row counter and offline pattern companion for Ravelry projects.",
+      "summary": "Count rows, browse Ravelry collections, and read your synced patterns offline.",
+      "page_description": "A knuckle-sized row counter, Ravelry library browser, and offline pattern reader.",
       "version": "0.1.0",
-      "minimum_cobalt_version": "0.3.1",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "bookmark",
-      "capabilities": ["network"],
+      "capabilities": ["network", "keep-awake"],
       "setup": {
         "steps": [
           {
@@ -461,6 +468,10 @@
           {
             "text": "Install the credential under the exact name ravelry.",
             "command": "kobo secret set ravelry --device <address>"
+          },
+          {
+            "text": "Prepare and transfer a PDF you own with Poppler's pdftotext installed.",
+            "command": "kobo needles push PATTERN.pdf --device <address>"
           }
         ]
       }
@@ -472,8 +483,8 @@
       "short_label": "Nonograms",
       "summary": "Solve a bundled touch-first picture grid offline.",
       "page_description": "Solve a touch-first picture grid by cycling each square through fill, X, and blank.",
-      "version": "0.1.0",
-      "minimum_cobalt_version": "0.3.1",
+      "version": "0.1.1",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "grid",
       "capabilities": []
     },
@@ -482,10 +493,10 @@
       "id": "panels",
       "display_name": "Panels",
       "short_label": "Panels",
-      "summary": "Read sideloaded CBZ comics or connect to a Komga library.",
-      "page_description": "Read your CBZ comics locally, with a self-hosted-library path for Komga.",
+      "summary": "Read comics added from your computer or Komga library.",
+      "page_description": "Enjoy your comics on Kobo with clear page controls and support for Komga libraries.",
       "version": "0.1.0",
-      "minimum_cobalt_version": "0.3.1",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "reader",
       "capabilities": ["network"],
       "setup": {
@@ -508,13 +519,22 @@
       "summary": "Pair with a computer to mirror a terminal session on e-ink.",
       "page_description": "Pair a Kobo with a computer to read a terminal session on an e-ink display.",
       "version": "0.1.0",
-      "minimum_cobalt_version": "0.3.1",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "terminal",
-      "capabilities": [],
+      "capabilities": ["network"],
       "setup": {
         "steps": [
           {
-            "text": "Paperterm's kobo stream TLS companion is not yet included in this repository; the current build provides the pairing and terminal-mirror interface only."
+            "text": "Initialize the terminal companion and note the address and pairing code.",
+            "command": "kobo stream init"
+          },
+          {
+            "text": "Install the terminal companion certificate on the Kobo.",
+            "command": "kobo trust set stream --device <address>"
+          },
+          {
+            "text": "Start a mirrored terminal with the controls needed on the reader.",
+            "command": "kobo stream --controls -- <command>"
           }
         ]
       }
@@ -527,7 +547,7 @@
       "summary": "Play touch-first Reversi together on one Kobo.",
       "page_description": "A pass-and-play board-game shelf, beginning with touch-first Reversi.",
       "version": "0.1.0",
-      "minimum_cobalt_version": "0.3.1",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "circle",
       "capabilities": []
     },
@@ -536,10 +556,10 @@
       "id": "parser",
       "display_name": "Parser",
       "short_label": "Parser",
-      "summary": "Play an original offline parser-based interactive story.",
-      "page_description": "A touch-first offline interactive-fiction MVP that sets an original story as a readable Kobo page.",
+      "summary": "Play an original interactive story without Wi-Fi.",
+      "page_description": "Explore an original text adventure with touch shortcuts and a comfortable reading layout.",
       "version": "0.1.0",
-      "minimum_cobalt_version": "0.3.1",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "book",
       "capabilities": []
     },
@@ -548,10 +568,10 @@
       "id": "post",
       "display_name": "Post",
       "short_label": "Post",
-      "summary": "Read and reply to completed letters from a Hermes gateway.",
-      "page_description": "A slow correspondence channel for a self-hosted Hermes gateway: read completed letters offline and send deliberate replies.",
+      "summary": "Read and reply to letters from Hermes.",
+      "page_description": "A calm, letter-style inbox for thoughtful messages you can read anywhere.",
       "version": "0.1.0",
-      "minimum_cobalt_version": "0.3.1",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "chat",
       "capabilities": ["network"],
       "setup": {
@@ -574,7 +594,7 @@
       "summary": "Play offline solo or pass-around trivia rounds.",
       "page_description": "Offline trivia rounds for one reader or a table passing one Kobo between players.",
       "version": "0.1.0",
-      "minimum_cobalt_version": "0.3.1",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "chat",
       "capabilities": ["network"]
     },
@@ -583,10 +603,10 @@
       "id": "readlater",
       "display_name": "Read Later",
       "short_label": "Read Later",
-      "summary": "Sync a Wallabag queue for offline reading and archive actions.",
-      "page_description": "Offline Wallabag reading queue with daemon-held credentials and queued archive actions.",
+      "summary": "Read your Wallabag articles anywhere.",
+      "page_description": "Bring saved Wallabag articles to your Kobo, then archive or favorite them as you read.",
       "version": "0.1.0",
-      "minimum_cobalt_version": "0.3.1",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "bookmark",
       "capabilities": ["network"],
       "setup": {
@@ -606,10 +626,10 @@
       "id": "rss-miniflux",
       "display_name": "RSS Reader — Miniflux",
       "short_label": "RSS Reader",
-      "summary": "Read batched Miniflux entries offline and queue read state.",
-      "page_description": "A Miniflux-backed e-ink reader that batches unread entries and retains offline state.",
+      "summary": "Read your Miniflux feeds anywhere.",
+      "page_description": "Bring unread Miniflux articles to your Kobo and keep reading without Wi-Fi.",
       "version": "0.1.0",
-      "minimum_cobalt_version": "0.3.1",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "rss",
       "capabilities": ["network"],
       "setup": {
@@ -629,16 +649,24 @@
       "id": "syncthing",
       "display_name": "Sync",
       "short_label": "Sync",
-      "summary": "Configure battery-conscious sync folders and schedules.",
-      "page_description": "Settings surface for duty-cycled Syncthing folders and battery-conscious scheduling.",
-      "version": "0.1.0",
-      "minimum_cobalt_version": "0.3.1",
+      "summary": "Choose folders and a battery-friendly sync schedule.",
+      "page_description": "Keep selected folders in sync while controlling when your Kobo uses Wi-Fi.",
+      "version": "0.2.0",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "refresh",
-      "capabilities": [],
+      "capabilities": ["scheduled-wake"],
       "setup": {
         "steps": [
           {
-            "text": "The current Store build is a settings preview; syncing requires a future Cobalt platform update that supplies and supervises the ARMv7 Syncthing binary."
+            "text": "Sync requires a Cobalt platform build containing the pinned ARMv7 Syncthing engine and a package-manager-installed Syncthing binary on your computer."
+          },
+          {
+            "text": "Pair exactly one local directory to a fixed safe folder while the Kobo is awake on Wi-Fi.",
+            "command": "kobo sync setup LOCAL_DIR --folder vault --device <address>"
+          },
+          {
+            "text": "Resume Sync on the Kobo, then start the private host peer. It does not modify another Syncthing installation.",
+            "command": "kobo sync run"
           }
         ]
       }
@@ -648,10 +676,10 @@
       "id": "vault",
       "display_name": "Vault",
       "short_label": "Vault",
-      "summary": "Browse a pushed Markdown vault by note, tag, link, and backlink.",
-      "page_description": "A read-only offline note library for browsing Markdown, tags, links, backlinks, and search.",
+      "summary": "Browse your notes by folder, tag, link, and backlink.",
+      "page_description": "Keep a searchable copy of your note library ready to read on your Kobo.",
       "version": "0.1.0",
-      "minimum_cobalt_version": "0.3.1",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "note",
       "capabilities": []
     },
@@ -660,12 +688,14 @@
       "id": "verses",
       "display_name": "Verses",
       "short_label": "Verses",
-      "summary": "Read a deterministic public-domain poem each day.",
-      "page_description": "A deterministic daily public-domain poem with provenance-aware browsing and persisted favorites.",
+      "summary": "Read a public-domain poem each day.",
+      "page_description": "Discover a daily poem, browse its source, and keep favorites for later.",
       "version": "0.1.0",
-      "minimum_cobalt_version": "0.3.1",
+      "minimum_cobalt_version": "0.3.2",
       "glyph": "note",
-      "capabilities": []
+      "capabilities": [
+        "network"
+      ]
     }
   ]
 }

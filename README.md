@@ -63,6 +63,7 @@ new app can appear in Store without reinstalling or updating Cobalt.
 - Profile-driven full and partial refresh planning for supported panels
 - Static ARMv7 binaries with no device-side package manager
 - Recovery-safe app and catalog transactions
+- Serverless folder synchronization through a private host Syncthing peer
 
 ## How it differs
 

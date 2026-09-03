@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   checkEntries,
   checkProtocolMinimums,
+  COMMAND_MAX_BUFFER,
   releaseDependencyIds
 } from "./check-app-versions.mjs";
 
@@ -80,6 +81,11 @@ test("accepts the first Cobalt release supporting the package protocol", () => {
   assert.doesNotThrow(() =>
     checkProtocolMinimums(values.registry, 10, new Map([[10, "0.2.4"]]))
   );
+});
+
+test("bounds command output above Cargo's default metadata limit", () => {
+  assert.ok(COMMAND_MAX_BUFFER > 1024 * 1024);
+  assert.ok(COMMAND_MAX_BUFFER <= 16 * 1024 * 1024);
 });
 
 test("release inputs ignore exclusively dev-only dependency edges", () => {
