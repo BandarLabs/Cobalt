@@ -10,7 +10,7 @@ code 389), firmware 4.38.23697**, the **Kobo Clara HD N249 (device code
 376), firmware 4.38.23684 or 4.38.23697**, the **Kobo Libra 2 N418 (device
 code 388), firmware 4.38.23697**, the **Kobo Clara Colour N367 (device code
 393), firmware 4.45.23697**, and the **Kobo Libra Colour N428 (device code
-390), firmware 4.45.23697**. Support remains tied to the exact
+390), firmware 4.45.23697 or 4.46.23836**. Support remains tied to the exact
 firmware, kernel, framebuffer, touch, and identity combination in the
 [device support matrix](DEVICES.md#device-support-matrix).
 
@@ -31,7 +31,10 @@ at.
 - **An internet connection**, and **`curl`** on your path. Setup downloads
   NickelMenu v0.6.0 (the one piece that cannot live on the book partition) and
   checks it against a recorded SHA-256.
-- [**Rust**](https://rustup.rs), stable.
+- [**rustup**](https://rustup.rs) with its stable Rust toolchain. You do not
+  need a separate operating-system `rust` package: rustup supplies `rustc` and
+  `cargo`. If stable is not installed, run `rustup toolchain install stable`;
+  the next section selects it only for this checkout.
 - An **ARM cross-compiler**, because the TLS stack carries C and assembly that
   is built from source. Everything else is linked by `rust-lld`, which the Rust
   toolchain already ships.
@@ -49,8 +52,10 @@ at.
 ## 1. Get the code and the cross-compilation target
 
 ```sh
+rustup toolchain install stable
 git clone https://github.com/BandarLabs/Cobalt
 cd Cobalt
+rustup override set stable
 rustup target add armv7-unknown-linux-musleabihf
 ```
 

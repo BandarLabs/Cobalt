@@ -74,6 +74,7 @@ const STORE_PACKAGES: &[&str] = &[
     "kobo-sudoku",
     "kobo-tictactoe",
     "kobo-todo",
+    "kobo-zotero-reader",
 ];
 /// Proof that the daemon in the package can actually take the panel. The
 /// phrase only exists inside `present_on_panel`, which is behind
@@ -122,6 +123,14 @@ if [ -s \"$staged_key\" ]; then
   fi
   rm -f \"$staged_key\"
   sync
+fi
+# The terminal opens a pty: ptsname names /dev/pts/N and the child opens it.
+# Some Kobo firmware does not mount devpts, so without this every terminal is
+# refused with Failed. A kernel mount, not a write to the root filesystem, and
+# gone again at the next reboot.
+if ! grep -q ' /dev/pts ' /proc/mounts 2>/dev/null; then
+  mkdir -p /dev/pts 2>/dev/null &&
+    mount -t devpts devpts /dev/pts -o mode=0620,ptmxmode=0666 || true
 fi
 KOBO_PRESENT_UNLOCK=OWNER_ATTENDED_PANEL_SESSION \\
   exec \"$root/bin/kobod\" --present \"$root/bin/kobo-launcher\" > /mnt/onboard/kobod.txt 2>&1
@@ -647,14 +656,15 @@ fn app_release(arguments: &[String]) -> Result<(), String> {
         .map_err(|error| format!("invalid {} metadata: {error}", app.id))?;
         let bundle = kobo_app_store::build_bundle(&manifest, &binary, &seed)
             .map_err(|error| format!("bundle {}: {error}", app.id))?;
-        let package_path = output.join(format!("{}.cobalt-app", app.id));
+        let (package_name, package_sha256) = release_package_name(&app.id, &bundle);
+        let package_path = output.join(&package_name);
         fs::write(&package_path, &bundle)
             .map_err(|error| format!("write {}: {error}", package_path.display()))?;
         entries.push(
             kobo_app_store::CatalogEntry::new(kobo_app_store::CatalogEntryInput {
                 manifest,
-                package_url: format!("{base_url}/{}.cobalt-app", app.id),
-                package_sha256: kobo_net::sha256::hex_digest(&bundle),
+                package_url: format!("{base_url}/{package_name}"),
+                package_sha256,
                 package_bytes: u64::try_from(bundle.len())
                     .map_err(|_| format!("{} package is too large", app.id))?,
             })
@@ -804,7 +814,7 @@ fn read_release_registry(path: &Path) -> Result<Vec<ReleaseApp>, String> {
         fs::read_to_string(path).map_err(|error| format!("read {}: {error}", path.display()))?;
     let document =
         kobo_json::parse(&text).map_err(|error| format!("parse {}: {error}", path.display()))?;
-    let fields = strict_registry_object(&document, "registry", &["format_version", "apps"])?;
+    let fields = strict_registry_object(&document, "registry", &["format_version", "apps"], &[])?;
     if registry_field(fields, "format_version")?.as_i64() != Some(1) {
         return Err("app registry format_version must be 1".to_owned());
     }
@@ -860,7 +870,10 @@ fn parse_release_app(value: &kobo_json::Value) -> Result<ReleaseApp, String> {
         "glyph",
         "capabilities",
     ];
-    let fields = strict_registry_object(value, "app", &FIELDS)?;
+    // `setup` is an accepted website-only registry field. The page generator
+    // validates its nested schema; the CLI ignores it and release manifests
+    // deliberately contain none of it.
+    let fields = strict_registry_object(value, "app", &FIELDS, &["setup"])?;
     let string = |name| {
         registry_field(fields, name)?
             .as_str()
@@ -894,21 +907,22 @@ fn parse_release_app(value: &kobo_json::Value) -> Result<ReleaseApp, String> {
 fn strict_registry_object<'a>(
     value: &'a kobo_json::Value,
     object: &str,
-    allowed: &[&str],
+    required: &[&str],
+    optional: &[&str],
 ) -> Result<&'a [(String, kobo_json::Value)], String> {
     let kobo_json::Value::Object(fields) = value else {
         return Err(format!("{object} must be an object"));
     };
     let mut seen = BTreeSet::new();
     for (name, _) in fields {
-        if !allowed.contains(&name.as_str()) {
+        if !required.contains(&name.as_str()) && !optional.contains(&name.as_str()) {
             return Err(format!("unknown field '{name}' in {object}"));
         }
         if !seen.insert(name.as_str()) {
             return Err(format!("duplicate field '{name}' in {object}"));
         }
     }
-    for name in allowed {
+    for name in required {
         if !seen.contains(name) {
             return Err(format!("missing field '{name}' in {object}"));
         }
@@ -1006,6 +1020,11 @@ fn ensure_only_flags(arguments: &[String], flags: &[&str], usage: &str) -> Resul
         index += width;
     }
     Ok(())
+}
+
+fn release_package_name(id: &str, bundle: &[u8]) -> (String, String) {
+    let digest = kobo_net::sha256::hex_digest(bundle);
+    (format!("{id}-{digest}.cobalt-app"), digest)
 }
 
 fn read_signing_seed(path: &Path) -> Result<[u8; 32], String> {
@@ -3422,15 +3441,17 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
         } else if !would_stage {
             if menu::marker_stale(&reader.volume) {
                 format!(
-                    "would write a Cobalt entry to {}, and stage nothing. NickelMenu's\n\
-                     \x20 own files predate the last firmware update, though, and an update\n\
-                     \x20 removes the plugin: pass --menu to stage it again",
+                    "would write only a Cobalt entry to {}. It would not write or reinstall\n\
+                     \x20 any NickelMenu files or stage a KoboRoot.tgz. NickelMenu's own files\n\
+                     \x20 predate the last firmware update, though, and an update removes the\n\
+                     \x20 plugin: pass --menu to stage it again",
                     menu::CONFIG,
                 )
             } else {
                 format!(
-                    "would write a Cobalt entry to {}, and stage nothing, because NickelMenu\n\
-                     \x20 is already installed on this reader",
+                    "would write only a Cobalt entry to {}. It would not write or reinstall\n\
+                     \x20 any NickelMenu files or stage a KoboRoot.tgz, because NickelMenu is\n\
+                     \x20 already installed on this reader",
                     menu::CONFIG,
                 )
             }
@@ -5357,6 +5378,28 @@ mod tests {
     }
 
     #[test]
+    fn release_registry_accepts_website_setup_metadata() {
+        let value = kobo_json::parse(
+            r#"{
+                "package":"kobo-library",
+                "id":"library",
+                "display_name":"Library",
+                "short_label":"Library",
+                "summary":"Read a personal library.",
+                "version":"1.0.0",
+                "minimum_cobalt_version":"0.2.4",
+                "glyph":"book",
+                "capabilities":["network"],
+                "setup":{"steps":[{"text":"Create a read-only key."}]}
+            }"#,
+        )
+        .expect("registry fixture");
+
+        let app = super::parse_release_app(&value).expect("setup metadata is registry-only");
+        assert_eq!(app.id, "library");
+    }
+
+    #[test]
     fn app_bundle_and_catalog_commands_produce_verified_assets() {
         let root = std::env::temp_dir().join(format!("kobo-app-assets-{}", std::process::id()));
         fs::create_dir_all(&root).expect("create fixture");
@@ -6588,11 +6631,22 @@ mod tests {
                     registered,
                     STORE_PACKAGES.iter().copied().collect::<BTreeSet<_>>()
                 );
-                let sudoku = apps
-                    .iter()
-                    .find(|app| app.id == "sudoku")
-                    .expect("Sudoku registry entry");
-                assert_eq!(sudoku.version, "1.0.1");
+                // Versions move with every release, so the check is that
+                // each entry carries a version rather than which version it
+                // carries. A pinned number here broke every routine catalog
+                // bump while catching nothing the shape check misses.
+                for app in &apps {
+                    let parts: Vec<&str> = app.version.split('.').collect();
+                    assert!(
+                        parts.len() == 3
+                            && parts.iter().all(|part| {
+                                !part.is_empty() && part.chars().all(|digit| digit.is_ascii_digit())
+                            }),
+                        "{} version {:?} is not three dot-separated numbers",
+                        app.id,
+                        app.version
+                    );
+                }
             }
         }
     }
@@ -6780,6 +6834,9 @@ mod tests {
             let parsed = parse_setup(&arguments(&["--enable-ssh", "--dry-run"])).expect("parse");
             let plan = dry_run_plan(&parsed, &reader);
             assert!(plan.contains("already installed on this reader"), "{plan}");
+            assert!(plan.contains("would not write or reinstall"), "{plan}");
+            assert!(plan.contains("any NickelMenu files"), "{plan}");
+            assert!(plan.contains("or stage a KoboRoot.tgz"), "{plan}");
             assert!(!plan.contains("stage NickelMenu"), "{plan}");
             assert!(!plan.contains("same .kobo/KoboRoot.tgz"), "{plan}");
             assert!(

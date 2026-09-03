@@ -15,6 +15,9 @@ Cobalt is an open-source application platform for Kobo. It provides a launcher,
 an App Store, a Rust SDK, a runtime with capability isolation, and a Clara BW
 simulator.
 
+See the [public roadmap](ROADMAP.md) for the product outcomes Cobalt is working
+toward and the principles used to choose them.
+
 After one USB installation, users can install, update, and remove signed apps
 over Wi-Fi. App releases are independent from Cobalt platform releases, so a
 new app can appear in Store without reinstalling or updating Cobalt.
@@ -126,12 +129,16 @@ the [app request thread](https://github.com/BandarLabs/Cobalt/issues/41).
 
 ## Install
 
-Install Rust, add the ARM target and connect a charged, fully supported reader
-over USB:
+Install [rustup](https://rustup.rs), let it install the stable Rust toolchain,
+then add the ARM target and connect a charged, fully supported reader over USB.
+You do not need a separate operating-system `rust` package; rustup supplies
+`rustc` and `cargo`:
 
 ```sh
+rustup toolchain install stable
 git clone https://github.com/BandarLabs/Cobalt.git
 cd Cobalt
+rustup override set stable
 rustup target add armv7-unknown-linux-musleabihf
 cargo run -p kobo-cli -- setup
 ```
@@ -148,8 +155,9 @@ recovery steps.
 
 ## App Store
 
-Store reads a signed catalog from the fixed `app-catalog` GitHub release. Each
-package contains one ARM executable and a signed canonical manifest. The
+Store reads a signed catalog from the Stable `app-catalog` GitHub release, or
+the isolated `app-catalog-beta` release when the owner enables Beta updates.
+Each package contains one ARM executable and a signed canonical manifest. The
 runtime verifies the catalog, package, installed manifest, and binary before
 launch.
 
@@ -218,7 +226,11 @@ App contributions are regular pull requests:
 2. Add its release metadata to `apps/catalog.json`.
 3. Add unit tests and layout checks for every affected supported profile.
 4. Run the app in the browser and runtime simulators.
-5. Open a pull request.
+5. Run it on a physical, fully supported Kobo and attach a GIF, video, or
+   photos to the pull request.
+6. Include one clean panel screenshot for the app README and generated website
+   install page.
+7. Open a pull request.
 
 After the PR is reviewed and merged, the `Publish apps` workflow builds every
 registered app for ARM, signs the packages and catalog, and updates the fixed
@@ -252,6 +264,7 @@ cargo run -p kobo-cli -- run --sim --app sudoku
 
 Additional guides:
 
+- [Roadmap](ROADMAP.md)
 - [Contributing](CONTRIBUTING.md)
 - [Developing Cobalt](docs/DEVELOPING.md)
 - [Working with devices](docs/DEVICES.md)

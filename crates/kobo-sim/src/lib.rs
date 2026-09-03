@@ -1008,6 +1008,7 @@ fn simulated_app(
         label: label.to_owned(),
         summary: summary.to_owned(),
         version: "1.0.0".to_owned(),
+        minimum_cobalt_version: env!("CARGO_PKG_VERSION").to_owned(),
         glyph,
         capabilities: capabilities
             .iter()
@@ -2115,8 +2116,8 @@ fn simulated_tasks(name: &str) -> TaskRunner {
     runner
         .with_fetch(Arc::new(kobo_net::fetch_from))
         .with_post(Arc::new(kobo_net::post))
-        .with_credential_policy(Arc::new(move |credential, url| {
-            kobo_net::credential_allowed(&app, credential, url)
+        .with_credential_policy(Arc::new(move |credential, url, usage| {
+            kobo_policy::credentials::allowed(&app, credential, url, usage)
         }))
         .with_capabilities([kobo_policy::Capability::Network])
 }

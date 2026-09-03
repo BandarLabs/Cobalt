@@ -1,0 +1,15 @@
+[
+  {
+    "key": "PDF12345",
+    "version": 4,
+    "data": {
+      "key": "PDF12345",
+      "version": 4,
+      "itemType": "attachment",
+      "linkMode": "imported_file",
+      "contentType": "application/pdf",
+      "filename": "synthetic.pdf",
+      "parentItem": "PAPER001"
+    }
+  }
+]

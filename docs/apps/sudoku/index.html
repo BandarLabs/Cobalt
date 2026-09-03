@@ -3,19 +3,77 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sudoku for Cobalt</title>
-<meta name="description" content="Play touch-first Sudoku designed for an e-ink screen.">
+<title>Install Sudoku on Kobo | Cobalt</title>
+<meta name="description" content="Play touch-first Sudoku designed for an e-ink screen. Install it on a supported Kobo e-reader with Cobalt.">
 <link rel="canonical" href="https://bandarlabs.github.io/Cobalt/apps/sudoku/">
+<link rel="icon" href="../../logo.svg" type="image/svg+xml">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Sudoku for Cobalt">
-<meta property="og:description" content="Play touch-first Sudoku designed for an e-ink screen.">
+<meta property="og:title" content="Install Sudoku on Kobo | Cobalt">
+<meta property="og:description" content="Play touch-first Sudoku designed for an e-ink screen. Install it on a supported Kobo e-reader with Cobalt.">
 <meta property="og:url" content="https://bandarlabs.github.io/Cobalt/apps/sudoku/">
-<meta property="og:image" content="https://bandarlabs.github.io/Cobalt/media/site/og-card.jpg">
-<meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Sudoku for Cobalt">
-<meta name="twitter:description" content="Play touch-first Sudoku designed for an e-ink screen.">
-<meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/og-card.jpg">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta property="og:site_name" content="Cobalt">
+<meta property="og:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/sudoku.png">
+<meta property="og:image:width" content="1072">
+<meta property="og:image:height" content="1448">
+<meta property="og:image:alt" content="A Sudoku game designed for the Kobo touch screen">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Install Sudoku on Kobo | Cobalt">
+<meta name="twitter:description" content="Play touch-first Sudoku designed for an e-ink screen. Install it on a supported Kobo e-reader with Cobalt.">
+<meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/sudoku.png">
+<meta name="twitter:image:alt" content="A Sudoku game designed for the Kobo touch screen">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-3NlSLoJ38CbM4/kk7cvPr0LmVPHzqYYpmSIYAAWikuw='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "Sudoku",
+      "description": "Play touch-first Sudoku designed for an e-ink screen.",
+      "url": "https://bandarlabs.github.io/Cobalt/apps/sudoku/",
+      "image": {
+        "@type": "ImageObject",
+        "url": "https://bandarlabs.github.io/Cobalt/media/site/apps/sudoku.png",
+        "width": 1072,
+        "height": 1448,
+        "caption": "A Sudoku game designed for the Kobo touch screen"
+      },
+      "applicationSuite": "Cobalt",
+      "applicationCategory": "SoftwareApplication",
+      "operatingSystem": "Cobalt on supported Kobo e-readers",
+      "softwareVersion": "1.0.7",
+      "isAccessibleForFree": true,
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      },
+      "installUrl": "https://bandarlabs.github.io/Cobalt/apps/sudoku/"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Cobalt",
+          "item": "https://bandarlabs.github.io/Cobalt/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Apps",
+          "item": "https://bandarlabs.github.io/Cobalt/#apps"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "Sudoku",
+          "item": "https://bandarlabs.github.io/Cobalt/apps/sudoku/"
+        }
+      ]
+    }
+  ]
+}</script>
 <link rel="stylesheet" href="../install.css">
 </head>
 <body>
@@ -24,7 +82,7 @@
     <a class="brand" href="../../"><img src="../../logo.svg" alt="Cobalt" width="81" height="34"></a>
     <nav class="top" aria-label="Main navigation">
       <a class="active" href="../../#apps">Apps</a>
-      <a href="../../sdk.html">SDK</a>
+      <a href="../../developers.html">Developers</a>
       <a href="../../faq.html">FAQ</a>
       <a href="../../#store">Store</a>
       <a href="../../#install">Install</a>
@@ -33,13 +91,13 @@
     </nav>
   </div>
 </header>
-<main class="wrap" data-app-id="sudoku">
+<main class="wrap" data-app-id="sudoku" data-minimum-cobalt-version="0.3.1">
   <div class="app-hero">
     <div class="app-copy">
       <p class="eyebrow">Kobo app</p>
       <h1>Sudoku</h1>
       <p class="summary">Play touch-first Sudoku designed for an e-ink screen.</p>
-      <div class="meta"><span>Version 1.0.1</span><span>No additional permissions</span></div>
+      <div class="meta"><span>Version 1.0.7</span><span>No additional permissions</span></div>
     </div>
     <figure class="app-shot">
       <img src="../../media/site/apps/sudoku.png" width="1072" height="1448" alt="A Sudoku game designed for the Kobo touch screen">
@@ -82,7 +140,22 @@
     </div>
     <p class="status" id="install-status" role="status" aria-live="polite"></p>
   </section>
+  <aside class="community">
+    <strong>Want another Kobo app?</strong>
+    Request it, suggest a feature or report a bug in
+    <a href="https://www.reddit.com/r/CobaltForKobo/">r/CobaltForKobo</a>.
+  </aside>
 </main>
+<footer>
+  <div class="wrap">
+    <span>Cobalt · AGPL-3.0</span>
+    <nav aria-label="Footer navigation">
+      <a href="../../">Home</a>
+      <a href="https://www.reddit.com/r/CobaltForKobo/">Community</a>
+      <a href="https://github.com/BandarLabs/Cobalt">GitHub</a>
+    </nav>
+  </div>
+</footer>
 <script src="../install.js" defer></script>
 </body>
 </html>

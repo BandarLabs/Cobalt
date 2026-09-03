@@ -45,8 +45,8 @@ use kobo_hal::{Rect, RefreshIntent, RefreshPlan, RegionSnapshot};
 use kobo_policy::{Backends, Capability, Declared, DeviceServices, PowerPolicy, TaskRunner};
 use kobo_protocol::{Frame, IdleSleep, Lifecycle, Message, TaskError, TaskOutcome};
 use kobo_ui::{
-    render_all, ActionId, Chrome, FontHandle, FramePlanner, PanelWaveform, PictureCache, Screen,
-    Surface,
+    render_all, ActionId, CellStyle, Chrome, FontHandle, FramePlanner, Layout, LayoutKind,
+    PanelWaveform, PictureCache, Screen, Surface,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -166,6 +166,22 @@ const MAX_SESSION: Duration = Duration::from_secs(2 * 60 * 60);
 /// The longest the loop waits between passes even when nothing is happening,
 /// which bounds how stale the recovery watchdog's heartbeat can get.
 const BEAT_INTERVAL: Duration = Duration::from_secs(10);
+/// How long a session runs before the background update checker first asks
+/// what is newer. Long enough that opening Cobalt to do one thing never
+/// competes with a download for the radio; short enough that a session used
+/// for an evening still gets its updates.
+const AUTO_UPDATE_FIRST_CHECK: Duration = Duration::from_secs(2 * 60);
+/// How long after one check the next one happens. Releases are published on
+/// the scale of weeks, so asking more often than this buys nothing but radio
+/// time.
+const AUTO_UPDATE_RECHECK: Duration = Duration::from_secs(6 * 60 * 60);
+/// How long the panel must have been left alone before found updates are
+/// applied. Applying blocks the loop the way a store install does, so it only
+/// happens when nobody is mid-anything on the screen.
+const AUTO_UPDATE_QUIET: Duration = Duration::from_secs(60);
+/// Below this charge, background updates wait for a charger. A failed write
+/// to the book partition costs more than a late update is worth.
+const AUTO_UPDATE_MIN_BATTERY: u8 = 20;
 /// How long an application that asked for first refusal on Back is given to
 /// answer it with a screen.
 ///
@@ -425,6 +441,12 @@ enum Event {
     /// way so the panel, the touch device, the reader and the freeze watchdog
     /// all go back.
     Stopping(i32),
+    /// The background checker found software newer than what is running.
+    ///
+    /// Carried into the loop rather than applied on the checker's thread,
+    /// because applying replaces binaries and stops applications, and only
+    /// the loop knows whether the panel is quiet enough for that.
+    AutoUpdate(crate::autoupdate::Plan),
 }
 
 /// Where the idle-sleep preference lives, beside other owner-visible Cobalt
@@ -653,7 +675,7 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
     // two portrait poses.
     let forward_is_194 = pose.rotation() % 4 == profile.reference_rotation % 4;
 
-    let outcome = host_applications(
+    let application_outcome = host_applications(
         application,
         &display,
         whole_screen,
@@ -662,6 +684,17 @@ pub fn present(application: &Path, limits: Limits) -> Result<String, String> {
         forward_is_194,
         &watchdog,
     );
+    // No panel work may outlive Cobalt's ownership of the display. This is an
+    // explicit lifecycle fence rather than a timing assumption: the stock
+    // reader can start drawing as soon as the session gives the descriptor
+    // back.
+    let panel_idle = display
+        .finish_pending()
+        .map_err(|error| format!("finish panel updates before handoff: {error}"));
+    let outcome = match (application_outcome, panel_idle) {
+        (Ok(summary), Ok(_)) => Ok(summary),
+        (Err(error), _) | (_, Err(error)) => Err(error),
+    };
     trace("session finished, handing the panel back");
     println!("session finished, handing the panel back");
 
@@ -1052,26 +1085,6 @@ fn watch_saved_wifi(wifi: kobo_hal::wifi::Wifi) {
                 }
             }
         });
-}
-
-fn fetch_on_device(
-    url: &str,
-    offset: u32,
-    max_bytes: u32,
-    headers: &[(&str, &str)],
-) -> Result<Vec<u8>, TaskError> {
-    kobo_net::fetch_from(url, offset, max_bytes, headers)
-}
-
-fn post_on_device(
-    url: &str,
-    body: &[u8],
-    content_type: &str,
-    credential: Option<(&str, &str)>,
-    headers: &[(&str, &str)],
-    max_bytes: u32,
-) -> Result<Vec<u8>, TaskError> {
-    kobo_net::post(url, body, content_type, credential, headers, max_bytes)
 }
 
 fn charger_blocks_mem(display: &DisplaySession) -> bool {
@@ -1580,7 +1593,7 @@ fn host_applications(
         }
     };
     let audio_fetcher: kobo_hal::audio::StreamFetcher = Arc::new(|url, offset, max_bytes| {
-        fetch_on_device(url, offset, max_bytes, &[]).map_err(|error| match error {
+        kobo_net::fetch_from(url, offset, max_bytes, None, &[]).map_err(|error| match error {
             // A reader with no route and a service that will not answer are
             // different things everywhere else, but `DeviceError` is the radio
             // vocabulary and has one word for both. Unreachable is the honest
@@ -1644,10 +1657,16 @@ fn host_applications(
             println!("stop requests will not be caught ({error}); kill needs the watchdog");
         }
     }
+    watch_for_stale_software(&sender);
 
     let result = (|| -> Result<String, String> {
         let front = start_application(&mut apps, &mut next_id, &home, whole_screen, &sender)?;
         let mut front = front;
+        // Store installation stays bound to the channel whose catalog this
+        // session last displayed. Settings may change while Store is
+        // backgrounded; resolving the channel again at install time could
+        // otherwise install a different version than the one the user saw.
+        let mut store_channel = crate::autoupdate::preferences(Path::new(COBALT_ROOT)).channel;
         let mut visited: Vec<String> = Vec::new();
         let ceiling = Instant::now() + session_ceiling;
         let mut last_activity = Instant::now();
@@ -1664,9 +1683,18 @@ fn host_applications(
         // The rectangle a finger is resting on, with the metrics its mark was
         // drawn against. Both, because the mark is undone by drawing it again
         // and that is only exact if nothing about it is recomputed.
-        let mut pressed: Option<(kobo_ui::Rect, kobo_ui::DisplayMetrics)> = None;
+        let mut pressed: Option<(kobo_ui::Rect, kobo_ui::DisplayMetrics, FeedbackKind)> = None;
+        // A released control is restored with the application's answer when
+        // that answer arrives promptly. If it does not, this deadline makes
+        // the release visible on its own instead of leaving a key held down
+        // while an application works or fails.
+        let mut release_due: Option<Instant> = None;
         // When and where the finger landed, for telling a tap from a hold.
         let mut landed: Option<(Instant, i32, i32)> = None;
+        // Updates the background checker found, held until the panel has been
+        // quiet long enough to apply them. A newer report replaces an older
+        // one outright: the newer one was computed against newer facts.
+        let mut pending_updates: Option<crate::autoupdate::Plan> = None;
 
         loop {
             let now = Instant::now();
@@ -1674,6 +1702,10 @@ fn host_applications(
             // the runtime is still serving the panel rather than merely that
             // the process has not been reaped.
             watchdog.beat();
+            if release_due.is_some_and(|deadline| now >= deadline) {
+                panel.paint(display, whole_screen, &surface)?;
+                release_due = None;
+            }
             if let Some(ButtonAction::Shutdown) = power_button.poll_hold(now) {
                 paint_notice(
                     display,
@@ -1808,6 +1840,19 @@ fn host_applications(
                     last_activity = Instant::now();
                 }
             }
+            // Updates found in the background are applied only to a panel
+            // nobody is using: enough quiet has passed since the last touch,
+            // and the battery can afford the writes. Applying blocks this
+            // loop exactly as a store install does, which is acceptable here
+            // for the same reason it is there: nobody is waiting.
+            if pending_updates.is_some()
+                && now.saturating_duration_since(last_activity) >= AUTO_UPDATE_QUIET
+                && auto_update_battery_permits()
+            {
+                if let Some(plan) = pending_updates.take() {
+                    apply_auto_update(plan, &mut apps, front);
+                }
+            }
             // An application that was offered Back and drew nothing has had
             // its turn. This is what keeps the guarantee: the way out belongs
             // to the reader whatever the application does or fails to do.
@@ -1862,7 +1907,10 @@ fn host_applications(
                         .as_ref()
                         .and_then(|sleeping| sleeping.resleep_at)
                         .map_or(BEAT_INTERVAL, |at| at.saturating_duration_since(now)),
-                );
+                )
+                .min(release_due.map_or(BEAT_INTERVAL, |deadline| {
+                    deadline.saturating_duration_since(now)
+                }));
             match events.recv_timeout(wait) {
                 Ok(Event::Stopping(number)) => {
                     return Ok(finish(
@@ -1878,6 +1926,9 @@ fn host_applications(
                 // A heartbeat is a second chance to deliver a result, and a
                 // wake is the first: the drain is the only delivery path.
                 Err(RecvTimeoutError::Timeout) | Ok(Event::TaskReady) => {}
+                Ok(Event::AutoUpdate(plan)) => {
+                    pending_updates = Some(plan);
+                }
                 Err(RecvTimeoutError::Disconnected) => {
                     return Ok(finish(&apps, &visited, "the runtime ran out of work"));
                 }
@@ -2075,30 +2126,38 @@ fn host_applications(
                     // the finished surface, so the planner sees a change of
                     // pure black and white in one small rectangle and picks
                     // the fast waveform for it.
+                    let mut released = None;
                     if let Some(current) = screen.as_ref() {
                         match event {
                             TouchEvent::Down { x, y } => {
                                 if let (Ok(x), Ok(y)) = (i32::try_from(x), i32::try_from(y)) {
                                     landed = Some((Instant::now(), x, y));
-                                    if let Some(rect) = current
-                                        .layout_with(&metrics_for(current), &chrome)
-                                        .pressed_control(x, y)
-                                    {
+                                    let layout =
+                                        current.layout_with(&metrics_for(current), &chrome);
+                                    if let Some(rect) = layout.pressed_control(x, y) {
                                         let metrics = metrics_for(current);
                                         surface.invert_press(rect, &metrics);
                                         panel.paint(display, whole_screen, &surface)?;
-                                        pressed = Some((rect, metrics));
+                                        // This feedback frame also carried any
+                                        // older deferred release, so its
+                                        // fallback is no longer needed. A press
+                                        // outside every control paints nothing
+                                        // and must leave the deadline armed.
+                                        release_due = None;
+                                        pressed =
+                                            Some((rect, metrics, feedback_kind(&layout, rect)));
                                     }
                                 }
                             }
                             TouchEvent::Up { .. } => {
-                                // Put back before the action is delivered, so
-                                // that an application which repaints does so
-                                // over a control in its resting state rather
-                                // than over an inverted one.
-                                if let Some((rect, metrics)) = pressed.take() {
+                                // Restore the surface before the application
+                                // draws, but do not submit the release yet.
+                                // The action is delivered first and a prompt
+                                // answer carries both the release and the new
+                                // screen in one update.
+                                if let Some((rect, metrics, class)) = pressed.take() {
                                     surface.invert_press(rect, &metrics);
-                                    panel.paint(display, whole_screen, &surface)?;
+                                    released = Some(class);
                                 }
                             }
                             TouchEvent::Move { x, y } => {
@@ -2121,11 +2180,11 @@ fn host_applications(
                                 let off = match (i32::try_from(x), i32::try_from(y)) {
                                     (Ok(x), Ok(y)) => pressed
                                         .as_ref()
-                                        .is_some_and(|(rect, _)| !rect.contains(x, y)),
+                                        .is_some_and(|(rect, _, _)| !rect.contains(x, y)),
                                     _ => true,
                                 };
                                 if off {
-                                    if let Some((rect, metrics)) = pressed.take() {
+                                    if let Some((rect, metrics, _)) = pressed.take() {
                                         surface.invert_press(rect, &metrics);
                                         panel.paint(display, whole_screen, &surface)?;
                                     }
@@ -2143,13 +2202,14 @@ fn host_applications(
                             .is_some_and(|(at, _, _)| at.elapsed() >= HOLD_TIME),
                         _ => false,
                     };
-                    match deliver_touch(
+                    let disposition = deliver_touch(
                         &mut apps[index].stream,
                         event,
                         screen.as_ref(),
                         &chrome,
                         held,
-                    )? {
+                    )?;
+                    match disposition {
                         Tap::Handled => {}
                         Tap::OfferedBack => back_offered = Some((front, Instant::now())),
                         Tap::Leave => {
@@ -2172,6 +2232,10 @@ fn host_applications(
                                 &mut status,
                             )?;
                         }
+                    }
+                    if let Some(class) = released {
+                        release_due = (disposition != Tap::Leave)
+                            .then(|| Instant::now() + release_grace(class));
                     }
                 }
                 Ok(Event::App(id, frame)) => {
@@ -2210,6 +2274,7 @@ fn host_applications(
                                 // it, or releasing the finger would invert a
                                 // rectangle of the new screen instead.
                                 pressed = None;
+                                release_due = None;
                                 render_all(
                                     &screen,
                                     &metrics_for(&screen),
@@ -2626,18 +2691,27 @@ fn host_applications(
                                         )))
                                     }
                                     kobo_protocol::DeviceRequest::ReadAppCatalog => {
-                                        app_store_result(crate::app_store::catalog(Path::new(
-                                            COBALT_ROOT,
-                                        )))
+                                        let root = Path::new(COBALT_ROOT);
+                                        let channel = crate::autoupdate::preferences(root).channel;
+                                        let result = crate::app_store::catalog(root, channel);
+                                        if result.is_ok() {
+                                            store_channel = channel;
+                                        }
+                                        app_store_result(result)
                                     }
                                     kobo_protocol::DeviceRequest::RefreshAppCatalog => {
-                                        app_store_result(crate::app_store::refresh(Path::new(
-                                            COBALT_ROOT,
-                                        )))
+                                        let root = Path::new(COBALT_ROOT);
+                                        let channel = crate::autoupdate::preferences(root).channel;
+                                        let result = crate::app_store::refresh(root, channel);
+                                        if result.is_ok() {
+                                            store_channel = channel;
+                                        }
+                                        app_store_result(result)
                                     }
                                     kobo_protocol::DeviceRequest::InstallApp { id } => {
+                                        let root = Path::new(COBALT_ROOT);
                                         let result =
-                                            crate::app_store::install(Path::new(COBALT_ROOT), id);
+                                            crate::app_store::install(root, id, store_channel);
                                         if result.is_ok() {
                                             stop_named_application(&mut apps, id);
                                         }
@@ -2695,6 +2769,66 @@ fn host_applications(
                                             }
                                         }
                                     }
+                                    kobo_protocol::DeviceRequest::ReadAutoUpdate => {
+                                        auto_update_result(crate::autoupdate::preferences(
+                                            Path::new(COBALT_ROOT),
+                                        ))
+                                    }
+                                    kobo_protocol::DeviceRequest::SetAutoUpdate {
+                                        cobalt,
+                                        apps,
+                                    } => {
+                                        let current =
+                                            crate::autoupdate::preferences(Path::new(COBALT_ROOT));
+                                        let chosen = crate::autoupdate::Preferences {
+                                            cobalt: *cobalt,
+                                            apps: *apps,
+                                            ..current
+                                        };
+                                        match crate::autoupdate::set_preferences(
+                                            Path::new(COBALT_ROOT),
+                                            chosen,
+                                        ) {
+                                            Ok(()) => auto_update_result(chosen),
+                                            Err(error) => {
+                                                kobo_protocol::DeviceResult::Failed(error)
+                                            }
+                                        }
+                                    }
+                                    kobo_protocol::DeviceRequest::ReadUpdateChannel => {
+                                        update_channel_result(crate::autoupdate::preferences(
+                                            Path::new(COBALT_ROOT),
+                                        ))
+                                    }
+                                    kobo_protocol::DeviceRequest::SetUpdateChannel { channel } => {
+                                        let current =
+                                            crate::autoupdate::preferences(Path::new(COBALT_ROOT));
+                                        let chosen = crate::autoupdate::Preferences {
+                                            channel: *channel,
+                                            ..current
+                                        };
+                                        match crate::autoupdate::set_preferences(
+                                            Path::new(COBALT_ROOT),
+                                            chosen,
+                                        ) {
+                                            Ok(()) => update_channel_result(chosen),
+                                            Err(error) => {
+                                                kobo_protocol::DeviceResult::Failed(error)
+                                            }
+                                        }
+                                    }
+                                    // Answered by probing the hardware again
+                                    // rather than from anything cached, so
+                                    // the screen built from it describes the
+                                    // reader it is drawn on. That screen
+                                    // exists to be photographed as evidence a
+                                    // build ran here, and evidence read fresh
+                                    // is worth more than evidence remembered.
+                                    kobo_protocol::DeviceRequest::ReadIdentity => read_identity()
+                                        .map_or_else(
+                                            || services.handle(request.clone()),
+                                            kobo_protocol::DeviceResult::Identity,
+                                        ),
                                     _ => services.handle(request.clone()),
                                 }
                             };
@@ -3024,7 +3158,11 @@ fn system_request_allowed(app: &str, request: &kobo_protocol::DeviceRequest) -> 
     match request {
         kobo_protocol::DeviceRequest::Update { .. }
         | kobo_protocol::DeviceRequest::ReadIdleSleep
-        | kobo_protocol::DeviceRequest::SetIdleSleep(_) => app == "settings",
+        | kobo_protocol::DeviceRequest::SetIdleSleep(_)
+        | kobo_protocol::DeviceRequest::ReadAutoUpdate
+        | kobo_protocol::DeviceRequest::SetAutoUpdate { .. }
+        | kobo_protocol::DeviceRequest::ReadUpdateChannel
+        | kobo_protocol::DeviceRequest::SetUpdateChannel { .. } => app == "settings",
         kobo_protocol::DeviceRequest::ListInstalledApps => matches!(app, "launcher" | "store"),
         kobo_protocol::DeviceRequest::ReadAppCatalog
         | kobo_protocol::DeviceRequest::RefreshAppCatalog
@@ -3044,6 +3182,43 @@ fn app_link_result(
     result.unwrap_or_else(kobo_protocol::DeviceResult::Failed)
 }
 
+/// What this build is running on, read from the hardware right now.
+///
+/// `None` when the probe finds no matching profile, which is what happens on
+/// a development host; the policy's simulator answer stands there, and its
+/// profile name says plainly that it is not a reader. Firmware and kernel
+/// come from the same files the startup identification read, so a value that
+/// is missing here was missing there too and is shown as absent rather than
+/// invented.
+fn read_identity() -> Option<kobo_protocol::DeviceIdentity> {
+    let snapshot = kobo_hal::probe_device().ok()?;
+    let profile = kobo_profile::identify_profile(&snapshot)?;
+    Some(kobo_protocol::DeviceIdentity {
+        profile_id: profile.id.to_owned(),
+        model: profile.model.to_owned(),
+        device_code: profile.device_code,
+        firmware: bounded(snapshot.identity.firmware_version.unwrap_or_default()),
+        kernel: bounded(snapshot.identity.kernel_release.unwrap_or_default()),
+        runtime_version: env!("CARGO_PKG_VERSION").to_owned(),
+        panel_width: profile.width,
+        panel_height: profile.height,
+    })
+}
+
+/// Keeps a probed string inside the identity field bound so one overgrown
+/// version file cannot make the whole answer unsendable. Cut once at the
+/// bound, stepping back only as far as the nearest character boundary.
+fn bounded(mut text: String) -> String {
+    if text.len() > kobo_protocol::MAX_IDENTITY_FIELD_LEN {
+        let mut end = kobo_protocol::MAX_IDENTITY_FIELD_LEN;
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        text.truncate(end);
+    }
+    text
+}
+
 fn remote_installed_id(outcome: &kobo_protocol::RemoteInstallOutcome) -> Option<&str> {
     match outcome {
         kobo_protocol::RemoteInstallOutcome::Installed { id }
@@ -3051,7 +3226,8 @@ fn remote_installed_id(outcome: &kobo_protocol::RemoteInstallOutcome) -> Option<
         kobo_protocol::RemoteInstallOutcome::None
         | kobo_protocol::RemoteInstallOutcome::AlreadyInstalled { .. }
         | kobo_protocol::RemoteInstallOutcome::Included { .. }
-        | kobo_protocol::RemoteInstallOutcome::Unavailable { .. } => None,
+        | kobo_protocol::RemoteInstallOutcome::Unavailable { .. }
+        | kobo_protocol::RemoteInstallOutcome::RequiresCobalt { .. } => None,
     }
 }
 
@@ -3077,6 +3253,76 @@ fn stop_named_application(apps: &mut [Hosted], name: &str) {
         stop_application(&mut app.child, app.jail.as_deref());
         if let Some(root) = &app.jail {
             let _ignored = fs::remove_dir_all(root);
+        }
+    }
+}
+
+fn auto_update_result(chosen: crate::autoupdate::Preferences) -> kobo_protocol::DeviceResult {
+    kobo_protocol::DeviceResult::AutoUpdate {
+        cobalt: chosen.cobalt,
+        apps: chosen.apps,
+    }
+}
+
+fn update_channel_result(chosen: crate::autoupdate::Preferences) -> kobo_protocol::DeviceResult {
+    kobo_protocol::DeviceResult::UpdateChannel(chosen.channel)
+}
+
+/// Whether the battery can afford background writes right now. A reader whose
+/// gauge cannot be read is allowed, because refusing forever is worse than
+/// trusting hardware that boots.
+fn auto_update_battery_permits() -> bool {
+    kobo_hal::battery::read()
+        .is_none_or(|battery| battery.charging || battery.percent >= AUTO_UPDATE_MIN_BATTERY)
+}
+
+/// Applies what the background checker found, now that the panel is quiet.
+///
+/// The owner's choices are read again rather than trusted from the plan,
+/// because the plan may be hours old and the settings screen may have moved a
+/// switch since. The application currently on the panel is never replaced
+/// under the reader; its turn comes with a later plan. A staged platform
+/// release takes effect the next time Cobalt starts, exactly as one installed
+/// from the settings screen does.
+fn apply_auto_update(plan: crate::autoupdate::Plan, apps: &mut [Hosted], front: u64) {
+    let root = Path::new(COBALT_ROOT);
+    let chosen = crate::autoupdate::preferences(root);
+    if chosen.channel != plan.channel {
+        trace("the update channel changed, so the old background plan was discarded");
+        return;
+    }
+    let showing = apps
+        .iter()
+        .find(|app| app.id == front)
+        .map(|app| app.name.clone());
+    if chosen.apps {
+        for id in plan.apps {
+            if showing.as_deref() == Some(id.as_str()) {
+                trace(&format!("{id} is on the panel, so its update waits"));
+                continue;
+            }
+            match crate::app_store::install(root, &id, chosen.channel) {
+                Ok(()) => {
+                    stop_named_application(apps, &id);
+                    trace(&format!("{id} was updated in the background"));
+                }
+                Err(error) => trace(&format!("{id} background update failed: {error}")),
+            }
+        }
+    }
+    if !chosen.cobalt {
+        return;
+    }
+    if let Some(update) = plan.platform {
+        match crate::update::apply(&update.url, &update.sha256) {
+            Ok(()) => trace(&format!(
+                "Cobalt {} is staged and runs from the next start",
+                update.version
+            )),
+            Err(error) => trace(&format!(
+                "Cobalt {} background update failed: {error}",
+                update.version
+            )),
         }
     }
 }
@@ -3244,11 +3490,11 @@ fn start_application(
     let waker = sender.clone();
     let credential_app = name.clone();
     let tasks = TaskRunner::simulated(std::env::temp_dir())
-        .with_fetch(Arc::new(fetch_on_device))
-        .with_post(Arc::new(post_on_device))
+        .with_fetch(Arc::new(kobo_net::fetch_from))
+        .with_post(Arc::new(kobo_net::post))
         .with_secrets(SECRETS)
-        .with_credential_policy(Arc::new(move |credential, url| {
-            kobo_net::credential_allowed(&credential_app, credential, url)
+        .with_credential_policy(Arc::new(move |credential, url, usage| {
+            kobo_policy::credentials::allowed(&credential_app, credential, url, usage)
         }))
         .with_wake(Arc::new(move || {
             let _ = waker.send(Event::TaskReady);
@@ -3385,13 +3631,40 @@ fn resolve(catalogue: &Path, name: &str) -> Result<PathBuf, String> {
     if crate::app_store::manages_builtin(name) {
         return crate::app_store::resolve(Path::new(COBALT_ROOT), name);
     }
-    let path = catalogue.join(format!("kobo-{name}"));
-    if path.is_file() {
-        Ok(path)
-    } else {
+    prefer_installed(catalogue, name, || {
         crate::app_store::resolve(Path::new(COBALT_ROOT), name)
-            .map_err(|_| format!("no application named {name} is installed"))
-    }
+    })
+}
+
+/// Chooses between the copy the store installed and the binary sitting beside
+/// the runtime, for an application the runtime does not carry itself.
+///
+/// The store is asked first and the binary beside the runtime answers only
+/// when the store has none. Both can name the same application: the store
+/// writes its copy by installing or updating one, while the binary beside the
+/// runtime is whatever the last platform package left there. Asking in the
+/// other order pins the application to that leftover for good, because no
+/// update can replace it -- the store installs a newer copy, reports success,
+/// and the reader goes on starting the old binary with nothing to say it is
+/// happening. An application carried by an older package and dropped from a
+/// later one is where this bites, because the file outlives the release that
+/// put it there.
+///
+/// The lookup is a parameter so this decision can be tested: the real one
+/// verifies a signature against the compiled-in release key, which a test
+/// cannot produce.
+fn prefer_installed<F>(catalogue: &Path, name: &str, installed: F) -> Result<PathBuf, String>
+where
+    F: FnOnce() -> Result<PathBuf, String>,
+{
+    installed().or_else(|_| {
+        let path = catalogue.join(format!("kobo-{name}"));
+        if path.is_file() {
+            Ok(path)
+        } else {
+            Err(format!("no application named {name} is installed"))
+        }
+    })
 }
 
 fn valid_application_name(name: &str) -> bool {
@@ -3421,6 +3694,39 @@ fn installed_name(path: &Path) -> Result<String, String> {
 /// an unhurried tap becomes a gesture nobody asked for, longer and the reader
 /// concludes the panel is ignoring them and lifts off.
 const HOLD_TIME: Duration = Duration::from_millis(500);
+
+/// Briefly holds a release so an application's next screen can carry it.
+///
+/// These are far shorter than a panel transition and therefore add no visible
+/// hold. A keyboard gets a little more room because one key commonly changes
+/// both the key face and a text field at the opposite end of the screen.
+const CONTROL_RELEASE_GRACE: Duration = Duration::from_millis(12);
+const KEYBOARD_RELEASE_GRACE: Duration = Duration::from_millis(30);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FeedbackKind {
+    Control,
+    KeyboardKey,
+}
+
+fn feedback_kind(layout: &Layout, rect: kobo_ui::Rect) -> FeedbackKind {
+    if layout
+        .nodes
+        .iter()
+        .any(|node| node.rect == rect && matches!(node.kind, LayoutKind::Cell(_, CellStyle::Key)))
+    {
+        FeedbackKind::KeyboardKey
+    } else {
+        FeedbackKind::Control
+    }
+}
+
+fn release_grace(class: FeedbackKind) -> Duration {
+    match class {
+        FeedbackKind::Control => CONTROL_RELEASE_GRACE,
+        FeedbackKind::KeyboardKey => KEYBOARD_RELEASE_GRACE,
+    }
+}
 
 /// How far the finger may wander and still be holding, in pixels.
 ///
@@ -3800,8 +4106,8 @@ impl Painter {
         let frame = RegionSnapshot::from_grayscale(display.geometry(), region, &region_gray)
             .map_err(|error| format!("prepare the frame: {error}"))?;
         let converted = started.elapsed();
-        display
-            .restore(&frame)
+        let fence = display
+            .restore_timed(&frame)
             .map_err(|error| format!("write the frame: {error}"))?;
         let written = started.elapsed();
         let plan = RefreshPlan::new(
@@ -3813,7 +4119,7 @@ impl Painter {
         )
         .ok_or_else(|| "the refresh region is not inside the screen".to_owned())?;
         let timing = display
-            .refresh_timed(plan)
+            .refresh_deferred(plan)
             .map_err(|error| format!("show the frame: {error}"))?;
         // One line per frame: how long the grayscale conversion, the
         // framebuffer write and the two ioctls each took, and what was
@@ -3824,14 +4130,16 @@ impl Painter {
         // line; start.sh already captures stderr.
         if frame_timing_wanted() {
             eprintln!(
-                "frame {}x{} wf={} convert={}ms write={}ms submit={}us wait={}ms",
+                "frame {}x{} wf={} convert={}ms write={}ms submit={}us fence={}ms completed={} pending={}",
                 region.width,
                 region.height,
                 timing.submitted_waveform,
                 converted.as_millis(),
                 written.saturating_sub(converted).as_millis(),
                 timing.submit.as_micros(),
-                timing.wait.as_millis(),
+                fence.wait.saturating_add(timing.prior.wait).as_millis(),
+                fence.completed.saturating_add(timing.prior.completed),
+                timing.unfinished,
             );
         }
 
@@ -3936,6 +4244,38 @@ fn watch_for_stop_requests(sender: &Sender<Event>) {
             return;
         }
         thread::sleep(POLL_FOR_STOP);
+    });
+}
+
+/// Asks, from its own thread, whether newer software has been published.
+///
+/// Only the asking happens here: what it finds is sent into the loop as
+/// [`Event::AutoUpdate`] and applied when the panel is quiet, because
+/// applying replaces binaries and stops applications and only the loop knows
+/// whether that is safe right now. The owner's choices are read before every
+/// check, so a switch turned off in settings stops the next check without a
+/// restart. The thread ends with the process, which is right after the one
+/// session this process ever runs.
+fn watch_for_stale_software(sender: &Sender<Event>) {
+    let sender = sender.clone();
+    thread::spawn(move || {
+        let mut delay = AUTO_UPDATE_FIRST_CHECK;
+        loop {
+            thread::sleep(delay);
+            delay = AUTO_UPDATE_RECHECK;
+            let root = Path::new(COBALT_ROOT);
+            let chosen = crate::autoupdate::preferences(root);
+            if !chosen.cobalt && !chosen.apps {
+                continue;
+            }
+            let plan = crate::autoupdate::plan(root, chosen, env!("CARGO_PKG_VERSION"));
+            if plan.is_empty() {
+                continue;
+            }
+            if sender.send(Event::AutoUpdate(plan)).is_err() {
+                return;
+            }
+        }
     });
 }
 
@@ -4387,6 +4727,40 @@ mod tests {
     fn a_name_is_bounded_in_length() {
         assert!(resolve(&catalogue(), &"a".repeat(33)).is_err());
     }
+
+    /// The update an application receives has to be the one that starts.
+    ///
+    /// A reader had arXiv left beside the runtime by a package old enough to
+    /// predate the current wire protocol. The store updated the application,
+    /// said so, and the reader went on starting the leftover, which the
+    /// runtime then refused for speaking a protocol it no longer answers. The
+    /// application was pinned to a binary no update could reach, and the only
+    /// visible symptom was a screen that said Starting and stayed there.
+    #[test]
+    fn the_installed_copy_is_started_even_when_a_binary_sits_beside_the_runtime() {
+        let directory = catalogue();
+        let installed = directory.join("installed-elsewhere/kobo-hello");
+        assert_eq!(
+            super::prefer_installed(&directory, "hello", || Ok(installed.clone()))
+                .expect("the installed copy answers"),
+            installed,
+            "the leftover beside the runtime shadowed the installed copy"
+        );
+    }
+
+    #[test]
+    fn a_binary_beside_the_runtime_answers_only_when_nothing_is_installed() {
+        let directory = catalogue();
+        assert_eq!(
+            super::prefer_installed(&directory, "hello", || Err("nothing installed".to_owned()))
+                .expect("the binary beside the runtime answers"),
+            directory.join("kobo-hello")
+        );
+        assert!(super::prefer_installed(&directory, "nothing-here", || Err(
+            "nothing installed".to_owned()
+        ))
+        .is_err());
+    }
 }
 
 #[cfg(test)]
@@ -4487,6 +4861,22 @@ mod hosting_tests {
         assert!(!super::system_request_allowed("store", &platform));
         assert!(!super::system_request_allowed("todo", &platform));
 
+        for request in [
+            DeviceRequest::ReadAutoUpdate,
+            DeviceRequest::SetAutoUpdate {
+                cobalt: true,
+                apps: false,
+            },
+            DeviceRequest::ReadUpdateChannel,
+            DeviceRequest::SetUpdateChannel {
+                channel: kobo_protocol::UpdateChannel::Beta,
+            },
+        ] {
+            assert!(super::system_request_allowed("settings", &request));
+            assert!(!super::system_request_allowed("store", &request));
+            assert!(!super::system_request_allowed("todo", &request));
+        }
+
         let install = DeviceRequest::InstallApp {
             id: "word-count".to_owned(),
         };
@@ -4564,5 +4954,51 @@ mod hosting_tests {
             kobo_protocol::IdleSleep::ThirtyMinutes
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn keyboard_release_gets_one_short_app_response_window() {
+        assert_eq!(
+            super::release_grace(super::FeedbackKind::Control),
+            super::CONTROL_RELEASE_GRACE
+        );
+        assert_eq!(
+            super::release_grace(super::FeedbackKind::KeyboardKey),
+            super::KEYBOARD_RELEASE_GRACE
+        );
+        assert!(super::KEYBOARD_RELEASE_GRACE > super::CONTROL_RELEASE_GRACE);
+        assert!(super::KEYBOARD_RELEASE_GRACE < std::time::Duration::from_millis(50));
+    }
+
+    #[test]
+    fn keyboard_cells_use_the_keyboard_feedback_window() {
+        let screen = kobo_ui::Screen::new(
+            1,
+            vec![kobo_ui::Node::Grid {
+                id: kobo_ui::NodeId(1),
+                columns: 2,
+                square: false,
+                cells: vec![
+                    kobo_ui::Cell::new(kobo_ui::ActionId(1), "A"),
+                    kobo_ui::Cell::new(kobo_ui::ActionId(2), "B"),
+                ],
+            }],
+        );
+        let layout = screen.layout();
+        let key = layout
+            .nodes
+            .iter()
+            .find(|node| {
+                matches!(
+                    node.kind,
+                    kobo_ui::LayoutKind::Cell(_, kobo_ui::CellStyle::Key)
+                )
+            })
+            .expect("keyboard key")
+            .rect;
+        assert_eq!(
+            super::feedback_kind(&layout, key),
+            super::FeedbackKind::KeyboardKey
+        );
     }
 }

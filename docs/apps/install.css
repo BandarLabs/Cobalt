@@ -92,6 +92,18 @@ h1 {
 }
 
 .panel + .panel { margin-top: 22px; }
+.prerequisites { background: var(--paper-deep); }
+.prerequisites ol { margin: 20px 0 0; padding-left: 22px; color: var(--muted); }
+.prerequisites li + li { margin-top: 12px; }
+.setup-command {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font: 14px/1.5 var(--mono);
+}
 .setup { background: var(--paper-deep); }
 .setup ol { margin: 20px 0 24px; padding-left: 22px; color: var(--muted); }
 .setup li + li { margin-top: 8px; }
@@ -157,7 +169,25 @@ button.secondary:hover { border-color: var(--ink); background: var(--paper-deep)
 .status[data-tone="warning"] { color: var(--warning) !important; }
 .status[data-tone="error"] { color: var(--danger) !important; }
 .privacy { margin-top: 22px !important; font-size: 13px; }
+.community {
+  width: min(720px, 100%);
+  margin-top: 30px;
+  padding-top: 24px;
+  border-top: 1px solid var(--rule);
+  color: var(--muted);
+  font-size: 15px;
+}
+.community strong { color: var(--ink); }
 [hidden] { display: none !important; }
+
+footer {
+  border-top: 1px solid var(--rule);
+  padding: 28px 0 36px;
+  color: var(--muted);
+  font-size: 14px;
+}
+footer .wrap { display: flex; justify-content: space-between; gap: 18px; flex-wrap: wrap; }
+footer nav { display: flex; gap: 18px; flex-wrap: wrap; }
 
 @media (max-width: 540px) {
   .wrap { width: min(calc(100% - 36px), 1080px); }

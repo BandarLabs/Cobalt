@@ -49,12 +49,13 @@ members = [
     "apps/arxiv",
     "apps/morse",
     "apps/sudoku",
+    "apps/zotero-reader",
     "tools/icon-import",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "0.3.0"
+version = "0.3.4"
 edition = "2021"
 rust-version = "1.85.1"
 license = "AGPL-3.0-only"

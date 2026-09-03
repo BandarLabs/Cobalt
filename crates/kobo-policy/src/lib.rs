@@ -8,6 +8,7 @@
 //! application asking for something unreasonable gets a reduced grant rather
 //! than the device it asked for.
 
+pub mod credentials;
 pub mod services;
 pub mod shelf;
 pub mod store;

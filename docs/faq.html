@@ -13,6 +13,73 @@
 <meta property="og:url" content="https://bandarlabs.github.io/Cobalt/faq.html">
 <meta property="og:image" content="https://bandarlabs.github.io/Cobalt/media/site/og-card.jpg">
 <meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Cobalt FAQ">
+<meta name="twitter:description" content="Answers about installing, using and building apps for Kobo e-readers with Cobalt.">
+<meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/og-card.jpg">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "How is Cobalt different from NickelMenu?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "NickelMenu adds actions to Kobo's stock menu. Cobalt uses one action to add its entry, then launches and manages apps with shared support for screens, lifecycle, e-ink drawing, touch input, storage, networking and device access."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How is Cobalt different from KOReader or Plato?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "KOReader and Plato are reading apps. Cobalt is a platform for building many kinds of Kobo apps with a shared SDK and runtime."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "What does Cobalt handle for an app?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Cobalt handles layout, framebuffer drawing, e-ink refreshes, touch input, lifecycle events, background work, private storage and device requests."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How are apps isolated?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Cobalt starts each app as a separate unprivileged process. Apps declare required services, and the runtime checks each request."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How do developers build and test an app?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "The kobo new command creates an app, and kobo dev runs it in the browser simulator with the same screen model used on the reader."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "What does the Store add?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "After the first USB installation, Store installs, updates and removes signed apps over Wi-Fi. App releases are separate from Cobalt platform releases."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How can I request an app, suggest a feature or report a bug?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Join r/CobaltForKobo to request Kobo apps, suggest features, report bugs and discuss Cobalt with other users."
+      }
+    }
+  ]
+}
+</script>
 <style>
 :root {
   --paper: #f6f2ea;
@@ -51,6 +118,8 @@ header.masthead { border-bottom: 1px solid var(--ink); padding: 18px 0; }
 nav.top { display: flex; gap: 24px; font-size: 16px; flex-wrap: wrap; }
 nav.top a { color: var(--ink); }
 nav.top a.active, nav.top a:hover { color: var(--cobalt); }
+.icon-link { display: inline-flex; align-items: center; gap: 6px; }
+.icon-link svg { width: 15px; height: 15px; flex: none; fill: currentColor; }
 main { padding-top: 68px; padding-bottom: 86px; }
 .intro { padding-bottom: 52px; border-bottom: 1px solid var(--ink); }
 .kicker {
@@ -113,10 +182,15 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
     <a class="brand" href="index.html"><img src="logo.svg" alt="Cobalt" width="81" height="34"></a>
     <nav class="top">
       <a href="index.html">Home</a>
-      <a href="sdk.html">SDK</a>
+      <a href="developers.html">Developers</a>
       <a class="active" href="faq.html">FAQ</a>
       <a href="INSTALL.md">Install</a>
-      <a href="https://github.com/BandarLabs/Cobalt">GitHub</a>
+      <a class="icon-link" href="https://github.com/BandarLabs/Cobalt">
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.49c-2.23.49-2.7-1.08-2.7-1.08-.37-.93-.9-1.18-.9-1.18-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.72 1.23 1.88.87 2.34.67.07-.52.28-.87.51-1.07-1.78-.2-3.65-.89-3.65-3.96 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.22 2.2.82A7.66 7.66 0 0 1 8 3.72a7.7 7.7 0 0 1 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.08-1.88 3.75-3.66 3.95.29.25.54.74.54 1.5v2.32c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/>
+        </svg>
+        GitHub
+      </a>
     </nav>
   </div>
 </header>
@@ -163,6 +237,12 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
     <p>The first Cobalt installation uses USB. After that, Store can install, update and remove signed apps over Wi-Fi. App releases are separate from Cobalt platform releases, so publishing one app does not require reinstalling the platform.</p>
     <div class="note"><strong>Hardware support is exact.</strong> Check the <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/DEVICES.md#device-support-matrix">device support matrix</a> before installing Cobalt.</div>
   </section>
+
+  <section class="faq">
+    <h2>How can I request an app, suggest a feature or report a bug?</h2>
+    <p>Join <a href="https://www.reddit.com/r/CobaltForKobo/">r/CobaltForKobo</a> to request apps, suggest features, report bugs and discuss what you are running on your Kobo.</p>
+    <p>Developers and contributors can still use <a href="https://github.com/BandarLabs/Cobalt/issues">GitHub Issues</a> when a report needs logs, code references or implementation tracking.</p>
+  </section>
 </main>
 
 <footer>
@@ -170,7 +250,8 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
     <p>Cobalt · AGPL-3.0 · <a href="https://github.com/BandarLabs/Cobalt">BandarLabs/Cobalt</a></p>
     <nav>
       <a href="index.html">Home</a>
-      <a href="sdk.html">SDK docs</a>
+      <a href="developers.html">Developers</a>
+      <a href="https://www.reddit.com/r/CobaltForKobo/">Community</a>
       <a href="INSTALL.md">Install</a>
       <a href="https://github.com/BandarLabs/Cobalt/blob/main/SECURITY.md">Security</a>
     </nav>
