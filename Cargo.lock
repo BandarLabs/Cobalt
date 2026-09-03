@@ -792,6 +792,7 @@ name = "kobo-paperterm"
 version = "0.1.0"
 dependencies = [
  "kobo-json",
+ "kobo-profile",
  "kobo-sdk",
  "kobo-ui",
 ]

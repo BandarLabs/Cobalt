@@ -163,7 +163,7 @@ impl Paperterm {
                     screen = screen.secondary("The host held the final terminal screen.");
                 } else {
                     screen = match self.input {
-                        Input::Controls => screen.grid(
+                        Input::Controls => screen.fill().grid(
                             CONTROL_COLUMNS,
                             false,
                             CONTROL_KEYS.map(|(name, label, _)| (name, label)),
@@ -205,7 +205,7 @@ impl Paperterm {
         }
         screen = screen.terminal(Vec::<String>::new(), None);
         match (input, keyboard_open) {
-            (Input::Controls, _) => screen.grid(
+            (Input::Controls, _) => screen.fill().grid(
                 CONTROL_COLUMNS,
                 false,
                 CONTROL_KEYS.map(|(name, label, _)| (name, label)),
@@ -681,9 +681,34 @@ mod tests {
     use kobo_sdk::{Command, StoreRequest};
     use kobo_ui::{Chrome, CLARA_BW_METRICS};
 
+    const HOST_MAX_COLUMNS: u16 = 300;
+    const HOST_MAX_ROWS: u16 = 120;
+
     fn begin_hello(app: &mut Paperterm, context: &mut Context) -> TaskId {
         app.hello(context);
         app.hello.expect("hello task")
+    }
+
+    fn grid_from_url(url: &str) -> (u16, u16) {
+        let grid = url
+            .split("grid=")
+            .nth(1)
+            .expect("hello carries a grid")
+            .split('&')
+            .next()
+            .expect("grid value");
+        let (columns, rows) = grid.split_once('x').expect("COLSxROWS");
+        (
+            columns.parse().expect("numeric columns"),
+            rows.parse().expect("numeric rows"),
+        )
+    }
+
+    fn assert_host_valid(grid: (u16, u16), context: &str) {
+        assert!(
+            (1..=HOST_MAX_COLUMNS).contains(&grid.0) && (1..=HOST_MAX_ROWS).contains(&grid.1),
+            "{context}: {grid:?} is outside 1x1 through 300x120"
+        );
     }
 
     #[test]
@@ -698,6 +723,73 @@ mod tests {
             },
         );
         assert!(context.commands().iter().any(|command| matches!(command, Command::Spawn { work: Task::Fetch { url, .. }, .. } if url.contains("/hello?token=abc123&grid="))));
+    }
+
+    #[test]
+    fn initial_hidden_keyboard_hello_is_host_valid_and_reaches_stable_polling() {
+        let mut app = Paperterm::default();
+        let mut context = Context::default();
+        app.on_store(
+            &mut context,
+            StoreResult::Loaded {
+                key: PAIRING.to_owned(),
+                value: Some(b"host:9332\nabc123".to_vec()),
+            },
+        );
+        let url = context
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                Command::Spawn {
+                    work: Task::Fetch { url, .. },
+                    ..
+                } if url.contains("/hello?") => Some(url),
+                _ => None,
+            })
+            .expect("initial hello");
+        assert_host_valid(grid_from_url(url), "Clara BW hidden-keyboard hello");
+
+        let hello = app.hello.expect("hello task");
+        app.on_task(
+            &mut context,
+            hello,
+            TaskOutcome::Completed(br#"{"session":42,"input":"full"}"#.to_vec()),
+        );
+        assert_eq!(app.view, View::Watching);
+        assert_eq!(app.session, Some(42));
+        assert!(!app.keyboard_open);
+        assert!(app.hello.is_none());
+        assert!(
+            app.poll.is_some(),
+            "valid hello did not reach stable polling"
+        );
+    }
+
+    #[test]
+    fn every_profile_negotiates_host_valid_hidden_controls_and_keyboard_grids() {
+        for profile in kobo_profile::SUPPORTED_PROFILES {
+            let portrait = DisplayMetrics {
+                width: i32::try_from(profile.width).expect("profile width"),
+                height: i32::try_from(profile.height).expect("profile height"),
+                pixels_per_inch: i32::from(profile.pixels_per_inch),
+                text_scale: kobo_ui::TextScale::Default,
+            };
+            let metrics = portrait.oriented(Orientation::Landscape);
+            let hidden = Paperterm::grid_for(Input::Full, false, &metrics);
+            let controls = Paperterm::grid_for(Input::Controls, false, &metrics);
+            let open = Paperterm::grid_for(Input::Full, true, &metrics);
+            for (state, grid) in [
+                ("initial", Paperterm::grid_for(Input::None, false, &metrics)),
+                ("hidden", hidden),
+                ("controls", controls),
+                ("open", open),
+            ] {
+                assert_host_valid(grid, &format!("{} {state}", profile.id));
+            }
+            assert_eq!(hidden.0, open.0, "{} columns", profile.id);
+            assert!(hidden.1 > open.1, "{} keyboard rows", profile.id);
+            assert!(hidden.1 > controls.1, "{} control rows", profile.id);
+        }
     }
     #[test]
     fn changed_rows_repaint_but_an_empty_poll_does_not() {
@@ -769,6 +861,7 @@ mod tests {
         assert_eq!(app.sequence, 19);
         assert!(app.keys.is_control());
         let open_grid = app.hello_grid.expect("opening keys renegotiates");
+        assert_host_valid(open_grid, "open keyboard");
         assert!(app
             .screen()
             .layout_with(
@@ -794,6 +887,7 @@ mod tests {
         assert!(context.commands().contains(&Command::Cancel(poll)));
         app.on_task(&mut context, poll, TaskOutcome::Cancelled);
         let closed_grid = app.hello_grid.expect("closing keys renegotiates");
+        assert_host_valid(closed_grid, "closed keyboard");
         assert_eq!(closed_grid.0, open_grid.0);
         assert!(closed_grid.1 > open_grid.1);
         assert_eq!(app.rows, rows);
@@ -1200,6 +1294,7 @@ mod tests {
         let mut context = Context::default();
         let first = begin_hello(&mut app, &mut context);
         let first_grid = app.hello_grid.expect("initial grid");
+        assert_host_valid(first_grid, "initial hello");
         app.on_task(
             &mut context,
             first,
@@ -1211,6 +1306,7 @@ mod tests {
         assert_eq!(app.session, Some(42));
         let second = app.hello.expect("control grid hello");
         let second_grid = app.hello_grid.expect("control grid");
+        assert_host_valid(second_grid, "controls resize hello");
         assert_ne!(second_grid, first_grid);
         app.on_task(
             &mut context,
