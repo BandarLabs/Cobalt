@@ -94,7 +94,10 @@ impl SeekPreset {
         let initial = u32::from(self.minutes()).saturating_mul(60);
         game.supported()
             && game.rated
-            && game.source.as_deref() == Some("lobby")
+            && game
+                .source
+                .as_deref()
+                .is_some_and(|source| matches!(source, "pool" | "lobby"))
             && game.speed.as_deref() == Some(self.speed())
             && game
                 .seconds_left
@@ -622,12 +625,18 @@ mod tests {
                 rated: true,
                 is_my_turn: true,
                 last_move: None,
-                source: Some("lobby".to_owned()),
+                source: Some("pool".to_owned()),
                 speed: Some(preset.speed().to_owned()),
                 variant: Some("standard".to_owned()),
                 seconds_left: Some(u32::from(preset.minutes()) * 60),
             };
             assert!(preset.matches_summary(&summary), "{}", preset.label());
+            let mut legacy_lobby = summary.clone();
+            legacy_lobby.source = Some("lobby".to_owned());
+            assert!(preset.matches_summary(&legacy_lobby));
+            let mut unrelated = summary.clone();
+            unrelated.source = Some("friend".to_owned());
+            assert!(!preset.matches_summary(&unrelated));
             let mut wrong_minutes = summary.clone();
             wrong_minutes.seconds_left =
                 Some(u32::from(preset.minutes().saturating_add(5)).saturating_mul(60));

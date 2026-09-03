@@ -5399,7 +5399,7 @@ mod tests {
         assert!(app.seek_waiting);
         assert_eq!(app.route, Route::Pairing);
         let started = api::parse_event(
-            br#"{"type":"gameStart","game":{"gameId":"abcdEF12","color":"white","rated":true,"speed":"rapid","source":"lobby","variant":{"key":"standard"},"secondsLeft":600,"isMyTurn":true,"lastMove":"","opponent":{"username":"Other"}}}"#,
+            br#"{"type":"gameStart","game":{"gameId":"abcdEF12","color":"white","rated":true,"speed":"rapid","source":"pool","variant":{"key":"standard"},"secondsLeft":600,"isMyTurn":true,"lastMove":"","opponent":{"username":"Other"}}}"#,
         )
         .expect("matched game");
         app.handle_event(&mut context, started);
