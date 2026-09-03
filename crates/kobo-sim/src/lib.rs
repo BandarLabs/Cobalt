@@ -1369,10 +1369,13 @@ impl AppSession {
                     "page buttons are not verified for this profile",
                 ));
             }
-            let code_is_194 = !upper;
-            let forward_is_194 =
-                state.config.pose.rotation() % 4 == state.config.profile.reference_rotation % 4;
-            let forward = code_is_194 == forward_is_194;
+            let (_, forward) =
+                page_button_event_and_direction(state.config, upper).ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::Unsupported,
+                        "page-button position is not verified for this pose",
+                    )
+                })?;
             let chrome = simulated_chrome(&state.app_name, &state.screen);
             match state
                 .screen
@@ -1631,6 +1634,7 @@ impl AppSession {
                     ),
                 }
             }
+
             ("POST", "/button") => {
                 let upper = match std::str::from_utf8(&request.body).map(str::trim) {
                     Ok("upper") => Some(true),
@@ -1700,6 +1704,28 @@ impl AppSession {
             _ => write_response(&mut stream, 404, "text/plain; charset=utf-8", b"not found"),
         }
     }
+}
+
+/// Maps the bezel position into the measured reference pose before applying
+/// the event-code direction. A half-turn swaps both the physical positions and
+/// the meaning of codes 193/194; skipping the first swap reverses rotation 3.
+fn page_button_event_and_direction(config: SimulationConfig, upper: bool) -> Option<(u16, bool)> {
+    if config.profile.hardware.page_buttons != PageButtons::Measured193Back194Forward {
+        return None;
+    }
+    let turn = (config.pose.rotation() + 4 - config.profile.reference_rotation) % 4;
+    let reference_upper = match turn {
+        0 => upper,
+        2 => !upper,
+        _ => return None,
+    };
+    let event_code = if reference_upper { 193 } else { 194 };
+    let forward = match turn {
+        0 => event_code == 194,
+        2 => event_code == 193,
+        _ => return None,
+    };
+    Some((event_code, forward))
 }
 
 fn diagnostics_json(
@@ -3525,6 +3551,31 @@ mod tests {
         assert!(SimulationConfig::select("clara-bw", None).is_err());
         assert!(SimulationConfig::select("clara-bw-391", Some(1)).is_err());
         assert!(SimulationConfig::select("libra-2-388", Some(3)).is_ok());
+    }
+
+    #[test]
+    fn libra_2_page_buttons_map_physical_position_through_each_pose() {
+        let rotation_1 =
+            SimulationConfig::select("libra-2-388", Some(1)).expect("rotation 1 profile");
+        assert_eq!(
+            page_button_event_and_direction(rotation_1, true),
+            Some((193, false))
+        );
+        assert_eq!(
+            page_button_event_and_direction(rotation_1, false),
+            Some((194, true))
+        );
+
+        let rotation_3 =
+            SimulationConfig::select("libra-2-388", Some(3)).expect("rotation 3 profile");
+        assert_eq!(
+            page_button_event_and_direction(rotation_3, true),
+            Some((194, false))
+        );
+        assert_eq!(
+            page_button_event_and_direction(rotation_3, false),
+            Some((193, true))
+        );
     }
 
     #[test]

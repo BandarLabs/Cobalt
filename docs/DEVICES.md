@@ -56,8 +56,10 @@ profiles and 63 pixels on Elipsa 2E. Touch itself is measured:
 | Libra Colour | X 0–1680, Y 0–1264 | transpose and mirror Y |
 
 Measured non-framebuffer facts are intentionally sparse. Libra 2 and Libra
-Colour have page keys 193/194, meaning back/forward at the reference pose;
-Libra 2 also has measured orientation-sensor values. Clara BW 391 has measured
+Colour have page keys 193/194, meaning back/forward at the reference pose.
+Simulation maps the physical upper/lower position through the selected pose
+before applying that measured event-code direction. Libra 2 also has measured
+orientation-sensor values. Clara BW 391 has measured
 frontlight brightness 0–100 and raw warm/cool balance 0–10. Wi-Fi operation is
 measured only on Clara BW 391 and Libra 2. The shared MediaTek radio platform
 applies to the current MediaTek profiles, Libra 2 uses Realtek 8723ds, and
