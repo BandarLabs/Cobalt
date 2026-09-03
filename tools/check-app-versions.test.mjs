@@ -179,6 +179,33 @@ test("accepts the first Cobalt release supporting the package protocol", () => {
   );
 });
 
+test("manifest-only rebuilds must meet the current protocol minimum", () => {
+  const values = fixture({ currentVersion: "1.0.1", summary: "New summary" });
+  const built = new Set(packagesToBuild(values.registry, values.published, new Set()));
+  assert.deepEqual([...built], ["kobo-notes"]);
+  assert.throws(
+    () => checkProtocolMinimums(values.registry, 12, new Map([[12, "0.3.4"]]), built),
+    /minimum Cobalt 0\.3\.0 is older than protocol 12/
+  );
+});
+
+test("new packages must meet the current protocol minimum", () => {
+  const values = fixture();
+  values.registry.apps.push({
+    ...values.registry.apps[0],
+    package: "kobo-reader",
+    id: "reader",
+    display_name: "Reader",
+    short_label: "Reader"
+  });
+  const built = new Set(packagesToBuild(values.registry, values.published, new Set()));
+  assert.deepEqual([...built], ["kobo-reader"]);
+  assert.throws(
+    () => checkProtocolMinimums(values.registry, 12, new Map([[12, "0.3.4"]]), built),
+    /reader: minimum Cobalt 0\.3\.0 is older than protocol 12/
+  );
+});
+
 test("release inputs ignore exclusively dev-only dependency edges", () => {
   const dependencies = releaseDependencyIds({
     deps: [
