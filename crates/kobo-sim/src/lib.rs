@@ -797,6 +797,7 @@ fn is_picture_message(message: &Message) -> bool {
 #[derive(Debug)]
 struct AppState {
     screen: Screen,
+    orientation: kobo_ui::Orientation,
     /// How many screens the application has painted since it started.
     ///
     /// A driver posts a tap to this process and the application answers it in
@@ -831,6 +832,7 @@ impl AppState {
     fn with_apps(apps: Arc<Mutex<SimulatedApps>>) -> Self {
         Self {
             screen: Screen::new(0, Vec::new()),
+            orientation: kobo_ui::Orientation::Portrait,
             paints: 0,
             logs: Vec::new(),
             pictures: kobo_ui::PictureCache::default(),
@@ -1092,13 +1094,14 @@ impl AppSession {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut surface = Surface::new(PROFILE.width as usize, PROFILE.height as usize);
-        kobo_ui::render_all(
+        kobo_ui::render_oriented(
             &state.screen,
             &profile_metrics(),
             &kobo_ui::Chrome::default(),
             state.active_pictures(),
             &mut surface,
             None,
+            state.orientation,
         );
         state.panel.update(&surface);
         state.panel.frame(ideal).to_vec()
@@ -1762,6 +1765,12 @@ fn read_app_messages(
                     .map_err(|_| io::Error::other("app state lock poisoned"))?;
                 state.screen = screen;
                 state.paints = state.paints.saturating_add(1);
+            }
+            Message::SetOrientation(orientation) => {
+                state
+                    .lock()
+                    .map_err(|_| io::Error::other("app state lock poisoned"))?
+                    .orientation = orientation;
             }
             // The simulator hosts exactly one application, so a launch is
             // reported rather than performed. Pretending it worked would hide

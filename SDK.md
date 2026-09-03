@@ -182,6 +182,26 @@ hand it over:
 context.set_screen(ScreenBuilder::new("results").heading("Results").build());
 ```
 
+### Portrait and landscape
+
+Portrait is the compatibility default. An application that genuinely benefits
+from a wide viewport may request landscape for its current app session:
+
+```rust
+context.set_orientation(kobo_sdk::Orientation::Landscape);
+let metrics = context
+    .metrics()
+    .oriented(kobo_sdk::Orientation::Landscape);
+```
+
+The runtime keeps the framebuffer in its verified native mode and rotates the
+rendered surface in software when a hardware backend has not been independently
+validated for quarter turns. Touch coordinates are transformed through the
+same mapping. On readers that report a verified physical landscape side, the
+runtime follows that side; readers without orientation events use a fixed
+clockwise convention. Returning to the reader or starting another application
+restores the portrait default automatically.
+
 The runtime diffs it against the last one and picks an E Ink waveform from the
 pixels that changed. This is not a stylistic preference. A retained tree
 invites incremental mutation, incremental mutation on E Ink means many small
