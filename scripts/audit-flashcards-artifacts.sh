@@ -125,6 +125,7 @@ if ! cmp "$fresh_audit_device" "$audit_device" >/dev/null; then
   echo "unstripped device ELF differs from the fresh audited-source build" >&2
   exit 1
 fi
+rm -rf "$fresh_device_root" "$target_root/host-target"
 
 audit_tools="$target_root/audit-tools"
 rm -rf "$audit_tools"
@@ -140,7 +141,6 @@ trusted_cli="$audit_tools/release/kobo"
 trusted_host="$audit_tools/release/flashcards-import"
 audited_host="$target_root/artifacts/.flashcards-import.audited"
 cp "$trusted_host" "$audited_host"
-rm -rf "$target_root/host-target"
 mkdir -p "$(dirname "$host")"
 mv "$audited_host" "$host"
 if ! cmp "$trusted_host" "$host" >/dev/null; then
